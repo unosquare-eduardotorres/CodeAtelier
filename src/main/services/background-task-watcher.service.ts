@@ -263,7 +263,9 @@ class BackgroundTaskWatcherService {
     // the process *group* (`-pid`), so an arbitrary PID arriving from the
     // renderer would be a broadcast rather than a targeted stop.
     if (!this.findTrackedEntry(pid)) {
-      log.warn(`[BackgroundTaskWatcher] Refusing to stop pid ${pid} — not in any workspace manifest`)
+      log.warn(
+        `[BackgroundTaskWatcher] Refusing to stop pid ${pid} — not in any workspace manifest`
+      )
       return { stopped: false, alreadyExited: false, reason: 'untracked' }
     }
 
@@ -297,7 +299,10 @@ class BackgroundTaskWatcherService {
     if (!had) {
       // Nothing was armed. Say whether the process is even ours, so the UI can
       // explain the no-op instead of silently doing nothing.
-      return { cancelled: false, ...(this.findTrackedEntry(pid) ? {} : { reason: 'untracked' as const }) }
+      return {
+        cancelled: false,
+        ...(this.findTrackedEntry(pid) ? {} : { reason: 'untracked' as const })
+      }
     }
     this.saveState()
     this.emitChanged()
@@ -325,7 +330,9 @@ class BackgroundTaskWatcherService {
   }
 
   /** Pick up manifest entries that opted in to notifyOnExit and aren't watched yet. */
-  private async discoverNewWatches(workspaces: WorkspacePath[] = this.workspacePaths()): Promise<void> {
+  private async discoverNewWatches(
+    workspaces: WorkspacePath[] = this.workspacePaths()
+  ): Promise<void> {
     let added = false
     for (const { workspaceId, repoPath } of workspaces) {
       for (const entry of this.readManifest(repoPath)) {

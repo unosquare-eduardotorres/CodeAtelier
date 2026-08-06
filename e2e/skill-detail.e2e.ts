@@ -20,9 +20,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Skill Detail', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,9 +34,7 @@ test.describe('Skill Detail', () => {
     return true
   }
 
-  async function navigateToSkillDetail(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToSkillDetail(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('specialist')
     if (!navigated) return false
@@ -66,10 +62,16 @@ test.describe('Skill Detail', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDetail = await navigateToSkillDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="skill-detail-page"]')
     await expect(detailPage).toBeVisible()
@@ -77,16 +79,25 @@ test.describe('Skill Detail', () => {
 
   test('back button returns to specialist skills grid', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDetail = await navigateToSkillDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     // Click back button
     const backBtn = page.locator('[data-testid="skill-detail-back"]')
     const hasBack = await backBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasBack) { test.skip(); return }
+    if (!hasBack) {
+      test.skip()
+      return
+    }
 
     await backBtn.click()
     await page.waitForTimeout(1_000)
@@ -101,14 +112,18 @@ test.describe('Skill Detail', () => {
     }
   })
 
-  test('skill name and active/inactive badge display in header', async ({
-    electronPage: page
-  }) => {
+  test('skill name and active/inactive badge display in header', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDetail = await navigateToSkillDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="skill-detail-page"]')
 
@@ -130,17 +145,26 @@ test.describe('Skill Detail', () => {
 
   test('file tree shows SKILL.md and reference files', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDetail = await navigateToSkillDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     // The left sidebar should show file tree
     const detailPage = page.locator('[data-testid="skill-detail-page"]')
     const sidebar = detailPage.locator('.w-56, [class*="flex-shrink-0"]').first()
 
     const hasSidebar = await sidebar.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSidebar) { test.skip(); return }
+    if (!hasSidebar) {
+      test.skip()
+      return
+    }
 
     // Look for SKILL.md or file references
     const fileItems = sidebar.locator('button, [role="treeitem"]')
@@ -150,14 +174,18 @@ test.describe('Skill Detail', () => {
     expect(fileCount).toBeGreaterThan(0)
   })
 
-  test('selecting a file loads its content in the viewer pane', async ({
-    electronPage: page
-  }) => {
+  test('selecting a file loads its content in the viewer pane', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDetail = await navigateToSkillDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     // Look for the MarkdownViewer or code content in the main panel
     const viewer = page.locator('[data-testid="markdown-viewer"]')
@@ -167,7 +195,10 @@ test.describe('Skill Detail', () => {
       // Content might be loading or showing "Select a file"
       const loadingText = page.getByText(/select a file|could not load/i)
       const isPrompting = await loadingText.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (isPrompting) { test.skip(); return }
+      if (isPrompting) {
+        test.skip()
+        return
+      }
       test.skip()
       return
     }
@@ -181,10 +212,16 @@ test.describe('Skill Detail', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDetail = await navigateToSkillDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     // Check for "Used by" section in the sidebar
     const usedByHeader = page.getByText(/used by/i).first()
@@ -199,9 +236,7 @@ test.describe('Skill Detail', () => {
     await expect(usedByHeader).toBeVisible()
 
     // Should list at least one agent name
-    const agentNames = usedByHeader
-      .locator('xpath=following-sibling::div')
-      .locator('.text-xs')
+    const agentNames = usedByHeader.locator('xpath=following-sibling::div').locator('.text-xs')
     const agentCount = await agentNames.count()
     expect(agentCount).toBeGreaterThan(0)
   })

@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('Goal Campaign Detail', () => {
-  async function navigateToGoalsPage(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToGoalsPage(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,11 +40,12 @@ test.describe('Goal Campaign Detail', () => {
     return true
   }
 
-  async function openCampaignPanel(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openCampaignPanel(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for "New Campaign" or "Start Campaign" button
-    const startBtn = page.locator('button').filter({ hasText: /New Campaign|Start Campaign|Start Goal/i }).first()
+    const startBtn = page
+      .locator('button')
+      .filter({ hasText: /New Campaign|Start Campaign|Start Goal/i })
+      .first()
     const hasStart = await startBtn.isVisible({ timeout: 3_000 }).catch(() => false)
     if (!hasStart) return false
 
@@ -61,10 +60,16 @@ test.describe('Goal Campaign Detail', () => {
     electronPage: page
   }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openCampaignPanel(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="goal-campaign-panel"]')
     await expect(panel).toBeVisible()
@@ -72,7 +77,10 @@ test.describe('Goal Campaign Detail', () => {
     // Should have a textarea for describing the goal
     const textarea = panel.locator('textarea').first()
     const hasTextarea = await textarea.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTextarea) { test.skip(); return }
+    if (!hasTextarea) {
+      test.skip()
+      return
+    }
 
     await expect(textarea).toBeVisible()
     // Textarea should have a placeholder or be empty
@@ -80,36 +88,53 @@ test.describe('Goal Campaign Detail', () => {
     expect(placeholder !== null || (await textarea.inputValue()) !== null).toBeTruthy()
   })
 
-  test('review step shows editable measurable goal cards', async ({
-    electronPage: page
-  }) => {
+  test('review step shows editable measurable goal cards', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openCampaignPanel(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="goal-campaign-panel"]')
 
     // Fill in the describe step and advance
     const textarea = panel.locator('textarea').first()
     const hasTextarea = await textarea.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTextarea) { test.skip(); return }
+    if (!hasTextarea) {
+      test.skip()
+      return
+    }
 
-    await textarea.fill('Build a REST API endpoint for user authentication with JWT tokens and refresh token rotation')
+    await textarea.fill(
+      'Build a REST API endpoint for user authentication with JWT tokens and refresh token rotation'
+    )
     await page.waitForTimeout(500)
 
     // Click Next/Generate to advance to Review step
-    const nextBtn = panel.locator('button').filter({ hasText: /Next|Generate|Decompose/i }).first()
+    const nextBtn = panel
+      .locator('button')
+      .filter({ hasText: /Next|Generate|Decompose/i })
+      .first()
     const hasNext = await nextBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasNext) { test.skip(); return }
+    if (!hasNext) {
+      test.skip()
+      return
+    }
 
     await nextBtn.click()
     // Wait for AI generation (may take time)
     await page.waitForTimeout(10_000)
 
     // Look for goal cards in the review step
-    const goalCards = panel.locator('[class*="rounded"][class*="border"]').filter({ hasText: /feature|refactor|bugfix|tests/i })
+    const goalCards = panel
+      .locator('[class*="rounded"][class*="border"]')
+      .filter({ hasText: /feature|refactor|bugfix|tests/i })
     const hasGoalCards = (await goalCards.count()) > 0
     // Even if generation hasn't completed, panel should still be visible
     await expect(panel).toBeVisible()
@@ -118,28 +143,38 @@ test.describe('Goal Campaign Detail', () => {
     }
   })
 
-  test('goal cards have add/remove/reorder controls', async ({
-    electronPage: page
-  }) => {
+  test('goal cards have add/remove/reorder controls', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openCampaignPanel(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="goal-campaign-panel"]')
 
     // Check if we're already on a review step with goal cards
     // (may already have goals from previous session)
     const addBtn = panel.locator('button').filter({ hasText: /Add Goal|Add/i })
-    const hasAdd = await addBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasAdd = await addBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasAdd) {
       // Try to navigate to review step
       const textarea = panel.locator('textarea').first()
       if (await textarea.isVisible({ timeout: 2_000 }).catch(() => false)) {
         await textarea.fill('Add comprehensive unit tests for the authentication module')
-        const nextBtn = panel.locator('button').filter({ hasText: /Next|Generate|Decompose/i }).first()
+        const nextBtn = panel
+          .locator('button')
+          .filter({ hasText: /Next|Generate|Decompose/i })
+          .first()
         if (await nextBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
           await nextBtn.click()
           await page.waitForTimeout(10_000)
@@ -148,7 +183,9 @@ test.describe('Goal Campaign Detail', () => {
     }
 
     // Verify the panel has some controls (add, remove, arrows)
-    const controls = panel.locator('button:has(svg.lucide-plus), button:has(svg.lucide-trash-2), button:has(svg.lucide-arrow-up), button:has(svg.lucide-arrow-down)')
+    const controls = panel.locator(
+      'button:has(svg.lucide-plus), button:has(svg.lucide-trash-2), button:has(svg.lucide-arrow-up), button:has(svg.lucide-arrow-down)'
+    )
     const controlCount = await controls.count()
 
     // Panel should remain visible regardless
@@ -162,15 +199,24 @@ test.describe('Goal Campaign Detail', () => {
     electronPage: page
   }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openCampaignPanel(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="goal-campaign-panel"]')
 
     // Look for a "Start Campaign" or "Run" button (may be on last step)
-    const startCampaignBtn = panel.locator('button').filter({ hasText: /Start Campaign|Launch|Run/i }).first()
+    const startCampaignBtn = panel
+      .locator('button')
+      .filter({ hasText: /Start Campaign|Launch|Run/i })
+      .first()
     const hasStartBtn = await startCampaignBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // The panel should have step indicators or navigation
@@ -185,11 +231,12 @@ test.describe('Goal Campaign Detail', () => {
     }
   })
 
-  test('run detail shows phase timeline and artifact list', async ({
-    electronPage: page
-  }) => {
+  test('run detail shows phase timeline and artifact list', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for existing run details (previous campaign runs)
     const runDetail = page.locator('[data-testid="goal-run-detail"]')
@@ -197,7 +244,9 @@ test.describe('Goal Campaign Detail', () => {
 
     if (!hasRunDetail) {
       // Try clicking on a run history item
-      const runItems = page.locator('[class*="cursor-pointer"]').filter({ hasText: /running|completed|failed/i })
+      const runItems = page
+        .locator('[class*="cursor-pointer"]')
+        .filter({ hasText: /running|completed|failed/i })
       if ((await runItems.count()) > 0) {
         await runItems.first().click()
         await page.waitForTimeout(1_000)
@@ -205,7 +254,10 @@ test.describe('Goal Campaign Detail', () => {
       }
     }
 
-    if (!hasRunDetail) { test.skip(); return }
+    if (!hasRunDetail) {
+      test.skip()
+      return
+    }
 
     await expect(runDetail).toBeVisible()
 
@@ -218,7 +270,10 @@ test.describe('Goal Campaign Detail', () => {
     electronPage: page
   }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for artifact viewer (appears in run detail for completed goals)
     const artifactViewer = page.locator('[data-testid="goal-artifact-viewer"]')
@@ -234,7 +289,10 @@ test.describe('Goal Campaign Detail', () => {
       }
     }
 
-    if (!hasViewer) { test.skip(); return }
+    if (!hasViewer) {
+      test.skip()
+      return
+    }
 
     await expect(artifactViewer).toBeVisible()
 

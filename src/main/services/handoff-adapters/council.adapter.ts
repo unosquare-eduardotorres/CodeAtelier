@@ -81,13 +81,13 @@ class CouncilHandoffAdapter extends HandoffSourceAdapter<CouncilAdapterInput> {
 
     steps.push({
       title: 'Council review completed',
-      outcome: `${input.session.reviews.length} advisor review(s), ${input.session.peerReviews.length} peer review(s)`,
+      outcome: `${input.session.reviews.length} advisor review(s), ${input.session.peerReviews.length} peer review(s)`
     })
 
     if (input.session.verdict) {
       steps.push({
         title: 'Verdict rendered',
-        outcome: `Overall score: ${input.session.verdict.overallScore}/10`,
+        outcome: `Overall score: ${input.session.verdict.overallScore}/10`
       })
     }
 
@@ -101,7 +101,7 @@ class CouncilHandoffAdapter extends HandoffSourceAdapter<CouncilAdapterInput> {
     return verdict.revisions.map((revision, i) => ({
       title: `Revision ${i + 1}`,
       description: typeof revision === 'string' ? revision : JSON.stringify(revision),
-      priority: 'medium' as const,
+      priority: 'medium' as const
     }))
   }
 
@@ -114,14 +114,14 @@ class CouncilHandoffAdapter extends HandoffSourceAdapter<CouncilAdapterInput> {
     if (verdict.sections.recommendation) {
       decisions.push({
         what: 'Council recommendation',
-        why: verdict.sections.recommendation,
+        why: verdict.sections.recommendation
       })
     }
 
     if (verdict.sections.oneThingFirst) {
       decisions.push({
         what: 'Priority action',
-        why: verdict.sections.oneThingFirst,
+        why: verdict.sections.oneThingFirst
       })
     }
 
@@ -139,19 +139,23 @@ class CouncilHandoffAdapter extends HandoffSourceAdapter<CouncilAdapterInput> {
     const verdict = input.session.verdict
     if (!verdict?.sections.blindSpots) return []
 
-    return [{
-      risk: 'Blind spots identified by council',
-      severity: 'medium',
-      mitigation: verdict.sections.blindSpots.slice(0, 500),
-    }]
+    return [
+      {
+        risk: 'Blind spots identified by council',
+        severity: 'medium',
+        mitigation: verdict.sections.blindSpots.slice(0, 500)
+      }
+    ]
   }
 
   extractArtifacts(input: CouncilAdapterInput): ArtifactRef[] {
-    return [{
-      type: 'plan',
-      path: `council-session:${input.session.id}`,
-      description: `Council session with verdict`,
-    }]
+    return [
+      {
+        type: 'plan',
+        path: `council-session:${input.session.id}`,
+        description: `Council session with verdict`
+      }
+    ]
   }
 
   extractStructuredPlanRef(input: CouncilAdapterInput): string | undefined {
@@ -163,7 +167,7 @@ class CouncilHandoffAdapter extends HandoffSourceAdapter<CouncilAdapterInput> {
       councilSessionId: input.session.id,
       overallScore: input.session.verdict?.overallScore,
       individualScores: input.session.verdict?.individualScores,
-      phase: input.session.phase,
+      phase: input.session.phase
     }
   }
 }

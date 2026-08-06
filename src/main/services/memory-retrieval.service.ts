@@ -12,27 +12,23 @@ import { localEmbeddingProvider } from './local-embedding.provider'
 import { sanitizePromptInput } from './sanitize-prompt-input'
 import { cosineSimilarity } from './memory-engine.service'
 import { anyPathInScope, normalizePath } from './scope-matcher'
-import type {
-  MemoryFact,
-  MemoryFactCategory,
-  MemoryRetrievalResult
-} from '../../shared/types'
+import type { MemoryFact, MemoryFactCategory, MemoryRetrievalResult } from '../../shared/types'
 
 const log = dbLogger
 
 // ── Retrieval configuration ─────────────────────────────────────────────────
 
 /** Minimum combined score to include in results. */
-const RELEVANCE_FLOOR = 0.40
+const RELEVANCE_FLOOR = 0.4
 
 /** Cosine similarity floor — below this, cosine doesn't count. */
 const COSINE_FLOOR = 0.55
 
 /** Score weights */
-const WEIGHT_COSINE = 0.50
+const WEIGHT_COSINE = 0.5
 const WEIGHT_KEYWORD = 0.25
-const WEIGHT_TIER = 0.10
-const WEIGHT_RECENCY = 0.10
+const WEIGHT_TIER = 0.1
+const WEIGHT_RECENCY = 0.1
 const WEIGHT_SCOPE = 0.05
 
 /**
@@ -413,10 +409,7 @@ class MemoryRetrievalService {
       { fact: MemoryFact; score: number; inVector: boolean; inKeyword: boolean }
     >()
 
-    const contribute = (
-      ranked: MemoryFact[],
-      arm: 'inVector' | 'inKeyword'
-    ): void => {
+    const contribute = (ranked: MemoryFact[], arm: 'inVector' | 'inKeyword'): void => {
       ranked.forEach((fact, rank) => {
         const entry = fused.get(fact.id) ?? {
           fact,
@@ -509,11 +502,7 @@ class MemoryRetrievalService {
     category: MemoryFactCategory | undefined,
     activePaths: string[]
   ): Promise<MemoryRetrievalResult[]> {
-    const { candidateMap, queryVec } = await this.gatherCandidates(
-      workspaceId,
-      query,
-      category
-    )
+    const { candidateMap, queryVec } = await this.gatherCandidates(workspaceId, query, category)
     if (candidateMap.size === 0) return []
 
     const now = Date.now()
@@ -571,9 +560,7 @@ class MemoryRetrievalService {
     const queryVec = await this.embedQuery(query)
 
     // Get candidate facts
-    const allWithEmbeddings = queryVec
-      ? memoryFactRepository.findWithEmbeddings(workspaceId)
-      : []
+    const allWithEmbeddings = queryVec ? memoryFactRepository.findWithEmbeddings(workspaceId) : []
     const keywordCandidates = memoryFactRepository.search(workspaceId, query, 50)
 
     // Merge candidates by ID (union of both sets)
@@ -649,8 +636,7 @@ function scoreCandidate(
   now: number,
   activePaths: string[] = []
 ): MemoryRetrievalResult | null {
-  const cosineScore =
-    queryVec && embeddingVec ? cosineSimilarity(queryVec, embeddingVec) : 0
+  const cosineScore = queryVec && embeddingVec ? cosineSimilarity(queryVec, embeddingVec) : 0
   const cosineContrib = cosineScore >= COSINE_FLOOR ? cosineScore : 0
   const keywordScore = computeKeywordOverlap(queryTokens, fact)
   const tierBonus = fact.tier / 3

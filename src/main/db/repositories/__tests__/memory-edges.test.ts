@@ -68,7 +68,10 @@ if (!env) {
 
   let seq = 0
 
-  function insertFact(db: import('better-sqlite3').Database, extra: Record<string, string> = {}): string {
+  function insertFact(
+    db: import('better-sqlite3').Database,
+    extra: Record<string, string> = {}
+  ): string {
     const id = `edge-${++seq}`
     db.prepare(
       `INSERT INTO memory_facts
@@ -130,7 +133,9 @@ if (!env) {
         assert.throws(
           () =>
             db
-              .prepare(`INSERT INTO memory_edges (from_id, to_id, edge_type) VALUES (?, 'ghost', 'relates_to')`)
+              .prepare(
+                `INSERT INTO memory_edges (from_id, to_id, edge_type) VALUES (?, 'ghost', 'relates_to')`
+              )
               .run(a),
           /FOREIGN KEY/i
         )
@@ -144,7 +149,9 @@ if (!env) {
       try {
         const a = insertFact(db)
         const b = insertFact(db)
-        db.prepare(`INSERT INTO memory_edges (from_id, to_id, edge_type) VALUES (?, ?, 'relates_to')`).run(a, b)
+        db.prepare(
+          `INSERT INTO memory_edges (from_id, to_id, edge_type) VALUES (?, ?, 'relates_to')`
+        ).run(a, b)
 
         db.prepare('DELETE FROM memory_facts WHERE id = ?').run(a)
 
@@ -163,7 +170,9 @@ if (!env) {
         assert.throws(
           () =>
             db
-              .prepare(`INSERT INTO memory_edges (from_id, to_id, edge_type) VALUES (?, ?, 'invented')`)
+              .prepare(
+                `INSERT INTO memory_edges (from_id, to_id, edge_type) VALUES (?, ?, 'invented')`
+              )
               .run(a, b),
           /CHECK/i
         )

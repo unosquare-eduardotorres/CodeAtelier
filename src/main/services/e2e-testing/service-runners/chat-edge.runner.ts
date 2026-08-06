@@ -55,10 +55,9 @@ export async function runChatEdgeConcurrent(ctx: E2EServiceContext): Promise<E2E
     // Verify no stream lock by sending a real prompt
     transcript.push(statusEntry('testing_post_empty_stream'))
     try {
-      const entries = await ctx.streamPrompt(
-        'What is 1+1? Answer briefly.',
-        { conversationId: ctx.conversationId }
-      )
+      const entries = await ctx.streamPrompt('What is 1+1? Answer briefly.', {
+        conversationId: ctx.conversationId
+      })
       const hasResponse = entries.some((e) => e.type === 'text' && e.role === 'assistant')
       transcript.push(statusEntry(hasResponse ? 'second_stream_ok' : 'second_stream_no_response'))
     } catch (err) {
@@ -85,7 +84,9 @@ export async function runChatEdgeConcurrent(ctx: E2EServiceContext): Promise<E2E
         transcript.push(statusEntry('second_stream_accepted_unexpectedly'))
       } catch (err) {
         transcript.push(statusEntry('second_stream_rejected'))
-        log.info(`[chat-edge-concurrent] Second stream correctly rejected: ${(err as Error).message}`)
+        log.info(
+          `[chat-edge-concurrent] Second stream correctly rejected: ${(err as Error).message}`
+        )
       }
 
       // Wait for first stream to finish
@@ -110,7 +111,9 @@ export async function runChatEdgeConcurrent(ctx: E2EServiceContext): Promise<E2E
  * 3× (start → abort at 500ms → restart) → assert no zombie sessions.
  * Each restart should succeed, proving proper cleanup after abort.
  */
-export async function runChatEdgeRapidCancel(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runChatEdgeRapidCancel(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -142,11 +145,17 @@ export async function runChatEdgeRapidCancel(ctx: E2EServiceContext): Promise<E2
             `Cycle ${i + 1} restart: What is ${i + 1} + ${i + 1}? Answer briefly.`,
             { conversationId: ctx.conversationId }
           )
-          const hasResponse = restartEntries.some((e) => e.type === 'text' && e.role === 'assistant')
+          const hasResponse = restartEntries.some(
+            (e) => e.type === 'text' && e.role === 'assistant'
+          )
           if (hasResponse) successCount++
-          transcript.push(statusEntry(`cycle_${i + 1}_restart_${hasResponse ? 'ok' : 'no_response'}`))
+          transcript.push(
+            statusEntry(`cycle_${i + 1}_restart_${hasResponse ? 'ok' : 'no_response'}`)
+          )
         } catch (restartErr) {
-          transcript.push(statusEntry(`cycle_${i + 1}_restart_failed: ${(restartErr as Error).message}`))
+          transcript.push(
+            statusEntry(`cycle_${i + 1}_restart_failed: ${(restartErr as Error).message}`)
+          )
         }
 
         // Brief delay between cycles
@@ -158,7 +167,11 @@ export async function runChatEdgeRapidCancel(ctx: E2EServiceContext): Promise<E2
     }
 
     log.info(`[chat-edge-rapid-cancel] Success: ${successCount}/${cycles}`)
-    transcript.push(statusEntry(successCount >= 2 ? 'no_zombie_sessions' : `zombie_risk: ${successCount}/${cycles}`))
+    transcript.push(
+      statusEntry(
+        successCount >= 2 ? 'no_zombie_sessions' : `zombie_risk: ${successCount}/${cycles}`
+      )
+    )
   } catch (err) {
     transcript.push(errorEntry((err as Error).message))
   }
@@ -172,7 +185,9 @@ export async function runChatEdgeRapidCancel(ctx: E2EServiceContext): Promise<E2
  * Trigger compact() then immediately stream → assert either queued or clean rejection.
  * Never corruption.
  */
-export async function runChatEdgeCompactRace(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runChatEdgeCompactRace(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -180,18 +195,16 @@ export async function runChatEdgeCompactRace(ctx: E2EServiceContext): Promise<E2
 
     // First, ensure there's some conversation history to compact
     transcript.push(statusEntry('building_history'))
-    const entries1 = await ctx.streamPrompt(
-      'Remember the number 42. Just acknowledge.',
-      { conversationId: ctx.conversationId }
-    )
+    const entries1 = await ctx.streamPrompt('Remember the number 42. Just acknowledge.', {
+      conversationId: ctx.conversationId
+    })
     transcript.push(...entries1.filter((e) => e.type === 'status'))
 
     await new Promise((r) => setTimeout(r, 1000))
 
-    const entries2 = await ctx.streamPrompt(
-      'What is the meaning of life? Brief answer.',
-      { conversationId: ctx.conversationId }
-    )
+    const entries2 = await ctx.streamPrompt('What is the meaning of life? Brief answer.', {
+      conversationId: ctx.conversationId
+    })
     transcript.push(...entries2.filter((e) => e.type === 'status'))
 
     await new Promise((r) => setTimeout(r, 1000))
@@ -200,18 +213,21 @@ export async function runChatEdgeCompactRace(ctx: E2EServiceContext): Promise<E2
     transcript.push(statusEntry('triggering_compact_race'))
 
     const compactPromise = chatAgentService.compact().catch((err: Error) => {
-      log.info(`[chat-edge-compact-race] Compact error (may be expected): ${(err as Error).message}`)
+      log.info(
+        `[chat-edge-compact-race] Compact error (may be expected): ${(err as Error).message}`
+      )
     })
 
     // Immediately try to stream during compaction
     try {
-      const raceEntries = await ctx.streamPrompt(
-        'What number did I ask you to remember?',
-        { conversationId: ctx.conversationId }
-      )
+      const raceEntries = await ctx.streamPrompt('What number did I ask you to remember?', {
+        conversationId: ctx.conversationId
+      })
 
       const hasResponse = raceEntries.some((e) => e.type === 'text' && e.role === 'assistant')
-      transcript.push(statusEntry(hasResponse ? 'stream_after_compact_ok' : 'stream_after_compact_no_response'))
+      transcript.push(
+        statusEntry(hasResponse ? 'stream_after_compact_ok' : 'stream_after_compact_no_response')
+      )
     } catch (err) {
       // Clean rejection is acceptable
       transcript.push(statusEntry(`compact_race_ok: ${(err as Error).message}`))

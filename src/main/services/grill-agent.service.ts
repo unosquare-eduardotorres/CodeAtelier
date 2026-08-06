@@ -259,7 +259,9 @@ export class GrillAgentService extends EventEmitter {
       // unrelated greenfield evaluation.
       if (this.greenfieldSession?.running && this.greenfieldSession.workspaceId === workspaceId) {
         try {
-          this.greenfieldSession.session.cancelCurrentQuery(this.greenfieldSession.lastConversationId)
+          this.greenfieldSession.session.cancelCurrentQuery(
+            this.greenfieldSession.lastConversationId
+          )
         } catch (e) {
           grillLog.debug('[grill:greenfield] cancelCurrentQuery() failed (non-fatal):', e)
         }
@@ -277,7 +279,9 @@ export class GrillAgentService extends EventEmitter {
       }
       if (this.greenfieldSession?.session) {
         try {
-          this.greenfieldSession.session.cancelCurrentQuery(this.greenfieldSession.lastConversationId)
+          this.greenfieldSession.session.cancelCurrentQuery(
+            this.greenfieldSession.lastConversationId
+          )
         } catch (e) {
           grillLog.debug('[grill:greenfield] cancelCurrentQuery() failed (non-fatal):', e)
         }

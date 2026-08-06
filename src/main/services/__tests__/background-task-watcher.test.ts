@@ -87,8 +87,6 @@ async function withKillSpy(
   return signals
 }
 
-
-
 // ── wait_process: budget clamping ──
 
 describe('clampWaitTimeout', () => {
@@ -374,10 +372,7 @@ describe('BackgroundTaskWatcherService', () => {
     const { service, stateDir } = setup()
     try {
       const recordPath = join(stateDir, 'exit-4242.json')
-      writeFileSync(
-        recordPath,
-        JSON.stringify({ exitCode: 137, exitedAt: 1234, tail: 'killed' })
-      )
+      writeFileSync(recordPath, JSON.stringify({ exitCode: 137, exitedAt: 1234, tail: 'killed' }))
 
       const exit = detectExitOf(service)(makeWatched({ pid: 4242 })) as ProcessExitInfo
       assert.equal(exit.exitCode, 137)
@@ -458,13 +453,20 @@ describe('BackgroundTaskWatcherService', () => {
   test('cancelWatch disarms auto-resume and reports whether a watch existed', () => {
     const { service, stateDir } = setup()
     try {
-      writeFileSync(join(stateDir, 'manifest.json'), JSON.stringify([makeManifestEntry({ pid: 4242 })]))
+      writeFileSync(
+        join(stateDir, 'manifest.json'),
+        JSON.stringify([makeManifestEntry({ pid: 4242 })])
+      )
       const watched = (service as unknown as { watched: Map<number, WatchedProcess> }).watched
       watched.set(4242, makeWatched())
 
       assert.deepEqual(service.cancelWatch(4242), { cancelled: true })
       assert.equal(watched.has(4242), false)
-      assert.deepEqual(service.cancelWatch(4242), { cancelled: false }, 'cancelling twice is a no-op')
+      assert.deepEqual(
+        service.cancelWatch(4242),
+        { cancelled: false },
+        'cancelling twice is a no-op'
+      )
     } finally {
       cleanup()
     }
@@ -603,7 +605,9 @@ describe('BackgroundTaskWatcherService', () => {
         notified.push(w.pid)
       }
       ;(service as unknown as { canResume: () => boolean }).canResume = () => true
-      ;(service as unknown as { doResume: (id: string) => Promise<void> }).doResume = async (id) => {
+      ;(service as unknown as { doResume: (id: string) => Promise<void> }).doResume = async (
+        id
+      ) => {
         resumed.push(id)
       }
       ;(service as unknown as { saveState: () => void }).saveState = () => {}

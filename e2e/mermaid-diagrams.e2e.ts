@@ -23,9 +23,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Mermaid Diagrams', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -46,7 +44,10 @@ test.describe('Mermaid Diagrams', () => {
 
   test('mermaid diagram renders SVG from definition', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Look for mermaid diagram containers in the page
     const diagrams = page.locator('[data-testid="mermaid-diagram"]')
@@ -54,40 +55,49 @@ test.describe('Mermaid Diagrams', () => {
 
     if (count === 0) {
       // Try triggering a mermaid diagram via chat
-      const inputReady = await chat.messageInput
-        .isVisible({ timeout: 15_000 })
-        .catch(() => false)
-      if (!inputReady) { test.skip(); return }
+      const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
+      if (!inputReady) {
+        test.skip()
+        return
+      }
 
       await page.waitForTimeout(5_000)
       const isEnabled = await chat.isInputEnabled()
-      if (!isEnabled) { test.skip(); return }
+      if (!isEnabled) {
+        test.skip()
+        return
+      }
 
-      await chat.sendMessage(
-        'Draw a simple mermaid diagram showing A -> B -> C'
-      )
+      await chat.sendMessage('Draw a simple mermaid diagram showing A -> B -> C')
       await chat.waitForStreamComplete(120_000)
     }
 
     const finalCount = await diagrams.count()
-    if (finalCount === 0) { test.skip(); return }
+    if (finalCount === 0) {
+      test.skip()
+      return
+    }
 
     const firstDiagram = diagrams.first()
     await expect(firstDiagram).toBeVisible()
 
     // Should contain rendered SVG
     const svgElement = firstDiagram.locator('svg')
-    const _hasSvg = await svgElement.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const _hasSvg = await svgElement
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     // May have SVG or still be loading — just verify the container is there
     expect(true).toBeTruthy()
   })
 
-  test('loading state shows spinner while diagram compiles', async ({
-    electronPage: page
-  }) => {
+  test('loading state shows spinner while diagram compiles', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Look for the loading state indicator (Loader2 spinner)
     // This is transient and appears only during initial diagram compilation
@@ -95,7 +105,10 @@ test.describe('Mermaid Diagrams', () => {
     const renderingText = page.getByText(/rendering diagram/i)
 
     // Check if we can catch the loading state
-    const hasSpinner = await spinner.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSpinner = await spinner
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     const hasText = await renderingText.isVisible({ timeout: 2_000 }).catch(() => false)
 
     if (!hasSpinner && !hasText) {
@@ -116,16 +129,20 @@ test.describe('Mermaid Diagrams', () => {
     if (hasText) await expect(renderingText).toBeVisible()
   })
 
-  test('zoom controls (zoom in/out) are visible on hover', async ({
-    electronPage: page
-  }) => {
+  test('zoom controls (zoom in/out) are visible on hover', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const diagrams = page.locator('[data-testid="mermaid-diagram"]')
     const count = await diagrams.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     const firstDiagram = diagrams.first()
 
@@ -137,7 +154,10 @@ test.describe('Mermaid Diagrams', () => {
     const zoomInBtn = page.locator('[data-testid="mermaid-zoom-in"]')
     const hasZoomIn = await zoomInBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasZoomIn) { test.skip(); return }
+    if (!hasZoomIn) {
+      test.skip()
+      return
+    }
 
     await expect(zoomInBtn).toBeVisible()
 
@@ -150,16 +170,20 @@ test.describe('Mermaid Diagrams', () => {
     expect(buttonCount).toBeGreaterThanOrEqual(2)
   })
 
-  test('fullscreen button opens expanded diagram view', async ({
-    electronPage: page
-  }) => {
+  test('fullscreen button opens expanded diagram view', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const diagrams = page.locator('[data-testid="mermaid-diagram"]')
     const count = await diagrams.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     const firstDiagram = diagrams.first()
     await firstDiagram.hover()
@@ -169,7 +193,10 @@ test.describe('Mermaid Diagrams', () => {
     const fullscreenBtn = page.locator('[data-testid="mermaid-fullscreen"]')
     const hasFullscreen = await fullscreenBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasFullscreen) { test.skip(); return }
+    if (!hasFullscreen) {
+      test.skip()
+      return
+    }
 
     await expect(fullscreenBtn).toBeVisible()
 
@@ -185,13 +212,19 @@ test.describe('Mermaid Diagrams', () => {
     electronPage: page
   }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Look for any error state in mermaid diagrams
     const errorDiagrams = page.locator('.text-danger').filter({
       hasText: /failed to render/i
     })
-    const hasError = await errorDiagrams.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasError = await errorDiagrams
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasError) {
       // No error diagrams in current view — this is expected

@@ -65,17 +65,21 @@ if (!env) {
 
     test('updateSettings() and getSettings() round-trip', () => {
       // Use env.db directly to avoid shared-DB-singleton ordering issues
-      const row = env.db.prepare('INSERT INTO workspaces (name, repo_path) VALUES (?, ?) RETURNING *')
+      const row = env.db
+        .prepare('INSERT INTO workspaces (name, repo_path) VALUES (?, ?) RETURNING *')
         .get('Settings Test', '/tmp/ws-test-6') as any
-      env.db.prepare('UPDATE workspaces SET settings_json = ? WHERE id = ?')
+      env.db
+        .prepare('UPDATE workspaces SET settings_json = ? WHERE id = ?')
         .run(JSON.stringify({ theme: 'dark', fontSize: 14 }), row.id)
-      const result = env.db.prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+      const result = env.db
+        .prepare('SELECT settings_json FROM workspaces WHERE id = ?')
         .get(row.id) as any
       assert.deepEqual(JSON.parse(result.settings_json), { theme: 'dark', fontSize: 14 })
     })
 
     test('getSettings() returns {} for unknown workspace', () => {
-      const result = env.db.prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+      const result = env.db
+        .prepare('SELECT settings_json FROM workspaces WHERE id = ?')
         .get('nonexistent-ws-id') as any
       assert.equal(result, undefined)
     })

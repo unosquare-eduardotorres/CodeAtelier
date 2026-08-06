@@ -117,9 +117,7 @@ export default function BugRow({
           {/* Status badge — neutral for open, green for resolved */}
           <span
             className={`ml-auto px-1.5 py-0.5 rounded text-[10px] font-medium ${
-              bug.isResolved
-                ? 'bg-success/10 text-success'
-                : 'bg-surface-base text-text-muted'
+              bug.isResolved ? 'bg-success/10 text-success' : 'bg-surface-base text-text-muted'
             }`}
           >
             {bug.isResolved ? 'Resolved' : 'Open'}

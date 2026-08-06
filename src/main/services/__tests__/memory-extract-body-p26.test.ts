@@ -19,10 +19,15 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach } from './test-harness'
-import { setupFullMock, getMockRepo, resetAllMocks } from './setup-full-mock'
+import { setupFullMock, getMockRepo, resetAllMocks, evictFromCache } from './setup-full-mock'
 
 setupFullMock()
 
+// An earlier file in the shared run caches these bound to the REAL repositories,
+// so extraction would write through to the real DB (and fail the workspace
+// foreign key). Drop them so they re-bind to the mocks below; the scoped-logger
+// module goes with them to keep the re-executed graph consistent.
+evictFromCache('memory-extraction.service', 'memory-engine.service', '/main/logger')
 const mod = require('../memory-extraction.service')
 const { memoryExtractionService } = mod
 
@@ -137,8 +142,9 @@ describe('MemoryExtractionService — deep body (P26)', () => {
       //    reporting is real.
       memoryExtractionService['spawnSummarizer'] = async () => '# CLAUDE.md\n\nGenerated content.'
       const progressMessages: string[] = []
-      const genResult = await memoryExtractionService.regenerateClaudeMd('/tmp/does-not-need-to-exist', (e: { message: string }) =>
-        progressMessages.push(e.message)
+      const genResult = await memoryExtractionService.regenerateClaudeMd(
+        '/tmp/does-not-need-to-exist',
+        (e: { message: string }) => progressMessages.push(e.message)
       )
       assert.equal(genResult.success, true)
       assert.equal(genResult.content, '# CLAUDE.md\n\nGenerated content.')
@@ -147,18 +153,20 @@ describe('MemoryExtractionService — deep body (P26)', () => {
       // 3. Busy guard: a second call while isBusy is true is rejected without
       //    ever touching spawnSummarizer again.
       memoryExtractionService['isBusy'] = true
-      const busyResult = await memoryExtractionService.regenerateClaudeMd('/tmp/does-not-need-to-exist')
+      const busyResult = await memoryExtractionService.regenerateClaudeMd(
+        '/tmp/does-not-need-to-exist'
+      )
       assert.equal(busyResult.success, false)
       assert.equal(busyResult.error, 'An extraction is already in progress')
       memoryExtractionService['isBusy'] = false
 
-      // 4. shutdown() aborts any in-flight extraction and clears busy state.
+      // 4. shutdown() aborts every in-flight extraction and clears busy state.
       const controller = new AbortController()
-      memoryExtractionService['currentAbortController'] = controller
+      memoryExtractionService['liveAbortControllers'].add(controller)
       memoryExtractionService['isBusy'] = true
       memoryExtractionService.shutdown()
       assert.equal(controller.signal.aborted, true)
-      assert.equal(memoryExtractionService['currentAbortController'], null)
+      assert.equal(memoryExtractionService['liveAbortControllers'].size, 0)
       assert.equal(memoryExtractionService['isBusy'], false)
     } finally {
       memoryExtractionService['spawnSummarizer'] = originalSpawnSummarizer

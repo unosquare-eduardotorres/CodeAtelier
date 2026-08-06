@@ -384,11 +384,7 @@ class MemoryBootstrapService {
       if (outcome === 'paused' && remaining > 0) {
         memoryBootstrapRepository.updateRun(runId, { status: 'paused' })
         const summary = memoryBootstrapRepository.getRun(runId)
-        emit(
-          summary?.currentPhase ?? 'docs',
-          `Paused — ${remaining} items remaining`,
-          'paused'
-        )
+        emit(summary?.currentPhase ?? 'docs', `Paused — ${remaining} items remaining`, 'paused')
         return { jobId, runId, factsCreated: summary?.factsCreated ?? 0 }
       }
 
@@ -465,7 +461,9 @@ class MemoryBootstrapService {
       if (Number.isFinite(raw) && raw >= MIN_BOOTSTRAP_CONCURRENCY) {
         return Math.min(MAX_BOOTSTRAP_CONCURRENCY, Math.floor(raw))
       }
-    } catch { /* fall through to default */ }
+    } catch {
+      /* fall through to default */
+    }
     return DEFAULT_BOOTSTRAP_CONCURRENCY
   }
 
@@ -482,7 +480,10 @@ class MemoryBootstrapService {
         await codeGraphService.indexWorkspace(workspaceId, workspacePath)
         bsLog.info('[preflight] Code-graph index built successfully')
       } catch (err) {
-        bsLog.warn('[preflight] Code-graph indexing failed — architecture phase will be limited:', err)
+        bsLog.warn(
+          '[preflight] Code-graph indexing failed — architecture phase will be limited:',
+          err
+        )
       }
     }
 
@@ -496,7 +497,9 @@ class MemoryBootstrapService {
     const headSha = readHeadSha(workspacePath)
 
     if (mode === 'incremental' && lastCommit && headSha && lastCommit === headSha) {
-      bsLog.info('[preflight] HEAD unchanged since last bootstrap — incremental run will be minimal')
+      bsLog.info(
+        '[preflight] HEAD unchanged since last bootstrap — incremental run will be minimal'
+      )
     }
 
     return {

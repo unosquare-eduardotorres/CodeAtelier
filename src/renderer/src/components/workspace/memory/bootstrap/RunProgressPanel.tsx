@@ -9,6 +9,7 @@
 import { Loader2, CheckCircle, PauseCircle, AlertTriangle } from 'lucide-react'
 import type { BootstrapProgress, BootstrapPhaseLabel } from '../../../../../../shared/types'
 import { PHASE_INFO, DEEP_SCAN_PHASES, FULL_PHASES, formatDuration } from './phase-meta'
+import { itemLabel, detailLine } from './detail-line'
 
 function PhaseStep({
   phase,
@@ -89,23 +90,8 @@ export default function RunProgressPanel({
   const memoriesPerItem =
     progress.itemsDone > 0 ? (progress.factsCreated / progress.itemsDone).toFixed(1) : '—'
 
-  const itemLabel = progress.currentItem
-    ? progress.currentItem.chunkTotal > 1
-      ? `${progress.currentItem.sourceRef} — chunk ${progress.currentItem.chunkDone}/${progress.currentItem.chunkTotal}`
-      : progress.currentItem.sourceRef
-    : null
-
-  // While an item is in flight the chunk counter owns the main line, so the
-  // extractor's own status ("Rate limited — retrying in 4s…") has nowhere to go
-  // and a long backoff looks like a freeze. Show it underneath instead — unless
-  // it is just repeating the item line.
-  const detail =
-    itemLabel &&
-    progress.message &&
-    progress.message !== itemLabel &&
-    progress.message !== progress.currentItem?.sourceRef
-      ? progress.message
-      : null
+  const label = itemLabel(progress)
+  const detail = detailLine(progress)
 
   return (
     <div className="space-y-3">
@@ -122,7 +108,7 @@ export default function RunProgressPanel({
           <span className="text-text-secondary truncate flex items-center gap-1.5 min-w-0">
             {isPaused && <PauseCircle className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
             {isError && <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
-            <span className="truncate">{itemLabel ?? progress.message}</span>
+            <span className="truncate">{label ?? progress.message}</span>
           </span>
           <span className="text-text-muted font-mono shrink-0 tabular-nums">
             {settled}/{progress.itemsTotal} · {percent}%

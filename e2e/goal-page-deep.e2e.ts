@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Goal Page Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -42,9 +40,7 @@ test.describe('Goal Page Deep', () => {
   }
 
   /** Navigate to the Goals tab in workspace settings. */
-  async function navigateToGoals(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToGoals(page: import('@playwright/test').Page): Promise<boolean> {
     // Try navigating via sidebar tab
     const goalsTab = page.locator('[data-testid="sidebar-goals-tab"]')
     let hasTab = await goalsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -100,18 +96,26 @@ test.describe('Goal Page Deep', () => {
 
     // Goal page should show the Goals header with experimental badge
     const header = page.getByText('Goals')
-    const hasHeader = await header.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasHeader = await header
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     expect(hasHeader).toBeTruthy()
 
     // Experimental badge
     const badge = page.getByText('Experimental')
-    const hasBadge = await badge.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasBadge = await badge
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     expect(hasBadge).toBeTruthy()
 
     // Either empty state CTA or history should be visible
     const startBtn = page.getByText(/start your first goal|new goal/i).first()
     const hasStart = await startBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasHistory = await page.getByText(/past|history/i).first()
+    const hasHistory = await page
+      .getByText(/past|history/i)
+      .first()
       .isVisible({ timeout: 2_000 })
       .catch(() => false)
 
@@ -152,9 +156,7 @@ test.describe('Goal Page Deep', () => {
       await page.waitForTimeout(500)
 
       // Look for a "Next" or "Review" or submit button
-      const nextBtn = page
-        .getByRole('button', { name: /next|review|describe|submit/i })
-        .first()
+      const nextBtn = page.getByRole('button', { name: /next|review|describe|submit/i }).first()
       const hasNext = await nextBtn.isVisible({ timeout: 2_000 }).catch(() => false)
       if (hasNext) {
         // Don't actually submit — just verify the form is interactive

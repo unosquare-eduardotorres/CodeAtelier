@@ -46,7 +46,12 @@ export async function runCodeGraphIndex(ctx: E2EServiceContext): Promise<E2ETran
       transcript.push(statusEntry('indexing_timeout'))
     }
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -54,7 +59,9 @@ export async function runCodeGraphIndex(ctx: E2EServiceContext): Promise<E2ETran
 
 // ── Embedding Generation ──
 
-export async function runEmbeddingGeneration(_ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runEmbeddingGeneration(
+  _ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -76,7 +83,12 @@ export async function runEmbeddingGeneration(_ctx: E2EServiceContext): Promise<E
     log.info(`[embedding-gen] Generated ${vectors.length} vectors, dim=${dim}`)
     transcript.push(statusEntry(`embedding_ok: vectors=${vectors.length}, dim=${dim}`))
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -108,17 +120,29 @@ export async function runSemanticSearch(ctx: E2EServiceContext): Promise<E2ETran
     }
 
     // Try semantic search via the identifiers search
-    const results = await codeGraphService.searchIdentifiers(ctx.workspaceId, ctx.workspacePath, 'hello', { maxResults: 10 })
+    const results = await codeGraphService.searchIdentifiers(
+      ctx.workspaceId,
+      ctx.workspacePath,
+      'hello',
+      { maxResults: 10 }
+    )
 
     if (results && results.length > 0) {
       const hasHello = results.some((r) => r.name.toLowerCase().includes('hello'))
-      transcript.push(statusEntry(`search_results_found: count=${results.length}, hasHello=${hasHello}`))
+      transcript.push(
+        statusEntry(`search_results_found: count=${results.length}, hasHello=${hasHello}`)
+      )
       log.info(`[semantic-search] Found ${results.length} results, hasHello=${hasHello}`)
     } else {
       transcript.push(statusEntry('search_results_found: count=0'))
     }
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript

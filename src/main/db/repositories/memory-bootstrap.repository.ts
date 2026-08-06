@@ -117,9 +117,8 @@ export class MemoryBootstrapRepository extends BaseRepository<ItemRow, Bootstrap
   }
 
   getRun(runId: string): BootstrapRunSummary | undefined {
-    const row = this.db()
-      .prepare('SELECT * FROM memory_bootstrap_runs WHERE id = ?')
-      .get(runId) as RunRow | undefined
+    const row = this.db().prepare('SELECT * FROM memory_bootstrap_runs WHERE id = ?').get(runId) as
+      RunRow | undefined
     if (!row) return undefined
     return this.toSummary(row)
   }

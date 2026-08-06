@@ -157,30 +157,6 @@ describe('CliMcpConfigWriter.buildConfig', () => {
     assert.ok(!('semantic-search' in config.mcpServers), 'Should not have semantic-search server')
   })
 
-  test('githubConfigured_true_includes_github_context_server', () => {
-    const config = buildConfig({
-      featureFlags: {
-        repomapEnabled: false,
-        semanticSearchEnabled: false,
-        githubConfigured: true,
-        localMcpActive: {}
-      }
-    })
-    assert.ok('github-context' in config.mcpServers, 'Should have github-context server')
-  })
-
-  test('githubConfigured_false_excludes_github_context_server', () => {
-    const config = buildConfig({
-      featureFlags: {
-        repomapEnabled: false,
-        semanticSearchEnabled: false,
-        githubConfigured: false,
-        localMcpActive: {}
-      }
-    })
-    assert.ok(!('github-context' in config.mcpServers), 'Should not have github-context server')
-  })
-
   test('always_includes_git_context_server', () => {
     const config = buildConfig({
       featureFlags: {
@@ -217,38 +193,6 @@ describe('CliMcpConfigWriter.buildConfig', () => {
     assert.ok('control-actions' in config.mcpServers, 'Should always have control-actions server')
   })
 
-  test('conversationId_includes_checkpoint_context_server', () => {
-    const config = buildConfig({
-      conversationId: 'conv-123',
-      featureFlags: {
-        repomapEnabled: false,
-        semanticSearchEnabled: false,
-        githubConfigured: false,
-        localMcpActive: {}
-      }
-    })
-    assert.ok(
-      'checkpoint-context' in config.mcpServers,
-      'Should include checkpoint-context when conversationId set'
-    )
-  })
-
-  test('no_conversationId_excludes_checkpoint_context_server', () => {
-    const config = buildConfig({
-      conversationId: null,
-      featureFlags: {
-        repomapEnabled: false,
-        semanticSearchEnabled: false,
-        githubConfigured: false,
-        localMcpActive: {}
-      }
-    })
-    assert.ok(
-      !('checkpoint-context' in config.mcpServers),
-      'Should not include checkpoint-context when no conversationId'
-    )
-  })
-
   test('environment_variables_include_workspace_path', () => {
     const config = buildConfig()
     const gitCtx = config.mcpServers['git-context']
@@ -257,12 +201,11 @@ describe('CliMcpConfigWriter.buildConfig', () => {
   })
 
   test('skipServers_removes_specified_servers_from_config', () => {
-    const config = buildConfig({ skipServers: ['control-actions', 'checkpoint-context'] })
+    const config = buildConfig({ skipServers: ['control-actions', 'code-analysis'] })
     assert.ok(!('control-actions' in config.mcpServers), 'control-actions should be removed')
-    assert.ok(!('checkpoint-context' in config.mcpServers), 'checkpoint-context should be removed')
+    assert.ok(!('code-analysis' in config.mcpServers), 'code-analysis should be removed')
     // Other servers should still be present
     assert.ok('git-context' in config.mcpServers, 'git-context should remain')
-    assert.ok('code-analysis' in config.mcpServers, 'code-analysis should remain')
   })
 
   test('skipServers_empty_array_removes_nothing', () => {

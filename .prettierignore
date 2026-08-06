@@ -1,5 +1,16 @@
 out
 dist
+# Mirrors eslint.config.mjs `ignores` — tool-managed directories.
+.opencode
+.agent-studio
+.claude/worktrees
+# Generated coverage output. These are single-line JSON blobs; formatting them
+# expands each to hundreds of thousands of lines of pure churn.
+.c8-report
+.verify-cov
+.verify-cov2
+.verify-cov3
+coverage
 pnpm-lock.yaml
 LICENSE.md
 tsconfig.json

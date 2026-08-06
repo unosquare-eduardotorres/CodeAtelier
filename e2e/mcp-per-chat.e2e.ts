@@ -68,7 +68,10 @@ test.describe('MCP Per-Chat Controls', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -149,7 +152,8 @@ test.describe('MCP Per-Chat Controls', () => {
     // When inactive: should have muted/subtle styling
     // The pill should have one of these states
     const hasAccent = classes?.includes('text-accent') || classes?.includes('border-accent')
-    const hasMuted = classes?.includes('text-text-muted') || classes?.includes('border-border-subtle')
+    const hasMuted =
+      classes?.includes('text-text-muted') || classes?.includes('border-border-subtle')
 
     expect(hasAccent || hasMuted).toBeTruthy()
 
@@ -186,7 +190,10 @@ test.describe('MCP Per-Chat Controls', () => {
 
     // Navigate to integrations
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)

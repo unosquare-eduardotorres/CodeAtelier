@@ -10,11 +10,7 @@ import { X, CheckCircle, Archive, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '@renderer/components/common'
 import TierBadge from './TierBadge'
 import CategoryBadge from './CategoryBadge'
-import type {
-  MemoryFact,
-  MemoryFactCategory,
-  MemoryFactTier
-} from '../../../../../shared/types'
+import type { MemoryFact, MemoryFactCategory, MemoryFactTier } from '../../../../../shared/types'
 
 // ── Props ──
 
@@ -55,9 +51,7 @@ export default function NodeDetailPanel({
     <>
       <div className="absolute top-3 right-3 w-[300px] max-h-[calc(100%-24px)] overflow-y-auto bg-surface-float border border-border-default rounded-md shadow-lg p-4 space-y-3 z-40">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="text-sm font-medium text-text-primary leading-tight flex-1">
-            {title}
-          </h3>
+          <h3 className="text-sm font-medium text-text-primary leading-tight flex-1">{title}</h3>
           <button
             onClick={onClose}
             className="p-1 text-text-muted hover:text-text-primary shrink-0"
@@ -84,10 +78,11 @@ export default function NodeDetailPanel({
             <div className="space-y-1 text-[10px] text-text-muted">
               <p>Confidence: {Math.round((fact.confidence ?? 0) * 100)}%</p>
               <p>Confirms: {fact.confirmationCount}</p>
-              <p>Source: {fact.sourceType}{fact.sourceRef ? ` · ${fact.sourceRef.slice(0, 20)}` : ''}</p>
-              {fact.scopePaths.length > 0 && (
-                <p>Scope: {fact.scopePaths.slice(0, 3).join(', ')}</p>
-              )}
+              <p>
+                Source: {fact.sourceType}
+                {fact.sourceRef ? ` · ${fact.sourceRef.slice(0, 20)}` : ''}
+              </p>
+              {fact.scopePaths.length > 0 && <p>Scope: {fact.scopePaths.slice(0, 3).join(', ')}</p>}
             </div>
           </>
         ) : (

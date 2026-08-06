@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('InsightsSummary', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -54,20 +52,42 @@ test.describe('InsightsSummary', () => {
 
     // Try complete dialog first (has insights)
     const completeBtn = page.locator('button:has-text("Complete"), [data-testid="complete-btn"]')
-    if (await completeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)) {
+    if (
+      await completeBtn
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
+    ) {
       await completeBtn.first().click()
       await page.waitForTimeout(500)
-      if (await page.locator('[data-testid="complete-dialog"]').isVisible({ timeout: 2_000 }).catch(() => false)) {
+      if (
+        await page
+          .locator('[data-testid="complete-dialog"]')
+          .isVisible({ timeout: 2_000 })
+          .catch(() => false)
+      ) {
         return 'complete-dialog'
       }
     }
 
     // Try close dialog (also has insights)
-    const closeBtn = page.locator('[data-testid="close-conversation-btn"], button:has-text("Close")')
-    if (await closeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)) {
+    const closeBtn = page.locator(
+      '[data-testid="close-conversation-btn"], button:has-text("Close")'
+    )
+    if (
+      await closeBtn
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
+    ) {
       await closeBtn.first().click()
       await page.waitForTimeout(500)
-      if (await page.locator('[data-testid="close-dialog"]').isVisible({ timeout: 2_000 }).catch(() => false)) {
+      if (
+        await page
+          .locator('[data-testid="close-dialog"]')
+          .isVisible({ timeout: 2_000 })
+          .catch(() => false)
+      ) {
         return 'close-dialog'
       }
     }
@@ -77,10 +97,16 @@ test.describe('InsightsSummary', () => {
 
   test('insights summary renders inside CompleteDialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialogType = await openDialogWithInsights(page)
-    if (!dialogType) { test.skip(); return }
+    if (!dialogType) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator(`[data-testid="${dialogType}"]`)
     await expect(dialog).toBeVisible()
@@ -109,10 +135,16 @@ test.describe('InsightsSummary', () => {
 
   test('loading state shows skeleton/spinner', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialogType = await openDialogWithInsights(page)
-    if (!dialogType) { test.skip(); return }
+    if (!dialogType) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator(`[data-testid="${dialogType}"]`)
     await expect(dialog).toBeVisible()
@@ -139,10 +171,16 @@ test.describe('InsightsSummary', () => {
 
   test('populated insights show metric values', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialogType = await openDialogWithInsights(page)
-    if (!dialogType) { test.skip(); return }
+    if (!dialogType) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator(`[data-testid="${dialogType}"]`)
     await expect(dialog).toBeVisible()
@@ -152,7 +190,10 @@ test.describe('InsightsSummary', () => {
 
     const summary = dialog.locator('[data-testid="insights-summary"]')
     const hasSummary = await summary.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSummary) { test.skip(); return }
+    if (!hasSummary) {
+      test.skip()
+      return
+    }
 
     // Should show "Session Insights" header
     await expect(summary.locator('text=Session Insights')).toBeVisible()
@@ -174,10 +215,16 @@ test.describe('InsightsSummary', () => {
 
   test('file change count displayed when available', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialogType = await openDialogWithInsights(page)
-    if (!dialogType) { test.skip(); return }
+    if (!dialogType) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator(`[data-testid="${dialogType}"]`)
     await expect(dialog).toBeVisible()
@@ -186,7 +233,10 @@ test.describe('InsightsSummary', () => {
 
     const summary = dialog.locator('[data-testid="insights-summary"]')
     const hasSummary = await summary.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSummary) { test.skip(); return }
+    if (!hasSummary) {
+      test.skip()
+      return
+    }
 
     // FILES stat pill may or may not be present depending on whether there are file changes
     const filesPill = summary.locator('text=FILES')
@@ -201,12 +251,20 @@ test.describe('InsightsSummary', () => {
     await page.keyboard.press('Escape')
   })
 
-  test('empty state handled gracefully when insights unavailable', async ({ electronPage: page }) => {
+  test('empty state handled gracefully when insights unavailable', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialogType = await openDialogWithInsights(page)
-    if (!dialogType) { test.skip(); return }
+    if (!dialogType) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator(`[data-testid="${dialogType}"]`)
     await expect(dialog).toBeVisible()

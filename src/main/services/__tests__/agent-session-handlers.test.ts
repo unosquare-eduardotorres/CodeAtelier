@@ -93,7 +93,9 @@ describe('parsePlanPayload', () => {
     const payload = {
       title: 'Fix auth',
       summary: 'Implement auth fix across 3 files',
-      phases: [{ id: 1, title: 'Audit', complexity: 2, risk: 'low', description: 'Audit current auth' }]
+      phases: [
+        { id: 1, title: 'Audit', complexity: 2, risk: 'low', description: 'Audit current auth' }
+      ]
     }
     const result = parsePlanPayload(payload, 'before')
     assert.ok(result.structuredPlan !== null)
@@ -101,7 +103,10 @@ describe('parsePlanPayload', () => {
   })
 
   test('JSON string payload containing valid plan → structuredPlan populated via fallback parse', () => {
-    const plan = { title: 'Deploy fix', phases: [{ id: 1, title: 'Build', complexity: 1, risk: 'low', description: 'Build it' }] }
+    const plan = {
+      title: 'Deploy fix',
+      phases: [{ id: 1, title: 'Build', complexity: 1, risk: 'low', description: 'Build it' }]
+    }
     const result = parsePlanPayload(JSON.stringify(plan), 'context')
     assert.ok(result.structuredPlan !== null)
     assert.equal((result.structuredPlan as unknown as Record<string, unknown>).title, 'Deploy fix')

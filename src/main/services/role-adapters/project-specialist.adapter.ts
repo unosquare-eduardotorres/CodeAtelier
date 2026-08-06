@@ -224,7 +224,9 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
       : undefined
     if (pendingCompact) {
       effectiveMessage = `${pendingCompact}\n\n---\n\n${effectiveMessage}`
-      this.log.info('[PIPELINE:lazy-compact] Prepended compaction instruction (pending confirmation)')
+      this.log.info(
+        '[PIPELINE:lazy-compact] Prepended compaction instruction (pending confirmation)'
+      )
     }
 
     // Mode switch context
@@ -331,7 +333,11 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
    * Queue a /goal condition for the next send on this conversation.
    * Consumed (auto-cleared) by consumeGoalForConversation() during _doSend().
    */
-  setGoalCondition(conversationId: string, goal: string, mode: 'advisory' | 'enforce' = 'enforce'): void {
+  setGoalCondition(
+    conversationId: string,
+    goal: string,
+    mode: 'advisory' | 'enforce' = 'enforce'
+  ): void {
     this.pendingGoals.set(conversationId, { goal, mode })
   }
 
@@ -339,7 +345,9 @@ export class ProjectSpecialistRoleAdapter extends BaseRoleAdapter {
    * Read and consume the pending goal for a conversation.
    * Returns null if no goal was queued. One-shot: clears after read.
    */
-  consumeGoalForConversation(conversationId: string): { goal: string; mode: 'advisory' | 'enforce' } | null {
+  consumeGoalForConversation(
+    conversationId: string
+  ): { goal: string; mode: 'advisory' | 'enforce' } | null {
     const pending = this.pendingGoals.get(conversationId)
     if (pending) {
       this.pendingGoals.delete(conversationId)

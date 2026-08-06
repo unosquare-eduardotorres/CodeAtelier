@@ -1,7 +1,12 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
-import type { AppPreferences, AppTheme, ChatBubbleSize, UserAvatarVariant } from '../../../shared/types'
+import type {
+  AppPreferences,
+  AppTheme,
+  ChatBubbleSize,
+  UserAvatarVariant
+} from '../../../shared/types'
 
 type AppPreferenceKey = keyof AppPreferences
 

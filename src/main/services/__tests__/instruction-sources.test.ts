@@ -30,11 +30,10 @@ import type { InstructionSource } from '../instruction-sources.service'
  * The harness runs tests concurrently, so a shared `beforeEach` root would be
  * clobbered between tests — each test gets its own directory instead.
  */
-function withRepo(body: (root: string, write: (rel: string, content: string) => void) => void): void {
-  const root = join(
-    tmpdir(),
-    `instr-src-${Date.now()}-${Math.random().toString(36).slice(2)}`
-  )
+function withRepo(
+  body: (root: string, write: (rel: string, content: string) => void) => void
+): void {
+  const root = join(tmpdir(), `instr-src-${Date.now()}-${Math.random().toString(36).slice(2)}`)
   mkdirSync(root, { recursive: true })
 
   const write = (rel: string, content: string): void => {
@@ -270,10 +269,7 @@ describe('expandImports', () => {
       write('b.md', 'B\n@c.md')
       write('c.md', 'C')
 
-      const shallow = expandImports(
-        { path: join(root, 'CLAUDE.md'), content: '@a.md' },
-        2
-      )
+      const shallow = expandImports({ path: join(root, 'CLAUDE.md'), content: '@a.md' }, 2)
 
       assert.ok(shallow.includes('A'))
       assert.ok(shallow.includes('B'))

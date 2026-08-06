@@ -33,17 +33,13 @@ export class ChatPage {
 
   /** Return all message elements in the message list. */
   getMessages(): Locator {
-    return this.page.locator(
-      '[data-testid="message-bubble"], [data-testid="message-card"]'
-    )
+    return this.page.locator('[data-testid="message-bubble"], [data-testid="message-card"]')
   }
 
   /** Check if the message input is enabled and ready for typing. */
   async isInputEnabled(): Promise<boolean> {
     try {
-      const isVisible = await this.messageInput
-        .isVisible({ timeout: 3_000 })
-        .catch(() => false)
+      const isVisible = await this.messageInput.isVisible({ timeout: 3_000 }).catch(() => false)
       if (!isVisible) return false
       return !(await this.messageInput.isDisabled())
     } catch {
@@ -56,9 +52,7 @@ export class ChatPage {
     const hasIndicator = await this.streamingIndicator
       .isVisible({ timeout: 1_000 })
       .catch(() => false)
-    const hasStop = await this.stopButton
-      .isVisible({ timeout: 1_000 })
-      .catch(() => false)
+    const hasStop = await this.stopButton.isVisible({ timeout: 1_000 }).catch(() => false)
     return hasIndicator || hasStop
   }
 
@@ -91,9 +85,7 @@ export class ChatPage {
 
   /** Click the stop button to halt streaming. */
   async stopGeneration(): Promise<void> {
-    const isVisible = await this.stopButton
-      .isVisible({ timeout: 3_000 })
-      .catch(() => false)
+    const isVisible = await this.stopButton.isVisible({ timeout: 3_000 }).catch(() => false)
     if (isVisible) {
       await this.stopButton.click()
       await this.page.waitForTimeout(1_000)

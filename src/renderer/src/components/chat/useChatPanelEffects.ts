@@ -8,8 +8,7 @@ import { useProjectSpecialistStore } from '@renderer/store/project-specialist.st
  */
 export function useChatPanelEffects(): {
   projectSpecialist:
-    | ReturnType<typeof useProjectSpecialistStore.getState>['byWorkspace'][string]
-    | null
+    ReturnType<typeof useProjectSpecialistStore.getState>['byWorkspace'][string] | null
 } {
   const { activeWorkspace } = useWorkspaceStore()
 

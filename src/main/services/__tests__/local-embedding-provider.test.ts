@@ -12,6 +12,19 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { localEmbeddingProvider } from '../local-embedding.provider'
 
+/**
+ * `localEmbeddingProvider` is a process-wide singleton. When an earlier test
+ * file in the shared run calls `registerEmbeddingIpc(mainWindow)`, that adds
+ * permanent modelReady/modelError listeners which call
+ * `mainWindow.webContents.send(...)`. With a stub window that has no
+ * `webContents`, those listeners throw synchronously out of `emit()` and fail
+ * whichever test emitted. Drop them so each test controls its own listeners.
+ */
+function dropLeakedListeners(): void {
+  localEmbeddingProvider.removeAllListeners('modelReady')
+  localEmbeddingProvider.removeAllListeners('modelError')
+}
+
 describe('LocalEmbeddingProvider — interface contract', () => {
   test('exports singleton instance', () => {
     assert.ok(localEmbeddingProvider, 'localEmbeddingProvider should be exported')
@@ -70,6 +83,7 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
   test('initialize with ollama backend and no model emits modelError', async () => {
     localEmbeddingProvider.setBackend('ollama')
     localEmbeddingProvider.dispose() // clear any previous model
+    dropLeakedListeners()
 
     const errors: string[] = []
     const handler = (e: string): void => {
@@ -111,6 +125,7 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
 describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () => {
   test('omlx modelReady event propagates through facade when backend is omlx', () => {
     localEmbeddingProvider.setBackend('omlx')
+    dropLeakedListeners()
     const events: string[] = []
     const handler = (): void => {
       events.push('modelReady')
@@ -127,6 +142,7 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
 
   test('omlx modelError event propagates through facade when backend is omlx', () => {
     localEmbeddingProvider.setBackend('omlx')
+    dropLeakedListeners()
     const errors: string[] = []
     const handler = (e: string): void => {
       errors.push(e)

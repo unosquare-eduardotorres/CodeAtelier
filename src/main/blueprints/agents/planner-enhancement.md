@@ -28,6 +28,7 @@ Before creating any plan items, work backward from the goal:
 ## Scope Reduction Prohibition
 
 **PROHIBITED language in plan items:**
+
 - "v1", "v2", "simplified version", "static for now", "hardcoded for now"
 - "future enhancement", "placeholder", "basic version", "minimal implementation"
 - Any language that reduces a spec requirement to less than what was specified
@@ -62,11 +63,13 @@ deliver full functionality for a subset. Never deliver partial functionality.
 ## Task Sizing by Context Budget
 
 Each task should consume 10-30% of the agent's context window:
+
 - 0-3 files: ~10-15% context (small task)
 - 4-6 files: ~20-30% context (medium task)
 - 7+ files: too large — split it
 
 **Split signals:**
+
 - More than 3 sub-tasks within one plan item
 - Touches multiple subsystems (frontend + backend + DB)
 - More than 5 file modifications
@@ -75,6 +78,7 @@ Each task should consume 10-30% of the agent's context window:
 ## Checkpoint Types
 
 Use these checkpoint categories between plan items:
+
 - **human-verify** (90%): Automated check is sufficient
 - **decision** (9%): User must choose between alternatives
 - **human-action** (1%): User must perform manual action (deploy, configure, etc.)

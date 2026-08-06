@@ -38,7 +38,9 @@ if (!env) {
     test('createRun() accepts optional fields', () => {
       // Seed a campaign so the FK is satisfied
       const campId = 'camp-opt-' + Date.now()
-      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campId, wsId, 'Test Campaign', 'running')
+      env.db
+        .prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)')
+        .run(campId, wsId, 'Test Campaign', 'running')
       const run = mpaRunRepository.createRun({
         workspaceId: wsId,
         title: 'Full Run',
@@ -88,7 +90,9 @@ if (!env) {
         goalType: 'feature'
       })
       const campX = 'camp-x-' + Date.now()
-      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campX, freshWs, 'Campaign', 'running')
+      env.db
+        .prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)')
+        .run(campX, freshWs, 'Campaign', 'running')
       mpaRunRepository.createRun({
         workspaceId: freshWs,
         title: 'Campaign Run',
@@ -106,7 +110,9 @@ if (!env) {
 
     test('findByCampaign() returns runs ordered by orderIndex', () => {
       const campId = 'camp-order-test-' + Date.now()
-      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campId, wsId, 'Order Campaign', 'running')
+      env.db
+        .prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)')
+        .run(campId, wsId, 'Order Campaign', 'running')
       mpaRunRepository.createRun({
         workspaceId: wsId,
         title: 'Goal 2',
@@ -167,7 +173,9 @@ if (!env) {
 
     test('deleteByCampaignOrder() removes runs for campaign+order', () => {
       const campId = 'camp-del-test-' + Date.now()
-      env.db.prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)').run(campId, wsId, 'Del Campaign', 'running')
+      env.db
+        .prepare('INSERT INTO mpa_campaigns (id, workspace_id, title, status) VALUES (?, ?, ?, ?)')
+        .run(campId, wsId, 'Del Campaign', 'running')
       mpaRunRepository.createRun({
         workspaceId: wsId,
         title: 'To Delete',

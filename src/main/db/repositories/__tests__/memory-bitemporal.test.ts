@@ -87,9 +87,17 @@ if (!env) {
   function readFact(
     db: import('better-sqlite3').Database,
     id: string
-  ): { status: string; valid_from: string | null; valid_to: string | null; observed_at: string | null; recorded_at: string | null } {
+  ): {
+    status: string
+    valid_from: string | null
+    valid_to: string | null
+    observed_at: string | null
+    recorded_at: string | null
+  } {
     return db
-      .prepare('SELECT status, valid_from, valid_to, observed_at, recorded_at FROM memory_facts WHERE id = ?')
+      .prepare(
+        'SELECT status, valid_from, valid_to, observed_at, recorded_at FROM memory_facts WHERE id = ?'
+      )
       .get(id) as never
   }
 
@@ -99,8 +107,9 @@ if (!env) {
     test('all four columns exist', () => {
       const db = createSchemaDb()
       try {
-        const cols = (db.prepare('PRAGMA table_info(memory_facts)').all() as Array<{ name: string }>)
-          .map((c) => c.name)
+        const cols = (
+          db.prepare('PRAGMA table_info(memory_facts)').all() as Array<{ name: string }>
+        ).map((c) => c.name)
         for (const col of ['valid_from', 'valid_to', 'observed_at', 'recorded_at']) {
           assert.ok(cols.includes(col), `${col} should exist`)
         }
@@ -113,7 +122,9 @@ if (!env) {
       const db = createSchemaDb()
       try {
         const idx = db
-          .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memory_facts_valid'")
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_memory_facts_valid'"
+          )
           .get()
         assert.ok(idx, 'idx_memory_facts_valid should exist')
       } finally {
@@ -254,7 +265,9 @@ if (!env) {
       try {
         const retired = insertFact(db, { status: 'superseded', validTo: '2026-06-01 00:00:00' })
         // Force a known start so the window is unambiguous.
-        db.prepare("UPDATE memory_facts SET valid_from = '2020-01-01 00:00:00' WHERE id = ?").run(retired)
+        db.prepare("UPDATE memory_facts SET valid_from = '2020-01-01 00:00:00' WHERE id = ?").run(
+          retired
+        )
 
         const asOf = '2023-01-01 00:00:00'
         const ids = (
@@ -276,7 +289,9 @@ if (!env) {
       const db = createSchemaDb()
       try {
         const id = insertFact(db)
-        db.prepare("UPDATE memory_facts SET valid_from = '2026-01-01 00:00:00' WHERE id = ?").run(id)
+        db.prepare("UPDATE memory_facts SET valid_from = '2026-01-01 00:00:00' WHERE id = ?").run(
+          id
+        )
 
         const asOf = '2020-01-01 00:00:00'
         const ids = (

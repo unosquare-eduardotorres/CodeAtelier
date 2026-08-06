@@ -262,9 +262,7 @@ function handleToolPart(part: Record<string, unknown>, state: NormalizerState): 
       type: 'tool_use',
       toolName,
       toolId: callID,
-      toolInput: hasInput
-        ? (typeof input === 'string' ? input : JSON.stringify(input))
-        : undefined
+      toolInput: hasInput ? (typeof input === 'string' ? input : JSON.stringify(input)) : undefined
     })
   }
 
@@ -456,9 +454,7 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
   let error: string =
     typeof rawError === 'string'
       ? rawError
-      : (rawError as any)?.data?.message ??
-        (rawError as any)?.message ??
-        ''
+      : ((rawError as any)?.data?.message ?? (rawError as any)?.message ?? '')
   if (!error || !error.trim()) {
     error = JSON.stringify(rawError)
     if (!error || error === '{}' || error === '""') {
@@ -591,9 +587,8 @@ function handleSessionDiff(properties: EventProperties): StreamChunk[] {
   if (!diff) return []
   // Session diffs are internal recovery metadata — route to session_state,
   // not text, to prevent rendering in the chat bubble.
-  const safeDiff = diff.length > MAX_SESSION_DIFF_CHARS
-    ? diff.slice(0, MAX_SESSION_DIFF_CHARS)
-    : diff
+  const safeDiff =
+    diff.length > MAX_SESSION_DIFF_CHARS ? diff.slice(0, MAX_SESSION_DIFF_CHARS) : diff
   return [{ type: 'session_state', content: `session_diff:${safeDiff}` }]
 }
 
@@ -622,7 +617,7 @@ function handleSessionStatus(properties: EventProperties): StreamChunk[] {
     thinking: 'thinking',
     tool_use: 'reviewing',
     idle: 'idle',
-    busy: 'thinking',  // local LLM backend status → map to 'thinking' (already suppressed)
+    busy: 'thinking', // local LLM backend status → map to 'thinking' (already suppressed)
     error: 'failed',
     compacting: 'thinking',
     generating: 'writing'
@@ -875,10 +870,16 @@ function handleV2ToolCalled(
 ): StreamChunk[] {
   if (!v2ToolFirstSighting.called) {
     v2ToolFirstSighting.called = true
-    openCodeLog.info('[opencode] V2 tool.called first sighting — raw properties:', JSON.stringify(properties).slice(0, 500))
+    openCodeLog.info(
+      '[opencode] V2 tool.called first sighting — raw properties:',
+      JSON.stringify(properties).slice(0, 500)
+    )
   }
 
-  const toolName = (properties.tool ?? properties.name ?? properties.toolName ?? 'unknown') as string
+  const toolName = (properties.tool ??
+    properties.name ??
+    properties.toolName ??
+    'unknown') as string
   const callID = (properties.callID ?? properties.id ?? properties.toolCallId) as string | undefined
   if (!callID) return []
 
@@ -888,7 +889,8 @@ function handleV2ToolCalled(
   state.emittedToolUse.add(callID)
   state.lastPartType = 'tool'
 
-  const rawInput = (properties.input ?? properties.args) as Record<string, unknown> | string | undefined
+  const rawInput = (properties.input ?? properties.args) as
+    Record<string, unknown> | string | undefined
   let toolInput: string | undefined
   if (rawInput != null) {
     toolInput = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
@@ -909,10 +911,16 @@ function handleV2ToolSuccess(
 ): StreamChunk[] {
   if (!v2ToolFirstSighting.success) {
     v2ToolFirstSighting.success = true
-    openCodeLog.info('[opencode] V2 tool.success first sighting — raw properties:', JSON.stringify(properties).slice(0, 500))
+    openCodeLog.info(
+      '[opencode] V2 tool.success first sighting — raw properties:',
+      JSON.stringify(properties).slice(0, 500)
+    )
   }
 
-  const toolName = (properties.tool ?? properties.name ?? properties.toolName ?? 'unknown') as string
+  const toolName = (properties.tool ??
+    properties.name ??
+    properties.toolName ??
+    'unknown') as string
   const callID = (properties.callID ?? properties.id ?? properties.toolCallId) as string | undefined
   if (!callID) return []
 
@@ -926,7 +934,8 @@ function handleV2ToolSuccess(
   if (!state.emittedToolUse.has(callID)) {
     state.emittedToolUse.add(callID)
     state.lastPartType = 'tool'
-    const rawInput = (properties.input ?? properties.args) as Record<string, unknown> | string | undefined
+    const rawInput = (properties.input ?? properties.args) as
+      Record<string, unknown> | string | undefined
     let toolInput: string | undefined
     if (rawInput != null) {
       toolInput = typeof rawInput === 'string' ? rawInput : JSON.stringify(rawInput)
@@ -954,7 +963,9 @@ function handleV2ToolSuccess(
       content: [
         inputSummary ? `Input: ${inputSummary}` : '',
         resultSummaryObj?.result ? `Result: ${resultSummaryObj.result}` : ''
-      ].filter(Boolean).join(' — ')
+      ]
+        .filter(Boolean)
+        .join(' — ')
     })
   }
 
@@ -973,10 +984,16 @@ function handleV2ToolFailed(
 ): StreamChunk[] {
   if (!v2ToolFirstSighting.failed) {
     v2ToolFirstSighting.failed = true
-    openCodeLog.info('[opencode] V2 tool.failed first sighting — raw properties:', JSON.stringify(properties).slice(0, 500))
+    openCodeLog.info(
+      '[opencode] V2 tool.failed first sighting — raw properties:',
+      JSON.stringify(properties).slice(0, 500)
+    )
   }
 
-  const toolName = (properties.tool ?? properties.name ?? properties.toolName ?? 'unknown') as string
+  const toolName = (properties.tool ??
+    properties.name ??
+    properties.toolName ??
+    'unknown') as string
   const callID = (properties.callID ?? properties.id ?? properties.toolCallId) as string | undefined
   if (!callID) return []
 
@@ -1008,7 +1025,12 @@ function handleV2ToolFailed(
  */
 function handleAgentSwitched(properties: EventProperties): StreamChunk[] {
   const raw = properties.agent ?? properties.name ?? 'unknown'
-  const name = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.name ?? (raw as Record<string, unknown>)?.id ?? JSON.stringify(raw)
+  const name =
+    typeof raw === 'string'
+      ? raw
+      : ((raw as Record<string, unknown>)?.name ??
+        (raw as Record<string, unknown>)?.id ??
+        JSON.stringify(raw))
   return [{ type: 'status', content: `agent_switched:${name}` }]
 }
 
@@ -1019,7 +1041,12 @@ function handleAgentSwitched(properties: EventProperties): StreamChunk[] {
  */
 function handleModelSwitched(properties: EventProperties): StreamChunk[] {
   const raw = properties.model ?? properties.modelID ?? properties.id ?? 'unknown'
-  const modelId = typeof raw === 'string' ? raw : (raw as Record<string, unknown>)?.id ?? (raw as Record<string, unknown>)?.modelID ?? JSON.stringify(raw)
+  const modelId =
+    typeof raw === 'string'
+      ? raw
+      : ((raw as Record<string, unknown>)?.id ??
+        (raw as Record<string, unknown>)?.modelID ??
+        JSON.stringify(raw))
   return [{ type: 'status', content: `model_switched:${modelId}` }]
 }
 
@@ -1033,8 +1060,7 @@ function handleStepEnded(
   if (usage) {
     tokenUsage.input = usage.inputTokens ?? usage.input ?? tokenUsage.input
     tokenUsage.output = usage.outputTokens ?? usage.output ?? tokenUsage.output
-    tokenUsage.cacheReadInputTokens =
-      usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
+    tokenUsage.cacheReadInputTokens = usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
     tokenUsage.cacheCreationInputTokens =
       usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
   }

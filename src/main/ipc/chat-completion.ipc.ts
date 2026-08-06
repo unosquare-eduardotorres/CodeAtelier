@@ -216,7 +216,10 @@ async function handleChatComplete(args: {
     try {
       conversationRepository.delete(conversationId)
     } catch (deleteErr) {
-      log.error('[chat:complete] Failed to delete conversation after successful push — non-fatal:', deleteErr)
+      log.error(
+        '[chat:complete] Failed to delete conversation after successful push — non-fatal:',
+        deleteErr
+      )
     }
     cleanupChatImages(conversationId)
 
@@ -253,21 +256,29 @@ export function registerChatCompletionIpc(): void {
     const description = optionalString(args, 'description', IPC_CHANNELS.CHAT_COMPLETE) ?? ''
     const branchNameArg = optionalString(args, 'branchName', IPC_CHANNELS.CHAT_COMPLETE)
     const baseBranch = optionalString(args, 'baseBranch', IPC_CHANNELS.CHAT_COMPLETE)
-    return handleChatComplete({ conversationId, commitMessage, description, branchNameArg, baseBranch })
+    return handleChatComplete({
+      conversationId,
+      commitMessage,
+      description,
+      branchNameArg,
+      baseBranch
+    })
   })
 
   ipcMain.handle(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, async (event, rawArgs: unknown) => {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION)
-    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION)
+    const conversationId = requireString(
+      args,
+      'conversationId',
+      IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION
+    )
 
     const conversation = conversationRepository.findById(conversationId)
     if (!conversation) throw new Error('Conversation not found')
 
     const workspace = workspaceRepository.findById(conversation.workspaceId)
-    const messages = messageRepository
-      .findByConversation(conversationId)
-      .filter((m) => !m.hidden)
+    const messages = messageRepository.findByConversation(conversationId).filter((m) => !m.hidden)
 
     if (messages.length === 0) {
       return { description: '' }

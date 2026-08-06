@@ -40,7 +40,10 @@ test.describe('Integration Card Internals', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -229,9 +232,7 @@ test.describe('Integration Card Internals', () => {
 
   // ── TokenImpactBadge ──
 
-  test('TokenImpactBadge shows correct impact and tool count', async ({
-    electronPage: page
-  }) => {
+  test('TokenImpactBadge shows correct impact and tool count', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const integrationCards = page.locator('[data-testid^="integration-card-"]')

@@ -63,7 +63,10 @@ const SEVERITY_COLORS: Record<ClarifyFindingSeverity, string> = {
 
 // ── Status Chips ──
 
-const STATUS_CONFIG: Record<ClarifyFindingStatus, { icon: typeof CheckCircle2; color: string; label: string }> = {
+const STATUS_CONFIG: Record<
+  ClarifyFindingStatus,
+  { icon: typeof CheckCircle2; color: string; label: string }
+> = {
   resolved: { icon: CheckCircle2, color: 'text-green-400', label: 'Resolved' },
   outstanding: { icon: AlertCircle, color: 'text-amber-400', label: 'Outstanding' },
   deferred: { icon: Circle, color: 'text-slate-400', label: 'Deferred' }
@@ -83,7 +86,10 @@ export function BlueprintFindingsCard({ findings }: BlueprintFindingsCardProps):
   const severityOrder: ClarifyFindingSeverity[] = ['critical', 'high', 'medium', 'low']
 
   return (
-    <div data-testid="blueprint-findings-card" className="bg-surface-raised rounded-xl border border-border/50 overflow-hidden">
+    <div
+      data-testid="blueprint-findings-card"
+      className="bg-surface-raised rounded-xl border border-border/50 overflow-hidden"
+    >
       {/* Header */}
       <div className="px-4 py-3 border-b border-border/30 flex items-center justify-between">
         <h3 className="text-xs font-semibold text-text-primary">Findings</h3>
@@ -139,17 +145,13 @@ function FindingRow({ finding }: { finding: ClarifyFinding }): JSX.Element {
       <CategoryIcon size={14} className="text-text-muted mt-0.5 shrink-0" />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-medium text-text-primary truncate">
-            {finding.title}
-          </span>
+          <span className="text-xs font-medium text-text-primary truncate">{finding.title}</span>
           <span className={`flex items-center gap-0.5 text-[10px] ${statusConfig.color}`}>
             <StatusIcon size={10} />
             {statusConfig.label}
           </span>
         </div>
-        <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">
-          {finding.description}
-        </p>
+        <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">{finding.description}</p>
         {finding.specRefs.length > 0 && (
           <div className="flex gap-1 mt-1 flex-wrap">
             {finding.specRefs.map((ref) => (

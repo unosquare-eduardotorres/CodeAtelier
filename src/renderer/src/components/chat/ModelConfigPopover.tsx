@@ -141,15 +141,11 @@ function ModelSelector({
 
   return (
     <div className="mt-3 pt-3 border-t border-border-subtle">
-      <p className="text-[10px] text-text-muted mb-2">
-        Changes only affect this conversation.
-      </p>
+      <p className="text-[10px] text-text-muted mb-2">Changes only affect this conversation.</p>
       {EDITABLE_ROLES.map((role) => {
         const current =
           overrides[role.action]?.modelId ??
-          (role.action === 'specialist:plan'
-            ? snapshot?.plan.modelId
-            : snapshot?.build.modelId) ??
+          (role.action === 'specialist:plan' ? snapshot?.plan.modelId : snapshot?.build.modelId) ??
           ''
         return (
           <div key={role.action} className="flex items-center justify-between gap-3 py-1">

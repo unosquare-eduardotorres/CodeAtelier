@@ -82,7 +82,12 @@ export async function runRepoCommit(ctx: E2EServiceContext): Promise<E2ETranscri
       GIT_COMMITTER_EMAIL: 'e2e@test.local'
     }
 
-    execSync('git add .', { cwd: ctx.workspacePath, stdio: 'pipe', env: { ...process.env, ...gitEnv }, windowsHide: true })
+    execSync('git add .', {
+      cwd: ctx.workspacePath,
+      stdio: 'pipe',
+      env: { ...process.env, ...gitEnv },
+      windowsHide: true
+    })
     execSync('git commit -m "E2E: test commit for workspace-ops"', {
       cwd: ctx.workspacePath,
       stdio: 'pipe',

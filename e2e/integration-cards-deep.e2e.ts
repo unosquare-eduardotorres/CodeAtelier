@@ -22,9 +22,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Integration Cards Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,9 +36,7 @@ test.describe('Integration Cards Deep', () => {
     return true
   }
 
-  async function navigateToIntegrations(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToIntegrations(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
@@ -57,9 +53,15 @@ test.describe('Integration Cards Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasIntegrations = await navigateToIntegrations(page)
-    if (!hasIntegrations) { test.skip(); return }
+    if (!hasIntegrations) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="integration-card"]').first()
     await expect(card).toBeVisible()
@@ -69,20 +71,27 @@ test.describe('Integration Cards Deep', () => {
     expect(cardText?.trim().length).toBeGreaterThan(0)
   })
 
-  test('availability toggle switches enabled/disabled state', async ({
-    electronPage: page
-  }) => {
+  test('availability toggle switches enabled/disabled state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasIntegrations = await navigateToIntegrations(page)
-    if (!hasIntegrations) { test.skip(); return }
+    if (!hasIntegrations) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="integration-card"]').first()
 
     // Look for a toggle switch or enable/disable button
-    const toggle = card.locator('button, [role="switch"]').filter({
-      hasText: /enable|disable|toggle/i
-    }).first()
+    const toggle = card
+      .locator('button, [role="switch"]')
+      .filter({
+        hasText: /enable|disable|toggle/i
+      })
+      .first()
     const hasToggle = await toggle.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (!hasToggle) {
@@ -105,9 +114,15 @@ test.describe('Integration Cards Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasIntegrations = await navigateToIntegrations(page)
-    if (!hasIntegrations) { test.skip(); return }
+    if (!hasIntegrations) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="integration-card"]').first()
 
@@ -131,17 +146,24 @@ test.describe('Integration Cards Deep', () => {
       // Look for tool details in expanded view
       const toolDetails = page.getByText(/tool|capability/i).first()
       const hasDetails = await toolDetails.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!hasDetails) { test.skip(); return }
+      if (!hasDetails) {
+        test.skip()
+        return
+      }
     }
   })
 
-  test('use-case grid shows categorized usage examples', async ({
-    electronPage: page
-  }) => {
+  test('use-case grid shows categorized usage examples', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasIntegrations = await navigateToIntegrations(page)
-    if (!hasIntegrations) { test.skip(); return }
+    if (!hasIntegrations) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="integration-card"]').first()
 
@@ -159,13 +181,17 @@ test.describe('Integration Cards Deep', () => {
     }
   })
 
-  test('token impact badge displays estimated token overhead', async ({
-    electronPage: page
-  }) => {
+  test('token impact badge displays estimated token overhead', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasIntegrations = await navigateToIntegrations(page)
-    if (!hasIntegrations) { test.skip(); return }
+    if (!hasIntegrations) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="integration-card"]').first()
 
@@ -189,9 +215,15 @@ test.describe('Integration Cards Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasIntegrations = await navigateToIntegrations(page)
-    if (!hasIntegrations) { test.skip(); return }
+    if (!hasIntegrations) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="integration-card"]').first()
 

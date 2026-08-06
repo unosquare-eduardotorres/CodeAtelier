@@ -21,9 +21,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Attachment Handling', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,9 +36,7 @@ test.describe('Attachment Handling', () => {
   }
 
   /** Navigate to an active conversation for attachment testing. */
-  async function selectConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasTab) {
@@ -57,31 +53,51 @@ test.describe('Attachment Handling', () => {
     return true
   }
 
-  test('attachment dropzone is rendered inside the message input area', async ({ electronPage: page }) => {
+  test('attachment dropzone is rendered inside the message input area', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // The attachment dropzone wraps the message input area
     const dropzone = page.locator('[data-testid="attachment-dropzone"]')
     const visible = await dropzone.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!visible) { test.skip(); return }
+    if (!visible) {
+      test.skip()
+      return
+    }
 
     await expect(dropzone).toBeVisible()
   })
 
   test('attach files button is present in the dropzone', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const dropzone = page.locator('[data-testid="attachment-dropzone"]')
     const visible = await dropzone.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!visible) { test.skip(); return }
+    if (!visible) {
+      test.skip()
+      return
+    }
 
     // The attach button with "Attach files" label should be present
     const attachBtn = dropzone.locator('[aria-label="Attach files"]')
@@ -90,14 +106,23 @@ test.describe('Attachment Handling', () => {
 
   test('file chip appears when a file is attached via input', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const dropzone = page.locator('[data-testid="attachment-dropzone"]')
     const visible = await dropzone.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!visible) { test.skip(); return }
+    if (!visible) {
+      test.skip()
+      return
+    }
 
     // Check if any attachment chips are already present (from prior files)
     const chips = page.locator('[data-testid="attachment-chip"]')
@@ -116,10 +141,16 @@ test.describe('Attachment Handling', () => {
 
   test('image preview thumbnail renders for image attachments', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Image thumbnails may be present if images were attached
     const thumbnails = page.locator('[data-testid="attachment-thumbnail"]')
@@ -140,10 +171,16 @@ test.describe('Attachment Handling', () => {
 
   test('remove button on attachment removes it from the list', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Look for existing file chips or image thumbnails
     const chips = page.locator('[data-testid="attachment-chip"]')

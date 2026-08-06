@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Specialist Warning Dialog', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -50,10 +48,16 @@ test.describe('Specialist Warning Dialog', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialog = await findSpecialistWarningDialog(page)
-    if (!dialog) { test.skip(); return }
+    if (!dialog) {
+      test.skip()
+      return
+    }
 
     // Dialog should be visible with role="dialog"
     await expect(dialog).toBeVisible()
@@ -69,10 +73,16 @@ test.describe('Specialist Warning Dialog', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialog = await findSpecialistWarningDialog(page)
-    if (!dialog) { test.skip(); return }
+    if (!dialog) {
+      test.skip()
+      return
+    }
 
     // The title should mention one of the warning types
     const title = dialog.locator('h3')
@@ -86,19 +96,22 @@ test.describe('Specialist Warning Dialog', () => {
     expect(hasValidTitle).toBeTruthy()
   })
 
-  test('token estimate displays formatted count', async ({
-    electronPage: page
-  }) => {
+  test('token estimate displays formatted count', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialog = await findSpecialistWarningDialog(page)
-    if (!dialog) { test.skip(); return }
+    if (!dialog) {
+      test.skip()
+      return
+    }
 
     // Look for token estimate text
     const text = await dialog.textContent()
-    const hasTokenInfo =
-      text?.includes('token') || text?.includes('active specialist')
+    const hasTokenInfo = text?.includes('token') || text?.includes('active specialist')
 
     expect(hasTokenInfo).toBeTruthy()
 
@@ -107,14 +120,18 @@ test.describe('Specialist Warning Dialog', () => {
     expect(hasCount).toBeTruthy()
   })
 
-  test('confirm button proceeds with specialist-enabled action', async ({
-    electronPage: page
-  }) => {
+  test('confirm button proceeds with specialist-enabled action', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialog = await findSpecialistWarningDialog(page)
-    if (!dialog) { test.skip(); return }
+    if (!dialog) {
+      test.skip()
+      return
+    }
 
     // Confirm button should be visible and enabled
     const confirmBtn = page.locator('[data-testid="specialist-warning-confirm"]')
@@ -127,26 +144,33 @@ test.describe('Specialist Warning Dialog', () => {
     await expect(cancelBtn).toBeVisible()
   })
 
-  test('"Don\'t show again" checkbox persists preference', async ({
-    electronPage: page
-  }) => {
+  test('"Don\'t show again" checkbox persists preference', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const dialog = await findSpecialistWarningDialog(page)
-    if (!dialog) { test.skip(); return }
+    if (!dialog) {
+      test.skip()
+      return
+    }
 
     // Find the "Don't show" checkbox
     const checkbox = dialog.locator('input[type="checkbox"]')
     const hasCheckbox = await checkbox.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasCheckbox) { test.skip(); return }
+    if (!hasCheckbox) {
+      test.skip()
+      return
+    }
 
     await expect(checkbox).toBeVisible()
     await expect(checkbox).not.toBeChecked()
 
     // The label should mention "Don't show this"
-    const labelText = dialog.locator('text=Don\'t show this')
+    const labelText = dialog.locator("text=Don't show this")
     await expect(labelText).toBeVisible()
 
     // Check the checkbox

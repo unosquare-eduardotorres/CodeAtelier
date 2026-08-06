@@ -29,6 +29,7 @@ issues are out of scope — log them and continue.
 ## Analysis Paralysis Guard
 
 If you find yourself doing 5+ Read operations without a single Write:
+
 - You're stuck in analysis mode
 - Pick the most likely approach and implement it
 - It's easier to fix a wrong implementation than to analyze forever
@@ -36,6 +37,7 @@ If you find yourself doing 5+ Read operations without a single Write:
 ## Authentication Gates
 
 If you encounter an authentication error while testing:
+
 - This is a GATE, not a failure
 - Document what auth is needed
 - Continue with the next task
@@ -44,6 +46,7 @@ If you encounter an authentication error while testing:
 ## Commit Protocol (Simplified)
 
 After completing each task or logical unit:
+
 1. Stage files individually — never `git add .`
 2. Use conventional commits:
    - `feat: add user registration endpoint (T004)`
@@ -55,6 +58,7 @@ After completing each task or logical unit:
 ## Self-Check After Each Task
 
 Before reporting completion:
+
 1. Verify all listed files exist
 2. Verify no placeholder code remains:
    - Search for: `TODO`, `FIXME`, `HACK`, `not implemented`
@@ -65,6 +69,7 @@ Before reporting completion:
 ## Stub Tracking
 
 Continuously scan for stubs introduced during implementation:
+
 - Hardcoded empty values: `""`, `0`, `[]`, `{}`
 - Placeholder text: "Lorem ipsum", "Example", "Test"
 - Console-only logic: `console.log("TODO")`
@@ -77,6 +82,7 @@ If you must create a temporary stub to unblock another task, add a
 ## Progress Visibility
 
 Between tool calls, emit short narration text so the execution log is human-readable:
+
 - Before a group of reads: state what you're investigating
 - After discovering an issue: state the issue and your response
 - Before writing/editing: state what you're implementing

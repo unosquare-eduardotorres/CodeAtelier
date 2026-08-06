@@ -32,10 +32,26 @@ export type IngestionProgressCallback = (progress: IngestionProgress) => void
 
 /** Directories to skip during folder walk */
 const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'out', 'build', 'coverage',
-  '.next', '.nuxt', '.cache', '__pycache__', '.tox', '.venv',
-  'vendor', 'target', 'bin', 'obj', '.gradle', '.idea',
-  '.vscode', '.vs'
+  'node_modules',
+  '.git',
+  'dist',
+  'out',
+  'build',
+  'coverage',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '__pycache__',
+  '.tox',
+  '.venv',
+  'vendor',
+  'target',
+  'bin',
+  'obj',
+  '.gradle',
+  '.idea',
+  '.vscode',
+  '.vs'
 ])
 
 /** Max files per folder ingestion (guard against accidental huge repo scans) */
@@ -99,7 +115,9 @@ class MemoryIngestionService {
 
     let totalFacts = 0
 
-    const emit = (partial: Partial<IngestionProgress> & { docIndex: number; docName: string }): void => {
+    const emit = (
+      partial: Partial<IngestionProgress> & { docIndex: number; docName: string }
+    ): void => {
       onProgress?.({
         jobId,
         docCount: files.length,
@@ -241,7 +259,12 @@ class MemoryIngestionService {
 
     // Image files skip chunking — extraction is handled differently
     if (readResult.isImage) {
-      emit({ docIndex, docName, docStatus: 'skipped', message: 'Image files — use vision extraction (not yet supported in batch)' })
+      emit({
+        docIndex,
+        docName,
+        docStatus: 'skipped',
+        message: 'Image files — use vision extraction (not yet supported in batch)'
+      })
       return 0
     }
 
@@ -312,7 +335,10 @@ class MemoryIngestionService {
         )
         factsFromDoc += created
       } catch (err) {
-        ingestionLog.warn(`[ingestSingleFile] Chunk ${ci + 1} extraction failed for ${docName}:`, err)
+        ingestionLog.warn(
+          `[ingestSingleFile] Chunk ${ci + 1} extraction failed for ${docName}:`,
+          err
+        )
       }
     }
 
@@ -328,7 +354,9 @@ class MemoryIngestionService {
       message: `Done — ${factsFromDoc} memories from ${chunks.length} chunks`
     })
 
-    ingestionLog.info(`[ingestSingleFile] ${docName}: ${factsFromDoc} facts from ${chunks.length} chunks`)
+    ingestionLog.info(
+      `[ingestSingleFile] ${docName}: ${factsFromDoc} facts from ${chunks.length} chunks`
+    )
     return factsFromDoc
   }
 

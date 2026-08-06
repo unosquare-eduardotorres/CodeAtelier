@@ -90,7 +90,10 @@ export class AgentExecutorFactory {
    */
   async resolveLocalContextWindowAsync(): Promise<{ contextWindow: number; confident: boolean }> {
     if (this.cachedContextWindow !== null) {
-      return { contextWindow: this.cachedContextWindow, confident: this.cachedContextWindowConfident }
+      return {
+        contextWindow: this.cachedContextWindow,
+        confident: this.cachedContextWindowConfident
+      }
     }
 
     if (!this.s.workspacePath) {
@@ -256,22 +259,25 @@ export class AgentExecutorFactory {
 
   // ── buildCLIExecuteOptions ────────────────────────────────────────────
 
-  buildCLIExecuteOptions(params: {
-    prompt: string | Array<Record<string, unknown>>
-    systemPrompt: string
-    sessionId: string | undefined
-    isBuildMode: boolean
-    mode?: ConversationMode
-    resumeAt: string | undefined
-    abortController: AbortController
-    mcpResult: AdapterMcpResult
-    // F14: localContextWindow removed — was accepted as a parameter but never
-    // referenced. Context window is resolved internally from the model config.
-    /** Completion goal — Claude works autonomously until this condition is met */
-    goal?: string
-    /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
-    goalMode?: 'advisory' | 'enforce'
-  }, resolvedExecutor?: { isAlive(): boolean }): CLIExecuteOptions {
+  buildCLIExecuteOptions(
+    params: {
+      prompt: string | Array<Record<string, unknown>>
+      systemPrompt: string
+      sessionId: string | undefined
+      isBuildMode: boolean
+      mode?: ConversationMode
+      resumeAt: string | undefined
+      abortController: AbortController
+      mcpResult: AdapterMcpResult
+      // F14: localContextWindow removed — was accepted as a parameter but never
+      // referenced. Context window is resolved internally from the model config.
+      /** Completion goal — Claude works autonomously until this condition is met */
+      goal?: string
+      /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
+      goalMode?: 'advisory' | 'enforce'
+    },
+    resolvedExecutor?: { isAlive(): boolean }
+  ): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
     const { allowedTools, disallowedTools } = mcpResult
@@ -393,16 +399,19 @@ export class AgentExecutorFactory {
       agentId: this.s.adapter.agentId,
       effort: this.resolveEffort(resolvedModel),
       // Fable 5 has native 1M context — no beta header needed. Sonnet/Opus use the beta.
-      betas: supports1M && !resolvedModel.includes('fable')
-        ? [AgentExecutorFactory.CONTEXT_1M_BETA]
-        : undefined,
+      betas:
+        supports1M && !resolvedModel.includes('fable')
+          ? [AgentExecutorFactory.CONTEXT_1M_BETA]
+          : undefined,
       // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
       // Fable → Opus fallback (refusal/availability per Anthropic docs).
       // Opus → Sonnet fallback (appropriate cost reduction).
       // Sonnet/Haiku → no fallback.
       fallbackModel: resolvedModel.includes('fable')
         ? 'claude-opus-4-8'
-        : resolvedModel.includes('opus') ? 'claude-sonnet-5' : undefined,
+        : resolvedModel.includes('opus')
+          ? 'claude-sonnet-5'
+          : undefined,
       additionalDirectories,
       contextWindowSize: sdkContextWindowSize,
       autoCompactEnabled: true,
@@ -412,9 +421,7 @@ export class AgentExecutorFactory {
       // the packaged-app cold start is slower than dev.
       envOverrides: {
         ...compactionEnv,
-        ...(this.s.adapter.role.startsWith('blueprint-')
-          ? { MCP_TIMEOUT: '30000' }
-          : {})
+        ...(this.s.adapter.role.startsWith('blueprint-') ? { MCP_TIMEOUT: '30000' } : {})
       },
       continueSession: false,
       mcpConfigPath,
@@ -457,7 +464,8 @@ export class AgentExecutorFactory {
       // Use pre-computed skip servers when available (caller already derived them
       // to gate the permissionPromptTool flag). Fall back to computing here for
       // callers that don't pre-compute.
-      const skipServers = precomputedSkipServers ?? deriveSkipServers(_params.mcpResult.allowedTools)
+      const skipServers =
+        precomputedSkipServers ?? deriveSkipServers(_params.mcpResult.allowedTools)
 
       const configPath = this.s.mcpConfigWriter.writeConfig({
         workspacePath: this.s.workspacePath!,
@@ -492,7 +500,9 @@ export class AgentExecutorFactory {
    * `default` (interactive prompts → blocked in our stream-json session)
    * when unavailable. `acceptEdits` is deterministic and needs no gating.
    */
-  private resolveCliPermissionMode(mode: ConversationMode): 'plan' | 'acceptEdits' | 'bypassPermissions' {
+  private resolveCliPermissionMode(
+    mode: ConversationMode
+  ): 'plan' | 'acceptEdits' | 'bypassPermissions' {
     switch (mode) {
       case 'danger':
         return 'bypassPermissions'
@@ -502,5 +512,4 @@ export class AgentExecutorFactory {
         return 'plan'
     }
   }
-
 }

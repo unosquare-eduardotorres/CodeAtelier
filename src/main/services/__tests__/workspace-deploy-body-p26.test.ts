@@ -86,9 +86,12 @@ describe('WorkspaceDeployService (P26-W3)', () => {
 
   test('activateAgents reports progress events in order ending with completion', async () => {
     const messages: string[] = []
-    await workspaceDeployService.activateAgents(tmpDir, (event: { type: string; message: string }) => {
-      messages.push(event.message)
-    })
+    await workspaceDeployService.activateAgents(
+      tmpDir,
+      (event: { type: string; message: string }) => {
+        messages.push(event.message)
+      }
+    )
 
     assert.ok(messages.length > 0)
     assert.equal(messages[messages.length - 1], 'Activation complete!')

@@ -18,20 +18,29 @@ if (!env) {
 
   // Seed specialists
   const spec1 = specialistRepository.create({
-    agentId: 'cs-agent-1', displayName: 'CS Spec 1', isActive: true
+    agentId: 'cs-agent-1',
+    displayName: 'CS Spec 1',
+    isActive: true
   })
   const spec2 = specialistRepository.create({
-    agentId: 'cs-agent-2', displayName: 'CS Spec 2', isActive: true
+    agentId: 'cs-agent-2',
+    displayName: 'CS Spec 2',
+    isActive: true
   })
   void specialistRepository.create({
-    agentId: 'cs-agent-inactive', displayName: 'Inactive', isActive: false
+    agentId: 'cs-agent-inactive',
+    displayName: 'Inactive',
+    isActive: false
   })
 
   describe('ConversationSpecialistRepository', () => {
     test('upsert() creates new override with isActive default', () => {
       const convId = seedConversation(db, wsId)
       conversationSpecialistRepository.upsert(convId, spec1.id, { isActive: true })
-      const found = conversationSpecialistRepository.findByConversationAndSpecialist(convId, spec1.id)
+      const found = conversationSpecialistRepository.findByConversationAndSpecialist(
+        convId,
+        spec1.id
+      )
       assert.ok(found)
       assert.equal(found.isActive, true)
       assert.equal(found.specialistId, spec1.id)
@@ -41,7 +50,10 @@ if (!env) {
       const convId = seedConversation(db, wsId)
       conversationSpecialistRepository.upsert(convId, spec1.id, { isActive: true })
       conversationSpecialistRepository.upsert(convId, spec1.id, { isActive: false })
-      const found = conversationSpecialistRepository.findByConversationAndSpecialist(convId, spec1.id)
+      const found = conversationSpecialistRepository.findByConversationAndSpecialist(
+        convId,
+        spec1.id
+      )
       assert.equal(found!.isActive, false)
     })
 
@@ -55,7 +67,10 @@ if (!env) {
 
     test('findByConversationAndSpecialist() returns null when not found', () => {
       const convId = seedConversation(db, wsId)
-      const found = conversationSpecialistRepository.findByConversationAndSpecialist(convId, 'nonexistent')
+      const found = conversationSpecialistRepository.findByConversationAndSpecialist(
+        convId,
+        'nonexistent'
+      )
       assert.equal(found, null)
     })
 
@@ -63,7 +78,10 @@ if (!env) {
       const convId = seedConversation(db, wsId)
       conversationSpecialistRepository.upsert(convId, spec1.id, { isActive: true })
       conversationSpecialistRepository.remove(convId, spec1.id)
-      const found = conversationSpecialistRepository.findByConversationAndSpecialist(convId, spec1.id)
+      const found = conversationSpecialistRepository.findByConversationAndSpecialist(
+        convId,
+        spec1.id
+      )
       assert.equal(found, null)
     })
 
@@ -90,23 +108,30 @@ if (!env) {
       conversationSpecialistRepository.upsert(convId, spec1.id, { isActive: true })
       conversationSpecialistRepository.upsert(convId, spec2.id, { isActive: true })
 
-      const result = conversationSpecialistRepository.replaceConversationSpecialists(convId, [spec2.id])
+      const result = conversationSpecialistRepository.replaceConversationSpecialists(convId, [
+        spec2.id
+      ])
       assert.equal(result.length, 1)
       assert.equal(result[0].specialistId, spec2.id)
     })
 
     test('replaceConversationSpecialists() deduplicates IDs', () => {
       const convId = seedConversation(db, wsId)
-      const result = conversationSpecialistRepository.replaceConversationSpecialists(
-        convId, [spec1.id, spec1.id, spec2.id]
-      )
+      const result = conversationSpecialistRepository.replaceConversationSpecialists(convId, [
+        spec1.id,
+        spec1.id,
+        spec2.id
+      ])
       assert.equal(result.length, 2) // deduplicated
     })
 
     test('mapRow() converts boolean correctly', () => {
       const convId = seedConversation(db, wsId)
       conversationSpecialistRepository.upsert(convId, spec1.id, { isActive: false })
-      const found = conversationSpecialistRepository.findByConversationAndSpecialist(convId, spec1.id)
+      const found = conversationSpecialistRepository.findByConversationAndSpecialist(
+        convId,
+        spec1.id
+      )
       assert.equal(typeof found!.isActive, 'boolean')
       assert.equal(found!.isActive, false)
     })

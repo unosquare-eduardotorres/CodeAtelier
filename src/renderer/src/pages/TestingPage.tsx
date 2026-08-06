@@ -103,11 +103,13 @@ export default function TestingPage(): React.JSX.Element {
     }
     window.api.testingGetRunResults({ runId: selectedRunId }).then(setResults)
 
-    const comparisonId = baselineRunId ?? (() => {
-      const runIndex = runs.findIndex((r) => r.id === selectedRunId)
-      const prevRun = runIndex >= 0 && runIndex < runs.length - 1 ? runs[runIndex + 1] : null
-      return prevRun?.id ?? null
-    })()
+    const comparisonId =
+      baselineRunId ??
+      (() => {
+        const runIndex = runs.findIndex((r) => r.id === selectedRunId)
+        const prevRun = runIndex >= 0 && runIndex < runs.length - 1 ? runs[runIndex + 1] : null
+        return prevRun?.id ?? null
+      })()
 
     if (comparisonId) {
       window.api.testingGetRunResults({ runId: comparisonId }).then(setPreviousResults)
@@ -247,7 +249,10 @@ export default function TestingPage(): React.JSX.Element {
       try {
         setIsRunning(true)
         setProgressCounts(null)
-        const { runId: newRunId } = await window.api.testingRequeueFailed({ runId, workspaceId: activeWorkspace?.id })
+        const { runId: newRunId } = await window.api.testingRequeueFailed({
+          runId,
+          workspaceId: activeWorkspace?.id
+        })
         activeRunId.current = newRunId
         setSelectedRunId(newRunId)
         await loadRuns()
@@ -264,7 +269,10 @@ export default function TestingPage(): React.JSX.Element {
       try {
         setIsRunning(true)
         setProgressCounts(null)
-        const { runId: newRunId } = await window.api.testingResumeRun({ runId, workspaceId: activeWorkspace?.id })
+        const { runId: newRunId } = await window.api.testingResumeRun({
+          runId,
+          workspaceId: activeWorkspace?.id
+        })
         activeRunId.current = newRunId
         setSelectedRunId(newRunId)
         await loadRuns()
@@ -308,7 +316,8 @@ export default function TestingPage(): React.JSX.Element {
         <div>
           <h2 className="text-lg font-semibold text-text-body">E2E Model Testing</h2>
           <p className="text-xs text-text-muted mt-0.5">
-            Real end-to-end tests against a local oMLX model. Tests use the full production pipeline.
+            Real end-to-end tests against a local oMLX model. Tests use the full production
+            pipeline.
           </p>
         </div>
       </div>
@@ -352,7 +361,8 @@ export default function TestingPage(): React.JSX.Element {
                 <RunningBanner
                   scenarioTitle={
                     currentScenarioId
-                      ? (scenarios.find((s) => s.id === currentScenarioId)?.title ?? currentScenarioId)
+                      ? (scenarios.find((s) => s.id === currentScenarioId)?.title ??
+                        currentScenarioId)
                       : null
                   }
                   counts={progressCounts}

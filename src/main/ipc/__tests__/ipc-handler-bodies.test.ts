@@ -54,7 +54,8 @@ async function registerIpcModule(modulePath: string, needsWindow = false): Promi
   }
 
   const registerFn = Object.values(mod).find(
-    (v) => typeof v === 'function' && (v as (...args: unknown[]) => unknown).name.startsWith('register')
+    (v) =>
+      typeof v === 'function' && (v as (...args: unknown[]) => unknown).name.startsWith('register')
   ) as ((...args: unknown[]) => unknown) | undefined
 
   if (!registerFn) {

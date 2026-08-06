@@ -7,12 +7,7 @@
  */
 
 import { AUDIT_TRACKS } from '../../shared/constants'
-import type {
-  AuditFinding,
-  AuditResult,
-  AuditRun,
-  AuditPlan
-} from '../../shared/types'
+import type { AuditFinding, AuditResult, AuditRun, AuditPlan } from '../../shared/types'
 
 // ── Overall Score ────────────────────────────────────────────────────────────
 

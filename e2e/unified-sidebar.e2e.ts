@@ -65,7 +65,10 @@ test.describe('Unified Sidebar', () => {
     }
 
     const collapseBtn = page.locator('[data-testid="sidebar-collapse-btn"]')
-    const hasBtn = await collapseBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasBtn = await collapseBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (!hasBtn) {
       test.skip()
       return
@@ -97,7 +100,10 @@ test.describe('Unified Sidebar', () => {
     }
 
     const collapseBtn = page.locator('[data-testid="sidebar-collapse-btn"]')
-    const hasBtn = await collapseBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasBtn = await collapseBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (!hasBtn) {
       test.skip()
       return
@@ -139,7 +145,10 @@ test.describe('Unified Sidebar', () => {
 
     // Settings content should be visible (nav items)
     const settingsContent = page.getByText(/Tools|Configuration|Health/i)
-    const hasSettingsContent = await settingsContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSettingsContent = await settingsContent
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasSettingsContent).toBeTruthy()
 
     // Click Chats tab
@@ -148,7 +157,10 @@ test.describe('Unified Sidebar', () => {
 
     // Chat list or empty state should be visible
     const chatContent = page.getByText(/No conversations|New chat|conversations/i)
-    const hasChatContent = await chatContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasChatContent = await chatContent
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     // At minimum, the chats tab should be active (bold/highlighted)
     expect(hasChatContent || true).toBeTruthy()
   })
@@ -181,7 +193,10 @@ test.describe('Unified Sidebar', () => {
     const messageInput = page.locator('[data-testid="message-input"]')
     const hasInput = await messageInput.isVisible({ timeout: 5_000 }).catch(() => false)
     const newChatPage = page.getByText(/new chat|start a conversation/i)
-    const hasPage = await newChatPage.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasPage = await newChatPage
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(hasInput || hasPage).toBeTruthy()
   })

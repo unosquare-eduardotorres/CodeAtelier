@@ -380,9 +380,7 @@ describe('PromptOptimizerService', () => {
 
     test('multiple generic fences reject (ambiguous) — falls to parse-error', async () => {
       return withSettings(DEFAULT_SETTINGS, async () => {
-        const runner = withRunner(
-          '```\nBlock one\n```\n\nSome text\n```\nBlock two\n```'
-        )
+        const runner = withRunner('```\nBlock one\n```\n\nSome text\n```\nBlock two\n```')
         try {
           const result = await promptOptimizerService.optimize(DEFAULT_PARAMS)
           assert.equal(result.changed, false)

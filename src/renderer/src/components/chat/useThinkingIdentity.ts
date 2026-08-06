@@ -23,9 +23,7 @@ export function useThinkingIdentity(): ThinkingIdentity {
     (s) => s.specialists.find((sp) => sp.agentId === 'specialist') ?? null
   )
   const defaultAlias =
-    defaultSpec?.alias ??
-    defaultSpec?.displayName ??
-    CORE_AGENT_DEFAULTS['specialist'].displayName
+    defaultSpec?.alias ?? defaultSpec?.displayName ?? CORE_AGENT_DEFAULTS['specialist'].displayName
   const thinkingAvatarKey = CORE_AGENT_DEFAULTS['specialist'].avatarKey
   const thinkingAccentColor = defaultSpec?.color ?? CORE_AGENT_DEFAULTS['specialist'].color
 

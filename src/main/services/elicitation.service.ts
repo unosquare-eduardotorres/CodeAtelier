@@ -20,7 +20,9 @@ export class ElicitationService {
     mode?: string
   ): void {
     this.pendingElicitations.set(requestId, { resolve, serverName, mode })
-    log.debug(`[ElicitationService] Registered elicitation requestId=${requestId} server=${serverName}`)
+    log.debug(
+      `[ElicitationService] Registered elicitation requestId=${requestId} server=${serverName}`
+    )
   }
 
   resolveElicitation(
@@ -46,7 +48,9 @@ export class ElicitationService {
    */
   resolveAll(): void {
     if (this.pendingElicitations.size === 0) return
-    log.debug(`[ElicitationService] resolveAll — cancelling ${this.pendingElicitations.size} pending elicitation(s)`)
+    log.debug(
+      `[ElicitationService] resolveAll — cancelling ${this.pendingElicitations.size} pending elicitation(s)`
+    )
     for (const pending of this.pendingElicitations.values()) {
       pending.resolve({ action: 'cancel' })
     }

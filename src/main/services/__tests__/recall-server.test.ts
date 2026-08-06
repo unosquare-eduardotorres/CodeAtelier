@@ -321,7 +321,11 @@ describe('mergePlanEntries', () => {
 
   test('current_entries_sort_newest_first', () => {
     const newer = entryFromPlanRecord(
-      makePlanRecord({ id: 'plan-2', linkedConversationId: 'conv-3', createdAt: '2026-07-05 09:00:00' })
+      makePlanRecord({
+        id: 'plan-2',
+        linkedConversationId: 'conv-3',
+        createdAt: '2026-07-05 09:00:00'
+      })
     )
     const merged = mergePlanEntries([registryEntry, newer], [])
     assert.equal(merged[0].ref, 'plan:plan-2')

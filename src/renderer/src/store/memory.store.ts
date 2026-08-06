@@ -61,7 +61,13 @@ interface MemoryState {
   deleteFact: (id: string) => Promise<void>
   updateFact: (
     id: string,
-    params: { title?: string; content?: string; tags?: string[]; scopePaths?: string[]; category?: MemoryFactCategory }
+    params: {
+      title?: string
+      content?: string
+      tags?: string[]
+      scopePaths?: string[]
+      category?: MemoryFactCategory
+    }
   ) => Promise<void>
 
   // Scope toggle
@@ -69,15 +75,26 @@ interface MemoryState {
 
   // Contradiction actions
   loadContradictions: (status?: ContradictionStatus, page?: number) => Promise<void>
-  resolveContradiction: (id: string, resolution: string, keepFactId: string, archiveFactId?: string) => Promise<void>
-  autoResolveDuplicates: (workspaceId: string, minCosine?: number) => Promise<{ resolvedCount: number }>
+  resolveContradiction: (
+    id: string,
+    resolution: string,
+    keepFactId: string,
+    archiveFactId?: string
+  ) => Promise<void>
+  autoResolveDuplicates: (
+    workspaceId: string,
+    minCosine?: number
+  ) => Promise<{ resolvedCount: number }>
 
   // CLAUDE.md actions
   loadClaudeMd: (workspacePath: string) => Promise<void>
 
   // Capture settings
   loadCaptureSettings: (workspaceId: string) => Promise<void>
-  updateCaptureSettings: (workspaceId: string, settings: Partial<MemoryCaptureSettings>) => Promise<void>
+  updateCaptureSettings: (
+    workspaceId: string,
+    settings: Partial<MemoryCaptureSettings>
+  ) => Promise<void>
 
   // Embedding actions
   loadEmbeddingStatus: (workspaceId: string) => Promise<void>
@@ -86,7 +103,9 @@ interface MemoryState {
 
   // Dedup & Consolidation
   scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
-  runConsolidation: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
+  runConsolidation: (
+    workspaceId: string
+  ) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
 
   // Search
   setSearchQuery: (query: string) => void
@@ -310,9 +329,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     try {
       await window.api.memoryCaptureSettingsSet({ workspaceId, settings })
       set((state) => ({
-        captureSettings: state.captureSettings
-          ? { ...state.captureSettings, ...settings }
-          : null
+        captureSettings: state.captureSettings ? { ...state.captureSettings, ...settings } : null
       }))
     } catch (error) {
       rendererLog.error('Failed to update capture settings:', error)
@@ -410,7 +427,11 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     if (progress.status === 'error') {
       set({ feedStatus: 'error', feedError: progress.message })
     } else if (progress.status === 'done') {
-      set({ feedStatus: 'completed', feedMessage: progress.message, feedSource: progress.source as FeedSource })
+      set({
+        feedStatus: 'completed',
+        feedMessage: progress.message,
+        feedSource: progress.source as FeedSource
+      })
     } else {
       set({ feedMessage: progress.message })
     }
@@ -446,7 +467,11 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   onIngestionProgress: (progress) => {
     set({ ingestion: progress })
-    if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
+    if (
+      progress.jobStatus === 'done' ||
+      progress.jobStatus === 'cancelled' ||
+      progress.jobStatus === 'error'
+    ) {
       // Clean up listener after job completes
       const { ingestionCleanup } = useMemoryStore.getState()
       ingestionCleanup?.()

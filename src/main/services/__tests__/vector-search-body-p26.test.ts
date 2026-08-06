@@ -4,10 +4,13 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach } from './test-harness'
-import { setupFullMock, getMockRepo, resetAllMocks } from './setup-full-mock'
+import { setupFullMock, getMockRepo, resetAllMocks, evictFromCache } from './setup-full-mock'
 
 setupFullMock()
 
+// An earlier file in the shared run may already have cached this service bound
+// to the real repositories; drop it so it re-binds to the mocks below.
+evictFromCache('vector-search.service')
 const mod = require('../vector-search.service')
 const { InMemoryCollection, cosineSimilarity, vectorSearchService } = mod
 

@@ -181,39 +181,39 @@ export default function RunsView({
             <SectionCard
               title="Results"
               icon={<ClipboardList size={14} />}
-              action={
-                (() => {
-                  const canResume = selectedRun.status === 'cancelled' && selectedRun.totalError > 0
-                  const canRunFailed =
-                    selectedRun.totalFailed > 0 || (selectedRun.totalError > 0 && !canResume)
-                  const runActionsEnabled = preflightOk && !isRunning
-                  return (
-                    <div className="flex items-center gap-2">
-                      {runActionsEnabled && canResume && (
-                        <button
-                          type="button"
-                          onClick={() => onResumeRun(selectedRun.id)}
-                          className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-primary-muted/40 text-primary-muted hover:bg-primary-muted/10 transition-colors"
-                          title="Resume incomplete scenarios"
-                        >
-                          <Play size={12} /> Resume
-                        </button>
-                      )}
-                      {runActionsEnabled && canRunFailed && (
-                        <button
-                          type="button"
-                          onClick={() => onRequeueFailed(selectedRun.id)}
-                          className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
-                          title="Re-run failed and errored scenarios"
-                        >
-                          <RotateCcw size={12} /> Run Failed
-                        </button>
-                      )}
-                      <span className="text-xs tabular-nums text-text-muted">{sortedResults.length}</span>
-                    </div>
-                  )
-                })()
-              }
+              action={(() => {
+                const canResume = selectedRun.status === 'cancelled' && selectedRun.totalError > 0
+                const canRunFailed =
+                  selectedRun.totalFailed > 0 || (selectedRun.totalError > 0 && !canResume)
+                const runActionsEnabled = preflightOk && !isRunning
+                return (
+                  <div className="flex items-center gap-2">
+                    {runActionsEnabled && canResume && (
+                      <button
+                        type="button"
+                        onClick={() => onResumeRun(selectedRun.id)}
+                        className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-primary-muted/40 text-primary-muted hover:bg-primary-muted/10 transition-colors"
+                        title="Resume incomplete scenarios"
+                      >
+                        <Play size={12} /> Resume
+                      </button>
+                    )}
+                    {runActionsEnabled && canRunFailed && (
+                      <button
+                        type="button"
+                        onClick={() => onRequeueFailed(selectedRun.id)}
+                        className="flex items-center gap-1 px-2 py-0.5 text-xs rounded-lg border border-border-subtle hover:bg-surface-overlay transition-colors"
+                        title="Re-run failed and errored scenarios"
+                      >
+                        <RotateCcw size={12} /> Run Failed
+                      </button>
+                    )}
+                    <span className="text-xs tabular-nums text-text-muted">
+                      {sortedResults.length}
+                    </span>
+                  </div>
+                )
+              })()}
               flush
             >
               <div className="divide-y divide-border-subtle">
@@ -237,9 +237,7 @@ export default function RunsView({
                     >
                       <div className="flex items-center gap-2 min-w-0">
                         {statusIcon(result.status)}
-                        <span className="text-sm text-text-body truncate">
-                          {title}
-                        </span>
+                        <span className="text-sm text-text-body truncate">{title}</span>
                       </div>
 
                       <div className="flex items-center gap-3 ml-4 shrink-0">

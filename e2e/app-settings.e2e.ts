@@ -18,9 +18,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('App Settings', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,12 +33,15 @@ test.describe('App Settings', () => {
   }
 
   /** Navigate to app-level settings (not workspace settings). */
-  async function navigateToAppSettings(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToAppSettings(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for app settings gear icon or menu item
-    const settingsBtn = page.locator('[aria-label="App Settings"], [data-testid="app-settings-btn"]')
-    let hasBtn = await settingsBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const settingsBtn = page.locator(
+      '[aria-label="App Settings"], [data-testid="app-settings-btn"]'
+    )
+    let hasBtn = await settingsBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasBtn) {
       await settingsBtn.first().click()
@@ -70,10 +71,16 @@ test.describe('App Settings', () => {
 
   test('app settings page renders with preference sections', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const settingsPage = page.locator('[data-testid="app-settings-page"]')
     await expect(settingsPage).toBeVisible({ timeout: 5_000 })
@@ -85,80 +92,128 @@ test.describe('App Settings', () => {
 
   test('theme section shows dark/light theme toggle', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const settingsPage = page.locator('[data-testid="app-settings-page"]')
     const hasPage = await settingsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Theme section
     const themeSection = page.getByText(/theme/i).first()
     const hasTheme = await themeSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasTheme) { test.skip(); return }
+    if (!hasTheme) {
+      test.skip()
+      return
+    }
 
     await expect(themeSection).toBeVisible()
   })
 
   test('chat bubble size section shows size selector', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const settingsPage = page.locator('[data-testid="app-settings-page"]')
     const hasPage = await settingsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Chat bubble size section
     const bubbleSection = page.getByText(/bubble|chat.*size/i).first()
     const hasBubble = await bubbleSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasBubble) { test.skip(); return }
+    if (!hasBubble) {
+      test.skip()
+      return
+    }
 
     await expect(bubbleSection).toBeVisible()
   })
 
   test('update settings shows auto-update toggle', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const settingsPage = page.locator('[data-testid="app-settings-page"]')
     const hasPage = await settingsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Update section
     const updateSection = page.getByText(/update|auto-update|version/i).first()
     const hasUpdate = await updateSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasUpdate) { test.skip(); return }
+    if (!hasUpdate) {
+      test.skip()
+      return
+    }
 
     await expect(updateSection).toBeVisible()
   })
 
   test('AI subscriptions section shows Claude API config', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const settingsPage = page.locator('[data-testid="app-settings-page"]')
     const hasPage = await settingsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // AI Subscriptions section
     const aiSection = page.getByText(/subscription|claude|api|anthropic/i).first()
     const hasAI = await aiSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasAI) { test.skip(); return }
+    if (!hasAI) {
+      test.skip()
+      return
+    }
 
     await expect(aiSection).toBeVisible()
   })

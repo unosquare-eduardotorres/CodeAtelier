@@ -93,9 +93,7 @@ function InfoItem({
     <div className="flex items-start gap-1.5">
       {icon && <span className="text-text-muted mt-0.5 shrink-0">{icon}</span>}
       <div>
-        <dt className="text-[10px] font-medium text-text-muted uppercase tracking-wide">
-          {label}
-        </dt>
+        <dt className="text-[10px] font-medium text-text-muted uppercase tracking-wide">{label}</dt>
         <dd
           className={`text-xs text-text-secondary mt-0.5 truncate ${mono ? 'font-mono' : ''}`}
           title={value}
@@ -132,7 +130,7 @@ export default function BugDetail({
   const ProcessIcon = PROCESS_ICON[bug.process] ?? Monitor
 
   const handleCopyStack = async (): Promise<void> => {
-    if (bug.stackTrace && await copyTextToClipboard(bug.stackTrace)) {
+    if (bug.stackTrace && (await copyTextToClipboard(bug.stackTrace))) {
       setCopiedStack(true)
       setTimeout(() => setCopiedStack(false), 2000)
     }
@@ -153,9 +151,7 @@ export default function BugDetail({
           {/* Severity badge */}
           <div
             className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-semibold uppercase ${
-              bug.severity === 'fatal'
-                ? 'bg-danger/20 text-danger'
-                : 'bg-warning/20 text-warning'
+              bug.severity === 'fatal' ? 'bg-danger/20 text-danger' : 'bg-warning/20 text-warning'
             }`}
           >
             {bug.severity === 'fatal' ? <Skull size={12} /> : <AlertTriangle size={12} />}
@@ -178,7 +174,8 @@ export default function BugDetail({
             </span>
             <span>·</span>
             <span className="inline-flex items-center gap-1">
-              <Clock size={11} /> {formatTimestamp(bug.timestamp)} → {formatTimestamp(bug.lastSeenAt)}
+              <Clock size={11} /> {formatTimestamp(bug.timestamp)} →{' '}
+              {formatTimestamp(bug.lastSeenAt)}
             </span>
           </div>
         </div>
@@ -264,9 +261,7 @@ export default function BugDetail({
             <InfoItem icon={<Layers size={11} />} label="Component" value={bug.componentName} />
           )}
           <InfoItem icon={<Cpu size={11} />} label="App Version" value={bug.appVersion} />
-          {bug.osInfo && (
-            <InfoItem icon={<Globe size={11} />} label="OS" value={bug.osInfo} />
-          )}
+          {bug.osInfo && <InfoItem icon={<Globe size={11} />} label="OS" value={bug.osInfo} />}
           {bug.workspaceId && (
             <InfoItem
               icon={<FolderOpen size={11} />}
@@ -275,9 +270,7 @@ export default function BugDetail({
               mono
             />
           )}
-          {bug.agentId && (
-            <InfoItem icon={<User size={11} />} label="Agent" value={bug.agentId} />
-          )}
+          {bug.agentId && <InfoItem icon={<User size={11} />} label="Agent" value={bug.agentId} />}
           {bug.activeView && (
             <InfoItem icon={<Eye size={11} />} label="Active View" value={bug.activeView} />
           )}

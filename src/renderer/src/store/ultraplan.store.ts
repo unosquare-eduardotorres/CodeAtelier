@@ -8,12 +8,7 @@
 import { create } from 'zustand'
 
 export type UltraplanStatus =
-  | 'idle'
-  | 'drafting'
-  | 'needs_input'
-  | 'ready'
-  | 'approved'
-  | 'cancelled'
+  'idle' | 'drafting' | 'needs_input' | 'ready' | 'approved' | 'cancelled'
 
 interface UltraplanState {
   status: UltraplanStatus
@@ -30,8 +25,7 @@ interface UltraplanState {
 
 // Preserve Zustand state across HMR (dev only)
 const previousState = import.meta.hot?.data?.ultraplanStoreState as
-  | Partial<UltraplanState>
-  | undefined
+  Partial<UltraplanState> | undefined
 
 export const useUltraplanStore = create<UltraplanState>((set) => ({
   status: previousState?.status ?? 'idle',

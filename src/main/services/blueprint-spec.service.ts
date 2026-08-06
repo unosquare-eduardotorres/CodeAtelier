@@ -13,10 +13,18 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import {
+  PhaseActivityWatchdog,
+  STALL_TIMEOUT_MS,
+  wireAskUserAutoResponder
+} from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintSpecifyAdapter } from './role-adapters/blueprint/blueprint-specify.adapter'
-import { buildReferenceDocsBlock, loadAllReferenceDocuments, splitBinaryDocs } from './blueprint-document-loader'
+import {
+  buildReferenceDocsBlock,
+  loadAllReferenceDocuments,
+  splitBinaryDocs
+} from './blueprint-document-loader'
 import { memoryExtractionService } from './memory-extraction.service'
 import { BlueprintClarifyAdapter } from './role-adapters/blueprint/blueprint-clarify.adapter'
 import { buildSpecifyGoalCondition, buildClarifyGoalCondition } from './blueprint-goal-conditions'
@@ -37,7 +45,11 @@ import {
   deduplicateClarifyQuestions,
   grillQuestionsToClarifyBlock
 } from '../../shared/blueprint-clarify-parsers'
-import type { ClarifyFindingsBlock, ClarifyQuestionsBlock, ClarifyQuestion } from '../../shared/blueprint-clarify-parsers'
+import type {
+  ClarifyFindingsBlock,
+  ClarifyQuestionsBlock,
+  ClarifyQuestion
+} from '../../shared/blueprint-clarify-parsers'
 import type {
   BlueprintPhaseCompletion,
   BlueprintPhaseStartPayload,
@@ -111,10 +123,13 @@ export class BlueprintSpecService extends EventEmitter {
    * B2-FIX: Track the last-emitted clarify UI state per blueprint so
    * getPipelineStatus can hydrate the renderer after reload.
    */
-  private clarifyUiState = new Map<string, {
-    questions: ClarifyQuestionsBlock | null
-    awaitingInput: boolean
-  }>()
+  private clarifyUiState = new Map<
+    string,
+    {
+      questions: ClarifyQuestionsBlock | null
+      awaitingInput: boolean
+    }
+  >()
   /** Track all previously asked questions per blueprint for dedupe. */
   private previouslyAskedQuestions = new Map<string, ClarifyQuestion[]>()
   /** M4: Track whether a corrective nudge has been attempted for the current turn. */
@@ -159,7 +174,14 @@ export class BlueprintSpecService extends EventEmitter {
     grillDecisions?: GrillDecisionForBlueprint[]
     referenceDocuments?: Array<{ type: string; path: string; name?: string }>
   }): Promise<void> {
-    const { blueprintId, workspaceId, workspacePath, description, grillDecisions, referenceDocuments } = params
+    const {
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      description,
+      grillDecisions,
+      referenceDocuments
+    } = params
 
     bpLog.info(`[startSpecifyPhase] Blueprint ${blueprintId} — starting SPECIFY`)
 
@@ -171,10 +193,15 @@ export class BlueprintSpecService extends EventEmitter {
 
     // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
     // finally's markPipelineStopped() is guaranteed to run.
-    let specifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let specifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> =
+      undefined
     let session: AgentSessionService | null = null
     // BP-CHAIN-SPECIFY-CLARIFY: Method-local (not instance field) to avoid race across concurrent workspaces.
-    let pendingClarifyDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
+    let pendingClarifyDispatch: {
+      blueprintId: string
+      workspaceId: string
+      workspacePath: string
+    } | null = null
     let cleanupAskUser: (() => void) | undefined
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
@@ -194,7 +221,11 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintRepository.update(blueprintId, { currentPhase: 'specify' })
 
       // 3. Assemble phase context (includes pre-loaded workspace docs)
-      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'specify', workspacePath)
+      const phaseContext = await blueprintService.assemblePhaseContext(
+        blueprintId,
+        'specify',
+        workspacePath
+      )
 
       // 3b. Surface code-graph index status — warn when repomap is enabled
       // but no persisted index exists. The agent will still start, but its
@@ -205,7 +236,7 @@ export class BlueprintSpecService extends EventEmitter {
       if (repomapEnabled && !codeGraphService.hasPersistedIndex(workspaceId)) {
         bpLog.warn(
           `[startSpecifyPhase] Blueprint ${blueprintId} — code-graph index not built for workspace ${workspaceId}. ` +
-          `Agent will fall back to file reads. Build the index in Code Intelligence.`
+            `Agent will fall back to file reads. Build the index in Code Intelligence.`
         )
         this.safeEmit('phaseProgress', {
           blueprintId,
@@ -216,7 +247,11 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // 3c. Load reference documents (if provided)
-      const mappedDocs = referenceDocuments?.map((d) => ({ type: d.type as 'file' | 'workspace-file' | 'url', path: d.path, name: d.name }))
+      const mappedDocs = referenceDocuments?.map((d) => ({
+        type: d.type as 'file' | 'workspace-file' | 'url',
+        path: d.path,
+        name: d.name
+      }))
       const docsResult = mappedDocs?.length
         ? await buildReferenceDocsBlock(workspacePath, mappedDocs)
         : undefined
@@ -257,11 +292,15 @@ export class BlueprintSpecService extends EventEmitter {
                   { tags: ['blueprint', `blueprint:${blueprintId}`] }
                 )
               } catch (err) {
-                bpLog.warn(`[startSpecifyPhase] Failed to extract memory from doc "${ld.doc.name}": ${err}`)
+                bpLog.warn(
+                  `[startSpecifyPhase] Failed to extract memory from doc "${ld.doc.name}": ${err}`
+                )
               }
             })
           }
-          bpLog.info(`[startSpecifyPhase] Enqueued memory extraction for ${textDocs.length} reference doc(s)`)
+          bpLog.info(
+            `[startSpecifyPhase] Enqueued memory extraction for ${textDocs.length} reference doc(s)`
+          )
         }
       }
 
@@ -294,11 +333,13 @@ export class BlueprintSpecService extends EventEmitter {
 
       session.on('chunk', (chunk: StreamChunk) => {
         stallWatchdog.touch()
-        forwardBlueprintChunk(
-          (event, payload) => this.safeEmit(event, payload),
-          chunk,
-          { blueprintId, workspaceId, phase: 'specify', workspacePath, mode: 'plan' }
-        )
+        forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
+          blueprintId,
+          workspaceId,
+          phase: 'specify',
+          workspacePath,
+          mode: 'plan'
+        })
       })
 
       session.on('statusUpdate', (status: AgentStatus) => {
@@ -313,7 +354,10 @@ export class BlueprintSpecService extends EventEmitter {
 
       // 10. Create or reuse synthetic conversation ID
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
-      const specPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
+      const specPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(
+        blueprintId,
+        'specify'
+      )
       const priorConvId = specPhaseRecord?.conversationId
       if (priorConvId && conversationRepository.getSessionId(priorConvId)) {
         // Guard: if model/provider changed between attempts, session resume is invalid
@@ -332,8 +376,11 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Persist conversation ID early so retries can find it
       if (specPhaseRecord) {
-        try { blueprintPhaseRepository.setConversation(specPhaseRecord.id, syntheticConvId) }
-        catch { /* conversation may not exist yet in DB */ }
+        try {
+          blueprintPhaseRepository.setConversation(specPhaseRecord.id, syntheticConvId)
+        } catch {
+          /* conversation may not exist yet in DB */
+        }
       }
 
       // Timeout + stall watchdog + abort race
@@ -463,11 +510,18 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintService.failPipeline(workspaceId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
-      try { blueprintService.saveRetryContext(blueprintId, 'specify', { error: errorMsg }) }
-      catch { /* best effort — don't let context capture block error reporting */ }
+      try {
+        blueprintService.saveRetryContext(blueprintId, 'specify', { error: errorMsg })
+      } catch {
+        /* best effort — don't let context capture block error reporting */
+      }
 
       const autoRetrying = blueprintService.scheduleAutoRetry({
-        blueprintId, workspaceId, workspacePath, phase: 'specify', error: errorMsg
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        phase: 'specify',
+        error: errorMsg
       })
 
       this.safeEmit('phaseComplete', {
@@ -524,7 +578,8 @@ export class BlueprintSpecService extends EventEmitter {
 
     // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
     // markPipelineStopped() is guaranteed to run on failure.
-    let clarifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
+    let clarifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> =
+      undefined
     let session: AgentSessionService | null = null
 
     try {
@@ -541,7 +596,11 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // 3. Assemble phase context (includes spec from SPECIFY + workspace docs)
-      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'clarify', workspacePath)
+      const phaseContext = await blueprintService.assemblePhaseContext(
+        blueprintId,
+        'clarify',
+        workspacePath
+      )
 
       // 4. Create adapter
       const adapter = new BlueprintClarifyAdapter({
@@ -557,7 +616,10 @@ export class BlueprintSpecService extends EventEmitter {
       session = new AgentSessionService(adapter)
 
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
-      const clarifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
+      const clarifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(
+        blueprintId,
+        'clarify'
+      )
       const priorClarifyConvId = clarifyPhaseRec?.conversationId
       let syntheticConvId: string
       if (priorClarifyConvId && conversationRepository.getSessionId(priorClarifyConvId)) {
@@ -565,7 +627,9 @@ export class BlueprintSpecService extends EventEmitter {
         const currentProvider = modelConfigService.getProvider(workspacePath)
         if (priorConv?.llmProvider === currentProvider) {
           syntheticConvId = priorClarifyConvId
-          bpLog.info(`[startClarifyPhase] Resuming conversation ${priorClarifyConvId} from failed attempt`)
+          bpLog.info(
+            `[startClarifyPhase] Resuming conversation ${priorClarifyConvId} from failed attempt`
+          )
         } else {
           syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
           bpLog.info(`[startClarifyPhase] Provider changed — falling back to fresh conversation`)
@@ -576,8 +640,11 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Persist conversation ID early so retries can find it
       if (clarifyPhaseRec) {
-        try { blueprintPhaseRepository.setConversation(clarifyPhaseRec.id, syntheticConvId) }
-        catch { /* conversation may not exist yet in DB */ }
+        try {
+          blueprintPhaseRepository.setConversation(clarifyPhaseRec.id, syntheticConvId)
+        } catch {
+          /* conversation may not exist yet in DB */
+        }
       }
 
       // Store session reference for follow-up user messages
@@ -594,11 +661,13 @@ export class BlueprintSpecService extends EventEmitter {
       session.on('chunk', (chunk: StreamChunk) => {
         const state = this.clarifySessions.get(blueprintId)
         state?.activeWatchdog?.touch()
-        forwardBlueprintChunk(
-          (event, payload) => this.safeEmit(event, payload),
-          chunk,
-          { blueprintId, workspaceId, phase: 'clarify', workspacePath, mode: 'plan' }
-        )
+        forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
+          blueprintId,
+          workspaceId,
+          phase: 'clarify',
+          workspacePath,
+          mode: 'plan'
+        })
       })
 
       session.on('statusUpdate', (status: AgentStatus) => {
@@ -612,7 +681,9 @@ export class BlueprintSpecService extends EventEmitter {
         const state = this.clarifySessions.get(blueprintId)
         if (!state || !data.requestId) return
 
-        bpLog.info(`[askQuestion bridge] Blueprint ${blueprintId} — model called ask_user with ${data.questions.length} questions`)
+        bpLog.info(
+          `[askQuestion bridge] Blueprint ${blueprintId} — model called ask_user with ${data.questions.length} questions`
+        )
 
         // Convert GrillQuestion[] → ClarifyQuestionsBlock
         const clarifyBlock = grillQuestionsToClarifyBlock(data.questions)
@@ -622,7 +693,10 @@ export class BlueprintSpecService extends EventEmitter {
         const newQuestions = deduplicateClarifyQuestions(clarifyBlock.questions, prev)
         if (newQuestions.length === 0) {
           // All questions already asked — auto-respond to unblock the turn
-          state.session.respondToAskUser(data.requestId, 'All questions were already answered in previous turns. Proceed with the information you have.')
+          state.session.respondToAskUser(
+            data.requestId,
+            'All questions were already answered in previous turns. Proceed with the information you have.'
+          )
           return
         }
 
@@ -693,8 +767,11 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintService.failPipeline(workspaceId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
-      try { blueprintService.saveRetryContext(blueprintId, 'clarify', { error: errorMsg }) }
-      catch { /* best effort */ }
+      try {
+        blueprintService.saveRetryContext(blueprintId, 'clarify', { error: errorMsg })
+      } catch {
+        /* best effort */
+      }
 
       this.safeEmit('phaseComplete', {
         blueprintId,
@@ -816,7 +893,8 @@ export class BlueprintSpecService extends EventEmitter {
     } satisfies BlueprintPhaseCompletePayload)
 
     // BP-CHAIN-CLARIFY-PLAN: Auto-dispatch PLAN after CLARIFY is skipped.
-    const resolvedWorkspaceId = skipWorkspaceId || blueprintRepository.findById(blueprintId)?.workspaceId
+    const resolvedWorkspaceId =
+      skipWorkspaceId || blueprintRepository.findById(blueprintId)?.workspaceId
     if (resolvedWorkspaceId) {
       this.dispatchPlanPhase(blueprintId, resolvedWorkspaceId)
     }
@@ -831,7 +909,11 @@ export class BlueprintSpecService extends EventEmitter {
    * Parses findings/questions/completion blocks, drives machine transitions,
    * and emits appropriate events.
    */
-  private async handleClarifyTurnEnd(blueprintId: string, workspaceId: string, text: string): Promise<void> {
+  private async handleClarifyTurnEnd(
+    blueprintId: string,
+    workspaceId: string,
+    text: string
+  ): Promise<void> {
     const machine = blueprintService.getMachine(workspaceId)
 
     // 1. Parse & emit findings (always emitted if present)
@@ -867,7 +949,8 @@ export class BlueprintSpecService extends EventEmitter {
     // 3. Check for completion
     const completionRaw = parseClarifyCompletion(text)
     const completion = completionRaw
-      ? (parsePhaseCompletionBlock(text, 'clarify') ?? (completionRaw as unknown as BlueprintPhaseCompletion))
+      ? (parsePhaseCompletionBlock(text, 'clarify') ??
+        (completionRaw as unknown as BlueprintPhaseCompletion))
       : null
 
     // M5 (nudge restructure): Hoist zero-block check ABOVE the emit cascade.

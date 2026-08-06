@@ -79,9 +79,7 @@ function BashPreview({ input }: { input: Record<string, unknown> }): React.JSX.E
 
   return (
     <div className="space-y-2">
-      {description && (
-        <p className="text-sm text-text-secondary">{description}</p>
-      )}
+      {description && <p className="text-sm text-text-secondary">{description}</p>}
       <CodeBlock value={command} />
     </div>
   )
@@ -90,9 +88,7 @@ function BashPreview({ input }: { input: Record<string, unknown> }): React.JSX.E
 /** File tools (Read/Write/Edit) — show file path badge + other params. */
 function FileToolPreview({ input }: { input: Record<string, unknown> }): React.JSX.Element {
   const filePath = (input.file_path ?? input.filePath) as string | undefined
-  const otherEntries = Object.entries(input).filter(
-    ([k]) => k !== 'file_path' && k !== 'filePath'
-  )
+  const otherEntries = Object.entries(input).filter(([k]) => k !== 'file_path' && k !== 'filePath')
 
   return (
     <div className="space-y-2">

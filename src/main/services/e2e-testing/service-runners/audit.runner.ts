@@ -34,10 +34,10 @@ async function runAuditAndCollect(
     transcript.push(statusEntry(`audit_started: runId=${run.id}`))
 
     // Setup event listeners
-    const onProgress = (data: { trackId?: string; progress?: number }) => {
+    const onProgress = (data: { trackId?: string; progress?: number }): void => {
       transcript.push(statusEntry(`audit_progress: ${data.trackId} ${data.progress ?? 0}%`))
     }
-    const onResult = (data: { findings?: unknown[]; coverageStats?: unknown }) => {
+    const onResult = (data: { findings?: unknown[]; coverageStats?: unknown }): void => {
       if (data.findings && Array.isArray(data.findings) && data.findings.length > 0) {
         hasFindings = true
         transcript.push(statusEntry(`findings_present: count=${data.findings.length}`))
@@ -47,7 +47,7 @@ async function runAuditAndCollect(
         transcript.push(statusEntry('coverage_stats_present'))
       }
     }
-    const onComplete = () => {
+    const onComplete = (): void => {
       transcript.push(statusEntry('audit_complete'))
     }
 
@@ -88,7 +88,12 @@ async function runAuditAndCollect(
       }
     }
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return { transcript, runId, hasFindings, hasCoverageStats }
@@ -107,7 +112,9 @@ export async function runAuditFindings(ctx: E2EServiceContext): Promise<E2ETrans
   const { transcript, hasFindings } = await runAuditAndCollect(ctx, ['code'])
   if (!hasFindings) {
     // Fixture has TODO/FIXME/dead-code — findings should be present
-    transcript.push(statusEntry('findings_present: count=0 (unexpected — fixture has planted markers)'))
+    transcript.push(
+      statusEntry('findings_present: count=0 (unexpected — fixture has planted markers)')
+    )
   }
   return transcript
 }

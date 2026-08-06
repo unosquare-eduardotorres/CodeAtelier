@@ -86,7 +86,11 @@ describe('reconcileStopState', () => {
 
   test('does not mutate the caller’s set', async () => {
     const original = new Set(['conv-1'])
-    await reconcileStopState(async () => ({ isStreaming: false }), () => original, 'conv-1')
+    await reconcileStopState(
+      async () => ({ isStreaming: false }),
+      () => original,
+      'conv-1'
+    )
     assert.deepEqual([...original], ['conv-1'], 'zustand state must never be mutated in place')
   })
 

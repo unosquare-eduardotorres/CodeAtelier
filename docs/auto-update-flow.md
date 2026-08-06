@@ -252,18 +252,18 @@ flowchart LR
 
 ## File Map
 
-| Layer    | File                                                    | Role                                                                            |
-| -------- | ------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Shared   | `src/shared/constants.ts`                               | 8 `UPDATE_*` IPC channel constants                                              |
-| Main     | `src/main/services/auto-update.service.ts`              | Wraps `electron-updater`, 60m poll, install-on-quit (Win/Linux), forwards events |
-| Main     | `src/main/ipc/update.ipc.ts`                            | IPC handlers: check, download, install                                          |
-| Main     | `src/main/index.ts`                                     | Init + 5s startup check + `startPeriodicChecks()` + `installOnQuitIfReady()`    |
-| Preload  | `src/preload/index.ts`                                  | Exposes `checkForUpdate`, `downloadUpdate`, `installUpdate` + 5 event listeners |
-| Renderer | `src/renderer/src/store/update.store.ts`                | Zustand store: status, progress, snooze, auto-install countdown                  |
-| Renderer | `src/renderer/src/store/update-store-utils.ts`          | Pure snooze rule (`nextSnooze` / `isSnoozed` / `isBannerMuted`) + mute scopes    |
-| Renderer | `src/renderer/src/components/common/UpdateAvailableModal.tsx` | Confirmation modal: aurora hero, progress ring, countdown                 |
-| Renderer | `src/renderer/src/components/common/UpdateBanner.tsx`   | Top-of-window banner (suppressed while the modal is open or the version is snoozed) |
-| Renderer | `src/renderer/src/components/settings/UpdateButton.tsx` | "Check for Updates" / "Download vX" / "Install Update" — all open the modal     |
-| Renderer | `src/renderer/src/hooks/useAppIpcListeners.ts`          | Wires IPC events to the Zustand store                                           |
-| Renderer | `src/renderer/src/assets/main.css`                      | `update-*` keyframes: aurora, icon pulse, ring expand, check draw               |
-| Config   | `electron-builder.yml`                                  | GitHub publish provider config                                                  |
+| Layer    | File                                                          | Role                                                                                |
+| -------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Shared   | `src/shared/constants.ts`                                     | 8 `UPDATE_*` IPC channel constants                                                  |
+| Main     | `src/main/services/auto-update.service.ts`                    | Wraps `electron-updater`, 60m poll, install-on-quit (Win/Linux), forwards events    |
+| Main     | `src/main/ipc/update.ipc.ts`                                  | IPC handlers: check, download, install                                              |
+| Main     | `src/main/index.ts`                                           | Init + 5s startup check + `startPeriodicChecks()` + `installOnQuitIfReady()`        |
+| Preload  | `src/preload/index.ts`                                        | Exposes `checkForUpdate`, `downloadUpdate`, `installUpdate` + 5 event listeners     |
+| Renderer | `src/renderer/src/store/update.store.ts`                      | Zustand store: status, progress, snooze, auto-install countdown                     |
+| Renderer | `src/renderer/src/store/update-store-utils.ts`                | Pure snooze rule (`nextSnooze` / `isSnoozed` / `isBannerMuted`) + mute scopes       |
+| Renderer | `src/renderer/src/components/common/UpdateAvailableModal.tsx` | Confirmation modal: aurora hero, progress ring, countdown                           |
+| Renderer | `src/renderer/src/components/common/UpdateBanner.tsx`         | Top-of-window banner (suppressed while the modal is open or the version is snoozed) |
+| Renderer | `src/renderer/src/components/settings/UpdateButton.tsx`       | "Check for Updates" / "Download vX" / "Install Update" — all open the modal         |
+| Renderer | `src/renderer/src/hooks/useAppIpcListeners.ts`                | Wires IPC events to the Zustand store                                               |
+| Renderer | `src/renderer/src/assets/main.css`                            | `update-*` keyframes: aurora, icon pulse, ring expand, check draw                   |
+| Config   | `electron-builder.yml`                                        | GitHub publish provider config                                                      |

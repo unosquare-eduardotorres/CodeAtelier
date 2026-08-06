@@ -24,7 +24,9 @@ import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Pipeline', () => {
   // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
-  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+  test.beforeEach(async ({ electronPage }) => {
+    await pinSequentialBuild(electronPage)
+  })
 
   async function navigateToBlueprints(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
@@ -45,7 +47,10 @@ test.describe('Blueprint Pipeline', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -167,7 +172,10 @@ test.describe('Blueprint Pipeline', () => {
 
     // Progress bar should be present
     const progressBar = timelineNow.locator('[class*="bg-emerald"]')
-    const hasProgress = await progressBar.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasProgress = await progressBar
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasProgress).toBeTruthy()
   })
 

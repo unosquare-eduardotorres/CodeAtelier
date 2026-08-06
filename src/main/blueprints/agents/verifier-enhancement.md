@@ -5,6 +5,7 @@
 **Assume the goal is NOT achieved until you have evidence proving it is.**
 
 Do not trust:
+
 - File existence alone (could be stubs)
 - Import statements alone (could be unused)
 - Test existence alone (could be trivial/passing-by-default)
@@ -15,11 +16,15 @@ Trust only: data flowing through verified wiring.
 ## 4-Level Artifact Verification (Detailed)
 
 ### Level 1 — EXISTS
+
 Check the file is present at the expected path:
+
 - Use `Glob` with the exact path pattern to confirm existence.
 
 ### Level 2 — SUBSTANTIVE
+
 Check if the file contains real implementation:
+
 - Use `mcp__code-graph__file_outline` to check the symbol count and structure.
 - Use `Read` to inspect the file contents.
 - Flag stub patterns:
@@ -33,18 +38,23 @@ Check if the file contains real implementation:
   - "Lorem ipsum", "Example text"
 
 ### Level 3 — WIRED
+
 Check if the artifact is connected to the system:
+
 - Use `mcp__code-graph__file_dependents` to see which files import this module.
 - Use `mcp__code-graph__find_references` on the key exported symbol to see all usage sites.
 - Fallback: `Grep` for import/usage patterns.
 
 Interpret results:
+
 - **WIRED**: Imported AND used (dependents > 0, references beyond imports > 0)
 - **ORPHANED**: Exists but not imported (dependents = 0)
 - **PARTIAL**: Imported but not used beyond import (references = imports only)
 
 ### Level 4 — DATA FLOWING
+
 Verify real data flows through the wiring:
+
 - Use `mcp__code-graph__find_callees` to trace from entry point through to data source.
 - Use `mcp__code-graph__find_callers` to verify consumers exist.
 - Flag: static returns with no DB query (fake backend)
@@ -55,21 +65,25 @@ Verify real data flows through the wiring:
 ## Key Link Verification Patterns
 
 ### Component → API
+
 1. Component calls a fetch/API function
 2. The function makes an actual HTTP request (not a mock)
 3. The request URL matches a real route
 
 ### API → Database
+
 1. Route handler calls a service/repository
 2. Service/repository executes a real query
 3. Query references actual table/collection names
 
 ### Form → Handler
+
 1. Form has an onSubmit handler
 2. Handler calls a submission function
 3. Function processes the form data (not just logs it)
 
 ### State → Render
+
 1. State variable is set from real data (API response, user input)
 2. State is used in JSX/template rendering
 3. Changing the state would change the rendered output
@@ -77,17 +91,20 @@ Verify real data flows through the wiring:
 ## Stub Detection Patterns
 
 ### React Component Stubs
+
 - `return <div />` or `return null`
 - `return <p>Coming soon</p>`
 - Component with no props that should have them
 - useEffect with empty dependency array that should fetch data
 
 ### API Route Stubs
+
 - Handler returns hardcoded response
 - Handler doesn't call any service
 - Missing error handling (bare `res.json()`)
 
 ### Wiring Red Flags
+
 - Import exists but imported symbol unused
 - Props interface defined but all props optional with no defaults
 - Route registered but handler is `(req, res) => res.json({})`
@@ -95,6 +112,7 @@ Verify real data flows through the wiring:
 ## Human Verification Items
 
 These CANNOT be verified by code analysis — flag them explicitly:
+
 - **Visual**: Does the UI look correct? (layout, styling, responsiveness)
 - **Flow**: Does the multi-step user flow work end-to-end?
 - **Real-time**: Do WebSocket/streaming features work?
@@ -110,7 +128,7 @@ visual inspection, manual user flows, real credential testing, and performance u
 ```
 1. Any MISSING artifacts?
    YES → gaps_found (critical)
-   
+
 2. Any STUB artifacts (Level 2 fail)?
    YES → gaps_found (critical)
 

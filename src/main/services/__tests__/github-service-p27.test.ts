@@ -6,14 +6,13 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test } from './test-harness'
-import { setupFullMock, mockService } from './setup-full-mock'
+import { setupFullMock } from './setup-full-mock'
 
 setupFullMock()
 
-// Mock octokit/github modules
-mockService('github.service', {}) // Will require directly after
-
-// Require after mocking
+// NOTE: do NOT mockService('github.service', ...) here — mockService matches on
+// substring, so it would intercept the very module under test and hand back the
+// stub instead of the real export.
 const { GitHubService } = require('../github.service')
 
 describe('GitHubService — constructor and configuration', () => {

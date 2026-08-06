@@ -50,7 +50,9 @@ export function buildReadOnlyToolConfig(flags: EvaluationToolFlags): AdapterMcpR
     'WebSearch',
     'WebFetch',
     ...(flags.repomapEnabled && flags.hasWorkspace ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES : []),
-    ...(flags.semanticSearchEnabled && flags.hasWorkspace ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES : []),
+    ...(flags.semanticSearchEnabled && flags.hasWorkspace
+      ? MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
+      : []),
     ...(flags.includeGitContext ? MCP_TOOLS.GIT_CONTEXT._ALL_NAMES : []),
     ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
     // Memory tools — evaluators can search/record/flag workspace knowledge

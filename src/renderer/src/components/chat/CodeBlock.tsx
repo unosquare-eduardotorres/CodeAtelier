@@ -16,9 +16,13 @@ function detectLanguage(code: string): string {
   // Mermaid — first line is a diagram type keyword
   // Note: `graph` requires a direction (TD/TB/BT/RL/LR) to avoid false positives
   if (
-    /^(flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|gitgraph|journey|mindmap|timeline|quadrantChart|sankey-beta|xychart-beta|block-beta|requirementDiagram|C4Context|C4Container|C4Component|C4Deployment|zenuml)\b/.test(trimmed) ||
+    /^(flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|gitgraph|journey|mindmap|timeline|quadrantChart|sankey-beta|xychart-beta|block-beta|requirementDiagram|C4Context|C4Container|C4Component|C4Deployment|zenuml)\b/.test(
+      trimmed
+    ) ||
     /^graph\s+(TD|TB|BT|RL|LR)\b/.test(trimmed) ||
-    /^---\s*\n[\s\S]*?\n---\s*\n\s*(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|gitgraph|journey|mindmap|timeline)/.test(trimmed)
+    /^---\s*\n[\s\S]*?\n---\s*\n\s*(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|gitGraph|gitgraph|journey|mindmap|timeline)/.test(
+      trimmed
+    )
   ) {
     return 'mermaid'
   }
@@ -136,7 +140,10 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
   }
 
   return (
-    <div data-testid="code-block" className="relative group my-2 rounded-lg overflow-x-auto overflow-y-hidden border border-border-subtle">
+    <div
+      data-testid="code-block"
+      className="relative group my-2 rounded-lg overflow-x-auto overflow-y-hidden border border-border-subtle"
+    >
       <div className="flex items-center justify-between px-3 py-1.5 bg-surface-raised border-b border-border-default">
         <span className="text-xs text-primary/70 font-mono tracking-wide uppercase">
           {language || 'code'}

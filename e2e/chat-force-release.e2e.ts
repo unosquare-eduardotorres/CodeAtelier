@@ -19,11 +19,11 @@
 import { test, expect } from './helpers/electron-fixture'
 
 test.describe('Chat force-release (wedge escape hatch)', () => {
-  test('forceReleaseConversation is exposed on the preload API', async ({
-    electronPage: page
-  }) => {
+  test('forceReleaseConversation is exposed on the preload API', async ({ electronPage: page }) => {
     const kind = await page.evaluate(
-      () => typeof (window as unknown as { api?: Record<string, unknown> }).api?.forceReleaseConversation
+      () =>
+        typeof (window as unknown as { api?: Record<string, unknown> }).api
+          ?.forceReleaseConversation
     )
     expect(kind).toBe('function')
   })
@@ -40,7 +40,10 @@ test.describe('Chat force-release (wedge escape hatch)', () => {
         }
       ).api
       try {
-        return { ok: true, value: await api.forceReleaseConversation('e2e-not-a-real-conversation') }
+        return {
+          ok: true,
+          value: await api.forceReleaseConversation('e2e-not-a-real-conversation')
+        }
       } catch (err) {
         return { ok: false, error: (err as Error).message }
       }

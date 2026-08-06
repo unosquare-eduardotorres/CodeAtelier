@@ -201,9 +201,7 @@ export function formatStructuredPlan(plan: StructuredPlan): string {
     )
   }
   if (plan.decisions?.length) {
-    parts.push(
-      `**Decisions:**\n${plan.decisions.map((d) => `- ${d.what} — ${d.why}`).join('\n')}`
-    )
+    parts.push(`**Decisions:**\n${plan.decisions.map((d) => `- ${d.what} — ${d.why}`).join('\n')}`)
   }
   if (plan.phases?.length) {
     parts.push(
@@ -307,8 +305,7 @@ export function mergePlanEntries(
 export function sortEntries(entries: RecallPlanEntry[]): RecallPlanEntry[] {
   return [...entries].sort(
     (a, b) =>
-      Number(a.superseded) - Number(b.superseded) ||
-      parseTs(b.createdAt) - parseTs(a.createdAt)
+      Number(a.superseded) - Number(b.superseded) || parseTs(b.createdAt) - parseTs(a.createdAt)
   )
 }
 
@@ -372,7 +369,9 @@ export function formatPlanDetail(
       entry.planType ? ` · type: ${entry.planType}` : ''
     } · created: ${shortDate(entry.createdAt)}`,
     entry.superseded ? '⚠ This plan was superseded — a newer revision exists.' : null,
-    lineage?.previous ? `previous revision: ${lineage.previous.ref} — ${lineage.previous.title}` : null,
+    lineage?.previous
+      ? `previous revision: ${lineage.previous.ref} — ${lineage.previous.title}`
+      : null,
     lineage?.superseding
       ? `superseded by: ${lineage.superseding.ref} — ${lineage.superseding.title}`
       : null

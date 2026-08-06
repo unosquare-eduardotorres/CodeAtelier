@@ -41,7 +41,7 @@ if (!env) {
           content: 'This is a test fact for coverage.',
           tags: ['test', 'phase24'],
           sourceType: 'manual',
-          sourceRef: 'test-ref',
+          sourceRef: 'test-ref'
         })
         assert.ok(fact.id, 'Should have an id')
         assert.equal(fact.title, 'Test Fact')
@@ -57,7 +57,7 @@ if (!env) {
           title: 'Search Target',
           content: 'Unique search target content for phase24',
           tags: ['searchtest'],
-          sourceType: 'manual',
+          sourceType: 'manual'
         })
 
         const results = memoryFactRepo.search(wsId, 'Search Target', 10)
@@ -72,12 +72,12 @@ if (!env) {
           title: 'Old Title',
           content: 'Old content',
           tags: [],
-          sourceType: 'manual',
+          sourceType: 'manual'
         })
 
         memoryFactRepo.updateFact(fact.id, {
           title: 'New Title',
-          content: 'Updated content',
+          content: 'Updated content'
         })
 
         const updated = memoryFactRepo.getById?.(fact.id)
@@ -93,7 +93,7 @@ if (!env) {
           title: 'To Archive',
           content: 'This will be archived',
           tags: [],
-          sourceType: 'manual',
+          sourceType: 'manual'
         })
 
         memoryFactRepo.archiveFact(fact.id)
@@ -127,7 +127,7 @@ if (!env) {
             workspaceId: wsId,
             intent: 'continue',
             originalGoal: 'Test goal',
-            contextSummary: 'Test summary',
+            contextSummary: 'Test summary'
           })
           assert.ok(handoff.id, 'Should have an id')
           assert.equal(handoff.source, 'grill')
@@ -158,7 +158,9 @@ if (!env) {
     const mod = require('../../repositories/blueprint-event.repository')
     blueprintEventRepo = mod.blueprintEventRepository
   } catch (err) {
-    console.log(`⚠ blueprint-event.repository load failed: ${(err as Error).message?.split('\n')[0]}`)
+    console.log(
+      `⚠ blueprint-event.repository load failed: ${(err as Error).message?.split('\n')[0]}`
+    )
   }
 
   if (blueprintEventRepo) {

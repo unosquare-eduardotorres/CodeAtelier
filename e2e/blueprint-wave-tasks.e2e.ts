@@ -19,14 +19,14 @@ import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Wave Tasks', () => {
   // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
-  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+  test.beforeEach(async ({ electronPage }) => {
+    await pinSequentialBuild(electronPage)
+  })
 
   /**
    * Helper: navigate to blueprints and open one in build phase.
    */
-  async function openBlueprintWithTasks(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openBlueprintWithTasks(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const settings = new WorkspaceSettings(page)
 
@@ -45,7 +45,10 @@ test.describe('Blueprint Wave Tasks', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -108,7 +111,10 @@ test.describe('Blueprint Wave Tasks', () => {
 
     // Progress bar fill should exist
     const progressBar = waveProgress.locator('[role="progressbar"], .bg-accent, .bg-success')
-    const hasProgressBar = await progressBar.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasProgressBar = await progressBar
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // At least the count or progress bar should be visible
     expect(hasTaskCount || hasProgressBar).toBeTruthy()
@@ -131,7 +137,10 @@ test.describe('Blueprint Wave Tasks', () => {
     if (count === 0) {
       // Tasks may be rendered without testid — check for task-like elements
       const taskTexts = page.getByText(/task\s+\d+/i)
-      const hasTaskTexts = await taskTexts.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasTaskTexts = await taskTexts
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       if (!hasTaskTexts) {
         test.skip()
@@ -234,7 +243,10 @@ test.describe('Blueprint Wave Tasks', () => {
     if (!hasWave) {
       // Check for status text directly
       const statusText = page.getByText(/pending|running|completed|in progress/i)
-      const hasStatus = await statusText.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasStatus = await statusText
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       expect(hasStatus).toBeTruthy()
       return
     }
@@ -247,9 +259,7 @@ test.describe('Blueprint Wave Tasks', () => {
 
   // ── Task expand shows detail ──
 
-  test('expanding a task shows subtask detail and file list', async ({
-    electronPage: page
-  }) => {
+  test('expanding a task shows subtask detail and file list', async ({ electronPage: page }) => {
     const hasBlueprintTasks = await openBlueprintWithTasks(page)
 
     if (!hasBlueprintTasks) {
@@ -271,7 +281,10 @@ test.describe('Blueprint Wave Tasks', () => {
 
     // Look for expanded content (file list, subtasks, or description)
     const expandedContent = page.getByText(/files?|subtask|description|output/i)
-    const _hasExpanded = await expandedContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const _hasExpanded = await expandedContent
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Alternatively, check if task row expanded (more content visible)
     const taskText = await taskItems.first().textContent()

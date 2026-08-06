@@ -70,7 +70,10 @@ export default function FileDiffView({
   return (
     <div data-testid="file-diff-view" className="flex-1 flex flex-col min-h-0 min-w-0">
       {/* Diff header */}
-      <div data-testid="file-diff-header" className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-surface-overlay/50 shrink-0">
+      <div
+        data-testid="file-diff-header"
+        className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-surface-overlay/50 shrink-0"
+      >
         <span className="text-xs font-medium text-text-primary truncate">{filePath}</span>
         {/* The exact commit both sides are measured from — answers "what actually ships". */}
         {diff.baseSha && (

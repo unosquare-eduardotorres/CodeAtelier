@@ -24,9 +24,7 @@ import { ChatPage } from './pages/chat-page'
 test.describe('Chat Drafts & Attachments', () => {
   // ── Shared helpers ────────────────────────────────────────────────
 
-  async function ensureWorkspaceWithChat(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage> {
+  async function ensureWorkspaceWithChat(page: import('@playwright/test').Page): Promise<ChatPage> {
     const welcomePage = new WelcomePage(page)
     const chat = new ChatPage(page)
 
@@ -61,9 +59,7 @@ test.describe('Chat Drafts & Attachments', () => {
 
   // ── 1. Draft message persists when switching conversations ────────
 
-  test('draft message persists when switching conversations', async ({
-    electronPage: page
-  }) => {
+  test('draft message persists when switching conversations', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceWithChat(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -108,9 +104,7 @@ test.describe('Chat Drafts & Attachments', () => {
 
   // ── 2. Draft restored when returning to conversation ──────────────
 
-  test('draft restored when returning to original conversation', async ({
-    electronPage: page
-  }) => {
+  test('draft restored when returning to original conversation', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceWithChat(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -166,9 +160,7 @@ test.describe('Chat Drafts & Attachments', () => {
 
   // ── 3. AttachmentList renders attached files in message bubbles ────
 
-  test('AttachmentList renders file attachments in messages', async ({
-    electronPage: page
-  }) => {
+  test('AttachmentList renders file attachments in messages', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceWithChat(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -179,7 +171,10 @@ test.describe('Chat Drafts & Attachments', () => {
 
     // Look for existing attachment lists in message history
     const attachmentList = page.locator('[data-testid="attachment-list"]')
-    const hasAttachments = await attachmentList.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasAttachments = await attachmentList
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasAttachments) {
       // Check all conversations for attachments
@@ -191,7 +186,10 @@ test.describe('Chat Drafts & Attachments', () => {
         await sidebarItems.nth(i).click()
         await page.waitForTimeout(1_000)
 
-        const hasAtt = await attachmentList.first().isVisible({ timeout: 3_000 }).catch(() => false)
+        const hasAtt = await attachmentList
+          .first()
+          .isVisible({ timeout: 3_000 })
+          .catch(() => false)
         if (hasAtt) {
           foundAttachments = true
           break
@@ -248,10 +246,10 @@ test.describe('Chat Drafts & Attachments', () => {
 
     if (!hasScrollable) {
       // Try scrolling the chat panel itself
-      await chat.chatPanel.evaluate((el) => el.scrollTop = 0)
+      await chat.chatPanel.evaluate((el) => (el.scrollTop = 0))
       await page.waitForTimeout(500)
     } else {
-      await chatContainer.evaluate((el) => el.scrollTop = 0)
+      await chatContainer.evaluate((el) => (el.scrollTop = 0))
       await page.waitForTimeout(500)
     }
 
@@ -286,9 +284,7 @@ test.describe('Chat Drafts & Attachments', () => {
 
   // ── 5. RateLimitBadge click opens detail/tooltip ──────────────────
 
-  test('RateLimitBadge click shows rate limit details', async ({
-    electronPage: page
-  }) => {
+  test('RateLimitBadge click shows rate limit details', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceWithChat(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -299,7 +295,9 @@ test.describe('Chat Drafts & Attachments', () => {
 
     // Look for rate limit badge (shows remaining requests or limit info)
     const rateLimitBadge = page.locator('[data-testid="rate-limit-badge"]')
-    const rateLimitText = page.getByText(/rate limit|requests remaining|\d+\s*\/\s*\d+\s*req/i).first()
+    const rateLimitText = page
+      .getByText(/rate limit|requests remaining|\d+\s*\/\s*\d+\s*req/i)
+      .first()
 
     const hasBadge = await rateLimitBadge.isVisible({ timeout: 5_000 }).catch(() => false)
     const hasText = await rateLimitText.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -319,8 +317,14 @@ test.describe('Chat Drafts & Attachments', () => {
     const detail = page.locator('[role="dialog"], [role="tooltip"], [data-testid*="rate-limit"]')
     const detailText = page.getByText(/limit|request|minute|hour|reset/i)
 
-    const hasDetail = await detail.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasDetailText = await detailText.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasDetail = await detail
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasDetailText = await detailText
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Click interaction was performed — verify some response
     expect(hasDetail || hasDetailText).toBeTruthy()

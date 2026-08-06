@@ -79,7 +79,10 @@ export default function TierBadge({ tier, confidence }: TierBadgeProps): React.J
       </span>
 
       {/* Confidence bar */}
-      <div className="w-8 h-1 bg-border-default rounded-full overflow-hidden" title={`${(confidence * 100).toFixed(0)}% confidence`}>
+      <div
+        className="w-8 h-1 bg-border-default rounded-full overflow-hidden"
+        title={`${(confidence * 100).toFixed(0)}% confidence`}
+      >
         <div
           className={`h-full rounded-full ${DOT_COLORS[tierIdx]}`}
           style={{ width: `${Math.round(confidence * 100)}%` }}
@@ -96,9 +99,7 @@ export default function TierBadge({ tier, confidence }: TierBadgeProps): React.J
           <p className="mt-1 text-text-muted">
             Higher tiers rank higher in retrieval and survive longer.
           </p>
-          <p className="mt-1 text-text-muted">
-            Confidence: {(confidence * 100).toFixed(0)}%
-          </p>
+          <p className="mt-1 text-text-muted">Confidence: {(confidence * 100).toFixed(0)}%</p>
         </div>
       )}
     </div>

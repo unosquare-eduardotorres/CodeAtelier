@@ -70,6 +70,22 @@ class TestAdapter extends BaseRoleAdapter {
     this.githubConfigured = v
   }
 
+  public _resolveIndexState(workspaceId: string | null) {
+    return this.resolveIndexState(workspaceId)
+  }
+
+  // Index-state probe stub — counts calls so memoization is observable.
+  public probeCount = 0
+  public probeResult: { graph: boolean; vectors: boolean } | Error = {
+    graph: false,
+    vectors: false
+  }
+  protected override probeIndexState(): { graph: boolean; vectors: boolean } {
+    this.probeCount++
+    if (this.probeResult instanceof Error) throw this.probeResult
+    return this.probeResult
+  }
+
   // Override getMcpStrategy for testing dispatch
   private strategyOverride: McpStrategy | null = null
   public setMcpStrategyOverride(s: McpStrategy | null) {
@@ -187,7 +203,56 @@ describe('BaseRoleAdapter — buildPromptFeatureFlags', () => {
     assert.equal(flags.semanticSearchEnabled, true)
     assert.equal(flags.githubConfigured, false)
     assert.equal(flags.includeGitContext, true)
-    assert.equal(flags.includeCheckpoint, false)
+  })
+})
+
+describe('BaseRoleAdapter — resolveIndexState', () => {
+  test('memoizes the probe within the TTL', () => {
+    const adapter = new TestAdapter()
+    adapter.probeResult = { graph: false, vectors: true }
+
+    const first = adapter._resolveIndexState('ws-1')
+    const second = adapter._resolveIndexState('ws-1')
+
+    assert.deepEqual(first, { graph: false, vectors: true })
+    assert.deepEqual(second, first, 'cached value must match')
+    assert.equal(adapter.probeCount, 1, 'second call within TTL must not re-probe')
+  })
+
+  test('re-probes when the workspace changes', () => {
+    const adapter = new TestAdapter()
+    adapter.probeResult = { graph: false, vectors: false }
+    adapter._resolveIndexState('ws-1')
+    adapter._resolveIndexState('ws-2')
+    assert.equal(adapter.probeCount, 2, 'cache is keyed by workspace')
+  })
+
+  test('fails OPEN when the probe throws', () => {
+    // Suppressing guidance because a DB probe threw is the worse of the two
+    // failures — the model would be told the workspace is unindexed forever.
+    const adapter = new TestAdapter()
+    adapter.probeResult = new Error('db closed')
+    assert.deepEqual(adapter._resolveIndexState('ws-1'), { graph: true, vectors: true })
+    assert.equal(adapter.probeCount, 1)
+
+    // A failed probe must not be cached as a result.
+    adapter.probeResult = { graph: true, vectors: false }
+    assert.deepEqual(adapter._resolveIndexState('ws-1'), { graph: true, vectors: false })
+    assert.equal(adapter.probeCount, 2)
+  })
+
+  test('adapters with no workspace binding are treated as indexed', () => {
+    const adapter = new TestAdapter()
+    assert.deepEqual(adapter._resolveIndexState(null), { graph: true, vectors: true })
+    assert.equal(adapter.probeCount, 0, 'no workspace means nothing to probe')
+  })
+
+  test('buildPromptFeatureFlags carries index state through', () => {
+    const adapter = new TestAdapter()
+    const flags = adapter._buildPromptFeatureFlags()
+    // TestAdapter does not override resolveWorkspaceId, so it is unbound → fail open.
+    assert.equal(flags.repomapIndexed, true)
+    assert.equal(flags.semanticSearchIndexed, true)
   })
 })
 

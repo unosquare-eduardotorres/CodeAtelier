@@ -1,5 +1,10 @@
 import { BaseRepository } from '../base-repository'
-import type { AppPreferences, AppTheme, UpdateSourceProvider, UserAvatarVariant } from '../../../shared/types'
+import type {
+  AppPreferences,
+  AppTheme,
+  UpdateSourceProvider,
+  UserAvatarVariant
+} from '../../../shared/types'
 
 interface AppPreferenceRow {
   key: string
@@ -19,8 +24,7 @@ export class AppPreferenceRepository extends BaseRepository<
   get(key: string): string | null {
     const db = this.db()
     const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get(key) as
-      | AppPreferenceRow
-      | undefined
+      AppPreferenceRow | undefined
     return row ? row.value : null
   }
 

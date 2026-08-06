@@ -45,12 +45,15 @@ test.describe('SpecialistForm', () => {
     return true
   }
 
-  async function openSpecialistForm(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openSpecialistForm(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for "Add Specialist" button
-    const addBtn = page.locator('button:has-text("Add Specialist"), button:has-text("Add specialist"), button:has-text("New Specialist")')
-    const hasAdd = await addBtn.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const addBtn = page.locator(
+      'button:has-text("Add Specialist"), button:has-text("Add specialist"), button:has-text("New Specialist")'
+    )
+    const hasAdd = await addBtn
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     if (hasAdd) {
       await addBtn.first().click()
       await page.waitForTimeout(500)
@@ -61,7 +64,12 @@ test.describe('SpecialistForm', () => {
     const specialistCards = page.locator('[data-testid="specialist-card"]')
     if ((await specialistCards.count()) > 0) {
       const editBtn = page.locator('button:has-text("Edit"), button[aria-label*="Edit"]')
-      if (await editBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)) {
+      if (
+        await editBtn
+          .first()
+          .isVisible({ timeout: 3_000 })
+          .catch(() => false)
+      ) {
         await editBtn.first().click()
         await page.waitForTimeout(500)
         return true
@@ -73,14 +81,23 @@ test.describe('SpecialistForm', () => {
 
   test('specialist form renders with input fields', async ({ electronPage: page }) => {
     const ready = await navigateToSpecialistSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openSpecialistForm(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const form = page.locator('[data-testid="specialist-form"]')
     const isVisible = await form.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(form).toBeVisible()
 
@@ -105,19 +122,31 @@ test.describe('SpecialistForm', () => {
 
   test('name input accepts and displays entered text', async ({ electronPage: page }) => {
     const ready = await navigateToSpecialistSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openSpecialistForm(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const form = page.locator('[data-testid="specialist-form"]')
     const isVisible = await form.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Find the display name input (first text input)
     const nameInput = form.locator('input[placeholder*="React Architect"]').first()
     const hasInput = await nameInput.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasInput) { test.skip(); return }
+    if (!hasInput) {
+      test.skip()
+      return
+    }
 
     // Clear and type a name
     await nameInput.fill('')
@@ -133,19 +162,34 @@ test.describe('SpecialistForm', () => {
 
   test('description textarea allows multi-line input', async ({ electronPage: page }) => {
     const ready = await navigateToSpecialistSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openSpecialistForm(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const form = page.locator('[data-testid="specialist-form"]')
     const isVisible = await form.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Find the prompt textarea
     const textarea = form.locator('textarea')
-    const hasTextarea = await textarea.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTextarea) { test.skip(); return }
+    const hasTextarea = await textarea
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasTextarea) {
+      test.skip()
+      return
+    }
 
     // Type multi-line content
     await textarea.first().fill('Line 1\nLine 2\nLine 3')
@@ -162,14 +206,23 @@ test.describe('SpecialistForm', () => {
 
   test('model selection shows available options', async ({ electronPage: page }) => {
     const ready = await navigateToSpecialistSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openSpecialistForm(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const form = page.locator('[data-testid="specialist-form"]')
     const isVisible = await form.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Should have icon and color inputs
     const iconInput = form.locator('input[maxlength="4"]')
@@ -196,16 +249,27 @@ test.describe('SpecialistForm', () => {
     await page.keyboard.press('Escape')
   })
 
-  test('form shows validation feedback on empty required fields', async ({ electronPage: page }) => {
+  test('form shows validation feedback on empty required fields', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToSpecialistSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openSpecialistForm(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const form = page.locator('[data-testid="specialist-form"]')
     const isVisible = await form.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Clear the display name (required field)
     const nameInput = form.locator('input[placeholder*="React Architect"]').first()
@@ -215,16 +279,27 @@ test.describe('SpecialistForm', () => {
     }
 
     // Try to save with empty name
-    const saveBtn = form.locator('button:has-text("Add Specialist"), button:has-text("Save Changes")')
-    const hasSave = await saveBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSave) { test.skip(); return }
+    const saveBtn = form.locator(
+      'button:has-text("Add Specialist"), button:has-text("Save Changes")'
+    )
+    const hasSave = await saveBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasSave) {
+      test.skip()
+      return
+    }
 
     await saveBtn.first().click()
     await page.waitForTimeout(500)
 
     // Error message should appear
     const errorMsg = form.locator('.text-danger, .bg-danger-muted')
-    const hasError = await errorMsg.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasError = await errorMsg
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasError) {
       await expect(errorMsg.first()).toBeVisible()
       const errorText = await errorMsg.first().textContent()
@@ -237,14 +312,23 @@ test.describe('SpecialistForm', () => {
 
   test('cancel action discards unsaved form changes', async ({ electronPage: page }) => {
     const ready = await navigateToSpecialistSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openSpecialistForm(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const form = page.locator('[data-testid="specialist-form"]')
     const isVisible = await form.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Cancel button should dismiss the form
     const cancelBtn = form.locator('button:has-text("Cancel")')

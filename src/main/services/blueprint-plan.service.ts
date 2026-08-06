@@ -10,11 +10,19 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import {
+  PhaseActivityWatchdog,
+  STALL_TIMEOUT_MS,
+  wireAskUserAutoResponder
+} from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintPlanAdapter } from './role-adapters/blueprint/blueprint-plan.adapter'
 import { buildPlanGoalCondition } from './blueprint-goal-conditions'
-import { parsePhaseCompletionBlock, parseBlueprintPlan, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
+import {
+  parsePhaseCompletionBlock,
+  parseBlueprintPlan,
+  parseDiscoveriesBlock
+} from './blueprint-artifact-parsers'
 import { blueprintService } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import { blueprintTasksService } from './blueprint-tasks.service'
@@ -34,7 +42,6 @@ const bpLog = log.scope('blueprint-plan')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 export class BlueprintPlanService extends EventEmitter {
-
   // BP-PHASE-RAW-EMIT-01: Error-isolated emit prevents listener throws from
   // crashing the pipeline. Mirrors safeEmit() in BlueprintBuildService/VerifyService.
   private safeEmit(event: string, payload: unknown): boolean {
@@ -60,7 +67,11 @@ export class BlueprintPlanService extends EventEmitter {
     let planPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
     let session: AgentSessionService | null = null
     // BP-CHAIN-PLAN-TASKS: Method-local (not instance field) to avoid race across concurrent workspaces.
-    let pendingTasksDispatch: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
+    let pendingTasksDispatch: {
+      blueprintId: string
+      workspaceId: string
+      workspacePath: string
+    } | null = null
     let cleanupAskUser: (() => void) | undefined
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
@@ -78,7 +89,11 @@ export class BlueprintPlanService extends EventEmitter {
       blueprintRepository.update(blueprintId, { currentPhase: 'plan' })
 
       // 2. Assemble context (includes spec + clarify artifacts + workspace docs)
-      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'plan', workspacePath)
+      const phaseContext = await blueprintService.assemblePhaseContext(
+        blueprintId,
+        'plan',
+        workspacePath
+      )
 
       // 3. Create adapter + session
       const adapter = new BlueprintPlanAdapter({ workspaceId, blueprintId, phaseContext })
@@ -101,11 +116,13 @@ export class BlueprintPlanService extends EventEmitter {
 
       session.on('chunk', (chunk: StreamChunk) => {
         stallWatchdog.touch()
-        forwardBlueprintChunk(
-          (event, payload) => this.safeEmit(event, payload),
-          chunk,
-          { blueprintId, workspaceId, phase: 'plan', workspacePath, mode: 'plan' }
-        )
+        forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
+          blueprintId,
+          workspaceId,
+          phase: 'plan',
+          workspacePath,
+          mode: 'plan'
+        })
       })
 
       session.on('statusUpdate', (status: AgentStatus) => {
@@ -137,8 +154,11 @@ export class BlueprintPlanService extends EventEmitter {
 
       // Persist conversation ID early so retries can find it
       if (planPhaseRec) {
-        try { blueprintPhaseRepository.setConversation(planPhaseRec.id, syntheticConvId) }
-        catch { /* conversation may not exist yet in DB */ }
+        try {
+          blueprintPhaseRepository.setConversation(planPhaseRec.id, syntheticConvId)
+        } catch {
+          /* conversation may not exist yet in DB */
+        }
       }
 
       let timeoutId: NodeJS.Timeout | undefined
@@ -253,12 +273,19 @@ export class BlueprintPlanService extends EventEmitter {
       blueprintService.failPipeline(workspaceId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
-      try { blueprintService.saveRetryContext(blueprintId, 'plan', { error: errorMsg }) }
-      catch { /* best effort */ }
+      try {
+        blueprintService.saveRetryContext(blueprintId, 'plan', { error: errorMsg })
+      } catch {
+        /* best effort */
+      }
 
       // Auto-retry once for transient failures (timeout, stall, CLI crash)
       const autoRetrying = blueprintService.scheduleAutoRetry({
-        blueprintId, workspaceId, workspacePath, phase: 'plan', error: errorMsg
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        phase: 'plan',
+        error: errorMsg
       })
 
       this.safeEmit('phaseComplete', {
@@ -282,11 +309,9 @@ export class BlueprintPlanService extends EventEmitter {
         const currentStatus = blueprintRepository.findById(pendingTasks.blueprintId)?.status
         if (currentStatus !== 'cancelled') {
           try {
-            blueprintTasksService
-              .startTasksPhase(pendingTasks)
-              .catch((err) => {
-                bpLog.error('[plan→tasks] Tasks phase failed:', err)
-              })
+            blueprintTasksService.startTasksPhase(pendingTasks).catch((err) => {
+              bpLog.error('[plan→tasks] Tasks phase failed:', err)
+            })
           } catch (syncErr) {
             bpLog.error('[plan→tasks] Tasks startup failed (sync):', syncErr)
           }

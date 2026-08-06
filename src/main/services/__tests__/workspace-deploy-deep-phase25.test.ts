@@ -40,8 +40,8 @@ if (loaded) {
       'scanWorkspaceClaude',
       'activateAgents',
       'shutdown',
-      'getDiscoveredAgents',
-      'getDiscoveredSkills'
+      'scanWorkspaceAgents',
+      'scanWorkspaceSkills'
     ]
     for (const m of methods) {
       test(`has ${m}`, () =>
@@ -49,10 +49,10 @@ if (loaded) {
     }
   })
 
-  describe('WorkspaceDeployService — getDiscoveredAgents (Phase 25)', () => {
+  describe('WorkspaceDeployService — scanWorkspaceAgents (Phase 25)', () => {
     test('returns array or empty', () => {
       try {
-        const result = workspaceDeployService.getDiscoveredAgents('ws-unknown')
+        const result = workspaceDeployService.scanWorkspaceAgents('ws-unknown')
         assert.ok(Array.isArray(result) || result === undefined || result === null)
       } catch {
         assert.ok(true)
@@ -60,10 +60,10 @@ if (loaded) {
     })
   })
 
-  describe('WorkspaceDeployService — getDiscoveredSkills (Phase 25)', () => {
+  describe('WorkspaceDeployService — scanWorkspaceSkills (Phase 25)', () => {
     test('returns array or empty', () => {
       try {
-        const result = workspaceDeployService.getDiscoveredSkills('ws-unknown')
+        const result = workspaceDeployService.scanWorkspaceSkills('ws-unknown')
         assert.ok(Array.isArray(result) || result === undefined || result === null)
       } catch {
         assert.ok(true)

@@ -32,7 +32,10 @@ export class WelcomePage {
     const homeIndicators = this.page.locator(
       '[data-testid="welcome-screen"], [data-testid="home-screen"], button:has-text("Add Project")'
     )
-    const hasHome = await homeIndicators.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasHome = await homeIndicators
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasHome) return true
 
     // Fallback: check for workspace cards
@@ -72,9 +75,7 @@ export class WelcomePage {
     }
 
     // Click Continue (step 1 → step 2)
-    const continueBtn = this.welcomeModal
-      .getByRole('button', { name: /continue/i })
-      .first()
+    const continueBtn = this.welcomeModal.getByRole('button', { name: /continue/i }).first()
     if (await continueBtn.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await continueBtn.click()
       await this.page.waitForTimeout(1_000)

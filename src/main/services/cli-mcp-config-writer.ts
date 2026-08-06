@@ -65,7 +65,7 @@ export interface CliMcpConfigWriterOptions {
   /**
    * Server IDs to omit from the generated config. Blueprint sessions use this
    * to skip spawning servers whose tools aren't in allowedTools (e.g.
-   * 'checkpoint-context', 'control-actions', 'github-context') — reducing
+   * 'control-actions', 'semantic-search', 'code-analysis') — reducing
    * cold-start contention that causes the MCP connection race.
    */
   skipServers?: string[]
@@ -122,9 +122,7 @@ export class CliMcpConfigWriter {
 
   /** Clean up generated config file. Pass instanceId for per-session configs. */
   dispose(workspacePath: string, instanceId?: string): void {
-    const configKey = instanceId
-      ? `${workspacePath}:${instanceId}`
-      : workspacePath
+    const configKey = instanceId ? `${workspacePath}:${instanceId}` : workspacePath
     const configPath = this.configPaths.get(configKey)
     if (configPath) {
       try {
@@ -204,30 +202,6 @@ export class CliMcpConfigWriter {
       command: 'node',
       args: [join(serverBasePath, 'git-context-server.js')],
       env: { WORKSPACE_PATH: workspacePath }
-    }
-
-    // ── Checkpoint Context ── (only when resuming a conversation)
-    if (opts.conversationId) {
-      servers['checkpoint-context'] = {
-        command: 'node',
-        args: [join(serverBasePath, 'checkpoint-context-server.js')],
-        env: {
-          CONVERSATION_ID: opts.conversationId,
-          WORKSPACE_PATH: workspacePath
-        }
-      }
-    }
-
-    // ── GitHub Context ──
-    if (featureFlags.githubConfigured && workspaceId) {
-      servers['github-context'] = {
-        command: 'node',
-        args: [join(serverBasePath, 'github-context-server.js')],
-        env: {
-          WORKSPACE_ID: workspaceId,
-          WORKSPACE_PATH: workspacePath
-        }
-      }
     }
 
     // ── Code Analysis ──

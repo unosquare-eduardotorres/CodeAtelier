@@ -119,9 +119,7 @@ export default function ProfileSection(): React.JSX.Element {
                   {label}
                 </span>
                 <span
-                  className={`text-[9px] ${
-                    isActive ? 'text-primary-text' : 'text-text-muted'
-                  }`}
+                  className={`text-[9px] ${isActive ? 'text-primary-text' : 'text-text-muted'}`}
                 >
                   {size}
                 </span>
@@ -157,9 +155,7 @@ export default function ProfileSection(): React.JSX.Element {
 
       {/* Display name editor */}
       <div className="mt-5">
-        <label className="block text-xs font-medium text-text-secondary mb-1.5">
-          Display Name
-        </label>
+        <label className="block text-xs font-medium text-text-secondary mb-1.5">Display Name</label>
         <input
           type="text"
           value={editName}
@@ -169,9 +165,7 @@ export default function ProfileSection(): React.JSX.Element {
                      text-sm text-text-primary placeholder-text-muted
                      focus:outline-none focus:ring-1 focus:ring-primary"
         />
-        <p className="text-xs text-text-muted mt-1.5">
-          Appears in chat messages and workspaces.
-        </p>
+        <p className="text-xs text-text-muted mt-1.5">Appears in chat messages and workspaces.</p>
         <button
           onClick={() => void handleSaveName()}
           disabled={isSaving || !nameChanged}

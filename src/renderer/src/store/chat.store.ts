@@ -130,7 +130,11 @@ export interface ChatState {
   updateMode: (mode: ConversationMode) => Promise<void>
   renameConversation: (id: string, title: string) => Promise<void>
   stopGeneration: () => Promise<void>
-  sendMessage: (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => Promise<void>
+  sendMessage: (
+    text: string,
+    attachments?: string[],
+    options?: { hidden?: boolean; skipOptimizer?: boolean }
+  ) => Promise<void>
   appendStreamChunk: (
     conversationId: string,
     chunk: string,
@@ -141,17 +145,14 @@ export interface ChatState {
   ) => void
   /** Reset safety timer without processing content — used by keepalive signals from backend. */
   handleKeepalive: (conversationId?: string) => void
-  updateStreamingIdentity: (
-    role: 'specialist',
+  updateStreamingIdentity: (role: 'specialist', taskId?: string, specialist?: string) => void
+  finalizeStream: (
+    conversationId: string,
+    messageId: string,
     taskId?: string,
-    specialist?: string
+    requestId?: string
   ) => void
-  finalizeStream: (conversationId: string, messageId: string, taskId?: string, requestId?: string) => void
-  finalizeTurnBubble: (
-    turnId: string,
-    turnRole?: 'specialist',
-    turnSpecialist?: string
-  ) => void
+  finalizeTurnBubble: (turnId: string, turnRole?: 'specialist', turnSpecialist?: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
 
@@ -526,9 +527,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (switchGeneration !== myGeneration) return
 
     // PER-CONV-ACCUM: Project from always-warm buffer (or empty if no buffer)
-    const restored = isConversationStillStreaming && buffer
-      ? buffer
-      : emptyStreamState()
+    const restored = isConversationStillStreaming && buffer ? buffer : emptyStreamState()
     // BUG-R8-1: Detect re-selection (selecting the already-active conversation)
     const isReselection = get().activeConversation?.id === id
 
@@ -560,7 +559,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? (restored.pendingQuestionAction ?? (isReselection ? state.pendingQuestionAction : null))
         : null,
       pendingQuestionRequestId: isConversationStillStreaming
-        ? (restored.pendingQuestionRequestId ?? (isReselection ? state.pendingQuestionRequestId : null))
+        ? (restored.pendingQuestionRequestId ??
+          (isReselection ? state.pendingQuestionRequestId : null))
         : null,
       // Hydrate effort from persisted conversation state
       effortLevels: conversation.effort
@@ -621,7 +621,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }))
         }
       }
-    } catch { /* non-critical — todos are ephemeral fallback */ }
+    } catch {
+      /* non-critical — todos are ephemeral fallback */
+    }
 
     // SWITCH-GENERATION: Bail if superseded during todo load
     if (switchGeneration !== myGeneration) return
@@ -631,7 +633,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const phaseData = await window.api.getPhaseProgress({ conversationId: id })
       if (switchGeneration !== myGeneration) return
       if (phaseData && phaseData.progress.length > 0) {
-        const { startExecution, updatePhase, updateTask, markFileTouched } = usePlanExecutionStore.getState()
+        const { startExecution, updatePhase, updateTask, markFileTouched } =
+          usePlanExecutionStore.getState()
         startExecution(id, {
           planId: phaseData.planId,
           title: phaseData.planTitle,
@@ -642,7 +645,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const p of phaseData.progress) {
           updatePhase(id, {
             phaseId: p.phaseId,
-            phaseTitle: phaseData.phases.find((ph) => ph.id === p.phaseId)?.title ?? `Phase ${p.phaseId}`,
+            phaseTitle:
+              phaseData.phases.find((ph) => ph.id === p.phaseId)?.title ?? `Phase ${p.phaseId}`,
             status: p.status as PhaseStatus['status'],
             totalPhases: phaseData.phases.length
           })
@@ -665,7 +669,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   },
 
   renameConversation: async (id: string, title: string) => {
@@ -722,7 +728,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (activeConversation?.id !== get().activeConversation?.id) return
 
     // PER-CONV-ACCUM helper: clean up the conversation buffer alongside globals
-    const cleanupBuffer = (state: ChatState): { conversationStreams: Map<string, PerConversationStreamState> } => {
+    const cleanupBuffer = (
+      state: ChatState
+    ): { conversationStreams: Map<string, PerConversationStreamState> } => {
       if (!activeConversation) return { conversationStreams: state.conversationStreams }
       const streams = new Map(state.conversationStreams)
       streams.delete(activeConversation.id)
@@ -794,12 +802,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (reconciled) set(reconciled)
   },
 
-  sendMessage: async (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => {
-    const { activeConversation, updateMode, isStreaming: alreadyStreaming, sendingConversationIds } = get()
+  sendMessage: async (
+    text: string,
+    attachments?: string[],
+    options?: { hidden?: boolean; skipOptimizer?: boolean }
+  ) => {
+    const {
+      activeConversation,
+      updateMode,
+      isStreaming: alreadyStreaming,
+      sendingConversationIds
+    } = get()
     // SEND-RACE-02: Per-conversation send guard. Prevents rapid double-clicks from
     // bypassing the isStreaming check (stale React closure). Phase 2 ready:
     // only blocks sends on the SAME conversation, not globally.
-    if (!activeConversation || alreadyStreaming || sendingConversationIds.has(activeConversation.id)) return
+    if (
+      !activeConversation ||
+      alreadyStreaming ||
+      sendingConversationIds.has(activeConversation.id)
+    )
+      return
     set({
       sendingConversationIds: new Set([...sendingConversationIds, activeConversation.id]),
       // SEND-ASKUSER-01: Clear stale pending questions so the card doesn't persist alongside new stream
@@ -830,10 +852,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
           (error) => rendererLog.warn('[SEND-SAFETY] reconcile failed:', error)
         )
         if (reconciled) {
-          rendererLog.warn(`[SEND-SAFETY] stuck for 30s and main is idle — releasing ${convId.slice(0, 12)}`)
+          rendererLog.warn(
+            `[SEND-SAFETY] stuck for 30s and main is idle — releasing ${convId.slice(0, 12)}`
+          )
           set(reconciled)
         } else {
-          rendererLog.warn(`[SEND-SAFETY] stuck for 30s but main still streaming — keeping ${convId.slice(0, 12)} disabled (Stop available)`)
+          rendererLog.warn(
+            `[SEND-SAFETY] stuck for 30s but main still streaming — keeping ${convId.slice(0, 12)} disabled (Stop available)`
+          )
         }
       })()
     }, 30_000)
@@ -847,7 +873,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       internals.bumpGeneration()
 
       // Auto-detect plan intent in build mode → switch to plan
-      if (activeConversation.mode === 'build' && (detectPlanIntent(text) || detectComplexTask(text))) {
+      if (
+        activeConversation.mode === 'build' &&
+        (detectPlanIntent(text) || detectComplexTask(text))
+      ) {
         await updateMode('plan')
         // GAP-C-FIX: Bail if selectConversation (or createConversation) fired during
         // updateMode. Without this, streamingConversationIds would contain the wrong
@@ -856,7 +885,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const isHidden = options?.hidden === true
-      const optimisticMessage = isHidden ? null : createOptimisticUserMessage(activeConversation.id, text, attachments)
+      const optimisticMessage = isHidden
+        ? null
+        : createOptimisticUserMessage(activeConversation.id, text, attachments)
 
       set((state) => ({
         // MULTI-CHAT-06: Remove stale optimistic message from a previous blocked-by attempt
@@ -877,7 +908,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // activeRequestId is set AFTER the backend returns — see below.
         activeRequestId: null,
         // Track this conversation as streaming (for sidebar indicator when user switches away)
-        streamingConversationIds: new Set([...state.streamingConversationIds, activeConversation.id])
+        streamingConversationIds: new Set([
+          ...state.streamingConversationIds,
+          activeConversation.id
+        ])
       }))
 
       // Reset segment accumulator for new message
@@ -1004,7 +1038,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const convId = get().activeConversation?.id
     if (!convId) return // No active conversation — nothing to attach tool activity to
     internals.resetSafetyTimer(convId)
-    internals.recordChunkActivity(convId)  // STALL-DETECT-02: Tool activity is real activity
+    internals.recordChunkActivity(convId) // STALL-DETECT-02: Tool activity is real activity
     internals.getOrCreateAccumulatorFor(convId).handleToolActivity(activity)
   },
 
@@ -1012,20 +1046,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const convId = get().activeConversation?.id
     if (!convId) return // No active conversation — nothing to update
     internals.resetSafetyTimer(convId)
-    internals.recordChunkActivity(convId)  // STALL-DETECT-02: Tool activity is real activity
-    internals.getOrCreateAccumulatorFor(convId)
+    internals.recordChunkActivity(convId) // STALL-DETECT-02: Tool activity is real activity
+    internals
+      .getOrCreateAccumulatorFor(convId)
       .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 
-  finalizeStream: (conversationId: string, messageId: string, taskId?: string, requestId?: string) => {
+  finalizeStream: (
+    conversationId: string,
+    messageId: string,
+    taskId?: string,
+    requestId?: string
+  ) => {
     finalizeStreamAction(get, set, conversationId, messageId, taskId, requestId)
   },
 
-  finalizeTurnBubble: (
-    turnId: string,
-    turnRole?: 'specialist',
-    turnSpecialist?: string
-  ) => {
+  finalizeTurnBubble: (turnId: string, turnRole?: 'specialist', turnSpecialist?: string) => {
     finalizeTurnBubbleAction(get, set, turnId, turnRole, turnSpecialist)
   },
 
@@ -1037,9 +1073,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   continuePastBudgetCap: async () => {
     const { budgetCapBanner, activeConversation, isStreaming, sendingConversationIds } = get()
-    if (!budgetCapBanner || !activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id)) return
+    if (
+      !budgetCapBanner ||
+      !activeConversation ||
+      isStreaming ||
+      sendingConversationIds.has(activeConversation.id)
+    )
+      return
     set({ budgetCapBanner: null })
-    void get().sendMessage('Continue where you left off.', undefined, { hidden: true, skipOptimizer: true })
+    void get().sendMessage('Continue where you left off.', undefined, {
+      hidden: true,
+      skipOptimizer: true
+    })
   },
 
   dismissBudgetCap: () => set({ budgetCapBanner: null }),
@@ -1053,9 +1098,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // MULTI-CHAT-06: Remove the unsent optimistic message before switching away
     set((state) => ({
       blockedByBanner: null,
-      messages: optimisticId
-        ? state.messages.filter((m) => m.id !== optimisticId)
-        : state.messages
+      messages: optimisticId ? state.messages.filter((m) => m.id !== optimisticId) : state.messages
     }))
     await selectConversation(targetConvId)
   },
@@ -1065,7 +1108,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!blockedByBanner) return
     // GAP-E-FIX: Capture target conversation before async gaps
     const targetConvId = get().activeConversation?.id
-    const { blockedConvId, retryText, retryAttachments, retryOptions, optimisticMessageId } = blockedByBanner
+    const { blockedConvId, retryText, retryAttachments, retryOptions, optimisticMessageId } =
+      blockedByBanner
     // MULTI-CHAT-06: Remove old optimistic message — sendMessage will create a fresh one on retry
     set((state) => ({
       blockedByBanner: null,
@@ -1100,17 +1144,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const optimisticId = blockedByBanner.optimisticMessageId
     set((state) => ({
       blockedByBanner: null,
-      messages: optimisticId
-        ? state.messages.filter((m) => m.id !== optimisticId)
-        : state.messages
+      messages: optimisticId ? state.messages.filter((m) => m.id !== optimisticId) : state.messages
     }))
   },
 
   continuePastTurnLimit: () => {
     const { activeConversation, isStreaming, sendingConversationIds } = get()
-    if (!activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id)) return
+    if (!activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id))
+      return
     set({ turnLimitReached: null })
-    void get().sendMessage('Continue where you left off. Do not repeat completed work.', undefined, { hidden: true, skipOptimizer: true })
+    void get().sendMessage(
+      'Continue where you left off. Do not repeat completed work.',
+      undefined,
+      { hidden: true, skipOptimizer: true }
+    )
   },
 
   dismissTurnLimit: () => set({ turnLimitReached: null }),
@@ -1126,7 +1173,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ conversationState: data })
   },
 
-  completeConversation: async (branchName: string, commitMessage: string, description: string, baseBranch?: string) => {
+  completeConversation: async (
+    branchName: string,
+    commitMessage: string,
+    description: string,
+    baseBranch?: string
+  ) => {
     const { activeConversation, conversations } = get()
     if (!activeConversation) throw new Error('No active conversation')
 
@@ -1248,8 +1300,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
               budgetCapBanner: null,
               blockedByBanner: null,
               turnLimitReached: null,
-              sendingConversationIds: new Set<string>(),  // IMP-R9-1: Prevent locked input after close during send
-              conversationState: { phase: 'idle' as const, from: null, event: null, conversationId: null }
+              sendingConversationIds: new Set<string>(), // IMP-R9-1: Prevent locked input after close during send
+              conversationState: {
+                phase: 'idle' as const,
+                from: null,
+                event: null,
+                conversationId: null
+              }
             }
           : {})
       }
@@ -1266,7 +1323,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     internals.flushAccumulator(activeConversation?.id)
 
     // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
-    const buffer = activeConversation ? get().conversationStreams.get(activeConversation.id) : undefined
+    const buffer = activeConversation
+      ? get().conversationStreams.get(activeConversation.id)
+      : undefined
     const streamingContent = buffer?.streamingContent ?? get().streamingContent
     const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
     const streamingRole = buffer?.streamingRole ?? get().streamingRole
@@ -1481,7 +1540,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSpecialist: null,
       streamingTaskId: null,
       isStreaming: false,
-      sendingConversationIds: new Set<string>(),  // GAP-R8-1: Prevent locked input after workspace switch during send
+      sendingConversationIds: new Set<string>(), // GAP-R8-1: Prevent locked input after workspace switch during send
       streamingConversationIds: new Set<string>(),
       conversationStreams: new Map(),
       activeRequestId: null,

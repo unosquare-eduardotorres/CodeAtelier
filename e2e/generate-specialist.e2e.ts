@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Generate Specialist', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -44,12 +42,18 @@ test.describe('Generate Specialist', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Modal should have the title
     const title = modal.locator('h1')
@@ -68,22 +72,29 @@ test.describe('Generate Specialist', () => {
     await expect(svgIcon).toBeVisible()
   })
 
-  test('"Generate Now" button triggers specialist build', async ({
-    electronPage: page
-  }) => {
+  test('"Generate Now" button triggers specialist build', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Look for the Generate Now / Retry button
     const generateBtn = page.locator('[data-testid="generate-specialist-btn"]')
     const hasBtn = await generateBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     await expect(generateBtn).toBeVisible()
 
@@ -96,26 +107,36 @@ test.describe('Generate Specialist', () => {
     expect(hasValidLabel).toBeTruthy()
   })
 
-  test('building state shows spinner and progress message', async ({
-    electronPage: page
-  }) => {
+  test('building state shows spinner and progress message', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Check for building state indicators
     const title = modal.locator('h1')
     const titleText = await title.textContent()
 
-    if (!titleText?.includes('Generating Specialist')) { test.skip(); return }
+    if (!titleText?.includes('Generating Specialist')) {
+      test.skip()
+      return
+    }
 
     // Spinner should be visible (animate-spin class on SVG)
     const spinner = modal.locator('.animate-spin')
-    const hasSpinner = await spinner.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasSpinner = await spinner
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     expect(hasSpinner).toBeTruthy()
 
     // Progress message should be visible
@@ -123,22 +144,29 @@ test.describe('Generate Specialist', () => {
     await expect(progressText).toBeVisible()
   })
 
-  test('ready state shows success checkmark and auto-closes', async ({
-    electronPage: page
-  }) => {
+  test('ready state shows success checkmark and auto-closes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Check for ready state
     const title = modal.locator('h1')
     const titleText = await title.textContent()
 
-    if (!titleText?.includes('Specialist Ready')) { test.skip(); return }
+    if (!titleText?.includes('Specialist Ready')) {
+      test.skip()
+      return
+    }
 
     // Should show success message
     const successText = modal.locator('text=Your specialist is ready')
@@ -150,16 +178,20 @@ test.describe('Generate Specialist', () => {
 
   // ── PromptPreviewModal ──
 
-  test('prompt preview modal shows editable system prompt', async ({
-    electronPage: page
-  }) => {
+  test('prompt preview modal shows editable system prompt', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Should have "Edit System Prompt" header
     const header = modal.locator('h3')
@@ -178,16 +210,20 @@ test.describe('Generate Specialist', () => {
     await expect(charCount).toBeVisible()
   })
 
-  test('save button in prompt preview persists changes', async ({
-    electronPage: page
-  }) => {
+  test('save button in prompt preview persists changes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Save button should exist
     const saveBtn = page.locator('[data-testid="prompt-preview-save"]')

@@ -41,7 +41,10 @@ test.describe('Grill Radar Chart', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -163,9 +166,7 @@ test.describe('Grill Radar Chart', () => {
 
   // ── Clicking radar label/point ──
 
-  test('clicking radar label/point triggers track selection', async ({
-    electronPage: page
-  }) => {
+  test('clicking radar label/point triggers track selection', async ({ electronPage: page }) => {
     const hasTrackSelector = await navigateToGrillTrackSelector(page)
 
     if (!hasTrackSelector) {
@@ -209,7 +210,9 @@ test.describe('Grill Radar Chart', () => {
     const trackSelector = page.locator('[data-testid="grill-track-selector"]')
     const questionCard = page.locator('[data-testid="grill-question-card"]')
 
-    const selectorStillVisible = await trackSelector.isVisible({ timeout: 3_000 }).catch(() => false)
+    const selectorStillVisible = await trackSelector
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     const hasQuestionCard = await questionCard.isVisible({ timeout: 5_000 }).catch(() => false)
 
     // Either navigated away (question card) or stayed (track may not trigger nav)

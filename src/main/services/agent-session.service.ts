@@ -67,7 +67,11 @@ import { openCodeAgentWriter } from './opencode-agent-writer'
 import { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
-import { ensureOpencodePathInEnv, getOpencodePath, resolveOpencodePath } from '../../shared/opencode-cli-path'
+import {
+  ensureOpencodePathInEnv,
+  getOpencodePath,
+  resolveOpencodePath
+} from '../../shared/opencode-cli-path'
 import { resolveOpenCodeProviderFromSnapshot } from './snapshot-model-resolver'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
@@ -81,7 +85,8 @@ import type {
  * 'ok' = normal completion; non-'ok' values record why the session ended abnormally.
  * Used by blueprint executeTask/startVerifyPhase to detect absorbed errors.
  */
-export type SendOutcome = 'ok' | 'overload' | 'turn_limit_exhausted' | 'context_overflow' | 'error' | 'aborted'
+export type SendOutcome =
+  'ok' | 'overload' | 'turn_limit_exhausted' | 'context_overflow' | 'error' | 'aborted'
 
 /** Internal loop-state book-keeping for executeStream. */
 interface StreamLoopState {
@@ -165,7 +170,10 @@ export class AgentSessionService extends AgentBaseService {
   /** Most-recently-started conversation — for backward-compat queries (logging, UI, bridge). */
   private _lastActiveConversationId: string | null = null
   /** Per-conversation stream contexts (text accumulator + abort controller). */
-  private readonly activeStreams = new Map<string, import('./agent-session-host').ActiveStreamContext>()
+  private readonly activeStreams = new Map<
+    string,
+    import('./agent-session-host').ActiveStreamContext
+  >()
   /** Fallback accumulator for direct field access when no activeStreams context exists (test compat). */
   private _directAccumulatedText = ''
   /** HEAD sha captured at session start — for memory extraction git delta. */
@@ -273,7 +281,10 @@ export class AgentSessionService extends AgentBaseService {
   /** G1: Per-session instance ID for MCP config file isolation (parallel build tasks). */
   readonly instanceId: string | undefined
 
-  constructor(private readonly adapter: AgentRoleAdapter, instanceId?: string) {
+  constructor(
+    private readonly adapter: AgentRoleAdapter,
+    instanceId?: string
+  ) {
     super()
     this.instanceId = instanceId
     this.streamProcessor = new AgentStreamProcessor(this)
@@ -502,7 +513,10 @@ export class AgentSessionService extends AgentBaseService {
     // temporary array allocation when activeStreams has many completed entries.
     let hasActiveStream = false
     for (const ctx of this.activeStreams.values()) {
-      if (ctx.abortController !== null) { hasActiveStream = true; break }
+      if (ctx.abortController !== null) {
+        hasActiveStream = true
+        break
+      }
     }
     if (
       hasActiveStream &&
@@ -561,10 +575,18 @@ export class AgentSessionService extends AgentBaseService {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred: only needed on this rare path
       const { execSync } = require('node:child_process')
-      this.currentStartSha = (execSync('git rev-parse HEAD 2>/dev/null || true', {
-        cwd: workspacePath, encoding: 'utf-8', timeout: 2000, windowsHide: true
-      }) as string).trim() || undefined
-    } catch { /* no git — fine */ }
+      this.currentStartSha =
+        (
+          execSync('git rev-parse HEAD 2>/dev/null || true', {
+            cwd: workspacePath,
+            encoding: 'utf-8',
+            timeout: 2000,
+            windowsHide: true
+          }) as string
+        ).trim() || undefined
+    } catch {
+      /* no git — fine */
+    }
 
     // Resolve workspace id + cost preference + executor backend
     try {
@@ -581,7 +603,7 @@ export class AgentSessionService extends AgentBaseService {
       if (storedBackend && storedBackend !== this.executorBackend) {
         this.log.info(
           `[start] Ignoring stored executorBackend='${storedBackend}' — ` +
-          `derived from provider='${this.llmProvider}' → '${this.executorBackend}'`
+            `derived from provider='${this.llmProvider}' → '${this.executorBackend}'`
         )
       }
       this.log.info(
@@ -621,7 +643,10 @@ export class AgentSessionService extends AgentBaseService {
     // for API calls is resolved via resolveModelFromSnapshot() once a conversation ID exists.
     eventLoggerService.logSessionStarted({
       agentId: this.adapter.agentId,
-      model: modelConfigService.getModel(workspacePath, resolveModelAction(this.adapter.role, false))
+      model: modelConfigService.getModel(
+        workspacePath,
+        resolveModelAction(this.adapter.role, false)
+      )
     })
 
     this.log.info(`${this.adapter.role} SDK session initialized for workspace:`, workspacePath)
@@ -813,7 +838,13 @@ export class AgentSessionService extends AgentBaseService {
     let chatGoal: string | undefined
     let chatGoalMode: 'advisory' | 'enforce' = 'advisory'
     if ('consumeGoalForConversation' in this.adapter) {
-      const consumed = (this.adapter as { consumeGoalForConversation(id: string): { goal: string; mode: 'advisory' | 'enforce' } | null }).consumeGoalForConversation(conversationId)
+      const consumed = (
+        this.adapter as {
+          consumeGoalForConversation(
+            id: string
+          ): { goal: string; mode: 'advisory' | 'enforce' } | null
+        }
+      ).consumeGoalForConversation(conversationId)
       if (consumed) {
         chatGoal = consumed.goal
         chatGoalMode = consumed.mode
@@ -862,7 +893,9 @@ export class AgentSessionService extends AgentBaseService {
       if (this.executorBackend === 'cli') {
         const executor = this.cliExecutors.get(conversationId)
         if (executor?.isAlive()) {
-          executor.killProcess().catch(() => { /* best-effort */ })
+          executor.killProcess().catch(() => {
+            /* best-effort */
+          })
         }
       }
       if (this.executorBackend === 'opencode') {
@@ -871,7 +904,9 @@ export class AgentSessionService extends AgentBaseService {
           openCodeExecutor.abortSession(sessionId).catch((err) => {
             this.log.warn('[opencode] Session abort failed:', err)
           })
-          this.log.info(`[cancelCurrentQuery] OpenCode session ${sessionId} abort requested for ${conversationId}`)
+          this.log.info(
+            `[cancelCurrentQuery] OpenCode session ${sessionId} abort requested for ${conversationId}`
+          )
         }
       }
     } else {
@@ -1002,7 +1037,10 @@ export class AgentSessionService extends AgentBaseService {
       () => this._doSwitchMode(mode),
       () => this._doSwitchMode(mode)
     )
-    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    this.sendLocks.set(
+      conversationId,
+      thisLock.catch(() => {})
+    )
     return thisLock
   }
 
@@ -1049,7 +1087,8 @@ export class AgentSessionService extends AgentBaseService {
           const providerConfig = this.resolveOpenCodeProviderConfig()
           const featureFlags = this.resolveWorkspaceMcpFlags()
           // Derive isLocal from the snapshot-resolved providerId
-          const isLocal = providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
+          const isLocal =
+            providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
           openCodeConfigWriter.writeConfig({
             workspacePath: this.workspacePath,
             workspaceId: this.workspaceId,
@@ -1103,7 +1142,10 @@ export class AgentSessionService extends AgentBaseService {
       () => this._doCompact(),
       () => this._doCompact()
     )
-    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    this.sendLocks.set(
+      conversationId,
+      thisLock.catch(() => {})
+    )
     return thisLock
   }
 
@@ -1297,7 +1339,9 @@ export class AgentSessionService extends AgentBaseService {
       this.sessionMap.delete(conversationId)
       try {
         conversationRepository.updateSessionId(conversationId, '')
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return undefined
     }
 
@@ -1310,11 +1354,13 @@ export class AgentSessionService extends AgentBaseService {
     if (sessionId && !fromMemory) {
       this.log.info(
         `[resolveSession] Session ${sessionId} for ${conversationId} loaded from DB — ` +
-        `previous CLI process is gone. Starting fresh to avoid orphaned background tasks.`
+          `previous CLI process is gone. Starting fresh to avoid orphaned background tasks.`
       )
       try {
         conversationRepository.updateSessionId(conversationId, '')
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return undefined
     }
 
@@ -1346,7 +1392,9 @@ export class AgentSessionService extends AgentBaseService {
                 // files/APIs that no longer exist. Better to cold-start from
                 // recent messages than inject outdated context.
                 conversationRepository.updateSummary(conversationId, '')
-              } catch { /* non-fatal */ }
+              } catch {
+                /* non-fatal */
+              }
               return undefined
             }
           }
@@ -1421,7 +1469,10 @@ export class AgentSessionService extends AgentBaseService {
       // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
       // to prevent the first request's promise from deadlocking forever.
       if (this.controlToolState.askUser && requestId) {
-        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.respondToAskUser(
+          requestId,
+          'A question is already pending. Wait for the user to answer.'
+        )
         this.log.info(
           `[wrapControlCallbacks] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
         )
@@ -1467,9 +1518,7 @@ export class AgentSessionService extends AgentBaseService {
 
     const hasExternalMcps =
       mcpServers &&
-      Object.keys(mcpServers).some((id) =>
-        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id)
-      )
+      Object.keys(mcpServers).some((id) => EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id))
     const timeoutMs = hasExternalMcps
       ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
       : baseTimeoutMs
@@ -1507,7 +1556,7 @@ export class AgentSessionService extends AgentBaseService {
       mcpResult,
       llmProvider,
       localContextWindow,
-      contextTier: passedContextTier,
+      contextTier: passedContextTier
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -1545,7 +1594,9 @@ export class AgentSessionService extends AgentBaseService {
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
         case 'opencode': {
-          const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>)
+          const { text: ocPrompt, images: ocImages } = splitContentBlocks(
+            cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>
+          )
           executorStream = this.executeOpenCodeStream({
             prompt: ocPrompt,
             images: ocImages,
@@ -1560,16 +1611,16 @@ export class AgentSessionService extends AgentBaseService {
         default:
           {
             // Explicit goal from opts (chat path) takes priority over adapter duck-typing (blueprint/MPA path)
-            const adapterGoal = opts.goal ?? (
-              'getGoalCondition' in this.adapter
+            const adapterGoal =
+              opts.goal ??
+              ('getGoalCondition' in this.adapter
                 ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
-                : null
-            )
-            const adapterGoalMode = opts.goalMode ?? (
-              'getGoalMode' in this.adapter
+                : null)
+            const adapterGoalMode =
+              opts.goalMode ??
+              ('getGoalMode' in this.adapter
                 ? (this.adapter as { getGoalMode(): 'advisory' | 'enforce' }).getGoalMode()
-                : ('advisory' as const)
-            )
+                : ('advisory' as const))
             executorStream = this.executeCLIStream({
               prompt: cliPromptInput,
               systemPrompt,
@@ -1582,7 +1633,7 @@ export class AgentSessionService extends AgentBaseService {
               localContextWindow,
               goal: adapterGoal ?? undefined,
               goalMode: adapterGoalMode,
-              conversationId,
+              conversationId
             })
           }
           break
@@ -1644,7 +1695,10 @@ export class AgentSessionService extends AgentBaseService {
         const convAccText = this.activeStreams.get(conversationId)?.accumulatedText ?? ''
         if (this.workspaceId && convAccText.length > 200) {
           // Gate on sessionCapture setting
-          const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<string, unknown>
+          const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<
+            string,
+            unknown
+          >
           if (wSettings.memorySessionCapture !== false) {
             const { memoryExtractionService } = await import('./memory-extraction.service')
             memoryExtractionService.enqueueSessionExtraction({
@@ -1863,7 +1917,6 @@ export class AgentSessionService extends AgentBaseService {
     }
   }
 
-
   /**
    * Extract prompt content from either a string or AsyncIterable<AgentPromptInput>.
    * For images, the iterable contains content blocks (image + text) that need
@@ -1967,7 +2020,8 @@ export class AgentSessionService extends AgentBaseService {
       const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
 
       // Resolve context tier for tier-aware config (compaction, timeouts)
-      const isLocal = params.providerConfig.providerId === 'ollama' || params.providerConfig.providerId === 'omlx'
+      const isLocal =
+        params.providerConfig.providerId === 'ollama' || params.providerConfig.providerId === 'omlx'
       let contextTier: ContextWindowTier | undefined
       let contextWindowConfident = false
       if (isLocal) {
@@ -2028,19 +2082,22 @@ export class AgentSessionService extends AgentBaseService {
    * Build CLI execute options from session parameters.
    * Maps the same information that buildSdkExecuteOptions uses to CLI flags.
    */
-  private buildCLIExecuteOptions(params: {
-    prompt: string | Array<Record<string, unknown>>
-    systemPrompt: string
-    sessionId: string | undefined
-    isBuildMode: boolean
-    mode?: ConversationMode
-    resumeAt: string | undefined
-    abortController: AbortController
-    mcpResult: AdapterMcpResult
-    localContextWindow?: number
-    goal?: string
-    goalMode?: 'advisory' | 'enforce'
-  }, executor?: CLIExecutor): CLIExecuteOptions {
+  private buildCLIExecuteOptions(
+    params: {
+      prompt: string | Array<Record<string, unknown>>
+      systemPrompt: string
+      sessionId: string | undefined
+      isBuildMode: boolean
+      mode?: ConversationMode
+      resumeAt: string | undefined
+      abortController: AbortController
+      mcpResult: AdapterMcpResult
+      localContextWindow?: number
+      goal?: string
+      goalMode?: 'advisory' | 'enforce'
+    },
+    executor?: CLIExecutor
+  ): CLIExecuteOptions {
     return this.executorFactory.buildCLIExecuteOptions(params, executor)
   }
 
@@ -2083,7 +2140,7 @@ export class AgentSessionService extends AgentBaseService {
       this.emit('plan', planEvent)
       this.log.info(
         `[ipc-bridge] Plan event received — conversationId=${this.currentConversationId} ` +
-        `structuredPlan=${!!planEvent.structuredPlan} rawContentLen=${planEvent.rawContent.length}`
+          `structuredPlan=${!!planEvent.structuredPlan} rawContentLen=${planEvent.rawContent.length}`
       )
 
       // Persist the plan so phase/task progress has a DB row to attach to.
@@ -2128,7 +2185,10 @@ export class AgentSessionService extends AgentBaseService {
       // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
       // to prevent the first request's promise from deadlocking forever.
       if (this.controlToolState.askUser && requestId) {
-        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.respondToAskUser(
+          requestId,
+          'A question is already pending. Wait for the user to answer.'
+        )
         this.log.info(
           `[ipc-bridge] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
         )
@@ -2168,11 +2228,11 @@ export class AgentSessionService extends AgentBaseService {
       // Resolve planId from the plan registry for this conversation
       let planId: string | null = null
       try {
-        const plan = planRepository.findActiveByConversationId(
-          this.currentConversationId ?? ''
-        )
+        const plan = planRepository.findActiveByConversationId(this.currentConversationId ?? '')
         if (plan) planId = plan.id
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
 
       // Persist phase progress to DB (non-critical)
       if (planId) {
@@ -2181,40 +2241,53 @@ export class AgentSessionService extends AgentBaseService {
         let touchedFiles: string[] | undefined
         if (progress.status === 'completed') {
           try {
-            const plan = planRepository.findActiveByConversationId(
-              this.currentConversationId ?? ''
-            )
-            const phaseData = plan?.structuredPlan?.phases?.find(
-              (p) => p.id === progress.phaseId
-            )
+            const plan = planRepository.findActiveByConversationId(this.currentConversationId ?? '')
+            const phaseData = plan?.structuredPlan?.phases?.find((p) => p.id === progress.phaseId)
             if (phaseData?.files && phaseData.files.length > 0) {
               touchedFiles = phaseData.files.map((f) => f.file)
             }
-          } catch { /* non-critical */ }
+          } catch {
+            /* non-critical */
+          }
         }
 
         // Build optional task update for persistence
-        const taskUpdate = progress.taskId && progress.taskStatus
-          ? { taskId: progress.taskId, title: progress.taskTitle ?? progress.taskId, status: progress.taskStatus }
-          : undefined
+        const taskUpdate =
+          progress.taskId && progress.taskStatus
+            ? {
+                taskId: progress.taskId,
+                title: progress.taskTitle ?? progress.taskId,
+                status: progress.taskStatus
+              }
+            : undefined
 
         try {
           planRepository.updatePhaseProgress(
-            planId, progress.phaseId, progress.status, undefined, touchedFiles, taskUpdate
+            planId,
+            progress.phaseId,
+            progress.status,
+            undefined,
+            touchedFiles,
+            taskUpdate
           )
-        } catch { /* non-critical */ }
+        } catch {
+          /* non-critical */
+        }
 
         // Auto-detect plan completion: if all phases are done, mark plan completed
         if (progress.status === 'completed') {
           try {
             const allProgress = planRepository.getPhaseProgress(planId)
-            const allCompleted = allProgress.length >= progress.totalPhases &&
+            const allCompleted =
+              allProgress.length >= progress.totalPhases &&
               allProgress.every((p) => p.status === 'completed' || p.status === 'skipped')
             if (allCompleted) {
               planRepository.markCompleted(planId)
               this.log.info(`[ipc-bridge] Plan ${planId} auto-completed — all phases done`)
             }
-          } catch { /* non-critical */ }
+          } catch {
+            /* non-critical */
+          }
         }
       }
 

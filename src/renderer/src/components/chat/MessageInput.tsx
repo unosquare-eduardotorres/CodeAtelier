@@ -67,15 +67,11 @@ function handleCommandKey(e: React.KeyboardEvent, ctx: CommandContext): boolean 
   switch (e.key) {
     case 'ArrowUp':
       e.preventDefault()
-      ctx.setSelectedCommandIndex((prev) =>
-        prev > 0 ? prev - 1 : ctx.filteredCommands.length - 1
-      )
+      ctx.setSelectedCommandIndex((prev) => (prev > 0 ? prev - 1 : ctx.filteredCommands.length - 1))
       return true
     case 'ArrowDown':
       e.preventDefault()
-      ctx.setSelectedCommandIndex((prev) =>
-        prev < ctx.filteredCommands.length - 1 ? prev + 1 : 0
-      )
+      ctx.setSelectedCommandIndex((prev) => (prev < ctx.filteredCommands.length - 1 ? prev + 1 : 0))
       return true
     case 'Tab': {
       e.preventDefault()
@@ -216,14 +212,28 @@ function useMessageSubmit(params: {
   checkWarning: (text: string, attachments?: string[]) => boolean
   executeSend: (content: string, sendAttachments?: string[]) => Promise<void>
 }): () => Promise<void> {
-  const { text, setText, attachments, activeConversation, executeCommand, checkWarning, executeSend } = params
+  const {
+    text,
+    setText,
+    attachments,
+    activeConversation,
+    executeCommand,
+    checkWarning,
+    executeSend
+  } = params
 
   return useCallback(async (): Promise<void> => {
     const trimmed = text.trim()
     // SEND-RACE-02: Read live store state (not stale React closure) to prevent
     // rapid double-clicks from bypassing the guard between render cycles.
     const { isStreaming: liveStreaming, sendingConversationIds } = useChatStore.getState()
-    if (!trimmed || liveStreaming || sendingConversationIds.has(activeConversation?.id ?? '') || !activeConversation) return
+    if (
+      !trimmed ||
+      liveStreaming ||
+      sendingConversationIds.has(activeConversation?.id ?? '') ||
+      !activeConversation
+    )
+      return
 
     if (trimmed.startsWith('/')) {
       setText('')
@@ -364,7 +374,13 @@ export default function MessageInput({
   })
 
   // ── Side effects ──
-  useMessageInputEffects(text, conversationId, textareaRef, loadPreferences, hydrateConversationSpecialists)
+  useMessageInputEffects(
+    text,
+    conversationId,
+    textareaRef,
+    loadPreferences,
+    hydrateConversationSpecialists
+  )
 
   // ── Slash commands ──
   const currentProvider = activeConversation?.llmProvider ?? 'claude'
@@ -447,7 +463,9 @@ export default function MessageInput({
     }
   }
 
-  const isSending = useChatStore((s) => s.sendingConversationIds.has(s.activeConversation?.id ?? ''))
+  const isSending = useChatStore((s) =>
+    s.sendingConversationIds.has(s.activeConversation?.id ?? '')
+  )
   const isDisabled = isStreaming || isSending || !activeConversation || isInitializing
 
   return (

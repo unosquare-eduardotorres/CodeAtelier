@@ -24,13 +24,20 @@ const readline = require('readline')
 // ── Marker file (test can assert shim was used, not real CLI) ──
 
 const markerDir = process.env.CLAUDE_SHIM_MARKER_DIR || path.join(__dirname, '.markers')
-try { fs.mkdirSync(markerDir, { recursive: true }) } catch { /* ignore */ }
+try {
+  fs.mkdirSync(markerDir, { recursive: true })
+} catch {
+  /* ignore */
+}
 const spawnId = `shim-${Date.now()}-${process.pid}`
-fs.writeFileSync(path.join(markerDir, spawnId), JSON.stringify({
-  pid: process.pid,
-  args: process.argv.slice(2),
-  timestamp: new Date().toISOString()
-}))
+fs.writeFileSync(
+  path.join(markerDir, spawnId),
+  JSON.stringify({
+    pid: process.pid,
+    args: process.argv.slice(2),
+    timestamp: new Date().toISOString()
+  })
+)
 
 // ── NDJSON helpers ──
 
@@ -123,7 +130,8 @@ const CLARIFY_FINDINGS = {
       severity: 'high',
       status: 'outstanding',
       title: 'Response format unspecified',
-      description: 'The spec does not define whether the greeting endpoint should return plain text or JSON.',
+      description:
+        'The spec does not define whether the greeting endpoint should return plain text or JSON.',
       specRefs: ['section 1.1'],
       recommendation: 'Define the response content type and structure.'
     },
@@ -210,7 +218,7 @@ ${questionsJson}
 
 function buildClarifyTurn2Response() {
   const resolvedFindings = {
-    findings: CLARIFY_FINDINGS.findings.map(f => ({
+    findings: CLARIFY_FINDINGS.findings.map((f) => ({
       ...f,
       status: 'resolved'
     })),
@@ -270,11 +278,15 @@ async function main() {
 
     // Phase detection on first user message
     if (turnCount === 1) {
-      if (content.includes('Generate a detailed specification') ||
-          content.includes('specification') && content.includes('description')) {
+      if (
+        content.includes('Generate a detailed specification') ||
+        (content.includes('specification') && content.includes('description'))
+      ) {
         isSpecify = true
-      } else if (content.includes('Analyze the specification') ||
-                 content.includes('gap analysis')) {
+      } else if (
+        content.includes('Analyze the specification') ||
+        content.includes('gap analysis')
+      ) {
         isClarify = true
       } else {
         // Default: treat as specify for robustness
@@ -293,7 +305,7 @@ async function main() {
   }
 
   // Give a moment for stdout to flush, then exit cleanly
-  await new Promise(r => setTimeout(r, 100))
+  await new Promise((r) => setTimeout(r, 100))
   process.exit(0)
 }
 
@@ -303,8 +315,8 @@ function extractUserText(msg) {
   if (typeof message.content === 'string') return message.content
   if (Array.isArray(message.content)) {
     return message.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
       .join('\n')
   }
   return ''
@@ -346,7 +358,7 @@ function handleClarifyTurn(content, turn) {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   process.stderr.write(`[claude-shim] Fatal error: ${err.message}\n`)
   process.exit(1)
 })

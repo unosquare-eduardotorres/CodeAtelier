@@ -2,9 +2,8 @@
 /**
  * Code Analysis MCP Server — externalized for CLI interactive mode.
  *
- * Exposes: analyze_complexity, analyze_dependencies, analyze_test_coverage,
- *          find_code_smells, suggest_refactoring, resolve_library_id,
- *          query_library_docs, eslint_check, eslint_fix, eslint_rules
+ * Exposes: audit_scan, analyze_complexity, eslint_check, eslint_fix, eslint_rules,
+ *          resolve_library_id, query_library_docs
  *
  * Environment variables:
  *   WORKSPACE_PATH    — Absolute workspace path
@@ -78,19 +77,27 @@ function resolveEslintStrategy(): EslintStrategy {
 
   // 2. Detect workspace config type
   const flatConfigFiles = [
-    'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts'
+    'eslint.config.js',
+    'eslint.config.mjs',
+    'eslint.config.cjs',
+    'eslint.config.ts'
   ]
   const legacyConfigFiles = [
-    '.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.json', '.eslintrc.yml', '.eslintrc.yaml'
+    '.eslintrc',
+    '.eslintrc.js',
+    '.eslintrc.cjs',
+    '.eslintrc.json',
+    '.eslintrc.yml',
+    '.eslintrc.yaml'
   ]
 
-  const hasFlatConfig = flatConfigFiles.some(f => existsSync(join(WORKSPACE_PATH, f)))
+  const hasFlatConfig = flatConfigFiles.some((f) => existsSync(join(WORKSPACE_PATH, f)))
   if (hasFlatConfig) {
     eslintStrategy = 'flat'
     return eslintStrategy
   }
 
-  const hasLegacyConfig = legacyConfigFiles.some(f => existsSync(join(WORKSPACE_PATH, f)))
+  const hasLegacyConfig = legacyConfigFiles.some((f) => existsSync(join(WORKSPACE_PATH, f)))
   if (hasLegacyConfig) {
     eslintStrategy = 'legacy'
     return eslintStrategy
@@ -193,17 +200,25 @@ async function handleAnalyzeComplexity(args: {
 
   if (!checkEslintAvailable()) {
     return {
-      content: [{
-        type: 'text' as const,
-        text: `[analyze_complexity] ESLint not available via npx. Complexity analysis requires ESLint.`
-      }]
+      content: [
+        {
+          type: 'text' as const,
+          text: `[analyze_complexity] ESLint not available via npx. Complexity analysis requires ESLint.`
+        }
+      ]
     }
   }
 
   try {
     // Run ESLint with complexity rule at max:0 to report ALL functions
     const { stdout } = runEslint(
-      ['--format', 'json', '--rule', `'{"complexity": ["warn", {"max": 0}]}'`, quotePaths([targetPath])],
+      [
+        '--format',
+        'json',
+        '--rule',
+        `'{"complexity": ["warn", {"max": 0}]}'`,
+        quotePaths([targetPath])
+      ],
       WORKSPACE_PATH
     )
 
@@ -263,10 +278,12 @@ async function handleAnalyzeComplexity(args: {
     // Graceful degradation for config errors — non-alarming message
     if (err instanceof EslintConfigError) {
       return {
-        content: [{
-          type: 'text' as const,
-          text: `[analyze_complexity] ⚠️ ${err.message}`
-        }]
+        content: [
+          {
+            type: 'text' as const,
+            text: `[analyze_complexity] ⚠️ ${err.message}`
+          }
+        ]
       }
     }
     return {
@@ -284,7 +301,7 @@ async function handleAnalyzeComplexity(args: {
 async function registerTools(): Promise<void> {
   server.tool(
     'analyze_complexity',
-    'Cyclomatic complexity analysis for JS/TS files.',
+    'Cyclomatic complexity per function above a threshold. audit_scan already includes this — call it only for a different path or threshold.',
     {
       path: z.string().describe('File or directory path to analyze (relative to workspace root)'),
       threshold: z
@@ -307,85 +324,11 @@ async function registerTools(): Promise<void> {
     handleAnalyzeComplexity
   )
 
-  server.tool(
-    'analyze_dependencies',
-    'Analyze dependency structure for a file or module.',
-    {
-      path: z.string().describe('File or directory path to analyze')
-    },
-    async (args) => {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `[analyze_dependencies] path=${args.path} — delegating to in-process service`
-          }
-        ]
-      }
-    }
-  )
-
-  server.tool(
-    'analyze_test_coverage',
-    'Find files that lack corresponding test files.',
-    {
-      path: z.string().optional().describe('Directory to scan (default: entire workspace)'),
-      testPattern: z.string().optional().describe('Test file pattern (default: **/*.test.ts)')
-    },
-    async (args) => {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `[analyze_test_coverage] path=${args.path ?? 'all'} — delegating to in-process service`
-          }
-        ]
-      }
-    }
-  )
-
-  server.tool(
-    'find_code_smells',
-    'Detect common code quality issues in a file or directory.',
-    {
-      path: z.string().describe('File or directory to analyze'),
-      maxResults: z.number().int().min(1).max(500).optional().default(20)
-    },
-    async (args) => {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `[find_code_smells] path=${args.path} max=${args.maxResults} — delegating to in-process service`
-          }
-        ]
-      }
-    }
-  )
-
-  server.tool(
-    'suggest_refactoring',
-    'Suggest refactoring opportunities for a file based on complexity and coupling analysis.',
-    {
-      filePath: z.string().describe('File to analyze for refactoring')
-    },
-    async (args) => {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `[suggest_refactoring] file=${args.filePath} — delegating to in-process service`
-          }
-        ]
-      }
-    }
-  )
-
   // ── Library Documentation Tools ──
 
   server.tool(
     'resolve_library_id',
-    'Search for a library by name. Checks local cache first, then Context7, then npm registry. Returns available packages and their doc coverage.',
+    'Step 1 of 2 for external library docs: name in, doc id out. Pass the id to query_library_docs. Call once per library per session.',
     {
       libraryName: z.string().describe('Package name (e.g. "zod", "electron", "react")'),
       query: z.string().optional().describe('What you need — improves ranking')
@@ -436,7 +379,7 @@ async function registerTools(): Promise<void> {
 
   server.tool(
     'query_library_docs',
-    'Get documentation for a library. Returns relevant sections matched by full-text search. Falls back through local cache → Context7 → npm registry.',
+    'Docs for an external library, given an id from resolve_library_id. Third-party APIs only — use code-graph for code in this repo.',
     {
       packageName: z.string().describe('Package name (exact match)'),
       query: z.string().describe('Specific question or topic to search for'),
@@ -551,7 +494,7 @@ const CONFIG_ERROR_PATTERNS = [
 
 function isConfigError(stderr: string): boolean {
   const lower = stderr.toLowerCase()
-  return CONFIG_ERROR_PATTERNS.some(p => lower.includes(p.toLowerCase()))
+  return CONFIG_ERROR_PATTERNS.some((p) => lower.includes(p.toLowerCase()))
 }
 
 /** Strategy fallback order: flat → legacy → fallback */
@@ -603,7 +546,7 @@ function _runEslintWithStrategy(
         // All strategies exhausted — throw graceful degradation error
         throw new EslintConfigError(
           `ESLint analysis skipped — no usable ESLint config in this workspace. ` +
-          `Tried strategies: flat, legacy, fallback. Last error: ${stderr.slice(0, 300)}`
+            `Tried strategies: flat, legacy, fallback. Last error: ${stderr.slice(0, 300)}`
         )
       }
       throw new Error(`ESLint fatal: ${stderr.slice(0, 500)}`)
@@ -643,11 +586,14 @@ function getGitChangedFiles(cwd: string): string[] {
       windowsHide: true
     })
     const allFiles = `${diffOutput}\n${stagedOutput}`
-    const unique = [...new Set(
-      allFiles.split('\n')
-        .map(f => f.trim())
-        .filter(f => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
-    )]
+    const unique = [
+      ...new Set(
+        allFiles
+          .split('\n')
+          .map((f) => f.trim())
+          .filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
+      )
+    ]
     return unique
   } catch {
     return []
@@ -657,7 +603,7 @@ function getGitChangedFiles(cwd: string): string[] {
 function summarizeDiagnostics(diagnostics: EslintDiagnostic[]): string {
   const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
   const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
-  const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+  const filesWithIssues = diagnostics.filter((d) => d.errorCount + d.warningCount > 0)
 
   const lines: string[] = [
     `## ESLint Results`,
@@ -685,7 +631,7 @@ function summarizeDiagnostics(diagnostics: EslintDiagnostic[]): string {
 
   // Top 10 rules by total count
   const topRules = [...ruleCounts.entries()]
-    .sort((a, b) => (b[1].errors + b[1].warnings) - (a[1].errors + a[1].warnings))
+    .sort((a, b) => b[1].errors + b[1].warnings - (a[1].errors + a[1].warnings))
     .slice(0, 10)
 
   lines.push('### Top Issues by Rule')
@@ -698,7 +644,7 @@ function summarizeDiagnostics(diagnostics: EslintDiagnostic[]): string {
 
   // Files with errors (up to 15)
   const errorFiles = filesWithIssues
-    .filter(f => f.errorCount > 0)
+    .filter((f) => f.errorCount > 0)
     .sort((a, b) => b.errorCount - a.errorCount)
     .slice(0, 15)
 
@@ -715,7 +661,7 @@ function summarizeDiagnostics(diagnostics: EslintDiagnostic[]): string {
 }
 
 function formatFullDiagnostics(diagnostics: EslintDiagnostic[]): string {
-  const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+  const filesWithIssues = diagnostics.filter((d) => d.errorCount + d.warningCount > 0)
   const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
   const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
 
@@ -736,7 +682,9 @@ function formatFullDiagnostics(diagnostics: EslintDiagnostic[]): string {
     lines.push('')
     for (const msg of file.messages) {
       const sev = msg.severity === 2 ? '❌' : '⚠️'
-      lines.push(`- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`)
+      lines.push(
+        `- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`
+      )
     }
     lines.push('')
   }
@@ -822,10 +770,14 @@ async function handleEslintFix(args: {
       lines.push('### Remaining Issues (cannot auto-fix)')
       lines.push('')
       for (const file of filesWithIssues.slice(0, 15)) {
-        lines.push(`**${file.filePath}** — ${file.errorCount} errors, ${file.warningCount} warnings`)
+        lines.push(
+          `**${file.filePath}** — ${file.errorCount} errors, ${file.warningCount} warnings`
+        )
         for (const msg of file.messages.slice(0, 10)) {
           const sev = msg.severity === 2 ? '❌' : '⚠️'
-          lines.push(`  ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`)
+          lines.push(
+            `  ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`
+          )
         }
       }
     }
@@ -850,11 +802,7 @@ async function handleEslintFix(args: {
 }
 
 function resolveRuleSeverity(raw: unknown): 'error' | 'warn' | 'off' {
-  return raw === 2 || raw === 'error'
-    ? 'error'
-    : raw === 1 || raw === 'warn'
-      ? 'warn'
-      : 'off'
+  return raw === 2 || raw === 'error' ? 'error' : raw === 1 || raw === 'warn' ? 'warn' : 'off'
 }
 
 function resolveTargetFile(filePath?: string): string {
@@ -873,10 +821,7 @@ function resolveTargetFile(filePath?: string): string {
   }
 }
 
-function formatRulesOutput(
-  targetFile: string,
-  rules: Record<string, unknown>
-): string {
+function formatRulesOutput(targetFile: string, rules: Record<string, unknown>): string {
   const activeRules: Array<{ rule: string; severity: string; options: unknown }> = []
   for (const [rule, value] of Object.entries(rules)) {
     const arr = Array.isArray(value) ? value : [value]
@@ -919,7 +864,10 @@ async function handleEslintRules(args: {
 }): Promise<{ isError?: boolean; content: Array<{ type: 'text'; text: string }> }> {
   try {
     const targetFile = resolveTargetFile(args.filePath)
-    const { stdout } = runEslint(['--print-config', `"${sanitizePath(targetFile)}"`], WORKSPACE_PATH)
+    const { stdout } = runEslint(
+      ['--print-config', `"${sanitizePath(targetFile)}"`],
+      WORKSPACE_PATH
+    )
     const config = JSON.parse(stdout)
     const output = formatRulesOutput(targetFile, config.rules ?? {})
 
@@ -964,95 +912,101 @@ async function handleAuditScan(args: {
     sections.push(
       `### ESLint + Complexity\n⚠️ ESLint not available via npx. Complexity analysis requires ESLint.\n`
     )
-  } else try {
-    const targetPaths = args.paths.map(sanitizePath)
-    const { stdout } = runEslint(
-      [
-        '--format', 'json',
-        '--rule', `'{"complexity": ["warn", {"max": 0}]}'`,
-        quotePaths(targetPaths)
-      ],
-      WORKSPACE_PATH
-    )
-    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+  } else
+    try {
+      const targetPaths = args.paths.map(sanitizePath)
+      const { stdout } = runEslint(
+        [
+          '--format',
+          'json',
+          '--rule',
+          `'{"complexity": ["warn", {"max": 0}]}'`,
+          quotePaths(targetPaths)
+        ],
+        WORKSPACE_PATH
+      )
+      const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
 
-    // Split lint issues from complexity issues
-    const lintIssues: Array<{
-      file: string; line: number; severity: number; rule: string
-    }> = []
-    const complexityResults: ComplexityResult[] = []
+      // Split lint issues from complexity issues
+      const lintIssues: Array<{
+        file: string
+        line: number
+        severity: number
+        rule: string
+      }> = []
+      const complexityResults: ComplexityResult[] = []
 
-    for (const diag of diagnostics) {
-      for (const msg of diag.messages) {
-        if (msg.ruleId === 'complexity') {
-          const parsed = parseComplexityMessage(msg, diag.filePath)
-          if (parsed && parsed.complexity >= args.complexityThreshold) {
-            complexityResults.push(parsed)
+      for (const diag of diagnostics) {
+        for (const msg of diag.messages) {
+          if (msg.ruleId === 'complexity') {
+            const parsed = parseComplexityMessage(msg, diag.filePath)
+            if (parsed && parsed.complexity >= args.complexityThreshold) {
+              complexityResults.push(parsed)
+            }
+          } else if (msg.ruleId) {
+            lintIssues.push({
+              file: diag.filePath.replace(WORKSPACE_PATH + '/', ''),
+              line: msg.line,
+              severity: msg.severity,
+              rule: msg.ruleId
+            })
           }
-        } else if (msg.ruleId) {
-          lintIssues.push({
-            file: diag.filePath.replace(WORKSPACE_PATH + '/', ''),
-            line: msg.line,
-            severity: msg.severity,
-            rule: msg.ruleId
-          })
         }
       }
-    }
 
-    // ESLint section
-    const errors = lintIssues.filter((i) => i.severity === 2)
-    const warnings = lintIssues.filter((i) => i.severity === 1)
-    sections.push(
-      `### ESLint (${errors.length} errors, ${warnings.length} warnings across ${diagnostics.length} files)`
-    )
-    if (lintIssues.length === 0) {
-      sections.push('✅ All files pass.\n')
-    } else {
-      sections.push('| Severity | Rule | File | Line |')
-      sections.push('|----------|------|------|------|')
-      for (const i of lintIssues.slice(0, args.maxResults)) {
-        const sev = i.severity === 2 ? '❌' : '⚠️'
-        sections.push(`| ${sev} | ${i.rule} | ${i.file} | ${i.line} |`)
+      // ESLint section
+      const errors = lintIssues.filter((i) => i.severity === 2)
+      const warnings = lintIssues.filter((i) => i.severity === 1)
+      sections.push(
+        `### ESLint (${errors.length} errors, ${warnings.length} warnings across ${diagnostics.length} files)`
+      )
+      if (lintIssues.length === 0) {
+        sections.push('✅ All files pass.\n')
+      } else {
+        sections.push('| Severity | Rule | File | Line |')
+        sections.push('|----------|------|------|------|')
+        for (const i of lintIssues.slice(0, args.maxResults)) {
+          const sev = i.severity === 2 ? '❌' : '⚠️'
+          sections.push(`| ${sev} | ${i.rule} | ${i.file} | ${i.line} |`)
+        }
+        if (lintIssues.length > args.maxResults) {
+          sections.push(`_...and ${lintIssues.length - args.maxResults} more_`)
+        }
+        sections.push('')
       }
-      if (lintIssues.length > args.maxResults) {
-        sections.push(`_...and ${lintIssues.length - args.maxResults} more_`)
-      }
-      sections.push('')
-    }
 
-    // Complexity section
-    complexityResults.sort((a, b) => b.complexity - a.complexity)
-    const cappedComplexity = complexityResults.slice(0, args.maxResults)
-    sections.push(
-      `### Complexity (${complexityResults.length} functions above threshold ${args.complexityThreshold})`
-    )
-    if (cappedComplexity.length === 0) {
-      sections.push(`✅ No functions exceed complexity ${args.complexityThreshold}.\n`)
-    } else {
-      sections.push('| Score | Function | File | Line |')
-      sections.push('|-------|----------|------|------|')
-      for (const r of cappedComplexity) {
-        const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
-        const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
-        sections.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
+      // Complexity section
+      complexityResults.sort((a, b) => b.complexity - a.complexity)
+      const cappedComplexity = complexityResults.slice(0, args.maxResults)
+      sections.push(
+        `### Complexity (${complexityResults.length} functions above threshold ${args.complexityThreshold})`
+      )
+      if (cappedComplexity.length === 0) {
+        sections.push(`✅ No functions exceed complexity ${args.complexityThreshold}.\n`)
+      } else {
+        sections.push('| Score | Function | File | Line |')
+        sections.push('|-------|----------|------|------|')
+        for (const r of cappedComplexity) {
+          const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
+          const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
+          sections.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
+        }
+        sections.push('')
       }
-      sections.push('')
+    } catch (err) {
+      if (err instanceof EslintConfigError) {
+        // Graceful degradation — config issue, not a crash
+        sections.push(`### ESLint + Complexity\n⚠️ ${err.message}\n`)
+      } else {
+        const msg = err instanceof Error ? err.message : String(err)
+        const hint = !checkEslintAvailable()
+          ? ' ESLint is not available via npx.'
+          : msg.includes('exit code 2')
+            ? ' ESLint could not parse the project config. Check eslint.config.* for syntax errors.'
+            : ''
+        sections.push(`### ESLint + Complexity\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
+      }
     }
-  } catch (err) {
-    if (err instanceof EslintConfigError) {
-      // Graceful degradation — config issue, not a crash
-      sections.push(`### ESLint + Complexity\n⚠️ ${err.message}\n`)
-    } else {
-      const msg = err instanceof Error ? err.message : String(err)
-      const hint = !checkEslintAvailable()
-        ? ' ESLint is not available via npx.'
-        : msg.includes('exit code 2')
-          ? ' ESLint could not parse the project config. Check eslint.config.* for syntax errors.'
-          : ''
-      sections.push(`### ESLint + Complexity\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
-    }
-  }
 
   // ── 2. Dead code via code-graph (if available) ──
   if (WORKSPACE_ID) {
@@ -1076,7 +1030,11 @@ async function handleAuditScan(args: {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const isNative = msg.includes('NODE_MODULE_VERSION') || msg.includes('ABI') || msg.includes('was compiled against') || msg.includes('.node')
+      const isNative =
+        msg.includes('NODE_MODULE_VERSION') ||
+        msg.includes('ABI') ||
+        msg.includes('was compiled against') ||
+        msg.includes('.node')
       const hint = isNative
         ? ' The better-sqlite3 native module failed to load. Reinstall with `npm install better-sqlite3`.'
         : ''
@@ -1087,15 +1045,15 @@ async function handleAuditScan(args: {
   }
 
   // ── Summary if both sub-scans failed ──
-  const eslintFailed = sections.some(s => s.includes('### ESLint + Complexity\n⚠️'))
-  const deadCodeFailed = sections.some(s => s.includes('### Dead Code\n⚠️'))
+  const eslintFailed = sections.some((s) => s.includes('### ESLint + Complexity\n⚠️'))
+  const deadCodeFailed = sections.some((s) => s.includes('### Dead Code\n⚠️'))
 
   if (eslintFailed && deadCodeFailed) {
     sections.push(
-      `### Summary\n⚠️ Both sub-scans produced warnings. Common causes:\n`
-      + `- ESLint not available via npx\n`
-      + `- No ESLint config in workspace (eslint.config.* or .eslintrc.*)\n`
-      + `- Native module load failure: reinstall with \`npm install better-sqlite3\`\n`
+      `### Summary\n⚠️ Both sub-scans produced warnings. Common causes:\n` +
+        `- ESLint not available via npx\n` +
+        `- No ESLint config in workspace (eslint.config.* or .eslintrc.*)\n` +
+        `- Native module load failure: reinstall with \`npm install better-sqlite3\`\n`
     )
   }
 
@@ -1109,7 +1067,7 @@ async function handleAuditScan(args: {
 function registerEslintTools(): void {
   server.tool(
     'eslint_check',
-    'Run ESLint on specified files or directories and return structured results. Defaults to changed files (git diff) if no paths given.',
+    'Run ESLint and return structured results. Omit paths to check only git-changed files. Mandatory after code edits in build mode.',
     {
       paths: z
         .array(z.string())
@@ -1126,7 +1084,7 @@ function registerEslintTools(): void {
 
   server.tool(
     'eslint_fix',
-    'Run ESLint with --fix on specified files. Auto-fixes what it can, returns remaining issues.',
+    'Run ESLint --fix and return what could not be auto-fixed. Call after eslint_check reports errors, then re-check.',
     {
       paths: z
         .array(z.string())
@@ -1138,7 +1096,7 @@ function registerEslintTools(): void {
 
   server.tool(
     'eslint_rules',
-    'List active ESLint rules and their severity for a file. Useful for understanding which rules are enforced.',
+    'Which rules are active for a file and at what severity. Use to understand why a rule fired — never to justify an eslint-disable.',
     {
       filePath: z
         .string()
@@ -1150,7 +1108,7 @@ function registerEslintTools(): void {
 
   server.tool(
     'audit_scan',
-    'Combined ESLint + complexity + dead code scan. Use instead of separate eslint_check/analyze_complexity/find_dead_code calls.',
+    'One pass covering lint + complexity + dead code. Prefer this over calling eslint_check, analyze_complexity and code-graph find_dead_code separately. Reports "ESLint not available" rather than failing silently.',
     {
       paths: z.array(z.string()).min(1).describe('Files or directories to scan'),
       complexityThreshold: z

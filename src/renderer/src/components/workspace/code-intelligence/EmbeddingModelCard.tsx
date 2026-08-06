@@ -37,7 +37,8 @@ export default function EmbeddingModelCard({
   const hasOllamaEmbedding = isOllamaBackend && embeddingStatus?.ollamaRunning
 
   // Determine operational state: covers both ready flag AND connected+loaded
-  const isOperational = embeddingStatus?.ready ||
+  const isOperational =
+    embeddingStatus?.ready ||
     (embeddingStatus?.omlxRunning && embeddingStatus?.omlxEmbeddingModelLoaded) ||
     (hasOllamaEmbedding && !!embeddingStatus?.ollamaEmbeddingModel)
 
@@ -105,15 +106,15 @@ export default function EmbeddingModelCard({
               ) : (
                 'bge-m3 or nomic-embed-text'
               )
-            ) : (
-              /* Match by suffix: server returns 'bge-m3-mlx-8bit', constant is 'mlx-community/bge-m3-mlx-8bit' */
-              embeddingStatus?.omlxEmbeddingModelId &&
+            ) : /* Match by suffix: server returns 'bge-m3-mlx-8bit', constant is 'mlx-community/bge-m3-mlx-8bit' */
+            embeddingStatus?.omlxEmbeddingModelId &&
               (OMLX_EMBEDDING.recommendedModel.id.endsWith(embeddingStatus.omlxEmbeddingModelId) ||
-               embeddingStatus.omlxEmbeddingModelId.endsWith(OMLX_EMBEDDING.recommendedModel.modelName)) ? (
-                <span className="text-success">✓ Recommended model loaded</span>
-              ) : (
-                OMLX_EMBEDDING.recommendedModel.id
-              )
+                embeddingStatus.omlxEmbeddingModelId.endsWith(
+                  OMLX_EMBEDDING.recommendedModel.modelName
+                )) ? (
+              <span className="text-success">✓ Recommended model loaded</span>
+            ) : (
+              OMLX_EMBEDDING.recommendedModel.id
             )}
           </span>
         </div>
@@ -160,7 +161,9 @@ export default function EmbeddingModelCard({
         <div className="mt-3 flex items-start gap-2">
           <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
           <p className="text-xs text-text-muted leading-relaxed">
-            <span className="font-medium text-text-secondary">Apple Silicon required for oMLX.</span>{' '}
+            <span className="font-medium text-text-secondary">
+              Apple Silicon required for oMLX.
+            </span>{' '}
             Switch to the Ollama backend in Models to use semantic search on this platform.
           </p>
         </div>
@@ -169,15 +172,18 @@ export default function EmbeddingModelCard({
       {/* Help text — only when NOT operational */}
       {!isOperational && !(isAppleSilicon === false && !isOllamaBackend) && (
         <p className="mt-3 text-xs text-text-muted leading-relaxed">
-          {isOllamaBackend
-            ? 'Select an embedding model (e.g. bge-m3 or nomic-embed-text) in Models → Local Models → Ollama to enable semantic search.'
-            : <>Install an embedding model in oMLX to enable semantic search. Open the oMLX admin
-                dashboard and download{' '}
-                <span className="font-mono text-text-secondary">
-                  {OMLX_EMBEDDING.recommendedModel.id}
-                </span>{' '}
-                (~{OMLX_EMBEDDING.recommendedModel.estimatedSizeMB} MB).
-              </>}
+          {isOllamaBackend ? (
+            'Select an embedding model (e.g. bge-m3 or nomic-embed-text) in Models → Local Models → Ollama to enable semantic search.'
+          ) : (
+            <>
+              Install an embedding model in oMLX to enable semantic search. Open the oMLX admin
+              dashboard and download{' '}
+              <span className="font-mono text-text-secondary">
+                {OMLX_EMBEDDING.recommendedModel.id}
+              </span>{' '}
+              (~{OMLX_EMBEDDING.recommendedModel.estimatedSizeMB} MB).
+            </>
+          )}
         </p>
       )}
     </SettingsCard>

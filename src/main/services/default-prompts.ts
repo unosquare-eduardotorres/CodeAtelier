@@ -58,15 +58,34 @@ mcp__code-graph__file_outline before Read on large files.
 Impact → mcp__code-graph__find_callers/mcp__code-graph__find_references. Architecture → mcp__code-graph__coupling_analysis + mcp__code-graph__circular_dependencies.
 "How does A reach B?" → mcp__code-graph__shortest_path.
 Results tagged resolution=inferred/ambiguous are name-matches with several candidate definitions — treat them as leads, not facts.
-Grep is fine for exact strings, regex, config values, error messages, or when code-graph returns nothing. Glob for directory/file discovery. If a code-graph tool errors, fall back — don't retry it.`
+Grep is fine for exact strings, regex, config values, error messages, or when code-graph returns nothing. Glob for directory/file discovery. If a code-graph tool errors, fall back — don't retry it.
+Skip all of this when the answer is already in context, the user named the file, or the task is a trivial edit.`
 
 export const REPOMAP_GUIDANCE_PROMPT_LEAN = REPOMAP_GUIDANCE_PROMPT
 
-export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search
+/**
+ * Injected when Code Graph is enabled but the workspace has no persisted index.
+ * The tools stay mounted and visible in the schema, so staying silent would just
+ * invite blind calls — say the index is missing instead.
+ */
+export const REPOMAP_UNINDEXED_NOTE = `## Code Graph
+Enabled but this workspace has no index yet — code-graph tools will return empty.
+Use Grep and Glob until indexing completes. Do not retry code-graph tools.`
 
-mcp__semantic-search__semantic_search for concepts, mcp__semantic-search__similar_code for duplicates/patterns. Prefer over Grep for meaning-based queries.`
+export const SEMANTIC_SEARCH_GUIDANCE_PROMPT = `## Semantic Search
+mcp__semantic-search__semantic_search finds code by meaning when you cannot name the symbol.
+mcp__semantic-search__similar_code finds duplicates and repeated patterns.
+Weak at: exact identifiers (use mcp__code-graph__search_identifiers), string literals and config values (use Grep),
+and anything written since the last index — it answers from an embedding snapshot, not the working tree.
+Typical chain: semantic_search (candidate files by meaning) → file_outline / search_identifiers (exact structure)
+→ find_callers / find_references (impact).`
 
 export const SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN = SEMANTIC_SEARCH_GUIDANCE_PROMPT
+
+/** Counterpart to REPOMAP_UNINDEXED_NOTE for a workspace with no embedding index. */
+export const SEMANTIC_SEARCH_UNINDEXED_NOTE = `## Semantic Search
+Enabled but this workspace has no embedding index yet — semantic search will return empty.
+Use Grep for now.`
 
 export const GIT_CONTEXT_GUIDANCE_PROMPT = `## Git Context
 
@@ -74,21 +93,13 @@ Git tools for changes/diffs/blame only — not for reading files or searching co
 
 export const GIT_CONTEXT_GUIDANCE_PROMPT_LEAN = GIT_CONTEXT_GUIDANCE_PROMPT
 
-export const CHECKPOINT_CONTEXT_GUIDANCE_PROMPT = `## Checkpoint Tools
-
-Review rollback points and prior state. Read-only.`
-
-export const CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN = CHECKPOINT_CONTEXT_GUIDANCE_PROMPT
-
-export const GITHUB_CONTEXT_GUIDANCE_PROMPT = `## GitHub Tools
-
-PR status, review comments, issues. Not for creating — use \`gh\` CLI.`
-
-export const GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN = GITHUB_CONTEXT_GUIDANCE_PROMPT
-
 export const CODE_ANALYSIS_GUIDANCE_PROMPT = `## Code Analysis
 
-mcp__code-analysis__audit_scan for tech debt + complexity + dead code (combined). mcp__code-analysis__analyze_test_coverage for untested files, mcp__code-analysis__analyze_dependencies for package audits.`
+mcp__code-analysis__audit_scan is the entry point — one pass covering lint, complexity and dead code.
+Prefer it over calling eslint_check + analyze_complexity + code-graph find_dead_code separately.
+mcp__code-analysis__analyze_complexity only when you need a different path or threshold than audit_scan used.
+Test coverage and dependency health are not tools here: run tests with Bash, and use
+mcp__code-graph__coupling_analysis / mcp__code-graph__circular_dependencies for dependency structure.`
 
 export const CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN = CODE_ANALYSIS_GUIDANCE_PROMPT
 
@@ -532,8 +543,19 @@ export const MODE_CONTEXT_SECTIONS_LEAN_COMPACT: Record<ConversationMode, string
 
 export const TOOL_PRIORITY_DIRECTIVE = `
 ## Tool Priority
-Prefer Code Graph (mcp__code-graph__search_identifiers, mcp__code-graph__graph_map, mcp__code-graph__file_outline) and Semantic Search as your first step.
-Grep for exact strings, regex, or config values. Glob for file/directory discovery. Fall back to either when code-graph is unavailable or returns nothing.`
+| Question shape | First tool | Fallback |
+|---|---|---|
+| Named symbol | mcp__code-graph__search_identifiers | Grep |
+| Concept, name unknown | mcp__semantic-search__semantic_search | Grep |
+| What's in this file | mcp__code-graph__file_outline | Read |
+| Impact of a change | mcp__code-graph__find_callers / find_references | Grep |
+| How does A reach B | mcp__code-graph__shortest_path | — |
+| Architecture, cycles | mcp__code-graph__coupling_analysis / circular_dependencies | — |
+| Exact string, regex, config value, error text | Grep | — |
+| Files by path pattern | Glob | — |
+
+Skip all of the above when the answer is already in context, the user named the file, or the task is a trivial edit.
+If a code-graph tool errors or returns empty, fall back immediately — do not retry it.`
 
 /** Builder-specific variant — includes write-mode context (file_outline, find_references before changes) */
 export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `

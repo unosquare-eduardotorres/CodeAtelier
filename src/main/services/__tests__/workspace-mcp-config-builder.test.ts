@@ -403,6 +403,12 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
     for (const tool of MCP_TOOLS.GIT_CONTEXT._ALL_NAMES) {
       assert.ok(result.allowedTools!.includes(tool), `Missing: ${tool}`)
     }
+    // git_show is real and registered but was absent from the registry, so plan
+    // mode silently blocked it. Assert it explicitly so it cannot regress.
+    assert.ok(
+      result.allowedTools!.includes(MCP_TOOLS.GIT_CONTEXT.GIT_SHOW.name),
+      'plan mode must allow git_show'
+    )
   })
 
   test('plan mode → git-context disabled via localMcpActive', () => {
@@ -415,30 +421,6 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
     )
     for (const tool of MCP_TOOLS.GIT_CONTEXT._ALL_NAMES) {
       assert.ok(!result.allowedTools!.includes(tool), `Should not include: ${tool}`)
-    }
-  })
-
-  test('plan mode → github-context only when githubConfigured=true', () => {
-    const withGithub = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: true })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
-      assert.ok(withGithub.allowedTools!.includes(tool), `Missing: ${tool}`)
-    }
-
-    const withoutGithub = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: false })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
-      assert.ok(!withoutGithub.allowedTools!.includes(tool), `Should not include: ${tool}`)
     }
   })
 
@@ -672,19 +654,6 @@ describe('buildLocalProviderMcpConfig — small tier + codeGraph disabled', () =
 })
 
 describe('buildClaudeProviderMcpConfig — plan mode toggle combos', () => {
-  test('plan mode + checkpoint-context disabled → no checkpoint tools', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ localMcpActive: { 'checkpoint-context': false } })
-      })
-    )
-    for (const tool of MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES) {
-      assert.ok(!result.allowedTools?.includes(tool), `Should not include: ${tool}`)
-    }
-  })
-
   test('plan mode + code-analysis disabled → no code-analysis tools', () => {
     const result = buildWorkspaceMcpConfig(
       makeOpts({
@@ -707,32 +676,6 @@ describe('buildClaudeProviderMcpConfig — plan mode toggle combos', () => {
       })
     )
     for (const tool of ALL_CG) {
-      assert.ok(!result.allowedTools?.includes(tool), `Should not include: ${tool}`)
-    }
-  })
-
-  test('plan mode + github enabled → includes github-context tools', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: true })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
-      assert.ok(result.allowedTools?.includes(tool), `Missing github tool: ${tool}`)
-    }
-  })
-
-  test('plan mode + github disabled → no github-context tools', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: false })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
       assert.ok(!result.allowedTools?.includes(tool), `Should not include: ${tool}`)
     }
   })

@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Update Settings Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,11 +34,14 @@ test.describe('Update Settings Deep', () => {
   }
 
   /** Navigate to app-level settings page. */
-  async function navigateToAppSettings(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
-    const settingsBtn = page.locator('[aria-label="App Settings"], [data-testid="app-settings-btn"]')
-    let hasBtn = await settingsBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+  async function navigateToAppSettings(page: import('@playwright/test').Page): Promise<boolean> {
+    const settingsBtn = page.locator(
+      '[aria-label="App Settings"], [data-testid="app-settings-btn"]'
+    )
+    let hasBtn = await settingsBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasBtn) {
       await settingsBtn.first().click()
@@ -67,14 +68,23 @@ test.describe('Update Settings Deep', () => {
 
   test('update section renders with current app version', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="update-settings-section"]')
     const hasSection = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
     // Should display a version string like v1.2.3
@@ -83,14 +93,23 @@ test.describe('Update Settings Deep', () => {
 
   test('source selector renders Cloud Drive and GitHub buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="update-settings-section"]')
     const hasSection = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const driveBtn = page.locator('[data-testid="update-source-drive-btn"]')
     const githubBtn = page.locator('[data-testid="update-source-github-btn"]')
@@ -99,16 +118,27 @@ test.describe('Update Settings Deep', () => {
     await expect(githubBtn).toBeVisible()
   })
 
-  test('selecting Drive source shows path input with browse button', async ({ electronPage: page }) => {
+  test('selecting Drive source shows path input with browse button', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="update-settings-section"]')
     const hasSection = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     // Click the Drive source button
     const driveBtn = page.locator('[data-testid="update-source-drive-btn"]')
@@ -125,14 +155,23 @@ test.describe('Update Settings Deep', () => {
 
   test('selecting GitHub source shows owner and repo inputs', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="update-settings-section"]')
     const hasSection = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     // Click the GitHub source button
     const githubBtn = page.locator('[data-testid="update-source-github-btn"]')
@@ -149,14 +188,23 @@ test.describe('Update Settings Deep', () => {
 
   test('drive source info text mentions required file format', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="update-settings-section"]')
     const hasSection = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     // Ensure Drive source is selected
     const driveBtn = page.locator('[data-testid="update-source-drive-btn"]')
@@ -169,14 +217,23 @@ test.describe('Update Settings Deep', () => {
 
   test('github source shows future availability notice', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToAppSettings(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="update-settings-section"]')
     const hasSection = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     // Click GitHub source
     const githubBtn = page.locator('[data-testid="update-source-github-btn"]')

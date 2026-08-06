@@ -19,9 +19,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Specialist Order', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -58,12 +56,20 @@ test.describe('Specialist Order', () => {
     return orderSection.isVisible({ timeout: 3_000 }).catch(() => false)
   }
 
-  test('specialist order section renders with ordered specialist list', async ({ electronPage: page }) => {
+  test('specialist order section renders with ordered specialist list', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToSpecialistOrder(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const orderSection = page.locator('[data-testid="specialist-order"]')
     await expect(orderSection).toBeVisible({ timeout: 5_000 })
@@ -78,16 +84,27 @@ test.describe('Specialist Order', () => {
     expect(await orderItems.count()).toBeGreaterThanOrEqual(1)
   })
 
-  test('each specialist shows grip handle, position number, and name', async ({ electronPage: page }) => {
+  test('each specialist shows grip handle, position number, and name', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToSpecialistOrder(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const orderItems = page.locator('[data-testid="specialist-order-item"]')
     const itemCount = await orderItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     const firstItem = orderItems.first()
 
@@ -110,14 +127,23 @@ test.describe('Specialist Order', () => {
 
   test('up button moves specialist higher in priority', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToSpecialistOrder(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const orderItems = page.locator('[data-testid="specialist-order-item"]')
     const itemCount = await orderItems.count()
-    if (itemCount < 2) { test.skip(); return }
+    if (itemCount < 2) {
+      test.skip()
+      return
+    }
 
     // Get the second item's name
     const secondItem = orderItems.nth(1)
@@ -126,7 +152,10 @@ test.describe('Specialist Order', () => {
     // Click the up button on the second item
     const upBtn = secondItem.locator('button').first() // ChevronUp is the first button
     const hasUp = await upBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasUp) { test.skip(); return }
+    if (!hasUp) {
+      test.skip()
+      return
+    }
 
     await upBtn.click()
     await page.waitForTimeout(1_000)
@@ -139,14 +168,23 @@ test.describe('Specialist Order', () => {
 
   test('down button moves specialist lower in priority', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToSpecialistOrder(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const orderItems = page.locator('[data-testid="specialist-order-item"]')
     const itemCount = await orderItems.count()
-    if (itemCount < 2) { test.skip(); return }
+    if (itemCount < 2) {
+      test.skip()
+      return
+    }
 
     // Get the first item's name
     const firstItem = orderItems.first()
@@ -155,7 +193,10 @@ test.describe('Specialist Order', () => {
     // Click the down button on the first item (second button in the button group)
     const buttons = firstItem.locator('button')
     const btnCount = await buttons.count()
-    if (btnCount < 2) { test.skip(); return }
+    if (btnCount < 2) {
+      test.skip()
+      return
+    }
 
     const downBtn = buttons.nth(1) // ChevronDown is the second button
     await downBtn.click()
@@ -167,16 +208,27 @@ test.describe('Specialist Order', () => {
     expect(newSecondName).toBe(firstName)
   })
 
-  test('first specialist has up button disabled, last has down disabled', async ({ electronPage: page }) => {
+  test('first specialist has up button disabled, last has down disabled', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToSpecialistOrder(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const orderItems = page.locator('[data-testid="specialist-order-item"]')
     const itemCount = await orderItems.count()
-    if (itemCount < 2) { test.skip(); return }
+    if (itemCount < 2) {
+      test.skip()
+      return
+    }
 
     // First item's up button should be disabled
     const firstItem = orderItems.first()

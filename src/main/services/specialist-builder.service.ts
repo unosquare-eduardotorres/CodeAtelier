@@ -218,7 +218,9 @@ export class SpecialistBuilderService {
       .get(specialistId) as SpecialistRow | undefined
     if (!specialist) throw new Error(`Specialist ${specialistId} not found`)
     if (!specialist.workspace_id) {
-      throw new Error(`Specialist ${specialistId} is not workspace-bound — only workspace-bound specialists are supported`)
+      throw new Error(
+        `Specialist ${specialistId} is not workspace-bound — only workspace-bound specialists are supported`
+      )
     }
     const workspace = db
       .prepare(`SELECT id, name, repo_path FROM workspaces WHERE id = ?`)

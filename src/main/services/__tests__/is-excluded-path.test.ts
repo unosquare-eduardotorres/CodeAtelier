@@ -9,6 +9,7 @@ import { test, describe } from './test-harness'
 import {
   isExcludedPath,
   isExcludedDirName,
+  isTier2CandidateDirName,
   toPosixRel,
   matchesSkipPattern
 } from '../code-graph-exclusions'
@@ -184,6 +185,113 @@ describe('isExcludedPath — vendored trees', () => {
   test('does NOT exclude first-party names that merely contain a keyword', () => {
     assert.equal(isExcludedPath('src/Toolset/Builder.cs'), false)
     assert.equal(isExcludedPath('src/tools.ts'), false)
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────
+// Tier 1 — tool-managed output across mobile / game / native ecosystems.
+// The reported regression: the embedding indexer walked every boost header
+// under apps/mobile/ios/Pods/ReactNativeDependencies.
+// ────────────────────────────────────────────────────────────────────
+describe('isExcludedPath — Tier 1 ecosystem additions', () => {
+  test('excludes the exact reported CocoaPods path', () => {
+    assert.equal(
+      isExcludedPath(
+        'apps/mobile/ios/Pods/ReactNativeDependencies/Headers/boost/type_traits/detail/is_mem_fun_pointer_impl.hpp'
+      ),
+      true
+    )
+  })
+
+  test('Pods matches case-insensitively', () => {
+    assert.equal(isExcludedDirName('Pods'), true)
+    assert.equal(isExcludedDirName('pods'), true)
+    assert.equal(isExcludedDirName('PODS'), true)
+  })
+
+  test('excludes other iOS / macOS tool output', () => {
+    assert.equal(isExcludedPath('ios/Carthage/Build/iOS/Alamofire.framework/Header.h'), true)
+    assert.equal(isExcludedPath('DerivedData/App-abc/Build/Products/x.swift'), true)
+    assert.equal(isExcludedPath('App.xcodeproj/xcuserdata/me.xcuserdatad/x.plist'), true)
+  })
+
+  test('excludes Android / JVM generated trees', () => {
+    assert.equal(isExcludedPath('app/build/gen/com/example/R.java'), true)
+    assert.equal(isExcludedPath('app/captures/profile.trace'), true)
+    assert.equal(isExcludedPath('Intermediates/app/classes.dex'), true)
+  })
+
+  test('excludes Unreal Engine output', () => {
+    assert.equal(isExcludedPath('Binaries/Win64/Game.exe'), true)
+    assert.equal(isExcludedPath('Intermediate/Build/Win64/Game.gen.cpp'), true)
+    assert.equal(isExcludedPath('DerivedDataCache/0/abc.udd'), true)
+    assert.equal(isExcludedPath('Saved/Logs/Game.log'), true)
+  })
+
+  test('excludes Unity caches', () => {
+    assert.equal(isExcludedPath('Temp/Bin/Debug/Assembly.dll'), true)
+    assert.equal(isExcludedPath('Logs/Packages-Update.log'), true)
+    assert.equal(isExcludedPath('Builds/StandaloneOSX/game.app'), true)
+    assert.equal(isExcludedPath('MemoryCaptures/snapshot.snap'), true)
+  })
+
+  test('excludes C/C++ vendored + CMake trees', () => {
+    assert.equal(isExcludedPath('build/CMakeFiles/feature_tests.cxx'), true)
+    assert.equal(isExcludedPath('cmake-build-debug/CMakeCache.txt'), true)
+    assert.equal(isExcludedPath('cmake-build-release/out.o'), true)
+    assert.equal(isExcludedPath('build/_deps/googletest-src/src/gtest.cc'), true)
+    assert.equal(isExcludedPath('vcpkg_installed/x64-osx/include/zlib.h'), true)
+    assert.equal(isExcludedPath('conan/data/boost/boost.hpp'), true)
+  })
+
+  test('excludes Python installed dependency trees', () => {
+    assert.equal(isExcludedPath('env/lib/python3.11/site-packages/requests/api.py'), true)
+    assert.equal(isExcludedPath('eggs/foo-1.0.egg/foo.py'), true)
+    assert.equal(isExcludedPath('wheels/foo-1.0-py3.whl/foo.py'), true)
+    assert.equal(isExcludedPath('.eggs/setuptools/x.py'), true)
+  })
+
+  test('excludes legacy web package roots and Go vendoring', () => {
+    assert.equal(isExcludedPath('bower_components/jquery/jquery.js'), true)
+    assert.equal(isExcludedPath('jspm_packages/npm/react/index.js'), true)
+    assert.equal(isExcludedPath('web_modules/lodash.js'), true)
+    assert.equal(isExcludedPath('Godeps/_workspace/src/foo/foo.go'), true)
+  })
+
+  test('excludes generated static-site output', () => {
+    assert.equal(isExcludedPath('_site/index.html'), true)
+    assert.equal(isExcludedPath('storybook-static/iframe.html'), true)
+  })
+
+  test('does NOT exclude first-party paths that merely resemble Tier 1 names', () => {
+    assert.equal(isExcludedPath('src/Pods.swift'), false)
+    assert.equal(isExcludedPath('src/BinariesLoader.cs'), false)
+    assert.equal(isExcludedPath('src/generators/index.ts'), false)
+  })
+})
+
+// ────────────────────────────────────────────────────────────────────
+// Tier 2 — generic names that must NEVER be excluded without confirmation.
+// Excluding `lib/` by default would silently hide first-party source.
+// ────────────────────────────────────────────────────────────────────
+describe('Tier 2 candidates are not excluded by default', () => {
+  test('generic dependency-ish names stay indexed', () => {
+    for (const name of ['lib', 'libs', 'Library', 'external', 'deps', 'plugins', 'shared']) {
+      assert.equal(isExcludedDirName(name), false, `${name} must not be hardcoded-excluded`)
+    }
+  })
+
+  test('paths under generic names stay indexed', () => {
+    assert.equal(isExcludedPath('src/lib/format.ts'), false)
+    assert.equal(isExcludedPath('Assets/Library/Player.cs'), false)
+    assert.equal(isExcludedPath('packages-common/shared/util.ts'), false)
+  })
+
+  test('they ARE flagged as preflight candidates instead', () => {
+    assert.equal(isTier2CandidateDirName('lib'), true)
+    assert.equal(isTier2CandidateDirName('Library'), true)
+    assert.equal(isTier2CandidateDirName('third-party'), true)
+    assert.equal(isTier2CandidateDirName('src'), false)
   })
 })
 

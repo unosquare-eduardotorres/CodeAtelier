@@ -11,7 +11,13 @@ import { FileText, FileCode2, FileImage, Link2 } from 'lucide-react'
 // ── Custom SVG Icons ──
 
 /** Custom Markdown icon — the ⬇M pill glyph in violet */
-function MarkdownIcon({ size = 12, className = '' }: { size?: number; className?: string }): JSX.Element {
+function MarkdownIcon({
+  size = 12,
+  className = ''
+}: {
+  size?: number
+  className?: string
+}): JSX.Element {
   return (
     <svg
       width={size}
@@ -21,15 +27,44 @@ function MarkdownIcon({ size = 12, className = '' }: { size?: number; className?
       className={className}
       aria-hidden="true"
     >
-      <rect x="1" y="3" width="14" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" fill="none" />
-      <path d="M4 11V5l2.5 3L9 5v6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <path d="M11.5 8v3m0 0l1.5-1.5M11.5 11L10 9.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <rect
+        x="1"
+        y="3"
+        width="14"
+        height="10"
+        rx="2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        fill="none"
+      />
+      <path
+        d="M4 11V5l2.5 3L9 5v6"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <path
+        d="M11.5 8v3m0 0l1.5-1.5M11.5 11L10 9.5"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
     </svg>
   )
 }
 
 /** PDF badge icon — red file with "PDF" text */
-function PdfIcon({ size = 12, className = '' }: { size?: number; className?: string }): JSX.Element {
+function PdfIcon({
+  size = 12,
+  className = ''
+}: {
+  size?: number
+  className?: string
+}): JSX.Element {
   return (
     <svg
       width={size}
@@ -45,14 +80,36 @@ function PdfIcon({ size = 12, className = '' }: { size?: number; className?: str
         strokeWidth="1.3"
         fill="none"
       />
-      <path d="M9 1v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <text x="4.5" y="12" fontSize="4.5" fontWeight="bold" fill="currentColor" fontFamily="system-ui">PDF</text>
+      <path
+        d="M9 1v4h4"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <text
+        x="4.5"
+        y="12"
+        fontSize="4.5"
+        fontWeight="bold"
+        fill="currentColor"
+        fontFamily="system-ui"
+      >
+        PDF
+      </text>
     </svg>
   )
 }
 
 /** Word badge icon — blue file with "W" */
-function WordIcon({ size = 12, className = '' }: { size?: number; className?: string }): JSX.Element {
+function WordIcon({
+  size = 12,
+  className = ''
+}: {
+  size?: number
+  className?: string
+}): JSX.Element {
   return (
     <svg
       width={size}
@@ -68,8 +125,24 @@ function WordIcon({ size = 12, className = '' }: { size?: number; className?: st
         strokeWidth="1.3"
         fill="none"
       />
-      <path d="M9 1v4h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-      <text x="5" y="12.5" fontSize="6" fontWeight="bold" fill="currentColor" fontFamily="system-ui">W</text>
+      <path
+        d="M9 1v4h4"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <text
+        x="5"
+        y="12.5"
+        fontSize="6"
+        fontWeight="bold"
+        fill="currentColor"
+        fontFamily="system-ui"
+      >
+        W
+      </text>
     </svg>
   )
 }

@@ -33,9 +33,7 @@ function PipelineIllustration(): React.JSX.Element {
         return (
           <div key={phase} className="flex items-center gap-2">
             {/* Connector dashes (before all except first) */}
-            {i > 0 && (
-              <div className="w-6 border-t-2 border-dashed border-border-subtle" />
-            )}
+            {i > 0 && <div className="w-6 border-t-2 border-dashed border-border-subtle" />}
             {/* Phase circle + label */}
             <div className="flex flex-col items-center gap-1.5">
               <div
@@ -70,7 +68,10 @@ export default function BlueprintOnboardModal({
       className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 backdrop-blur-sm"
       /* No outside-click dismiss — prevents accidental close on paste / mis-click */
     >
-      <div data-testid="blueprint-onboard-modal" className="w-full max-w-md bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden">
+      <div
+        data-testid="blueprint-onboard-modal"
+        className="w-full max-w-md bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle">
           <h2 className="text-sm font-semibold text-text-primary">
@@ -96,8 +97,8 @@ export default function BlueprintOnboardModal({
           <div className="text-center space-y-1.5">
             <p className="text-sm text-text-primary leading-relaxed">
               As this is a blank project, the{' '}
-              <span className="font-semibold text-accent">Blueprint pipeline</span> can help
-              you generate a project skeleton, plan features, and build them step by step.
+              <span className="font-semibold text-accent">Blueprint pipeline</span> can help you
+              generate a project skeleton, plan features, and build them step by step.
             </p>
             <p className="text-xs text-text-secondary">
               Describe what you want to build and the 7-phase pipeline will specify, plan, build,

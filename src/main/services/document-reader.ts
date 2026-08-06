@@ -32,16 +32,58 @@ const MIN_CONTENT_CHARS = 20
 
 /** Text-readable code/config extensions (read as UTF-8) */
 const TEXT_EXTENSIONS = new Set([
-  '.md', '.txt', '.rst', '.adoc',
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-  '.py', '.pyi', '.rb', '.go', '.rs', '.java', '.kt', '.kts',
-  '.c', '.cpp', '.h', '.hpp', '.cs', '.swift',
-  '.sh', '.bash', '.zsh', '.fish', '.ps1',
-  '.json', '.yaml', '.yml', '.toml', '.ini', '.cfg', '.env',
-  '.xml', '.html', '.htm', '.css', '.scss', '.less',
-  '.sql', '.graphql', '.gql', '.prisma',
-  '.dockerfile', '.makefile', '.cmake',
-  '.csv', '.tsv', '.log'
+  '.md',
+  '.txt',
+  '.rst',
+  '.adoc',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.py',
+  '.pyi',
+  '.rb',
+  '.go',
+  '.rs',
+  '.java',
+  '.kt',
+  '.kts',
+  '.c',
+  '.cpp',
+  '.h',
+  '.hpp',
+  '.cs',
+  '.swift',
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.fish',
+  '.ps1',
+  '.json',
+  '.yaml',
+  '.yml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.env',
+  '.xml',
+  '.html',
+  '.htm',
+  '.css',
+  '.scss',
+  '.less',
+  '.sql',
+  '.graphql',
+  '.gql',
+  '.prisma',
+  '.dockerfile',
+  '.makefile',
+  '.cmake',
+  '.csv',
+  '.tsv',
+  '.log'
 ])
 
 /** Image extensions supported for vision-based extraction */
@@ -49,22 +91,56 @@ const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif'])
 
 /** Binary extensions that are always skipped */
 const SKIP_EXTENSIONS = new Set([
-  '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar',
-  '.dmg', '.exe', '.msi', '.deb', '.rpm',
-  '.mp3', '.mp4', '.wav', '.avi', '.mov', '.mkv',
-  '.ico', '.bmp', '.tiff', '.svg',
-  '.woff', '.woff2', '.ttf', '.eot', '.otf',
-  '.sqlite', '.db', '.dat', '.bin',
-  '.psd', '.ai', '.sketch', '.fig',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.bz2',
+  '.7z',
+  '.rar',
+  '.dmg',
+  '.exe',
+  '.msi',
+  '.deb',
+  '.rpm',
+  '.mp3',
+  '.mp4',
+  '.wav',
+  '.avi',
+  '.mov',
+  '.mkv',
+  '.ico',
+  '.bmp',
+  '.tiff',
+  '.svg',
+  '.woff',
+  '.woff2',
+  '.ttf',
+  '.eot',
+  '.otf',
+  '.sqlite',
+  '.db',
+  '.dat',
+  '.bin',
+  '.psd',
+  '.ai',
+  '.sketch',
+  '.fig',
   '.doc', // .doc (legacy Word) is not supported — only .docx
-  '.xls', '.xlsx', '.ppt', '.pptx'
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx'
 ])
 
 // ── Result type ──────────────────────────────────────────────────────────────
 
 export type DocumentReadResult =
   | { ok: true; content: string; format: 'text' | 'pdf' | 'docx' | 'image'; isImage: boolean }
-  | { ok: false; reason: 'too_large' | 'too_short' | 'binary_skip' | 'not_found' | 'read_error'; message: string }
+  | {
+      ok: false
+      reason: 'too_large' | 'too_short' | 'binary_skip' | 'not_found' | 'read_error'
+      message: string
+    }
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
@@ -79,9 +155,13 @@ export async function readDocument(filePath: string): Promise<DocumentReadResult
 
   // Handle extensionless files (Dockerfile, Makefile, etc.)
   const basename = filePath.split('/').pop() ?? ''
-  const isKnownExtensionless = ['dockerfile', 'makefile', 'rakefile', 'gemfile', 'procfile'].includes(
-    basename.toLowerCase()
-  )
+  const isKnownExtensionless = [
+    'dockerfile',
+    'makefile',
+    'rakefile',
+    'gemfile',
+    'procfile'
+  ].includes(basename.toLowerCase())
 
   // 1. Check if binary/skip
   if (SKIP_EXTENSIONS.has(ext)) {
@@ -93,27 +173,43 @@ export async function readDocument(filePath: string): Promise<DocumentReadResult
   try {
     fileSize = statSync(filePath).size
   } catch {
-    return { ok: false, reason: 'not_found', message: `File not found or inaccessible: ${filePath}` }
+    return {
+      ok: false,
+      reason: 'not_found',
+      message: `File not found or inaccessible: ${filePath}`
+    }
   }
 
   // 3. Route by format
   if (ext === '.pdf') {
     if (fileSize > MAX_DOC_SIZE_BYTES) {
-      return { ok: false, reason: 'too_large', message: `PDF exceeds ${MAX_DOC_SIZE_BYTES / 1024 / 1024}MB limit` }
+      return {
+        ok: false,
+        reason: 'too_large',
+        message: `PDF exceeds ${MAX_DOC_SIZE_BYTES / 1024 / 1024}MB limit`
+      }
     }
     return readPdf(filePath)
   }
 
   if (ext === '.docx') {
     if (fileSize > MAX_DOC_SIZE_BYTES) {
-      return { ok: false, reason: 'too_large', message: `DOCX exceeds ${MAX_DOC_SIZE_BYTES / 1024 / 1024}MB limit` }
+      return {
+        ok: false,
+        reason: 'too_large',
+        message: `DOCX exceeds ${MAX_DOC_SIZE_BYTES / 1024 / 1024}MB limit`
+      }
     }
     return readDocx(filePath)
   }
 
   if (IMAGE_EXTENSIONS.has(ext)) {
     if (fileSize > MAX_IMAGE_SIZE_BYTES) {
-      return { ok: false, reason: 'too_large', message: `Image exceeds ${MAX_IMAGE_SIZE_BYTES / 1024 / 1024}MB limit` }
+      return {
+        ok: false,
+        reason: 'too_large',
+        message: `Image exceeds ${MAX_IMAGE_SIZE_BYTES / 1024 / 1024}MB limit`
+      }
     }
     return readImage(filePath)
   }
@@ -132,9 +228,13 @@ export async function readDocument(filePath: string): Promise<DocumentReadResult
 export function isSupportedExtension(filePath: string): boolean {
   const ext = extname(filePath).toLowerCase()
   const basename = filePath.split('/').pop() ?? ''
-  const isKnownExtensionless = ['dockerfile', 'makefile', 'rakefile', 'gemfile', 'procfile'].includes(
-    basename.toLowerCase()
-  )
+  const isKnownExtensionless = [
+    'dockerfile',
+    'makefile',
+    'rakefile',
+    'gemfile',
+    'procfile'
+  ].includes(basename.toLowerCase())
   return (
     TEXT_EXTENSIONS.has(ext) ||
     IMAGE_EXTENSIONS.has(ext) ||
@@ -157,7 +257,11 @@ function readTextFile(filePath: string): DocumentReadResult {
   try {
     const content = readFileSync(filePath, 'utf-8')
     if (content.length < MIN_CONTENT_CHARS) {
-      return { ok: false, reason: 'too_short', message: `File content too short (${content.length} chars)` }
+      return {
+        ok: false,
+        reason: 'too_short',
+        message: `File content too short (${content.length} chars)`
+      }
     }
     return { ok: true, content, format: 'text', isImage: false }
   } catch (err) {
@@ -179,7 +283,11 @@ async function readPdf(filePath: string): Promise<DocumentReadResult> {
     const text = result.text?.trim()
 
     if (!text || text.length < MIN_CONTENT_CHARS) {
-      return { ok: false, reason: 'too_short', message: `PDF extracted text too short (${text?.length ?? 0} chars)` }
+      return {
+        ok: false,
+        reason: 'too_short',
+        message: `PDF extracted text too short (${text?.length ?? 0} chars)`
+      }
     }
 
     return { ok: true, content: text, format: 'pdf', isImage: false }
@@ -201,7 +309,11 @@ async function readDocx(filePath: string): Promise<DocumentReadResult> {
     const text = result.value?.trim()
 
     if (!text || text.length < MIN_CONTENT_CHARS) {
-      return { ok: false, reason: 'too_short', message: `DOCX extracted text too short (${text?.length ?? 0} chars)` }
+      return {
+        ok: false,
+        reason: 'too_short',
+        message: `DOCX extracted text too short (${text?.length ?? 0} chars)`
+      }
     }
 
     return { ok: true, content: text, format: 'docx', isImage: false }

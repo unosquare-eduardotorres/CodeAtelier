@@ -25,7 +25,7 @@ export function useTransitionState(): UseTransitionStateReturn {
     phase: 'idle',
     workspaceId: null,
     workspaceName: null,
-    animationType: 'none',
+    animationType: 'none'
   })
 
   const startTimeRef = useRef<number>(0)
@@ -53,7 +53,7 @@ export function useTransitionState(): UseTransitionStateReturn {
       phase: 'animating',
       workspaceId,
       workspaceName,
-      animationType,
+      animationType
     })
   }, [])
 

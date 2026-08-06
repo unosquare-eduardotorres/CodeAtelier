@@ -26,15 +26,23 @@ try {
 if (loaded) {
   describe('MemoryBootstrapService — singleton (Phase 25)', () => {
     test('exists', () => assert.ok(memoryBootstrapService !== undefined))
-    test('has bootstrap', () => assert.equal(typeof memoryBootstrapService.bootstrap, 'function'))
-    test('has isRunning', () => assert.equal(typeof memoryBootstrapService.isRunning, 'function'))
+    test('has startBootstrap', () =>
+      assert.equal(typeof memoryBootstrapService.startBootstrap, 'function'))
+    // isRunning is a getter, not a method
+    test('has isRunning', () => assert.equal(typeof memoryBootstrapService.isRunning, 'boolean'))
+    test('has isRunningFor', () =>
+      assert.equal(typeof memoryBootstrapService.isRunningFor, 'function'))
     test('has cancel', () => assert.equal(typeof memoryBootstrapService.cancel, 'function'))
-    test('has shutdown', () => assert.equal(typeof memoryBootstrapService.shutdown, 'function'))
+    test('has cancelAll', () => assert.equal(typeof memoryBootstrapService.cancelAll, 'function'))
   })
 
   describe('MemoryBootstrapService — state (Phase 25)', () => {
-    test('isRunning returns false initially', () => {
-      assert.equal(memoryBootstrapService.isRunning('ws-unknown'), false)
+    test('isRunning is false initially', () => {
+      assert.equal(memoryBootstrapService.isRunning, false)
+    })
+
+    test('isRunningFor returns false for an unknown workspace', () => {
+      assert.equal(memoryBootstrapService.isRunningFor('ws-unknown'), false)
     })
   })
 

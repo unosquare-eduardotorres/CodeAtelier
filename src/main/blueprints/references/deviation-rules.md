@@ -12,6 +12,7 @@ execution flowing without unnecessary user interruption.
 
 **Trigger**: Code doesn't work as intended
 **Examples**:
+
 - Wrong SQL query (SELECT from wrong table)
 - Logic error (off-by-one, wrong comparison operator)
 - Type error (passing string where number expected)
@@ -25,6 +26,7 @@ execution flowing without unnecessary user interruption.
 
 **Trigger**: Missing standard correctness requirements
 **Examples**:
+
 - No error handling on async operations
 - No input validation on user-facing endpoints
 - No authentication check on protected routes
@@ -40,6 +42,7 @@ they're baseline correctness requirements.
 
 **Trigger**: Something prevents completing the current task
 **Examples**:
+
 - Wrong TypeScript types (interface mismatch)
 - Broken imports (module not found)
 - Missing environment variables
@@ -53,6 +56,7 @@ they're baseline correctness requirements.
 
 **Trigger**: Change would alter the project's structure significantly
 **Examples**:
+
 - Creating new database tables (columns are OK)
 - Switching libraries (e.g., Express → Fastify)
 - Changing authentication approach
@@ -75,11 +79,13 @@ treat it as Rule 4 and ask.
 ## Scope Boundaries
 
 **IN SCOPE** for auto-fix:
+
 - Issues DIRECTLY caused by current task's changes
 - Issues in files the current task modifies
 - Build errors that prevent verification
 
 **OUT OF SCOPE** for auto-fix:
+
 - Pre-existing issues in untouched files
 - Performance optimizations not in the task
 - Code style improvements not in the task
@@ -90,6 +96,7 @@ For out-of-scope issues: log them in the deviation report and continue.
 ## Excluded: Package Manager Failures
 
 If `npm install`, `pip install`, `cargo add`, etc. fails:
+
 - Do NOT substitute a similarly-named alternative package
 - Do NOT try to work around with a different library
 - Report the failure and stop

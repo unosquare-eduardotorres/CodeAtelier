@@ -385,12 +385,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
            DO UPDATE SET confidence = excluded.confidence
          RETURNING *`
       )
-      .get(
-        params.fromId,
-        params.toId,
-        params.edgeType,
-        params.confidence ?? 1.0
-      ) as MemoryEdgeRow | undefined
+      .get(params.fromId, params.toId, params.edgeType, params.confidence ?? 1.0) as
+      MemoryEdgeRow | undefined
 
     return row ? mapEdgeRow(row) : null
   }
@@ -444,9 +440,7 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
    */
   reopenValidity(id: string): void {
     this.db()
-      .prepare(
-        `UPDATE memory_facts SET valid_to = NULL, updated_at = datetime('now') WHERE id = ?`
-      )
+      .prepare(`UPDATE memory_facts SET valid_to = NULL, updated_at = datetime('now') WHERE id = ?`)
       .run(id)
   }
 
@@ -519,9 +513,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       supersededBy?: string | null
     }
   ): MemoryFact {
-    const existing = this.db()
-      .prepare('SELECT * FROM memory_facts WHERE id = ?')
-      .get(id) as MemoryFactRow | undefined
+    const existing = this.db().prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as
+      MemoryFactRow | undefined
     if (!existing) throw new Error(`MemoryFact not found: ${id}`)
 
     const row = this.db()
@@ -571,9 +564,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   /** Increment confirmation count, touch last_confirmed_at, optionally bump tier. */
   confirmFact(id: string, newTier?: MemoryFactTier, newConfidence?: number): MemoryFact {
-    const existing = this.db()
-      .prepare('SELECT * FROM memory_facts WHERE id = ?')
-      .get(id) as MemoryFactRow | undefined
+    const existing = this.db().prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as
+      MemoryFactRow | undefined
     if (!existing) throw new Error(`MemoryFact not found: ${id}`)
 
     const row = this.db()
@@ -685,7 +677,11 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       .filter((r) => r.embedding !== null)
       .map((r) => ({
         fact: mapFactRow(r),
-        embedding: new Float32Array(r.embedding!.buffer, r.embedding!.byteOffset, r.embedding!.byteLength / 4)
+        embedding: new Float32Array(
+          r.embedding!.buffer,
+          r.embedding!.byteOffset,
+          r.embedding!.byteLength / 4
+        )
       }))
   }
 
@@ -701,7 +697,12 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   }
 
   /** Count facts per workspace (for stats). */
-  countByWorkspace(workspaceId: string): { active: number; superseded: number; archived: number; pendingEmbedding: number } {
+  countByWorkspace(workspaceId: string): {
+    active: number
+    superseded: number
+    archived: number
+    pendingEmbedding: number
+  } {
     const row = this.db()
       .prepare(
         `SELECT
@@ -712,7 +713,12 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
          FROM memory_facts
          WHERE workspace_id = ? OR workspace_id IS NULL`
       )
-      .get(workspaceId) as { active: number; superseded: number; archived: number; pending_embedding: number }
+      .get(workspaceId) as {
+      active: number
+      superseded: number
+      archived: number
+      pending_embedding: number
+    }
     return {
       active: row.active ?? 0,
       superseded: row.superseded ?? 0,
@@ -804,7 +810,9 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       ? 'SELECT * FROM memory_contradictions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
       : 'SELECT * FROM memory_contradictions ORDER BY created_at DESC LIMIT ? OFFSET ?'
     const args = status ? [status, limit, offset] : [limit, offset]
-    const rows = this.db().prepare(sql).all(...args) as ContradictionRow[]
+    const rows = this.db()
+      .prepare(sql)
+      .all(...args) as ContradictionRow[]
     return rows.map(mapContradictionRow)
   }
 
@@ -813,7 +821,9 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       ? 'SELECT COUNT(*) as cnt FROM memory_contradictions WHERE status = ?'
       : 'SELECT COUNT(*) as cnt FROM memory_contradictions'
     const args = status ? [status] : []
-    const row = this.db().prepare(sql).get(...args) as { cnt: number }
+    const row = this.db()
+      .prepare(sql)
+      .get(...args) as { cnt: number }
     return row.cnt
   }
 
@@ -847,10 +857,14 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
         const newFact = this.findById(row.new_fact_id)
         if (!oldFact || !newFact) continue
 
-        const oldIsOlder = new Date(oldFact.createdAt).getTime() <= new Date(newFact.createdAt).getTime()
+        const oldIsOlder =
+          new Date(oldFact.createdAt).getTime() <= new Date(newFact.createdAt).getTime()
         const archiveId = oldIsOlder ? oldFact.id : newFact.id
 
-        resolveStmt.run(`auto-resolved duplicate (cosine: ${cosine.toFixed(3)}, archived older)`, row.id)
+        resolveStmt.run(
+          `auto-resolved duplicate (cosine: ${cosine.toFixed(3)}, archived older)`,
+          row.id
+        )
         archiveStmt.run(archiveId)
         resolved++
       }
@@ -859,7 +873,11 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return resolved
   }
 
-  resolveContradiction(id: string, resolution: string, status: ContradictionStatus = 'user_resolved'): MemoryContradiction {
+  resolveContradiction(
+    id: string,
+    resolution: string,
+    status: ContradictionStatus = 'user_resolved'
+  ): MemoryContradiction {
     const row = this.db()
       .prepare(
         `UPDATE memory_contradictions SET
@@ -877,9 +895,7 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   getDocState(workspaceId: string, filePath: string): MemoryDocState | undefined {
     const row = this.db()
-      .prepare(
-        'SELECT * FROM memory_doc_state WHERE workspace_id = ? AND file_path = ?'
-      )
+      .prepare('SELECT * FROM memory_doc_state WHERE workspace_id = ? AND file_path = ?')
       .get(workspaceId, filePath) as DocStateRow | undefined
     return row ? mapDocStateRow(row) : undefined
   }
@@ -923,7 +939,11 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   // ── Confirmation event log ──────────────────────────────────────────────
 
   /** Record a confirmation event with source type and weight. */
-  addConfirmation(factId: string, sourceType: ConfirmationSourceType, weight = 1.0): MemoryConfirmation {
+  addConfirmation(
+    factId: string,
+    sourceType: ConfirmationSourceType,
+    weight = 1.0
+  ): MemoryConfirmation {
     const row = this.db()
       .prepare(
         `INSERT INTO memory_confirmations (fact_id, source_type, weight)
@@ -1008,9 +1028,7 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   /** Mark a fact as volatile (version/count patterns). */
   setVolatile(id: string, volatile: boolean): void {
     this.db()
-      .prepare(
-        `UPDATE memory_facts SET volatile = ?, updated_at = datetime('now') WHERE id = ?`
-      )
+      .prepare(`UPDATE memory_facts SET volatile = ?, updated_at = datetime('now') WHERE id = ?`)
       .run(volatile ? 1 : 0, id)
   }
 
@@ -1052,12 +1070,15 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   /** Update a fact's content in-place (for UPDATE action on volatile/dedup).
    *  Preserves existing tags/scopePaths when the caller doesn't provide them. */
-  updateFactInPlace(id: string, params: {
-    title: string
-    content: string
-    tags?: string[]
-    scopePaths?: string[]
-  }): MemoryFact {
+  updateFactInPlace(
+    id: string,
+    params: {
+      title: string
+      content: string
+      tags?: string[]
+      scopePaths?: string[]
+    }
+  ): MemoryFact {
     // Only overwrite tags/scopePaths when explicitly provided — undefined means "keep existing"
     const row = this.db()
       .prepare(

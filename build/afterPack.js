@@ -12,7 +12,9 @@ function countFiles(dir) {
       if (entry.isFile()) count++
       else if (entry.isDirectory()) count += countFiles(path.join(dir, entry.name))
     }
-  } catch { /* skip unreadable dirs */ }
+  } catch {
+    /* skip unreadable dirs */
+  }
   return count
 }
 
@@ -56,7 +58,18 @@ module.exports = async function afterPack(context) {
     // ── 1b. Remove unnecessary assets that trigger Apple codesign failures ──
     console.log('[afterPack] Pruning non-essential node_modules assets')
 
-    const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.svg', '.webp', '.ico', '.bmp', '.tiff', '.eps'])
+    const IMAGE_EXTS = new Set([
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.gif',
+      '.svg',
+      '.webp',
+      '.ico',
+      '.bmp',
+      '.tiff',
+      '.eps'
+    ])
     const VIDEO_EXTS = new Set(['.mp4', '.webm', '.ogg', '.mov'])
     const CODE_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.d.ts', '.json'])
     const KEEP_IMAGES = new Set(['icon.png', 'icon.icns', 'background.png'])
@@ -73,22 +86,32 @@ module.exports = async function afterPack(context) {
           } else if (entry.isFile()) {
             const ext = path.extname(entry.name).toLowerCase()
             if (dir.includes('iconv-lite/encodings/tables') && ext === '.json') {
-              fs.rmSync(full); removed++; continue
+              fs.rmSync(full)
+              removed++
+              continue
             }
             if (IMAGE_EXTS.has(ext) && !KEEP_IMAGES.has(entry.name)) {
-              fs.rmSync(full); removed++; continue
+              fs.rmSync(full)
+              removed++
+              continue
             }
             if (VIDEO_EXTS.has(ext)) {
-              fs.rmSync(full); removed++; continue
+              fs.rmSync(full)
+              removed++
+              continue
             }
             if (/\b(example|test|demo|docs|samples)\b/i.test(dir)) {
               if (!CODE_EXTS.has(ext) && !entry.name.endsWith('.md')) {
-                fs.rmSync(full); removed++; continue
+                fs.rmSync(full)
+                removed++
+                continue
               }
             }
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     prune(nmTarget)
     if (removed) console.log(`[afterPack] Removed ${removed} non-essential file(s)`)
@@ -121,7 +144,7 @@ module.exports = async function afterPack(context) {
       `${context.packager.appInfo.productFilename}.app`,
       'Contents',
       'Frameworks',
-      'Electron Framework.framework',
+      'Electron Framework.framework'
     )
     let lprojRemoved = 0
     function stripLproj(dir) {
@@ -138,21 +161,25 @@ module.exports = async function afterPack(context) {
             }
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     if (fs.existsSync(frameworkPath)) stripLproj(frameworkPath)
     // Electron binary Resources
     try {
       const eResources = path.join(frameworkPath, 'Resources')
       if (fs.existsSync(eResources)) {
-        fs.readdirSync(eResources).forEach(child => {
+        fs.readdirSync(eResources).forEach((child) => {
           if (child.endsWith('.lproj')) {
             fs.rmSync(path.join(eResources, child), { recursive: true, force: true })
             lprojRemoved++
           }
         })
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
     if (lprojRemoved) console.log(`[afterPack] Stripped ${lprojRemoved} Electron .lproj dirs`)
   }
 
@@ -172,10 +199,14 @@ module.exports = async function afterPack(context) {
             try {
               execSync(`strip -x "${full}"`, { stdio: 'pipe' })
               stripped++
-            } catch { /* strip may silently skip — that's ok */ }
+            } catch {
+              /* strip may silently skip — that's ok */
+            }
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     stripDotNode(nmTarget)
     if (stripped) console.log(`[afterPack] Stripped ${stripped} .node file(s) for codesign`)

@@ -2,16 +2,7 @@
  * Shared phase metadata for the Feed Brain panels.
  */
 
-import {
-  Zap,
-  Search,
-  FileText,
-  Layers,
-  GitBranch,
-  Network,
-  Sparkles,
-  Flag
-} from 'lucide-react'
+import { Zap, Search, FileText, Layers, GitBranch, Network, Sparkles, Flag } from 'lucide-react'
 import type { BootstrapPhaseLabel } from '../../../../../../shared/types'
 
 export interface PhaseInfo {
@@ -64,11 +55,23 @@ export const PHASE_INFO: Record<string, PhaseInfo> = {
 }
 
 export const FULL_PHASES: BootstrapPhaseLabel[] = [
-  'preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize'
+  'preflight',
+  'docs',
+  'stack',
+  'architecture',
+  'history',
+  'structure',
+  'finalize'
 ]
 
 export const DEEP_SCAN_PHASES: BootstrapPhaseLabel[] = [
-  'preflight', 'docs', 'stack', 'architecture', 'history', 'agent-exploration', 'finalize'
+  'preflight',
+  'docs',
+  'stack',
+  'architecture',
+  'history',
+  'agent-exploration',
+  'finalize'
 ]
 
 /** "2m 30s" / "45s" — null input renders as an em dash by the caller. */

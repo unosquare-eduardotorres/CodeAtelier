@@ -35,8 +35,7 @@ export default function ContradictionCard({
 
   // Resolve fact IDs to full fact objects
   useEffect(() => {
-    const resolveLocal = (id: string): MemoryFact | undefined =>
-      allFacts?.find((f) => f.id === id)
+    const resolveLocal = (id: string): MemoryFact | undefined => allFacts?.find((f) => f.id === id)
 
     const resolveFact = async (id: string): Promise<MemoryFact | null> => {
       // Try local first
@@ -60,11 +59,7 @@ export default function ContradictionCard({
   return (
     <div
       className={`border rounded-md p-3 space-y-3 ${
-        isPending
-          ? dup
-            ? 'border-info/40 bg-info/5'
-            : 'border-warning'
-          : 'border-border-default'
+        isPending ? (dup ? 'border-info/40 bg-info/5' : 'border-warning') : 'border-border-default'
       }`}
     >
       {/* Header */}
@@ -106,17 +101,25 @@ export default function ContradictionCard({
                 <TierBadge tier={oldFact.tier} confidence={oldFact.confidence} />
               </div>
               <p className="text-xs font-medium text-text-primary">{oldFact.title}</p>
-              <p className="text-[11px] text-text-secondary leading-relaxed">{excerpt(oldFact.content)}</p>
+              <p className="text-[11px] text-text-secondary leading-relaxed">
+                {excerpt(oldFact.content)}
+              </p>
             </>
           ) : (
-            <p className="text-xs text-text-muted font-mono">{contradiction.oldFactId.slice(0, 12)}…</p>
+            <p className="text-xs text-text-muted font-mono">
+              {contradiction.oldFactId.slice(0, 12)}…
+            </p>
           )}
         </div>
 
         {/* New fact */}
-        <div className={`bg-surface-overlay rounded-md p-2.5 space-y-1.5 border ${dup ? 'border-info/30' : 'border-success/30'}`}>
+        <div
+          className={`bg-surface-overlay rounded-md p-2.5 space-y-1.5 border ${dup ? 'border-info/30' : 'border-success/30'}`}
+        >
           <div className="flex items-center gap-1.5">
-            <span className={`text-[10px] uppercase tracking-wider font-medium ${dup ? 'text-info' : 'text-success'}`}>
+            <span
+              className={`text-[10px] uppercase tracking-wider font-medium ${dup ? 'text-info' : 'text-success'}`}
+            >
               {dup ? 'Fact B (newer)' : 'New (active)'}
             </span>
           </div>
@@ -126,10 +129,14 @@ export default function ContradictionCard({
                 <TierBadge tier={newFact.tier} confidence={newFact.confidence} />
               </div>
               <p className="text-xs font-medium text-text-primary">{newFact.title}</p>
-              <p className="text-[11px] text-text-secondary leading-relaxed">{excerpt(newFact.content)}</p>
+              <p className="text-[11px] text-text-secondary leading-relaxed">
+                {excerpt(newFact.content)}
+              </p>
             </>
           ) : (
-            <p className="text-xs text-text-muted font-mono">{contradiction.newFactId.slice(0, 12)}…</p>
+            <p className="text-xs text-text-muted font-mono">
+              {contradiction.newFactId.slice(0, 12)}…
+            </p>
           )}
         </div>
       </div>
@@ -138,21 +145,27 @@ export default function ContradictionCard({
       {isPending && onResolve && oldFact && newFact && (
         <div className="flex items-center gap-2 pt-1">
           <button
-            onClick={() => onResolve(contradiction.id, 'Kept newer fact, archived older', newFact.id, oldFact.id)}
+            onClick={() =>
+              onResolve(contradiction.id, 'Kept newer fact, archived older', newFact.id, oldFact.id)
+            }
             className="flex items-center gap-1 px-2.5 py-1 text-xs bg-surface-overlay text-text-secondary border border-border-default rounded hover:bg-surface-float hover:text-text-primary transition-colors"
           >
             <Archive className="w-3 h-3" />
             Archive old · keep new
           </button>
           <button
-            onClick={() => onResolve(contradiction.id, 'Kept older fact, archived newer', oldFact.id, newFact.id)}
+            onClick={() =>
+              onResolve(contradiction.id, 'Kept older fact, archived newer', oldFact.id, newFact.id)
+            }
             className="flex items-center gap-1 px-2.5 py-1 text-xs bg-surface-overlay text-text-secondary border border-border-default rounded hover:bg-surface-float hover:text-text-primary transition-colors"
           >
             <Archive className="w-3 h-3" />
             Keep old · discard new
           </button>
           <button
-            onClick={() => onResolve(contradiction.id, 'Dismissed — both facts are valid', newFact.id)}
+            onClick={() =>
+              onResolve(contradiction.id, 'Dismissed — both facts are valid', newFact.id)
+            }
             className="flex items-center gap-1 px-2.5 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
           >
             <X className="w-3 h-3" />

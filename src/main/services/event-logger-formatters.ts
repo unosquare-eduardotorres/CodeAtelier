@@ -10,11 +10,10 @@
  * eventType: `gate.{type}.{pass|fail}`
  * message:   `[PASSED|FAILED] {type}: {summary}`
  */
-export function formatGateResultMessage(gate: {
-  type: string
-  passed: boolean
-  summary: string
-}): { eventType: string; message: string } {
+export function formatGateResultMessage(gate: { type: string; passed: boolean; summary: string }): {
+  eventType: string
+  message: string
+} {
   const status = gate.passed ? 'PASSED' : 'FAILED'
   return {
     eventType: `gate.${gate.type}.${gate.passed ? 'pass' : 'fail'}`,

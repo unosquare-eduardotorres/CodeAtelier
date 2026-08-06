@@ -183,7 +183,10 @@ describe('retrieve — reciprocal rank fusion', () => {
         'caching invalidation strategy rules',
         10
       )
-      assert.deepEqual(results.map((r: { fact: MemoryFact }) => r.fact.id), ['f-strong'])
+      assert.deepEqual(
+        results.map((r: { fact: MemoryFact }) => r.fact.id),
+        ['f-strong']
+      )
     } finally {
       ftsByWs.delete(ws)
       vectorsByWs.delete(ws)
@@ -204,7 +207,10 @@ describe('retrieve — reciprocal rank fusion', () => {
       const results = await memoryRetrievalService.retrieve(ws, 'fix this bug', 10, undefined, [
         'src/billing/Invoice.java'
       ])
-      assert.deepEqual(results.map((r: { fact: MemoryFact }) => r.fact.id), ['f-scoped'])
+      assert.deepEqual(
+        results.map((r: { fact: MemoryFact }) => r.fact.id),
+        ['f-scoped']
+      )
     } finally {
       ftsByWs.delete(ws)
       vectorsByWs.delete(ws)
@@ -265,10 +271,22 @@ describe('getContextForTurn — MMR diversification', () => {
     const ws = 'ws-mmr'
 
     // Three paraphrases pointing the same direction, one genuinely different.
-    const dupA = makeFact('f-dupA', { title: 'caching rule A', content: 'caching invalidation strategy rules' })
-    const dupB = makeFact('f-dupB', { title: 'caching rule B', content: 'caching invalidation strategy rules' })
-    const dupC = makeFact('f-dupC', { title: 'caching rule C', content: 'caching invalidation strategy rules' })
-    const other = makeFact('f-other', { title: 'caching rule D', content: 'caching invalidation strategy rules' })
+    const dupA = makeFact('f-dupA', {
+      title: 'caching rule A',
+      content: 'caching invalidation strategy rules'
+    })
+    const dupB = makeFact('f-dupB', {
+      title: 'caching rule B',
+      content: 'caching invalidation strategy rules'
+    })
+    const dupC = makeFact('f-dupC', {
+      title: 'caching rule C',
+      content: 'caching invalidation strategy rules'
+    })
+    const other = makeFact('f-other', {
+      title: 'caching rule D',
+      content: 'caching invalidation strategy rules'
+    })
 
     embeddingsById.set('f-dupA', unitVec(0))
     embeddingsById.set('f-dupB', unitVec(2))
@@ -606,7 +624,10 @@ const EVAL_CASES: Array<{ query: string; expect: string; facts: MemoryFact[] }> 
         content: 'why is reflection opt in because it spends money on a model',
         tier: 2
       }),
-      makeFact('e-noise-reflection', { title: 'Consolidation', content: 'decay and merge run idle' })
+      makeFact('e-noise-reflection', {
+        title: 'Consolidation',
+        content: 'decay and merge run idle'
+      })
     ]
   },
   {
@@ -635,39 +656,53 @@ const EVAL_CASES: Array<{ query: string; expect: string; facts: MemoryFact[] }> 
   }
 ]
 
+/**
+ * Run `body` with the keyword-arm stub reinstalled as the outermost wrapper.
+ *
+ * The module-level stubs above are installed once at load. Other test files
+ * wrap the same repository singleton, and the whole suite shares one process,
+ * so by the time these run the eval workspaces can be answered by somebody
+ * else's wrapper instead of ours — which returns nothing for them and makes
+ * every case look like a ranking failure. Reinstalling here puts this stub
+ * last in the chain no matter what the import order was.
+ *
+ * Deliberately NOT under `runExclusive`. The lock is process-global and this
+ * body awaits dozens of retrievals; holding it that long deadlocked the whole
+ * suite behind any other exclusive section. The wrapper is safe to leave
+ * installed concurrently instead, because it delegates every workspace it does
+ * not own back to whatever it replaced.
+ */
+async function withKeywordStub(body: () => Promise<void>): Promise<void> {
+  const previous = memoryFactRepository.searchFts
+  memoryFactRepository.searchFts = (
+    ws: string,
+    query: string,
+    limit: number,
+    asOf?: string
+  ): Array<{ fact: MemoryFact; rank: number }> => {
+    const stub = ftsByWs.get(ws)
+    if (!stub) return previous(ws, query, limit, asOf)
+    return stub.map((fact, rank) => ({ fact, rank }))
+  }
+  try {
+    await body()
+  } finally {
+    memoryFactRepository.searchFts = previous
+  }
+}
+
 describe('retrieval eval set — RRF must not regress against legacy', () => {
   test('RRF ranks the expected fact first in every case', async () => {
     if (!loaded) return
-    let hits = 0
-    for (const [i, testCase] of EVAL_CASES.entries()) {
-      const ws = `ws-eval-rrf-${i}`
-      ftsByWs.set(ws, testCase.facts)
-      vectorsByWs.set(ws, [])
-      try {
-        const results = await memoryRetrievalService.retrieve(
-          ws,
-          testCase.query,
-          10,
-          undefined,
-          [],
-          { scorer: 'rrf' }
-        )
-        if (results[0]?.fact.id === testCase.expect) hits++
-      } finally {
-        ftsByWs.delete(ws)
-        vectorsByWs.delete(ws)
-      }
-    }
-    assert.equal(hits, EVAL_CASES.length, `RRF got ${hits}/${EVAL_CASES.length} top-1 correct`)
-  })
-
-  test('RRF scores at least as well as the legacy scorer', async () => {
-    if (!loaded) return
-
-    const scoreWith = async (scorer: 'rrf' | 'legacy'): Promise<number> => {
+    await withKeywordStub(async () => {
       let hits = 0
+      const misses: string[] = []
       for (const [i, testCase] of EVAL_CASES.entries()) {
-        const ws = `ws-eval-${scorer}-${i}`
+        // Namespaced away from the comparison test below: `scoreWith('rrf')`
+        // used to generate this exact key set, and because the harness runs
+        // async tests concurrently the two loops deleted each other's stubs
+        // mid-flight. With three cases the window was too small to notice.
+        const ws = `ws-eval-top1-${i}`
         ftsByWs.set(ws, testCase.facts)
         vectorsByWs.set(ws, [])
         try {
@@ -677,23 +712,62 @@ describe('retrieval eval set — RRF must not regress against legacy', () => {
             10,
             undefined,
             [],
-            { scorer }
+            { scorer: 'rrf' }
           )
           if (results[0]?.fact.id === testCase.expect) hits++
+          else
+            misses.push(
+              `"${testCase.query}" expected=${testCase.expect} got=${
+                results[0]?.fact.id ?? '<none>'
+              } (${results.length} result(s))`
+            )
         } finally {
           ftsByWs.delete(ws)
           vectorsByWs.delete(ws)
         }
       }
-      return hits
-    }
+      assert.equal(
+        hits,
+        EVAL_CASES.length,
+        `RRF got ${hits}/${EVAL_CASES.length} top-1 correct. Misses:\n  ${misses.join('\n  ')}`
+      )
+    })
+  })
 
-    const rrf = await scoreWith('rrf')
-    const legacy = await scoreWith('legacy')
-    assert.ok(
-      rrf >= legacy,
-      `RRF top-1 (${rrf}) must not be worse than legacy (${legacy}) on the eval set`
-    )
+  test('RRF scores at least as well as the legacy scorer', async () => {
+    if (!loaded) return
+    await withKeywordStub(async () => {
+      const scoreWith = async (scorer: 'rrf' | 'legacy'): Promise<number> => {
+        let hits = 0
+        for (const [i, testCase] of EVAL_CASES.entries()) {
+          const ws = `ws-eval-cmp-${scorer}-${i}`
+          ftsByWs.set(ws, testCase.facts)
+          vectorsByWs.set(ws, [])
+          try {
+            const results = await memoryRetrievalService.retrieve(
+              ws,
+              testCase.query,
+              10,
+              undefined,
+              [],
+              { scorer }
+            )
+            if (results[0]?.fact.id === testCase.expect) hits++
+          } finally {
+            ftsByWs.delete(ws)
+            vectorsByWs.delete(ws)
+          }
+        }
+        return hits
+      }
+
+      const rrf = await scoreWith('rrf')
+      const legacy = await scoreWith('legacy')
+      assert.ok(
+        rrf >= legacy,
+        `RRF top-1 (${rrf}) must not be worse than legacy (${legacy}) on the eval set`
+      )
+    })
   })
 
   test('the legacy scorer is still reachable behind the flag', async () => {

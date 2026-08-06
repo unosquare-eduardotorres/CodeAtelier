@@ -103,13 +103,19 @@ export default function ProgressBar({ counts }: ProgressBarProps): React.JSX.Ele
         )}
         {counts.queued > 0 && (
           <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-surface-base border border-border-subtle" aria-hidden="true" />
+            <span
+              className="inline-block w-2 h-2 rounded-full bg-surface-base border border-border-subtle"
+              aria-hidden="true"
+            />
             Queued: <span className="tabular-nums text-text-secondary">{counts.queued}</span>
           </span>
         )}
         {counts.skipped > 0 && (
           <span className="flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-text-muted/30" aria-hidden="true" />
+            <span
+              className="inline-block w-2 h-2 rounded-full bg-text-muted/30"
+              aria-hidden="true"
+            />
             Skipped: <span className="tabular-nums text-text-secondary">{counts.skipped}</span>
           </span>
         )}

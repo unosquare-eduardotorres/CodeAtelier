@@ -14,9 +14,7 @@ import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Help System & Keyboard Shortcuts', () => {
-  async function ensureAppReady(
-    page: import('@playwright/test').Page
-  ): Promise<AppChrome> {
+  async function ensureAppReady(page: import('@playwright/test').Page): Promise<AppChrome> {
     const welcomePage = new WelcomePage(page)
     const chrome = new AppChrome(page)
 
@@ -51,7 +49,9 @@ test.describe('Help System & Keyboard Shortcuts', () => {
       expect(sectionCount).toBeGreaterThanOrEqual(5) // At least 5 help sections
     } else {
       // Alternative: check for section headings
-      const headings = page.locator('h2, h3').filter({ hasText: /getting|workspace|chat|agent|model/i })
+      const headings = page
+        .locator('h2, h3')
+        .filter({ hasText: /getting|workspace|chat|agent|model/i })
       const headingCount = await headings.count()
       expect(headingCount).toBeGreaterThan(0)
     }

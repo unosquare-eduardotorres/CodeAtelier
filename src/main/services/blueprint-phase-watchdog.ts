@@ -147,13 +147,19 @@ export class PhaseActivityWatchdog {
  * Returns a cleanup function to remove the listener.
  */
 export function wireAskUserAutoResponder(
-  session: { on: (event: string, handler: (...args: unknown[]) => void) => void; off: (event: string, handler: (...args: unknown[]) => void) => void; respondToAskUser: (requestId: string, response: string) => void },
+  session: {
+    on: (event: string, handler: (...args: unknown[]) => void) => void
+    off: (event: string, handler: (...args: unknown[]) => void) => void
+    respondToAskUser: (requestId: string, response: string) => void
+  },
   phaseName: string
 ): () => void {
   const handler = (data: unknown): void => {
     const { requestId } = data as { requestId?: string }
     if (!requestId) return
-    bpLog.info(`[askUser-auto-responder] ${phaseName} phase — auto-responding to ask_user (non-interactive phase)`)
+    bpLog.info(
+      `[askUser-auto-responder] ${phaseName} phase — auto-responding to ask_user (non-interactive phase)`
+    )
     session.respondToAskUser(
       requestId,
       `Non-interactive phase (${phaseName}) — proceed with best judgment and emit the required fenced block.`

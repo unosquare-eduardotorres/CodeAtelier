@@ -367,10 +367,7 @@ describe('gitlink handling', () => {
   })
 
   test('regular_file_entry_is_not_a_gitlink', () => {
-    assert.equal(
-      isGitlinkEntry({ ...gitlink, srcMode: '100644', dstMode: '100644' }),
-      false
-    )
+    assert.equal(isGitlinkEntry({ ...gitlink, srcMode: '100644', dstMode: '100644' }), false)
   })
 
   test('newly_added_submodule_is_still_a_gitlink', () => {

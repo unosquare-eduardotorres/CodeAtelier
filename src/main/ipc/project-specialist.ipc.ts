@@ -301,8 +301,7 @@ export function registerProjectSpecialistIpc(): void {
             WHERE s.id = ?`
         )
         .get(specialistId) as
-        | { id: string; workspace_id: string; detected_techs: string; repo_path: string }
-        | undefined
+        { id: string; workspace_id: string; detected_techs: string; repo_path: string } | undefined
 
       if (!row) throw new Error(`Specialist not found: ${specialistId}`)
 

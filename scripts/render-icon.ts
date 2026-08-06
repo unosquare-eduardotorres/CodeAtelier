@@ -40,7 +40,7 @@ const TIERS: TierConfig[] = [
   { source: 't1-full.png', sizes: [1024, 512] },
   { source: 't2-medium.png', sizes: [256, 128] },
   { source: 't3-simple.png', sizes: [64, 32] },
-  { source: 't4-tiny.png', sizes: [16] },
+  { source: 't4-tiny.png', sizes: [16] }
 ]
 
 /** Maps each iconset slot filename to its pixel size and source tier index */
@@ -54,21 +54,17 @@ const ICONSET_SLOTS: Array<{ name: string; pixelSize: number; tierIndex: number 
   { name: 'icon_32x32@2x.png', pixelSize: 64, tierIndex: 2 },
   { name: 'icon_32x32.png', pixelSize: 32, tierIndex: 2 },
   { name: 'icon_16x16@2x.png', pixelSize: 32, tierIndex: 2 },
-  { name: 'icon_16x16.png', pixelSize: 16, tierIndex: 3 },
+  { name: 'icon_16x16.png', pixelSize: 16, tierIndex: 3 }
 ]
 
 // ── Squircle mask via Playwright (--apply-mask only) ───────────────────────
 
-async function applySquircleMask(
-  srcPath: string,
-  size: number,
-  outPath: string
-): Promise<void> {
+async function applySquircleMask(srcPath: string, size: number, outPath: string): Promise<void> {
   const { chromium } = await import('playwright')
   const browser = await chromium.launch()
   const page = await browser.newPage({
     viewport: { width: size, height: size },
-    deviceScaleFactor: 1,
+    deviceScaleFactor: 1
   })
 
   // Apple icon grid: artwork occupies 824/1024 (~80.5%) of canvas, centered
@@ -128,7 +124,7 @@ async function cropToContentBbox(
     `bottom = min(img.height, int(cy + half))`,
     'cropped = img.crop((left, top, right, bottom))',
     `resized = cropped.resize((${targetSize}, ${targetSize}), Image.LANCZOS)`,
-    `resized.save("${outPath}", "PNG")`,
+    `resized.save("${outPath}", "PNG")`
   ].join('; ')
   execSync(`python3 -c '${script}'`, { stdio: 'pipe' })
 }
@@ -142,10 +138,7 @@ async function resizePng(srcPath: string, size: number, outPath: string): Promis
 
 // ── ICNS generation ─────────────────────────────────────────────────────────
 
-async function generateIcns(
-  sizeToFile: Map<number, string>,
-  outPath: string
-): Promise<void> {
+async function generateIcns(sizeToFile: Map<number, string>, outPath: string): Promise<void> {
   const { execSync } = await import('node:child_process')
   const tmpIconset = path.join(ROOT, 'build', 'icon.iconset')
 
@@ -160,7 +153,7 @@ async function generateIcns(
     const dest = path.join(tmpIconset, slot.name)
     // Resize from the tier's masked source to the exact target size
     execSync(`sips -z ${slot.pixelSize} ${slot.pixelSize} "${srcFile}" --out "${dest}"`, {
-      stdio: 'pipe',
+      stdio: 'pipe'
     })
   }
 

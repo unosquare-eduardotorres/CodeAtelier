@@ -44,7 +44,11 @@ import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE, BUILD_SUMMARY_RE } from './plan-d
 import type { SectionKey } from './task-plan/TaskPlanSections'
 import { BuildActionBar, usePlanMemos, buildSectionMap } from './task-plan'
 import type { StructuredPlan, MemoryFact } from '../../../../shared/types'
-import { derivePlanTasks, derivePhaseFiles, renderTaskManifest } from '../../../../shared/plan-tasks'
+import {
+  derivePlanTasks,
+  derivePhaseFiles,
+  renderTaskManifest
+} from '../../../../shared/plan-tasks'
 import { modifierKey } from '@renderer/utils/platform'
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -226,7 +230,9 @@ const MAX_DERIVED_GOAL_LENGTH = 3500
 function deriveGoalFromPlan(plan: StructuredPlan): string {
   const parts: string[] = []
   if (plan.phases?.length) {
-    parts.push(`Complete all ${plan.phases.length} phases: ${plan.phases.map((p) => p.title).join(', ')}`)
+    parts.push(
+      `Complete all ${plan.phases.length} phases: ${plan.phases.map((p) => p.title).join(', ')}`
+    )
   }
   if (plan.verification?.length) {
     parts.push(`Verify: ${plan.verification.join('; ')}`)
@@ -377,7 +383,12 @@ function PlanTabContent({
   const messages = useChatStore((s) => s.messages)
   const latestPlanMsg = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role !== 'user' && messages[i].contentMd && PLAN_BLOCK_RE.test(messages[i].contentMd) && !BUILD_SUMMARY_RE.test(messages[i].contentMd)) {
+      if (
+        messages[i].role !== 'user' &&
+        messages[i].contentMd &&
+        PLAN_BLOCK_RE.test(messages[i].contentMd) &&
+        !BUILD_SUMMARY_RE.test(messages[i].contentMd)
+      ) {
         return messages[i]
       }
     }
@@ -390,7 +401,10 @@ function PlanTabContent({
   // Goal state: user edit → plan's goal → derived fallback
   const [editedGoal, setEditedGoal] = useState<string | null>(null)
   const effectiveGoal = useMemo(
-    () => editedGoal ?? structuredPlan?.goal ?? (structuredPlan ? deriveGoalFromPlan(structuredPlan) : ''),
+    () =>
+      editedGoal ??
+      structuredPlan?.goal ??
+      (structuredPlan ? deriveGoalFromPlan(structuredPlan) : ''),
     [editedGoal, structuredPlan]
   )
 
@@ -470,23 +484,22 @@ function PlanTabContent({
     // Set goal on adapter before sending (enforce mode for autonomous execution)
     const goalToEnforce = effectiveGoal?.trim()
     if (goalToEnforce) {
-      window.api.chatSetGoal({
-        conversationId,
-        goal: goalToEnforce,
-        goalMode: 'enforce'
-      }).then(() => {
-        void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
-      }).catch((err) => {
-        console.error('[plan] Failed to set goal, sending without enforcement:', err)
-        void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
-      })
+      window.api
+        .chatSetGoal({
+          conversationId,
+          goal: goalToEnforce,
+          goalMode: 'enforce'
+        })
+        .then(() => {
+          void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
+        })
+        .catch((err) => {
+          console.error('[plan] Failed to set goal, sending without enforcement:', err)
+          void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
+        })
     } else {
       // No goal — send without enforcement (backward compat)
-      void sendMessage(
-        buildKickoffMessage,
-        undefined,
-        { hidden: true, skipOptimizer: true }
-      )
+      void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
     }
   }, [conversationId, structuredPlan, effectiveGoal, latestPlanMsg, sendMessage, updateMode])
 
@@ -538,7 +551,11 @@ function PlanTabContent({
   }, [])
 
   const handleRegeneratePlan = useCallback((): void => {
-    const { isStreaming, sendingConversationIds, activeConversation: conv } = useChatStore.getState()
+    const {
+      isStreaming,
+      sendingConversationIds,
+      activeConversation: conv
+    } = useChatStore.getState()
     if (isStreaming || sendingConversationIds.has(conv?.id ?? '')) {
       useToastStore.getState().addToast({
         type: 'info',
@@ -562,9 +579,9 @@ function PlanTabContent({
     setUserClicked(true)
     void sendMessage(
       `I've updated the goal to:\n\n${effectiveGoal}\n\n` +
-      'Regenerate the plan to achieve this updated goal. ' +
-      "Include the new goal in the plan's `goal` field. " +
-      'Output the updated plan in a ```plan``` block.',
+        'Regenerate the plan to achieve this updated goal. ' +
+        "Include the new goal in the plan's `goal` field. " +
+        'Output the updated plan in a ```plan``` block.',
       undefined,
       { hidden: true, skipOptimizer: true }
     )
@@ -719,9 +736,11 @@ function CompletedPlanBanner({
     : null
 
   return (
-    <div className={`flex items-center gap-2 px-3 py-1.5 border-b border-border-subtle text-xs flex-shrink-0 ${
-      allFailed ? 'bg-error/5' : 'bg-success/5'
-    }`}>
+    <div
+      className={`flex items-center gap-2 px-3 py-1.5 border-b border-border-subtle text-xs flex-shrink-0 ${
+        allFailed ? 'bg-error/5' : 'bg-success/5'
+      }`}
+    >
       {allFailed ? (
         <XCircle size={12} className="text-error" />
       ) : (
@@ -730,18 +749,11 @@ function CompletedPlanBanner({
       <span className="text-text-primary font-medium">Execution complete</span>
       <span className="text-text-muted">
         {completedPhases}/{execution.totalPhases} phases
-        {failedPhases > 0 && (
-          <span className="text-error ml-1">({failedPhases} failed)</span>
-        )}
+        {failedPhases > 0 && <span className="text-error ml-1">({failedPhases} failed)</span>}
       </span>
-      {durationStr && (
-        <span className="text-text-muted">· {durationStr}</span>
-      )}
+      {durationStr && <span className="text-text-muted">· {durationStr}</span>}
       {execution.planGoal && (
-        <span
-          className="text-text-muted truncate max-w-[200px]"
-          title={execution.planGoal}
-        >
+        <span className="text-text-muted truncate max-w-[200px]" title={execution.planGoal}>
           🎯{' '}
           {execution.planGoal.length > 50
             ? execution.planGoal.slice(0, 47) + '...'
@@ -763,7 +775,11 @@ function CompletedPlanBanner({
 
 // ── Plan History Tab ─────────────────────────────────────────────────────────
 
-function PlanHistoryTab({ conversationId: _conversationId }: { conversationId: string }): JSX.Element {
+function PlanHistoryTab({
+  conversationId: _conversationId
+}: {
+  conversationId: string
+}): JSX.Element {
   const messages = useChatStore((s) => s.messages)
 
   const planMessages = useMemo(() => {
@@ -836,11 +852,7 @@ function PlanHistoryTab({ conversationId: _conversationId }: { conversationId: s
 
 // ── Session Memories Tab ─────────────────────────────────────────────────────
 
-function SessionMemoriesTab({
-  conversationId
-}: {
-  conversationId: string
-}): JSX.Element {
+function SessionMemoriesTab({ conversationId }: { conversationId: string }): JSX.Element {
   const workspaceId = useWorkspaceStore((s) => s.activeWorkspace?.id)
   const [memories, setMemories] = useState<MemoryFact[]>([])
   const [loading, setLoading] = useState(true)
@@ -888,9 +900,7 @@ function SessionMemoriesTab({
             <span className="text-sm font-medium text-text-primary">{fact.title}</span>
             <span
               className={`text-[10px] px-1.5 py-0.5 rounded ${
-                fact.tier >= 2
-                  ? 'bg-success/20 text-success'
-                  : 'bg-surface-overlay text-text-muted'
+                fact.tier >= 2 ? 'bg-success/20 text-success' : 'bg-surface-overlay text-text-muted'
               }`}
             >
               T{fact.tier}
@@ -1030,7 +1040,11 @@ export default function ChatExecutionPanel({
       )}
 
       {/* Tab bar */}
-      <div role="tablist" aria-label="Execution panel tabs" className="flex border-b border-border-subtle px-2 pt-2 gap-1 flex-shrink-0">
+      <div
+        role="tablist"
+        aria-label="Execution panel tabs"
+        className="flex border-b border-border-subtle px-2 pt-2 gap-1 flex-shrink-0"
+      >
         <button
           type="button"
           role="tab"
@@ -1047,7 +1061,9 @@ export default function ChatExecutionPanel({
           <FileText size={14} />
           Plan
           {planContent && (
-            <span className={`w-2 h-2 rounded-full bg-plan-card flex-shrink-0${activeTab !== 'plan' ? ' animate-pulse' : ''}`} />
+            <span
+              className={`w-2 h-2 rounded-full bg-plan-card flex-shrink-0${activeTab !== 'plan' ? ' animate-pulse' : ''}`}
+            />
           )}
         </button>
         <button
@@ -1087,9 +1103,7 @@ export default function ChatExecutionPanel({
           <History size={14} />
           History
           {planMessageCount > 0 && (
-            <span className="text-[11px] font-mono text-text-muted">
-              {planMessageCount}
-            </span>
+            <span className="text-[11px] font-mono text-text-muted">{planMessageCount}</span>
           )}
         </button>
         <button
@@ -1185,14 +1199,10 @@ export default function ChatExecutionPanel({
         )}
 
         {/* ── History tab ── */}
-        {activeTab === 'history' && (
-          <PlanHistoryTab conversationId={conversationId} />
-        )}
+        {activeTab === 'history' && <PlanHistoryTab conversationId={conversationId} />}
 
         {/* ── Memories tab ── */}
-        {activeTab === 'memories' && (
-          <SessionMemoriesTab conversationId={conversationId} />
-        )}
+        {activeTab === 'memories' && <SessionMemoriesTab conversationId={conversationId} />}
       </div>
     </div>
   )

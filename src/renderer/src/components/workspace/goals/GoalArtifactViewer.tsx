@@ -108,7 +108,9 @@ export default function GoalArtifactViewer({ report }: GoalArtifactViewerProps):
               <div className="flex items-center gap-2 mb-1">
                 {STATUS_ICONS[issue.status]}
                 <span className="text-xs font-mono text-text-muted">{issue.planItemId}</span>
-                <span className="text-xs text-text-primary">{STATUS_LABELS[issue.status] ?? issue.status}</span>
+                <span className="text-xs text-text-primary">
+                  {STATUS_LABELS[issue.status] ?? issue.status}
+                </span>
               </div>
               <p className="text-xs text-text-secondary">{issue.detail}</p>
               {issue.filesChecked.length > 0 && (

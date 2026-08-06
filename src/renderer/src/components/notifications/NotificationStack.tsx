@@ -46,9 +46,12 @@ export default function NotificationStack({
   const dismissTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
 
   // Clear all pending auto-dismiss timers on unmount
-  useEffect(() => () => {
-    dismissTimersRef.current.forEach(clearTimeout)
-  }, [])
+  useEffect(
+    () => () => {
+      dismissTimersRef.current.forEach(clearTimeout)
+    },
+    []
+  )
 
   // Listen for OS notification click → navigate to workspace + target page
   useEffect(() => {
@@ -87,9 +90,7 @@ export default function NotificationStack({
   // Show toasts for NON-active workspaces, plus toolPermission for the active workspace
   // (askQuestion/elicitation have inline chat handlers; toolPermission does not)
   const visiblePermissions = permissions.filter(
-    (p) =>
-      (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') &&
-      !p.badgeFallback
+    (p) => (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') && !p.badgeFallback
   )
 
   const handlePermissionRespond = useCallback(

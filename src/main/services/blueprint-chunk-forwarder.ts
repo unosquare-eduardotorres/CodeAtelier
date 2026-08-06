@@ -64,11 +64,7 @@ export function forwardBlueprintChunk(
   }
 
   // ── Tool chunks (tool_use / tool_result / tool_progress) ──
-  if (
-    chunk.type === 'tool_use' ||
-    chunk.type === 'tool_result' ||
-    chunk.type === 'tool_progress'
-  ) {
+  if (chunk.type === 'tool_use' || chunk.type === 'tool_result' || chunk.type === 'tool_progress') {
     const processed = processToolChunk(chunk, {
       agentType: 'blueprint',
       workspacePath: ctx.workspacePath,

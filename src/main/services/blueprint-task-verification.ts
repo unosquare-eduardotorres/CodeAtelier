@@ -105,7 +105,13 @@ export function verifyTaskFileClaims(
   // ── Case 2: No claims in completion block ──
   if (plannedFiles.length === 0) {
     // No claims + no planned files → unverifiable (integration/wiring task)
-    return { ok: true, missingClaimed: [], missingPlanned: [], staleClaimed: [], unverifiable: true }
+    return {
+      ok: true,
+      missingClaimed: [],
+      missingPlanned: [],
+      staleClaimed: [],
+      unverifiable: true
+    }
   }
 
   // Check if ANY planned files exist on disk
@@ -138,11 +144,19 @@ export function verifyTaskFileClaims(
             anyFresh = true
             break
           }
-        } catch { /* stat failed — skip */ }
+        } catch {
+          /* stat failed — skip */
+        }
       }
     }
     if (!anyFresh) {
-      return { ok: false, missingClaimed: [], missingPlanned, staleClaimed: [], unverifiable: false }
+      return {
+        ok: false,
+        missingClaimed: [],
+        missingPlanned,
+        staleClaimed: [],
+        unverifiable: false
+      }
     }
   }
 
@@ -195,7 +209,7 @@ export function scanCompletedTaskFiles(
 
       // Planned-but-not-claimed = drift (informational only)
       if (task.filePathsJson?.length) {
-        const claimedSet = new Set(claimed.map(p => p.toLowerCase()))
+        const claimedSet = new Set(claimed.map((p) => p.toLowerCase()))
         for (const filePath of task.filePathsJson) {
           if (claimedSet.has(filePath.toLowerCase())) continue
           const resolved = resolveAndGuard(workspacePath, filePath)
@@ -241,13 +255,13 @@ export function applyDeterministicFileCheck(
   if (!completion) return completion
 
   // Count only missingClaimed — drift doesn't force downgrade
-  const tasksWithClaimedMissing = [...missingByTask.entries()]
-    .filter(([, v]) => v.missingClaimed.length > 0)
+  const tasksWithClaimedMissing = [...missingByTask.entries()].filter(
+    ([, v]) => v.missingClaimed.length > 0
+  )
 
   if (tasksWithClaimedMissing.length === 0) {
     // Only drift — inject informational finding but DON'T downgrade status
-    const driftCount = [...missingByTask.values()]
-      .reduce((sum, v) => sum + v.driftFiles.length, 0)
+    const driftCount = [...missingByTask.values()].reduce((sum, v) => sum + v.driftFiles.length, 0)
     if (driftCount > 0) {
       const existingFindings = Array.isArray(completion.findings) ? completion.findings : []
       return {

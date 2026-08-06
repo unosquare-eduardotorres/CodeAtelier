@@ -94,7 +94,9 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
    */
   getLastMessageTimestamp(conversationId: string): string | undefined {
     const row = this.db()
-      .prepare('SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1')
+      .prepare(
+        'SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1'
+      )
       .get(conversationId) as { created_at: string } | undefined
     return row?.created_at
   }
@@ -175,9 +177,7 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
   }
 
   updatePlanAction(messageId: string, action: string): void {
-    this.db()
-      .prepare('UPDATE messages SET plan_action = ? WHERE id = ?')
-      .run(action, messageId)
+    this.db().prepare('UPDATE messages SET plan_action = ? WHERE id = ?').run(action, messageId)
   }
 }
 

@@ -14,9 +14,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 
 test.describe('Specialist Management', () => {
-  async function openWorkspace(
-    page: import('@playwright/test').Page
-  ): Promise<void> {
+  async function openWorkspace(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -102,16 +100,17 @@ test.describe('Specialist Management', () => {
     await expect(panel).toBeHidden({ timeout: 3_000 })
   })
 
-  test('specialist settings page renders in workspace settings', async ({
-    electronPage: page
-  }) => {
+  test('specialist settings page renders in workspace settings', async ({ electronPage: page }) => {
     await openWorkspace(page)
 
     const settings = new WorkspaceSettings(page)
 
     // Navigate to settings > specialist
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -131,7 +130,10 @@ test.describe('Specialist Management', () => {
     const settings = new WorkspaceSettings(page)
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)

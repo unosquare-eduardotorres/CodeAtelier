@@ -27,10 +27,7 @@ export function makeDescriptionKey(filePath: string, symbolName: string, body: s
  * @param maxIndex Upper bound (exclusive) for valid indices (i.e. chunk count)
  * @returns Map<0-based-index, description>
  */
-export function parseBatchDescriptionOutput(
-  output: string,
-  maxIndex: number
-): Map<number, string> {
+export function parseBatchDescriptionOutput(output: string, maxIndex: number): Map<number, string> {
   const results = new Map<number, string>()
   for (const line of output.split('\n')) {
     const match = line.match(/^(\d+):\s*(.+)/)
@@ -48,9 +45,11 @@ export function parseBatchDescriptionOutput(
  * Aggregate rows of { source, count } into a summary object.
  * Handles 'ai' and 'heuristic' source types; ignores unknown sources.
  */
-export function aggregateSourceCounts(
-  rows: Array<{ source: string; count: number }>
-): { ai: number; heuristic: number; total: number } {
+export function aggregateSourceCounts(rows: Array<{ source: string; count: number }>): {
+  ai: number
+  heuristic: number
+  total: number
+} {
   let ai = 0
   let heuristic = 0
   for (const row of rows) {

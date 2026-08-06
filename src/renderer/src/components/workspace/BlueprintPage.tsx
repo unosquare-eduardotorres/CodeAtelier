@@ -5,11 +5,7 @@ import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/bl
 import { rendererLog } from '@renderer/utils/logger'
 import { ConfirmDialog } from '@renderer/components/common'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
-import {
-  BlueprintPhaseTimeline,
-  BlueprintApprovalGate,
-  BlueprintHistoryItem
-} from './blueprints'
+import { BlueprintPhaseTimeline, BlueprintApprovalGate, BlueprintHistoryItem } from './blueprints'
 import { BlueprintClarifyGateCard } from './blueprints/BlueprintClarifyGateCard'
 import { PHASE_ICONS, type PhaseIconKey } from './blueprints/phase-icons'
 import BlueprintChatView, { BlueprintQuestionFooter } from './blueprints/BlueprintChatView'
@@ -77,9 +73,25 @@ function BlueprintActiveView({
   onIterateClarify
 }: {
   pendingApproval: {
-    blueprintId: string; planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string
+    blueprintId: string
+    planSummary: string
+    completion?: Record<string, unknown>
+    reviewMarkdown?: string
     preflight?: {
-      result: { checks: Array<{ id: string; name: string; kind: string; status: string; message: string; remediation?: string; sources: string[] }>; ranAt: string; hasBlockers: boolean; hasWarnings: boolean }
+      result: {
+        checks: Array<{
+          id: string
+          name: string
+          kind: string
+          status: string
+          message: string
+          remediation?: string
+          sources: string[]
+        }>
+        ranAt: string
+        hasBlockers: boolean
+        hasWarnings: boolean
+      }
       overridden: boolean
     }
   } | null
@@ -94,8 +106,10 @@ function BlueprintActiveView({
   phaseDurations: Partial<Record<BlueprintPhaseType, number>>
   chatMessages: BlueprintChatMessage[]
   clarifyAwaitingInput: boolean
-  clarifyFindings: import('../../../../shared/blueprint-clarify-parsers').ClarifyFindingsBlock | null
-  clarifyQuestions: import('../../../../shared/blueprint-clarify-parsers').ClarifyQuestionsBlock | null
+  clarifyFindings:
+    import('../../../../shared/blueprint-clarify-parsers').ClarifyFindingsBlock | null
+  clarifyQuestions:
+    import('../../../../shared/blueprint-clarify-parsers').ClarifyQuestionsBlock | null
   clarifyGateReady: boolean
   currentGoal: string | null
   taskGoals: Record<string, string>
@@ -107,7 +121,13 @@ function BlueprintActiveView({
   onApprove: () => void
   onReject: (feedback: string) => void
   onCancel: () => void
-  onSendClarifyAnswer: (message: string, answers?: Record<string, import('../../../../shared/blueprint-clarify-parsers').QuestionAnswerState>) => void
+  onSendClarifyAnswer: (
+    message: string,
+    answers?: Record<
+      string,
+      import('../../../../shared/blueprint-clarify-parsers').QuestionAnswerState
+    >
+  ) => void
   onSkipClarify: () => void
   onProceedGate: () => void
   onIterateClarify: () => void
@@ -153,9 +173,8 @@ function BlueprintActiveView({
   // Track whether any phases have completed (enables deliverables tab)
   const hasCompletedPhases = useMemo(
     () =>
-      currentBlueprint?.phases.some(
-        (p) => p.status === 'complete' || p.status === 'failed'
-      ) ?? false,
+      currentBlueprint?.phases.some((p) => p.status === 'complete' || p.status === 'failed') ??
+      false,
     [currentBlueprint]
   )
 
@@ -191,7 +210,9 @@ function BlueprintActiveView({
         >
           <div
             className={`grid ${panelOpen ? '' : 'grid-cols-[200px_minmax(0,1fr)]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
-            style={panelOpen ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` } : undefined}
+            style={
+              panelOpen ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` } : undefined
+            }
           >
             <div className="p-3 overflow-y-auto min-h-0">
               <BlueprintPhaseTimeline
@@ -204,7 +225,13 @@ function BlueprintActiveView({
             <div className="flex flex-col min-h-0 min-w-0">
               <BlueprintChatView
                 messages={chatMessages}
-                isStreaming={isRunning && !clarifyGateReady && !clarifyQuestions && !clarifyAwaitingInput && !pendingApproval}
+                isStreaming={
+                  isRunning &&
+                  !clarifyGateReady &&
+                  !clarifyQuestions &&
+                  !clarifyAwaitingInput &&
+                  !pendingApproval
+                }
                 runningTasks={runningTasks}
                 waveTasks={waveTasks}
                 currentPhase={currentPhase}
@@ -249,10 +276,7 @@ function BlueprintActiveView({
 
                     {/* Clarify fallback textarea (no structured questions parsed) */}
                     {clarifyAwaitingInput && !clarifyQuestions && !clarifyGateReady && (
-                      <ClarifyAnswerPanel
-                        onSend={onSendClarifyAnswer}
-                        onSkip={onSkipClarify}
-                      />
+                      <ClarifyAnswerPanel onSend={onSendClarifyAnswer} onSkip={onSkipClarify} />
                     )}
                   </>
                 }
@@ -416,7 +440,11 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   // ── Local state ──
   const [viewState, setViewState] = useState<ViewState>('landing')
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; isActive: boolean } | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string
+    title: string
+    isActive: boolean
+  } | null>(null)
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set())
   // Prefill state for onboard flow (CreateProjectDialog → BlueprintPage handoff)
   const [prefillTitle, setPrefillTitle] = useState('')
@@ -438,13 +466,19 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
 
   const filteredHistory = useMemo(() => {
     let result = history
-    if (filter === 'complete') result = result.filter((bp) => COMPLETED_STATUSES.includes(bp.status))
-    else if (filter === 'failed') result = result.filter((bp) => FAILED_STATUSES.includes(bp.status))
-    else if (filter === 'active') result = result.filter((bp) => !COMPLETED_STATUSES.includes(bp.status) && !FAILED_STATUSES.includes(bp.status))
+    if (filter === 'complete')
+      result = result.filter((bp) => COMPLETED_STATUSES.includes(bp.status))
+    else if (filter === 'failed')
+      result = result.filter((bp) => FAILED_STATUSES.includes(bp.status))
+    else if (filter === 'active')
+      result = result.filter(
+        (bp) => !COMPLETED_STATUSES.includes(bp.status) && !FAILED_STATUSES.includes(bp.status)
+      )
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase()
       result = result.filter(
-        (bp) => bp.title.toLowerCase().includes(q) || (bp.description ?? '').toLowerCase().includes(q)
+        (bp) =>
+          bp.title.toLowerCase().includes(q) || (bp.description ?? '').toLowerCase().includes(q)
       )
     }
     return result
@@ -499,7 +533,14 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
       setViewState('landing')
       /* eslint-enable react-hooks/set-state-in-effect */
     }
-  }, [workspaceId, loadHistory, loadPipelineStatus, resetForWorkspaceSwitch, loadBlueprint, hydrateTranscript])
+  }, [
+    workspaceId,
+    loadHistory,
+    loadPipelineStatus,
+    resetForWorkspaceSwitch,
+    loadBlueprint,
+    hydrateTranscript
+  ])
 
   // ── Auto-start from pendingOnboard (CreateProjectDialog → BlueprintPage handoff) ──
   const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
@@ -507,11 +548,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   const clarifyBlueprintId = useBlueprintStore((s) => s.clarifyBlueprintId)
 
   useEffect(() => {
-    if (
-      !pendingOnboard ||
-      pendingOnboard.workspaceId !== workspaceId ||
-      isRunning
-    ) {
+    if (!pendingOnboard || pendingOnboard.workspaceId !== workspaceId || isRunning) {
       return
     }
 
@@ -547,26 +584,29 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   const effectiveView = getEffectiveView(viewState, isRunning, pendingApproval, selectedId)
 
   // ── Actions ──
-  const handleStart = useCallback(async (params: {
-    title: string
-    description?: string
-    settingsJson?: Record<string, unknown>
-  }) => {
-    if (!params.title.trim() || !workspaceId) return
-    try {
-      await startBlueprint({
-        workspaceId,
-        title: params.title,
-        description: params.description,
-        settingsJson: params.settingsJson
-      })
-      setPrefillTitle('')
-      setPrefillDescription('')
-    } catch {
-      // Error already logged in store — go back to landing so the error banner is visible
-      setViewState('landing')
-    }
-  }, [workspaceId, startBlueprint])
+  const handleStart = useCallback(
+    async (params: {
+      title: string
+      description?: string
+      settingsJson?: Record<string, unknown>
+    }) => {
+      if (!params.title.trim() || !workspaceId) return
+      try {
+        await startBlueprint({
+          workspaceId,
+          title: params.title,
+          description: params.description,
+          settingsJson: params.settingsJson
+        })
+        setPrefillTitle('')
+        setPrefillDescription('')
+      } catch {
+        // Error already logged in store — go back to landing so the error banner is visible
+        setViewState('landing')
+      }
+    },
+    [workspaceId, startBlueprint]
+  )
 
   const handleCancel = useCallback(async () => {
     if (!workspaceId) return
@@ -651,11 +691,17 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
   // Active view goes full-bleed; landing/input/detail stay narrow for readability
   const isFullBleed = effectiveView === 'active'
   // B1: Input view gets wider max-w and flex-fill for full-height layout
-  const narrowMaxW = (effectiveView === 'input' || effectiveView === 'detail') ? 'max-w-7xl' : 'max-w-3xl'
+  const narrowMaxW =
+    effectiveView === 'input' || effectiveView === 'detail' ? 'max-w-7xl' : 'max-w-3xl'
 
   return (
-    <div data-testid="blueprint-page" className={`flex flex-col h-full ${isFullBleed ? '' : 'overflow-y-auto'}`}>
-      <div className={`w-full ${isFullBleed ? 'px-4 pt-4 pb-2 flex flex-col flex-1 min-h-0 gap-3' : `p-6 space-y-6 ${narrowMaxW} mx-auto ${effectiveView === 'input' ? 'flex flex-col flex-1 min-h-0' : ''}`}`}>
+    <div
+      data-testid="blueprint-page"
+      className={`flex flex-col h-full ${isFullBleed ? '' : 'overflow-y-auto'}`}
+    >
+      <div
+        className={`w-full ${isFullBleed ? 'px-4 pt-4 pb-2 flex flex-col flex-1 min-h-0 gap-3' : `p-6 space-y-6 ${narrowMaxW} mx-auto ${effectiveView === 'input' ? 'flex flex-col flex-1 min-h-0' : ''}`}`}
+      >
         {/* Header — hidden during active view (status bar replaces it) */}
         {!isFullBleed && (
           <div className="flex items-center justify-between">
@@ -717,9 +763,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
 
                   {/* 7-phase workflow cards */}
                   <div className="grid grid-cols-4 gap-3">
-                    {(
-                      ['specify', 'plan', 'build', 'verify'] as const
-                    ).map((phase) => {
+                    {(['specify', 'plan', 'build', 'verify'] as const).map((phase) => {
                       const config = PHASE_ICONS[phase as PhaseIconKey]
                       const CardIcon = config.icon
                       return (
@@ -735,7 +779,9 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                               {config.label}
                             </span>
                           </div>
-                          <p className="text-xs text-text-secondary leading-relaxed">{config.description}</p>
+                          <p className="text-xs text-text-secondary leading-relaxed">
+                            {config.description}
+                          </p>
                         </div>
                       )
                     })}
@@ -772,7 +818,8 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                     <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
                     <div className="flex flex-col gap-0.5 flex-1">
                       <span className="text-sm font-medium">
-                        &ldquo;{orphanedBlueprint.title}&rdquo; was interrupted during {orphanedBlueprint.currentPhase}
+                        &ldquo;{orphanedBlueprint.title}&rdquo; was interrupted during{' '}
+                        {orphanedBlueprint.currentPhase}
                       </span>
                       <span className="text-xs opacity-80">
                         {orphanedBlueprint.totalTasks > 0
@@ -814,11 +861,13 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                         key={bp.id}
                         blueprint={bp}
                         onSelect={() => handleSelectBlueprint(bp.id)}
-                        onDelete={() => setDeleteTarget({
-                          id: bp.id,
-                          title: bp.title,
-                          isActive: isRunning && currentBlueprint?.id === bp.id
-                        })}
+                        onDelete={() =>
+                          setDeleteTarget({
+                            id: bp.id,
+                            title: bp.title,
+                            isActive: isRunning && currentBlueprint?.id === bp.id
+                          })
+                        }
                         isDeleting={deletingIds.has(bp.id)}
                       />
                     ))}
@@ -873,7 +922,12 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
                 sendClarifyAnswer(bpId, workspaceId, message, answers)
               } else {
                 rendererLog.error('[blueprint] Cannot submit answer — no blueprint id in scope')
-                useBlueprintStore.setState({ lastError: { blueprintId: '', message: 'Cannot submit answer — no blueprint id in scope' } })
+                useBlueprintStore.setState({
+                  lastError: {
+                    blueprintId: '',
+                    message: 'Cannot submit answer — no blueprint id in scope'
+                  }
+                })
               }
             }}
             onSkipClarify={() => {

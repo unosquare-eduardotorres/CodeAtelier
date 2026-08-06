@@ -10,13 +10,7 @@ import type { ToolActivity } from './types'
 // ── Phase & Status Enums ──
 
 export type BlueprintPhaseType =
-  | 'specify'
-  | 'clarify'
-  | 'plan'
-  | 'tasks'
-  | 'review'
-  | 'build'
-  | 'verify'
+  'specify' | 'clarify' | 'plan' | 'tasks' | 'review' | 'build' | 'verify'
 
 export type BlueprintStatus =
   | 'draft'

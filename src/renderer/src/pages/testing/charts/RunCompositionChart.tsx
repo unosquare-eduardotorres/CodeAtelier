@@ -13,7 +13,11 @@ interface Props {
   onSelectRun: (id: string) => void
 }
 
-export default function RunCompositionChart({ runs, selectedRunId, onSelectRun }: Props): React.JSX.Element | null {
+export default function RunCompositionChart({
+  runs,
+  selectedRunId,
+  onSelectRun
+}: Props): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
 
   const completed = useMemo(() => {
@@ -29,11 +33,7 @@ export default function RunCompositionChart({ runs, selectedRunId, onSelectRun }
     const labels = completed.map((_, i) => `R${i + 1}`)
     const selectedIdx = completed.findIndex((r) => r.id === selectedRunId)
 
-    const makeSeries = (
-      name: string,
-      color: string,
-      getter: (r: E2ERunSummary) => number
-    ) => ({
+    const makeSeries = (name: string, color: string, getter: (r: E2ERunSummary) => number) => ({
       name,
       type: 'bar' as const,
       stack: 'total',
@@ -57,9 +57,11 @@ export default function RunCompositionChart({ runs, selectedRunId, onSelectRun }
         axisPointer: { type: 'shadow' },
         formatter: (params: unknown) => {
           const ps = params as { seriesName: string; value: number; dataIndex: number }[]
-          return `<b>Run ${ps[0].dataIndex + 1}</b><br/>`
-            + ps.map((p) => `${p.seriesName}: ${p.value}`).join('<br/>')
-            + `<br/><span style="color:#64748b">Click to select</span>`
+          return (
+            `<b>Run ${ps[0].dataIndex + 1}</b><br/>` +
+            ps.map((p) => `${p.seriesName}: ${p.value}`).join('<br/>') +
+            `<br/><span style="color:#64748b">Click to select</span>`
+          )
         }
       },
       legend: { show: false },

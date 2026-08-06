@@ -40,7 +40,10 @@ test.describe('Blueprint Phase Switching', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -53,9 +56,7 @@ test.describe('Blueprint Phase Switching', () => {
    * Helper: open an existing blueprint that has at least one completed phase.
    * Returns true if successfully opened.
    */
-  async function openBlueprintWithPhases(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openBlueprintWithPhases(page: import('@playwright/test').Page): Promise<boolean> {
     await navigateToBlueprints(page)
 
     // Look for existing blueprint cards with completed status
@@ -80,9 +81,7 @@ test.describe('Blueprint Phase Switching', () => {
 
   // ── Phase clicking ──
 
-  test('clicking completed phase in timeline shows its output', async ({
-    electronPage: page
-  }) => {
+  test('clicking completed phase in timeline shows its output', async ({ electronPage: page }) => {
     const hasBlueprint = await openBlueprintWithPhases(page)
 
     if (!hasBlueprint) {
@@ -170,9 +169,7 @@ test.describe('Blueprint Phase Switching', () => {
 
   // ── Artifacts ──
 
-  test('phase stream shows artifacts with markdown rendering', async ({
-    electronPage: page
-  }) => {
+  test('phase stream shows artifacts with markdown rendering', async ({ electronPage: page }) => {
     const hasBlueprint = await openBlueprintWithPhases(page)
 
     if (!hasBlueprint) {
@@ -207,7 +204,9 @@ test.describe('Blueprint Phase Switching', () => {
     const hasMarkdown = await markdownContent.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Look for copy button on artifact content
-    const copyBtn = phaseStream.locator('button[aria-label*="copy" i], button[title*="copy" i]').first()
+    const copyBtn = phaseStream
+      .locator('button[aria-label*="copy" i], button[title*="copy" i]')
+      .first()
     const hasCopyBtn = await copyBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // At least markdown or copy functionality should be present

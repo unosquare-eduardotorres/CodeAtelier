@@ -17,7 +17,10 @@ export default function BlueprintHistoryItem({
 }): JSX.Element {
   const created = new Date(blueprint.createdAt)
   const timeAgo = formatTimeAgo(created)
-  const isTerminal = blueprint.status === 'complete' || blueprint.status === 'failed' || blueprint.status === 'cancelled'
+  const isTerminal =
+    blueprint.status === 'complete' ||
+    blueprint.status === 'failed' ||
+    blueprint.status === 'cancelled'
   const completedAgo = blueprint.completedAt ? formatTimeAgo(new Date(blueprint.completedAt)) : null
 
   return (
@@ -41,16 +44,22 @@ export default function BlueprintHistoryItem({
           <StatusBadge status={blueprint.status} />
         </div>
         {blueprint.description && (
-          <p className="text-xs text-text-muted mt-0.5 truncate">{stripMarkdownInline(blueprint.description)}</p>
+          <p className="text-xs text-text-muted mt-0.5 truncate">
+            {stripMarkdownInline(blueprint.description)}
+          </p>
         )}
         <div className="flex items-center gap-2 mt-1">
           <Clock size={10} className="text-text-muted" />
-          <span className="text-[10px] text-text-muted" title={isTerminal && blueprint.completedAt ? blueprint.completedAt : blueprint.createdAt}>
+          <span
+            className="text-[10px] text-text-muted"
+            title={
+              isTerminal && blueprint.completedAt ? blueprint.completedAt : blueprint.createdAt
+            }
+          >
             {isTerminal && completedAgo
               ? `${blueprint.status === 'complete' ? 'Completed' : blueprint.status === 'failed' ? 'Failed' : 'Stopped'} ${completedAgo}`
               : timeAgo}
           </span>
-
         </div>
       </div>
       {onDelete && (

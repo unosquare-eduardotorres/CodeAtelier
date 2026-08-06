@@ -171,8 +171,7 @@ function summarizeCodeGraph(content: string): ToolResultSummary | undefined {
 
     // Generic fallback — find the first top-level array
     const firstArr = Object.entries(parsed).find(([, v]) => Array.isArray(v)) as
-      | [string, unknown[]]
-      | undefined
+      [string, unknown[]] | undefined
     if (firstArr) return { result: `${firstArr[1].length} ${firstArr[0]}`, resultDetail: detail }
   } catch {
     /* fall through to default */

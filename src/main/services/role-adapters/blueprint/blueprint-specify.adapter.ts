@@ -64,12 +64,7 @@ export class BlueprintSpecifyAdapter extends BlueprintBaseAdapter {
     }
 
     if (this.referenceDocsBlock) {
-      parts.push(
-        '',
-        '## Reference Documents (attached by user)',
-        '',
-        this.referenceDocsBlock
-      )
+      parts.push('', '## Reference Documents (attached by user)', '', this.referenceDocsBlock)
     }
 
     return parts.join('\n')

@@ -21,9 +21,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Voice Input', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,9 +35,7 @@ test.describe('Voice Input', () => {
     return true
   }
 
-  async function selectConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasTab) {
@@ -57,15 +53,23 @@ test.describe('Voice Input', () => {
 
   test('voice button is visible in the message input toolbar', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Look for voice/microphone button in the message input area
-    const voiceBtn = page.locator('[aria-label*="oice"], [aria-label*="icrophone"], button:has(svg)').filter({
-      has: page.locator('svg')
-    })
+    const voiceBtn = page
+      .locator('[aria-label*="oice"], [aria-label*="icrophone"], button:has(svg)')
+      .filter({
+        has: page.locator('svg')
+      })
 
     // Voice button may not be present if Web Speech API is unavailable
     const count = await voiceBtn.count()
@@ -74,10 +78,16 @@ test.describe('Voice Input', () => {
 
   test('voice indicator shows listening state when activated', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Check if listening indicator is present (may be active from prior interaction)
     const listeningIndicator = page.locator('[data-testid="voice-indicator-listening"]')
@@ -95,17 +105,28 @@ test.describe('Voice Input', () => {
     }
   })
 
-  test('voice indicator shows animated recording dots when listening', async ({ electronPage: page }) => {
+  test('voice indicator shows animated recording dots when listening', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const listeningIndicator = page.locator('[data-testid="voice-indicator-listening"]')
     const isListening = await listeningIndicator.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!isListening) { test.skip(); return }
+    if (!isListening) {
+      test.skip()
+      return
+    }
 
     // Verify the three animated recording dots
     const dots = listeningIndicator.locator('.animate-bounce')
@@ -118,10 +139,16 @@ test.describe('Voice Input', () => {
 
   test('error state displays error message with dismiss button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Voice error indicator may be present if voice failed
     const errorIndicator = page.locator('[data-testid="voice-indicator-error"]')
@@ -141,15 +168,24 @@ test.describe('Voice Input', () => {
 
   test('dismiss error button removes the voice indicator error', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const errorIndicator = page.locator('[data-testid="voice-indicator-error"]')
     const hasError = await errorIndicator.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasError) { test.skip(); return }
+    if (!hasError) {
+      test.skip()
+      return
+    }
 
     // Click dismiss button
     const dismissBtn = errorIndicator.locator('[aria-label="Dismiss error"]')

@@ -120,7 +120,9 @@ export default function CodeIntelligenceSection({
                   Ready ({embeddingStatus.omlxEmbeddingModelId ?? 'oMLX'})
                 </span>
               ) : embeddingStatus?.omlxRunning ? (
-                <span className="text-xs text-warning">oMLX running — no embedding model loaded</span>
+                <span className="text-xs text-warning">
+                  oMLX running — no embedding model loaded
+                </span>
               ) : (
                 <button
                   onClick={onShowEmbeddingSetup}

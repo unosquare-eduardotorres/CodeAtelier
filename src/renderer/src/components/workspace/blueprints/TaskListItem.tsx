@@ -24,7 +24,10 @@ export function TaskListItem({ task }: { task: TaskData }): JSX.Element {
   const icon = TASK_STATUS_ICON[task.status] ?? PENDING_ICON
 
   return (
-    <div data-testid={`task-list-item-${task.id}`} className="px-3 py-2 rounded-lg bg-surface-base border border-border-subtle">
+    <div
+      data-testid={`task-list-item-${task.id}`}
+      className="px-3 py-2 rounded-lg bg-surface-base border border-border-subtle"
+    >
       <div className="flex items-center gap-2">
         {icon}
         <span className="text-xs text-text-primary flex-1">{task.description}</span>

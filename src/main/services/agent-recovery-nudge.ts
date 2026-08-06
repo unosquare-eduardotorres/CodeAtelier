@@ -126,7 +126,9 @@ export class RecoveryNudgeService {
               `[${label}-timeout] No chunk for ${timeoutMs / 1000}s — force-closing iterator`
             )
             timedOut = true
-            iter.return?.(undefined as never).catch(() => { /* ignore */ })
+            iter.return?.(undefined as never).catch(() => {
+              /* ignore */
+            })
           }
           break
         }
@@ -195,7 +197,11 @@ export class RecoveryNudgeService {
           effort: 'low'
         })
 
-        for await (const chunk of this.withChunkTimeout(rawIter, RECOVERY_TIMEOUT_MS, 'recovery-nudge')) {
+        for await (const chunk of this.withChunkTimeout(
+          rawIter,
+          RECOVERY_TIMEOUT_MS,
+          'recovery-nudge'
+        )) {
           if ('_meta' in chunk && chunk._meta) {
             const meta = chunk._meta as ExecutorResult
             if (meta.sessionId && opts.conversationId) {
@@ -311,7 +317,11 @@ export class RecoveryNudgeService {
         effort: 'low'
       })
 
-      for await (const chunk of this.withChunkTimeout(rawIter, RECOVERY_TIMEOUT_MS, 'plan-tool-recovery')) {
+      for await (const chunk of this.withChunkTimeout(
+        rawIter,
+        RECOVERY_TIMEOUT_MS,
+        'plan-tool-recovery'
+      )) {
         if ('_meta' in chunk && chunk._meta) {
           const meta = chunk._meta as ExecutorResult
           if (meta.sessionId && opts.conversationId) {

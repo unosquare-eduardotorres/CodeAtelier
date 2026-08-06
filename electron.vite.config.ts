@@ -25,12 +25,6 @@ export default defineConfig({
           'mcp-servers/code-analysis-server': resolve(
             'src/main/mcp-servers/code-analysis-server.ts'
           ),
-          'mcp-servers/checkpoint-context-server': resolve(
-            'src/main/mcp-servers/checkpoint-context-server.ts'
-          ),
-          'mcp-servers/github-context-server': resolve(
-            'src/main/mcp-servers/github-context-server.ts'
-          ),
           'mcp-servers/memory-server': resolve('src/main/mcp-servers/memory-server.ts'),
           'mcp-servers/recall-server': resolve('src/main/mcp-servers/recall-server.ts'),
           'mcp-servers/process-manager-server': resolve(
@@ -85,7 +79,7 @@ export default defineConfig({
             '  };',
             '}',
             '// ── End shim ────────────────────────────────────────────────────────',
-            '',
+            ''
           ].join('\n')
 
           // Insert after shebang + "use strict" but before any require()

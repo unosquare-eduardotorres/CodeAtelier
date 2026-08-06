@@ -51,7 +51,10 @@ describe('processToolChunk — tool_progress', () => {
   })
 
   test('tool_use without an id still gets a synthesised id (unchanged behaviour)', () => {
-    const processed = processToolChunk({ type: 'tool_use', toolName: 'Bash' } as StreamChunk, OPTIONS)
+    const processed = processToolChunk(
+      { type: 'tool_use', toolName: 'Bash' } as StreamChunk,
+      OPTIONS
+    )
     assert.ok(processed?.toolActivity.id)
     assert.equal(processed?.toolActivity.status, 'running')
   })

@@ -52,14 +52,17 @@ log.info(`[Path Augmentation] Enhanced PATH with: ${PLATFORM_PATHS.filter(p => !
 ## Complete Fixes Implemented
 
 ### 1. checkCliAvailable() - Validates CLI installation
+
 - Checks if `opencode` binary is available before attempting to spawn
 - Provides helpful installation instructions
 
 ### 2. Enhanced Error Messages - Better UX
+
 - Detects `ENOENT` errors specifically
 - Shows clear installation commands
 
 ### 3. PATH Augmentation (CRITICAL) - Ensures Electron can find CLI
+
 - Adds Homebrew paths to process.env.PATH
 - Must be done **before** any child process spawns
 

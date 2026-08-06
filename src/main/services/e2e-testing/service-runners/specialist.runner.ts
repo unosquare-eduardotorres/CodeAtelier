@@ -151,7 +151,8 @@ export async function runSpecialistDispatch(ctx: E2EServiceContext): Promise<E2E
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { specialistRepository, conversationSpecialistRepository } = await import('../../../db/repositories')
+    const { specialistRepository, conversationSpecialistRepository } =
+      await import('../../../db/repositories')
 
     // Create a custom specialist with a distinctive persona
     const specialist = specialistRepository.create({
@@ -160,7 +161,8 @@ export async function runSpecialistDispatch(ctx: E2EServiceContext): Promise<E2E
       icon: '🎯',
       priority: 10,
       isActive: true,
-      prompt: 'You are the Dispatch Test Specialist. IMPORTANT: Always start every response with exactly "SPECIALIST-ACK:" before any other text. This is mandatory.'
+      prompt:
+        'You are the Dispatch Test Specialist. IMPORTANT: Always start every response with exactly "SPECIALIST-ACK:" before any other text. This is mandatory.'
     })
     transcript.push(statusEntry(`dispatch_specialist_created: ${specialist.id}`))
 
@@ -169,10 +171,9 @@ export async function runSpecialistDispatch(ctx: E2EServiceContext): Promise<E2E
     transcript.push(statusEntry('specialist_assigned_to_conversation'))
 
     // Stream a prompt and check for the persona marker
-    const entries = await ctx.streamPrompt(
-      'Say hello and tell me what 2+2 is.',
-      { conversationId: ctx.conversationId }
-    )
+    const entries = await ctx.streamPrompt('Say hello and tell me what 2+2 is.', {
+      conversationId: ctx.conversationId
+    })
     transcript.push(...entries)
 
     // Check if response contains the persona marker
@@ -182,7 +183,9 @@ export async function runSpecialistDispatch(ctx: E2EServiceContext): Promise<E2E
       .join('')
 
     const hasMarker = /SPECIALIST-ACK/i.test(responseText)
-    log.info(`[specialist-dispatch] Response has marker: ${hasMarker}, length: ${responseText.length}`)
+    log.info(
+      `[specialist-dispatch] Response has marker: ${hasMarker}, length: ${responseText.length}`
+    )
     transcript.push(statusEntry(hasMarker ? 'dispatch_ok' : 'dispatch_marker_missing'))
 
     // Clean up
@@ -205,7 +208,8 @@ export async function runSpecialistOverride(ctx: E2EServiceContext): Promise<E2E
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { specialistRepository, conversationSpecialistRepository, conversationRepository } = await import('../../../db/repositories')
+    const { specialistRepository, conversationSpecialistRepository, conversationRepository } =
+      await import('../../../db/repositories')
 
     // Create a specialist
     const specialist = specialistRepository.create({
@@ -230,8 +234,14 @@ export async function runSpecialistOverride(ctx: E2EServiceContext): Promise<E2E
     transcript.push(statusEntry('override_set_inactive_for_conv1'))
 
     // Verify: conv1 should have specialist inactive, conv2 should have it active
-    const conv1Override = conversationSpecialistRepository.findByConversationAndSpecialist(conv1.id, specialist.id)
-    const conv2Override = conversationSpecialistRepository.findByConversationAndSpecialist(conv2.id, specialist.id)
+    const conv1Override = conversationSpecialistRepository.findByConversationAndSpecialist(
+      conv1.id,
+      specialist.id
+    )
+    const conv2Override = conversationSpecialistRepository.findByConversationAndSpecialist(
+      conv2.id,
+      specialist.id
+    )
 
     const conv1Inactive = conv1Override && !conv1Override.isActive
     const conv2Active = conv2Override && conv2Override.isActive
@@ -240,7 +250,11 @@ export async function runSpecialistOverride(ctx: E2EServiceContext): Promise<E2E
       transcript.push(statusEntry('override_applied'))
       log.info(`[specialist-override] Conv1 inactive, Conv2 active — override correctly isolated`)
     } else {
-      transcript.push(statusEntry(`override_mismatch: conv1Active=${conv1Override?.isActive}, conv2Active=${conv2Override?.isActive}`))
+      transcript.push(
+        statusEntry(
+          `override_mismatch: conv1Active=${conv1Override?.isActive}, conv2Active=${conv2Override?.isActive}`
+        )
+      )
     }
 
     // Clean up

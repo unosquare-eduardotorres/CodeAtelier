@@ -51,7 +51,8 @@ const PRIORITY_CONFIG: Record<string, { label: string; colorClass: string }> = {
 export function getFileIcon(filePath: string): React.JSX.Element {
   const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
   if (['tsx', 'jsx'].includes(ext)) return <FileCode2 size={12} className="text-info" />
-  if (['ts', 'js', 'mjs', 'cjs'].includes(ext)) return <FileCode2 size={12} className="text-accent" />
+  if (['ts', 'js', 'mjs', 'cjs'].includes(ext))
+    return <FileCode2 size={12} className="text-accent" />
   if (['css', 'scss', 'less'].includes(ext)) return <Palette size={12} className="text-success" />
   return <FileType size={12} className="text-text-muted" />
 }
@@ -103,7 +104,9 @@ function ScopeChip({ scope }: { scope: string }): React.JSX.Element {
   }
   const Icon = config.icon
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded ${config.colorClass}`}>
+    <span
+      className={`inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded ${config.colorClass}`}
+    >
       <Icon size={12} />
       {config.label}
     </span>
@@ -122,7 +125,9 @@ function PriorityChip({ priority }: { priority: string | undefined }): React.JSX
     return <span className="text-xs text-text-muted">{priority}</span>
   }
   return (
-    <span className={`inline-flex items-center text-[11px] font-semibold px-1.5 py-0.5 rounded border ${config.colorClass}`}>
+    <span
+      className={`inline-flex items-center text-[11px] font-semibold px-1.5 py-0.5 rounded border ${config.colorClass}`}
+    >
       {config.label}
     </span>
   )
@@ -135,16 +140,11 @@ function TechStackFooter({ techStack }: { techStack: Record<string, unknown> }):
     <div className="px-4 py-3 border-t border-border/20">
       <div className="grid grid-cols-2 gap-2">
         {Object.entries(techStack).map(([key, value]) => (
-          <div
-            key={key}
-            className="border border-border-subtle/50 rounded-lg px-2.5 py-1.5"
-          >
+          <div key={key} className="border border-border-subtle/50 rounded-lg px-2.5 py-1.5">
             <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider block">
               {key}
             </span>
-            <span className="text-xs text-text-secondary">
-              {String(value)}
-            </span>
+            <span className="text-xs text-text-secondary">{String(value)}</span>
           </div>
         ))}
       </div>
@@ -154,7 +154,10 @@ function TechStackFooter({ techStack }: { techStack: Record<string, unknown> }):
 
 // ── Main component ──────────────────────────────────────────────────────────
 
-export function BlueprintPlanCard({ plan, taskStatuses }: {
+export function BlueprintPlanCard({
+  plan,
+  taskStatuses
+}: {
   plan: Record<string, unknown>
   taskStatuses?: Record<string, import('../../../../../shared/blueprint-types').BlueprintTaskStatus>
 }): React.JSX.Element {
@@ -195,9 +198,7 @@ export function BlueprintPlanCard({ plan, taskStatuses }: {
               </span>
             )}
             <span className="text-xs text-text-muted">{items.length} items</span>
-            {totalFiles > 0 && (
-              <span className="text-xs text-text-muted">{totalFiles} files</span>
-            )}
+            {totalFiles > 0 && <span className="text-xs text-text-muted">{totalFiles} files</span>}
           </div>
         </div>
         {/* Progress bar */}
@@ -307,14 +308,21 @@ export function BlueprintPlanCard({ plan, taskStatuses }: {
 
 // ── Tasks Card (typography-bumped for consistency) ──────────────────────────
 
-export function BlueprintTasksCard({ tasks }: { tasks: Record<string, unknown> }): React.JSX.Element {
+export function BlueprintTasksCard({
+  tasks
+}: {
+  tasks: Record<string, unknown>
+}): React.JSX.Element {
   const waves = (tasks.waves ?? []) as Array<Record<string, unknown>>
   const flatItems = (tasks.tasks ?? tasks.items ?? []) as Array<Record<string, unknown>>
-  const allTasks = waves.length > 0
-    ? waves.flatMap((w) => (w.tasks as Array<Record<string, unknown>>) ?? [])
-    : flatItems
+  const allTasks =
+    waves.length > 0
+      ? waves.flatMap((w) => (w.tasks as Array<Record<string, unknown>>) ?? [])
+      : flatItems
 
-  const [expandedWaves, setExpandedWaves] = useState<Set<number>>(() => new Set(waves.map((_, i) => i)))
+  const [expandedWaves, setExpandedWaves] = useState<Set<number>>(
+    () => new Set(waves.map((_, i) => i))
+  )
 
   const toggleWave = (idx: number): void => {
     setExpandedWaves((prev) => {
@@ -347,14 +355,20 @@ export function BlueprintTasksCard({ tasks }: { tasks: Record<string, unknown> }
                   onClick={() => toggleWave(wi)}
                   className="w-full px-4 py-2.5 flex items-center gap-2 hover:bg-surface-hover/50 transition-colors"
                 >
-                  {isExpanded ? <ChevronDown size={12} className="text-text-muted" /> : <ChevronRight size={12} className="text-text-muted" />}
+                  {isExpanded ? (
+                    <ChevronDown size={12} className="text-text-muted" />
+                  ) : (
+                    <ChevronRight size={12} className="text-text-muted" />
+                  )}
                   <span className="text-xs font-semibold text-text-secondary">
                     Wave {wave.wave != null ? String(wave.wave) : wi + 1}
                   </span>
                   {wave.name ? (
                     <span className="text-xs text-text-muted">— {String(wave.name)}</span>
                   ) : null}
-                  <span className="text-[11px] text-text-muted ml-auto">{waveTasks.length} tasks</span>
+                  <span className="text-[11px] text-text-muted ml-auto">
+                    {waveTasks.length} tasks
+                  </span>
                 </button>
                 {isExpanded && (
                   <div className="divide-y divide-border/10">
@@ -379,7 +393,13 @@ export function BlueprintTasksCard({ tasks }: { tasks: Record<string, unknown> }
   )
 }
 
-function TaskRow({ task, index }: { task: Record<string, unknown>; index: number }): React.JSX.Element {
+function TaskRow({
+  task,
+  index
+}: {
+  task: Record<string, unknown>
+  index: number
+}): React.JSX.Element {
   const files = (task.files ?? task.filePaths ?? []) as string[]
   const isParallel = task.isParallel as boolean | undefined
   const includesTests = task.includesTests as boolean | undefined
@@ -387,7 +407,9 @@ function TaskRow({ task, index }: { task: Record<string, unknown>; index: number
   const userStory = task.userStory as string | undefined
 
   return (
-    <div className={`px-4 py-3 hover:bg-surface-hover/50 transition-colors ${index % 2 === 1 ? 'bg-surface-inset/30' : ''}`}>
+    <div
+      className={`px-4 py-3 hover:bg-surface-hover/50 transition-colors ${index % 2 === 1 ? 'bg-surface-inset/30' : ''}`}
+    >
       <div className="flex items-start gap-3">
         <span className="w-10 h-6 rounded bg-surface-inset border border-border-subtle flex items-center justify-center font-mono text-xs text-text-muted shrink-0">
           {String(task.taskId ?? task.id ?? `T${String(index + 1).padStart(3, '0')}`)}

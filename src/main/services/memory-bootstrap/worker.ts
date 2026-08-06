@@ -133,10 +133,7 @@ export async function drainRun(opts: DrainOptions): Promise<DrainOutcome> {
   const EMIT_INTERVAL_MS = 250
   let lastEmitAt = 0
 
-  const emit = (
-    jobStatus: BootstrapProgress['jobStatus'] = 'running',
-    force = true
-  ): void => {
+  const emit = (jobStatus: BootstrapProgress['jobStatus'] = 'running', force = true): void => {
     const now = Date.now()
     if (!force && now - lastEmitAt < EMIT_INTERVAL_MS) return
     lastEmitAt = now

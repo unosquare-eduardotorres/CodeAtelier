@@ -23,9 +23,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Skill Management', () => {
-  async function navigateToTeamTab(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToTeamTab(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -45,15 +43,19 @@ test.describe('Skill Management', () => {
     return true
   }
 
-  test('skill management section renders with skill tags', async ({
-    electronPage: page
-  }) => {
+  test('skill management section renders with skill tags', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="skill-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
 
@@ -64,18 +66,25 @@ test.describe('Skill Management', () => {
     expect(headingText).toMatch(/Skills/i)
   })
 
-  test('skill tag shows name and agent association badges', async ({
-    electronPage: page
-  }) => {
+  test('skill tag shows name and agent association badges', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="skill-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const tags = section.locator('[data-testid="skill-management-tag"]')
-    if ((await tags.count()) === 0) { test.skip(); return }
+    if ((await tags.count()) === 0) {
+      test.skip()
+      return
+    }
 
     const firstTag = tags.first()
     await expect(firstTag).toBeVisible()
@@ -85,18 +94,25 @@ test.describe('Skill Management', () => {
     expect(tagText?.trim().length).toBeGreaterThan(0)
   })
 
-  test('expanding a skill shows detail with content preview', async ({
-    electronPage: page
-  }) => {
+  test('expanding a skill shows detail with content preview', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="skill-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const tags = section.locator('[data-testid="skill-management-tag"]')
-    if ((await tags.count()) === 0) { test.skip(); return }
+    if ((await tags.count()) === 0) {
+      test.skip()
+      return
+    }
 
     // Click first skill tag to expand it
     await tags.first().click()
@@ -115,20 +131,30 @@ test.describe('Skill Management', () => {
     }
   })
 
-  test('import dropzone accepts YAML skill files', async ({
-    electronPage: page
-  }) => {
+  test('import dropzone accepts YAML skill files', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="skill-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Click the import button to show the dropzone
-    const importBtn = section.locator('button').filter({ hasText: /Import|Upload/i }).first()
+    const importBtn = section
+      .locator('button')
+      .filter({ hasText: /Import|Upload/i })
+      .first()
     const hasImport = await importBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasImport) { test.skip(); return }
+    if (!hasImport) {
+      test.skip()
+      return
+    }
 
     await importBtn.click()
     await page.waitForTimeout(500)
@@ -144,34 +170,51 @@ test.describe('Skill Management', () => {
     }
   })
 
-  test('delete skill shows confirmation dialog', async ({
-    electronPage: page
-  }) => {
+  test('delete skill shows confirmation dialog', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="skill-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const tags = section.locator('[data-testid="skill-management-tag"]')
-    if ((await tags.count()) === 0) { test.skip(); return }
+    if ((await tags.count()) === 0) {
+      test.skip()
+      return
+    }
 
     // Expand a skill first
     await tags.first().click()
     await page.waitForTimeout(500)
 
     // Look for delete button within the expanded skill detail
-    const deleteBtn = section.locator('button[aria-label*="delete" i], button:has(svg.lucide-trash-2)').first()
+    const deleteBtn = section
+      .locator('button[aria-label*="delete" i], button:has(svg.lucide-trash-2)')
+      .first()
     const hasDelete = await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasDelete) { test.skip(); return }
+    if (!hasDelete) {
+      test.skip()
+      return
+    }
 
     await deleteBtn.click()
     await page.waitForTimeout(500)
 
     // Confirmation dialog should appear
-    const dialog = page.locator('[data-testid="confirm-dialog"], [role="alertdialog"], [role="dialog"]')
-    const dialogVisible = await dialog.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const dialog = page.locator(
+      '[data-testid="confirm-dialog"], [role="alertdialog"], [role="dialog"]'
+    )
+    const dialogVisible = await dialog
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(dialogVisible).toBeTruthy()
 
     // Dismiss
@@ -181,21 +224,30 @@ test.describe('Skill Management', () => {
     }
   })
 
-  test('stale indicator appears for outdated skills', async ({
-    electronPage: page
-  }) => {
+  test('stale indicator appears for outdated skills', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="skill-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const tags = section.locator('[data-testid="skill-management-tag"]')
-    if ((await tags.count()) === 0) { test.skip(); return }
+    if ((await tags.count()) === 0) {
+      test.skip()
+      return
+    }
 
     // Look for stale indicator (warning icon or "stale" text/class)
-    const staleIndicator = section.locator('svg.lucide-alert-triangle, [class*="warning"], [class*="stale"]').first()
+    const staleIndicator = section
+      .locator('svg.lucide-alert-triangle, [class*="warning"], [class*="stale"]')
+      .first()
     const hasStale = await staleIndicator.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // Stale indicators may not be present if all skills are fresh — that's OK

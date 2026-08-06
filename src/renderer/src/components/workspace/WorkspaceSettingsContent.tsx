@@ -52,8 +52,11 @@ export default function WorkspaceSettingsContent({
 }: WorkspaceSettingsContentProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
 
-  const { handleUpdatePlan, handleAcceptAndBuild, isProcessing: councilProcessing } =
-    useCouncilOutcomeActions(onNavigateToChat)
+  const {
+    handleUpdatePlan,
+    handleAcceptAndBuild,
+    isProcessing: councilProcessing
+  } = useCouncilOutcomeActions(onNavigateToChat)
 
   const {
     selectedSkill,

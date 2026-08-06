@@ -114,7 +114,12 @@ interface AuditState {
   generatePlan: (workspaceId: string) => Promise<AuditPlanRecord>
   clearPlan: () => void
   setPendingFixContext: (
-    ctx: { title: string; description: string; autoSend?: boolean; sourceAuditRunId?: string } | null
+    ctx: {
+      title: string
+      description: string
+      autoSend?: boolean
+      sourceAuditRunId?: string
+    } | null
   ) => void
   convertFindings: (workspaceId: string) => Promise<string> // returns conversationId
   handleProgress: (data: AuditProgressEvent) => void

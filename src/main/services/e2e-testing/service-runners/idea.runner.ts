@@ -152,11 +152,19 @@ export async function runIdeaConvert(ctx: E2EServiceContext): Promise<E2ETranscr
 
     // Verify
     const result = ideaRepository.findById(idea.id)
-    if (result && result.status === 'completed' && result.convertedConversationId === targetConv.id) {
+    if (
+      result &&
+      result.status === 'completed' &&
+      result.convertedConversationId === targetConv.id
+    ) {
       transcript.push(statusEntry('converted'))
       log.info(`[idea-convert] Conversion verified: idea=${idea.id} → conv=${targetConv.id}`)
     } else {
-      transcript.push(statusEntry(`convert_failed: status=${result?.status}, convId=${result?.convertedConversationId}`))
+      transcript.push(
+        statusEntry(
+          `convert_failed: status=${result?.status}, convId=${result?.convertedConversationId}`
+        )
+      )
     }
 
     // Cleanup
@@ -185,7 +193,7 @@ export async function runIdeaToBlueprint(ctx: E2EServiceContext): Promise<E2ETra
       ctx.workspaceId,
       'Build a REST API',
       'Build a REST API with Express.js and TypeScript for managing a task list. ' +
-      'Include CRUD endpoints, input validation with Zod, and error handling middleware.'
+        'Include CRUD endpoints, input validation with Zod, and error handling middleware.'
     )
     transcript.push(statusEntry(`idea_created: ${idea.id}`))
 
@@ -194,7 +202,9 @@ export async function runIdeaToBlueprint(ctx: E2EServiceContext): Promise<E2ETra
       const { blueprintService } = await import('../../blueprint.service')
       const blueprint = blueprintService.createFromIdea(idea.id, ctx.workspaceId)
 
-      log.info(`[idea-to-blueprint] Blueprint created: ${blueprint.id}, phases: ${blueprint.phases.length}`)
+      log.info(
+        `[idea-to-blueprint] Blueprint created: ${blueprint.id}, phases: ${blueprint.phases.length}`
+      )
       transcript.push(statusEntry(`blueprint_created: phases=${blueprint.phases.length}`))
     } catch (bpErr) {
       // createFromIdea may not exist or may require specific prerequisites

@@ -279,9 +279,15 @@ export class CouncilService extends EventEmitter {
               content: [
                 `**Score**: ${verdict.overallScore}/10`,
                 `**Recommendation**: ${verdict.sections.recommendation}`,
-                verdict.sections.blindSpots ? `**Blind Spots**: ${verdict.sections.blindSpots}` : '',
-                verdict.sections.oneThingFirst ? `**Do First**: ${verdict.sections.oneThingFirst}` : ''
-              ].filter(Boolean).join('\n\n'),
+                verdict.sections.blindSpots
+                  ? `**Blind Spots**: ${verdict.sections.blindSpots}`
+                  : '',
+                verdict.sections.oneThingFirst
+                  ? `**Do First**: ${verdict.sections.oneThingFirst}`
+                  : ''
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
               tags: ['council', 'verdict'],
               sourceType: 'blueprint',
               sourceRef: entry.dbSessionId ?? null,
@@ -817,8 +823,12 @@ Respond ONLY with a JSON block:
               `**Score**: ${verdict.overallScore}/10`,
               `**Recommendation**: ${verdict.sections.recommendation}`,
               verdict.sections.blindSpots ? `**Blind Spots**: ${verdict.sections.blindSpots}` : '',
-              verdict.sections.oneThingFirst ? `**Do First**: ${verdict.sections.oneThingFirst}` : ''
-            ].filter(Boolean).join('\n\n'),
+              verdict.sections.oneThingFirst
+                ? `**Do First**: ${verdict.sections.oneThingFirst}`
+                : ''
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
             tags: ['council', 'verdict'],
             sourceType: 'blueprint',
             sourceRef: sessionId,

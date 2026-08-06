@@ -22,9 +22,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Chat Panel Core', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const chat = new ChatPage(page)
 
@@ -44,7 +42,10 @@ test.describe('Chat Panel Core', () => {
 
   test('chat panel renders with message list and input area', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Chat panel or new chat page should be visible
     const hasPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -66,14 +67,23 @@ test.describe('Chat Panel Core', () => {
 
   test('message input accepts text and shows character count', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
-    if (!inputReady) { test.skip(); return }
+    if (!inputReady) {
+      test.skip()
+      return
+    }
 
     await page.waitForTimeout(5_000) // Wait for agent init
     const isEnabled = await chat.isInputEnabled()
-    if (!isEnabled) { test.skip(); return }
+    if (!isEnabled) {
+      test.skip()
+      return
+    }
 
     // Type text into message input
     await chat.messageInput.fill('Hello, this is a test message')
@@ -86,14 +96,23 @@ test.describe('Chat Panel Core', () => {
 
   test('send button submits message and clears input', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
-    if (!inputReady) { test.skip(); return }
+    if (!inputReady) {
+      test.skip()
+      return
+    }
 
     await page.waitForTimeout(5_000)
     const isEnabled = await chat.isInputEnabled()
-    if (!isEnabled) { test.skip(); return }
+    if (!isEnabled) {
+      test.skip()
+      return
+    }
 
     // Count messages before
     const messages = chat.getMessages()
@@ -116,10 +135,16 @@ test.describe('Chat Panel Core', () => {
 
   test('message list scrolls to bottom on new messages', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
-    if (!inputReady) { test.skip(); return }
+    if (!inputReady) {
+      test.skip()
+      return
+    }
 
     const messages = chat.getMessages()
     const messageCount = await messages.count()
@@ -129,7 +154,9 @@ test.describe('Chat Panel Core', () => {
       const messageList = page.locator('[data-testid="message-list"]')
       const hasList = await messageList.isVisible({ timeout: 3_000 }).catch(() => false)
       if (hasList) {
-        await messageList.evaluate((el) => { el.scrollTop = 0 })
+        await messageList.evaluate((el) => {
+          el.scrollTop = 0
+        })
         await page.waitForTimeout(500)
 
         // ScrollToBottom button might appear
@@ -148,22 +175,36 @@ test.describe('Chat Panel Core', () => {
 
   test('slash command menu appears on "/" input', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
-    if (!inputReady) { test.skip(); return }
+    if (!inputReady) {
+      test.skip()
+      return
+    }
 
     await page.waitForTimeout(5_000)
     const isEnabled = await chat.isInputEnabled()
-    if (!isEnabled) { test.skip(); return }
+    if (!isEnabled) {
+      test.skip()
+      return
+    }
 
     // Type "/" to trigger slash command menu
     await chat.messageInput.fill('/')
     await page.waitForTimeout(800)
 
     // Look for slash command dropdown/menu
-    const slashMenu = page.locator('[data-testid="slash-command-menu"], [class*="command"], [role="listbox"], [role="menu"]')
-    const hasMenu = await slashMenu.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const slashMenu = page.locator(
+      '[data-testid="slash-command-menu"], [class*="command"], [role="listbox"], [role="menu"]'
+    )
+    const hasMenu = await slashMenu
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Clear the input
     await chat.messageInput.clear()
@@ -175,11 +216,17 @@ test.describe('Chat Panel Core', () => {
 
   test('file attachment chip renders in input area', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Check for attachment indicators in the input area
     const attachmentChip = page.locator('[data-testid="attachment-chip"], [class*="attachment"]')
-    const hasChip = await attachmentChip.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasChip = await attachmentChip
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasChip) {
       // No attachments currently — check for attachment button
@@ -195,10 +242,16 @@ test.describe('Chat Panel Core', () => {
 
   test('input disabled during active streaming', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
-    if (!inputReady) { test.skip(); return }
+    if (!inputReady) {
+      test.skip()
+      return
+    }
 
     // Check if currently streaming
     const isStreaming = await chat.isStreaming()

@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Specialist Build Flow', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -44,12 +42,20 @@ test.describe('Specialist Build Flow', () => {
     return modal.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('generate specialist modal renders when specialist is pending', async ({ electronPage: page }) => {
+  test('generate specialist modal renders when specialist is pending', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalShown = await isModalVisible(page)
-    if (!modalShown) { test.skip(); return }
+    if (!modalShown) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
     await expect(modal).toBeVisible()
@@ -61,10 +67,16 @@ test.describe('Specialist Build Flow', () => {
 
   test('"Generate" button starts the specialist build', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalShown = await isModalVisible(page)
-    if (!modalShown) { test.skip(); return }
+    if (!modalShown) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
 
@@ -85,10 +97,16 @@ test.describe('Specialist Build Flow', () => {
 
   test('building state shows spinner and progress message', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalShown = await isModalVisible(page)
-    if (!modalShown) { test.skip(); return }
+    if (!modalShown) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
 
@@ -113,10 +131,16 @@ test.describe('Specialist Build Flow', () => {
 
   test('ready state shows success check', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalShown = await isModalVisible(page)
-    if (!modalShown) { test.skip(); return }
+    if (!modalShown) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
 
@@ -137,10 +161,16 @@ test.describe('Specialist Build Flow', () => {
 
   test('failed state shows error with retry option', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalShown = await isModalVisible(page)
-    if (!modalShown) { test.skip(); return }
+    if (!modalShown) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
 
@@ -167,10 +197,16 @@ test.describe('Specialist Build Flow', () => {
 
   test('"Maybe later" dismisses the modal (session-only)', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalShown = await isModalVisible(page)
-    if (!modalShown) { test.skip(); return }
+    if (!modalShown) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="generate-specialist-modal"]')
 
@@ -178,7 +214,10 @@ test.describe('Specialist Build Flow', () => {
     const maybeLaterBtn = modal.getByText(/maybe later/i)
     const hasBtn = await maybeLaterBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     await maybeLaterBtn.click()
     await page.waitForTimeout(800)

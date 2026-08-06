@@ -11,7 +11,6 @@ setupFullMock()
 const mod = require('../agent-session.service')
 const { AgentSessionService } = mod
 
-
 // Create a minimal mock adapter matching the AgentRoleAdapter interface
 function createMockAdapter() {
   return {

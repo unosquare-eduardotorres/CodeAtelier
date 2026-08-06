@@ -69,9 +69,7 @@ function ensureReady(): Promise<Services> {
       }
       const { planRepository } = await import('../db/repositories/plan.repository')
       const { messageRepository } = await import('../db/repositories/message.repository')
-      const { conversationRepository } = await import(
-        '../db/repositories/conversation.repository'
-      )
+      const { conversationRepository } = await import('../db/repositories/conversation.repository')
       console.error('[recall-server] Services initialized')
       return { planRepository, messageRepository, conversationRepository }
     })()
@@ -99,9 +97,7 @@ function ensureReady(): Promise<Services> {
 async function loadEntries(): Promise<RecallPlanEntry[]> {
   const { planRepository, messageRepository } = await ensureReady()
 
-  const registryEntries = planRepository
-    .getForWorkspace(WORKSPACE_ID)
-    .map(entryFromPlanRecord)
+  const registryEntries = planRepository.getForWorkspace(WORKSPACE_ID).map(entryFromPlanRecord)
 
   const messageEntries = messageRepository
     .findPlanBlockMessages(WORKSPACE_ID, MESSAGE_SCAN_LIMIT)
@@ -143,7 +139,7 @@ function registerToolSchemas(): void {
   // ── recall_plans ──────────────────────────────────────────────────────
   server.tool(
     'recall_plans',
-    'Search past plans in this workspace — including plans from earlier chats that are no longer in your context. Call this BEFORE telling the user a past plan cannot be recovered.',
+    'Search past plans in this workspace, including plans from earlier chats no longer in your context. Call this BEFORE telling the user a past plan cannot be recovered. Past plans, not project facts — use memory_search for those.',
     {
       query: z
         .string()

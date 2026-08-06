@@ -59,8 +59,7 @@ class DescriptionCacheService {
   get(key: string): string | null {
     const db = getDatabase()
     const row = db.prepare('SELECT description FROM chunk_descriptions WHERE key = ?').get(key) as
-      | { description: string }
-      | undefined
+      { description: string } | undefined
     return row?.description ?? null
   }
 

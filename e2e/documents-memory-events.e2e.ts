@@ -120,7 +120,9 @@ test.describe('Documents, Memory & Events', () => {
     await expect(searchInput).toBeVisible()
 
     // Memory type filter badges visible
-    const filterBadges = page.getByRole('button').filter({ hasText: /User|Feedback|Project|Reference/i })
+    const filterBadges = page
+      .getByRole('button')
+      .filter({ hasText: /User|Feedback|Project|Reference/i })
     const badgeCount = await filterBadges.count()
     expect(badgeCount).toBeGreaterThanOrEqual(1)
   })

@@ -6,7 +6,9 @@ interface LibraryDocsCardProps {
   workspaceId: string
 }
 
-export default function LibraryDocsCard({ workspaceId: _workspaceId }: LibraryDocsCardProps): React.JSX.Element {
+export default function LibraryDocsCard({
+  workspaceId: _workspaceId
+}: LibraryDocsCardProps): React.JSX.Element {
   const [apiKey, setApiKey] = useState('')
   const [showKey, setShowKey] = useState(false)
   const [saved, setSaved] = useState(false)

@@ -17,7 +17,10 @@ export default function NotificationSection(): React.JSX.Element {
 
   useEffect(() => {
     if (enabled) {
-      window.api.probeNotificationSupport().then(setProbeResult).catch(() => setProbeResult(null))
+      window.api
+        .probeNotificationSupport()
+        .then(setProbeResult)
+        .catch(() => setProbeResult(null))
     } else {
       setProbeResult(null)
     }

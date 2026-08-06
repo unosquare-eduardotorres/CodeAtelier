@@ -14,9 +14,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Checkpoint Approval', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -32,11 +30,17 @@ test.describe('Checkpoint Approval', () => {
 
   test('modal renders with approval request details', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="checkpoint-approval-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     await expect(modal).toBeVisible()
     await expect(page.locator('[data-testid="checkpoint-approve-btn"]')).toBeVisible()
@@ -45,10 +49,16 @@ test.describe('Checkpoint Approval', () => {
 
   test('approve button accepts and closes modal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="checkpoint-approval-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await page.locator('[data-testid="checkpoint-approve-btn"]').click()
     await page.waitForTimeout(1_000)
@@ -57,10 +67,16 @@ test.describe('Checkpoint Approval', () => {
 
   test('reject button declines and closes modal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="checkpoint-approval-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await page.locator('[data-testid="checkpoint-reject-btn"]').click()
     await page.waitForTimeout(1_000)
@@ -69,13 +85,22 @@ test.describe('Checkpoint Approval', () => {
 
   test('changed files section expands and collapses', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="checkpoint-approval-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     const filesToggle = page.locator('[data-testid="checkpoint-files-toggle"]')
-    if (!(await filesToggle.isVisible({ timeout: 2_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await filesToggle.isVisible({ timeout: 2_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await filesToggle.click()
     await page.waitForTimeout(300)
@@ -87,10 +112,16 @@ test.describe('Checkpoint Approval', () => {
 
   test('type badge shows correct request type', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="checkpoint-approval-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     const typeBadge = page.locator('[data-testid="checkpoint-type-badge"]')
     await expect(typeBadge).toBeVisible()

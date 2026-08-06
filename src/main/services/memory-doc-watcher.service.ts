@@ -88,14 +88,20 @@ class MemoryDocWatcherService {
     }
 
     if (this.watchers.length > 0) {
-      log.info(`[DocWatcher] Watching ${this.watchers.length} directories for ${patterns.join(', ')}`)
+      log.info(
+        `[DocWatcher] Watching ${this.watchers.length} directories for ${patterns.join(', ')}`
+      )
     }
   }
 
   /** Stop all watchers and clear state. */
   stop(): void {
     for (const w of this.watchers) {
-      try { w.close() } catch { /* ignore */ }
+      try {
+        w.close()
+      } catch {
+        /* ignore */
+      }
     }
     this.watchers = []
     for (const timer of this.debounceTimers.values()) {
@@ -145,7 +151,9 @@ class MemoryDocWatcherService {
           results.push(full)
         }
       }
-    } catch { /* permission error, etc. */ }
+    } catch {
+      /* permission error, etc. */
+    }
     return results
   }
 

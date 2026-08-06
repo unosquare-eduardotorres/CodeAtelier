@@ -22,7 +22,10 @@ export default function SyncBanner({
   const newSkillsCount = syncDiff.newSkills.length
 
   return (
-    <div data-testid="sync-banner" className="bg-primary-muted border border-primary/30 rounded p-4">
+    <div
+      data-testid="sync-banner"
+      className="bg-primary-muted border border-primary/30 rounded p-4"
+    >
       <div className="flex items-start gap-3">
         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-primary-muted flex-shrink-0">
           <RefreshCw size={16} className="text-primary-text" />

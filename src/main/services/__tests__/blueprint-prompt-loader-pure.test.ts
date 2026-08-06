@@ -186,7 +186,10 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
     assert.ok(result.includes('Spec Summary'))
     assert.ok(result.includes('This is the spec markdown.'))
     // Should NOT include the JSON dump since spec type prefers contentMd
-    assert.ok(!result.includes('should-not-appear'), 'JSON should be omitted for spec when contentMd exists')
+    assert.ok(
+      !result.includes('should-not-appear'),
+      'JSON should be omitted for spec when contentMd exists'
+    )
   })
 
   test('artifact_plan_with_both_prefers_compact_json', () => {
@@ -206,7 +209,10 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
     // Plan type should prefer projected compact JSON over verbose contentMd
     assert.ok(result.includes('```json'), 'Plan should render as JSON block')
     assert.ok(result.includes('Phase 1'), 'Projected JSON should keep phase names')
-    assert.ok(!result.includes('Verbose plan output'), 'Should NOT include verbose contentMd for plan')
+    assert.ok(
+      !result.includes('Verbose plan output'),
+      'Should NOT include verbose contentMd for plan'
+    )
   })
 
   test('artifact_with_filePath_shows_path_line', () => {

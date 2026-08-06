@@ -8,36 +8,100 @@
 
 /** Tools that are inherently safe (read-only, no side effects) — always auto-approved. */
 export const AUTO_APPROVE_TOOLS = new Set([
-  'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
-  'SummarizePage', 'Snapshot', 'Evaluate', // browser read tools
+  'Read',
+  'Glob',
+  'Grep',
+  'WebSearch',
+  'WebFetch',
+  'SummarizePage',
+  'Snapshot',
+  'Evaluate' // browser read tools
 ])
 
 /** Read-only Bash command prefixes that are safe to auto-approve in any mode. */
 export const SAFE_BASH_PREFIXES = [
   // Git read-only
-  'git status', 'git log', 'git diff', 'git show', 'git branch',
-  'git tag', 'git remote', 'git rev-parse', 'git describe', 'git stash list',
-  'git grep', 'git fetch', 'git config',
+  'git status',
+  'git log',
+  'git diff',
+  'git show',
+  'git branch',
+  'git tag',
+  'git remote',
+  'git rev-parse',
+  'git describe',
+  'git stash list',
+  'git grep',
+  'git fetch',
+  'git config',
   // File inspection
-  'ls', 'cat ', 'head ', 'tail ', 'wc ', 'find ', 'du ', 'df ',
-  'stat ', 'file ', 'tree ', 'readlink ',
+  'ls',
+  'cat ',
+  'head ',
+  'tail ',
+  'wc ',
+  'find ',
+  'du ',
+  'df ',
+  'stat ',
+  'file ',
+  'tree ',
+  'readlink ',
   // Shell builtins (read-only)
-  'echo ', 'pwd', 'whoami', 'date', 'uname', 'which ', 'type ', 'env', 'printenv',
-  'cd ',  // directory change — no side effects
+  'echo ',
+  'pwd',
+  'whoami',
+  'date',
+  'uname',
+  'which ',
+  'type ',
+  'env',
+  'printenv',
+  'cd ', // directory change — no side effects
   // Node.js / npm
-  'npm ls', 'npm list', 'npm test', 'npm run test', 'npm run lint',
-  'npm run typecheck', 'npm --version', 'npm run build',
-  'npx tsc --noEmit', 'npx tsc -noEmit',
-  'npx tsx ', 'npx vitest', 'npx jest', 'npx playwright',
-  'node --version', 'node -v', 'node -e ',
+  'npm ls',
+  'npm list',
+  'npm test',
+  'npm run test',
+  'npm run lint',
+  'npm run typecheck',
+  'npm --version',
+  'npm run build',
+  'npx tsc --noEmit',
+  'npx tsc -noEmit',
+  'npx tsx ',
+  'npx vitest',
+  'npx jest',
+  'npx playwright',
+  'node --version',
+  'node -v',
+  'node -e ',
   // .NET
-  'dotnet test', 'dotnet build', 'dotnet run', 'dotnet --version',
+  'dotnet test',
+  'dotnet build',
+  'dotnet run',
+  'dotnet --version',
   // Python
-  'python -m pytest', 'python -c ', 'python3 -m pytest', 'python3 -c ',
+  'python -m pytest',
+  'python -c ',
+  'python3 -m pytest',
+  'python3 -c ',
   // Other
-  'grep ', 'sort ', 'uniq ', 'awk ', 'sed -n ', 'jq ',
-  'cargo test', 'cargo build', 'cargo check', 'go test', 'go build',
-  'make test', 'make build', 'make lint', 'make check',
+  'grep ',
+  'sort ',
+  'uniq ',
+  'awk ',
+  'sed -n ',
+  'jq ',
+  'cargo test',
+  'cargo build',
+  'cargo check',
+  'go test',
+  'go build',
+  'make test',
+  'make build',
+  'make lint',
+  'make check'
 ]
 
 /**
@@ -45,13 +109,29 @@ export const SAFE_BASH_PREFIXES = [
  * auto-approved, even in build mode. Mirrors the pre-tool-use-hook.sh list.
  */
 const DANGEROUS_PATTERNS = [
-  'rm -rf /', 'rm -rf /*', 'rm -rf ~', 'rm -rf $HOME',
-  'git push --force', 'git push -f ',
-  'sudo ', 'mkfs.', 'dd if=', ':(){:|:&};:',
-  'chmod -R 777 /', 'DROP DATABASE', 'DROP TABLE', 'TRUNCATE TABLE',
-  '| bash', '| sh', 'curl.*| bash', 'wget.*| sh',
-  'eval "$(curl', 'eval "$(wget', '> /dev/sda',
-  'npm publish', 'npx publish',
+  'rm -rf /',
+  'rm -rf /*',
+  'rm -rf ~',
+  'rm -rf $HOME',
+  'git push --force',
+  'git push -f ',
+  'sudo ',
+  'mkfs.',
+  'dd if=',
+  ':(){:|:&};:',
+  'chmod -R 777 /',
+  'DROP DATABASE',
+  'DROP TABLE',
+  'TRUNCATE TABLE',
+  '| bash',
+  '| sh',
+  'curl.*| bash',
+  'wget.*| sh',
+  'eval "$(curl',
+  'eval "$(wget',
+  '> /dev/sda',
+  'npm publish',
+  'npx publish'
 ]
 
 function isDangerousCommand(command: string): boolean {

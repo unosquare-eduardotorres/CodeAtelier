@@ -25,10 +25,7 @@ import { withErrorBoundary } from './tool-error-handler'
 
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 
-const server = new McpServer(
-  { name: 'memory', version: '1.0.0' },
-  { capabilities: { tools: {} } }
-)
+const server = new McpServer({ name: 'memory', version: '1.0.0' }, { capabilities: { tools: {} } })
 
 // ── Lazy service initialization ─────────────────────────────────────────
 
@@ -63,7 +60,10 @@ function ensureReady(): Promise<Services> {
     readyPromise.catch((err) => {
       if (retryCount < MAX_RETRIES) {
         retryCount++
-        console.error(`[memory-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`, err)
+        console.error(
+          `[memory-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`,
+          err
+        )
         readyPromise = null // Allow next invocation to retry
       } else {
         console.error(`[memory-server] Init failed after ${MAX_RETRIES} retries — giving up:`, err)
@@ -79,7 +79,7 @@ function registerToolSchemas(): void {
   // ── memory_search ─────────────────────────────────────────────────────
   server.tool(
     'memory_search',
-    'Search the workspace knowledge base for relevant facts. Use before making assumptions about project conventions, architecture decisions, or known gotchas.',
+    'Search the workspace knowledge base for relevant facts. Use before making assumptions about project conventions, architecture decisions, or known gotchas. Facts about the project, not past conversations — use recall_plans for those.',
     {
       query: z.string().describe('Natural language search query — what you want to know'),
       category: z
@@ -164,7 +164,9 @@ function registerToolSchemas(): void {
       })
       if (!fact) {
         return {
-          content: [{ type: 'text' as const, text: 'Fact deduplicated or capped — no new record created.' }]
+          content: [
+            { type: 'text' as const, text: 'Fact deduplicated or capped — no new record created.' }
+          ]
         }
       }
       const tierLabel = ['Observed', 'Confirmed', 'Established', 'Wisdom'][fact.tier]
@@ -196,8 +198,7 @@ function registerToolSchemas(): void {
     withErrorBoundary('memory_flag', async (args) => {
       const { memoryEngineService, memoryFactRepository } = await ensureReady()
       const existing = memoryFactRepository.findById(args.factId) as
-        | import('../../shared/types').MemoryFact
-        | undefined
+        import('../../shared/types').MemoryFact | undefined
       if (!existing) {
         return {
           content: [{ type: 'text' as const, text: `Fact not found: ${args.factId}` }]
@@ -229,7 +230,11 @@ function registerToolSchemas(): void {
           sourceRef: null
         })
         if (!newFact) {
-          return { content: [{ type: 'text' as const, text: 'Contradiction note deduplicated — no change made.' }] }
+          return {
+            content: [
+              { type: 'text' as const, text: 'Contradiction note deduplicated — no change made.' }
+            ]
+          }
         }
         // Guard: writeFact may UPDATE-match the replacement against the very fact
         // being contradicted and return it — don't self-supersede.
@@ -246,9 +251,10 @@ function registerToolSchemas(): void {
           content: [
             {
               type: 'text' as const,
-              text: newFact.id !== existing.id
-                ? `Fact "${existing.title}" superseded by "${newFact.title}" (id: ${newFact.id})`
-                : `Fact "${existing.title}" updated in place (id: ${existing.id})`
+              text:
+                newFact.id !== existing.id
+                  ? `Fact "${existing.title}" superseded by "${newFact.title}" (id: ${newFact.id})`
+                  : `Fact "${existing.title}" updated in place (id: ${existing.id})`
             }
           ]
         }

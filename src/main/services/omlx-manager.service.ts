@@ -100,20 +100,18 @@ class OmlxManagerService {
         // `models` field = loaded models only (backward compat with OllamaStatus)
         status.models = allModels.filter((m) => m.loaded).map((m) => m.id)
         // `allModels` = full list with loaded/downloading status
-        status.allModels = allModels.map(
-          (m): OmlxModelDetail => ({
-            id: m.id,
-            loaded: m.loaded,
-            isLoading: m.is_loading,
-            estimatedSize: m.estimated_size_formatted,
-            pinned: m.pinned,
-            isDefault: m.is_default,
-            modelType: m.model_type
-          })
-        )
+        status.allModels = allModels.map((m): OmlxModelDetail => ({
+          id: m.id,
+          loaded: m.loaded,
+          isLoading: m.is_loading,
+          estimatedSize: m.estimated_size_formatted,
+          pinned: m.pinned,
+          isDefault: m.is_default,
+          modelType: m.model_type
+        }))
         log.info(
           `[OmlxManager] Admin API: ${allModels.length} total, ` +
-          `types: ${[...new Set(allModels.map((m) => m.model_type))].join(', ')}`
+            `types: ${[...new Set(allModels.map((m) => m.model_type))].join(', ')}`
         )
         return status
       }
@@ -122,17 +120,18 @@ class OmlxManagerService {
       // Fall back to /v1/models — but capture diagnostics for the UI
       log.warn(
         `[OmlxManager] Admin API ${adminRes.status} — ` +
-        `${adminRes.status === 401 ? 'auth required (missing API key?)' : 'falling back to /v1/models'}`
+          `${adminRes.status === 401 ? 'auth required (missing API key?)' : 'falling back to /v1/models'}`
       )
       status.diagnostics = {
         adminAuthRequired: adminRes.status === 401,
         adminHttpStatus: adminRes.status,
         timedOut: false,
-        errorDetail: adminRes.status === 401
-          ? (apiKey
-            ? 'API key rejected — check it in oMLX admin → Settings'
-            : 'API key required — set it below to access model management')
-          : undefined
+        errorDetail:
+          adminRes.status === 401
+            ? apiKey
+              ? 'API key rejected — check it in oMLX admin → Settings'
+              : 'API key required — set it below to access model management'
+            : undefined
       }
     } catch (err) {
       // Admin API not reachable — detect timeout vs connection refused
@@ -168,7 +167,8 @@ class OmlxManagerService {
 
         // Synthesize allModels from /v1/models when admin API was unavailable
         // Use name-based heuristics to infer model type
-        const EMBEDDING_PATTERN = /\b(bge|e5[-_]|gte[-_]|ember|embedding|nomic[-_]embed|mxbai[-_]embed|snowflake|modernbert)/i
+        const EMBEDDING_PATTERN =
+          /\b(bge|e5[-_]|gte[-_]|ember|embedding|nomic[-_]embed|mxbai[-_]embed|snowflake|modernbert)/i
         status.allModels = status.models.map((id) => ({
           id,
           loaded: true, // /v1/models only returns loaded models
@@ -180,7 +180,7 @@ class OmlxManagerService {
         }))
         log.info(
           `[OmlxManager] /v1/models fallback: ${status.models.length} loaded, ` +
-          `synthesized types: ${status.allModels.map((m) => `${m.id}=${m.modelType}`).join(', ')}`
+            `synthesized types: ${status.allModels.map((m) => `${m.id}=${m.modelType}`).join(', ')}`
         )
       } else {
         log.warn(

@@ -73,7 +73,10 @@ test.describe('Repository & Auth Settings', () => {
 
     // Git configuration section visible
     const gitSection = page.getByText(/Git|Repository|Remote/i)
-    const hasGit = await gitSection.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasGit = await gitSection
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasGit).toBeTruthy()
   })
 
@@ -86,7 +89,10 @@ test.describe('Repository & Auth Settings', () => {
     if (!visible) {
       // Workspace already has git — verify remote URL field instead
       const remoteField = page.getByText(/Remote|remote URL/i)
-      const hasRemote = await remoteField.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasRemote = await remoteField
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       expect(hasRemote).toBeTruthy()
       return
     }
@@ -132,7 +138,10 @@ test.describe('Repository & Auth Settings', () => {
     if (!visible) {
       // Try navigating to auth-specific areas
       const authText = page.getByText(/Authentication|Auth Mode|Claude Max|API Key/i)
-      const hasAuth = await authText.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasAuth = await authText
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       if (!hasAuth) {
         test.skip()
         return
@@ -142,8 +151,14 @@ test.describe('Repository & Auth Settings', () => {
     // Mode toggle should show Claude Max / API Key options
     const claudeMax = page.getByText(/Claude Max/i)
     const apiKey = page.getByText(/API Key/i)
-    const hasMax = await claudeMax.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasApi = await apiKey.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasMax = await claudeMax
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasApi = await apiKey
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(hasMax || hasApi).toBeTruthy()
   })
@@ -164,7 +179,10 @@ test.describe('Repository & Auth Settings', () => {
 
     // Success indicator should appear
     const success = page.getByText(/Saved|success/i)
-    const hasSuccess = await success.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSuccess = await success
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasSuccess).toBeTruthy()
   })
 })

@@ -18,9 +18,7 @@ test.describe('Message Rendering', () => {
   /**
    * Helper: Ensure workspace is open and chat is accessible.
    */
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage> {
     const welcomePage = new WelcomePage(page)
     const chat = new ChatPage(page)
 
@@ -194,7 +192,9 @@ test.describe('Message Rendering', () => {
     }
 
     // Look for code blocks in messages
-    const codeBlocks = page.locator('[data-testid="message-bubble"] pre code, [data-testid="message-bubble"] pre')
+    const codeBlocks = page.locator(
+      '[data-testid="message-bubble"] pre code, [data-testid="message-bubble"] pre'
+    )
     const codeCount = await codeBlocks.count()
 
     if (codeCount === 0) {
@@ -212,7 +212,9 @@ test.describe('Message Rendering', () => {
     expect(content?.length).toBeGreaterThan(0)
 
     // Check for syntax highlighting (colored spans within code)
-    const highlightedSpans = firstCode.locator('span[style*="color"], span[class*="token"], span[class*="hljs"]')
+    const highlightedSpans = firstCode.locator(
+      'span[style*="color"], span[class*="token"], span[class*="hljs"]'
+    )
     const highlightCount = await highlightedSpans.count()
 
     // May or may not have highlighting depending on content

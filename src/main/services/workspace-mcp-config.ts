@@ -346,9 +346,7 @@ function buildLocalProviderMcpConfig(opts: {
     // Memory tools — always on (all tiers, ~1-2K tokens of schemas)
     ...MCP_TOOLS.MEMORY._ALL_NAMES,
     // Recall tools — past plans + surrounding conversation (workspace-scoped)
-    ...(workspaceId && isLocalMcpEnabled('recall', localActive)
-      ? MCP_TOOLS.RECALL._ALL_NAMES
-      : [])
+    ...(workspaceId && isLocalMcpEnabled('recall', localActive) ? MCP_TOOLS.RECALL._ALL_NAMES : [])
   ]
   const localAllowed = resolveToolAllowlist(baseAllowed, conditionalTools)
 
@@ -395,9 +393,7 @@ function buildLocalProviderMcpConfig(opts: {
       'NotebookRead',
       'NotebookEdit'
     ]
-    planBuiltinDisallowed = allBuiltins.filter(
-      (t) => !tierLimits.planBuiltinAllowlist!.includes(t)
-    )
+    planBuiltinDisallowed = allBuiltins.filter((t) => !tierLimits.planBuiltinAllowlist!.includes(t))
     chatAgentLogger.info(
       `[mcp:plan-builtin-gating] tier=${tier} allowed=[${tierLimits.planBuiltinAllowlist.join(',')}] ` +
         `disallowed=[${planBuiltinDisallowed.join(',')}] — saves ~${planBuiltinDisallowed.length * 450} tokens`
@@ -426,7 +422,7 @@ function buildClaudeProviderMcpConfig(opts: {
   disallowed: string[]
 }): McpConfigResult {
   const { mode, featureFlags, workspaceId, baseAllowed, disallowed } = opts
-  const { repomapEnabled, semanticSearchEnabled, githubConfigured } = featureFlags
+  const { repomapEnabled, semanticSearchEnabled } = featureFlags
   const localActive = featureFlags.localMcpActive
 
   // ── Claude Write/Edit exposure ──
@@ -463,9 +459,7 @@ function buildClaudeProviderMcpConfig(opts: {
         ]
       : []),
     // Semantic search (workspace flag AND per-chat toggle)
-    ...(semanticSearchEnabled &&
-    workspaceId &&
-    isLocalMcpEnabled('semantic-search', localActive)
+    ...(semanticSearchEnabled && workspaceId && isLocalMcpEnabled('semantic-search', localActive)
       ? [
           MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name,
           MCP_TOOLS.SEMANTIC_SEARCH.SIMILAR_CODE.name,
@@ -473,21 +467,9 @@ function buildClaudeProviderMcpConfig(opts: {
         ]
       : []),
     // Git context (per-chat gated)
-    ...(isLocalMcpEnabled('git-context', localActive)
-      ? MCP_TOOLS.GIT_CONTEXT._ALL_NAMES
-      : []),
-    // Checkpoint context (per-chat gated)
-    ...(isLocalMcpEnabled('checkpoint-context', localActive)
-      ? MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES
-      : []),
-    // GitHub context (workspace flag AND per-chat toggle)
-    ...(githubConfigured && isLocalMcpEnabled('github-context', localActive)
-      ? MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES
-      : []),
+    ...(isLocalMcpEnabled('git-context', localActive) ? MCP_TOOLS.GIT_CONTEXT._ALL_NAMES : []),
     // Code analysis (per-chat gated)
-    ...(isLocalMcpEnabled('code-analysis', localActive)
-      ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES
-      : []),
+    ...(isLocalMcpEnabled('code-analysis', localActive) ? MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES : []),
     // Process manager — build/danger mode only (not plan)
     ...(mode !== 'plan' && isLocalMcpEnabled('process-manager', localActive)
       ? MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES
@@ -499,9 +481,7 @@ function buildClaudeProviderMcpConfig(opts: {
     // Memory tools — always on (all tiers)
     ...MCP_TOOLS.MEMORY._ALL_NAMES,
     // Recall tools — past plans + surrounding conversation (workspace-scoped)
-    ...(workspaceId && isLocalMcpEnabled('recall', localActive)
-      ? MCP_TOOLS.RECALL._ALL_NAMES
-      : [])
+    ...(workspaceId && isLocalMcpEnabled('recall', localActive) ? MCP_TOOLS.RECALL._ALL_NAMES : [])
   ]
   const allowedTools = resolveToolAllowlist(claudeBaseAllowed, conditionalTools)
 

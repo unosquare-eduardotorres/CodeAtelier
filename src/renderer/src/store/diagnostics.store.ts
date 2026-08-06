@@ -22,8 +22,7 @@ interface DiagnosticsState {
 
 // Preserve Zustand state across HMR (dev only)
 const previousState = import.meta.hot?.data?.diagnosticsStoreState as
-  | Partial<DiagnosticsState>
-  | undefined
+  Partial<DiagnosticsState> | undefined
 
 export const useDiagnosticsStore = create<DiagnosticsState>((set) => ({
   diagnostics: previousState?.diagnostics ?? {},

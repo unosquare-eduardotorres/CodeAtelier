@@ -68,7 +68,11 @@ export class AgentRecoveryManager {
     if (isLocal) {
       const discoveries = this.s.toolActivityAccumulator.buildDiscoverySummary(2000)
       const planState = localPlanStateService.getForConversation(conversationId)
-      const partialPlan = (this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').slice(-1000)
+      const partialPlan = (
+        this.s.activeStreams?.get(conversationId)?.accumulatedText ??
+        this.s.accumulatedText ??
+        ''
+      ).slice(-1000)
 
       continuationPrompt = [
         '## Continuation — Complete the Plan',
@@ -199,7 +203,15 @@ export class AgentRecoveryManager {
     llmProvider: LLMProvider
     recoveryDepth: number
   }): Promise<'handled' | 'continue'> {
-    const { streamState, conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth } = params
+    const {
+      streamState,
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      mcpResult,
+      llmProvider,
+      recoveryDepth
+    } = params
 
     // Skip if the underlying cause was API overload
     if (streamState.overloadDetected && streamState.lastTerminalReason === 'max_turns') {
@@ -226,7 +238,12 @@ export class AgentRecoveryManager {
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
       await this.continueTurnLimit({
-        conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth
+        conversationId,
+        systemPrompt,
+        isBuildMode,
+        mcpResult,
+        llmProvider,
+        recoveryDepth
       })
       return 'handled'
     }
@@ -378,7 +395,8 @@ export class AgentRecoveryManager {
     recoveryDepth: number
   ): void {
     // Auto-capture conversation summary for ALL providers
-    const convAccText = this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
+    const convAccText =
+      this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
     if (convAccText.length > 100) {
       try {
         const summary = this.extractStructuredSummary(conversationId)
@@ -474,13 +492,23 @@ export class AgentRecoveryManager {
 
     // Step 1: Handle overload / max_turns auto-continue
     const overloadResult = await this.handleOverloadOrMaxTurns({
-      streamState, conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth
+      streamState,
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      mcpResult,
+      llmProvider,
+      recoveryDepth
     })
     if (overloadResult === 'handled') return
 
     // Step 2: Plan-mode tool-block recovery + nudge
     await this.attemptStreamRecovery({
-      streamState, conversationId, systemPrompt, isBuildMode, timedOut
+      streamState,
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      timedOut
     })
 
     // Step 3: Summary capture, intent detection, completion
@@ -491,8 +519,13 @@ export class AgentRecoveryManager {
 
   /** Save partial progress on error (all providers). */
   private saveErrorProgress(): void {
-    const errConvId = this.s.lastStreamOpts?.conversationId ?? (this.s as any).lastActiveConversationId ?? this.s.currentConversationId
-    const errAccText = errConvId ? (this.s.activeStreams?.get(errConvId)?.accumulatedText ?? this.s.accumulatedText ?? '') : ''
+    const errConvId =
+      this.s.lastStreamOpts?.conversationId ??
+      (this.s as any).lastActiveConversationId ??
+      this.s.currentConversationId
+    const errAccText = errConvId
+      ? (this.s.activeStreams?.get(errConvId)?.accumulatedText ?? this.s.accumulatedText ?? '')
+      : ''
     if (errAccText.length <= 50 || !errConvId) {
       return
     }
@@ -535,8 +568,7 @@ export class AgentRecoveryManager {
       !timedOut &&
       !isAbort &&
       /529|overloaded|server_is_overloaded|503 Service/i.test(error.message)
-    const isMaxTurns =
-      !timedOut && !isAbort && error.message?.includes('maximum number of turns')
+    const isMaxTurns = !timedOut && !isAbort && error.message?.includes('maximum number of turns')
     const isContextOverflow =
       !timedOut &&
       !isAbort &&
@@ -593,7 +625,8 @@ export class AgentRecoveryManager {
     effectiveTimeoutMs?: number
   ): Promise<void> {
     // Clear abort controller for the errored conversation (from lastStreamOpts if available)
-    const errorConvId = this.s.lastStreamOpts?.conversationId ?? (this.s as any).lastActiveConversationId ?? null
+    const errorConvId =
+      this.s.lastStreamOpts?.conversationId ?? (this.s as any).lastActiveConversationId ?? null
     if (errorConvId) {
       const ctx = this.s.activeStreams?.get(errorConvId)
       if (ctx) {
@@ -607,8 +640,10 @@ export class AgentRecoveryManager {
     }
     this.saveErrorProgress()
 
-    const { isOverload, isMaxTurns, isContextOverflow, isAbort } =
-      this.classifyStreamError(error, timedOut)
+    const { isOverload, isMaxTurns, isContextOverflow, isAbort } = this.classifyStreamError(
+      error,
+      timedOut
+    )
 
     // API overload — don't auto-continue
     if (isOverload) {
@@ -632,8 +667,7 @@ export class AgentRecoveryManager {
       this.s.lastStreamOpts &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
-      const { conversationId, systemPrompt, isBuildMode, llmProvider } =
-        this.s.lastStreamOpts
+      const { conversationId, systemPrompt, isBuildMode, llmProvider } = this.s.lastStreamOpts
       // AUTOCONT-STALE-MCP-01: Rebuild mcpResult from adapter to pick up any
       // MCP config changes made since the stream started. lastStreamOpts captured
       // mcpResult at executeStream() entry — using it directly risks invoking
@@ -643,7 +677,10 @@ export class AgentRecoveryManager {
         const controlCallbacks = this.s.adapter.buildControlCallbacks({
           conversationId,
           emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload),
-          getAccumulatedText: () => this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
+          getAccumulatedText: () =>
+            this.s.activeStreams?.get(conversationId)?.accumulatedText ??
+            this.s.accumulatedText ??
+            ''
         })
         freshMcpResult = this.s.adapter.buildMcpConfig({
           mode: this.s.currentMode,
@@ -655,10 +692,17 @@ export class AgentRecoveryManager {
         })
       } catch {
         // Non-fatal: fall back to stale mcpResult from lastStreamOpts
-        this.s.log.warn('[PIPELINE:error-autocont] Failed to rebuild mcpResult — using stale config')
+        this.s.log.warn(
+          '[PIPELINE:error-autocont] Failed to rebuild mcpResult — using stale config'
+        )
       }
       await this.continueTurnLimit({
-        conversationId, systemPrompt, isBuildMode, mcpResult: freshMcpResult, llmProvider, recoveryDepth
+        conversationId,
+        systemPrompt,
+        isBuildMode,
+        mcpResult: freshMcpResult,
+        llmProvider,
+        recoveryDepth
       })
       return
     }
@@ -738,7 +782,8 @@ export class AgentRecoveryManager {
     if (!this.s.workspaceId || this.s.currentMode !== 'plan') return
     try {
       const filesExplored = this.s.toolActivityAccumulator.getExploredFiles()
-      const text = this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
+      const text =
+        this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
 
       const planLineRegex =
         /^\s*(?:\d+[.)]\s|[-*]\s|#{2,4}\s(?:Step|Phase|Change|Modify|Add|Remove|Update|Create|Fix|Implement)|\*{1,2}\d+[.)]\*{0,2}\s)/i
@@ -775,7 +820,8 @@ export class AgentRecoveryManager {
   // ── Structured Summary Extraction ─────────────────────────────────────
 
   extractStructuredSummary(_conversationId: string): string | null {
-    const text = this.s.activeStreams?.get(_conversationId)?.accumulatedText ?? this.s.accumulatedText
+    const text =
+      this.s.activeStreams?.get(_conversationId)?.accumulatedText ?? this.s.accumulatedText
     if (!text || text.length < 50) return null
 
     const filesExplored = this.s.toolActivityAccumulator.getExploredFiles()

@@ -20,9 +20,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Model Configuration', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,19 +34,23 @@ test.describe('Model Configuration', () => {
     return true
   }
 
-  async function navigateToModels(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToModels(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('models')
   }
 
   test('model config tab renders with provider cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToModels(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const modelConfig = page.locator('[data-testid="model-config-tab"]')
     await expect(modelConfig).toBeVisible({ timeout: 5_000 })
@@ -62,16 +64,27 @@ test.describe('Model Configuration', () => {
     await expect(providerCards).toBeVisible()
   })
 
-  test('both Claude and oMLX provider cards render simultaneously', async ({ electronPage: page }) => {
+  test('both Claude and oMLX provider cards render simultaneously', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToModels(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const providerCards = page.locator('[data-testid="provider-toggle"]')
     const hasCards = await providerCards.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     // Both Claude and oMLX cards should be visible at the same time
     const claudeCard = page.locator('[data-testid="claude-config-section"]')
@@ -81,8 +94,8 @@ test.describe('Model Configuration', () => {
     await expect(omlxCard).toBeVisible()
 
     // Both cards should be visible as connection cards (no "Default" chip)
-    const claudeText = await claudeCard.textContent() ?? ''
-    const omlxText = await omlxCard.textContent() ?? ''
+    const claudeText = (await claudeCard.textContent()) ?? ''
+    const omlxText = (await omlxCard.textContent()) ?? ''
     // Verify cards show provider names
     expect(claudeText).toContain('Claude')
     expect(omlxText).toContain('oMLX')
@@ -90,14 +103,23 @@ test.describe('Model Configuration', () => {
 
   test('claude config shows model role pickers', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToModels(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const modelConfig = page.locator('[data-testid="model-config-tab"]')
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // Model routing section should be visible (always visible, not behind provider tab)
     const rolesSection = page.getByText(/Model Routing|Plan|Build/i).first()
@@ -113,64 +135,103 @@ test.describe('Model Configuration', () => {
 
   test('claude config shows communication tone options', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToModels(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const modelConfig = page.locator('[data-testid="model-config-tab"]')
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // Communication tone section (always visible, not behind provider tab)
     const toneSection = page.getByText(/tone|communication/i).first()
     const hasTone = await toneSection.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasTone) { test.skip(); return }
+    if (!hasTone) {
+      test.skip()
+      return
+    }
 
     await expect(toneSection).toBeVisible()
   })
 
   test('local LLM config shows host/port/model fields', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToModels(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const modelConfig = page.locator('[data-testid="model-config-tab"]')
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // oMLX card is always visible — look for host/port/model fields directly
     const omlxCard = page.locator('[data-testid="local-llm-config"]')
     const hasOmlx = await omlxCard.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasOmlx) { test.skip(); return }
+    if (!hasOmlx) {
+      test.skip()
+      return
+    }
 
     // Should show server connection fields
     const localConfig = page.getByText(/server address|host|port|model/i).first()
     const hasLocalConfig = await localConfig.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasLocalConfig) { test.skip(); return }
+    if (!hasLocalConfig) {
+      test.skip()
+      return
+    }
 
     await expect(localConfig).toBeVisible()
   })
 
   test('connection test button validates local LLM endpoint', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToModels(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const modelConfig = page.locator('[data-testid="model-config-tab"]')
     const hasConfig = await modelConfig.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // oMLX card is always visible — look for test button directly
     const omlxCard = page.locator('[data-testid="local-llm-config"]')
     const hasOmlx = await omlxCard.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasOmlx) { test.skip(); return }
+    if (!hasOmlx) {
+      test.skip()
+      return
+    }
 
     // Look for test connection button within oMLX card
     const testBtn = omlxCard.getByRole('button', { name: /test|connect|check/i }).first()

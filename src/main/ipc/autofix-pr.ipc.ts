@@ -16,36 +16,33 @@ import log from 'electron-log/main'
 const autofixLog = log.scope('autofix-pr')
 
 export function registerAutofixPrIpc(mainWindow: BrowserWindow): void {
-  ipcMain.handle(
-    (IPC_CHANNELS as any).AUTOFIX_PR_START,
-    async (event, rawArgs: unknown): Promise<void> => {
-      validateSender(event)
+  ipcMain.handle(IPC_CHANNELS.AUTOFIX_PR_START, async (event, rawArgs: unknown): Promise<void> => {
+    validateSender(event)
 
-      const args = rawArgs as { conversationId: string; prNumber?: number }
-      const conversation = conversationRepository.findById(args.conversationId)
-      if (!conversation) throw new Error('Conversation not found')
+    const args = rawArgs as { conversationId: string; prNumber?: number }
+    const conversation = conversationRepository.findById(args.conversationId)
+    if (!conversation) throw new Error('Conversation not found')
 
-      try {
-        // 1. Build the fix prompt (gathers CI + review context)
-        const { prompt, context } = await autofixPrService.buildFixPrompt({
-          workspaceId: conversation.workspaceId,
-          prNumber: args.prNumber
-        })
+    try {
+      // 1. Build the fix prompt (gathers CI + review context)
+      const { prompt, context } = await autofixPrService.buildFixPrompt({
+        workspaceId: conversation.workspaceId,
+        prNumber: args.prNumber
+      })
 
-        // 2. Send progress event to renderer
-        safeWindowSend(mainWindow, (IPC_CHANNELS as any).AUTOFIX_PR_STATUS, {
-          conversationId: args.conversationId,
-          status: 'fixing',
-          context
-        })
+      // 2. Send progress event to renderer
+      safeWindowSend(mainWindow, IPC_CHANNELS.AUTOFIX_PR_STATUS, {
+        conversationId: args.conversationId,
+        status: 'fixing',
+        context
+      })
 
-        // 3. Send the fix prompt as a regular message to the current agent session.
-        //    This reuses the existing agent (with its tools, MCP servers, code context).
-        await chatStreamService.stream(args.conversationId, prompt, [], { optimizePrompt: false })
-      } catch (err) {
-        autofixLog.error('[autofix-pr] Failed:', err)
-        throw err // Re-throw so the renderer catch block handles it
-      }
+      // 3. Send the fix prompt as a regular message to the current agent session.
+      //    This reuses the existing agent (with its tools, MCP servers, code context).
+      await chatStreamService.stream(args.conversationId, prompt, [], { optimizePrompt: false })
+    } catch (err) {
+      autofixLog.error('[autofix-pr] Failed:', err)
+      throw err // Re-throw so the renderer catch block handles it
     }
-  )
+  })
 }

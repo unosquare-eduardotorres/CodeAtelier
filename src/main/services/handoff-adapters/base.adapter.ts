@@ -98,7 +98,7 @@ export abstract class HandoffSourceAdapter<TInput> {
       decisions: this.extractDecisions(input),
       constraints: this.extractConstraints(input),
       risks: this.extractRisks(input),
-      structuredPlanRef: this.extractStructuredPlanRef(input),
+      structuredPlanRef: this.extractStructuredPlanRef(input)
     }
 
     const now = new Date()
@@ -138,7 +138,7 @@ export abstract class HandoffSourceAdapter<TInput> {
       priority: base.priority ?? 'medium',
       createdAt: now.toISOString(),
       expiresAt: expiresAt.toISOString(),
-      createdBy: base.createdBy ?? 'system',
+      createdBy: base.createdBy ?? 'system'
     }
 
     // Validate envelope size
@@ -146,7 +146,7 @@ export abstract class HandoffSourceAdapter<TInput> {
     if (json.length > MAX_ENVELOPE_SIZE_BYTES) {
       throw new Error(
         `HandoffEnvelope exceeds max size (${json.length} bytes > ${MAX_ENVELOPE_SIZE_BYTES} bytes). ` +
-        `Reduce contextSummary or artifact references.`
+          `Reduce contextSummary or artifact references.`
       )
     }
 

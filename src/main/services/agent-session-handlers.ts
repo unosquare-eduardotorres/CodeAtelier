@@ -37,7 +37,9 @@ export function parsePlanPayload(payload: unknown, beforePlan: string): PlanDete
       if (parsed?.title && parsed?.phases) {
         result.structuredPlan = parsed
       }
-    } catch { /* non-fatal — rawContent may not be valid JSON */ }
+    } catch {
+      /* non-fatal — rawContent may not be valid JSON */
+    }
   }
   return result
 }

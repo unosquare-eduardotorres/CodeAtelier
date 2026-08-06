@@ -314,10 +314,7 @@ export class PromptBuilder {
     }
   }
 
-  private readExtraInstructionSources(
-    workspacePath: string,
-    globs: string[]
-  ): InstructionSource[] {
+  private readExtraInstructionSources(workspacePath: string, globs: string[]): InstructionSource[] {
     if (globs.length === 0) return []
 
     const out: InstructionSource[] = []
@@ -591,11 +588,7 @@ export class PromptBuilder {
 
     // Layer 2: Minimal project context (tech stack + key commands only)
     if (options.workspacePath) {
-      const claudeMd = this.readProjectContext(
-        options.workspacePath,
-        options.mode,
-        'minimal'
-      )
+      const claudeMd = this.readProjectContext(options.workspacePath, options.mode, 'minimal')
       if (claudeMd) {
         layers.push(`## Project Context\n\n${claudeMd}`)
       }

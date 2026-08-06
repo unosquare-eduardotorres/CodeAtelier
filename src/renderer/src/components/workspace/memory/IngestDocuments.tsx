@@ -10,7 +10,15 @@
  */
 
 import { useState, useCallback, useRef, type DragEvent } from 'react'
-import { FolderOpen, FileUp, X, Loader2, CheckCircle, AlertTriangle, SkipForward } from 'lucide-react'
+import {
+  FolderOpen,
+  FileUp,
+  X,
+  Loader2,
+  CheckCircle,
+  AlertTriangle,
+  SkipForward
+} from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
 import type { IngestionProgress } from '../../../../../shared/types'
 
@@ -119,7 +127,10 @@ export default function IngestDocuments(): React.JSX.Element {
   }, [])
 
   const isRunning = ingestion?.jobStatus === 'running'
-  const isDone = ingestion?.jobStatus === 'done' || ingestion?.jobStatus === 'cancelled' || ingestion?.jobStatus === 'error'
+  const isDone =
+    ingestion?.jobStatus === 'done' ||
+    ingestion?.jobStatus === 'cancelled' ||
+    ingestion?.jobStatus === 'error'
 
   return (
     <div className="space-y-3">
@@ -127,7 +138,8 @@ export default function IngestDocuments(): React.JSX.Element {
         <div>
           <h3 className="text-sm font-medium text-text-primary">Ingest Documents</h3>
           <p className="text-xs text-text-muted mt-0.5">
-            Extract memories from files — markdown, code, PDF, DOCX. Unchanged files are skipped on re-ingest.
+            Extract memories from files — markdown, code, PDF, DOCX. Unchanged files are skipped on
+            re-ingest.
           </p>
         </div>
       </div>
@@ -236,9 +248,7 @@ export default function IngestDocuments(): React.JSX.Element {
                 Select Folder…
               </button>
             </div>
-            <p className="text-xs text-text-muted">
-              or drag and drop files here
-            </p>
+            <p className="text-xs text-text-muted">or drag and drop files here</p>
           </div>
 
           {/* Folder discovery summary */}
@@ -278,9 +288,7 @@ export default function IngestDocuments(): React.JSX.Element {
                 </div>
               ))}
               {pendingFiles.length > 10 && (
-                <div className="text-xs text-text-muted">
-                  …and {pendingFiles.length - 10} more
-                </div>
+                <div className="text-xs text-text-muted">…and {pendingFiles.length - 10} more</div>
               )}
             </div>
           )}

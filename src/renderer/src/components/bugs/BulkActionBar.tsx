@@ -18,7 +18,10 @@ export default function BulkActionBar({
   onClearSelection
 }: BulkActionBarProps): React.JSX.Element {
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 bg-surface-overlay border border-border-default rounded-xl shadow-lg z-50" data-testid="bug-bulk-action-bar">
+    <div
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 px-4 py-2.5 bg-surface-overlay border border-border-default rounded-xl shadow-lg z-50"
+      data-testid="bug-bulk-action-bar"
+    >
       {/* Selection count */}
       <span className="text-sm font-medium text-text-primary">{selectedCount} selected</span>
 

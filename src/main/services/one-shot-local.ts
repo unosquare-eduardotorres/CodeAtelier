@@ -25,10 +25,14 @@ const LOCAL_REQUEST_TIMEOUT_MS = 10_000
  */
 export function buildMemoryFeedFallbackArgs(prompt: string): string[] {
   return [
-    '-p', prompt,
-    '--model', DEFAULT_MODEL_CONFIG.memoryFeed,
-    '--output-format', 'text',
-    '--permission-mode', 'plan'
+    '-p',
+    prompt,
+    '--model',
+    DEFAULT_MODEL_CONFIG.memoryFeed,
+    '--output-format',
+    'text',
+    '--permission-mode',
+    'plan'
   ]
 }
 

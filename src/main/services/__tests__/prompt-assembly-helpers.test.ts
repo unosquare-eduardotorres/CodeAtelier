@@ -49,13 +49,37 @@ describe('appendMcpToolGuidance', () => {
     assert.equal(out, 'BASE')
   })
 
-  test('turn 2+ is no-op when repomap disabled', () => {
+  test('turn 2+ still reminds when only semantic search is enabled', () => {
+    // Regression: the gate used to read repomapEnabled alone, so a
+    // semantic-search-only workspace got no tool-priority reminder at all.
     const out = appendMcpToolGuidance('BASE', 2, {
       repomapEnabled: false,
       semanticSearchEnabled: true,
       githubConfigured: true
     })
+    assert.ok(out.includes('## Tool Priority'), 'semantic-search-only must still get the reminder')
+  })
+
+  test('turn 2+ is no-op when both code intelligence features are disabled', () => {
+    const out = appendMcpToolGuidance('BASE', 2, {
+      repomapEnabled: false,
+      semanticSearchEnabled: false,
+      githubConfigured: true
+    })
     assert.equal(out, 'BASE')
+  })
+
+  test('turn 2+ reminder is a routing table with an escape hatch', () => {
+    const out = appendMcpToolGuidance('BASE', 2, {
+      repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: false
+    })
+    assert.ok(out.includes('| Question shape | First tool | Fallback |'), 'routing table header')
+    assert.ok(
+      out.includes('Skip all of the above when the answer is already in context'),
+      'escape hatch keeps the table credible — without it the model discounts the block'
+    )
   })
 
   test('appends only flagged blocks on turn 1', () => {
@@ -64,16 +88,14 @@ describe('appendMcpToolGuidance', () => {
       semanticSearchEnabled: false,
       githubConfigured: false
     })
-    // Git + checkpoint always mount.
+    // Git always mounts.
     assert.ok(allOff.includes('## Git Context'), 'Git context guidance should be appended')
-    assert.ok(allOff.includes('## Checkpoint Tools'), 'Checkpoint guidance should be appended')
-    // Repomap / Semantic / GitHub require flags.
+    // Repomap / Semantic require flags.
     assert.ok(!allOff.includes('## Code Graph'), 'Code Graph should not be appended when disabled')
     assert.ok(
       !allOff.includes('## Semantic Search'),
       'Semantic Search should not be appended when disabled'
     )
-    assert.ok(!allOff.includes('## GitHub Tools'), 'GitHub should not be appended when disabled')
 
     const allOn = appendMcpToolGuidance('BASE', 1, {
       repomapEnabled: true,
@@ -85,7 +107,50 @@ describe('appendMcpToolGuidance', () => {
       allOn.includes('## Semantic Search'),
       'Semantic Search should be appended when enabled'
     )
-    assert.ok(allOn.includes('## GitHub Tools'), 'GitHub should be appended when enabled')
+  })
+
+  test('enabled-but-unindexed swaps in the unindexed note, not the full guidance', () => {
+    const out = appendMcpToolGuidance('BASE', 1, {
+      repomapEnabled: true,
+      semanticSearchEnabled: true,
+      repomapIndexed: false,
+      semanticSearchIndexed: false,
+      githubConfigured: false
+    })
+    // Tools stay mounted, so the block must still appear — silence invites blind calls.
+    assert.ok(out.includes('## Code Graph'), 'Code Graph header still present')
+    assert.ok(out.includes('## Semantic Search'), 'Semantic Search header still present')
+    assert.ok(out.includes('no index yet'), 'Code Graph unindexed note')
+    assert.ok(out.includes('no embedding index yet'), 'Semantic Search unindexed note')
+    assert.ok(
+      !out.includes('Typical chain:'),
+      'full semantic-search routing guidance must be replaced, not appended'
+    )
+  })
+
+  test('unknown index state is treated as indexed (fail open)', () => {
+    const out = appendMcpToolGuidance('BASE', 1, {
+      repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: false
+    })
+    assert.ok(out.includes('Typical chain:'), 'undefined index state keeps the full guidance')
+    assert.ok(!out.includes('no index yet'), 'must not claim the workspace is unindexed')
+  })
+
+  test('unindexed note wins over the lean variant', () => {
+    const out = appendMcpToolGuidance(
+      'BASE',
+      1,
+      {
+        repomapEnabled: false,
+        semanticSearchEnabled: true,
+        semanticSearchIndexed: false,
+        githubConfigured: false
+      },
+      'claude-opus-4-8'
+    )
+    assert.ok(out.includes('no embedding index yet'), 'lean models still need the index warning')
   })
 
   test('lean mode injects compressed REPOMAP_GUIDANCE when base lacks ## Code Exploration', () => {

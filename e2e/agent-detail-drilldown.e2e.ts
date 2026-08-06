@@ -23,9 +23,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Agent Detail Drilldown', () => {
-  async function navigateToTeamTab(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToTeamTab(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -47,11 +45,17 @@ test.describe('Agent Detail Drilldown', () => {
 
   test('agent management section renders with agent cards', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
 
@@ -67,11 +71,17 @@ test.describe('Agent Detail Drilldown', () => {
 
   test('clicking an agent card opens its detail page', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const agentCards = page.locator('[data-testid="agent-management-card"]')
     const cardCount = await agentCards.count()
-    if (cardCount === 0) { test.skip(); return }
+    if (cardCount === 0) {
+      test.skip()
+      return
+    }
 
     // Click the first agent card
     await agentCards.first().click()
@@ -80,7 +90,10 @@ test.describe('Agent Detail Drilldown', () => {
     // Agent detail page should appear
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(detailPage).toBeVisible()
 
@@ -91,17 +104,26 @@ test.describe('Agent Detail Drilldown', () => {
 
   test('detail page shows YAML content for the agent', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const agentCards = page.locator('[data-testid="agent-management-card"]')
-    if ((await agentCards.count()) === 0) { test.skip(); return }
+    if ((await agentCards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await agentCards.first().click()
     await page.waitForTimeout(1_500)
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for file content to load
     await page.waitForTimeout(2_000)
@@ -111,7 +133,10 @@ test.describe('Agent Detail Drilldown', () => {
     const loader = detailPage.locator('.animate-spin')
     const errorText = detailPage.locator('text=Could not load agent file')
 
-    const hasEditor = await editorContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasEditor = await editorContent
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     const hasLoader = await loader.isVisible({ timeout: 1_000 }).catch(() => false)
     const hasError = await errorText.isVisible({ timeout: 1_000 }).catch(() => false)
 
@@ -120,17 +145,26 @@ test.describe('Agent Detail Drilldown', () => {
 
   test('skill checkboxes reflect current agent configuration', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const agentCards = page.locator('[data-testid="agent-management-card"]')
-    if ((await agentCards.count()) === 0) { test.skip(); return }
+    if ((await agentCards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await agentCards.first().click()
     await page.waitForTimeout(1_500)
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Skills section should be present
     const skillsHeading = detailPage.locator('h4:has-text("Skills assigned")')
@@ -161,17 +195,26 @@ test.describe('Agent Detail Drilldown', () => {
 
   test('back button returns to agent management list', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const agentCards = page.locator('[data-testid="agent-management-card"]')
-    if ((await agentCards.count()) === 0) { test.skip(); return }
+    if ((await agentCards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await agentCards.first().click()
     await page.waitForTimeout(1_500)
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Click back button
     const backBtn = page.locator('[data-testid="agent-detail-back"]')
@@ -190,11 +233,17 @@ test.describe('Agent Detail Drilldown', () => {
 
   test('agent card active state updates after selection', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const agentCards = page.locator('[data-testid="agent-management-card"]')
     const cardCount = await agentCards.count()
-    if (cardCount < 1) { test.skip(); return }
+    if (cardCount < 1) {
+      test.skip()
+      return
+    }
 
     // Click first card
     await agentCards.first().click()

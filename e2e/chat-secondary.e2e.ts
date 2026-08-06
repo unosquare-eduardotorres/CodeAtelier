@@ -60,7 +60,10 @@ test.describe('Chat Secondary Interactions', () => {
 
     // BuildSummaryCard appears after a build completes
     const summaryCard = page.locator('[data-testid="build-summary-card"]')
-    const hasCard = await summaryCard.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasCard = await summaryCard
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasCard) {
       // No build summaries in current conversation
@@ -86,9 +89,7 @@ test.describe('Chat Secondary Interactions', () => {
 
   // ── DiagnosticsPanel ──
 
-  test('DiagnosticsPanel shows LSP errors with file references', async ({
-    electronPage: page
-  }) => {
+  test('DiagnosticsPanel shows LSP errors with file references', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -170,9 +171,7 @@ test.describe('Chat Secondary Interactions', () => {
 
   // ── Todos tab in execution panel ──
 
-  test('Todos tab renders checklist in execution panel', async ({
-    electronPage: page
-  }) => {
+  test('Todos tab renders checklist in execution panel', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -218,9 +217,7 @@ test.describe('Chat Secondary Interactions', () => {
 
   // ── IdeaPopover ──
 
-  test('IdeaPopover renders with title input and save button', async ({
-    electronPage: page
-  }) => {
+  test('IdeaPopover renders with title input and save button', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -269,9 +266,7 @@ test.describe('Chat Secondary Interactions', () => {
 
   // ── MessageListFooter (follow-up suggestions) ──
 
-  test('MessageListFooter shows follow-up prompt suggestion', async ({
-    electronPage: page
-  }) => {
+  test('MessageListFooter shows follow-up prompt suggestion', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -283,7 +278,10 @@ test.describe('Chat Secondary Interactions', () => {
     // Follow-up suggestions appear after assistant messages
     // They are rendered inside MessageListFooter
     const suggestion = page.locator('button').filter({ hasText: /^(?!.*\n).{10,100}$/ })
-    const hasSuggestion = await suggestion.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasSuggestion = await suggestion
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasSuggestion) {
       // No follow-up suggestion present — this is normal
@@ -313,7 +311,10 @@ test.describe('Chat Secondary Interactions', () => {
 
     // ImagePreviewThumbnail only renders when images are attached
     const thumbnail = page.locator('[data-testid="image-preview-thumbnail"]')
-    const hasThumbnail = await thumbnail.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasThumbnail = await thumbnail
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasThumbnail) {
       // No image attachments — expected in most conversations
@@ -335,7 +336,10 @@ test.describe('Chat Secondary Interactions', () => {
 
       // Lightbox overlay should appear
       const lightbox = page.locator('[class*="fixed inset-0"]')
-      const hasLightbox = await lightbox.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasLightbox = await lightbox
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       if (hasLightbox) {
         // Close lightbox

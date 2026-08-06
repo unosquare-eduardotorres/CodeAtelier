@@ -48,7 +48,11 @@ describe('parsePlanPayload', () => {
   // ── Direct StructuredPlan shape (has title + phases, no type — MCP emit_plan path) ──
 
   test('direct_structured_plan_object_with_title_and_phases_detected', () => {
-    const mcpPlan = { title: 'Fix auth', summary: 'Fix the auth bug', phases: [{ id: 1, title: 'Audit' }] }
+    const mcpPlan = {
+      title: 'Fix auth',
+      summary: 'Fix the auth bug',
+      phases: [{ id: 1, title: 'Audit' }]
+    }
     const result = parsePlanPayload(mcpPlan, 'before')
     assert.ok(result.structuredPlan !== null, 'title+phases should be detected as structuredPlan')
     assert.equal((result.structuredPlan as unknown as Record<string, unknown>).title, 'Fix auth')

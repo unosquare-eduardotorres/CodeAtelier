@@ -103,7 +103,9 @@ function SeverityChip({ label, count }: { label: string; count: number }): JSX.E
   }
   const cls = colorMap[label] ?? colorMap.low
   return (
-    <span className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border ${cls}`}>
+    <span
+      className={`inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full border ${cls}`}
+    >
       {count} {label}
     </span>
   )
@@ -122,27 +124,27 @@ function PreflightCheckRow({ check }: { check: PreflightCheckUI }): JSX.Element 
   const config = statusConfig[check.status as keyof typeof statusConfig] ?? statusConfig.warn
   const StatusIcon = config.icon
 
-  const kindIcon = check.kind === 'cli-tool' ? Terminal
-    : check.kind === 'env-var' ? Key
-    : Globe
+  const kindIcon = check.kind === 'cli-tool' ? Terminal : check.kind === 'env-var' ? Key : Globe
   const KindIcon = kindIcon
 
   return (
-    <div className={`flex items-start gap-2 px-3 py-2 rounded-lg ${config.bg} border border-transparent`}>
+    <div
+      className={`flex items-start gap-2 px-3 py-2 rounded-lg ${config.bg} border border-transparent`}
+    >
       <StatusIcon size={14} className={`${config.color} mt-0.5 shrink-0`} />
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <KindIcon size={11} className="text-text-muted" />
           <span className="text-xs font-medium text-text-primary truncate">{check.name}</span>
-          <span className={`text-[10px] px-1.5 py-0 rounded-full border ${config.bg} ${config.color} font-medium`}>
+          <span
+            className={`text-[10px] px-1.5 py-0 rounded-full border ${config.bg} ${config.color} font-medium`}
+          >
             {config.label}
           </span>
         </div>
         <p className="text-[11px] text-text-secondary mt-0.5">{check.message}</p>
         {check.remediation && check.status !== 'pass' && (
-          <p className="text-[11px] text-text-muted mt-0.5 italic">
-            💡 {check.remediation}
-          </p>
+          <p className="text-[11px] text-text-muted mt-0.5 italic">💡 {check.remediation}</p>
         )}
       </div>
     </div>
@@ -178,8 +180,7 @@ export default function BlueprintApprovalGate({
 
   // Extract structured metrics from completion
   const findings = completion?.findings as
-    | { critical?: number; high?: number; medium?: number; low?: number }
-    | undefined
+    { critical?: number; high?: number; medium?: number; low?: number } | undefined
   const recommendation = (completion?.recommendation as string) ?? null
   const coveragePercent = completion?.coveragePercent as number | undefined
   const requirementsWithTasks = completion?.requirementsWithTasks as number | undefined
@@ -221,7 +222,9 @@ export default function BlueprintApprovalGate({
               <div className="flex items-center gap-1.5">
                 <BarChart3 size={14} className="text-accent" />
                 <span className="text-xs text-text-secondary">Coverage:</span>
-                <span className={`text-sm font-semibold ${coveragePercent >= 80 ? 'text-success' : coveragePercent >= 50 ? 'text-warning' : 'text-danger'}`}>
+                <span
+                  className={`text-sm font-semibold ${coveragePercent >= 80 ? 'text-success' : coveragePercent >= 50 ? 'text-warning' : 'text-danger'}`}
+                >
                   {coveragePercent}%
                 </span>
               </div>
@@ -241,9 +244,7 @@ export default function BlueprintApprovalGate({
             {unmappedTasks !== undefined && unmappedTasks > 0 && (
               <div className="flex items-center gap-1.5">
                 <Info size={14} className="text-info" />
-                <span className="text-xs text-text-secondary">
-                  {unmappedTasks} unmapped tasks
-                </span>
+                <span className="text-xs text-text-secondary">{unmappedTasks} unmapped tasks</span>
               </div>
             )}
 
@@ -252,7 +253,8 @@ export default function BlueprintApprovalGate({
               <div className="flex items-center gap-1.5">
                 <Shield size={14} className="text-danger" />
                 <span className="text-xs text-danger font-medium">
-                  {constitutionViolations} constitution violation{constitutionViolations > 1 ? 's' : ''}
+                  {constitutionViolations} constitution violation
+                  {constitutionViolations > 1 ? 's' : ''}
                 </span>
               </div>
             )}
@@ -273,21 +275,25 @@ export default function BlueprintApprovalGate({
           )}
 
           {/* Recommendation badge */}
-          {recommendation && (() => {
-            const style = getRecommendationStyle(recommendation)
-            const label = getRecommendationLabel(recommendation)
-            const RecIcon = recommendation === 'proceed'
-              ? CheckCircle
-              : recommendation === 'fix_critical'
-                ? AlertTriangle
-                : AlertCircle
-            return (
-              <div className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border ${style.bg} ${style.text} ${style.border}`}>
-                <RecIcon size={13} />
-                {label}
-              </div>
-            )
-          })()}
+          {recommendation &&
+            (() => {
+              const style = getRecommendationStyle(recommendation)
+              const label = getRecommendationLabel(recommendation)
+              const RecIcon =
+                recommendation === 'proceed'
+                  ? CheckCircle
+                  : recommendation === 'fix_critical'
+                    ? AlertTriangle
+                    : AlertCircle
+              return (
+                <div
+                  className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg border ${style.bg} ${style.text} ${style.border}`}
+                >
+                  <RecIcon size={13} />
+                  {label}
+                </div>
+              )
+            })()}
         </div>
       )}
 
@@ -311,13 +317,15 @@ export default function BlueprintApprovalGate({
           </button>
           {reportExpanded && (
             <div className="bg-surface-base border-t border-border-subtle p-3 max-h-96 overflow-y-auto">
-              <div className="prose prose-sm max-w-none text-text-body
+              <div
+                className="prose prose-sm max-w-none text-text-body
                 prose-headings:text-text-primary prose-headings:font-semibold prose-headings:text-sm
                 prose-p:leading-relaxed prose-p:text-sm
                 prose-code:font-mono prose-code:text-xs prose-code:bg-surface-overlay prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-accent prose-code:before:content-none prose-code:after:content-none
                 prose-strong:text-text-primary prose-strong:font-semibold
                 prose-li:text-sm prose-li:text-text-body
-              ">
+              "
+              >
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                   {stripBlueprintBlocks(reviewMarkdown!)}
                 </ReactMarkdown>
@@ -331,13 +339,15 @@ export default function BlueprintApprovalGate({
       {!hasStructuredData && (
         <div className="bg-surface-base rounded-lg border border-info/20 p-3 max-h-80 overflow-y-auto">
           <p className="text-xs font-medium text-text-secondary mb-1.5">Plan Summary</p>
-          <div className="prose prose-sm max-w-none text-text-body
+          <div
+            className="prose prose-sm max-w-none text-text-body
             prose-headings:text-text-primary prose-headings:font-semibold prose-headings:text-sm
             prose-p:leading-relaxed prose-p:text-sm
             prose-code:font-mono prose-code:text-xs prose-code:bg-surface-overlay prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-accent prose-code:before:content-none prose-code:after:content-none
             prose-strong:text-text-primary prose-strong:font-semibold
             prose-li:text-sm prose-li:text-text-body
-          ">
+          "
+          >
             <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
               {stripBlueprintBlocks(planSummary)}
             </ReactMarkdown>
@@ -362,7 +372,10 @@ export default function BlueprintApprovalGate({
               ) : (
                 <ChevronRight size={14} className="text-text-muted flex-shrink-0" />
               )}
-              <Terminal size={14} className={`flex-shrink-0 ${preflight.result.hasBlockers ? 'text-danger' : preflight.result.hasWarnings ? 'text-warning' : 'text-success'}`} />
+              <Terminal
+                size={14}
+                className={`flex-shrink-0 ${preflight.result.hasBlockers ? 'text-danger' : preflight.result.hasWarnings ? 'text-warning' : 'text-success'}`}
+              />
               <span className="text-xs font-semibold text-text-primary">Environment Checks</span>
               <span className="text-[10px] text-text-muted ml-1">
                 {preflight.result.checks.filter((c) => c.status === 'pass').length} pass
@@ -370,7 +383,15 @@ export default function BlueprintApprovalGate({
                   <>, {preflight.result.checks.filter((c) => c.status === 'warn').length} warn</>
                 )}
                 {preflight.result.checks.filter((c) => c.status === 'blocker').length > 0 && (
-                  <>, <span className="text-danger font-medium">{preflight.result.checks.filter((c) => c.status === 'blocker').length} blocker{preflight.result.checks.filter((c) => c.status === 'blocker').length > 1 ? 's' : ''}</span></>
+                  <>
+                    ,{' '}
+                    <span className="text-danger font-medium">
+                      {preflight.result.checks.filter((c) => c.status === 'blocker').length} blocker
+                      {preflight.result.checks.filter((c) => c.status === 'blocker').length > 1
+                        ? 's'
+                        : ''}
+                    </span>
+                  </>
                 )}
               </span>
             </button>

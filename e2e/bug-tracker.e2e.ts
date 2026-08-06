@@ -18,9 +18,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Bug Tracker', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,12 +33,13 @@ test.describe('Bug Tracker', () => {
   }
 
   /** Navigate to the bug tracker page. */
-  async function navigateToBugTracker(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToBugTracker(page: import('@playwright/test').Page): Promise<boolean> {
     // Bug tracker is accessed via the app-level menu (not workspace settings)
     const bugBtn = page.locator('[aria-label="Bug Tracker"], [data-testid="bug-tracker-btn"]')
-    let hasBtn = await bugBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    let hasBtn = await bugBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasBtn) {
       await bugBtn.first().click()
@@ -62,10 +61,16 @@ test.describe('Bug Tracker', () => {
 
   test('bug tracker page renders with two-pane layout', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToBugTracker(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const bugTracker = page.locator('[data-testid="bug-tracker-page"]')
     await expect(bugTracker).toBeVisible({ timeout: 5_000 })
@@ -84,14 +89,23 @@ test.describe('Bug Tracker', () => {
 
   test('bug card list shows filtered entries or empty state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToBugTracker(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const bugTracker = page.locator('[data-testid="bug-tracker-page"]')
     const hasPage = await bugTracker.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Bug list pane should show either bugs or empty state
     const bugList = page.locator('[data-testid="bug-card"]')
@@ -108,14 +122,23 @@ test.describe('Bug Tracker', () => {
 
   test('clicking bug card shows detail panel', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToBugTracker(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const bugTracker = page.locator('[data-testid="bug-tracker-page"]')
     const hasPage = await bugTracker.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Look for clickable bug cards
     const bugItems = page.locator('[data-testid="bug-card"] [class*="cursor-pointer"]')
@@ -138,20 +161,32 @@ test.describe('Bug Tracker', () => {
 
   test('bug detail shows stack trace and action buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToBugTracker(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const bugTracker = page.locator('[data-testid="bug-tracker-page"]')
     const hasPage = await bugTracker.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Click first bug if any exist
     const bugItems = page.locator('[data-testid="bug-card"] [class*="cursor-pointer"]')
     const count = await bugItems.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     await bugItems.first().click()
     await page.waitForTimeout(500)
@@ -166,20 +201,32 @@ test.describe('Bug Tracker', () => {
 
   test('resolve/unresolve toggles bug status', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToBugTracker(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const bugTracker = page.locator('[data-testid="bug-tracker-page"]')
     const hasPage = await bugTracker.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Click first bug
     const bugItems = page.locator('[data-testid="bug-card"] [class*="cursor-pointer"]')
     const count = await bugItems.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     await bugItems.first().click()
     await page.waitForTimeout(500)
@@ -188,7 +235,10 @@ test.describe('Bug Tracker', () => {
     const resolveBtn = page.getByRole('button', { name: /resolve|unresolve/i }).first()
     const hasResolve = await resolveBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasResolve) { test.skip(); return }
+    if (!hasResolve) {
+      test.skip()
+      return
+    }
 
     await expect(resolveBtn).toBeEnabled()
   })

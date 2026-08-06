@@ -31,7 +31,7 @@ function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
       mainBkg: '#f8f9fa',
       nodeBorder: '#94a3b8',
       fontFamily: "'Inter', sans-serif",
-      fontSize: '13px',
+      fontSize: '13px'
     }
   }
 
@@ -66,7 +66,7 @@ function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
     labelBoxBkgColor: 'transparent',
     labelTextColor: textSecondary,
     fontFamily: "'Inter', 'JetBrains Mono', sans-serif",
-    fontSize: '13px',
+    fontSize: '13px'
   }
 }
 
@@ -109,7 +109,7 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
         curve: 'basis',
         padding: 16,
         nodeSpacing: 30,
-        rankSpacing: 50,
+        rankSpacing: 50
       }
     })
 
@@ -117,8 +117,8 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
     m.registerIconPacks([
       {
         name: 'lucide',
-        loader: () => import('@iconify-json/lucide').then((module) => module.icons),
-      },
+        loader: () => import('@iconify-json/lucide').then((module) => module.icons)
+      }
     ])
 
     mermaidInstance = m
@@ -128,8 +128,6 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
 
   return mermaidReady
 }
-
-
 
 let renderCounter = 0
 
@@ -186,7 +184,7 @@ export default function MermaidDiagram({
 
     setTranslate({
       x: fitsHorizontally ? (vw + FIT_PADDING * 2 - sw * fitScale) / 2 : FIT_PADDING,
-      y: fitsVertically ? (vh + FIT_PADDING * 2 - sh * fitScale) / 2 : FIT_PADDING,
+      y: fitsVertically ? (vh + FIT_PADDING * 2 - sh * fitScale) / 2 : FIT_PADDING
     })
   }, [])
 
@@ -371,10 +369,20 @@ export default function MermaidDiagram({
         <span className="text-[10px] font-mono text-text-secondary min-w-[36px] text-center select-none">
           {Math.round(scale * 100)}%
         </span>
-        <button data-testid="mermaid-zoom-in" onClick={handleZoomIn} className={toolbarBtnClass} title="Zoom in">
+        <button
+          data-testid="mermaid-zoom-in"
+          onClick={handleZoomIn}
+          className={toolbarBtnClass}
+          title="Zoom in"
+        >
           <ZoomIn size={12} />
         </button>
-        <button data-testid="mermaid-fullscreen" onClick={fitToView} className={toolbarBtnClass} title="Fit to view">
+        <button
+          data-testid="mermaid-fullscreen"
+          onClick={fitToView}
+          className={toolbarBtnClass}
+          title="Fit to view"
+        >
           <Maximize2 size={12} />
         </button>
         <div className="w-px h-4 bg-border-subtle mx-0.5" />
@@ -405,7 +413,7 @@ export default function MermaidDiagram({
           cursor: isDragging ? 'grabbing' : 'grab',
           minHeight: '200px',
           maxHeight: '60vh',
-          backgroundColor: 'var(--color-surface-base)',
+          backgroundColor: 'var(--color-surface-base)'
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

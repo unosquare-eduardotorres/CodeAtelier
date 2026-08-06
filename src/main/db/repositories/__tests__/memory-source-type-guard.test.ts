@@ -71,10 +71,7 @@ if (!env) {
   }
 
   /** Pull the allowed values out of a `source_type ... CHECK (source_type IN (...))`. */
-  function readSourceTypeCheck(
-    db: import('better-sqlite3').Database,
-    table: string
-  ): string[] {
+  function readSourceTypeCheck(db: import('better-sqlite3').Database, table: string): string[] {
     const row = db
       .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?")
       .get(table) as { sql: string } | undefined
@@ -110,7 +107,9 @@ if (!env) {
     test('every declared source type can actually be inserted', () => {
       const db = createSchemaDb()
       try {
-        db.prepare("INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-guard','g','/tmp/g')").run()
+        db.prepare(
+          "INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-guard','g','/tmp/g')"
+        ).run()
         const stmt = db.prepare(
           `INSERT INTO memory_facts (workspace_id, category, title, content, source_type)
            VALUES (?, 'convention', ?, 'body', ?)`
@@ -118,9 +117,7 @@ if (!env) {
         for (const sourceType of MEMORY_SOURCE_TYPES) {
           stmt.run('ws-guard', `fact-${sourceType}`, sourceType)
         }
-        const count = db
-          .prepare('SELECT count(*) AS c FROM memory_facts')
-          .get() as { c: number }
+        const count = db.prepare('SELECT count(*) AS c FROM memory_facts').get() as { c: number }
         assert.equal(count.c, MEMORY_SOURCE_TYPES.length)
       } finally {
         db.close()
@@ -130,7 +127,9 @@ if (!env) {
     test("'bootstrap' specifically is accepted (the original regression)", () => {
       const db = createSchemaDb()
       try {
-        db.prepare("INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-bs','b','/tmp/b')").run()
+        db.prepare(
+          "INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-bs','b','/tmp/b')"
+        ).run()
         db.prepare(
           `INSERT INTO memory_facts (workspace_id, category, title, content, source_type)
            VALUES ('ws-bs', 'gotcha', 'bootstrap fact', 'body', 'bootstrap')`
@@ -147,7 +146,9 @@ if (!env) {
     test('an undeclared source type is still rejected', () => {
       const db = createSchemaDb()
       try {
-        db.prepare("INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-x','x','/tmp/x')").run()
+        db.prepare(
+          "INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-x','x','/tmp/x')"
+        ).run()
         assert.throws(
           () =>
             db
@@ -241,7 +242,9 @@ if (!env) {
         assert.equal(contradictions.c, 1, 'contradictions survive the FK detach/reattach')
 
         const bak = db
-          .prepare("SELECT count(*) AS c FROM sqlite_master WHERE name = 'memory_contradictions_bak'")
+          .prepare(
+            "SELECT count(*) AS c FROM sqlite_master WHERE name = 'memory_contradictions_bak'"
+          )
           .get() as { c: number }
         assert.equal(bak.c, 0, 'the temporary backup table is dropped')
       } finally {

@@ -20,9 +20,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Code Intelligence', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -45,10 +43,16 @@ test.describe('Code Intelligence', () => {
 
   test('code intelligence page renders with feature cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToCodeIntelligence(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ciPage = page.locator('[data-testid="code-intelligence-page"]')
     await expect(ciPage).toBeVisible({ timeout: 5_000 })
@@ -60,14 +64,23 @@ test.describe('Code Intelligence', () => {
 
   test('code graph card shows toggle and indexing status', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToCodeIntelligence(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ciPage = page.locator('[data-testid="code-intelligence-page"]')
     const hasPage = await ciPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Code Graph section
     const codeGraphText = page.getByText(/code graph/i).first()
@@ -83,14 +96,23 @@ test.describe('Code Intelligence', () => {
 
   test('semantic search card shows configuration options', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToCodeIntelligence(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ciPage = page.locator('[data-testid="code-intelligence-page"]')
     const hasPage = await ciPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Semantic Search section
     const semanticText = page.getByText(/semantic search/i).first()
@@ -98,65 +120,107 @@ test.describe('Code Intelligence', () => {
     expect(hasSemantic).toBeTruthy()
   })
 
-  test('embedding model card shows current model or setup prompt', async ({ electronPage: page }) => {
+  test('embedding model card shows current model or setup prompt', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToCodeIntelligence(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ciPage = page.locator('[data-testid="code-intelligence-page"]')
     const hasPage = await ciPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Embedding model section
     const embeddingText = page.getByText(/embedding|model|MiniLM/i).first()
     const hasEmbedding = await embeddingText.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasEmbedding) { test.skip(); return }
+    if (!hasEmbedding) {
+      test.skip()
+      return
+    }
 
     await expect(embeddingText).toBeVisible()
   })
 
-  test('search playground renders query input when index loaded', async ({ electronPage: page }) => {
+  test('search playground renders query input when index loaded', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToCodeIntelligence(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
     const hasPlayground = await playground.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     // Should show "Search Playground" heading
     const heading = page.getByText(/search playground/i).first()
     await expect(heading).toBeVisible()
 
     // May have an input field for query
-    const searchInput = page.locator('input[placeholder*="search" i], input[placeholder*="query" i]')
-    const hasInput = await searchInput.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const searchInput = page.locator(
+      'input[placeholder*="search" i], input[placeholder*="query" i]'
+    )
+    const hasInput = await searchInput
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     // Input only shows when index is loaded — either way is valid
     expect(typeof hasInput).toBe('boolean')
   })
 
   test('library docs card shows Context7 API key field', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToCodeIntelligence(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ciPage = page.locator('[data-testid="code-intelligence-page"]')
     const hasPage = await ciPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Library Docs / Context7 section
     const libraryText = page.getByText(/library|context7|documentation/i).first()
     const hasLibrary = await libraryText.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasLibrary) { test.skip(); return }
+    if (!hasLibrary) {
+      test.skip()
+      return
+    }
 
     await expect(libraryText).toBeVisible()
   })

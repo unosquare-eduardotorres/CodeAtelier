@@ -84,8 +84,7 @@ export default function BranchPicker({
     [onCustomBranchNameChange]
   )
 
-  const radioBase =
-    'flex items-center gap-2 cursor-pointer text-sm transition-colors'
+  const radioBase = 'flex items-center gap-2 cursor-pointer text-sm transition-colors'
   const radioActive = 'text-text-primary'
   const radioInactive = 'text-text-secondary hover:text-text-primary'
 
@@ -171,9 +170,7 @@ export default function BranchPicker({
                   ))}
               </datalist>
             )}
-            {validationError && (
-              <p className="text-xs text-danger mt-1">{validationError}</p>
-            )}
+            {validationError && <p className="text-xs text-danger mt-1">{validationError}</p>}
             {!validationError && customBranchName && branches && (
               <p className="text-xs text-text-muted mt-1">
                 {branches.local.includes(customBranchName)

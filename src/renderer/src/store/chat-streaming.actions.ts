@@ -78,13 +78,16 @@ export class ChatStreamingInternals {
   private accumulators = new Map<string, StreamSegmentAccumulator>()
   /** PRE-MORTEM-2: Pending metadata written by appendStreamChunkAction, consumed by
    *  the accumulator's onChange to avoid an extra Map-copy set() per chunk. */
-  private pendingMeta = new Map<string, {
-    role?: 'specialist'
-    specialist?: string | null
-    taskId?: string | null
-    phase?: ConversationPhase | null
-    requestId?: string | null
-  }>()
+  private pendingMeta = new Map<
+    string,
+    {
+      role?: 'specialist'
+      specialist?: string | null
+      taskId?: string | null
+      phase?: ConversationPhase | null
+      requestId?: string | null
+    }
+  >()
   private storeGet: GetFn | null = null
   private storeSet: SetFn | null = null
 
@@ -136,10 +139,14 @@ export class ChatStreamingInternals {
             streamingContent: state.currentContent,
             streamingSegments: state.segments,
             streamingRole: meta?.role ?? existing?.streamingRole ?? ('specialist' as const),
-            streamingSpecialist: (meta?.specialist !== undefined ? meta.specialist : existing?.streamingSpecialist) ?? null,
-            streamingTaskId: (meta?.taskId !== undefined ? meta.taskId : existing?.streamingTaskId) ?? null,
+            streamingSpecialist:
+              (meta?.specialist !== undefined ? meta.specialist : existing?.streamingSpecialist) ??
+              null,
+            streamingTaskId:
+              (meta?.taskId !== undefined ? meta.taskId : existing?.streamingTaskId) ?? null,
             streamingPhase: meta?.phase ?? existing?.streamingPhase ?? null,
-            activeRequestId: (meta?.requestId !== undefined ? meta.requestId : existing?.activeRequestId) ?? null,
+            activeRequestId:
+              (meta?.requestId !== undefined ? meta.requestId : existing?.activeRequestId) ?? null,
             isStreaming: existing?.isStreaming ?? true,
             toolActivities: state.currentToolActivities,
             pendingQuestions: existing?.pendingQuestions ?? null,
@@ -151,19 +158,23 @@ export class ChatStreamingInternals {
           const isActive = prev.activeConversation?.id === conversationId
           return {
             conversationStreams: streams,
-            ...(isActive ? {
-              streamingContent: state.currentContent,
-              streamingSegments: state.segments,
-              toolActivities: state.currentToolActivities,
-              // Also project metadata when present
-              ...(meta ? {
-                streamingRole: entry.streamingRole,
-                streamingSpecialist: entry.streamingSpecialist,
-                streamingTaskId: entry.streamingTaskId,
-                streamingPhase: entry.streamingPhase,
-                isStreaming: true
-              } : {})
-            } : {})
+            ...(isActive
+              ? {
+                  streamingContent: state.currentContent,
+                  streamingSegments: state.segments,
+                  toolActivities: state.currentToolActivities,
+                  // Also project metadata when present
+                  ...(meta
+                    ? {
+                        streamingRole: entry.streamingRole,
+                        streamingSpecialist: entry.streamingSpecialist,
+                        streamingTaskId: entry.streamingTaskId,
+                        streamingPhase: entry.streamingPhase,
+                        isStreaming: true
+                      }
+                    : {})
+                }
+              : {})
           }
         })
       })
@@ -206,13 +217,16 @@ export class ChatStreamingInternals {
   }
 
   /** PRE-MORTEM-2: Stash metadata for the next accumulator onChange to consume. */
-  setPendingMeta(conversationId: string, meta: {
-    role?: 'specialist'
-    specialist?: string | null
-    taskId?: string | null
-    phase?: ConversationPhase | null
-    requestId?: string | null
-  }): void {
+  setPendingMeta(
+    conversationId: string,
+    meta: {
+      role?: 'specialist'
+      specialist?: string | null
+      taskId?: string | null
+      phase?: ConversationPhase | null
+      requestId?: string | null
+    }
+  ): void {
     this.pendingMeta.set(conversationId, meta)
   }
 
@@ -324,7 +338,8 @@ export class ChatStreamingInternals {
             // GAP-R7-1: Clean up stashed streaming state for the timed-out conversation.
             // Without this, the stash retains isStreaming: true, causing BUG-R7-1 (locked
             // input when the user switches to this conversation).
-            const currentStreams = this.storeGet?.().conversationStreams ?? new Map<string, PerConversationStreamState>()
+            const currentStreams =
+              this.storeGet?.().conversationStreams ?? new Map<string, PerConversationStreamState>()
             const newStreams = new Map(currentStreams)
             newStreams.delete(convId)
             // BUG-R5-1: Derive isStreaming from active conv membership, not global set size.
@@ -340,7 +355,14 @@ export class ChatStreamingInternals {
               streamingConversationIds: newIds,
               conversationStreams: newStreams,
               ...(isActiveConv
-                ? { conversationState: { phase: 'idle', from: null, event: null, conversationId: null } }
+                ? {
+                    conversationState: {
+                      phase: 'idle',
+                      from: null,
+                      event: null,
+                      conversationId: null
+                    }
+                  }
                 : {}),
               // STALL-DETECT-01: Clear stall flag on safety timeout.
               // Use per-conversation matching (not isActiveConv) so background
@@ -351,7 +373,11 @@ export class ChatStreamingInternals {
               // SAFETY-ORPHAN-QUESTIONS: Clear orphaned question cards on safety timeout.
               // The backend is dead — answers can't be routed to the CLI anymore.
               ...(isActiveConv
-                ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
+                ? {
+                    pendingQuestions: null,
+                    pendingQuestionAction: null,
+                    pendingQuestionRequestId: null
+                  }
                 : {})
             })
           }
@@ -390,7 +416,7 @@ export function appendStreamChunkAction(
     if (chunk?.includes?.('```plan\n')) {
       rendererLog.warn(
         `[appendStreamChunk:plan-block-DROPPED] reason=no-active-request ` +
-        `conversationId=${conversationId} chunkLen=${chunk.length}`
+          `conversationId=${conversationId} chunkLen=${chunk.length}`
       )
     }
     return
@@ -401,7 +427,7 @@ export function appendStreamChunkAction(
     if (chunk?.includes?.('```plan\n')) {
       rendererLog.warn(
         `[appendStreamChunk:plan-block-DROPPED] reason=stale-request ` +
-        `conversationId=${conversationId} expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
+          `conversationId=${conversationId} expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
       )
     }
     rendererLog.debug(
@@ -416,10 +442,12 @@ export function appendStreamChunkAction(
     if (chunk?.includes?.('```plan\n')) {
       rendererLog.warn(
         `[appendStreamChunk:plan-block-DROPPED] reason=no-requestId ` +
-        `conversationId=${conversationId} chunkLen=${chunk.length}`
+          `conversationId=${conversationId} chunkLen=${chunk.length}`
       )
     }
-    rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (effectiveRequestId set)')
+    rendererLog.debug(
+      '[appendStreamChunk] Dropped chunk without requestId (effectiveRequestId set)'
+    )
     return
   }
 
@@ -427,8 +455,8 @@ export function appendStreamChunkAction(
   if (chunk?.includes?.('```plan\n')) {
     rendererLog.info(
       `[appendStreamChunk:plan-block] conversationId=${conversationId} ` +
-      `effectiveRequestId=${effectiveRequestId?.slice(0, 12)} requestId=${requestId?.slice(0, 12)} ` +
-      `isCurrentlyStreaming=${isCurrentlyStreaming} chunkLen=${chunk.length}`
+        `effectiveRequestId=${effectiveRequestId?.slice(0, 12)} requestId=${requestId?.slice(0, 12)} ` +
+        `isCurrentlyStreaming=${isCurrentlyStreaming} chunkLen=${chunk.length}`
     )
   }
 
@@ -455,7 +483,8 @@ export function appendStreamChunkAction(
   // PRE-MORTEM-2: Stash metadata so the accumulator's onChange merges it in the
   // same set() call that writes content. This eliminates a redundant Map copy
   // that the old separate set() did on every chunk (~50/sec).
-  const updatedPhase = role === 'specialist' ? 'specialist-executing' as const : 'specialist-responding' as const
+  const updatedPhase =
+    role === 'specialist' ? ('specialist-executing' as const) : ('specialist-responding' as const)
   streamingInternals.setPendingMeta(conversationId, {
     role,
     specialist: specialist ?? undefined,
@@ -529,11 +558,7 @@ function computeFinalizeStateDelta(
   return base
 }
 
-function reloadMessagesFromDb(
-  conversationId: string,
-  get: GetFn,
-  set: SetFn
-): void {
+function reloadMessagesFromDb(conversationId: string, get: GetFn, set: SetFn): void {
   const reloadGeneration = streamingInternals.messageGeneration
   window.api
     .getMessages({ conversationId })
@@ -574,8 +599,10 @@ export function finalizeStreamAction(
   // Read streaming state from the buffer (or globals for active conv as fallback)
   const streamingSegments = buffer?.streamingSegments ?? (isActive ? get().streamingSegments : [])
   const streamingContent = buffer?.streamingContent ?? (isActive ? get().streamingContent : '')
-  const streamingRole = buffer?.streamingRole ?? (isActive ? get().streamingRole : 'specialist' as const)
-  const streamingSpecialist = buffer?.streamingSpecialist ?? (isActive ? get().streamingSpecialist : null)
+  const streamingRole =
+    buffer?.streamingRole ?? (isActive ? get().streamingRole : ('specialist' as const))
+  const streamingSpecialist =
+    buffer?.streamingSpecialist ?? (isActive ? get().streamingSpecialist : null)
   const toolActivities = buffer?.toolActivities ?? (isActive ? get().toolActivities : [])
 
   if (!taskId) streamingInternals.clearSafetyTimer(conversationId)
@@ -583,7 +610,9 @@ export function finalizeStreamAction(
   // Main path: streamed content exists
   if (streamingContent || streamingSegments.length > 0) {
     const { mergedContent, mergedTools } = mergeStreamedContent(
-      streamingSegments, streamingContent, toolActivities
+      streamingSegments,
+      streamingContent,
+      toolActivities
     )
 
     const newMessages: Message[] = []
@@ -625,16 +654,24 @@ export function finalizeStreamAction(
       return {
         conversationStreams: streams,
         // Only append messages + update globals for active conversation
-        ...(isActive ? {
-          messages: [...state.messages, ...newMessages],
-          ...computeFinalizeStateDelta(taskId, { id: conversationId }, state.streamingConversationIds),
-          ...(taskId ? {
-            activeRequestId: state.activeRequestId,
-            streamingPhase: state.streamingPhase,
-            toolActivities: state.toolActivities,
-            streamingSpecialist: state.streamingSpecialist
-          } : {})
-        } : {})
+        ...(isActive
+          ? {
+              messages: [...state.messages, ...newMessages],
+              ...computeFinalizeStateDelta(
+                taskId,
+                { id: conversationId },
+                state.streamingConversationIds
+              ),
+              ...(taskId
+                ? {
+                    activeRequestId: state.activeRequestId,
+                    streamingPhase: state.streamingPhase,
+                    toolActivities: state.toolActivities,
+                    streamingSpecialist: state.streamingSpecialist
+                  }
+                : {})
+            }
+          : {})
       }
     })
   } else if (taskId) {
@@ -643,7 +680,12 @@ export function finalizeStreamAction(
       const streams = new Map(state.conversationStreams)
       const existing = streams.get(conversationId)
       if (existing) {
-        streams.set(conversationId, { ...existing, streamingContent: '', streamingSegments: [], streamingTaskId: null })
+        streams.set(conversationId, {
+          ...existing,
+          streamingContent: '',
+          streamingSegments: [],
+          streamingTaskId: null
+        })
       }
       return {
         conversationStreams: streams,
@@ -760,7 +802,12 @@ export function finalizeTurnBubbleAction(
         const streams = new Map(state.conversationStreams)
         const existing = streams.get(activeConversation.id)
         if (existing) {
-          streams.set(activeConversation.id, { ...existing, streamingContent: '', streamingSegments: [], toolActivities: [] })
+          streams.set(activeConversation.id, {
+            ...existing,
+            streamingContent: '',
+            streamingSegments: [],
+            toolActivities: []
+          })
         }
         return {
           messages: [...state.messages, message],
@@ -776,9 +823,20 @@ export function finalizeTurnBubbleAction(
         const streams = new Map(state.conversationStreams)
         const existing = streams.get(activeConversation.id)
         if (existing) {
-          streams.set(activeConversation.id, { ...existing, streamingContent: '', streamingSegments: [], toolActivities: [] })
+          streams.set(activeConversation.id, {
+            ...existing,
+            streamingContent: '',
+            streamingSegments: [],
+            toolActivities: []
+          })
         }
-        return { streamingContent: '', streamingSegments: [], toolActivities: [], isStreaming: true, conversationStreams: streams }
+        return {
+          streamingContent: '',
+          streamingSegments: [],
+          toolActivities: [],
+          isStreaming: true,
+          conversationStreams: streams
+        }
       })
     }
   }

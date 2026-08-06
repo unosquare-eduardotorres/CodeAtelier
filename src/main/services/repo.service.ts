@@ -112,7 +112,7 @@ function firstLine(e: unknown): string {
 function isBinaryContent(s: string): boolean {
   if (s.length === 0) return false
   // Skip UTF-16 BOM — these are text files, not binary
-  const start = s.charCodeAt(0) === 0xFEFF ? 1 : 0
+  const start = s.charCodeAt(0) === 0xfeff ? 1 : 0
   return s.slice(start, start + 8000).includes('\0')
 }
 

@@ -19,7 +19,10 @@ export default function SlashCommandDropdown({
   onSelect
 }: SlashCommandDropdownProps): React.JSX.Element {
   return (
-    <div data-testid="slash-command-dropdown" className="absolute bottom-full mb-1 left-0 bg-surface-float rounded-lg border border-border-default py-1.5 w-[30rem] shadow-xl z-50">
+    <div
+      data-testid="slash-command-dropdown"
+      className="absolute bottom-full mb-1 left-0 bg-surface-float rounded-lg border border-border-default py-1.5 w-[30rem] shadow-xl z-50"
+    >
       {commands.map((cmd, index) => {
         const Icon = cmd.icon
         return (

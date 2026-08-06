@@ -18,9 +18,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Token Usage Page', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -40,7 +38,10 @@ test.describe('Token Usage Page', () => {
     await settingsTab.click()
     await page.waitForTimeout(500)
 
-    const tokensTab = page.locator('button').filter({ hasText: /tokens/i }).first()
+    const tokensTab = page
+      .locator('button')
+      .filter({ hasText: /tokens/i })
+      .first()
     if (!(await tokensTab.isVisible({ timeout: 3_000 }).catch(() => false))) return false
     await tokensTab.click()
     await page.waitForTimeout(800)
@@ -51,9 +52,15 @@ test.describe('Token Usage Page', () => {
 
   test('token usage page renders with feature breakdown', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToTokenUsage(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     await expect(page.locator('[data-testid="token-usage-page"]')).toBeVisible()
 
@@ -65,9 +72,15 @@ test.describe('Token Usage Page', () => {
 
   test('usage table shows per-feature token counts', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToTokenUsage(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const usageTable = page.locator('[data-testid="token-usage-table"]')
     const hasTable = await usageTable.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -92,9 +105,15 @@ test.describe('Token Usage Page', () => {
 
   test('cache efficiency panel shows hit rate', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToTokenUsage(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const cachePanel = page.locator('[data-testid="cache-efficiency-panel"]')
     const hasCache = await cachePanel.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -116,9 +135,15 @@ test.describe('Token Usage Page', () => {
 
   test('date range filter updates displayed usage', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToTokenUsage(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Look for date filter controls
     const dateFilter = page.locator('[data-testid="token-date-filter"]')
@@ -137,13 +162,22 @@ test.describe('Token Usage Page', () => {
 
   test('cost estimation summary shows totals', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToTokenUsage(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const costSummary = page.locator('[data-testid="token-cost-summary"]')
     const hasCost = await costSummary.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasCost) { test.skip(); return }
+    if (!hasCost) {
+      test.skip()
+      return
+    }
 
     // Cost summary should show monetary values or token counts
     const costText = await costSummary.textContent()

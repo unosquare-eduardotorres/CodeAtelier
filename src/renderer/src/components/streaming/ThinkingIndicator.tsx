@@ -41,7 +41,11 @@ export default function ThinkingIndicator({
   return (
     <div className="flex gap-3 flex-row">
       <div className="flex-shrink-0 mt-0.5">
-        <Avatar avatarKey={identity.avatarKey} size={avatarSize} accentColor={identity.accentColor} />
+        <Avatar
+          avatarKey={identity.avatarKey}
+          size={avatarSize}
+          accentColor={identity.accentColor}
+        />
       </div>
       <div className="flex flex-col max-w-[92%] items-start">
         <div className="flex flex-col mb-1 px-1 items-start">

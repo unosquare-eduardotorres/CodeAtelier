@@ -76,7 +76,10 @@ export default function CreatePrModal({
   }
 
   return (
-    <div data-testid="create-pr-modal" className="fixed inset-0 z-[120] flex items-center justify-center">
+    <div
+      data-testid="create-pr-modal"
+      className="fixed inset-0 z-[120] flex items-center justify-center"
+    >
       {/* Backdrop */}
       <button
         type="button"

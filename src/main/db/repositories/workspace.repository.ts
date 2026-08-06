@@ -107,8 +107,7 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
   getSettingsByPath(repoPath: string): WorkspaceSettings {
     const db = this.db()
     const row = db.prepare('SELECT * FROM workspaces WHERE repo_path = ?').get(repoPath) as
-      | WorkspaceRow
-      | undefined
+      WorkspaceRow | undefined
     if (!row) return {}
     // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
     return safeParseJSON<WorkspaceSettings>(row.settings_json, {})

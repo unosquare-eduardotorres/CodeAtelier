@@ -84,22 +84,44 @@ Reference: https://supermemory.ai/blog/building-code-chunk-ast-aware-code-chunki
 
 **Purpose:** Skip files that would pollute the index with irrelevant or auto-generated content. Embeddings of minified code, lock files, or generated protobuf types add noise that degrades retrieval quality for everything in the same collection.
 
-**Files to skip (in addition to `.gitignore`):**
+**Single source of truth: `src/main/services/code-graph-exclusions.ts`.** Both indexers consume it, so the code graph and semantic search can never drift apart:
+
+| Layer                              | Consumer                                                                              | Mechanism                                                                                                            |
+| ---------------------------------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Directory pruning during discovery | `discoverSrcFiles()` (used by **both** `code-graph.service.ts` and `indexing.ipc.ts`) | `REPOMAP_EXCLUDED_DIRS` + `ADDITIONAL_EXCLUDED_DIRS` via `isExcludedDirName()`, plus `.gitignore` / `.atelierignore` |
+| Incremental re-index               | `file-watcher.handler.ts`                                                             | `isExcludedPath()` + `matchesSkipPattern()` on the changed-file list                                                 |
+| Late-stage chunk filter            | `preprocessing/file-validation.ts` → `shouldSkipFile()`                               | `isExcludedPath()` (case-insensitive) + `SKIP_PATTERNS` + caller-supplied `skipPatterns`                             |
+
+`ADDITIONAL_EXCLUDED_DIRS` is **Tier 1** — tool-managed output that is never hand-written: `bin`, `obj`, `packages`, `Tools`, `ThirdParty`, `Pods`, `Carthage`, `DerivedData`, `xcuserdata`, `Binaries`, `Intermediate`, `DerivedDataCache`, `Saved`, `Temp`, `Logs`, `Builds`, `CMakeFiles`, `cmake-build-*`, `_deps`, `vcpkg_installed`, `conan`, `site-packages`, `bower_components`, `jspm_packages`, `Godeps`, `_site`, `storybook-static`, … Matching is case-insensitive (Windows NTFS / macOS HFS+).
+
+Generic names (`lib`, `libs`, `Library`, `external`, `deps`, `plugins`, `shared`, …) are **Tier 2** — listed in `TIER2_CANDIDATE_DIRS` and never excluded by default, because they are just as often first-party code.
+
+**Exclusion preflight** (`index-exclusion-preflight.service.ts`) runs before indexing starts. It walks the workspace breadth-first (max depth 6, 3-second budget), gathers evidence per candidate directory — `git check-ignore`, `git ls-files`, vendor markers (`LICENSE`, `*.podspec`, `Package.swift`, `*.nuspec`, `bower.json`, `CMakeLists.txt`), file-extension mix — and classifies:
+
+1. `gitIgnored` → **auto-exclude**
+2. Tier-1 name → **auto-exclude** (listed for transparency only; already hardcoded)
+3. > 80% binaries → **auto-exclude**
+4. Tier-2 + vendor markers → **needs confirmation**, checkbox pre-checked
+5. Tier-2 + tracked source → **needs confirmation**, checkbox **unchecked**, badged "contains source code committed to git"
+6. Otherwise → **keep**
+
+Confirmed exclusions are appended to the repository's `.atelierignore` (not to per-machine settings), so both indexers and every clone inherit the decision. A preflight failure is logged and ignored — it must never block indexing.
+
+**Remaining file-level patterns (`SKIP_PATTERNS`):**
 
 ```typescript
-const SKIP_PATTERNS = [
+export const SKIP_PATTERNS = [
+  ...excludedDirGlobs(), // derived from ADDITIONAL_EXCLUDED_DIRS
+
   // Package managers
   '**/node_modules/**',
   '**/vendor/**',
   '**/.pnp/**',
 
-  // Build output
+  // Build output not covered by the shared directory set
   '**/dist/**',
   '**/build/**',
-  '**/out/**',
   '**/.next/**',
-  '**/bin/**',
-  '**/obj/**', // C# build output
 
   // Generated files
   '**/*.generated.ts',

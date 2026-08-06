@@ -55,7 +55,10 @@ test.describe('Cross-Workspace Notifications', () => {
     // Check if any permission toasts are currently visible
     // These appear when a background workspace session needs user input
     const permissionModal = page.locator('[data-testid="permission-approval-modal"]')
-    const hasModal = await permissionModal.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasModal = await permissionModal
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasModal) {
       // No background sessions are requesting permissions right now
@@ -89,7 +92,10 @@ test.describe('Cross-Workspace Notifications', () => {
     await ensureWorkspaceOpen(page)
 
     const permissionModal = page.locator('[data-testid="permission-approval-modal"]')
-    const hasModal = await permissionModal.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasModal = await permissionModal
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasModal) {
       test.skip()
@@ -112,14 +118,15 @@ test.describe('Cross-Workspace Notifications', () => {
 
   // ── CompletionToast ──
 
-  test('CompletionToast renders with view and dismiss buttons', async ({
-    electronPage: page
-  }) => {
+  test('CompletionToast renders with view and dismiss buttons', async ({ electronPage: page }) => {
     await ensureWorkspaceOpen(page)
 
     // Completion toasts appear when background sessions finish
     const completionToast = page.locator('[data-testid="completion-toast"]')
-    const hasToast = await completionToast.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasToast = await completionToast
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasToast) {
       // No background sessions have completed — this is expected

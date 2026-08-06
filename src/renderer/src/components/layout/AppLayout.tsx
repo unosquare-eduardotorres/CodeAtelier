@@ -16,7 +16,11 @@ import {
   TokenDetailsModal,
   UnsavedChangesDialog
 } from '@renderer/components/common'
-import { WorkspaceTransition, useTransitionState, consumeUserInitiated } from '@renderer/components/transitions'
+import {
+  WorkspaceTransition,
+  useTransitionState,
+  consumeUserInitiated
+} from '@renderer/components/transitions'
 import { NotificationStack } from '@renderer/components/notifications'
 import { useBackgroundSessionListeners } from '@renderer/hooks/useBackgroundSessionListeners'
 import { BugTrackerPage } from '@renderer/components/bugs'
@@ -166,17 +170,14 @@ export default function AppLayout(): React.JSX.Element {
   // ── Unsaved-changes navigation guard ──
   const [pendingNav, setPendingNav] = useState<(() => void) | null>(null)
 
-  const guardNavigation = useCallback(
-    (action: () => void) => {
-      const guard = useSettingsStore.getState().unsavedGuard
-      if (guard?.isDirty()) {
-        setPendingNav(() => action)
-      } else {
-        action()
-      }
-    },
-    []
-  )
+  const guardNavigation = useCallback((action: () => void) => {
+    const guard = useSettingsStore.getState().unsavedGuard
+    if (guard?.isDirty()) {
+      setPendingNav(() => action)
+    } else {
+      action()
+    }
+  }, [])
 
   const guardedSetView = useCallback(
     (v: 'chat' | 'app-settings' | 'help' | 'bugs') => guardNavigation(() => setView(v)),
@@ -229,10 +230,7 @@ export default function AppLayout(): React.JSX.Element {
   // ── Pending onboard: auto-navigate to Blueprints tab ──
   const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
   useEffect(() => {
-    if (
-      activeWorkspace &&
-      pendingOnboard?.workspaceId === activeWorkspace.id
-    ) {
+    if (activeWorkspace && pendingOnboard?.workspaceId === activeWorkspace.id) {
       // Direct navigation — fresh workspace has no unsaved state
       setSidebarView('settings')
       setWorkspaceSettingsTab('blueprints')
@@ -469,10 +467,35 @@ export default function AppLayout(): React.JSX.Element {
           className="flex items-center gap-1.5 ml-auto relative z-10"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <HeaderIconButton icon={Home} isActive={false} onClick={handleGoHome} title="Home" ariaLabel="Home" />
-          <HeaderIconButton icon={Sliders} isActive={view === 'app-settings'} onClick={() => toggleView('app-settings')} title="Settings" ariaLabel="Settings" />
-          <HeaderIconButton icon={Bug} isActive={view === 'bugs'} onClick={() => toggleView('bugs')} title="Bug Tracker" ariaLabel="Bug Tracker" badge={unresolvedBugCount} />
-          <HeaderIconButton icon={CircleHelp} isActive={view === 'help'} onClick={() => toggleView('help')} title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`} ariaLabel="Help" />
+          <HeaderIconButton
+            icon={Home}
+            isActive={false}
+            onClick={handleGoHome}
+            title="Home"
+            ariaLabel="Home"
+          />
+          <HeaderIconButton
+            icon={Sliders}
+            isActive={view === 'app-settings'}
+            onClick={() => toggleView('app-settings')}
+            title="Settings"
+            ariaLabel="Settings"
+          />
+          <HeaderIconButton
+            icon={Bug}
+            isActive={view === 'bugs'}
+            onClick={() => toggleView('bugs')}
+            title="Bug Tracker"
+            ariaLabel="Bug Tracker"
+            badge={unresolvedBugCount}
+          />
+          <HeaderIconButton
+            icon={CircleHelp}
+            isActive={view === 'help'}
+            onClick={() => toggleView('help')}
+            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
+            ariaLabel="Help"
+          />
         </div>
       </div>
 

@@ -122,8 +122,7 @@ interface PlanExecutionState {
 
 // Preserve Zustand state across HMR (dev only)
 const previousState = import.meta.hot?.data?.planExecStoreState as
-  | Partial<PlanExecutionState>
-  | undefined
+  Partial<PlanExecutionState> | undefined
 
 export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
   executions: previousState?.executions ?? {},
@@ -174,31 +173,30 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         const allPhaseFiles = exec.phaseFiles?.[p.phaseId] ?? []
         // When completing, auto-fill touchedFiles with all known files for this phase
         const touchedFiles =
-          update.status === 'completed' && allPhaseFiles.length > 0
-            ? allPhaseFiles
-            : p.touchedFiles
+          update.status === 'completed' && allPhaseFiles.length > 0 ? allPhaseFiles : p.touchedFiles
         // When phase completes, mark any tasks the model never reported on as
         // 'skipped' — NOT 'complete'. Auto-completing them fabricates counts
         // (e.g. "4/4 done" from a single phase-level event with zero task
         // reports) and hides exactly the gap this tracking exists to surface.
-        const tasks = update.status === 'completed'
-          ? p.tasks.map(t =>
-              t.status === 'pending' || t.status === 'running'
-                ? { ...t, status: 'skipped' as const, completedAt: Date.now() }
-                : t
-            )
-          // When phase starts/progresses, auto-mark the first pending task as running
-          // (only if no task is already running — prevents overwriting agent-driven updates)
-          : (update.status === 'started' || update.status === 'in_progress')
-              && p.tasks.length > 0
-              && !p.tasks.some(t => t.status === 'running')
-            ? p.tasks.map((t, i, arr) => {
-                const firstPendingIdx = arr.findIndex(x => x.status === 'pending')
-                return i === firstPendingIdx
-                  ? { ...t, status: 'running' as const, startedAt: Date.now() }
+        const tasks =
+          update.status === 'completed'
+            ? p.tasks.map((t) =>
+                t.status === 'pending' || t.status === 'running'
+                  ? { ...t, status: 'skipped' as const, completedAt: Date.now() }
                   : t
-              })
-            : p.tasks
+              )
+            : // When phase starts/progresses, auto-mark the first pending task as running
+              // (only if no task is already running — prevents overwriting agent-driven updates)
+              (update.status === 'started' || update.status === 'in_progress') &&
+                p.tasks.length > 0 &&
+                !p.tasks.some((t) => t.status === 'running')
+              ? p.tasks.map((t, i, arr) => {
+                  const firstPendingIdx = arr.findIndex((x) => x.status === 'pending')
+                  return i === firstPendingIdx
+                    ? { ...t, status: 'running' as const, startedAt: Date.now() }
+                    : t
+                })
+              : p.tasks
         return {
           ...p,
           status: update.status,
@@ -258,8 +256,7 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         return files.some((f) => {
           const normalizedF = f.replace(/\\/g, '/')
           // Match full path segments, not just suffixes
-          return normalizedPath.endsWith(normalizedF) ||
-            normalizedPath.includes('/' + normalizedF)
+          return normalizedPath.endsWith(normalizedF) || normalizedPath.includes('/' + normalizedF)
         })
       })
 
@@ -269,12 +266,8 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
       const normalizedFile = filePath.replace(/\\/g, '/')
       const phases = exec.phases.map((p) => {
         if (p.phaseId !== matchedPhase.phaseId) return p
-        const alreadyTouched = p.touchedFiles.some(
-          (f) => f.replace(/\\/g, '/') === normalizedFile
-        )
-        const touchedFiles = alreadyTouched
-          ? p.touchedFiles
-          : [...p.touchedFiles, normalizedFile]
+        const alreadyTouched = p.touchedFiles.some((f) => f.replace(/\\/g, '/') === normalizedFile)
+        const touchedFiles = alreadyTouched ? p.touchedFiles : [...p.touchedFiles, normalizedFile]
         // Transition pending → in_progress, but leave other statuses unchanged
         const status = p.status === 'pending' ? ('in_progress' as const) : p.status
         const startedAt = p.status === 'pending' ? Date.now() : p.startedAt
@@ -286,8 +279,9 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
             t.status === 'pending' &&
             t.files?.some((tf) => {
               const normalizedTf = tf.replace(/\\/g, '/')
-              return normalizedPath.endsWith(normalizedTf) ||
-                normalizedPath.includes('/' + normalizedTf)
+              return (
+                normalizedPath.endsWith(normalizedTf) || normalizedPath.includes('/' + normalizedTf)
+              )
             })
         )
         if (matchedTaskIdx >= 0) {
@@ -323,7 +317,8 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
                   ...t,
                   title: update.title,
                   status: update.status,
-                  startedAt: update.status === 'running' ? (t.startedAt ?? Date.now()) : t.startedAt,
+                  startedAt:
+                    update.status === 'running' ? (t.startedAt ?? Date.now()) : t.startedAt,
                   completedAt:
                     update.status === 'complete' || update.status === 'failed'
                       ? Date.now()
@@ -334,16 +329,17 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         } else if (tasks.length > 0) {
           // Fuzzy match: update the first pending/running task in this phase
           // (agent task IDs rarely match the synthetic p.id-i format)
-          const fuzzyIdx = tasks.findIndex(t => t.status === 'pending' || t.status === 'running')
+          const fuzzyIdx = tasks.findIndex((t) => t.status === 'pending' || t.status === 'running')
           if (fuzzyIdx >= 0) {
             tasks = tasks.map((t, i) =>
               i === fuzzyIdx
                 ? {
                     ...t,
-                    taskId: update.taskId,  // adopt agent's ID going forward
+                    taskId: update.taskId, // adopt agent's ID going forward
                     title: update.title,
                     status: update.status,
-                    startedAt: update.status === 'running' ? (t.startedAt ?? Date.now()) : t.startedAt,
+                    startedAt:
+                      update.status === 'running' ? (t.startedAt ?? Date.now()) : t.startedAt,
                     completedAt:
                       update.status === 'complete' || update.status === 'failed'
                         ? Date.now()
@@ -377,21 +373,17 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
               status: update.status,
               startedAt: update.status === 'running' ? Date.now() : undefined,
               completedAt:
-                update.status === 'complete' || update.status === 'failed'
-                  ? Date.now()
-                  : undefined
+                update.status === 'complete' || update.status === 'failed' ? Date.now() : undefined
             }
           ]
         }
 
         // Auto-advance: when a task completes, mark the next pending task as running
         if (update.status === 'complete' || update.status === 'skipped') {
-          const nextPendingIdx = tasks.findIndex(t => t.status === 'pending')
+          const nextPendingIdx = tasks.findIndex((t) => t.status === 'pending')
           if (nextPendingIdx >= 0) {
             tasks = tasks.map((t, i) =>
-              i === nextPendingIdx
-                ? { ...t, status: 'running' as const, startedAt: Date.now() }
-                : t
+              i === nextPendingIdx ? { ...t, status: 'running' as const, startedAt: Date.now() } : t
             )
           }
         }
@@ -421,8 +413,7 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         if (!files) return false
         return files.some((f) => {
           const normalizedF = f.replace(/\\/g, '/')
-          return normalizedPath.endsWith(normalizedF) ||
-            normalizedPath.includes('/' + normalizedF)
+          return normalizedPath.endsWith(normalizedF) || normalizedPath.includes('/' + normalizedF)
         })
       })
 
@@ -437,9 +428,7 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
         if (p.phaseId !== matchedPhase.phaseId) return p
 
         // Update touchedFiles (existing behavior)
-        const touchedFiles = alreadyTouched
-          ? p.touchedFiles
-          : [...p.touchedFiles, normalizedPath]
+        const touchedFiles = alreadyTouched ? p.touchedFiles : [...p.touchedFiles, normalizedPath]
 
         // Infer task completion from file write/edit
         let tasks = p.tasks
@@ -448,8 +437,9 @@ export const usePlanExecutionStore = create<PlanExecutionState>((set) => ({
             (t.status === 'pending' || t.status === 'running') &&
             t.files?.some((tf) => {
               const normalizedTf = tf.replace(/\\/g, '/')
-              return normalizedPath.endsWith(normalizedTf) ||
-                normalizedPath.includes('/' + normalizedTf)
+              return (
+                normalizedPath.endsWith(normalizedTf) || normalizedPath.includes('/' + normalizedTf)
+              )
             })
         )
 

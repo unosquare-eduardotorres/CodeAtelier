@@ -61,7 +61,12 @@ describe('BootstrapProgress type', () => {
 
   test('jobStatus covers all states', () => {
     const states: BootstrapProgress['jobStatus'][] = [
-      'planning', 'running', 'paused', 'done', 'cancelled', 'error'
+      'planning',
+      'running',
+      'paused',
+      'done',
+      'cancelled',
+      'error'
     ]
     assert.equal(states.length, 6, 'Should have 6 job status states')
   })

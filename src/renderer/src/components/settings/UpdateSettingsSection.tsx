@@ -58,7 +58,10 @@ export default function UpdateSettingsSection(): React.JSX.Element {
   }, [localGithubOwner, localGithubRepo, config.githubOwner, config.githubRepo])
 
   return (
-    <div data-testid="update-settings-section" className="bg-surface-overlay border border-border-subtle rounded-lg p-5 shadow-sm space-y-5">
+    <div
+      data-testid="update-settings-section"
+      className="bg-surface-overlay border border-border-subtle rounded-lg p-5 shadow-sm space-y-5"
+    >
       {/* Header with version + check button */}
       <div className="flex items-center justify-between">
         <div>

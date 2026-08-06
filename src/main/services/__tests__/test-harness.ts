@@ -228,11 +228,31 @@ export function summary(): void {
  * whole run is in flight at once: wall-clock assertions ("resolves within 5s")
  * then measure event-loop contention rather than the code under test, and a
  * file's tests can outlive the module mocks they were written against.
+ *
+ * Bounded by `timeoutMs`. A test whose promise never settles would otherwise
+ * leave this awaiting a promise nothing can resolve; once no timers or handles
+ * remain, Node considers the event loop empty and exits 0 mid-run, silently
+ * truncating the suite. The timer below both caps the wait and keeps the loop
+ * alive. Tests still in flight when the budget expires are left to
+ * `summaryAsync()`'s straggler loop, which reports any that never finish.
  */
-export async function drainPending(): Promise<void> {
+export async function drainPending(timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
   while (pendingAsyncTests.length > 0) {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) return
     const batch = pendingAsyncTests.splice(0, pendingAsyncTests.length)
-    await Promise.all(batch)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        Promise.all(batch),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, remaining)
+        })
+      ])
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
   }
 }
 
@@ -247,7 +267,7 @@ const DROP_STALL_MS = 30_000
 const DROP_TOTAL_CAP_MS = 180_000
 
 export async function summaryAsync(): Promise<void> {
-  await drainPending()
+  await drainPending(DROP_TOTAL_CAP_MS)
 
   // A test whose result depends on a real timer can still be in flight when the
   // queue looks empty — its promise isn't in `pendingAsyncTests` yet, or the

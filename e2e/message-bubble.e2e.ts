@@ -21,9 +21,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('MessageBubble Deep', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -56,10 +54,16 @@ test.describe('MessageBubble Deep', () => {
 
   test('message bubble renders with role-based styling', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const bubbles = page.locator('[data-testid="message-bubble"]')
     const bubbleCount = await bubbles.count()
@@ -75,14 +79,23 @@ test.describe('MessageBubble Deep', () => {
 
   test('assistant message shows avatar and identity name', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const identities = page.locator('[data-testid="message-bubble-identity"]')
     const identityCount = await identities.count()
-    if (identityCount === 0) { test.skip(); return }
+    if (identityCount === 0) {
+      test.skip()
+      return
+    }
 
     // Verify identity span exists and contains text
     const firstIdentity = identities.first()
@@ -92,17 +105,28 @@ test.describe('MessageBubble Deep', () => {
 
     // Verify avatar is rendered as sibling within the bubble
     const parentBubble = page.locator('[data-testid="message-bubble"]').first()
-    const hasAvatar = await parentBubble.locator('img, svg, [class*="avatar"]').first()
-      .isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasAvatar = await parentBubble
+      .locator('img, svg, [class*="avatar"]')
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(typeof hasAvatar).toBe('boolean')
   })
 
-  test('user message renders right-aligned without avatar reversal', async ({ electronPage: page }) => {
+  test('user message renders right-aligned without avatar reversal', async ({
+    electronPage: page
+  }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const bubbles = page.locator('[data-testid="message-bubble"]')
     const count = await bubbles.count()
@@ -122,14 +146,23 @@ test.describe('MessageBubble Deep', () => {
 
   test('message content renders markdown with formatting', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const contentDivs = page.locator('[data-testid="message-bubble-content"]')
     const contentCount = await contentDivs.count()
-    if (contentCount === 0) { test.skip(); return }
+    if (contentCount === 0) {
+      test.skip()
+      return
+    }
 
     // Content div should contain rendered markdown (prose classes or standard elements)
     const firstContent = contentDivs.first()
@@ -143,13 +176,21 @@ test.describe('MessageBubble Deep', () => {
 
   test('tool activity blocks render within assistant messages', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Tool activities are shown in the footer area of assistant messages
-    const toolActivities = page.locator('[data-testid="tool-activity"], [data-testid="tool-activity-list"]')
+    const toolActivities = page.locator(
+      '[data-testid="tool-activity"], [data-testid="tool-activity-list"]'
+    )
     const toolCount = await toolActivities.count()
 
     // Tool activities may or may not be present depending on conversation content
@@ -166,14 +207,23 @@ test.describe('MessageBubble Deep', () => {
 
   test('message bubble respects bubble size preference', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const bubbles = page.locator('[data-testid="message-bubble"]')
     const count = await bubbles.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Bubble should have a max-width class indicating size mode
     const contentWrapper = bubbles.first().locator('div').nth(1) // The content wrapper
@@ -185,13 +235,21 @@ test.describe('MessageBubble Deep', () => {
 
   test('message with attachments shows inline elements', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await ensureConversationWithMessages(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Look for attachment indicators within any message bubble
-    const attachments = page.locator('[data-testid="message-bubble"] [data-testid*="attachment"], [data-testid="message-bubble"] img[src*="blob:"], [data-testid="message-bubble"] [class*="attachment"]')
+    const attachments = page.locator(
+      '[data-testid="message-bubble"] [data-testid*="attachment"], [data-testid="message-bubble"] img[src*="blob:"], [data-testid="message-bubble"] [class*="attachment"]'
+    )
     const attachmentCount = await attachments.count()
 
     // Attachments are conversation-dependent; verify the locator works

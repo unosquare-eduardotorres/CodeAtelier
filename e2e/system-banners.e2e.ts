@@ -23,9 +23,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('System Banners', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -45,12 +43,18 @@ test.describe('System Banners', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="rate-limit-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Banner should contain warning text about rate limiting
     const text = await banner.textContent()
@@ -65,12 +69,18 @@ test.describe('System Banners', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="rate-limit-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Check for the rejected state content
     const text = await banner.textContent()
@@ -83,22 +93,32 @@ test.describe('System Banners', () => {
     expect(hasRateLimitText || (text?.length ?? 0) > 0).toBeTruthy()
   })
 
-  test('rate limit banner has dismiss button that removes it', async ({
-    electronPage: page
-  }) => {
+  test('rate limit banner has dismiss button that removes it', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="rate-limit-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Find dismiss button (X button with aria-label)
     const dismissBtn = banner.locator('button[aria-label="Dismiss"], button[aria-label="Close"]')
-    const hasDismiss = await dismissBtn.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasDismiss = await dismissBtn
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
-    if (!hasDismiss) { test.skip(); return }
+    if (!hasDismiss) {
+      test.skip()
+      return
+    }
 
     await dismissBtn.first().click()
     await page.waitForTimeout(500)
@@ -113,17 +133,22 @@ test.describe('System Banners', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="budget-warning-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Banner should show dollar amounts
     const text = await banner.textContent()
-    const hasCostInfo =
-      text?.includes('$') || text?.toLowerCase().includes('budget')
+    const hasCostInfo = text?.includes('$') || text?.toLowerCase().includes('budget')
 
     expect(hasCostInfo).toBeTruthy()
 
@@ -136,17 +161,26 @@ test.describe('System Banners', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="budget-warning-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     const text = await banner.textContent()
     const isExceeded = text?.toLowerCase().includes('exceeded')
 
-    if (!isExceeded) { test.skip(); return }
+    if (!isExceeded) {
+      test.skip()
+      return
+    }
 
     // Exceeded state should mention pausing
     expect(
@@ -158,18 +192,27 @@ test.describe('System Banners', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="budget-warning-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Dismiss button should have the correct aria-label
     const dismissBtn = banner.locator('button[aria-label="Dismiss budget alert"]')
     const hasDismiss = await dismissBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasDismiss) { test.skip(); return }
+    if (!hasDismiss) {
+      test.skip()
+      return
+    }
 
     await expect(dismissBtn).toBeVisible()
     await expect(dismissBtn).toBeEnabled()
@@ -181,12 +224,18 @@ test.describe('System Banners', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="update-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Banner should contain version info or update messaging
     const text = await banner.textContent()

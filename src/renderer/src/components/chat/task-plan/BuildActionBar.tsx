@@ -19,7 +19,10 @@ export default function BuildActionBar({
   savedToPlans
 }: BuildActionBarProps): React.JSX.Element {
   return (
-    <div data-testid="task-plan-build-bar" className="sticky bottom-0 flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm flex-wrap">
+    <div
+      data-testid="task-plan-build-bar"
+      className="sticky bottom-0 flex items-center gap-2 px-5 py-3 border-t border-border-subtle bg-surface-overlay/95 backdrop-blur-sm flex-wrap"
+    >
       {onBuildNow && (
         <button
           onClick={() => {

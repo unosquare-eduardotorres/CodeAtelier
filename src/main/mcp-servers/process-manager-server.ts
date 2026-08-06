@@ -118,10 +118,31 @@ function isProcessAlive(pid: number): boolean {
 // quick tests, etc.).  The allowlist exists to prevent accidental execution
 // of system-level tools by a misguided LLM, not to sandbox arbitrary code.
 const ALLOWED_COMMAND_PREFIXES = [
-  'npm', 'npx', 'yarn', 'pnpm', 'node', 'python', 'python3',
-  'go', 'cargo', 'make', 'gradle', 'mvn', 'dotnet', 'ruby',
-  'docker', 'docker-compose', 'supabase', 'firebase',
-  'bun', 'deno', 'tsx', 'ts-node', 'jest', 'vitest', 'playwright'
+  'npm',
+  'npx',
+  'yarn',
+  'pnpm',
+  'node',
+  'python',
+  'python3',
+  'go',
+  'cargo',
+  'make',
+  'gradle',
+  'mvn',
+  'dotnet',
+  'ruby',
+  'docker',
+  'docker-compose',
+  'supabase',
+  'firebase',
+  'bun',
+  'deno',
+  'tsx',
+  'ts-node',
+  'jest',
+  'vitest',
+  'playwright'
 ]
 
 // ── State Directory ──
@@ -377,7 +398,9 @@ function reconnectFromManifest(): void {
     if (alive) {
       // Validate this is actually our process (not PID reuse)
       if (!validatePidOwnership(entry.pid, entry.command)) {
-        console.error(`[process-manager] PID ${entry.pid} reused by another process — discarding "${entry.label}"`)
+        console.error(
+          `[process-manager] PID ${entry.pid} reused by another process — discarding "${entry.label}"`
+        )
         deleteLogFile(entry.logFile)
         continue // skip reconnection
       }
@@ -389,10 +412,7 @@ function reconnectFromManifest(): void {
         const logPath = join(LOGS_DIR, entry.logFile)
         if (existsSync(logPath)) {
           const content = readFileSync(logPath, 'utf-8')
-          const lines = content
-            .split('\n')
-            .filter(Boolean)
-            .slice(-RING_BUFFER_MAX_LINES)
+          const lines = content.split('\n').filter(Boolean).slice(-RING_BUFFER_MAX_LINES)
           for (const line of lines) {
             output.push(line)
           }
@@ -515,7 +535,7 @@ const server = new McpServer({
 
 server.tool(
   'run_background',
-  'Spawn a command in the background and return immediately. Use instead of Bash for dev servers, watchers, and commands that don\'t exit. Processes survive across sessions.',
+  "Spawn a command in the background and return immediately. Use instead of Bash for dev servers, watchers, and commands that don't exit. Processes survive across sessions.",
   {
     command: z.string().describe('Shell command to run (e.g., "npm run dev")'),
     cwd: z.string().optional().describe('Working directory (defaults to workspace root)'),
@@ -530,11 +550,7 @@ server.tool(
   async ({ command, cwd, label, notifyOnExit }) => {
     // Enforce command allowlist — mitigates shell injection surface
     const firstToken = command.trim().split(/\s+/)[0]
-    if (
-      !ALLOWED_COMMAND_PREFIXES.some(
-        (p) => firstToken === p || firstToken.endsWith(`/${p}`)
-      )
-    ) {
+    if (!ALLOWED_COMMAND_PREFIXES.some((p) => firstToken === p || firstToken.endsWith(`/${p}`))) {
       return {
         content: [
           {

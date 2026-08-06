@@ -105,10 +105,7 @@ export function resetToCheckpoint(workspacePath: string, checkpoint: GitCheckpoi
  * @param diffRef - Git ref to diff against (default: 'HEAD~1')
  * @returns Object with filesChanged, linesAdded, linesRemoved
  */
-export function getExperimentDiffStats(
-  workspacePath: string,
-  diffRef = 'HEAD~1'
-): DiffStats {
+export function getExperimentDiffStats(workspacePath: string, diffRef = 'HEAD~1'): DiffStats {
   try {
     const stat = execSync(`git diff --shortstat ${diffRef}`, {
       cwd: workspacePath,
@@ -146,15 +143,12 @@ export function getExperimentDiffStats(
  */
 export function cleanupBuildArtifacts(workspacePath: string): void {
   try {
-    execSync(
-      'rm -rf coverage/ .c8_output/ run.log .nyc_output/ 2>/dev/null || true',
-      {
-        cwd: workspacePath,
-        encoding: 'utf-8',
-        timeout: 10_000,
-        windowsHide: true
-      }
-    )
+    execSync('rm -rf coverage/ .c8_output/ run.log .nyc_output/ 2>/dev/null || true', {
+      cwd: workspacePath,
+      encoding: 'utf-8',
+      timeout: 10_000,
+      windowsHide: true
+    })
     sandboxLog.info('[cleanup] Build artifacts removed')
   } catch {
     // Non-fatal — directory may not exist

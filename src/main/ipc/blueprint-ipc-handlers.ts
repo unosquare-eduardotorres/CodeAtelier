@@ -93,9 +93,7 @@ export function extractReferenceDocuments(
 
 // ── Approval Response Action ─────────────────────────────────────────────────
 
-export type ApprovalAction =
-  | { kind: 'build' }
-  | { kind: 'rewind'; toPhase: BlueprintPhaseType }
+export type ApprovalAction = { kind: 'build' } | { kind: 'rewind'; toPhase: BlueprintPhaseType }
 
 /**
  * Determine the action to take based on an approval response.

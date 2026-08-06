@@ -51,9 +51,7 @@ test.describe('Chat Voice Input', () => {
     }
 
     // Verify message input is available
-    const inputReady = await chat.messageInput
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
 
     if (!inputReady) {
       test.skip()
@@ -264,7 +262,7 @@ test.describe('Chat Voice Input', () => {
 
     // Error indicator should show an error message
     const errorText = await errorIndicator.textContent()
-    expect((errorText?.length ?? 0)).toBeGreaterThan(0)
+    expect(errorText?.length ?? 0).toBeGreaterThan(0)
 
     // Dismiss button should be visible
     const dismissBtn = page.locator('[data-testid="voice-indicator-dismiss"]')

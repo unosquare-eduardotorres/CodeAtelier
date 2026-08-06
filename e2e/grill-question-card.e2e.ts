@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('GrillQuestionCard Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,9 +33,7 @@ test.describe('GrillQuestionCard Deep', () => {
     return true
   }
 
-  async function findGrillQuestionCard(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function findGrillQuestionCard(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to chats and look for a conversation with pending grill questions
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -61,12 +57,20 @@ test.describe('GrillQuestionCard Deep', () => {
     return false
   }
 
-  test('question card renders with question text and option list', async ({ electronPage: page }) => {
+  test('question card renders with question text and option list', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasCard = await findGrillQuestionCard(page)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="grill-question-card"]')
     expect(await card.isVisible()).toBeTruthy()
@@ -83,14 +87,23 @@ test.describe('GrillQuestionCard Deep', () => {
 
   test('single-select option clicking toggles selection', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasCard = await findGrillQuestionCard(page)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     const options = page.locator('[data-testid="grill-question-option"]')
     const optionCount = await options.count()
-    if (optionCount === 0) { test.skip(); return }
+    if (optionCount === 0) {
+      test.skip()
+      return
+    }
 
     // Click first option
     const firstOption = options.first()
@@ -106,18 +119,30 @@ test.describe('GrillQuestionCard Deep', () => {
 
   test('multi-select mode allows toggling multiple options', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasCard = await findGrillQuestionCard(page)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     const options = page.locator('[data-testid="grill-question-option"]')
     const optionCount = await options.count()
-    if (optionCount < 2) { test.skip(); return }
+    if (optionCount < 2) {
+      test.skip()
+      return
+    }
 
     // Check if this is a multi-select question (role="checkbox")
     const firstRole = await options.first().getAttribute('role')
-    if (firstRole !== 'checkbox') { test.skip(); return }
+    if (firstRole !== 'checkbox') {
+      test.skip()
+      return
+    }
 
     // Click first option
     await options.first().click()
@@ -134,16 +159,25 @@ test.describe('GrillQuestionCard Deep', () => {
 
   test('Other option shows freeform text input', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasCard = await findGrillQuestionCard(page)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="grill-question-card"]')
 
     // Look for "Other:" text which indicates the other option row
     const otherLabel = card.locator('text=Other:')
-    const hasOther = await otherLabel.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasOther = await otherLabel
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasOther) {
       // Click the other option to activate it
@@ -152,7 +186,10 @@ test.describe('GrillQuestionCard Deep', () => {
 
       // A textarea should appear for freeform input
       const textarea = card.locator('textarea')
-      const hasTextarea = await textarea.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasTextarea = await textarea
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       expect(hasTextarea).toBeTruthy()
     }
 
@@ -162,16 +199,25 @@ test.describe('GrillQuestionCard Deep', () => {
 
   test('skip button dismisses question without selection', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasCard = await findGrillQuestionCard(page)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="grill-question-card"]')
 
     // Look for skip button
     const skipBtn = card.locator('button:has-text("Skip")')
-    const hasSkip = await skipBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSkip = await skipBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasSkip) {
       // Verify skip button is clickable
@@ -184,16 +230,25 @@ test.describe('GrillQuestionCard Deep', () => {
 
   test('question index badge shows position', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasCard = await findGrillQuestionCard(page)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="grill-question-card"]')
 
     // Header should show "Questions — N decision(s)" text
     const headerSpan = card.locator('span:has-text("decision")')
-    const hasDecisionText = await headerSpan.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasDecisionText = await headerSpan
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasDecisionText) {
       const text = await headerSpan.first().textContent()
@@ -202,7 +257,10 @@ test.describe('GrillQuestionCard Deep', () => {
 
     // Step indicator shows current/total question position
     const stepIndicator = card.locator('text=/\\d+\\s*\\/\\s*\\d+/')
-    const hasStep = await stepIndicator.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasStep = await stepIndicator
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(typeof hasStep).toBe('boolean')
   })
 })

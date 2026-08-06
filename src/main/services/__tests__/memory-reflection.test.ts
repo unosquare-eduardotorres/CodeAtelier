@@ -21,6 +21,13 @@ let loaded = false
 
 try {
   require('../../db/index')
+  // An earlier file in the shared run loads this service while setup-full-mock's
+  // Module._load patch is active, caching it bound to MOCK repositories. The
+  // recorders below patch the REAL memoryFactRepository, so without this the
+  // service writes to a stub and every recorded-call assertion sees nothing.
+  for (const key of Object.keys(require.cache)) {
+    if (key.includes('memory-reflection.service')) delete require.cache[key]
+  }
   reflection = require('../memory-reflection.service')
   loaded = true
 } catch (err) {
@@ -168,7 +175,11 @@ describe('findClusters', () => {
     if (!loaded) return
     const clusters = reflection.memoryReflectionService.findClusters(
       'ws-reflect',
-      embedded([['c1', 0], ['c2', 15], ['c3', 28]])
+      embedded([
+        ['c1', 0],
+        ['c2', 15],
+        ['c3', 28]
+      ])
     )
     assert.equal(clusters.length, 1)
     assert.equal(clusters[0].facts.length, 3)
@@ -179,7 +190,10 @@ describe('findClusters', () => {
     assert.deepEqual(
       reflection.memoryReflectionService.findClusters(
         'ws-reflect',
-        embedded([['p1', 0], ['p2', 15]])
+        embedded([
+          ['p1', 0],
+          ['p2', 15]
+        ])
       ),
       []
     )
@@ -190,7 +204,11 @@ describe('findClusters', () => {
     assert.deepEqual(
       reflection.memoryReflectionService.findClusters(
         'ws-reflect',
-        embedded([['d1', 0], ['d2', 1], ['d3', 2]])
+        embedded([
+          ['d1', 0],
+          ['d2', 1],
+          ['d3', 2]
+        ])
       ),
       []
     )
@@ -215,7 +233,11 @@ describe('findClusters', () => {
     assert.deepEqual(
       reflection.memoryReflectionService.findClusters(
         'ws-reflect',
-        embedded([['u1', 0], ['u2', 80], ['u3', 160]])
+        embedded([
+          ['u1', 0],
+          ['u2', 80],
+          ['u3', 160]
+        ])
       ),
       []
     )
@@ -332,10 +354,7 @@ describe('synthesizeCluster', () => {
         assert.equal(created, true)
         assert.deepEqual(recorded.archived, ['parent-new'], 'the proposal is archived, not visible')
         assert.equal(recorded.edges.length, 3, 'one derived_from edge per source fact')
-        assert.deepEqual(
-          recorded.edges.map((e) => e.toId).sort(),
-          ['s1', 's2', 's3']
-        )
+        assert.deepEqual(recorded.edges.map((e) => e.toId).sort(), ['s1', 's2', 's3'])
         assert.ok(recorded.edges.every((e) => e.edgeType === 'derived_from'))
         assert.deepEqual(
           recorded.edges.map((e) => e.fromId),

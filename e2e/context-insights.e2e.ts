@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Context Insights', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,9 +36,7 @@ test.describe('Context Insights', () => {
     return true
   }
 
-  async function selectConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasTab) {
@@ -56,9 +52,14 @@ test.describe('Context Insights', () => {
     return true
   }
 
-  test('context badge renders in chat sidebar items showing percentage', async ({ electronPage: page }) => {
+  test('context badge renders in chat sidebar items showing percentage', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to chats tab to see sidebar items
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
@@ -84,9 +85,14 @@ test.describe('Context Insights', () => {
     }
   })
 
-  test('context badge color reflects usage level (green/yellow/red)', async ({ electronPage: page }) => {
+  test('context badge color reflects usage level (green/yellow/red)', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -97,7 +103,10 @@ test.describe('Context Insights', () => {
 
     const badges = page.locator('[data-testid="context-badge"]')
     const badgeCount = await badges.count()
-    if (badgeCount === 0) { test.skip(); return }
+    if (badgeCount === 0) {
+      test.skip()
+      return
+    }
 
     const firstBadge = badges.first()
     const className = await firstBadge.getAttribute('class')
@@ -112,7 +121,10 @@ test.describe('Context Insights', () => {
 
   test('critical context level shows pulse animation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -136,18 +148,29 @@ test.describe('Context Insights', () => {
       // No critical badges — verify normal badges exist or skip
       const normalBadges = page.locator('[data-testid="context-badge"]')
       const normalCount = await normalBadges.count()
-      if (normalCount === 0) { test.skip(); return }
+      if (normalCount === 0) {
+        test.skip()
+        return
+      }
       // Normal badges without pulse is expected
       expect(normalCount).toBeGreaterThan(0)
     }
   })
 
-  test('insights summary loading state shows skeleton with animation', async ({ electronPage: page }) => {
+  test('insights summary loading state shows skeleton with animation', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // InsightsSummary loading state (animate-pulse skeleton)
     const loadingSkeleton = page.locator('[data-testid="insights-loading"]')
@@ -168,16 +191,27 @@ test.describe('Context Insights', () => {
     }
   })
 
-  test('insights summary stat pills show turns, tokens, cost, duration', async ({ electronPage: page }) => {
+  test('insights summary stat pills show turns, tokens, cost, duration', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const summary = page.locator('[data-testid="insights-summary"]')
     const hasSummary = await summary.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSummary) { test.skip(); return }
+    if (!hasSummary) {
+      test.skip()
+      return
+    }
 
     // Should show "Session Insights" label
     const label = summary.getByText(/session insights/i)
@@ -200,14 +234,23 @@ test.describe('Context Insights', () => {
 
   test('insights summary formats tokens and cost properly', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const summary = page.locator('[data-testid="insights-summary"]')
     const hasSummary = await summary.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSummary) { test.skip(); return }
+    if (!hasSummary) {
+      test.skip()
+      return
+    }
 
     // Get all stat pill values (the font-semibold text elements)
     const statValues = summary.locator('.font-semibold')

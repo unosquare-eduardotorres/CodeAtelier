@@ -510,7 +510,9 @@ export class CLIExecutor {
               const drainTimer = new Promise<'timeout'>((resolve) =>
                 setTimeout(() => resolve('timeout'), 1500)
               )
-              const drainNext = drainIterator.next().then((r) => ({ ...r, _source: 'iter' as const }))
+              const drainNext = drainIterator
+                .next()
+                .then((r) => ({ ...r, _source: 'iter' as const }))
               const drainResult = await Promise.race([drainNext, drainTimer])
               if (drainResult !== 'timeout' && !drainResult.done) {
                 const trailingMsg = drainResult.value as Record<string, unknown>

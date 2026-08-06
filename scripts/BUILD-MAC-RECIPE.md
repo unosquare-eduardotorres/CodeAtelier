@@ -29,6 +29,7 @@ npm run build:mac
 ```
 
 Then verify restore worked:
+
 ```bash
 grep '"dependencies"' package.json    # Must show 1 match
 npm run typecheck:node 2>&1 | grep -c "error TS"  # Must be 0
@@ -99,29 +100,29 @@ npm install --include=dev                             # --include=dev is critica
 
 ## Key Constants
 
-| Item | Value |
-|---|---|
-| Electron version | `43.2.0` |
-| electron-builder | `26.15.3` |
-| Node heap | `16384` MB |
-| Signing identity | `Developer ID Application: UNOSQUARE LLC (PZY6PW4386)` |
-| Keychain profile | `code-atelier` |
-| Native module | `better-sqlite3` v13 (N-API — no Electron rebuild needed) |
-| DMG output | `dist/code-atelier-{version}.dmg` (~170 MB) |
-| DMG window | 660×400 (120px icons) |
+| Item             | Value                                                     |
+| ---------------- | --------------------------------------------------------- |
+| Electron version | `43.2.0`                                                  |
+| electron-builder | `26.15.3`                                                 |
+| Node heap        | `16384` MB                                                |
+| Signing identity | `Developer ID Application: UNOSQUARE LLC (PZY6PW4386)`    |
+| Keychain profile | `code-atelier`                                            |
+| Native module    | `better-sqlite3` v13 (N-API — no Electron rebuild needed) |
+| DMG output       | `dist/code-atelier-{version}.dmg` (~170 MB)               |
+| DMG window       | 660×400 (120px icons)                                     |
 
 ## Timing
 
-| Phase | Duration |
-|---|---|
-| Typecheck + electron-vite build | ~30s |
-| Prune + strip | ~15s |
-| Packaging | ~30s |
-| Code signing | ~15s |
-| **Notarization (Apple upload + processing)** | **5–8 min** |
-| DMG + ZIP creation | ~30s |
-| Restore (npm install --include=dev) | ~30s |
-| **Total** | **~12–15 min** |
+| Phase                                        | Duration       |
+| -------------------------------------------- | -------------- |
+| Typecheck + electron-vite build              | ~30s           |
+| Prune + strip                                | ~15s           |
+| Packaging                                    | ~30s           |
+| Code signing                                 | ~15s           |
+| **Notarization (Apple upload + processing)** | **5–8 min**    |
+| DMG + ZIP creation                           | ~30s           |
+| Restore (npm install --include=dev)          | ~30s           |
+| **Total**                                    | **~12–15 min** |
 
 CI/automation timeouts must be >15 minutes.
 
@@ -141,11 +142,11 @@ The EXIT trap in `build-mac.sh` ALWAYS runs `rm -rf node_modules && npm install 
 
 ## Windows Build
 
-| Setting | Value |
-|---------|-------|
-| Script | `scripts/build-win.sh` |
-| Output | `dist/*-setup.exe` (NSIS installer) |
-| Cross-compiled from | macOS |
-| Native prebuilt | `win32-x64.node` |
-| Version bump | Opt-in via `BUMP_VERSION=1` |
-| Code signing | Requires `CSC_LINK` + `CSC_KEY_PASSWORD` env vars (optional) |
+| Setting             | Value                                                        |
+| ------------------- | ------------------------------------------------------------ |
+| Script              | `scripts/build-win.sh`                                       |
+| Output              | `dist/*-setup.exe` (NSIS installer)                          |
+| Cross-compiled from | macOS                                                        |
+| Native prebuilt     | `win32-x64.node`                                             |
+| Version bump        | Opt-in via `BUMP_VERSION=1`                                  |
+| Code signing        | Requires `CSC_LINK` + `CSC_KEY_PASSWORD` env vars (optional) |

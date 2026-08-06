@@ -88,9 +88,9 @@ if (!env) {
 
   function ftsRowsFor(db: import('better-sqlite3').Database, id: string): number {
     return (
-      db
-        .prepare('SELECT count(*) AS n FROM memory_facts_fts WHERE fact_id = ?')
-        .get(id) as { n: number }
+      db.prepare('SELECT count(*) AS n FROM memory_facts_fts WHERE fact_id = ?').get(id) as {
+        n: number
+      }
     ).n
   }
 
@@ -155,9 +155,13 @@ if (!env) {
       try {
         const names = (
           db
-            .prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memory_facts_fts%'")
+            .prepare(
+              "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'memory_facts_fts%'"
+            )
             .all() as Array<{ name: string }>
-        ).map((r) => r.name).sort()
+        )
+          .map((r) => r.name)
+          .sort()
         assert.deepEqual(names, [
           'memory_facts_fts_ad',
           'memory_facts_fts_ai',
@@ -271,7 +275,9 @@ if (!env) {
           .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
           .get(id) as { rowid: number }
 
-        db.prepare("UPDATE memory_facts SET last_accessed_at = datetime('now') WHERE id = ?").run(id)
+        db.prepare("UPDATE memory_facts SET last_accessed_at = datetime('now') WHERE id = ?").run(
+          id
+        )
 
         const after = db
           .prepare('SELECT rowid FROM memory_facts_fts WHERE fact_id = ?')
@@ -322,7 +328,11 @@ if (!env) {
     test('a tags-only change reindexes', () => {
       const db = createSchemaDb()
       try {
-        const id = insertFact(db, { title: 'Tagchangefact', content: 'body', tags: '["oldtagterm"]' })
+        const id = insertFact(db, {
+          title: 'Tagchangefact',
+          content: 'body',
+          tags: '["oldtagterm"]'
+        })
         db.prepare(`UPDATE memory_facts SET tags = '["newtagterm"]' WHERE id = ?`).run(id)
 
         assert.deepEqual(matchIds(db, '"newtagterm"'), [id])
@@ -337,7 +347,9 @@ if (!env) {
       try {
         const a = insertFact(db, { title: 'Bulkonefact', content: 'x' })
         const b = insertFact(db, { title: 'Bulktwofact', content: 'x' })
-        db.prepare("UPDATE memory_facts SET content = 'reindexedbody' WHERE workspace_id IS NULL").run()
+        db.prepare(
+          "UPDATE memory_facts SET content = 'reindexedbody' WHERE workspace_id IS NULL"
+        ).run()
 
         const ids = matchIds(db, '"reindexedbody"').sort()
         assert.deepEqual(ids, [a, b].sort(), 'triggers cover paths the repository never touches')

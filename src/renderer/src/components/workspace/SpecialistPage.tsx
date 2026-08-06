@@ -22,9 +22,7 @@ type RebuildState = 'idle' | 'building' | 'success' | 'failed'
 // ── Hooks ─────────────────────────────────────────────────────────────────
 
 /** Track rebuild lifecycle from build-progress events. */
-function useRebuildState(
-  buildProgress: { phase: string; message?: string } | null | undefined
-): {
+function useRebuildState(buildProgress: { phase: string; message?: string } | null | undefined): {
   rebuildState: RebuildState
   rebuildError: string | null
   setRebuildState: (s: RebuildState) => void
@@ -73,8 +71,15 @@ function useSkillActions(opts: {
   refreshingRecs: boolean
 } {
   const {
-    specialist, workspaceId, toggleSkill, attachSkill, detachSkill,
-    refreshRecommendations, importSkill, loadForWorkspace, addToast
+    specialist,
+    workspaceId,
+    toggleSkill,
+    attachSkill,
+    detachSkill,
+    refreshRecommendations,
+    importSkill,
+    loadForWorkspace,
+    addToast
   } = opts
   const [isImporting, setIsImporting] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -302,7 +307,10 @@ export default function SpecialistPage(): React.JSX.Element {
 
   if (!specialist) {
     return (
-      <div data-testid="specialist-page" className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+      <div
+        data-testid="specialist-page"
+        className="flex-1 flex flex-col items-center justify-center p-12 text-center"
+      >
         <div className="w-16 h-16 rounded-2xl bg-surface-overlay border border-border-subtle flex items-center justify-center mb-4">
           <Bot size={28} className="text-text-muted" />
         </div>

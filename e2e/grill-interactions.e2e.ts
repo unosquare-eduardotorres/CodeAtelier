@@ -49,7 +49,10 @@ test.describe('Grill Interactions', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -99,7 +102,10 @@ test.describe('Grill Interactions', () => {
 
     // Should have at least one question
     const questionText = questionCard.getByText(/question \d+ of \d+/i)
-    const hasQuestionText = await questionText.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasQuestionText = await questionText
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasQuestionText).toBeTruthy()
   })
 

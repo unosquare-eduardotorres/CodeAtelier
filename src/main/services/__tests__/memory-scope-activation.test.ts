@@ -200,7 +200,11 @@ describe('retrieve — path-scoped activation', () => {
         'src/billing/Invoice.java'
       ])
       assert.ok(results.length > 0)
-      assert.equal(results[0].fact.id, 'scope-target', 'activation lifts the scoped fact to the top')
+      assert.equal(
+        results[0].fact.id,
+        'scope-target',
+        'activation lifts the scoped fact to the top'
+      )
     } finally {
       stubFacts.delete(ws)
     }
@@ -227,9 +231,7 @@ describe('retrieve — path-scoped activation', () => {
 describe('active-paths', () => {
   test('parses porcelain status lines', () => {
     if (!loaded) return
-    const parsed = activePaths.parsePorcelain(
-      ' M src/a.ts\n?? src/new.ts\nA  src/added.ts\n'
-    )
+    const parsed = activePaths.parsePorcelain(' M src/a.ts\n?? src/new.ts\nA  src/added.ts\n')
     assert.deepEqual(parsed, ['src/a.ts', 'src/new.ts', 'src/added.ts'])
   })
 
@@ -253,10 +255,7 @@ describe('active-paths', () => {
 
   test('makes absolute paths workspace-relative', () => {
     if (!loaded) return
-    assert.equal(
-      activePaths.toWorkspaceRelative('/repo', '/repo/src/a.ts'),
-      'src/a.ts'
-    )
+    assert.equal(activePaths.toWorkspaceRelative('/repo', '/repo/src/a.ts'), 'src/a.ts')
   })
 
   test('rejects absolute paths outside the workspace', () => {

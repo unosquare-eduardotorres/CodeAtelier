@@ -134,7 +134,10 @@ describe('extraction retry loop honours the cancel signal', () => {
     const controller = new AbortController()
     controller.abort()
 
-    const { attempts, elapsedMs, error } = await countAttempts('API Error 429 rate limit', controller.signal)
+    const { attempts, elapsedMs, error } = await countAttempts(
+      'API Error 429 rate limit',
+      controller.signal
+    )
 
     assert.equal(attempts, 1, 'a cancelled run must not pay for further attempts')
     assert.ok(

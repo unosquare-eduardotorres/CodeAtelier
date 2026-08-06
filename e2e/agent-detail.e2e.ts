@@ -24,9 +24,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('AgentDetailPage', () => {
-  async function navigateToAgentDetail(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToAgentDetail(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -56,11 +54,17 @@ test.describe('AgentDetailPage', () => {
 
   test('agent detail page renders with agent name and icon', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(detailPage).toBeVisible()
 
@@ -77,11 +81,17 @@ test.describe('AgentDetailPage', () => {
 
   test('back button navigates to agent management list', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Back button should be visible
     const backBtn = page.locator('[data-testid="agent-detail-back"]')
@@ -101,11 +111,17 @@ test.describe('AgentDetailPage', () => {
 
   test('skills sidebar shows available skills with checkboxes', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Skills sidebar should have "Skills assigned" heading
     const skillsHeading = detailPage.locator('h4:has-text("Skills assigned")')
@@ -128,11 +144,17 @@ test.describe('AgentDetailPage', () => {
 
   test('deployed badge shows correct status indicator', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Should show either "Deployed" or "Not deployed" badge
     const deployedBadge = detailPage.locator('text=Deployed')
@@ -153,11 +175,17 @@ test.describe('AgentDetailPage', () => {
 
   test('YAML editor loads and displays file content', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for file content to load
     await page.waitForTimeout(2_000)
@@ -168,7 +196,10 @@ test.describe('AgentDetailPage', () => {
     const errorText = detailPage.locator('text=Could not load agent file')
 
     const hasLoader = await loader.isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasEditor = await editorContent.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasEditor = await editorContent
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     const hasError = await errorText.isVisible({ timeout: 2_000 }).catch(() => false)
 
     expect(hasLoader || hasEditor || hasError).toBe(true)
@@ -176,16 +207,25 @@ test.describe('AgentDetailPage', () => {
 
   test('properties panel shows model name and tool list', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Properties section should have "Properties" heading
     const propsHeading = detailPage.locator('h4:has-text("Properties")')
     const hasProps = await propsHeading.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasProps) { test.skip(); return }
+    if (!hasProps) {
+      test.skip()
+      return
+    }
 
     await expect(propsHeading).toBeVisible()
 
@@ -204,11 +244,17 @@ test.describe('AgentDetailPage', () => {
 
   test('loading spinner shows while file content loads', async ({ electronPage: page }) => {
     const ready = await navigateToAgentDetail(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const detailPage = page.locator('[data-testid="agent-detail-page"]')
     const isVisible = await detailPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Loading spinner may be visible briefly while file loads
     const loader = detailPage.locator('.animate-spin')
@@ -218,7 +264,10 @@ test.describe('AgentDetailPage', () => {
     await page.waitForTimeout(2_000)
 
     const hasLoader = await loader.isVisible().catch(() => false)
-    const hasContent = await editorContent.first().isVisible().catch(() => false)
+    const hasContent = await editorContent
+      .first()
+      .isVisible()
+      .catch(() => false)
 
     // One of these states should be present
     expect(hasLoader || hasContent || true).toBe(true)

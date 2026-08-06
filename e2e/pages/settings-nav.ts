@@ -97,9 +97,7 @@ export class SettingsNav {
     }
 
     // Fallback: try any button with the label text
-    const fallbackBtn = this.page
-      .getByRole('button', { name: new RegExp(label, 'i') })
-      .first()
+    const fallbackBtn = this.page.getByRole('button', { name: new RegExp(label, 'i') }).first()
     const hasFallback = await fallbackBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
     if (hasFallback) {

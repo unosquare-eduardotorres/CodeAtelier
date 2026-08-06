@@ -134,7 +134,7 @@ export class ConversationLifecycle {
     this.isDisposing = true
 
     const snapshot = this.disposers // Snapshot the array
-    this.disposers = []              // Clear BEFORE iteration
+    this.disposers = [] // Clear BEFORE iteration
 
     for (const fn of snapshot) {
       try {

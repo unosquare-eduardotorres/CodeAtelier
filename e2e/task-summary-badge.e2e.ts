@@ -14,9 +14,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('TaskSummaryBadge', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,11 +33,12 @@ test.describe('TaskSummaryBadge', () => {
     return true
   }
 
-  test('TaskSummaryBadge is not visible when no tasks exist', async ({
-    electronPage: page
-  }) => {
+  test('TaskSummaryBadge is not visible when no tasks exist', async ({ electronPage: page }) => {
     const ready = await ensureChatReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // The TaskSummaryBadge should not render if there are no tasks
     const badge = page.locator('[data-testid="task-summary-badge"]')
@@ -48,45 +47,50 @@ test.describe('TaskSummaryBadge', () => {
     expect(count).toBeGreaterThanOrEqual(0)
   })
 
-  test('TaskSummaryBadge renders after injecting tasks', async ({
-    electronPage: page
-  }) => {
+  test('TaskSummaryBadge renders after injecting tasks', async ({ electronPage: page }) => {
     const ready = await ensureChatReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Inject a fake plan execution with tasks into the store via evaluate
     const injected = await page.evaluate(() => {
       try {
-        const storeModule = (window as unknown as Record<string, unknown>).__PLAN_EXEC_STORE as {
-          getState: () => {
-            startExecution: (
-              convId: string,
-              plan: {
-                planId: string | null
-                title: string
-                phases: Array<{
-                  id: number
-                  title: string
-                  tasks?: Array<{ taskId: string; title: string; files?: string[] }>
-                }>
+        const storeModule = (window as unknown as Record<string, unknown>).__PLAN_EXEC_STORE as
+          | {
+              getState: () => {
+                startExecution: (
+                  convId: string,
+                  plan: {
+                    planId: string | null
+                    title: string
+                    phases: Array<{
+                      id: number
+                      title: string
+                      tasks?: Array<{ taskId: string; title: string; files?: string[] }>
+                    }>
+                  }
+                ) => void
               }
-            ) => void
-          }
-        } | undefined
+            }
+          | undefined
 
         if (!storeModule) return false
 
         storeModule.getState().startExecution('test-conv-e2e', {
           planId: null,
           title: 'E2E Test Plan',
-          phases: [{
-            id: 1,
-            title: 'Phase 1',
-            tasks: [
-              { taskId: '1-0', title: 'Task A', files: ['src/a.ts'] },
-              { taskId: '1-1', title: 'Task B', files: ['src/b.ts'] }
-            ]
-          }]
+          phases: [
+            {
+              id: 1,
+              title: 'Phase 1',
+              tasks: [
+                { taskId: '1-0', title: 'Task A', files: ['src/a.ts'] },
+                { taskId: '1-1', title: 'Task B', files: ['src/b.ts'] }
+              ]
+            }
+          ]
         })
         return true
       } catch {
@@ -112,45 +116,50 @@ test.describe('TaskSummaryBadge', () => {
     expect(badgeText).toMatch(/Phase \d+\/\d+/)
   })
 
-  test('Panel toggle opens ChatExecutionPanel', async ({
-    electronPage: page
-  }) => {
+  test('Panel toggle opens ChatExecutionPanel', async ({ electronPage: page }) => {
     const ready = await ensureChatReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Inject tasks to make the badge visible
     const injected = await page.evaluate(() => {
       try {
-        const storeModule = (window as unknown as Record<string, unknown>).__PLAN_EXEC_STORE as {
-          getState: () => {
-            startExecution: (
-              convId: string,
-              plan: {
-                planId: string | null
-                title: string
-                phases: Array<{
-                  id: number
-                  title: string
-                  tasks?: Array<{ taskId: string; title: string; files?: string[] }>
-                }>
+        const storeModule = (window as unknown as Record<string, unknown>).__PLAN_EXEC_STORE as
+          | {
+              getState: () => {
+                startExecution: (
+                  convId: string,
+                  plan: {
+                    planId: string | null
+                    title: string
+                    phases: Array<{
+                      id: number
+                      title: string
+                      tasks?: Array<{ taskId: string; title: string; files?: string[] }>
+                    }>
+                  }
+                ) => void
               }
-            ) => void
-          }
-        } | undefined
+            }
+          | undefined
 
         if (!storeModule) return false
 
         storeModule.getState().startExecution('test-conv-e2e', {
           planId: null,
           title: 'E2E Test Plan',
-          phases: [{
-            id: 1,
-            title: 'Phase 1',
-            tasks: [
-              { taskId: '1-0', title: 'Task A', files: ['src/a.ts'] },
-              { taskId: '1-1', title: 'Task B', files: ['src/b.ts'] }
-            ]
-          }]
+          phases: [
+            {
+              id: 1,
+              title: 'Phase 1',
+              tasks: [
+                { taskId: '1-0', title: 'Task A', files: ['src/a.ts'] },
+                { taskId: '1-1', title: 'Task B', files: ['src/b.ts'] }
+              ]
+            }
+          ]
         })
         return true
       } catch {

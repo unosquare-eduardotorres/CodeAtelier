@@ -24,9 +24,7 @@ test.describe('New Chat Page', () => {
   /**
    * Helper: navigate to a workspace and ensure NewChatPage is visible.
    */
-  async function navigateToNewChat(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToNewChat(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -54,7 +52,10 @@ test.describe('New Chat Page', () => {
 
   test('new chat page renders with title input and CTA', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     await expect(page.locator('[data-testid="new-chat-page"]')).toBeVisible()
     const titleInput = page.locator('[data-testid="new-chat-title-input"]')
@@ -66,7 +67,10 @@ test.describe('New Chat Page', () => {
 
   test('title input enables Start button', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const titleInput = page.locator('[data-testid="new-chat-title-input"]')
     const startBtn = page.locator('[data-testid="new-chat-start-btn"]')
@@ -79,7 +83,10 @@ test.describe('New Chat Page', () => {
 
   test('mode toggle switches between Plan and Build', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const modeToggle = page.locator('[data-testid="new-chat-mode-toggle"]')
     await expect(modeToggle).toBeVisible()
@@ -102,7 +109,10 @@ test.describe('New Chat Page', () => {
 
   test('tone selector buttons toggle', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const toneSelector = page.locator('[data-testid="new-chat-tone-selector"]')
     await expect(toneSelector).toBeVisible()
@@ -121,7 +131,10 @@ test.describe('New Chat Page', () => {
 
   test('provider toggle switches Cloud/Local', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const providerToggle = page.locator('[data-testid="new-chat-provider-toggle"]')
     await expect(providerToggle).toBeVisible()
@@ -140,12 +153,18 @@ test.describe('New Chat Page', () => {
 
   test('MCP tools section expands with toggle switches', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const mcpSection = page.locator('[data-testid="new-chat-mcp-section"]')
     const mcpExpand = page.locator('[data-testid="new-chat-mcp-expand"]')
     const hasMcp = await mcpSection.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasMcp) { test.skip(); return }
+    if (!hasMcp) {
+      test.skip()
+      return
+    }
 
     await mcpExpand.click()
     await page.waitForTimeout(500)
@@ -161,7 +180,10 @@ test.describe('New Chat Page', () => {
 
   test('Start Conversation creates chat', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const titleInput = page.locator('[data-testid="new-chat-title-input"]')
     const startBtn = page.locator('[data-testid="new-chat-start-btn"]')
@@ -178,7 +200,10 @@ test.describe('New Chat Page', () => {
 
   test('Cmd+Enter shortcut submits form', async ({ electronPage: page }) => {
     const hasNewChat = await navigateToNewChat(page)
-    if (!hasNewChat) { test.skip(); return }
+    if (!hasNewChat) {
+      test.skip()
+      return
+    }
 
     const titleInput = page.locator('[data-testid="new-chat-title-input"]')
     const descriptionInput = page.locator('[data-testid="new-chat-description"]')

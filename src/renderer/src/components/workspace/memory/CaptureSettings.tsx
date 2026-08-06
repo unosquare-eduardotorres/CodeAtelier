@@ -170,15 +170,9 @@ export default function CaptureSettings({
         </div>
         {feedStatus !== 'idle' && (
           <div className="mt-2 text-xs">
-            {feedStatus === 'running' && (
-              <span className="text-info">{feedMessage}</span>
-            )}
-            {feedStatus === 'error' && (
-              <span className="text-danger">{feedError}</span>
-            )}
-            {feedStatus === 'completed' && (
-              <span className="text-success">{feedMessage}</span>
-            )}
+            {feedStatus === 'running' && <span className="text-info">{feedMessage}</span>}
+            {feedStatus === 'error' && <span className="text-danger">{feedError}</span>}
+            {feedStatus === 'completed' && <span className="text-success">{feedMessage}</span>}
           </div>
         )}
       </SettingsCard>
@@ -186,7 +180,9 @@ export default function CaptureSettings({
       {captureSettings && (
         <SettingsCard>
           <h3 className="text-sm font-medium text-text-primary">Automatic Capture</h3>
-          <p className="text-xs text-text-secondary mt-0.5">Control which sources automatically extract memories</p>
+          <p className="text-xs text-text-secondary mt-0.5">
+            Control which sources automatically extract memories
+          </p>
           <div className="space-y-3 mt-3">
             <CaptureToggle
               label="Session transcripts"
@@ -295,8 +291,8 @@ export default function CaptureSettings({
         <SettingsCard>
           <h3 className="text-sm font-medium text-text-primary">Feed Brain Throughput</h3>
           <p className="text-xs text-text-secondary mt-0.5">
-            How many documents Feed Brain extracts at once. Each one spawns a Claude CLI
-            process — raise this to finish sooner, lower it if you hit API rate limits.
+            How many documents Feed Brain extracts at once. Each one spawns a Claude CLI process —
+            raise this to finish sooner, lower it if you hit API rate limits.
           </p>
           <div className="flex items-center gap-3 mt-3">
             <input

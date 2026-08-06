@@ -13,9 +13,21 @@ import type { BootstrapMode, BootstrapScope } from '../../../../../../shared/typ
 import { PHASE_INFO, DEEP_SCAN_PHASES, FULL_PHASES } from './phase-meta'
 
 const SCOPES: Array<{ id: BootstrapScope; label: string; hint: string }> = [
-  { id: 'changed', label: 'Changed only', hint: 'Skip files whose contents have not changed since the last run.' },
-  { id: 'docs', label: 'Re-ingest all docs', hint: 'Re-read every documentation file, even unchanged ones.' },
-  { id: 'deep-scan', label: 'Re-run Deep Scan', hint: 'Re-read the PageRank-central source files.' },
+  {
+    id: 'changed',
+    label: 'Changed only',
+    hint: 'Skip files whose contents have not changed since the last run.'
+  },
+  {
+    id: 'docs',
+    label: 'Re-ingest all docs',
+    hint: 'Re-read every documentation file, even unchanged ones.'
+  },
+  {
+    id: 'deep-scan',
+    label: 'Re-run Deep Scan',
+    hint: 'Re-read the PageRank-central source files.'
+  },
   { id: 'full', label: 'Full rebuild', hint: 'Ignore every hash and re-read everything. Slowest.' }
 ]
 
@@ -115,7 +127,9 @@ export default function RunControls({
         <button
           onClick={() => onModeChange('full')}
           className={`p-3 rounded-lg border text-left transition-colors ${
-            mode === 'full' ? 'border-teal bg-teal/5' : 'border-border-default hover:border-border-active'
+            mode === 'full'
+              ? 'border-teal bg-teal/5'
+              : 'border-border-default hover:border-border-active'
           }`}
         >
           <div className="flex items-center gap-1.5 mb-1">
@@ -123,7 +137,8 @@ export default function RunControls({
             <span className="text-sm font-medium text-text-primary">Feed Brain</span>
           </div>
           <p className="text-xs text-text-muted">
-            Deterministic scan — docs, stack, PageRank architecture, git history, structural gotchas.
+            Deterministic scan — docs, stack, PageRank architecture, git history, structural
+            gotchas.
           </p>
         </button>
 
@@ -181,9 +196,7 @@ export default function RunControls({
             </button>
           ))}
         </div>
-        <p className="text-[10px] text-text-muted">
-          {SCOPES.find((s) => s.id === scope)?.hint}
-        </p>
+        <p className="text-[10px] text-text-muted">{SCOPES.find((s) => s.id === scope)?.hint}</p>
       </div>
 
       {/* Start */}

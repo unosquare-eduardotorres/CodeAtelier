@@ -27,6 +27,7 @@
 </grill_decisions>
 
 If grill decisions are provided, use them as structured constraints:
+
 - Requirements track decisions → Functional Requirements (FR-*)
 - Architecture track decisions → Assumptions section
 - UX/UI track decisions → User Stories and acceptance scenarios
@@ -54,6 +55,7 @@ Before writing any specification, you MUST understand the workspace context. Ski
 </workspace_docs>
 
 Review CLAUDE.md, README.md, and package.json above. Extract:
+
 - **Tech stack decisions** already made (frameworks, databases, languages)
 - **Conventions** (naming, file structure, design system rules)
 - **Architecture decisions** (ADRs, patterns, constraints)
@@ -62,12 +64,14 @@ Review CLAUDE.md, README.md, and package.json above. Extract:
 #### 0b. Search Workspace Memories
 
 Use `mcp__memory__memory_search` to find existing decisions:
+
 - Search for: tech stack, architecture, conventions, database, testing strategy
 - Any decision found in memory is a RESOLVED FACT — do not re-ask it
 
 #### 0c. Explore Existing Code Structure
 
 If the workspace has source files:
+
 1. Use `mcp__code-graph__graph_map` (or `Glob` if unavailable) to understand the directory structure
 2. Read key config files (`tsconfig.json`, `docker-compose.yml`, `eslint.config.*`, etc.)
 3. Identify existing patterns, naming conventions, and architecture
@@ -75,6 +79,7 @@ If the workspace has source files:
 #### 0d. Compile Context Summary
 
 Before generating the spec, write a brief "Workspace Context" section:
+
 - Tech stack: [resolved from package.json/code]
 - Architecture: [resolved from docs/code]
 - Conventions: [resolved from CLAUDE.md/code]
@@ -86,6 +91,7 @@ Use these as RESOLVED FACTS in the specification. Do NOT specify choices that ar
 ### Step 1: Parse Input
 
 Read the blueprint context above. Extract:
+
 - Feature description
 - Any constraints or preferences from settings
 - Constitution rules that apply
@@ -100,6 +106,7 @@ it is stored automatically as the phase artifact.
 ### Step 3: Generate Feature Name
 
 Create a 2-4 word short name for this feature:
+
 - Must be descriptive and memorable
 - Use kebab-case (e.g., "user-auth-flow", "search-results-page")
 - Must be unique within the workspace
@@ -107,6 +114,7 @@ Create a 2-4 word short name for this feature:
 ### Step 4: Generate Specification
 
 Generate a complete spec.md. When the workspace already has established conventions:
+
 - Reference existing patterns ("following the existing service pattern in apps/api/src/services/")
 - Don't re-specify tech stack if already decided
 - Mark requirements that extend existing code vs. net-new features
@@ -114,13 +122,13 @@ Generate a complete spec.md. When the workspace already has established conventi
 
 Include these sections:
 
-| Section | Requirement |
-|---------|-------------|
-| **User Stories** (mandatory) | 2–3 prioritized (P1/P2/P3), each with Given/When/Then acceptance scenarios. P1 = MVP. |
-| **Requirements** (mandatory) | Functional IDs (FR-001+), MUST/SHOULD/MAY language, [NEEDS CLARIFICATION] for unclear items. Include key entities for data-heavy features. |
-| **Success Criteria** (mandatory) | Measurable, technology-agnostic outcomes with ≥1 user-facing metric. No implementation-specific criteria. |
-| **Assumptions** | Explicit assumptions and scope boundaries. |
-| **Edge Cases** | Boundary conditions, error scenarios, security considerations. |
+| Section                          | Requirement                                                                                                                                |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| **User Stories** (mandatory)     | 2–3 prioritized (P1/P2/P3), each with Given/When/Then acceptance scenarios. P1 = MVP.                                                      |
+| **Requirements** (mandatory)     | Functional IDs (FR-001+), MUST/SHOULD/MAY language, [NEEDS CLARIFICATION] for unclear items. Include key entities for data-heavy features. |
+| **Success Criteria** (mandatory) | Measurable, technology-agnostic outcomes with ≥1 user-facing metric. No implementation-specific criteria.                                  |
+| **Assumptions**                  | Explicit assumptions and scope boundaries.                                                                                                 |
+| **Edge Cases**                   | Boundary conditions, error scenarios, security considerations.                                                                             |
 
 ### Step 5: Quality Validation
 
@@ -129,6 +137,7 @@ Validate: (1) stories have priority + scenarios, (2) requirements have IDs + MUS
 ### Step 6: Assess Clarification Need
 
 Count [NEEDS CLARIFICATION] markers in the spec.
+
 - If ≤ 3 minor items: mark as `needsClarification: false`
 - If > 3 or any critical items: mark as `needsClarification: true`
 
@@ -168,25 +177,26 @@ When the spec is complete and validated, emit a completion block:
 
 ## Tool Priority
 
-**Your FIRST tool for any codebase question must be a code-intelligence tool — NOT Read/Glob/Grep.**
+Route by question shape. Grep wins for exact strings, regex, config values and error text; Glob wins for finding files by path pattern.
 
-| Goal | First tool | Fallback |
-|------|-----------|----------|
-| Find a symbol/function/class | `mcp__code-graph__search_identifiers` | `Grep` |
-| Understand file structure | `mcp__code-graph__file_outline` | `Read` |
-| See what calls a function | `mcp__code-graph__find_callers` | `Grep` |
-| See what a function calls | `mcp__code-graph__find_callees` | `Read` |
-| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
-| See file imports/importers | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep` |
-| Understand codebase architecture | `mcp__code-graph__graph_map` | `Glob` + `Read` |
-| Find related code semantically | `mcp__semantic-search__semantic_search` | `Grep` |
-| Find similar patterns | `mcp__semantic-search__similar_code` | `Grep` |
-| Understand domain concepts | `mcp__semantic-search__codebase_concepts` | — |
-| Search workspace knowledge | `mcp__memory__memory_search` | — |
-| Record a discovery for later phases | `mcp__memory__memory_record` | — |
+| Goal                                | First tool                                               | Fallback        |
+| ----------------------------------- | -------------------------------------------------------- | --------------- |
+| Find a symbol/function/class        | `mcp__code-graph__search_identifiers`                    | `Grep`          |
+| Understand file structure           | `mcp__code-graph__file_outline`                          | `Read`          |
+| See what calls a function           | `mcp__code-graph__find_callers`                          | `Grep`          |
+| See what a function calls           | `mcp__code-graph__find_callees`                          | `Read`          |
+| Find all references to a symbol     | `mcp__code-graph__find_references`                       | `Grep`          |
+| See file imports/importers          | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep`          |
+| Understand codebase architecture    | `mcp__code-graph__graph_map`                             | `Glob` + `Read` |
+| Find related code semantically      | `mcp__semantic-search__semantic_search`                  | `Grep`          |
+| Find similar patterns               | `mcp__semantic-search__similar_code`                     | `Grep`          |
+| Understand domain concepts          | `mcp__semantic-search__codebase_concepts`                | —               |
+| Search workspace knowledge          | `mcp__memory__memory_search`                             | —               |
+| Record a discovery for later phases | `mcp__memory__memory_record`                             | —               |
 
 **Greenfield caveat**: If the workspace has no source tree yet (empty or skeleton), use Glob/Read directly — code-intelligence tools need indexed files.
 
-Use Read only on files identified by code intelligence. If a code-graph/semantic-search/memory tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.
+Skip all of the above when the answer is already in context, the task names the file, or the change is trivial.
+Otherwise use Read on files identified by code intelligence. If a code-graph/semantic-search/memory tool errors or returns empty, fall back to Read/Glob/Grep immediately — do not retry it.
 
 Do NOT attempt to use `Write`, `Edit`, `Bash`, or any tool not listed above.

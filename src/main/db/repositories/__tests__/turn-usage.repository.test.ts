@@ -17,10 +17,12 @@ if (!env) {
 
   // Seed an agent session for FK satisfaction
   function seedSession(conversationId: string): string {
-    const row = db.prepare(
-      `INSERT INTO agent_sessions (agent_type, conversation_id, workspace_id)
+    const row = db
+      .prepare(
+        `INSERT INTO agent_sessions (agent_type, conversation_id, workspace_id)
        VALUES (?, ?, ?) RETURNING id`
-    ).get('da-vinci', conversationId, wsId) as { id: string }
+      )
+      .get('da-vinci', conversationId, wsId) as { id: string }
     return row.id
   }
 
@@ -54,9 +56,13 @@ if (!env) {
       const convId = seedConversation(db, wsId)
       const sessionId = seedSession(convId)
       const turn = turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 1,
-        inputTokens: 100, outputTokens: 50,
-        cacheReadTokens: 0, cacheCreationTokens: 0
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0
       })
       assert.equal(turn.model, null)
     })
@@ -65,14 +71,22 @@ if (!env) {
       const convId = seedConversation(db, wsId, 'Turn Conv')
       const sessionId = seedSession(convId)
       turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 2,
-        inputTokens: 200, outputTokens: 100,
-        cacheReadTokens: 0, cacheCreationTokens: 0
+        sessionId,
+        conversationId: convId,
+        turnNumber: 2,
+        inputTokens: 200,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0
       })
       turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 1,
-        inputTokens: 100, outputTokens: 50,
-        cacheReadTokens: 0, cacheCreationTokens: 0
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0
       })
 
       const turns = turnUsageRepository.findByConversation(convId)
@@ -85,14 +99,22 @@ if (!env) {
       const convId = seedConversation(db, wsId, 'Last Turn')
       const sessionId = seedSession(convId)
       turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 1,
-        inputTokens: 100, outputTokens: 50,
-        cacheReadTokens: 0, cacheCreationTokens: 0
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0
       })
       turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 2,
-        inputTokens: 200, outputTokens: 100,
-        cacheReadTokens: 0, cacheCreationTokens: 0
+        sessionId,
+        conversationId: convId,
+        turnNumber: 2,
+        inputTokens: 200,
+        outputTokens: 100,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0
       })
 
       const last = turnUsageRepository.getLastTurn(convId)
@@ -111,9 +133,13 @@ if (!env) {
       const convId = seedConversation(db, wsId, 'Context Tokens')
       const sessionId = seedSession(convId)
       turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 1,
-        inputTokens: 1000, outputTokens: 500,
-        cacheReadTokens: 100, cacheCreationTokens: 50
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 100,
+        cacheCreationTokens: 50
       })
 
       turnUsageRepository.updateLastTurnContextTokens(convId, 45000)
@@ -141,9 +167,13 @@ if (!env) {
       const convId = seedConversation(db, wsId, 'Model Map')
       const sessionId = seedSession(convId)
       const turn = turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 1,
-        inputTokens: 500, outputTokens: 250,
-        cacheReadTokens: 50, cacheCreationTokens: 25
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        inputTokens: 500,
+        outputTokens: 250,
+        cacheReadTokens: 50,
+        cacheCreationTokens: 25
       })
       assert.ok(typeof turn.id === 'string')
       assert.ok(typeof turn.createdAt === 'string')
@@ -156,9 +186,13 @@ if (!env) {
       const convId = seedConversation(db, wsId, 'Update Tokens')
       const sessionId = seedSession(convId)
       turnUsageRepository.record({
-        sessionId, conversationId: convId, turnNumber: 1,
-        inputTokens: 100, outputTokens: 50,
-        cacheReadTokens: 10, cacheCreationTokens: 5
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        inputTokens: 100,
+        outputTokens: 50,
+        cacheReadTokens: 10,
+        cacheCreationTokens: 5
       })
       // Update the last turn's token values
       turnUsageRepository.updateLastTurnTokens(convId, {

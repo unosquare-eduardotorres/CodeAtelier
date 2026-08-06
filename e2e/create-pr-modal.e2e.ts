@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Create PR Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -39,9 +37,7 @@ test.describe('Create PR Modal', () => {
   }
 
   /** Attempt to open the Create PR modal via code changes panel. */
-  async function openPrModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openPrModal(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to a conversation first
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -77,10 +73,16 @@ test.describe('Create PR Modal', () => {
 
   test('PR modal opens with title auto-filled from branch name', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPrModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const titleInput = page.locator('[data-testid="create-pr-title"]')
     await expect(titleInput).toBeVisible()
@@ -90,12 +92,20 @@ test.describe('Create PR Modal', () => {
     expect(titleValue.length).toBeGreaterThanOrEqual(0)
   })
 
-  test('title input is editable and required (create button disabled when empty)', async ({ electronPage: page }) => {
+  test('title input is editable and required (create button disabled when empty)', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPrModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const titleInput = page.locator('[data-testid="create-pr-title"]')
     await expect(titleInput).toBeVisible()
@@ -105,7 +115,9 @@ test.describe('Create PR Modal', () => {
     await page.waitForTimeout(300)
 
     // Create button should be disabled when title is empty
-    const createBtn = page.locator('[data-testid="create-pr-modal"]').getByText(/create pull request/i)
+    const createBtn = page
+      .locator('[data-testid="create-pr-modal"]')
+      .getByText(/create pull request/i)
     const hasCreateBtn = await createBtn.isVisible({ timeout: 2_000 }).catch(() => false)
     if (hasCreateBtn) {
       await expect(createBtn).toBeDisabled()
@@ -120,17 +132,28 @@ test.describe('Create PR Modal', () => {
     }
   })
 
-  test('generate description button triggers AI description generation', async ({ electronPage: page }) => {
+  test('generate description button triggers AI description generation', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPrModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     // Look for the "Auto-generate" button
     const generateBtn = page.locator('[data-testid="create-pr-modal"]').getByText(/auto-generate/i)
     const hasBtn = await generateBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     await expect(generateBtn).toBeVisible()
 
@@ -141,10 +164,16 @@ test.describe('Create PR Modal', () => {
 
   test('base branch selector defaults to "main"', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPrModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const baseBranch = page.locator('[data-testid="create-pr-base-branch"]')
     await expect(baseBranch).toBeVisible()
@@ -154,32 +183,54 @@ test.describe('Create PR Modal', () => {
     expect(value).toBe('main')
   })
 
-  test('create button disabled during creation shows loading state', async ({ electronPage: page }) => {
+  test('create button disabled during creation shows loading state', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPrModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     // Verify the create button exists and has proper label
-    const createBtn = page.locator('[data-testid="create-pr-modal"]').locator('button').filter({
-      hasText: /create pull request/i
-    })
+    const createBtn = page
+      .locator('[data-testid="create-pr-modal"]')
+      .locator('button')
+      .filter({
+        hasText: /create pull request/i
+      })
     const hasBtn = await createBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     await expect(createBtn).toBeVisible()
   })
 
   test('success state shows PR URL with external link icon', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPrModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     // Look for success state (PR already created)
-    const successText = page.locator('[data-testid="create-pr-modal"]').getByText(/pull request created/i)
+    const successText = page
+      .locator('[data-testid="create-pr-modal"]')
+      .getByText(/pull request created/i)
     const hasSuccess = await successText.isVisible({ timeout: 2_000 }).catch(() => false)
 
     if (hasSuccess) {

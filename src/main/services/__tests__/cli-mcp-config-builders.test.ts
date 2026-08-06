@@ -86,32 +86,6 @@ describe('buildCoreServers', () => {
     assert.equal(servers['semantic-search'], undefined)
   })
 
-  test('conversationId → checkpoint-context server included', () => {
-    const servers = buildCoreServers(makeParams({ conversationId: 'conv-123' }))
-    assert.ok(servers['checkpoint-context'])
-    assert.equal(servers['checkpoint-context'].env?.CONVERSATION_ID, 'conv-123')
-  })
-
-  test('no conversationId → no checkpoint-context server', () => {
-    const servers = buildCoreServers(makeParams({ conversationId: null }))
-    assert.equal(servers['checkpoint-context'], undefined)
-  })
-
-  test('githubConfigured → github-context server included', () => {
-    const servers = buildCoreServers(
-      makeParams({
-        featureFlags: {
-          repomapEnabled: false,
-          semanticSearchEnabled: false,
-          githubConfigured: true,
-          localMcpActive: {}
-        }
-      })
-    )
-    assert.ok(servers['github-context'])
-    assert.equal(servers['github-context'].env?.WORKSPACE_ID, 'ws-001')
-  })
-
   test('always-on servers: git-context, code-analysis, control-actions', () => {
     const servers = buildCoreServers(
       makeParams({

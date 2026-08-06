@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Help Search & Navigation', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,9 +35,7 @@ test.describe('Help Search & Navigation', () => {
   }
 
   /** Open the help view via Cmd+/ shortcut and ensure TOC is visible. */
-  async function openHelpWithTOC(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openHelpWithTOC(page: import('@playwright/test').Page): Promise<boolean> {
     await page.keyboard.press('Meta+/')
     await page.waitForTimeout(1_000)
 
@@ -53,10 +49,16 @@ test.describe('Help Search & Navigation', () => {
 
   test('TOC search input accepts text and is visible', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasTOC = await openHelpWithTOC(page)
-    if (!hasTOC) { test.skip(); return }
+    if (!hasTOC) {
+      test.skip()
+      return
+    }
 
     const searchInput = page.locator('[data-testid="help-toc-search"]')
     await expect(searchInput).toBeVisible()
@@ -68,17 +70,26 @@ test.describe('Help Search & Navigation', () => {
 
   test('typing search query filters TOC to matching sections', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasTOC = await openHelpWithTOC(page)
-    if (!hasTOC) { test.skip(); return }
+    if (!hasTOC) {
+      test.skip()
+      return
+    }
 
     const tocNav = page.locator('nav[aria-label="Help table of contents"]')
     const sectionButtons = tocNav.locator('ul button')
 
     // Count sections before search
     const fullCount = await sectionButtons.count()
-    if (fullCount === 0) { test.skip(); return }
+    if (fullCount === 0) {
+      test.skip()
+      return
+    }
 
     // Type a specific query
     const searchInput = page.locator('[data-testid="help-toc-search"]')
@@ -91,23 +102,35 @@ test.describe('Help Search & Navigation', () => {
     expect(filteredCount).toBeGreaterThan(0)
 
     // "Models" section should still be visible
-    const modelsBtn = tocNav.locator('button').filter({ hasText: /Models/i }).first()
+    const modelsBtn = tocNav
+      .locator('button')
+      .filter({ hasText: /Models/i })
+      .first()
     await expect(modelsBtn).toBeVisible()
   })
 
   test('clearing search restores all TOC sections', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasTOC = await openHelpWithTOC(page)
-    if (!hasTOC) { test.skip(); return }
+    if (!hasTOC) {
+      test.skip()
+      return
+    }
 
     const tocNav = page.locator('nav[aria-label="Help table of contents"]')
     const sectionButtons = tocNav.locator('ul button')
 
     // Count full sections
     const fullCount = await sectionButtons.count()
-    if (fullCount === 0) { test.skip(); return }
+    if (fullCount === 0) {
+      test.skip()
+      return
+    }
 
     // Type query to filter
     const searchInput = page.locator('[data-testid="help-toc-search"]')
@@ -125,10 +148,16 @@ test.describe('Help Search & Navigation', () => {
 
   test('unmatched search shows no-matching-topics empty state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasTOC = await openHelpWithTOC(page)
-    if (!hasTOC) { test.skip(); return }
+    if (!hasTOC) {
+      test.skip()
+      return
+    }
 
     // Type a query that won't match any section
     const searchInput = page.locator('[data-testid="help-toc-search"]')
@@ -145,12 +174,20 @@ test.describe('Help Search & Navigation', () => {
     expect(hasEmpty || hasEmptyText).toBeTruthy()
   })
 
-  test('section group dividers render for Workspace Settings and Advanced', async ({ electronPage: page }) => {
+  test('section group dividers render for Workspace Settings and Advanced', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasTOC = await openHelpWithTOC(page)
-    if (!hasTOC) { test.skip(); return }
+    if (!hasTOC) {
+      test.skip()
+      return
+    }
 
     const tocNav = page.locator('nav[aria-label="Help table of contents"]')
 
@@ -164,10 +201,16 @@ test.describe('Help Search & Navigation', () => {
 
   test('active section button has aria-current page attribute', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasTOC = await openHelpWithTOC(page)
-    if (!hasTOC) { test.skip(); return }
+    if (!hasTOC) {
+      test.skip()
+      return
+    }
 
     const tocNav = page.locator('nav[aria-label="Help table of contents"]')
 
@@ -178,7 +221,10 @@ test.describe('Help Search & Navigation', () => {
     // Click a different section
     const allButtons = tocNav.locator('ul button')
     const btnCount = await allButtons.count()
-    if (btnCount < 2) { test.skip(); return }
+    if (btnCount < 2) {
+      test.skip()
+      return
+    }
 
     // Click the last button (likely different from active)
     await allButtons.nth(btnCount - 1).click()

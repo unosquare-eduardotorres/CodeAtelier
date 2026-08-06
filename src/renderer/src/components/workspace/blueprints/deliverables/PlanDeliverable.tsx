@@ -57,7 +57,7 @@ export function PlanDeliverable({
   const json = plan?.contentJson as Record<string, unknown> | undefined
 
   const items = useMemo(
-    () => ((json?.items ?? json?.phases ?? json?.steps ?? []) as PlanItem[]),
+    () => (json?.items ?? json?.phases ?? json?.steps ?? []) as PlanItem[],
     [json]
   )
 
@@ -79,7 +79,11 @@ export function PlanDeliverable({
   if (!json && plan?.contentMd) {
     return (
       <div>
-        <DeliverableHeader config={config} summary="Implementation plan drafted" duration={duration} />
+        <DeliverableHeader
+          config={config}
+          summary="Implementation plan drafted"
+          duration={duration}
+        />
         <CappedMarkdownBlock content={plan.contentMd} label="Plan Details" className="" />
       </div>
     )
@@ -89,7 +93,9 @@ export function PlanDeliverable({
     return (
       <div>
         <DeliverableHeader config={config} summary="No plan artifact found" duration={duration} />
-        <p className="text-xs text-text-muted italic">The plan artifact was not produced by this phase.</p>
+        <p className="text-xs text-text-muted italic">
+          The plan artifact was not produced by this phase.
+        </p>
       </div>
     )
   }
@@ -104,19 +110,23 @@ export function PlanDeliverable({
 
       {/* Recommendation banner */}
       {recommendation && (
-        <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-6 ${
-          recommendation === 'proceed'
-            ? 'bg-success/10 border-success/20'
-            : 'bg-warning/10 border-warning/20'
-        }`}>
+        <div
+          className={`flex items-center gap-3 px-4 py-3 rounded-xl border mb-6 ${
+            recommendation === 'proceed'
+              ? 'bg-success/10 border-success/20'
+              : 'bg-warning/10 border-warning/20'
+          }`}
+        >
           {recommendation === 'proceed' ? (
             <CheckCircle2 size={16} className="text-success" />
           ) : (
             <AlertTriangle size={16} className="text-warning" />
           )}
-          <span className={`text-sm font-semibold ${
-            recommendation === 'proceed' ? 'text-success' : 'text-warning'
-          }`}>
+          <span
+            className={`text-sm font-semibold ${
+              recommendation === 'proceed' ? 'text-success' : 'text-warning'
+            }`}
+          >
             {recommendation === 'proceed' ? 'Ready to Proceed' : recommendation.replace(/_/g, ' ')}
           </span>
         </div>
@@ -126,14 +136,24 @@ export function PlanDeliverable({
       <div className="grid grid-cols-4 gap-3 mb-6">
         <MetricTile label="Plan Items" value={items.length} />
         <MetricTile label="Total Files" value={totalFiles} />
-        <MetricTile label="Risks" value={risks.length} variant={risks.length > 0 ? 'warning' : 'default'} />
-        <MetricTile label="Violations" value={violations} variant={violations > 0 ? 'danger' : 'success'} />
+        <MetricTile
+          label="Risks"
+          value={risks.length}
+          variant={risks.length > 0 ? 'warning' : 'default'}
+        />
+        <MetricTile
+          label="Violations"
+          value={violations}
+          variant={violations > 0 ? 'danger' : 'success'}
+        />
       </div>
 
       {/* Summary */}
       {summary && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">Summary</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
+            Summary
+          </h3>
           <p className="text-sm text-text-secondary leading-relaxed border-l-2 border-accent/30 pl-4 italic">
             {summary}
           </p>
@@ -143,11 +163,18 @@ export function PlanDeliverable({
       {/* Tech Stack */}
       {techStack && Object.keys(techStack).length > 0 && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Tech Stack</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Tech Stack
+          </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {Object.entries(techStack).map(([key, value]) => (
-              <div key={key} className="rounded-lg border border-border-subtle bg-surface-overlay px-3 py-2">
-                <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">{key}</div>
+              <div
+                key={key}
+                className="rounded-lg border border-border-subtle bg-surface-overlay px-3 py-2"
+              >
+                <div className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                  {key}
+                </div>
                 <div className="text-sm text-text-primary font-medium mt-0.5">{value}</div>
               </div>
             ))}
@@ -157,14 +184,18 @@ export function PlanDeliverable({
 
       {/* Plan table (reused component) */}
       <div className="mb-6">
-        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Implementation Plan</h3>
+        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+          Implementation Plan
+        </h3>
         <BlueprintPlanCard plan={json} />
       </div>
 
       {/* Dependency diagram */}
       {diagram && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Dependency Flow</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Dependency Flow
+          </h3>
           <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4 overflow-hidden">
             <MermaidDiagram definition={diagram} id="plan-deps" />
           </div>
@@ -174,10 +205,15 @@ export function PlanDeliverable({
       {/* Risks */}
       {risks.length > 0 && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Risks</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Risks
+          </h3>
           <div className="space-y-2">
             {risks.map((risk, i) => (
-              <div key={i} className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/5 border border-warning/10">
+              <div
+                key={i}
+                className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/5 border border-warning/10"
+              >
                 <AlertTriangle size={14} className="text-warning mt-0.5 flex-shrink-0" />
                 <span className="text-sm text-text-secondary">{risk}</span>
               </div>

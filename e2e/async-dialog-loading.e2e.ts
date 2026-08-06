@@ -18,9 +18,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Async Dialog Loading', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -34,9 +32,7 @@ test.describe('Async Dialog Loading', () => {
     return true
   }
 
-  async function selectConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasTab) {
@@ -51,22 +47,39 @@ test.describe('Async Dialog Loading', () => {
     return true
   }
 
-  test('RewindDialog shows loading state before checkpoint list', async ({ electronPage: page }) => {
+  test('RewindDialog shows loading state before checkpoint list', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConvo = await selectConversation(page)
-    if (!hasConvo) { test.skip(); return }
+    if (!hasConvo) {
+      test.skip()
+      return
+    }
 
     // Try to open rewind dialog
     const rewindBtn = page.locator('button:has-text("Rewind"), [data-testid="rewind-btn"]')
-    const hasRewindBtn = await rewindBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRewindBtn) { test.skip(); return }
+    const hasRewindBtn = await rewindBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasRewindBtn) {
+      test.skip()
+      return
+    }
     await rewindBtn.first().click()
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Immediately check for loading state OR already-loaded checkpoints
     const loadingText = dialog.locator('text=Loading checkpoints')
@@ -75,7 +88,10 @@ test.describe('Async Dialog Loading', () => {
 
     // At least one state should be visible
     const hasLoading = await loadingText.isVisible({ timeout: 1_000 }).catch(() => false)
-    const hasCheckpoints = await checkpoints.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasCheckpoints = await checkpoints
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     const hasNone = await noCheckpoints.isVisible({ timeout: 1_000 }).catch(() => false)
 
     expect(hasLoading || hasCheckpoints || hasNone).toBe(true)
@@ -86,20 +102,37 @@ test.describe('Async Dialog Loading', () => {
 
   test('CloseDialog shows InsightsSummary loading skeleton', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConvo = await selectConversation(page)
-    if (!hasConvo) { test.skip(); return }
+    if (!hasConvo) {
+      test.skip()
+      return
+    }
 
     // Try to open close dialog
-    const closeBtn = page.locator('[data-testid="close-conversation-btn"], button:has-text("Close")')
-    const hasCloseBtn = await closeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCloseBtn) { test.skip(); return }
+    const closeBtn = page.locator(
+      '[data-testid="close-conversation-btn"], button:has-text("Close")'
+    )
+    const hasCloseBtn = await closeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasCloseBtn) {
+      test.skip()
+      return
+    }
     await closeBtn.first().click()
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Check for insights loading skeleton or already-loaded insights
     const insightsLoading = dialog.locator('[data-testid="insights-loading"]')
@@ -120,22 +153,39 @@ test.describe('Async Dialog Loading', () => {
     await page.keyboard.press('Escape')
   })
 
-  test('CompleteDialog shows "Generating" during PR description generation', async ({ electronPage: page }) => {
+  test('CompleteDialog shows "Generating" during PR description generation', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConvo = await selectConversation(page)
-    if (!hasConvo) { test.skip(); return }
+    if (!hasConvo) {
+      test.skip()
+      return
+    }
 
     // Try to open complete dialog
     const completeBtn = page.locator('button:has-text("Complete"), [data-testid="complete-btn"]')
-    const hasCompleteBtn = await completeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCompleteBtn) { test.skip(); return }
+    const hasCompleteBtn = await completeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasCompleteBtn) {
+      test.skip()
+      return
+    }
     await completeBtn.first().click()
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Check for "Generating" text or loading indicator
     const generatingText = dialog.locator('text=Generating')
@@ -143,7 +193,10 @@ test.describe('Async Dialog Loading', () => {
     const insightsLoading = dialog.locator('[data-testid="insights-loading"]')
 
     const hasGenerating = await generatingText.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasSpinner = await loadingSpinner.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasSpinner = await loadingSpinner
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     const hasInsightsLoad = await insightsLoading.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // At least one loading indicator should be present or content is already loaded
@@ -159,20 +212,37 @@ test.describe('Async Dialog Loading', () => {
 
   test('dialog remains interactive after async data loads', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConvo = await selectConversation(page)
-    if (!hasConvo) { test.skip(); return }
+    if (!hasConvo) {
+      test.skip()
+      return
+    }
 
     // Open close dialog (has async insights loading)
-    const closeBtn = page.locator('[data-testid="close-conversation-btn"], button:has-text("Close")')
-    const hasCloseBtn = await closeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCloseBtn) { test.skip(); return }
+    const closeBtn = page.locator(
+      '[data-testid="close-conversation-btn"], button:has-text("Close")'
+    )
+    const hasCloseBtn = await closeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasCloseBtn) {
+      test.skip()
+      return
+    }
     await closeBtn.first().click()
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for async data to load
     await page.waitForTimeout(3_000)
@@ -195,20 +265,37 @@ test.describe('Async Dialog Loading', () => {
 
   test('dialog handles missing/failed async data gracefully', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConvo = await selectConversation(page)
-    if (!hasConvo) { test.skip(); return }
+    if (!hasConvo) {
+      test.skip()
+      return
+    }
 
     // Open any dialog with async loading
-    const closeBtn = page.locator('[data-testid="close-conversation-btn"], button:has-text("Close")')
-    const hasCloseBtn = await closeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCloseBtn) { test.skip(); return }
+    const closeBtn = page.locator(
+      '[data-testid="close-conversation-btn"], button:has-text("Close")'
+    )
+    const hasCloseBtn = await closeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasCloseBtn) {
+      test.skip()
+      return
+    }
     await closeBtn.first().click()
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for all async ops to complete or fail
     await page.waitForTimeout(3_000)

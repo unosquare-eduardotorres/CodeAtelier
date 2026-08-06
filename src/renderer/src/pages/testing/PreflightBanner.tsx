@@ -41,9 +41,7 @@ export default function PreflightBanner({
           <div>
             <span className="text-sm font-medium text-text-body">oMLX Connection</span>
             {preflight?.ok && (
-              <span className="ml-2 text-xs text-text-secondary">
-                Model: {preflight.modelId}
-              </span>
+              <span className="ml-2 text-xs text-text-secondary">Model: {preflight.modelId}</span>
             )}
             {preflight && !preflight.ok && (
               <span className="ml-2 text-xs text-danger">{preflight.error}</span>
@@ -101,11 +99,7 @@ export default function PreflightBanner({
             disabled={isChecking}
             className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded-lg border border-border-subtle hover:bg-surface-raised transition-colors disabled:opacity-50"
           >
-            {isChecking ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}
+            {isChecking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
             Check
           </button>
         </div>
@@ -116,9 +110,9 @@ export default function PreflightBanner({
         <div className="flex items-start gap-2 px-4 py-2.5 border-t border-warning/20 bg-warning/5">
           <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
           <div className="text-xs text-text-secondary leading-relaxed">
-            <span className="font-medium text-warning">Tool calling probe returned negative.</span>
-            {' '}Tool-dependent scenarios will be auto-skipped unless overridden.
-            {' '}The probe tests native oMLX tool_calls, but OpenCode may drive tools differently.
+            <span className="font-medium text-warning">Tool calling probe returned negative.</span>{' '}
+            Tool-dependent scenarios will be auto-skipped unless overridden. The probe tests native
+            oMLX tool_calls, but OpenCode may drive tools differently.
             <label className="flex items-center gap-1.5 mt-1.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -137,8 +131,8 @@ export default function PreflightBanner({
         <div className="flex items-start gap-2 px-4 py-2.5 border-t border-info/20 bg-info/5">
           <AlertTriangle size={14} className="text-info mt-0.5 shrink-0" />
           <div className="text-xs text-text-secondary leading-relaxed">
-            <span className="font-medium text-info">Text-only model detected.</span>
-            {' '}Vision scenarios (image attachments) will be auto-skipped.
+            <span className="font-medium text-info">Text-only model detected.</span> Vision
+            scenarios (image attachments) will be auto-skipped.
           </div>
         </div>
       )}

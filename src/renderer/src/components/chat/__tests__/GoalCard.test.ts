@@ -51,31 +51,19 @@ function visibleButtons(props: GoalCardProps): string[] {
 
 describe('GoalCard — isModified logic', () => {
   test('default render (no originalGoal) → not modified', () => {
-    assert.equal(
-      isGoalModified({ goal: 'Build an API' }),
-      false
-    )
+    assert.equal(isGoalModified({ goal: 'Build an API' }), false)
   })
 
   test('goal matches originalGoal → not modified', () => {
-    assert.equal(
-      isGoalModified({ goal: 'Build an API', originalGoal: 'Build an API' }),
-      false
-    )
+    assert.equal(isGoalModified({ goal: 'Build an API', originalGoal: 'Build an API' }), false)
   })
 
   test('goal differs from originalGoal → modified', () => {
-    assert.equal(
-      isGoalModified({ goal: 'Build a CLI tool', originalGoal: 'Build an API' }),
-      true
-    )
+    assert.equal(isGoalModified({ goal: 'Build a CLI tool', originalGoal: 'Build an API' }), true)
   })
 
   test('whitespace-only difference → not modified (trim comparison)', () => {
-    assert.equal(
-      isGoalModified({ goal: '  Build an API  ', originalGoal: 'Build an API' }),
-      false
-    )
+    assert.equal(isGoalModified({ goal: '  Build an API  ', originalGoal: 'Build an API' }), false)
   })
 
   test('readOnly mode + different goal → not modified (readOnly suppresses)', () => {
@@ -90,31 +78,24 @@ describe('GoalCard — isModified logic', () => {
   })
 
   test('empty goal vs non-empty originalGoal → modified', () => {
-    assert.equal(
-      isGoalModified({ goal: '', originalGoal: 'Build an API' }),
-      true
-    )
+    assert.equal(isGoalModified({ goal: '', originalGoal: 'Build an API' }), true)
   })
 
   test('both empty → not modified', () => {
-    assert.equal(
-      isGoalModified({ goal: '', originalGoal: '' }),
-      false
-    )
+    assert.equal(isGoalModified({ goal: '', originalGoal: '' }), false)
   })
 
   test('originalGoal is undefined → not modified regardless of goal', () => {
-    assert.equal(
-      isGoalModified({ goal: 'Anything at all', originalGoal: undefined }),
-      false
-    )
+    assert.equal(isGoalModified({ goal: 'Anything at all', originalGoal: undefined }), false)
   })
 })
 
 describe('GoalCard — button visibility', () => {
   test('Reset button calls onReset when modified', () => {
     let resetCalled = false
-    const onReset = (): void => { resetCalled = true }
+    const onReset = (): void => {
+      resetCalled = true
+    }
     const buttons = visibleButtons({
       goal: 'New goal',
       originalGoal: 'Old goal',

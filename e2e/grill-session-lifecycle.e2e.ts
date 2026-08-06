@@ -42,7 +42,10 @@ test.describe('Grill Session Lifecycle', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -68,7 +71,10 @@ test.describe('Grill Session Lifecycle', () => {
     const settings = new WorkspaceSettings(page)
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -79,9 +85,7 @@ test.describe('Grill Session Lifecycle', () => {
 
   // ── 1. Grill session restores after page navigation ───────────────
 
-  test('grill session restores after navigating away and back', async ({
-    electronPage: page
-  }) => {
+  test('grill session restores after navigating away and back', async ({ electronPage: page }) => {
     const onGrill = await navigateToGrill(page)
     if (!onGrill) {
       test.skip()
@@ -125,7 +129,7 @@ test.describe('Grill Session Lifecycle', () => {
 
     // Content should still be present (session was persisted)
     const restoredContent = await grillPageRestored.textContent()
-    expect((restoredContent?.length ?? 0)).toBeGreaterThan(0)
+    expect(restoredContent?.length ?? 0).toBeGreaterThan(0)
   })
 
   // ── 2. Multiple iterations show in sidebar ────────────────────────
@@ -263,9 +267,7 @@ test.describe('Grill Session Lifecycle', () => {
 
   // ── 4. Score gauge numeric value matches evaluation ────────────────
 
-  test('score gauge displays numeric value matching evaluation', async ({
-    electronPage: page
-  }) => {
+  test('score gauge displays numeric value matching evaluation', async ({ electronPage: page }) => {
     const onGrill = await navigateToGrill(page)
     if (!onGrill) {
       test.skip()

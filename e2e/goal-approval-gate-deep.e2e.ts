@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('GoalApprovalGate', () => {
-  async function navigateToApprovalGate(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToApprovalGate(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -46,7 +44,10 @@ test.describe('GoalApprovalGate', () => {
 
   test('approval gate renders with plan summary text', async ({ electronPage: page }) => {
     const ready = await navigateToApprovalGate(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const gate = page.locator('[data-testid="goal-approval-gate"]')
     await expect(gate).toBeVisible()
@@ -57,17 +58,23 @@ test.describe('GoalApprovalGate', () => {
 
     // Should have a plan summary in the bg-surface-base container
     const summary = gate.locator('.bg-surface-base.rounded-lg')
-    const hasSummary = await summary.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSummary = await summary
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasSummary).toBe(true)
 
     // Summary should contain text
-    const summaryText = await summary.first().textContent() ?? ''
+    const summaryText = (await summary.first().textContent()) ?? ''
     expect(summaryText.length).toBeGreaterThan(0)
   })
 
   test('plan items display with scope badge colors', async ({ electronPage: page }) => {
     const ready = await navigateToApprovalGate(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const gate = page.locator('[data-testid="goal-approval-gate"]')
     await expect(gate).toBeVisible()
@@ -86,7 +93,9 @@ test.describe('GoalApprovalGate', () => {
 
       // Scope badges should show colored text
       // Check for any of the scope colors (green=backend, blue=frontend, purple=database, cyan=shared, yellow=tests)
-      const scopeBadges = gate.locator('[class*="text-green-400"], [class*="text-blue-400"], [class*="text-purple-400"], [class*="text-cyan-400"], [class*="text-yellow-400"]')
+      const scopeBadges = gate.locator(
+        '[class*="text-green-400"], [class*="text-blue-400"], [class*="text-purple-400"], [class*="text-cyan-400"], [class*="text-yellow-400"]'
+      )
       const badgeCount = await scopeBadges.count()
       expect(badgeCount).toBeGreaterThanOrEqual(0) // Scope badges are optional
     }
@@ -96,14 +105,20 @@ test.describe('GoalApprovalGate', () => {
 
   test('risks section shows when plan has risks', async ({ electronPage: page }) => {
     const ready = await navigateToApprovalGate(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const gate = page.locator('[data-testid="goal-approval-gate"]')
     await expect(gate).toBeVisible()
 
     // Risks section is conditionally rendered
     const risksLabel = gate.locator('text=Risks')
-    const hasRisks = await risksLabel.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasRisks = await risksLabel
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasRisks) {
       // Risk items should be present with ⚠ prefix
@@ -118,7 +133,10 @@ test.describe('GoalApprovalGate', () => {
 
   test('approve button is visible and clickable', async ({ electronPage: page }) => {
     const ready = await navigateToApprovalGate(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const gate = page.locator('[data-testid="goal-approval-gate"]')
     await expect(gate).toBeVisible()
@@ -128,11 +146,11 @@ test.describe('GoalApprovalGate', () => {
     await expect(approveBtn).toBeVisible()
 
     // Should have "Approve & Execute" text
-    const btnText = await approveBtn.textContent() ?? ''
+    const btnText = (await approveBtn.textContent()) ?? ''
     expect(btnText).toContain('Approve')
 
     // Should have success background styling
-    const classes = await approveBtn.getAttribute('class') ?? ''
+    const classes = (await approveBtn.getAttribute('class')) ?? ''
     expect(classes).toContain('bg-success')
 
     // Button should be enabled
@@ -142,7 +160,10 @@ test.describe('GoalApprovalGate', () => {
 
   test('clicking reject reveals feedback textarea', async ({ electronPage: page }) => {
     const ready = await navigateToApprovalGate(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const gate = page.locator('[data-testid="goal-approval-gate"]')
     await expect(gate).toBeVisible()
@@ -176,7 +197,10 @@ test.describe('GoalApprovalGate', () => {
 
   test('cancel button X dismisses the gate', async ({ electronPage: page }) => {
     const ready = await navigateToApprovalGate(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const gate = page.locator('[data-testid="goal-approval-gate"]')
     await expect(gate).toBeVisible()
@@ -185,7 +209,10 @@ test.describe('GoalApprovalGate', () => {
     const closeBtn = gate.locator('button[title="Cancel goal"]')
     const hasClose = await closeBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasClose) { test.skip(); return }
+    if (!hasClose) {
+      test.skip()
+      return
+    }
 
     await expect(closeBtn).toBeVisible()
 

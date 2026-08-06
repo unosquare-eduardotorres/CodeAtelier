@@ -99,7 +99,7 @@ interface StreamingResetPatch {
   streamingTaskId: null
   conversationState: { phase: 'idle'; from: null; event: null; conversationId: null }
   streamingConversationIds: Set<string>
-  streamStalledConversationId: null  // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
+  streamStalledConversationId: null // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
 }
 
 /**
@@ -127,7 +127,7 @@ export function buildStreamingResetState(
     streamingTaskId: null,
     conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
     streamingConversationIds: newStreamingIds,
-    streamStalledConversationId: null  // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
+    streamStalledConversationId: null // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
   }
 }
 

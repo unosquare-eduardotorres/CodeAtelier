@@ -38,10 +38,14 @@ export function discoverDocs(workspacePath: string): string[] {
         const fullPath = join(workspacePath, entry)
         try {
           if (statSync(fullPath).isFile()) found.push(fullPath)
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
     }
-  } catch { /* skip */ }
+  } catch {
+    /* skip */
+  }
 
   // Doc directories
   for (const dir of DOC_DIRS) {
@@ -52,7 +56,9 @@ export function discoverDocs(workspacePath: string): string[] {
   // ADR directories
   try {
     findAdrDirs(workspacePath, found, 0)
-  } catch { /* skip */ }
+  } catch {
+    /* skip */
+  }
 
   // Scattered docs: find .md files outside standard doc dirs
   discoverScatteredDocs(workspacePath, found, MAX_SCATTERED_DOCS)
@@ -81,9 +87,13 @@ export function walkForMd(
         } else if (stat.isFile() && /\.(md|txt|rst|adoc)$/i.test(entry)) {
           files.push(fullPath)
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
-  } catch { /* skip */ }
+  } catch {
+    /* skip */
+  }
 }
 
 export function findAdrDirs(dirPath: string, files: string[], depth: number): void {
@@ -103,17 +113,17 @@ export function findAdrDirs(dirPath: string, files: string[], depth: number): vo
             findAdrDirs(fullPath, files, depth + 1)
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
-  } catch { /* skip */ }
+  } catch {
+    /* skip */
+  }
 }
 
 /** Find .md files outside standard doc dirs (e.g. feature/README.md) */
-export function discoverScatteredDocs(
-  rootPath: string,
-  files: string[],
-  maxFiles: number
-): void {
+export function discoverScatteredDocs(rootPath: string, files: string[], maxFiles: number): void {
   if (files.length >= maxFiles) return
 
   const seen = new Set(files) // O(1) lookups instead of O(n) includes()
@@ -138,9 +148,13 @@ export function discoverScatteredDocs(
             files.push(fullPath)
             seen.add(fullPath)
           }
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
 
   walk(rootPath, 0)
@@ -177,7 +191,9 @@ export function collectManifests(workspacePath: string): string {
             }
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     } else {
       const fullPath = join(workspacePath, pattern)
       const content = readCapped(fullPath)
@@ -187,8 +203,11 @@ export function collectManifests(workspacePath: string): string {
 
   // Also detect schema file
   const schemaPatterns = [
-    'src/main/db/schema.sql', 'schema.sql', 'db/schema.sql',
-    'prisma/schema.prisma', 'drizzle/schema.ts'
+    'src/main/db/schema.sql',
+    'schema.sql',
+    'db/schema.sql',
+    'prisma/schema.prisma',
+    'drizzle/schema.ts'
   ]
   for (const sp of schemaPatterns) {
     const content = readCapped(join(workspacePath, sp), 10000)
@@ -200,8 +219,11 @@ export function collectManifests(workspacePath: string): string {
 
   // Migration directory listing
   const migrationDirs = [
-    'src/main/db/migrations', 'migrations', 'db/migrations',
-    'prisma/migrations', 'drizzle/migrations'
+    'src/main/db/migrations',
+    'migrations',
+    'db/migrations',
+    'prisma/migrations',
+    'drizzle/migrations'
   ]
   for (const md of migrationDirs) {
     const dirPath = join(workspacePath, md)
@@ -211,7 +233,9 @@ export function collectManifests(workspacePath: string): string {
         parts.push(`## ${md} (last 20 entries)\n${entries.join('\n')}`)
         break
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
 
   return parts.join('\n\n').substring(0, 50000)
@@ -279,9 +303,13 @@ export function estimateProjectComplexity(workspacePath: string): {
               if (stat.size > 10_000) hasDeepDocs = true
             }
           }
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
-    } catch { /* skip */ }
+    } catch {
+      /* skip */
+    }
   }
 
   walk(workspacePath, 0)

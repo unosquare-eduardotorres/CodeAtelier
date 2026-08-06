@@ -20,9 +20,7 @@ test.describe('Blueprint File Tree', () => {
   /**
    * Helper: navigate to the Blueprints tab and open the new blueprint form.
    */
-  async function navigateToBlueprintInput(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToBlueprintInput(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const settings = new WorkspaceSettings(page)
 
@@ -41,7 +39,10 @@ test.describe('Blueprint File Tree', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -67,9 +68,7 @@ test.describe('Blueprint File Tree', () => {
 
   // ── File tree modal ──
 
-  test('WorkspaceFileTree modal opens with directory listing', async ({
-    electronPage: page
-  }) => {
+  test('WorkspaceFileTree modal opens with directory listing', async ({ electronPage: page }) => {
     const hasInput = await navigateToBlueprintInput(page)
 
     if (!hasInput) {
@@ -280,9 +279,7 @@ test.describe('Blueprint File Tree', () => {
 
   // ── Directory collapse/expand preserves selection state ──
 
-  test('directory collapse/expand preserves selection state', async ({
-    electronPage: page
-  }) => {
+  test('directory collapse/expand preserves selection state', async ({ electronPage: page }) => {
     const hasInput = await navigateToBlueprintInput(page)
 
     if (!hasInput) {
@@ -334,7 +331,10 @@ test.describe('Blueprint File Tree', () => {
       }
 
       // Check that the checkbox is still checked after collapse/expand
-      const _isStillChecked = await checkboxes.first().isChecked().catch(() => false)
+      const _isStillChecked = await checkboxes
+        .first()
+        .isChecked()
+        .catch(() => false)
       // Selection state should be preserved (true) or at minimum the checkbox should exist
       expect(cbCount).toBeGreaterThan(0)
     } else {

@@ -17,14 +17,7 @@
 
 import { useState, useCallback, useRef, useEffect, type JSX } from 'react'
 import { useDropzone } from 'react-dropzone'
-import {
-  Paperclip,
-  Link2,
-  Upload,
-  Maximize2,
-  X,
-  Check
-} from 'lucide-react'
+import { Paperclip, Link2, Upload, Maximize2, X, Check } from 'lucide-react'
 import type { ReferenceDocument } from '../../../../../shared/blueprint-types'
 import { useClipboardImagePaste, MAX_IMAGE_ATTACHMENTS, IMAGE_REGEX } from '@renderer/hooks'
 import { extractUrls, mergeUrlRefs } from './url-detector'
@@ -40,10 +33,40 @@ const LARGE_PASTE_THRESHOLD = 2000
 const CHAR_COUNT_THRESHOLD = 500
 
 const ACCEPTED_EXTENSIONS = [
-  '.txt', '.md', '.json', '.ts', '.tsx', '.js', '.jsx', '.py', '.sql',
-  '.yml', '.yaml', '.csv', '.png', '.jpg', '.jpeg', '.gif', '.webp',
-  '.pdf', '.doc', '.docx', '.html', '.xml', '.toml', '.env', '.sh',
-  '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.css', '.scss'
+  '.txt',
+  '.md',
+  '.json',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.py',
+  '.sql',
+  '.yml',
+  '.yaml',
+  '.csv',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.html',
+  '.xml',
+  '.toml',
+  '.env',
+  '.sh',
+  '.rs',
+  '.go',
+  '.java',
+  '.kt',
+  '.swift',
+  '.rb',
+  '.php',
+  '.css',
+  '.scss'
 ]
 
 const SUPPORTED_FORMAT_CHIPS = [
@@ -100,22 +123,19 @@ export function BlueprintInputView({
   // The expand modal still uses its own full-height layout.
 
   // ── URL detection on description change ──
-  const handleDescriptionChange = useCallback(
-    (value: string, prevLength?: number) => {
-      setDescription(value)
-      // Detect large paste
-      if (prevLength !== undefined && value.length - prevLength > LARGE_PASTE_THRESHOLD) {
-        setLargePasteFlash(true)
-        setTimeout(() => setLargePasteFlash(false), 2500)
-      }
-      // Detect URLs in pasted text
-      const detected = extractUrls(value)
-      if (detected.length > 0) {
-        setReferenceDocs((prev) => mergeUrlRefs(prev, detected))
-      }
-    },
-    []
-  )
+  const handleDescriptionChange = useCallback((value: string, prevLength?: number) => {
+    setDescription(value)
+    // Detect large paste
+    if (prevLength !== undefined && value.length - prevLength > LARGE_PASTE_THRESHOLD) {
+      setLargePasteFlash(true)
+      setTimeout(() => setLargePasteFlash(false), 2500)
+    }
+    // Detect URLs in pasted text
+    const detected = extractUrls(value)
+    if (detected.length > 0) {
+      setReferenceDocs((prev) => mergeUrlRefs(prev, detected))
+    }
+  }, [])
 
   // ── Char / word count ──
   const charCount = description.length
@@ -234,9 +254,7 @@ export function BlueprintInputView({
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         className={`bg-surface-raised rounded-xl border overflow-hidden transition-colors flex flex-col flex-1 min-h-0 ${
-          isDragActive
-            ? 'border-accent border-dashed bg-accent/5'
-            : 'border-border-subtle'
+          isDragActive ? 'border-accent border-dashed bg-accent/5' : 'border-border-subtle'
         }`}
       >
         <input {...getInputProps()} />
@@ -275,9 +293,7 @@ export function BlueprintInputView({
               {/* Description — large-paste editor */}
               <div className="relative flex-1 flex flex-col min-h-0">
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-text-secondary">
-                    Description
-                  </label>
+                  <label className="text-xs font-medium text-text-secondary">Description</label>
                   <button
                     type="button"
                     onClick={() => setShowExpandModal(true)}
@@ -308,7 +324,8 @@ export function BlueprintInputView({
                 {showMeta && (
                   <div className="flex items-center justify-between mt-1.5 px-0.5">
                     <span className="text-[10px] text-text-muted">
-                      {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars · {wordCount.toLocaleString()} words
+                      {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars ·{' '}
+                      {wordCount.toLocaleString()} words
                     </span>
                     <button
                       type="button"
@@ -470,7 +487,8 @@ export function BlueprintInputView({
             {/* Modal footer */}
             <div className="flex items-center justify-between px-4 py-2 border-t border-border-subtle">
               <span className="text-[10px] text-text-muted">
-                {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars · {wordCount.toLocaleString()} words
+                {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars ·{' '}
+                {wordCount.toLocaleString()} words
               </span>
               <button
                 type="button"

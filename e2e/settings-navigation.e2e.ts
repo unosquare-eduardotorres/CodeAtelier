@@ -61,7 +61,10 @@ test.describe('Settings Navigation', () => {
 
     // Switch to settings tab in sidebar
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -73,9 +76,7 @@ test.describe('Settings Navigation', () => {
   test('settings panel renders with all tab buttons', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -93,9 +94,7 @@ test.describe('Settings Navigation', () => {
   test('each tab is clickable and active indicator follows', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -121,9 +120,7 @@ test.describe('Settings Navigation', () => {
   test('tab switching updates content area', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -147,9 +144,7 @@ test.describe('Settings Navigation', () => {
   test('tools group tabs are visible', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -172,9 +167,7 @@ test.describe('Settings Navigation', () => {
   test('configuration group tabs are visible', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -206,9 +199,7 @@ test.describe('Settings Navigation', () => {
   test('collapse settings panel hides labels', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -256,9 +247,7 @@ test.describe('Settings Navigation', () => {
   test('close workspace settings returns to chat', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()

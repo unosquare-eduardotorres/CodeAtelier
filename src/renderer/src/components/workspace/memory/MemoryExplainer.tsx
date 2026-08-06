@@ -44,22 +44,27 @@ export default function MemoryExplainer(): React.JSX.Element {
             <div className="flex items-center gap-1.5 flex-wrap">
               {TIERS.map((tier, i) => (
                 <div key={tier.label} className="flex items-center gap-1.5">
-                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-overlay ${tier.color} font-mono`}>
+                  <span
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded bg-surface-overlay ${tier.color} font-mono`}
+                  >
                     <span className={`w-1.5 h-1.5 rounded-full ${tier.dotColor}`} />
                     {tier.label}
                   </span>
                   {i < TIERS.length - 1 && (
                     <span className="text-text-muted">
-                      →<span className="text-[10px] align-super ml-0.5">{TIERS[i + 1].confirms}×</span>
+                      →
+                      <span className="text-[10px] align-super ml-0.5">
+                        {TIERS[i + 1].confirms}×
+                      </span>
                     </span>
                   )}
                 </div>
               ))}
             </div>
             <p className="mt-1.5 text-text-muted">
-              Each confirmation from a session or agent bumps the count.
-              Higher tiers rank higher in retrieval and survive longer.
-              Wisdom (T3) additionally requires human confirmations and a 30-day evidence span.
+              Each confirmation from a session or agent bumps the count. Higher tiers rank higher in
+              retrieval and survive longer. Wisdom (T3) additionally requires human confirmations
+              and a 30-day evidence span.
             </p>
           </div>
 

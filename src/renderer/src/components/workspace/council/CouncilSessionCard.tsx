@@ -1,4 +1,14 @@
-import { Loader2, CheckCircle, AlertTriangle, X, Eye, Play, Landmark, Trash2, ArrowRight } from 'lucide-react'
+import {
+  Loader2,
+  CheckCircle,
+  AlertTriangle,
+  X,
+  Eye,
+  Play,
+  Landmark,
+  Trash2,
+  ArrowRight
+} from 'lucide-react'
 import type {
   CouncilSessionStatus,
   CouncilInputType,
@@ -142,7 +152,10 @@ export default function CouncilSessionCard({
   const displayTitle = extractDisplayTitle(session)
 
   return (
-    <div data-testid="council-session-card" className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm">
+    <div
+      data-testid="council-session-card"
+      className="group w-full flex items-center gap-3 p-4 bg-surface-overlay rounded-lg border border-border-subtle hover:border-border-default transition-colors shadow-sm"
+    >
       {/* Icon */}
       <Landmark size={16} className="text-indigo-400/50 flex-shrink-0" />
 
@@ -176,7 +189,10 @@ export default function CouncilSessionCard({
               {onNavigateToPlans ? (
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onNavigateToPlans() }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onNavigateToPlans()
+                  }}
                   className="flex items-center gap-0.5 text-[10px] text-indigo-400 hover:text-indigo-300 transition-colors"
                 >
                   <ArrowRight size={10} />

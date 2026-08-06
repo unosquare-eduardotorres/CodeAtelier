@@ -34,7 +34,12 @@ export interface BlueprintPipelineSnapshot {
   phaseStartedAt: number | null
   clarifyFindings: ClarifyFindingsBlock | null
   clarifyQuestions: ClarifyQuestionsBlock | null
-  pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
+  pendingApproval: {
+    planSummary: string
+    completion?: Record<string, unknown>
+    reviewMarkdown?: string
+    preflight?: { result: Record<string, unknown>; overridden: boolean }
+  } | null
   wave: { wave: number; taskCount: number; tasks: Record<string, BlueprintTaskStatus> } | null
   /** Currently executing tasks during Build phase (G3: replaces singular currentTask). */
   runningTasks: Record<string, { taskId: string; description: string }> | null

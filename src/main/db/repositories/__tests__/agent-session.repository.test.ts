@@ -105,7 +105,10 @@ if (!env) {
     test('updateTokenUsage() with breakdown', () => {
       const session = agentSessionRepository.create('da-vinci', { workspaceId: wsId })
       agentSessionRepository.updateTokenUsage(session.id, 8000, {
-        input: 5000, output: 2000, cacheRead: 500, cacheCreation: 500
+        input: 5000,
+        output: 2000,
+        cacheRead: 500,
+        cacheCreation: 500
       })
       const updated = agentSessionRepository.findById(session.id)
       assert.equal(updated!.tokenUsage, 8000)
@@ -130,7 +133,8 @@ if (!env) {
     test('getConversationTokenSummary() works for conversation', () => {
       const convId = seedConversation(db, wsId)
       const session = agentSessionRepository.create('da-vinci', {
-        workspaceId: wsId, conversationId: convId
+        workspaceId: wsId,
+        conversationId: convId
       })
       agentSessionRepository.complete(session.id, 'completed', 1000)
       const summary = agentSessionRepository.getConversationTokenSummary(convId)

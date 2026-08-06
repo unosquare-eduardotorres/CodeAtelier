@@ -20,9 +20,7 @@ test.describe('UltraPlan Approval', () => {
   /**
    * Helper: Ensure we're in a workspace with Claude provider.
    */
-  async function ensureWorkspaceOpen(
-    page: import('@playwright/test').Page
-  ): Promise<void> {
+  async function ensureWorkspaceOpen(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -83,7 +81,9 @@ test.describe('UltraPlan Approval', () => {
     }
   })
 
-  test('Approval dialog renders with plan preview and 3 actions', async ({ electronPage: page }) => {
+  test('Approval dialog renders with plan preview and 3 actions', async ({
+    electronPage: page
+  }) => {
     await ensureWorkspaceOpen(page)
 
     // Approval dialog only appears when status=approved

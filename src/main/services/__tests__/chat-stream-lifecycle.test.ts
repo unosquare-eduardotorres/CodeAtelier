@@ -120,10 +120,8 @@ function createTestService(overrides?: {
       undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
     forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck'],
     describeBusy: undefined as unknown as ChatStreamServiceInternal['describeBusy'],
-    isConversationBusy:
-      undefined as unknown as ChatStreamServiceInternal['isConversationBusy'],
-    releaseConversation:
-      undefined as unknown as ChatStreamServiceInternal['releaseConversation'],
+    isConversationBusy: undefined as unknown as ChatStreamServiceInternal['isConversationBusy'],
+    releaseConversation: undefined as unknown as ChatStreamServiceInternal['releaseConversation'],
     sweepOrphanedConversations:
       undefined as unknown as ChatStreamServiceInternal['sweepOrphanedConversations']
   }

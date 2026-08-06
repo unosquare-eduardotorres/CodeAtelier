@@ -64,13 +64,13 @@ export function decryptSettingsKey(
       if (looksLikePlaintext) {
         console.warn(
           `[SEC-04b] decryptSettingsKey: encrypted flag set but value appears to be plaintext ` +
-          `(len=${value.length}). Returning raw value as fallback.`
+            `(len=${value.length}). Returning raw value as fallback.`
         )
         return value
       }
       console.warn(
         `[SEC-04b] decryptSettingsKey: decryption failed for encrypted value (len=${value.length}). ` +
-        `Key is lost — user must re-enter it.`
+          `Key is lost — user must re-enter it.`
       )
       return undefined
     }

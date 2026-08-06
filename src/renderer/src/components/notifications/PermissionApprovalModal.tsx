@@ -12,7 +12,14 @@
  * file paths, key-value params) via ToolInputPreview instead of a raw summary.
  */
 
-import { Shield, MessageCircle, CheckCircle2, Terminal, FolderOpen, MessageSquare } from 'lucide-react'
+import {
+  Shield,
+  MessageCircle,
+  CheckCircle2,
+  Terminal,
+  FolderOpen,
+  MessageSquare
+} from 'lucide-react'
 import type { PendingPermission, PermissionType, ConversationMode } from '../../../../shared/types'
 import ToolInputPreview from './ToolInputPreview'
 
@@ -124,11 +131,12 @@ export default function PermissionApprovalModal({
   // ── Extract structured data — new fields preferred, fall back to payload parsing ──
   const toolName =
     permission.toolName ??
-    (permission.payload as Record<string, unknown> | null)?.toolName as string | undefined ??
+    ((permission.payload as Record<string, unknown> | null)?.toolName as string | undefined) ??
     undefined
   const toolInput =
     permission.toolInput ??
-    (permission.payload as Record<string, unknown> | null)?.input as Record<string, unknown> | undefined ??
+    ((permission.payload as Record<string, unknown> | null)?.input as
+      Record<string, unknown> | undefined) ??
     undefined
   const conversationTitle = permission.conversationTitle
   const mode = permission.mode

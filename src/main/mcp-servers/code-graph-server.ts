@@ -110,8 +110,10 @@ function ensureReady(): Promise<CodeGraphServices> {
         throw new Error(compat.error ?? 'Native module check failed')
       }
       const { codeGraphService } = await import('../services/code-graph.service')
-      const { codeGraphTagRepository } = await import('../db/repositories/code-graph-tag.repository')
-      const { codeGraphEdgeRepository } = await import('../db/repositories/code-graph-edge.repository')
+      const { codeGraphTagRepository } =
+        await import('../db/repositories/code-graph-tag.repository')
+      const { codeGraphEdgeRepository } =
+        await import('../db/repositories/code-graph-edge.repository')
       console.error('[code-graph-server] Services initialized')
       return { codeGraphService, codeGraphTagRepository, codeGraphEdgeRepository }
     })()
@@ -120,14 +122,76 @@ function ensureReady(): Promise<CodeGraphServices> {
     readyPromise.catch((err) => {
       if (retryCount < MAX_RETRIES) {
         retryCount++
-        console.error(`[code-graph-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`, err)
+        console.error(
+          `[code-graph-server] Init failed (attempt ${retryCount}/${MAX_RETRIES}), will retry on next call:`,
+          err
+        )
         readyPromise = null // Allow next invocation to retry
       } else {
-        console.error(`[code-graph-server] Init failed after ${MAX_RETRIES} retries — giving up:`, err)
+        console.error(
+          `[code-graph-server] Init failed after ${MAX_RETRIES} retries — giving up:`,
+          err
+        )
       }
     })
   }
   return readyPromise
+}
+
+// ── Index-state awareness ──
+
+/**
+ * An empty result from an unindexed workspace is indistinguishable from a genuine
+ * miss, so the model retries or wrongly concludes the code does not exist. These
+ * helpers turn that silent dead-end into an explicit signal.
+ */
+const NOT_INDEXED_HINT =
+  'This workspace has no code-graph index — code-graph tools cannot answer. Use Grep/Glob instead, and do not retry code-graph tools.'
+
+/**
+ * Only the positive answer is cached: indexing can complete while this server is
+ * running, so a `false` must stay re-probeable. Caching `true` is safe — an index
+ * is never un-built mid-session.
+ */
+let indexConfirmed = false
+
+async function isIndexed(): Promise<boolean> {
+  if (indexConfirmed) return true
+  try {
+    const { codeGraphService } = await ensureReady()
+    indexConfirmed = codeGraphService.hasPersistedIndex(WORKSPACE_ID)
+    return indexConfirmed
+  } catch {
+    // Fail open — a probe failure must not fabricate a "not indexed" claim.
+    return true
+  }
+}
+
+/** JSON tool result that self-describes a missing index when the result set is empty. */
+async function graphPayload(
+  isEmpty: boolean,
+  payload: Record<string, unknown>,
+  cap = 10_000
+): Promise<{ content: { type: 'text'; text: string }[] }> {
+  const body =
+    isEmpty && !(await isIndexed())
+      ? { ...payload, indexed: false, hint: NOT_INDEXED_HINT }
+      : payload
+  return {
+    content: [{ type: 'text' as const, text: truncateToolOutput(JSON.stringify(body), cap) }]
+  }
+}
+
+/** Markdown tool result variant — appends the same hint as a trailing line. */
+async function graphMarkdown(
+  isEmpty: boolean,
+  lines: string[],
+  cap = 10_000
+): Promise<{ content: { type: 'text'; text: string }[] }> {
+  const out = isEmpty && !(await isIndexed()) ? [...lines, `\n${NOT_INDEXED_HINT}`] : lines
+  return {
+    content: [{ type: 'text' as const, text: truncateToolOutput(out.join('\n'), cap) }]
+  }
 }
 
 // ── MCP Server ──
@@ -141,7 +205,8 @@ function registerToolSchemas(): void {
   // ── graph_map ──
   server.tool(
     'graph_map',
-    'Ranked repository map via PageRank, plus detected subsystems and god nodes.',
+    'Ranked repository map (PageRank) plus subsystems and god nodes. Use for orientation in an ' +
+      'unfamiliar repo — not to answer a specific question.',
     {
       projectRoot: z.string().describe('Absolute path to the repository root'),
       focusFiles: z.array(z.string()).optional(),
@@ -200,7 +265,8 @@ function registerToolSchemas(): void {
   // ── search_identifiers ──
   server.tool(
     'search_identifiers',
-    'Search code identifiers by name (substring match).',
+    'Find a symbol by name (case-insensitive substring) — fastest first step when you know or ' +
+      'can guess the identifier. Prefer over Grep for symbols; Grep wins for string literals.',
     {
       query: z.string().describe('Identifier name (case-insensitive substring match)'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
@@ -226,11 +292,7 @@ function registerToolSchemas(): void {
           symbolKinds: args.symbolKinds
         }
       )
-      return {
-        content: [
-          { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ results })) }
-        ]
-      }
+      return graphPayload(results.length === 0, { results })
     })
   )
 
@@ -269,7 +331,9 @@ function registerToolSchemas(): void {
             lines.push(`| ${r.name} | ${r.symbolKind ?? '?'} | ${r.file} | ${r.line} |`)
           }
         }
-        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+        return {
+          content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }]
+        }
       }
       return {
         content: [
@@ -285,7 +349,8 @@ function registerToolSchemas(): void {
   // ── file_outline ──
   server.tool(
     'file_outline',
-    'List all code definitions in a file with line numbers.',
+    'List every definition in a file with line numbers. Call before Read on files over ~300 ' +
+      'lines — a fraction of the tokens.',
     {
       filePath: z.string().describe('Relative file path within the workspace')
     },
@@ -294,34 +359,25 @@ function registerToolSchemas(): void {
       const tags = codeGraphTagRepository
         .findByFile(WORKSPACE_ID, args.filePath)
         .filter((t) => t.kind === 'def')
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: truncateToolOutput(
-              JSON.stringify({
-                file: args.filePath,
-                definitions: tags.map((t) => ({
-                  name: t.name,
-                  line: t.line,
-                  // 'class' | 'method' | 'function' | 'interface' | … (null pre-v130 index)
-                  kind: t.symbolKind ?? null
-                })),
-                count: tags.length
-              }),
-              10_000
-            )
-          }
-        ]
-      }
+      return graphPayload(tags.length === 0, {
+        file: args.filePath,
+        definitions: tags.map((t) => ({
+          name: t.name,
+          line: t.line,
+          // 'class' | 'method' | 'function' | 'interface' | … (null pre-v130 index)
+          kind: t.symbolKind ?? null
+        })),
+        count: tags.length
+      })
     })
   )
 
   // ── find_callers ──
   server.tool(
     'find_callers',
-    'Find callers of a symbol. Results are ordered most-trustworthy first; each carries ' +
-      'a resolution (extracted = one definition matched, inferred/ambiguous = one of several).',
+    'Who calls this symbol — use before changing or deleting it. Results ordered most-trustworthy ' +
+      'first; resolution=inferred/ambiguous are name-matches with several candidates, so treat ' +
+      'them as leads.',
     {
       symbolName: z.string().describe('Symbol name to find callers of'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
@@ -333,7 +389,11 @@ function registerToolSchemas(): void {
             'Note: some grammars (TypeScript) do not emit call captures, so filtering ' +
             'on calls can return nothing there — omit to see everything.'
         ),
-      deduplicate: z.boolean().optional().default(true).describe('Remove duplicate results (default: true)'),
+      deduplicate: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Remove duplicate results (default: true)'),
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     withErrorBoundary('find_callers', async (args) => {
@@ -374,24 +434,14 @@ function registerToolSchemas(): void {
             )
           }
         }
-        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+        return graphMarkdown(mapped.length === 0, lines)
       }
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: truncateToolOutput(
-              JSON.stringify({
-                symbol: args.symbolName,
-                defaults: PROVENANCE_DEFAULTS,
-                callers: mapped,
-                count: mapped.length
-              }),
-              10_000
-            )
-          }
-        ]
-      }
+      return graphPayload(mapped.length === 0, {
+        symbol: args.symbolName,
+        defaults: PROVENANCE_DEFAULTS,
+        callers: mapped,
+        count: mapped.length
+      })
     })
   )
 
@@ -437,24 +487,14 @@ function registerToolSchemas(): void {
             )
           }
         }
-        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+        return graphMarkdown(mapped.length === 0, lines)
       }
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: truncateToolOutput(
-              JSON.stringify({
-                symbol: args.symbolName,
-                defaults: PROVENANCE_DEFAULTS,
-                callees: mapped,
-                count: mapped.length
-              }),
-              10_000
-            )
-          }
-        ]
-      }
+      return graphPayload(mapped.length === 0, {
+        symbol: args.symbolName,
+        defaults: PROVENANCE_DEFAULTS,
+        callees: mapped,
+        count: mapped.length
+      })
     })
   )
 
@@ -465,7 +505,11 @@ function registerToolSchemas(): void {
     {
       symbolName: z.string().describe('Symbol name to find references for'),
       maxResults: z.number().int().min(1).max(500).optional().default(50),
-      deduplicate: z.boolean().optional().default(true).describe('Remove duplicate results (default: true)'),
+      deduplicate: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Remove duplicate results (default: true)'),
       format: z.enum(['json', 'markdown']).optional().default('json').describe('Output format')
     },
     withErrorBoundary('find_references', async (args) => {
@@ -501,19 +545,13 @@ function registerToolSchemas(): void {
             lines.push(`| ${r.file} | ${r.line} | ${r.name} | ${r.kind ?? '?'} |`)
           }
         }
-        return { content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 10_000) }] }
+        return graphMarkdown(mapped.length === 0, lines)
       }
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: truncateToolOutput(
-              JSON.stringify({ symbol: args.symbolName, references: mapped, count: mapped.length }),
-              10_000
-            )
-          }
-        ]
-      }
+      return graphPayload(mapped.length === 0, {
+        symbol: args.symbolName,
+        references: mapped,
+        count: mapped.length
+      })
     })
   )
 
@@ -536,7 +574,11 @@ function registerToolSchemas(): void {
           {
             type: 'text' as const,
             text: truncateToolOutput(
-              JSON.stringify({ file: args.filePath, dependencies: grouped, totalCount: deps.length }),
+              JSON.stringify({
+                file: args.filePath,
+                dependencies: grouped,
+                totalCount: deps.length
+              }),
               10_000
             )
           }
@@ -551,7 +593,11 @@ function registerToolSchemas(): void {
     'Find files that depend on a given file (blast radius).',
     {
       filePath: z.string().describe('Relative file path to find dependents of'),
-      deduplicate: z.boolean().optional().default(true).describe('Remove duplicate file entries per edge type (default: true)')
+      deduplicate: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe('Remove duplicate file entries per edge type (default: true)')
     },
     withErrorBoundary('file_dependents', async (args) => {
       const { codeGraphEdgeRepository } = await ensureReady()
@@ -625,9 +671,7 @@ function registerToolSchemas(): void {
         content: [
           {
             type: 'text' as const,
-            text: truncateToolOutput(
-              JSON.stringify({ couples: coupled, count: coupled.length })
-            )
+            text: truncateToolOutput(JSON.stringify({ couples: coupled, count: coupled.length }))
           }
         ]
       }
@@ -646,7 +690,10 @@ function registerToolSchemas(): void {
       const cycles = codeGraphService.findCircularDependencies(WORKSPACE_ID, { path: args.path })
       return {
         content: [
-          { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ cycles, count: cycles.length }), 10_000) }
+          {
+            type: 'text' as const,
+            text: truncateToolOutput(JSON.stringify({ cycles, count: cycles.length }), 10_000)
+          }
         ]
       }
     })
@@ -673,7 +720,10 @@ function registerToolSchemas(): void {
         content: [
           {
             type: 'text' as const,
-            text: truncateToolOutput(JSON.stringify({ modules: metrics, count: metrics.length }), 10_000)
+            text: truncateToolOutput(
+              JSON.stringify({ modules: metrics, count: metrics.length }),
+              10_000
+            )
           }
         ]
       }
@@ -683,8 +733,8 @@ function registerToolSchemas(): void {
   // ── shortest_path ──
   server.tool(
     'shortest_path',
-    'Show how one file reaches another through the dependency graph. Answers ' +
-      '"what connects A to B?" in a single call instead of walking file_dependencies repeatedly.',
+    'Dependency path from file A to file B. The tool for "how does A reach B" / "is X used by Y" — ' +
+      'one call instead of walking file_dependencies repeatedly.',
     {
       fromFile: z.string().describe('Relative path of the starting file'),
       toFile: z.string().describe('Relative path of the destination file'),

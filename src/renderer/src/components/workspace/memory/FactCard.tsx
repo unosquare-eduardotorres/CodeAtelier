@@ -80,7 +80,9 @@ export default function FactCard({
                 onClick={onScopeToggle}
                 className="flex items-center gap-0.5 text-xs text-text-muted hover:text-info transition-colors"
                 title={fact.workspaceId ? 'Make global' : 'Scope to workspace'}
-                aria-label={fact.workspaceId ? 'Make this memory global' : 'Scope this memory to workspace'}
+                aria-label={
+                  fact.workspaceId ? 'Make this memory global' : 'Scope this memory to workspace'
+                }
               >
                 <Globe className="w-3 h-3" />
                 {fact.workspaceId ? 'Workspace' : 'Global'}

@@ -57,7 +57,10 @@ export function calculateAgentTurns(
  * F-2: OpenAI reasoning effort (reasoningEffort)
  * F-3: Per-agent tool restrictions
  */
-export function buildProviderOptions(providerId: string, mode: 'plan' | 'build' | 'danger'): string {
+export function buildProviderOptions(
+  providerId: string,
+  mode: 'plan' | 'build' | 'danger'
+): string {
   const lines: string[] = []
 
   switch (providerId) {

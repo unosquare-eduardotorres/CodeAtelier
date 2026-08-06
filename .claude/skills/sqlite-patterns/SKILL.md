@@ -232,8 +232,7 @@ const migrations = [
 
 function migrate(db: Database) {
   const current = db.prepare('SELECT MAX(version) as v FROM schema_version').get() as
-    | { v: number }
-    | undefined
+    { v: number } | undefined
   const currentVersion = current?.v ?? 0
 
   const pending = migrations.filter((m) => m.version > currentVersion)

@@ -415,6 +415,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/task-execution-tracking.test',
   // ─── Windows stability: isExcludedPath path-separator handling ───
   '../services/__tests__/is-excluded-path.test',
+  // ─── Index exclusion preflight (Pods/vendored-tree confirmation) ───
+  '../services/__tests__/index-exclusion-preflight.test',
   // ─── Phase 24: IPC Coverage Blitz — 20 new IPC test files ───
   '../ipc/__tests__/ipc-bug-idea-events.test',
   '../ipc/__tests__/ipc-specialist-skill.test',

@@ -235,7 +235,12 @@ describe('ChatStreamService — deep body (P26)', () => {
         planInjected: false
       }
 
-      const listeners = svc['buildStreamListeners'](ctx, lock.lifecycle, lock.resolveDone, lock.rejectDone)
+      const listeners = svc['buildStreamListeners'](
+        ctx,
+        lock.lifecycle,
+        lock.resolveDone,
+        lock.rejectDone
+      )
       assert.equal(typeof listeners.onChunk, 'function')
       assert.equal(typeof listeners.onComplete, 'function')
       assert.equal(typeof listeners.onIntent, 'function')

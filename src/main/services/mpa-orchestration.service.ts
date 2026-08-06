@@ -898,8 +898,7 @@ export class MpaOrchestrationService extends EventEmitter {
       phases: remainingPhases,
       grillSessionId: run.grillSessionId ?? undefined,
       grillDecisions: config.grillDecisions as
-        | import('../../shared/mpa-types').GrillDecision[]
-        | undefined,
+        import('../../shared/mpa-types').GrillDecision[] | undefined,
       campaignId: run.campaignId ?? undefined,
       orderIndex: run.orderIndex ?? undefined,
       successCriteria

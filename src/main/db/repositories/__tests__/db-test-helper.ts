@@ -18,9 +18,7 @@ export function trySetupTestDb(): { db: import('better-sqlite3').Database; wsId:
     const wsId = seedWorkspace(db)
     return { db, wsId }
   } catch (err) {
-    console.log(
-      `\n⚠ DB test setup failed — tests will be skipped.`
-    )
+    console.log(`\n⚠ DB test setup failed — tests will be skipped.`)
     console.log(`  (${(err as Error).message.split('\n')[0]})`)
     return null
   }

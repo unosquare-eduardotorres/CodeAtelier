@@ -15,7 +15,13 @@
  */
 
 import { EventEmitter } from 'node:events'
-import type { AgentRole, AgentStatus, ControlToolState, ConversationMode, ImageAttachment } from '../../shared/types'
+import type {
+  AgentRole,
+  AgentStatus,
+  ControlToolState,
+  ConversationMode,
+  ImageAttachment
+} from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { AgentSessionService } from './agent-session.service'
 import { ProjectSpecialistRoleAdapter } from './role-adapters/project-specialist.adapter'
@@ -67,9 +73,7 @@ export class ChatAgentService extends EventEmitter {
     // catch-all is only hit from sdk-control.ipc which always targets the active UI.
     this.on('elicitationResponse', (payload: unknown) => {
       const wsId = (payload as Record<string, unknown> | null)?.workspaceId as string | undefined
-      const session = wsId
-        ? this.getSessionForWorkspace(wsId)
-        : this.getActiveSession()
+      const session = wsId ? this.getSessionForWorkspace(wsId) : this.getActiveSession()
       if (session) {
         session.emit('elicitationResponse', payload)
       } else {

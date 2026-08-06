@@ -78,7 +78,9 @@ export class LocalContextReconstructor {
                 )
               }
             }
-          } catch { /* non-fatal */ }
+          } catch {
+            /* non-fatal */
+          }
         }
       } catch {
         /* non-fatal */
@@ -131,7 +133,9 @@ export class LocalContextReconstructor {
     const parts: string[] = []
 
     if (planState.originalRequest) {
-      parts.push(`### Original Request\n${sanitizePromptInput(planState.originalRequest).slice(0, 500)}`)
+      parts.push(
+        `### Original Request\n${sanitizePromptInput(planState.originalRequest).slice(0, 500)}`
+      )
     }
 
     const ctx = planState.discoveredContext
@@ -142,7 +146,9 @@ export class LocalContextReconstructor {
       parts.push(`### Plan Items\n${ctx.planItems.map((p) => sanitizePromptInput(p)).join('\n')}`)
     }
     if (ctx.keyFindings.length > 0) {
-      parts.push(`### Key Findings\n${ctx.keyFindings.map((f) => sanitizePromptInput(f)).join('\n')}`)
+      parts.push(
+        `### Key Findings\n${ctx.keyFindings.map((f) => sanitizePromptInput(f)).join('\n')}`
+      )
     }
 
     if (planState.planText && planState.planText.length > 50) {

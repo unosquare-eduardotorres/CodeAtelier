@@ -46,7 +46,10 @@ test.describe('Integration Persistence', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -83,9 +86,7 @@ test.describe('Integration Persistence', () => {
 
   // ── 1. Toggle ON persists across page navigation ──────────────────
 
-  test('toggle ON persists after navigating away and back', async ({
-    electronPage: page
-  }) => {
+  test('toggle ON persists after navigating away and back', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const info = await getFirstToggle(page)
@@ -138,9 +139,7 @@ test.describe('Integration Persistence', () => {
 
   // ── 2. Toggle OFF persists across page navigation ─────────────────
 
-  test('toggle OFF persists after navigating away and back', async ({
-    electronPage: page
-  }) => {
+  test('toggle OFF persists after navigating away and back', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const info = await getFirstToggle(page)
@@ -192,9 +191,7 @@ test.describe('Integration Persistence', () => {
 
   // ── 3. CLI availability badge shows correct status ────────────────
 
-  test('CLI availability badge shows status on page load', async ({
-    electronPage: page
-  }) => {
+  test('CLI availability badge shows status on page load', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const cards = page.locator('[data-testid^="integration-card-"]')
@@ -215,11 +212,26 @@ test.describe('Integration Persistence', () => {
     const cliInstalled = page.getByText(/installed/i)
     const cliAvailable = page.getByText(/available/i)
 
-    const hasDetected = await cliDetected.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasNotFound = await cliNotFound.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasChecking = await cliChecking.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasInstalled = await cliInstalled.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasAvailable = await cliAvailable.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasDetected = await cliDetected
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasNotFound = await cliNotFound
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasChecking = await cliChecking
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasInstalled = await cliInstalled
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasAvailable = await cliAvailable
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // At least one CLI status indicator should be visible
     expect(hasDetected || hasNotFound || hasChecking || hasInstalled || hasAvailable).toBeTruthy()
@@ -229,8 +241,14 @@ test.describe('Integration Persistence', () => {
       // Wait longer — CLI check may be slow
       await page.waitForTimeout(5_000)
 
-      const lateDetected = await cliDetected.first().isVisible({ timeout: 3_000 }).catch(() => false)
-      const lateNotFound = await cliNotFound.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const lateDetected = await cliDetected
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
+      const lateNotFound = await cliNotFound
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       // Should have resolved by now
       expect(lateDetected || lateNotFound).toBeTruthy()
@@ -239,9 +257,7 @@ test.describe('Integration Persistence', () => {
 
   // ── 4. Token impact badge updates when integration toggled ────────
 
-  test('token impact badge updates when integration toggled', async ({
-    electronPage: page
-  }) => {
+  test('token impact badge updates when integration toggled', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const info = await getFirstToggle(page)
@@ -267,9 +283,7 @@ test.describe('Integration Persistence', () => {
     }
 
     // Record the initial badge text
-    const _initialText = hasBadge
-      ? await impactBadge.textContent()
-      : await tokenText.textContent()
+    const _initialText = hasBadge ? await impactBadge.textContent() : await tokenText.textContent()
 
     // Toggle the integration
     await toggle.click()
@@ -294,9 +308,7 @@ test.describe('Integration Persistence', () => {
 
   // ── 5. McpExplainerBanner dismisses and stays dismissed ───────────
 
-  test('MCP explainer banner dismisses and stays dismissed', async ({
-    electronPage: page
-  }) => {
+  test('MCP explainer banner dismisses and stays dismissed', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     // Look for the MCP explainer banner

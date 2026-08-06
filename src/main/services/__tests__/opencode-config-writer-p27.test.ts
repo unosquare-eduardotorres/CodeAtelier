@@ -31,7 +31,6 @@ mockService('mcp-server-registry', {
   buildLocalMcpServersFromRegistry: createSpy(() => ({}))
 })
 
-
 const { OpenCodeConfigWriter } = require('../opencode-config-writer')
 
 const TMP_DIR = join(tmpdir(), `opencode-config-test-${Date.now()}`)

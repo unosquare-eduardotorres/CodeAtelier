@@ -2679,8 +2679,12 @@ export const migrations: Migration[] = [
 
       // Chat-group actions overridden by model presets
       const chatActions = [
-        'da-vinci', 'da-vinci:plan', 'da-vinci:build',
-        'project-specialist', 'project-specialist:plan', 'project-specialist:build'
+        'da-vinci',
+        'da-vinci:plan',
+        'da-vinci:build',
+        'project-specialist',
+        'project-specialist:plan',
+        'project-specialist:build'
       ]
       function buildCfg(modelId: string): string {
         const cfg: Record<string, { provider: string; modelId: string }> = {}
@@ -2699,14 +2703,18 @@ export const migrations: Migration[] = [
           insert.run(`${ws.id}_${p.suffix}`, ws.id, p.name, buildCfg(p.modelId))
         }
       }
-      dbLogger.info(`[migration-108] ✓ Seeded Claude model presets for ${workspaces.length} workspace(s)`)
+      dbLogger.info(
+        `[migration-108] ✓ Seeded Claude model presets for ${workspaces.length} workspace(s)`
+      )
     }
   },
   {
     version: 109,
     name: 'add-conversation-type-column',
     up: (db) => {
-      db.exec(`ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint'))`)
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint'))`
+      )
       dbLogger.info('[migration-109] ✓ Added type column to conversations')
     }
   },
@@ -2771,9 +2779,15 @@ export const migrations: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_workspace ON memory_facts(workspace_id)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref)`
+      )
 
       // ── memory_contradictions: audit trail for conflicting facts ──
       db.exec(`
@@ -2787,7 +2801,9 @@ export const migrations: Migration[] = [
           resolved_at TEXT
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status)`
+      )
 
       // ── memory_doc_state: content-hash gate for doc watcher ──
       db.exec(`
@@ -2803,7 +2819,9 @@ export const migrations: Migration[] = [
       // ── Drop legacy memories table (fresh start — decision #3) ──
       db.exec(`DROP TABLE IF EXISTS memories`)
 
-      dbLogger.info('[migration-112] ✓ Created memory_facts, memory_contradictions, memory_doc_state; dropped memories')
+      dbLogger.info(
+        '[migration-112] ✓ Created memory_facts, memory_contradictions, memory_doc_state; dropped memories'
+      )
     }
   },
 
@@ -2827,7 +2845,9 @@ export const migrations: Migration[] = [
           total_error INTEGER NOT NULL DEFAULT 0
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_workspace ON e2e_test_runs(workspace_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_workspace ON e2e_test_runs(workspace_id)`
+      )
       db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_status ON e2e_test_runs(status)`)
 
       db.exec(`
@@ -2845,7 +2865,9 @@ export const migrations: Migration[] = [
         )
       `)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_run ON e2e_test_results(run_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_scenario ON e2e_test_results(scenario_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_e2e_test_results_scenario ON e2e_test_results(scenario_id)`
+      )
       db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_status ON e2e_test_results(status)`)
 
       dbLogger.info('[migration-113] ✓ Created e2e_test_runs, e2e_test_results tables')
@@ -2858,23 +2880,32 @@ export const migrations: Migration[] = [
     name: 'upgrade-sonnet-5-seed-fable-5-presets',
     up: (db) => {
       // 1. Update built-in Sonnet presets: swap claude-sonnet-4-6 → claude-sonnet-5 in action_config_json
-      const sonnetPresets = db.prepare(
-        `SELECT id, action_config_json FROM llm_presets WHERE is_built_in = 1 AND name = 'Claude Sonnet'`
-      ).all() as { id: string; action_config_json: string }[]
+      const sonnetPresets = db
+        .prepare(
+          `SELECT id, action_config_json FROM llm_presets WHERE is_built_in = 1 AND name = 'Claude Sonnet'`
+        )
+        .all() as { id: string; action_config_json: string }[]
 
       const updateStmt = db.prepare(
         `UPDATE llm_presets SET action_config_json = ?, updated_at = datetime('now') WHERE id = ?`
       )
       for (const preset of sonnetPresets) {
-        const updatedJson = preset.action_config_json.replace(/claude-sonnet-4-6/g, 'claude-sonnet-5')
+        const updatedJson = preset.action_config_json.replace(
+          /claude-sonnet-4-6/g,
+          'claude-sonnet-5'
+        )
         updateStmt.run(updatedJson, preset.id)
       }
 
       // 2. Seed Fable 5 preset for each workspace (same chat-group actions as migration-108)
       const workspaces = db.prepare('SELECT id FROM workspaces').all() as { id: string }[]
       const chatActions = [
-        'da-vinci', 'da-vinci:plan', 'da-vinci:build',
-        'project-specialist', 'project-specialist:plan', 'project-specialist:build'
+        'da-vinci',
+        'da-vinci:plan',
+        'da-vinci:build',
+        'project-specialist',
+        'project-specialist:plan',
+        'project-specialist:build'
       ]
       const cfg: Record<string, { provider: string; modelId: string }> = {}
       for (const a of chatActions) cfg[a] = { provider: 'claude', modelId: 'claude-fable-5' }
@@ -2887,7 +2918,9 @@ export const migrations: Migration[] = [
         insert.run(`${ws.id}_claude-fable`, ws.id, 'Claude Fable', fableJson)
       }
 
-      dbLogger.info(`[migration-114] ✓ Upgraded Sonnet presets to v5 + seeded Fable 5 for ${workspaces.length} workspace(s)`)
+      dbLogger.info(
+        `[migration-114] ✓ Upgraded Sonnet presets to v5 + seeded Fable 5 for ${workspaces.length} workspace(s)`
+      )
     }
   },
 
@@ -2898,12 +2931,15 @@ export const migrations: Migration[] = [
     up: (db) => {
       // Remove orphaned facts whose workspace was deleted before FK cascade existed.
       // Without this, the INSERT…SELECT below violates the FK on memory_facts_new.
-      const purged = db.prepare(
-        `DELETE FROM memory_facts
+      const purged = db
+        .prepare(
+          `DELETE FROM memory_facts
          WHERE workspace_id IS NOT NULL
            AND workspace_id NOT IN (SELECT id FROM workspaces)`
-      ).run()
-      if (purged.changes > 0) dbLogger.warn(`[migration-115] Purged ${purged.changes} orphaned memory_facts`)
+        )
+        .run()
+      if (purged.changes > 0)
+        dbLogger.warn(`[migration-115] Purged ${purged.changes} orphaned memory_facts`)
 
       // SQLite cannot ALTER CHECK constraints — must rebuild the table.
       // Precedent: migration 107 (blueprint_tasks 'skipped' status).
@@ -2968,7 +3004,9 @@ export const migrations: Migration[] = [
         DROP TABLE memory_contradictions_bak;
         CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status);
       `)
-      dbLogger.info('[migration-115] ✓ Extended memory_facts source_type CHECK to include blueprint + grill')
+      dbLogger.info(
+        '[migration-115] ✓ Extended memory_facts source_type CHECK to include blueprint + grill'
+      )
     }
   },
 
@@ -2978,13 +3016,15 @@ export const migrations: Migration[] = [
     name: 'sync-plan-prompt-diagram-styling',
     up: (db) => {
       const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE core_agent_prompts
         SET default_prompt_text = ?,
             prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
             updated_at = datetime('now')
         WHERE agent_role = 'da-vinci' AND mode = 'plan'
-      `).run(newPlanPrompt, newPlanPrompt)
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
       dbLogger.info('[migration-116] ✓ Plan prompt updated with diagram styling + icon guidance')
     }
   },
@@ -3001,8 +3041,11 @@ export const migrations: Migration[] = [
       // 0a. Rebuild core_agent_prompts CHECK to include 'specialist'
       // The current CHECK (from migration 92) only allows ('da-vinci', 'generalist').
       // We must widen it before UPDATE can set agent_role = 'specialist'.
-      const promptCols = (db.prepare('PRAGMA table_info(core_agent_prompts)').all() as Array<{ name: string }>)
-        .map(c => c.name).join(', ')
+      const promptCols = (
+        db.prepare('PRAGMA table_info(core_agent_prompts)').all() as Array<{ name: string }>
+      )
+        .map((c) => c.name)
+        .join(', ')
       db.exec(`
         CREATE TABLE core_agent_prompts_new (
           id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -3015,7 +3058,9 @@ export const migrations: Migration[] = [
           UNIQUE(agent_role, mode)
         )
       `)
-      db.exec(`INSERT INTO core_agent_prompts_new (${promptCols}) SELECT ${promptCols} FROM core_agent_prompts`)
+      db.exec(
+        `INSERT INTO core_agent_prompts_new (${promptCols}) SELECT ${promptCols} FROM core_agent_prompts`
+      )
       db.exec('DROP TABLE core_agent_prompts')
       db.exec('ALTER TABLE core_agent_prompts_new RENAME TO core_agent_prompts')
 
@@ -3036,34 +3081,53 @@ export const migrations: Migration[] = [
       dbLogger.info('[migration-117] ✓ CHECK constraints rebuilt to include specialist')
 
       // 1. Rewrite message roles
-      const msgResult = db.prepare(`
+      const msgResult = db
+        .prepare(
+          `
         UPDATE messages SET role = 'specialist' WHERE role = 'da-vinci'
-      `).run()
-      dbLogger.info(`[migration-117] Rewrote ${msgResult.changes} message roles da-vinci → specialist`)
+      `
+        )
+        .run()
+      dbLogger.info(
+        `[migration-117] Rewrote ${msgResult.changes} message roles da-vinci → specialist`
+      )
 
       // 2. Rewrite core_agent_prompts agent_role
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE core_agent_prompts SET agent_role = 'specialist' WHERE agent_role = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 3. Rewrite core_agent_aliases agent_role
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE core_agent_aliases SET agent_role = 'specialist' WHERE agent_role = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 4. Rewrite agent_sessions agent_type
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE agent_sessions SET agent_type = 'specialist' WHERE agent_type = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 5. Rewrite model overrides in workspace settings JSON
       // Replace 'da-vinci' → 'specialist', 'da-vinci:plan' → 'specialist:plan',
       // 'da-vinci:build' → 'specialist:build', 'project-specialist' → 'specialist',
       // 'project-specialist:plan' → 'specialist:plan', 'project-specialist:build' → 'specialist:build'
-      const workspaces = db.prepare(`SELECT id, settings_json FROM workspaces WHERE settings_json IS NOT NULL`).all() as Array<{ id: string; settings_json: string }>
+      const workspaces = db
+        .prepare(`SELECT id, settings_json FROM workspaces WHERE settings_json IS NOT NULL`)
+        .all() as Array<{ id: string; settings_json: string }>
       const updateSettings = db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`)
       for (const ws of workspaces) {
-        if (!ws.settings_json || !ws.settings_json.includes('da-vinci') && !ws.settings_json.includes('project-specialist')) continue
+        if (
+          !ws.settings_json ||
+          (!ws.settings_json.includes('da-vinci') &&
+            !ws.settings_json.includes('project-specialist'))
+        )
+          continue
         let updated = ws.settings_json
         // Order matters: replace longer keys first
         updated = updated.replace(/"project-specialist:plan"/g, '"specialist:plan"')
@@ -3077,24 +3141,34 @@ export const migrations: Migration[] = [
           const parsed = JSON.parse(updated)
           delete parsed.specialistSwapAccepted
           updated = JSON.stringify(parsed)
-        } catch { /* leave as-is if parse fails */ }
+        } catch {
+          /* leave as-is if parse fails */
+        }
         if (updated !== ws.settings_json) {
           updateSettings.run(updated, ws.id)
         }
       }
 
       // 6. Rewrite events entries
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE events SET agent_id = 'specialist' WHERE agent_id = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 7. Rewrite model preset action keys in llm_presets
-      const presets = db.prepare(
-        `SELECT id, action_config_json FROM llm_presets WHERE action_config_json IS NOT NULL`
-      ).all() as Array<{ id: string; action_config_json: string }>
+      const presets = db
+        .prepare(
+          `SELECT id, action_config_json FROM llm_presets WHERE action_config_json IS NOT NULL`
+        )
+        .all() as Array<{ id: string; action_config_json: string }>
       const updatePreset = db.prepare(`UPDATE llm_presets SET action_config_json = ? WHERE id = ?`)
       for (const preset of presets) {
-        if (!preset.action_config_json.includes('da-vinci') && !preset.action_config_json.includes('project-specialist')) continue
+        if (
+          !preset.action_config_json.includes('da-vinci') &&
+          !preset.action_config_json.includes('project-specialist')
+        )
+          continue
         let updated = preset.action_config_json
         // Order matters: replace longer keys first
         updated = updated.replace(/"project-specialist:plan"/g, '"specialist:plan"')
@@ -3138,10 +3212,18 @@ export const migrations: Migration[] = [
         )
       `)
 
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_workspace ON handoff_events(workspace_id, created_at DESC)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_source ON handoff_events(source, source_session_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_status ON handoff_events(status) WHERE status = 'pending'`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_parent ON handoff_events(parent_handoff_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_workspace ON handoff_events(workspace_id, created_at DESC)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_source ON handoff_events(source, source_session_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_status ON handoff_events(status) WHERE status = 'pending'`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_parent ON handoff_events(parent_handoff_id)`
+      )
 
       dbLogger.info('[migration-118] ✓ Created handoff_events table')
     }
@@ -3153,9 +3235,7 @@ export const migrations: Migration[] = [
     name: 'memory-system-overhaul',
     up: (db) => {
       // ── 1. Purge all pending contradiction rows (review queue reset) ──
-      const purged = db.prepare(
-        `DELETE FROM memory_contradictions WHERE status = 'pending'`
-      ).run()
+      const purged = db.prepare(`DELETE FROM memory_contradictions WHERE status = 'pending'`).run()
       if (purged.changes > 0) {
         dbLogger.info(`[migration-119] Purged ${purged.changes} pending contradiction rows`)
       }
@@ -3163,14 +3243,18 @@ export const migrations: Migration[] = [
       // ── 1b. Deduplicate resolved contradiction pairs before creating UNIQUE index ──
       // handleContradiction may have inserted (A,B) and (B,A) as separate resolved rows.
       // Keep only the newest row per normalized pair; delete the rest.
-      const deduped = db.prepare(`
+      const deduped = db
+        .prepare(
+          `
         DELETE FROM memory_contradictions
         WHERE rowid NOT IN (
           SELECT MAX(rowid)
           FROM memory_contradictions
           GROUP BY MIN(old_fact_id, new_fact_id), MAX(old_fact_id, new_fact_id)
         )
-      `).run()
+      `
+        )
+        .run()
       if (deduped.changes > 0) {
         dbLogger.info(`[migration-119] Deduped ${deduped.changes} duplicate contradiction pairs`)
       }
@@ -3198,15 +3282,21 @@ export const migrations: Migration[] = [
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_confirmations_fact ON memory_confirmations(fact_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_confirmations_date ON memory_confirmations(created_at)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_confirmations_fact ON memory_confirmations(fact_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_confirmations_date ON memory_confirmations(created_at)`
+      )
 
       // ── 5. Backfill confirmation events from existing confirmation_count ──
       // For each fact with confirmation_count > 0, insert that many auto_dedup events
       // spread across the fact's lifetime so tier recalibration has data to work with.
-      const factsWithConfirms = db.prepare(
-        `SELECT id, confirmation_count, created_at FROM memory_facts WHERE confirmation_count > 0`
-      ).all() as Array<{ id: string; confirmation_count: number; created_at: string }>
+      const factsWithConfirms = db
+        .prepare(
+          `SELECT id, confirmation_count, created_at FROM memory_facts WHERE confirmation_count > 0`
+        )
+        .all() as Array<{ id: string; confirmation_count: number; created_at: string }>
 
       const insertConfirm = db.prepare(
         `INSERT INTO memory_confirmations (fact_id, source_type, weight, created_at) VALUES (?, 'auto_dedup', 0.5, ?)`
@@ -3218,23 +3308,30 @@ export const migrations: Migration[] = [
         }
       }
       if (factsWithConfirms.length > 0) {
-        dbLogger.info(`[migration-119] Backfilled confirmation events for ${factsWithConfirms.length} facts`)
+        dbLogger.info(
+          `[migration-119] Backfilled confirmation events for ${factsWithConfirms.length} facts`
+        )
       }
 
       // ── 6. Demote T3/T2 facts that lack human confirmation ──
       // Any T3 (Wisdom) fact drops to T1; any T2 (Knowledge) drops to T1.
       // They can re-earn their tier through the new evidence-based rules.
-      const demoted = db.prepare(
-        `UPDATE memory_facts SET tier = 1, updated_at = datetime('now')
+      const demoted = db
+        .prepare(
+          `UPDATE memory_facts SET tier = 1, updated_at = datetime('now')
          WHERE tier >= 2 AND status = 'active'`
-      ).run()
+        )
+        .run()
       if (demoted.changes > 0) {
-        dbLogger.info(`[migration-119] Demoted ${demoted.changes} T2/T3 facts to T1 for re-evaluation`)
+        dbLogger.info(
+          `[migration-119] Demoted ${demoted.changes} T2/T3 facts to T1 for re-evaluation`
+        )
       }
 
       // ── 7. Detect and flag volatile facts (version/count patterns) ──
-      const volatilePatterns = db.prepare(
-        `UPDATE memory_facts SET volatile = 1, updated_at = datetime('now')
+      const volatilePatterns = db
+        .prepare(
+          `UPDATE memory_facts SET volatile = 1, updated_at = datetime('now')
          WHERE status = 'active'
            AND (
              content LIKE '%schemaVersion%' OR content LIKE '%schema_version%'
@@ -3242,7 +3339,8 @@ export const migrations: Migration[] = [
              OR content LIKE '%CURRENT_SCHEMA_VERSION%'
              OR title LIKE '%version%' AND (content LIKE '%=%' OR content LIKE '%:%')
            )`
-      ).run()
+        )
+        .run()
       if (volatilePatterns.changes > 0) {
         dbLogger.info(`[migration-119] Flagged ${volatilePatterns.changes} facts as volatile`)
       }
@@ -3295,8 +3393,12 @@ export const migrations: Migration[] = [
 
       // Revision linking: soft-link to the plan this one supersedes
       try {
-        db.exec(`ALTER TABLE plans ADD COLUMN previous_plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL`)
-      } catch { /* column may already exist */ }
+        db.exec(
+          `ALTER TABLE plans ADD COLUMN previous_plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL`
+        )
+      } catch {
+        /* column may already exist */
+      }
 
       dbLogger.info('[migration-122] ✓ Created plan_status_history table + previous_plan_id column')
     }
@@ -3320,13 +3422,17 @@ export const migrations: Migration[] = [
         settings_json: string | null
       }
 
-      const rows = db.prepare(`
+      const rows = db
+        .prepare(
+          `
         SELECT c.id as conv_id, c.workspace_id, c.llm_provider,
                w.settings_json
         FROM conversations c
         JOIN workspaces w ON c.workspace_id = w.id
         WHERE c.model_config_json IS NULL
-      `).all() as BackfillRow[]
+      `
+        )
+        .all() as BackfillRow[]
 
       if (rows.length === 0) {
         dbLogger.info('[migration-123] No conversations need backfill')
@@ -3343,12 +3449,15 @@ export const migrations: Migration[] = [
           let settings: Record<string, unknown> = {}
           try {
             settings = row.settings_json ? JSON.parse(row.settings_json) : {}
-          } catch { /* corrupted settings — use defaults */ }
+          } catch {
+            /* corrupted settings — use defaults */
+          }
 
           const workspaceProvider = (settings.llmProvider as LLMProvider) ?? 'claude'
           const workspaceBackend = (settings.localLlmBackend as LocalLLMBackend) ?? undefined
           const modelRoles = (settings.modelRoles ?? undefined) as ModelRoleMap | undefined
-          const modelOverrides = (settings.modelOverrides ?? undefined) as ModelOverrides | undefined
+          const modelOverrides = (settings.modelOverrides ?? undefined) as
+            ModelOverrides | undefined
 
           const resolveOpts = { modelRoles, modelOverrides, workspaceProvider, workspaceBackend }
 
@@ -3363,11 +3472,7 @@ export const migrations: Migration[] = [
           const resolvedProvider = snapshot.plan.provider
           const effectiveProvider = row.llm_provider || resolvedProvider
 
-          updateSnapshot.run(
-            JSON.stringify(snapshot),
-            effectiveProvider,
-            row.conv_id
-          )
+          updateSnapshot.run(JSON.stringify(snapshot), effectiveProvider, row.conv_id)
           backfilled++
         } catch (err) {
           dbLogger.warn(`[migration-123] Failed to backfill conversation ${row.conv_id}:`, err)
@@ -3426,12 +3531,16 @@ export const migrations: Migration[] = [
       // Add completed_at to blueprints
       db.exec(`ALTER TABLE blueprints ADD COLUMN completed_at TEXT`)
       // Backfill from updated_at for existing terminal blueprints
-      db.exec(`UPDATE blueprints SET completed_at = updated_at WHERE status IN ('complete', 'failed', 'cancelled')`)
+      db.exec(
+        `UPDATE blueprints SET completed_at = updated_at WHERE status IN ('complete', 'failed', 'cancelled')`
+      )
 
       // Add completed_at to plans
       db.exec(`ALTER TABLE plans ADD COLUMN completed_at TEXT`)
       // Backfill from updated_at for existing terminal plans
-      db.exec(`UPDATE plans SET completed_at = updated_at WHERE status IN ('completed', 'archived')`)
+      db.exec(
+        `UPDATE plans SET completed_at = updated_at WHERE status IN ('completed', 'archived')`
+      )
 
       dbLogger.info('[migration-126] ✓ Added completed_at to blueprints and plans tables')
     }
@@ -3488,7 +3597,9 @@ export const migrations: Migration[] = [
       db.exec('ALTER TABLE conversations_new RENAME TO conversations')
 
       // Recreate indexes dropped with the old table
-      db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)')
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)'
+      )
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_conversations_audit_run ON conversations(source_audit_run_id) WHERE source_audit_run_id IS NOT NULL`
       )
@@ -3558,12 +3669,15 @@ export const migrations: Migration[] = [
       //
       // SQLite cannot ALTER a CHECK constraint — rebuild the table.
       // Mirrors migration 115, including the memory_contradictions FK detach.
-      const purged = db.prepare(
-        `DELETE FROM memory_facts
+      const purged = db
+        .prepare(
+          `DELETE FROM memory_facts
          WHERE workspace_id IS NOT NULL
            AND workspace_id NOT IN (SELECT id FROM workspaces)`
-      ).run()
-      if (purged.changes > 0) dbLogger.warn(`[migration-132] Purged ${purged.changes} orphaned memory_facts`)
+        )
+        .run()
+      if (purged.changes > 0)
+        dbLogger.warn(`[migration-132] Purged ${purged.changes} orphaned memory_facts`)
 
       db.exec(`
         CREATE TABLE IF NOT EXISTS memory_contradictions_bak AS
@@ -3643,7 +3757,9 @@ export const migrations: Migration[] = [
           ON memory_contradictions(old_fact_id, new_fact_id);
       `)
 
-      dbLogger.info("[migration-132] ✓ Extended memory_facts source_type CHECK to include 'bootstrap'")
+      dbLogger.info(
+        "[migration-132] ✓ Extended memory_facts source_type CHECK to include 'bootstrap'"
+      )
     }
   },
 
@@ -3783,7 +3899,9 @@ export const migrations: Migration[] = [
       const indexed = (
         db.prepare('SELECT count(*) AS n FROM memory_facts_fts').get() as { n: number }
       ).n
-      dbLogger.info(`[migration-135] ✓ Created memory_facts_fts + triggers (${indexed} fact(s) indexed)`)
+      dbLogger.info(
+        `[migration-135] ✓ Created memory_facts_fts + triggers (${indexed} fact(s) indexed)`
+      )
     }
   },
 
@@ -3829,9 +3947,9 @@ export const migrations: Migration[] = [
       `)
 
       const open = (
-        db
-          .prepare('SELECT count(*) AS n FROM memory_facts WHERE valid_to IS NULL')
-          .get() as { n: number }
+        db.prepare('SELECT count(*) AS n FROM memory_facts WHERE valid_to IS NULL').get() as {
+          n: number
+        }
       ).n
       dbLogger.info(`[migration-136] ✓ Added bi-temporal columns (${open} fact(s) currently valid)`)
     }
@@ -3895,9 +4013,7 @@ export const migrations: Migration[] = [
            AND EXISTS (SELECT 1 FROM memory_facts b WHERE b.id = c.old_fact_id);
       `)
 
-      const edges = (
-        db.prepare('SELECT count(*) AS n FROM memory_edges').get() as { n: number }
-      ).n
+      const edges = (db.prepare('SELECT count(*) AS n FROM memory_edges').get() as { n: number }).n
       dbLogger.info(`[migration-137] ✓ Created memory_edges (${edges} edge(s) backfilled)`)
     }
   },
@@ -4075,7 +4191,11 @@ export function getDatabase(): Database.Database {
       // Zombie-state prevention: if migrations fail, close the DB and null out
       // the singleton so the app doesn't silently run on an unmigrated schema.
       dbLogger.error('[DB] Migration failed — closing DB to prevent zombie state:', migrationError)
-      try { db.close() } catch { /* best-effort close */ }
+      try {
+        db.close()
+      } catch {
+        /* best-effort close */
+      }
       db = null
       throw migrationError
     }
@@ -4119,9 +4239,7 @@ export function getDatabase(): Database.Database {
         const walSizeBytes = statSync(walPath).size
         const walSizeMB = Math.round(walSizeBytes / (1024 * 1024))
         if (walSizeBytes > 256 * 1024 * 1024) {
-          dbLogger.warn(
-            `[DB] ⚠ WAL file is ${walSizeMB} MB — possible checkpoint starvation`
-          )
+          dbLogger.warn(`[DB] ⚠ WAL file is ${walSizeMB} MB — possible checkpoint starvation`)
         } else if (walSizeBytes > 128 * 1024 * 1024) {
           dbLogger.info(`[DB] WAL file is ${walSizeMB} MB — elevated but within limits`)
         }
@@ -4300,5 +4418,3 @@ function seedDefaultSkills(database: Database.Database): void {
       '2026-03-21'
     )
 }
-
-

@@ -54,30 +54,30 @@ src/
 
 ### Available skills
 
-| Skill                | Path                                         | Purpose                                                          |
-| -------------------- | -------------------------------------------- | ---------------------------------------------------------------- |
-| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | Electron 42 IPC, security model, windowing, packaging            |
-| `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`   | .NET solution layout, project conventions, common patterns       |
-| `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`         | Claude CLI flags, modes, output streams, exit codes              |
-| `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`   | High-level Claude integration patterns                           |
-| `agent-sdk-patterns` | `.claude/skills/agent-sdk-patterns/SKILL.md` | Claude Agent SDK control flow, MCP server wiring, tool callbacks |
-| `sqlite-patterns`    | `.claude/skills/sqlite-patterns/SKILL.md`    | better-sqlite3 schema design, migrations, transactional queries  |
-| `supabase-architect` | `.claude/skills/supabase-architect/SKILL.md` | Supabase RLS, edge functions, auth flows (external workspaces)   |
-| `ui-ux-pro-max`      | `.claude/skills/ui-ux-pro-max/SKILL.md`      | UX heuristics, interaction design, accessibility checks          |
-| `design`             | `.claude/skills/design/SKILL.md`             | Visual hierarchy, typography, color, spacing                     |
-| `design-system`      | `.claude/skills/design-system/SKILL.md`      | Token systems, component contracts, theming                      |
-| `brand`              | `.claude/skills/brand/SKILL.md`              | Brand voice, identity, tone of voice                             |
-| `banner-design`      | `.claude/skills/banner-design/SKILL.md`      | Hero / banner / promo layout patterns                            |
-| `slides`             | `.claude/skills/slides/SKILL.md`             | Slide deck structure, narrative arcs, density rules              |
-| `git-workflow`       | `.claude/skills/git-workflow/SKILL.md`       | Branching, PR conventions, conventional commits                  |
-| `ipc-patterns`       | `.claude/skills/ipc-patterns/SKILL.md`       | Electron IPC contract design, channel naming, error propagation  |
-| `mermaid-diagrams`   | `.claude/skills/mermaid-diagrams/SKILL.md`   | Mermaid syntax for architecture, sequence, state diagrams        |
-| `design-docs`        | `.claude/skills/design-docs/SKILL.md`        | Design-doc structure, decision records, diagrams-as-code         |
-| `general-dev`        | `.claude/skills/general-dev/SKILL.md`        | General software-engineering practices for any stack             |
-| `testing-specialist` | `.claude/skills/testing-specialist/SKILL.md` | Test strategy, harness usage, coverage targets                   |
-| `planner`            | `.claude/skills/planner/SKILL.md`            | Plan-mode framing, breakdown patterns, scoping discipline        |
-| `security`           | `.claude/skills/security/SKILL.md`           | Threat modeling, secret handling, supply-chain hygiene           |
-| `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | Containerization, Terraform, CI/CD, deployment topology          |
+| Skill                | Path                                         | Purpose                                                                |
+| -------------------- | -------------------------------------------- | ---------------------------------------------------------------------- |
+| `electron-pro`       | `.claude/skills/electron-pro/SKILL.md`       | Electron 42 IPC, security model, windowing, packaging                  |
+| `dotnet-architect`   | `.claude/skills/dotnet-architect/SKILL.md`   | .NET solution layout, project conventions, common patterns             |
+| `claude-code-cli`    | `.claude/skills/claude-cli/SKILL.md`         | Claude CLI flags, modes, output streams, exit codes                    |
+| `claude-architect`   | `.claude/skills/claude-architect/SKILL.md`   | High-level Claude integration patterns                                 |
+| `agent-sdk-patterns` | `.claude/skills/agent-sdk-patterns/SKILL.md` | Claude Agent SDK control flow, MCP server wiring, tool callbacks       |
+| `sqlite-patterns`    | `.claude/skills/sqlite-patterns/SKILL.md`    | better-sqlite3 schema design, migrations, transactional queries        |
+| `supabase-architect` | `.claude/skills/supabase-architect/SKILL.md` | Supabase RLS, edge functions, auth flows (external workspaces)         |
+| `ui-ux-pro-max`      | `.claude/skills/ui-ux-pro-max/SKILL.md`      | UX heuristics, interaction design, accessibility checks                |
+| `design`             | `.claude/skills/design/SKILL.md`             | Visual hierarchy, typography, color, spacing                           |
+| `design-system`      | `.claude/skills/design-system/SKILL.md`      | Token systems, component contracts, theming                            |
+| `brand`              | `.claude/skills/brand/SKILL.md`              | Brand voice, identity, tone of voice                                   |
+| `banner-design`      | `.claude/skills/banner-design/SKILL.md`      | Hero / banner / promo layout patterns                                  |
+| `slides`             | `.claude/skills/slides/SKILL.md`             | Slide deck structure, narrative arcs, density rules                    |
+| `git-workflow`       | `.claude/skills/git-workflow/SKILL.md`       | Branching, PR conventions, conventional commits                        |
+| `ipc-patterns`       | `.claude/skills/ipc-patterns/SKILL.md`       | Electron IPC contract design, channel naming, error propagation        |
+| `mermaid-diagrams`   | `.claude/skills/mermaid-diagrams/SKILL.md`   | Mermaid syntax for architecture, sequence, state diagrams              |
+| `design-docs`        | `.claude/skills/design-docs/SKILL.md`        | Design-doc structure, decision records, diagrams-as-code               |
+| `general-dev`        | `.claude/skills/general-dev/SKILL.md`        | General software-engineering practices for any stack                   |
+| `testing-specialist` | `.claude/skills/testing-specialist/SKILL.md` | Test strategy, harness usage, coverage targets                         |
+| `planner`            | `.claude/skills/planner/SKILL.md`            | Plan-mode framing, breakdown patterns, scoping discipline              |
+| `security`           | `.claude/skills/security/SKILL.md`           | Threat modeling, secret handling, supply-chain hygiene                 |
+| `infrastructure`     | `.claude/skills/infrastructure/SKILL.md`     | Containerization, Terraform, CI/CD, deployment topology                |
 | `coding-discipline`  | `.claude/skills/coding-discipline/SKILL.md`  | Always-on coding principles: think first, simplicity, surgical changes |
 
 ### Electron skill trigger
@@ -125,25 +125,30 @@ npm run format        # Prettier
 `npm run build:mac` **mutilates `node_modules` and `package.json`** during the build, then restores them via an EXIT trap. If the build fails, is interrupted, or the trap misfires, you will be left with a broken environment.
 
 **Before running `build:mac`:**
+
 1. `npm run typecheck:node` → must be 0 errors
-2. `npm run typecheck:web` → must be 0 errors  
+2. `npm run typecheck:web` → must be 0 errors
 3. `grep '"dependencies"' package.json` → must return 1 match
 
 **After `build:mac` (success or failure):**
+
 1. `grep '"dependencies"' package.json` → must return 1 match. If 0 → `git checkout package.json`
 2. `npm run typecheck:node` → verify 0 errors
 3. `echo $NODE_ENV` → if `production`, the restore may have silently skipped dev deps
 4. `npm config get omit` → if `dev`, run `npm install --include=dev` to restore them
 
 **If type errors appear after build:mac, diagnose FIRST:**
+
 1. `find node_modules/electron-log -name '*.d.ts' | wc -l` → if 0, `.d.ts` files are missing (not a code bug)
 2. `echo $NODE_ENV` → if `production`, npm silently omitted devDependencies
 3. `npm config get omit` → if `dev`, that confirms the cause
 
 **If `.d.ts` files are missing** (NODE_ENV/omit issue):
+
 - ✅ `rm -rf node_modules && npm install --include=dev` — this is the correct fix
 
 **If `.d.ts` files are present** (genuine code bugs):
+
 - ❌ Do NOT `rm -rf node_modules && npm install` — this won't help
 - ❌ Do NOT `npm prune` outside of the build-mac flow
 - Fix the type errors in the code — they were latent bugs exposed by the clean install
@@ -162,7 +167,7 @@ npm run format        # Prettier
 - **Streaming**: `ipcRenderer.on` with cleanup functions from `window.api.on()`.
 - **Database**: SQLite, `schema.sql`, 107 versioned migrations, repository pattern.
 - **State**: Zustand stores, one per domain.
-- **MCP toolbox** (workspace-scoped, flag-gated): code-graph, semantic-search, git-context, checkpoint-context, github-context, control-actions.
+- **MCP toolbox** (workspace-scoped, flag-gated): code-graph, semantic-search, git-context, code-analysis, memory, recall, process-manager, control-actions.
 
 ## Error handling patterns
 

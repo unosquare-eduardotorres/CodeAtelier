@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Memory Settings', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,19 +36,23 @@ test.describe('Memory Settings', () => {
     return true
   }
 
-  async function navigateToMemory(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToMemory(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('memory')
   }
 
   test('page renders with Memories tab active', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToMemory(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Root element should be visible
     const memoryPage = page.locator('[data-testid="memory-settings-page"]')
@@ -61,22 +63,39 @@ test.describe('Memory Settings', () => {
     await expect(factsTab).toBeVisible()
 
     // Search bar should be present (part of the Memories tab)
-    const searchInput = page.locator('input[placeholder*="filter" i], input[placeholder*="search" i]').first()
+    const searchInput = page
+      .locator('input[placeholder*="filter" i], input[placeholder*="search" i]')
+      .first()
     const hasSearch = await searchInput.isVisible({ timeout: 3_000 }).catch(() => false)
     // Memories tab always shows — either the search bar or the empty state
-    expect(hasSearch || (await memoryPage.getByText(/no facts/i).isVisible().catch(() => false))).toBeTruthy()
+    expect(
+      hasSearch ||
+        (await memoryPage
+          .getByText(/no facts/i)
+          .isVisible()
+          .catch(() => false))
+    ).toBeTruthy()
   })
 
   test('Brain tab shows canvas and legend (or empty state)', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToMemory(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const memoryPage = page.locator('[data-testid="memory-settings-page"]')
     const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Click Brain tab (was Graph)
     const graphTab = page.locator('[data-testid="memory-tab-graph"]')
@@ -102,14 +121,23 @@ test.describe('Memory Settings', () => {
 
   test('Review tab renders contradictions section', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToMemory(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const memoryPage = page.locator('[data-testid="memory-settings-page"]')
     const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Click Review (contradictions) tab
     const reviewTab = page.locator('[data-testid="memory-tab-contradictions"]')
@@ -122,19 +150,30 @@ test.describe('Memory Settings', () => {
     const hasEmpty = await emptyState.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // The tab content rendered (either contradictions or empty state)
-    expect(hasEmpty || (await page.locator('[data-testid="memory-settings-page"]').isVisible())).toBeTruthy()
+    expect(
+      hasEmpty || (await page.locator('[data-testid="memory-settings-page"]').isVisible())
+    ).toBeTruthy()
   })
 
   test('Ingestion tab renders settings', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToMemory(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const memoryPage = page.locator('[data-testid="memory-settings-page"]')
     const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Click Ingestion (settings) tab
     const captureTab = page.locator('[data-testid="memory-tab-settings"]')
@@ -149,14 +188,23 @@ test.describe('Memory Settings', () => {
 
   test('CLAUDE.md tab renders panel', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToMemory(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const memoryPage = page.locator('[data-testid="memory-settings-page"]')
     const hasPage = await memoryPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Click CLAUDE.md tab
     const claudeTab = page.locator('[data-testid="memory-tab-claudemd"]')
@@ -165,8 +213,14 @@ test.describe('Memory Settings', () => {
     await page.waitForTimeout(500)
 
     // ClaudeMdPanel should render — either showing content or the empty state
-    const hasRegenerate = await page.getByText(/regenerate claude\.md/i).isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasNoFile = await page.getByText(/no claude\.md exists/i).isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasRegenerate = await page
+      .getByText(/regenerate claude\.md/i)
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasNoFile = await page
+      .getByText(/no claude\.md exists/i)
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     expect(hasRegenerate || hasNoFile).toBeTruthy()
   })

@@ -218,10 +218,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   } = props
 
   const titleSection = structuredPlan?.summary ? (
-    <details
-      open
-      className="rounded-lg border border-border-subtle bg-surface-overlay group"
-    >
+    <details open className="rounded-lg border border-border-subtle bg-surface-overlay group">
       <summary className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
@@ -241,7 +238,10 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   const summarySection = false
 
   const problemAnalysisSection = structuredPlan?.problemSummary && (
-    <div data-testid="task-plan-investigation" className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3">
+    <div
+      data-testid="task-plan-investigation"
+      className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3"
+    >
       <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)] mb-2">
         <Search size={14} className="text-[var(--color-plan-card)]" />
         Problem Analysis

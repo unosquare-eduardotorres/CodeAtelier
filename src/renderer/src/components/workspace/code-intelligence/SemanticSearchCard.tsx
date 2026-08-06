@@ -16,6 +16,8 @@ interface SemanticSearchCardProps {
   onToggle: (enabled: boolean) => Promise<void>
   onSettingToggle: (key: string, value: boolean) => Promise<void>
   onStartIndex: () => Promise<void>
+  /** Re-open the exclusion review after indexing has already run */
+  onReviewExclusions: () => void
   onNavigateToModels: () => void
 }
 
@@ -30,6 +32,7 @@ export default function SemanticSearchCard({
   onToggle,
   onSettingToggle,
   onStartIndex,
+  onReviewExclusions,
   onNavigateToModels
 }: SemanticSearchCardProps): React.JSX.Element {
   const [showWhyInfo, setShowWhyInfo] = useState(false)
@@ -40,9 +43,10 @@ export default function SemanticSearchCard({
   const embeddingUnavailable = isAppleSilicon === false && !hasOllamaEmbedding
 
   // Resolve display label for the active embedding backend
-  const backendLabel = embeddingStatus?.backend === 'ollama'
-    ? (embeddingStatus.ollamaEmbeddingModel ?? 'Ollama')
-    : (embeddingStatus?.omlxEmbeddingModelId ?? 'oMLX')
+  const backendLabel =
+    embeddingStatus?.backend === 'ollama'
+      ? (embeddingStatus.ollamaEmbeddingModel ?? 'Ollama')
+      : (embeddingStatus?.omlxEmbeddingModelId ?? 'oMLX')
 
   return (
     <SettingsCard className="space-y-3">
@@ -107,7 +111,8 @@ export default function SemanticSearchCard({
               <div className="flex items-center gap-1.5 text-xs text-text-secondary">
                 <Database size={12} className="text-primary" />
                 <span>
-                  {persistedIndexStatus.symbolCount?.toLocaleString()} chunks · {embeddingStatus?.backend === 'ollama' ? 'Ollama' : 'oMLX'} embedding
+                  {persistedIndexStatus.symbolCount?.toLocaleString()} chunks ·{' '}
+                  {embeddingStatus?.backend === 'ollama' ? 'Ollama' : 'oMLX'} embedding
                 </span>
               </div>
             </div>
@@ -124,9 +129,13 @@ export default function SemanticSearchCard({
                   Ready ({backendLabel})
                 </span>
               ) : hasOllamaEmbedding ? (
-                <span className="text-xs text-warning">Ollama running — no embedding model selected</span>
+                <span className="text-xs text-warning">
+                  Ollama running — no embedding model selected
+                </span>
               ) : embeddingStatus?.omlxRunning ? (
-                <span className="text-xs text-warning">oMLX running — no embedding model loaded</span>
+                <span className="text-xs text-warning">
+                  oMLX running — no embedding model loaded
+                </span>
               ) : embeddingUnavailable ? (
                 <span className="text-xs text-text-muted">
                   Configure Ollama with an embedding model in Models →
@@ -235,7 +244,14 @@ export default function SemanticSearchCard({
             <p className="text-xs text-text-muted mt-1">
               {persistedIndexStatus.loaded
                 ? 'Rebuild the semantic search index from scratch.'
-                : 'Scan the codebase and build the semantic search index.'}
+                : 'Scan the codebase and build the semantic search index.'}{' '}
+              <button
+                data-testid="review-exclusions"
+                onClick={onReviewExclusions}
+                className="text-primary hover:text-primary-hover underline underline-offset-2"
+              >
+                Review exclusions
+              </button>
             </p>
           </div>
 

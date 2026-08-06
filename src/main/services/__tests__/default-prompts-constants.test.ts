@@ -18,10 +18,6 @@ import {
   SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN,
   GIT_CONTEXT_GUIDANCE_PROMPT,
   GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
   CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
   LIBRARY_DOCS_GUIDANCE_PROMPT,
@@ -53,7 +49,10 @@ import {
   PLAN_MODE_SECTION_COMPACT,
   PLAN_MODE_SECTION_LEAN_COMPACT,
   MODE_CONTEXT_SECTIONS_COMPACT,
-  MODE_CONTEXT_SECTIONS_LEAN_COMPACT
+  MODE_CONTEXT_SECTIONS_LEAN_COMPACT,
+  TOOL_PRIORITY_DIRECTIVE,
+  REPOMAP_UNINDEXED_NOTE,
+  SEMANTIC_SEARCH_UNINDEXED_NOTE
 } from '../default-prompts'
 
 describe('default-prompts — prompt constants', () => {
@@ -69,16 +68,6 @@ describe('default-prompts — prompt constants', () => {
       SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN
     ],
     ['GIT_CONTEXT_GUIDANCE_PROMPT', GIT_CONTEXT_GUIDANCE_PROMPT, GIT_CONTEXT_GUIDANCE_PROMPT_LEAN],
-    [
-      'CHECKPOINT_CONTEXT_GUIDANCE_PROMPT',
-      CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
-      CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN
-    ],
-    [
-      'GITHUB_CONTEXT_GUIDANCE_PROMPT',
-      GITHUB_CONTEXT_GUIDANCE_PROMPT,
-      GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN
-    ],
     [
       'CODE_ANALYSIS_GUIDANCE_PROMPT',
       CODE_ANALYSIS_GUIDANCE_PROMPT,
@@ -272,6 +261,63 @@ describe('default-prompts — compact mode context sections', () => {
     assert.ok('build' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
     assert.ok('danger' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
   })
+})
+
+describe('default-prompts — tool routing', () => {
+  test('TOOL_PRIORITY_DIRECTIVE is a routing table, not an "always use first" mandate', () => {
+    assert.ok(
+      TOOL_PRIORITY_DIRECTIVE.includes('| Question shape | First tool | Fallback |'),
+      'must carry the routing table header'
+    )
+    for (const row of [
+      'mcp__code-graph__search_identifiers',
+      'mcp__semantic-search__semantic_search',
+      'mcp__code-graph__file_outline',
+      'mcp__code-graph__shortest_path'
+    ]) {
+      assert.ok(TOOL_PRIORITY_DIRECTIVE.includes(row), `routing table missing ${row}`)
+    }
+    assert.ok(TOOL_PRIORITY_DIRECTIVE.includes('| Grep |'), 'Grep must be a listed fallback')
+  })
+
+  test('TOOL_PRIORITY_DIRECTIVE carries the escape hatch', () => {
+    // Without it the table reads as a hard mandate, which the model discounts
+    // wholesale the first time the rule is obviously wrong.
+    assert.ok(
+      TOOL_PRIORITY_DIRECTIVE.includes(
+        'Skip all of the above when the answer is already in context'
+      ),
+      'missing skip clause'
+    )
+    assert.ok(TOOL_PRIORITY_DIRECTIVE.includes('do not retry it'), 'missing no-retry clause')
+  })
+
+  test('SEMANTIC_SEARCH_GUIDANCE_PROMPT states what it is weak at and the follow-up chain', () => {
+    assert.ok(SEMANTIC_SEARCH_GUIDANCE_PROMPT.includes('Weak at:'), 'missing negative space')
+    assert.ok(SEMANTIC_SEARCH_GUIDANCE_PROMPT.includes('Typical chain:'), 'missing tool chain')
+    assert.ok(
+      SEMANTIC_SEARCH_GUIDANCE_PROMPT.includes('mcp__code-graph__search_identifiers'),
+      'must route exact identifiers to code-graph'
+    )
+  })
+
+  const unindexedNotes = [
+    ['REPOMAP_UNINDEXED_NOTE', REPOMAP_UNINDEXED_NOTE, '## Code Graph', REPOMAP_GUIDANCE_PROMPT],
+    [
+      'SEMANTIC_SEARCH_UNINDEXED_NOTE',
+      SEMANTIC_SEARCH_UNINDEXED_NOTE,
+      '## Semantic Search',
+      SEMANTIC_SEARCH_GUIDANCE_PROMPT
+    ]
+  ] as const
+
+  for (const [name, note, marker, fullPrompt] of unindexedNotes) {
+    test(`${name} keeps the section marker so the block is still recognised`, () => {
+      assert.ok(note.length > 0, `${name} should not be empty`)
+      assert.ok(note.startsWith(marker), `${name} must start with ${marker}`)
+      assert.ok(note.length < fullPrompt.length, `${name} should be cheaper than the full guidance`)
+    })
+  }
 })
 
 describe('default-prompts — SOLE_IMPLEMENTER_DIRECTIVE', () => {

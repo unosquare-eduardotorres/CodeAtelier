@@ -19,7 +19,8 @@ import {
   setupFullMock,
   getMockRepo,
   createSpy,
-  mockService
+  mockService,
+  evictFromCache
 } from './setup-full-mock'
 
 setupFullMock()
@@ -42,7 +43,10 @@ mockService('snapshot-model-resolver', {
   resolveModelFromSnapshot: createSpy(() => 'claude-sonnet-4-6')
 })
 
-// Now require the factory
+// Now require the factory. Evict first: an earlier file in the shared run may
+// already have cached it bound to the real repositories, in which case the
+// mocks configured above would never be read.
+evictFromCache('agent-executor-factory')
 const { AgentExecutorFactory } = require('../agent-executor-factory')
 
 const wsRepo = getMockRepo('workspace')

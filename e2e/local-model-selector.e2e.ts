@@ -20,9 +20,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('LocalModelSelector Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -51,8 +49,13 @@ test.describe('LocalModelSelector Deep', () => {
     if (hasLocal) return true
 
     // Try clicking a "Local" tab/button if settings has provider tabs
-    const localTab = page.locator('button:has-text("Local"), button:has-text("Ollama"), button:has-text("oMLX")')
-    const hasLocalTab = await localTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const localTab = page.locator(
+      'button:has-text("Local"), button:has-text("Ollama"), button:has-text("oMLX")'
+    )
+    const hasLocalTab = await localTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasLocalTab) {
       await localTab.first().click()
       await page.waitForTimeout(1_000)
@@ -63,10 +66,16 @@ test.describe('LocalModelSelector Deep', () => {
 
   test('model selector renders recommended model cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSelector = await navigateToLocalModelSection(page)
-    if (!hasSelector) { test.skip(); return }
+    if (!hasSelector) {
+      test.skip()
+      return
+    }
 
     const selector = page.locator('[data-testid="local-model-selector"]')
     expect(await selector.isVisible()).toBeTruthy()
@@ -90,10 +99,16 @@ test.describe('LocalModelSelector Deep', () => {
 
   test('model card shows name, size, and memory tier badge', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSelector = await navigateToLocalModelSection(page)
-    if (!hasSelector) { test.skip(); return }
+    if (!hasSelector) {
+      test.skip()
+      return
+    }
 
     // Expand recommended models
     const selector = page.locator('[data-testid="local-model-selector"]')
@@ -109,7 +124,10 @@ test.describe('LocalModelSelector Deep', () => {
 
     const modelCards = page.locator('[data-testid="local-model-card"]')
     const cardCount = await modelCards.count()
-    if (cardCount === 0) { test.skip(); return }
+    if (cardCount === 0) {
+      test.skip()
+      return
+    }
 
     // First model card should contain model name and parameter size
     const firstCard = modelCards.first()
@@ -125,10 +143,16 @@ test.describe('LocalModelSelector Deep', () => {
 
   test('installed model shows checkmark indicator', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSelector = await navigateToLocalModelSection(page)
-    if (!hasSelector) { test.skip(); return }
+    if (!hasSelector) {
+      test.skip()
+      return
+    }
 
     const selector = page.locator('[data-testid="local-model-selector"]')
 
@@ -147,10 +171,16 @@ test.describe('LocalModelSelector Deep', () => {
 
   test('uninstalled model shows pull/download button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSelector = await navigateToLocalModelSection(page)
-    if (!hasSelector) { test.skip(); return }
+    if (!hasSelector) {
+      test.skip()
+      return
+    }
 
     // Expand recommendations
     const selector = page.locator('[data-testid="local-model-selector"]')
@@ -165,7 +195,9 @@ test.describe('LocalModelSelector Deep', () => {
     }
 
     // Look for Pull or Copy & Download buttons on model cards
-    const pullButtons = selector.locator('button:has-text("Pull"), button:has-text("Copy & Download")')
+    const pullButtons = selector.locator(
+      'button:has-text("Pull"), button:has-text("Copy & Download")'
+    )
     const pullCount = await pullButtons.count()
 
     expect(typeof pullCount).toBe('number')
@@ -174,32 +206,48 @@ test.describe('LocalModelSelector Deep', () => {
 
   test('selecting a model highlights it as active', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSelector = await navigateToLocalModelSection(page)
-    if (!hasSelector) { test.skip(); return }
+    if (!hasSelector) {
+      test.skip()
+      return
+    }
 
     const selector = page.locator('[data-testid="local-model-selector"]')
 
     // Look for currently selected model (has primary border/bg)
-    const selectedModel = selector.locator('button[class*="border-primary"], div[class*="border-primary"]')
+    const selectedModel = selector.locator(
+      'button[class*="border-primary"], div[class*="border-primary"]'
+    )
     const selectedCount = await selectedModel.count()
 
     // Selected state is indicated by border-primary class
     expect(typeof selectedCount).toBe('number')
 
     // If there are installed models, one should be selectable
-    const installedButtons = selector.locator('button:has-text("Select"), button:has-text("Selected")')
+    const installedButtons = selector.locator(
+      'button:has-text("Select"), button:has-text("Selected")'
+    )
     const installedCount = await installedButtons.count()
     expect(typeof installedCount).toBe('number')
   })
 
   test('copy model name button copies to clipboard', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSelector = await navigateToLocalModelSection(page)
-    if (!hasSelector) { test.skip(); return }
+    if (!hasSelector) {
+      test.skip()
+      return
+    }
 
     // Expand recommendations
     const selector = page.locator('[data-testid="local-model-selector"]')

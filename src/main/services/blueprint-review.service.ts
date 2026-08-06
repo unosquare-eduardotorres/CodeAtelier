@@ -13,7 +13,11 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import {
+  PhaseActivityWatchdog,
+  STALL_TIMEOUT_MS,
+  wireAskUserAutoResponder
+} from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintReviewAdapter } from './role-adapters/blueprint/blueprint-review.adapter'
 import { buildReviewGoalCondition } from './blueprint-goal-conditions'
@@ -83,7 +87,11 @@ export class BlueprintReviewService extends EventEmitter {
       blueprintRepository.update(blueprintId, { currentPhase: 'review' })
 
       // 2. Assemble context (includes spec + clarify + plan + tasks artifacts + workspace docs)
-      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'review', workspacePath)
+      const phaseContext = await blueprintService.assemblePhaseContext(
+        blueprintId,
+        'review',
+        workspacePath
+      )
 
       // 3. Create adapter + session
       const adapter = new BlueprintReviewAdapter({ workspaceId, blueprintId, phaseContext })
@@ -106,11 +114,13 @@ export class BlueprintReviewService extends EventEmitter {
 
       onChunk = (chunk: StreamChunk): void => {
         stallWatchdog.touch()
-        forwardBlueprintChunk(
-          (event, payload) => this.safeEmit(event, payload),
-          chunk,
-          { blueprintId, workspaceId, phase: 'review', workspacePath, mode: 'plan' }
-        )
+        forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
+          blueprintId,
+          workspaceId,
+          phase: 'review',
+          workspacePath,
+          mode: 'plan'
+        })
       }
       onStatus = (status: AgentStatus): void => {
         this.safeEmit('status', { workspaceId, status })
@@ -143,8 +153,11 @@ export class BlueprintReviewService extends EventEmitter {
 
       // Persist conversation ID early so retries can find it
       if (reviewPhaseRec) {
-        try { blueprintPhaseRepository.setConversation(reviewPhaseRec.id, syntheticConvId) }
-        catch { /* conversation may not exist yet in DB */ }
+        try {
+          blueprintPhaseRepository.setConversation(reviewPhaseRec.id, syntheticConvId)
+        } catch {
+          /* conversation may not exist yet in DB */
+        }
       }
 
       let timeoutId: NodeJS.Timeout | undefined
@@ -242,7 +255,7 @@ export class BlueprintReviewService extends EventEmitter {
         this.safeEmit('preflightResult', { blueprintId, workspaceId, result: preflightResult })
         bpLog.info(
           `[startReviewPhase] Preflight: ${preflightResult.checks.length} checks — ` +
-          `${preflightResult.hasBlockers ? 'HAS BLOCKERS' : 'no blockers'}`
+            `${preflightResult.hasBlockers ? 'HAS BLOCKERS' : 'no blockers'}`
         )
       } catch (preflightErr) {
         // Preflight failure should never block the approval gate (premortem #4)
@@ -260,7 +273,14 @@ export class BlueprintReviewService extends EventEmitter {
         planSummary,
         completion: completion ? (completion as Record<string, unknown>) : undefined,
         reviewMarkdown: text || undefined,
-        ...(preflightData ? { preflight: { result: preflightData.result as unknown as Record<string, unknown>, overridden: preflightData.overridden } } : {})
+        ...(preflightData
+          ? {
+              preflight: {
+                result: preflightData.result as unknown as Record<string, unknown>,
+                overridden: preflightData.overridden
+              }
+            }
+          : {})
       })
       this.safeEmit('approvalNeeded', {
         blueprintId,
@@ -298,11 +318,18 @@ export class BlueprintReviewService extends EventEmitter {
       blueprintService.failPipeline(workspaceId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
-      try { blueprintService.saveRetryContext(blueprintId, 'review', { error: errorMsg }) }
-      catch { /* best effort */ }
+      try {
+        blueprintService.saveRetryContext(blueprintId, 'review', { error: errorMsg })
+      } catch {
+        /* best effort */
+      }
 
       const autoRetrying = blueprintService.scheduleAutoRetry({
-        blueprintId, workspaceId, workspacePath, phase: 'review', error: errorMsg
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        phase: 'review',
+        error: errorMsg
       })
 
       this.safeEmit('phaseComplete', {
@@ -333,9 +360,9 @@ export class BlueprintReviewService extends EventEmitter {
     if (!completion) return 'Review completed — no structured findings available.'
 
     const findings = completion.findings as
-      | { critical?: number; high?: number; medium?: number; low?: number }
-      | undefined
-    const recommendation = typeof completion.recommendation === 'string' ? completion.recommendation : 'unknown'
+      { critical?: number; high?: number; medium?: number; low?: number } | undefined
+    const recommendation =
+      typeof completion.recommendation === 'string' ? completion.recommendation : 'unknown'
     const coverage = completion.coveragePercent as number | undefined
 
     const lines: string[] = []

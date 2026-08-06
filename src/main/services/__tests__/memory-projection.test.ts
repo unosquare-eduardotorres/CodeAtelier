@@ -92,7 +92,10 @@ describe('selectForIndex', () => {
       fact({ id: 'b', tier: 3 }),
       fact({ id: 'c', tier: 1 })
     ])
-    assert.deepEqual(kept.map((f) => f.id), ['b', 'c', 'a'])
+    assert.deepEqual(
+      kept.map((f) => f.id),
+      ['b', 'c', 'a']
+    )
   })
 
   test('breaks tier ties by confidence', () => {
@@ -108,7 +111,10 @@ describe('selectForIndex', () => {
       fact({ id: 'weak', title: 'Use Result types', tier: 0 }),
       fact({ id: 'strong', title: 'use  RESULT  types!', tier: 3 })
     ])
-    assert.deepEqual(kept.map((f) => f.id), ['strong'])
+    assert.deepEqual(
+      kept.map((f) => f.id),
+      ['strong']
+    )
     assert.equal(pruned, 1)
   })
 
@@ -155,7 +161,10 @@ describe('groupByTopic', () => {
 
     assert.ok(!topics.has('rare-topic'), 'a one-fact topic does not earn its own file')
     assert.ok(topics.has('caching'))
-    assert.deepEqual(topics.get('general')?.map((f) => f.id), ['x'])
+    assert.deepEqual(
+      topics.get('general')?.map((f) => f.id),
+      ['x']
+    )
   })
 
   test('returns topics in a stable alphabetical order', () => {

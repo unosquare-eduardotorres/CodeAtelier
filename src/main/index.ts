@@ -53,11 +53,11 @@ import { memoryConsolidationService } from './services/memory-consolidation.serv
 // Augment PATH to include Homebrew and npm global bin directories
 // CRITICAL: Ensures child_process.spawn() can locate binaries like 'opencode',
 // which the @opencode-ai/sdk needs to start its server locally
-import { 
-  augmentOpenCodeCliPath, 
+import {
+  augmentOpenCodeCliPath,
   locateOpenCodeCli,
   resolveOpencodePath,
-  ensureOpencodePathInEnv 
+  ensureOpencodePathInEnv
 } from '../shared/opencode-cli-path'
 
 // Augment PATH before any services or child processes are initialized
@@ -68,12 +68,10 @@ augmentOpenCodeCliPath()
 try {
   // Use npm-based resolution (more robust than hardcoded paths)
   const opencodePath = resolveOpencodePath()
-  
+
   if (opencodePath) {
     ensureOpencodePathInEnv()
-    log.info(
-      `[OpenCode CLI] Resolved: ${opencodePath}. PATH updated.`,
-    )
+    log.info(`[OpenCode CLI] Resolved: ${opencodePath}. PATH updated.`)
   } else {
     log.warn(
       `[OpenCode CLI] WARNING: Could not find 'opencode' binary. Install with: npm install -g @opencode-ai/cli`
@@ -338,9 +336,7 @@ function createWindow(): void {
   // ── Renderer crash/hang observability ──
   // Without these handlers, a renderer crash or freeze is completely silent.
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    log.error(
-      `[Renderer] Process gone — reason: ${details.reason}, exitCode: ${details.exitCode}`
-    )
+    log.error(`[Renderer] Process gone — reason: ${details.reason}, exitCode: ${details.exitCode}`)
     // Write renderer crash info to vitals for crash-diagnosis
     vitalsLog.error(
       `[RENDERER-GONE] reason=${details.reason} exitCode=${details.exitCode} detail="" rss_mb=${Math.round(process.memoryUsage().rss / 1024 / 1024)}`
@@ -534,18 +530,18 @@ app.whenReady().then(() => {
   // ── Embedding: auto-load model at startup (delayed, non-fatal) ──
   setTimeout(() => {
     import('./services/local-embedding.provider').then(({ localEmbeddingProvider }) =>
-      localEmbeddingProvider.ensureEmbeddingReady().catch((e) =>
-        log.debug('Startup embedding auto-load (non-fatal):', e)
-      )
+      localEmbeddingProvider
+        .ensureEmbeddingReady()
+        .catch((e) => log.debug('Startup embedding auto-load (non-fatal):', e))
     )
   }, 5000)
 
   // ── Prompt Optimizer: pre-warm CLI session (delayed, non-fatal) ──
   setTimeout(() => {
     import('./services/prompt-optimizer.service').then(({ promptOptimizerService }) =>
-      promptOptimizerService.warmup().catch((e) =>
-        log.debug('Prompt optimizer warmup (non-fatal):', e)
-      )
+      promptOptimizerService
+        .warmup()
+        .catch((e) => log.debug('Prompt optimizer warmup (non-fatal):', e))
     )
   }, 8_000)
 
@@ -610,7 +606,12 @@ app.whenReady().then(() => {
   // We snapshot watcher state before stopping so we can restart after wake.
   // fileWatcherService.stopAll() closes fs.watch handles and clears all state,
   // so we need to preserve {workspaceId, workspacePath, options} to recreate them.
-  let suspendedWatchers: { workspaceId: string; workspacePath: string; codeGraphEnabled: boolean; semanticSearchEnabled: boolean }[] = []
+  let suspendedWatchers: {
+    workspaceId: string
+    workspacePath: string
+    codeGraphEnabled: boolean
+    semanticSearchEnabled: boolean
+  }[] = []
   let suspendedConsolidationWorkspace: string | null = null
 
   powerMonitor.on('suspend', () => {

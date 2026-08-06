@@ -54,7 +54,10 @@ export default function ElicitationModal(): React.JSX.Element | null {
   if (!request) return null
 
   return (
-    <div data-testid="elicitation-modal" className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50">
+    <div
+      data-testid="elicitation-modal"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50"
+    >
       <div className="bg-surface-float rounded-xl shadow-2xl w-[420px] border border-border-default">
         {/* Header */}
         <div className="flex items-center gap-2 px-5 py-4 border-b border-border-default">

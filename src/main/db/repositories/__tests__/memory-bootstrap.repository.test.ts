@@ -20,8 +20,7 @@ if (!env) {
   const { wsId } = env
   const { memoryBootstrapRepository: repo } = require('../memory-bootstrap.repository')
 
-  const plan = (runId: string, items: PlannedItem[]): number =>
-    repo.planItems(runId, wsId, items)
+  const plan = (runId: string, items: PlannedItem[]): number => repo.planItems(runId, wsId, items)
 
   const newRun = (mode = 'full', scope = 'changed'): string =>
     repo.createRun({ workspaceId: wsId, mode, scope })
@@ -287,9 +286,7 @@ if (!env) {
   describe('MemoryBootstrapRepository recovery', () => {
     test('markOrphanedRunsPaused demotes running rows and requeues their items', () => {
       const runId = newRun()
-      plan(runId, [
-        { phase: 'docs', kind: 'doc', sourceRef: 'orphan.md', chunkTotal: 8 }
-      ])
+      plan(runId, [{ phase: 'docs', kind: 'doc', sourceRef: 'orphan.md', chunkTotal: 8 }])
       repo.updateRun(runId, { status: 'running' })
       const item = repo.claimNextItem(runId)
       repo.bumpChunkDone(item.id, 3, 2)

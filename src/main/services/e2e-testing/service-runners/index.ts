@@ -32,17 +32,38 @@ import { runBlueprintProgressTracking } from './blueprint.runner'
 import { runBlueprintTaskExecution } from './blueprint.runner'
 import { runBlueprintClarifyLive } from './blueprint.runner'
 import {
-  runMpaPreflight, runMpaGoalConditions, runMpaOrchestration, runMpaCancellation,
-  runMpaCampaignSequential, runMpaCampaignPauseRetry, runMpaCampaignSkip, runMpaCampaignReconcile
+  runMpaPreflight,
+  runMpaGoalConditions,
+  runMpaOrchestration,
+  runMpaCancellation,
+  runMpaCampaignSequential,
+  runMpaCampaignPauseRetry,
+  runMpaCampaignSkip,
+  runMpaCampaignReconcile
 } from './mpa.runner'
 import {
-  runRepoDiffDetection, runRepoCommit, runRepoCommitMessage,
-  runBtwQuestion, runInsightsTokens, runDocsMermaid
+  runRepoDiffDetection,
+  runRepoCommit,
+  runRepoCommitMessage,
+  runBtwQuestion,
+  runInsightsTokens,
+  runDocsMermaid
 } from './workspace-ops.runner'
 import { runCodeGraphIndex, runEmbeddingGeneration, runSemanticSearch } from './code-intel.runner'
-import { runGrillEvaluate, runGrillMultiTrack, runGrillIteration, runGrillCondenseRequirement, runGrillGeneratePlan } from './grill.runner'
+import {
+  runGrillEvaluate,
+  runGrillMultiTrack,
+  runGrillIteration,
+  runGrillCondenseRequirement,
+  runGrillGeneratePlan
+} from './grill.runner'
 import { runAuditStartRun, runAuditFindings, runAuditCoverage } from './audit.runner'
-import { runCouncilStartSession, runCouncilAdvisorOpinions, runCouncilSynthesis, runCouncilStructuredOutput } from './council.runner'
+import {
+  runCouncilStartSession,
+  runCouncilAdvisorOpinions,
+  runCouncilSynthesis,
+  runCouncilStructuredOutput
+} from './council.runner'
 import {
   runMemoryTiers,
   runMemoryDedupExact,
@@ -52,10 +73,24 @@ import {
   runMemoryScopeBoost,
   runMemorySessionDedupe
 } from './memory.runner'
-import { runCheckpointCapture, runCheckpointRestore, runCheckpointRewind, runCheckpointUntracked } from './checkpoint.runner'
-import { runChatEdgeConcurrent, runChatEdgeRapidCancel, runChatEdgeCompactRace } from './chat-edge.runner'
+import {
+  runCheckpointCapture,
+  runCheckpointRestore,
+  runCheckpointRewind,
+  runCheckpointUntracked
+} from './checkpoint.runner'
+import {
+  runChatEdgeConcurrent,
+  runChatEdgeRapidCancel,
+  runChatEdgeCompactRace
+} from './chat-edge.runner'
 import { runIdeaCrud, runIdeaStartGrill, runIdeaConvert, runIdeaToBlueprint } from './idea.runner'
-import { runSpecialistCrud, runSpecialistSkills, runSpecialistDispatch, runSpecialistOverride } from './specialist.runner'
+import {
+  runSpecialistCrud,
+  runSpecialistSkills,
+  runSpecialistDispatch,
+  runSpecialistOverride
+} from './specialist.runner'
 
 // ── Registry ──
 

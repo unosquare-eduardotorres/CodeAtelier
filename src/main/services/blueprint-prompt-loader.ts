@@ -80,14 +80,32 @@ const AGENT_ENHANCEMENT_FILES: Partial<Record<BlueprintPhaseType, string>> = {
 
 // Fields to keep when projecting plan JSON (drops verbose description prose)
 const PLAN_PROJECTION_KEYS = new Set([
-  'summary', 'techStack', 'mustHaves', 'existingPatterns', 'keyLinks',
-  'phases', 'items', 'id', 'title', 'name', 'files', 'scope'
+  'summary',
+  'techStack',
+  'mustHaves',
+  'existingPatterns',
+  'keyLinks',
+  'phases',
+  'items',
+  'id',
+  'title',
+  'name',
+  'files',
+  'scope'
 ])
 
 // Fields to keep when projecting tasks JSON
 const TASKS_PROJECTION_KEYS = new Set([
-  'id', 'title', 'wave', 'files', 'scope', 'status', 'taskId',
-  'userStory', 'filePathsJson', 'description'
+  'id',
+  'title',
+  'wave',
+  'files',
+  'scope',
+  'status',
+  'taskId',
+  'userStory',
+  'filePathsJson',
+  'description'
 ])
 
 /** Per-phase char budget for the formatted artifacts block. */
@@ -100,7 +118,10 @@ const MAX_DISCOVERY_ENTRIES = 30
  * Project only the allowed keys from an object (shallow, one level + recurse into arrays).
  * Returns a new object with only the allowed fields.
  */
-function projectFields(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
+function projectFields(
+  obj: Record<string, unknown>,
+  allowed: Set<string>
+): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   for (const key of Object.keys(obj)) {
     if (allowed.has(key)) {
@@ -164,9 +185,7 @@ export function formatArtifacts(
   // Render consolidated discoveries block
   if (allDiscoveryEntries.length > 0) {
     const capped = allDiscoveryEntries.length > MAX_DISCOVERY_ENTRIES
-    const entries = capped
-      ? allDiscoveryEntries.slice(-MAX_DISCOVERY_ENTRIES)
-      : allDiscoveryEntries
+    const entries = capped ? allDiscoveryEntries.slice(-MAX_DISCOVERY_ENTRIES) : allDiscoveryEntries
     const bullets = entries.map((e) => `- ${e}`).join('\n')
     const omitted = allDiscoveryEntries.length - entries.length
     const suffix = capped
@@ -293,7 +312,9 @@ function formatRetryContext(ctx: NonNullable<PhaseContext['retryContext']>): str
 
   if (ctx.filesModified.length > 0) {
     lines.push(`**Files modified before failure:** ${ctx.filesModified.join(', ')}`)
-    lines.push('⚠️ These files may be in an inconsistent state — re-read them before making further changes.')
+    lines.push(
+      '⚠️ These files may be in an inconsistent state — re-read them before making further changes.'
+    )
     lines.push('')
   }
   if (ctx.filesCreated.length > 0) {
@@ -301,7 +322,9 @@ function formatRetryContext(ctx: NonNullable<PhaseContext['retryContext']>): str
     lines.push('')
   }
   if (ctx.totalTasks > 0) {
-    lines.push(`**Progress:** ${ctx.tasksCompleted}/${ctx.totalTasks} tasks completed before failure`)
+    lines.push(
+      `**Progress:** ${ctx.tasksCompleted}/${ctx.totalTasks} tasks completed before failure`
+    )
     lines.push('')
   }
 
@@ -350,14 +373,13 @@ function replaceVariables(
       // Pre-loaded workspace documentation (CLAUDE.md, README.md, package.json, PLAN.md)
       .replace(
         '{{WORKSPACE_DOCS}}',
-        context.workspaceDocs || '(No workspace documentation found — use Read to check for CLAUDE.md, README.md, package.json)'
+        context.workspaceDocs ||
+          '(No workspace documentation found — use Read to check for CLAUDE.md, README.md, package.json)'
       )
       // Retry context (populated only on retry — guides the agent to build on prior work)
       .replace(
         '{{RETRY_CONTEXT}}',
-        context.retryContext
-          ? formatRetryContext(context.retryContext)
-          : ''
+        context.retryContext ? formatRetryContext(context.retryContext) : ''
       )
   )
 }

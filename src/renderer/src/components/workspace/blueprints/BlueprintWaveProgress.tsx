@@ -54,9 +54,13 @@ export default function BlueprintWaveProgress({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Layers size={14} className="text-accent" />
-          <span className={`text-xs font-semibold ${isRemediation ? 'text-warning' : 'text-text-primary'}`}>
+          <span
+            className={`text-xs font-semibold ${isRemediation ? 'text-warning' : 'text-text-primary'}`}
+          >
             Wave {wave}
-            {isRemediation && <span className="text-[10px] font-normal ml-1 text-warning/70">(Remediation)</span>}
+            {isRemediation && (
+              <span className="text-[10px] font-normal ml-1 text-warning/70">(Remediation)</span>
+            )}
           </span>
           <span className="text-[10px] text-text-muted">
             {taskCount} task{taskCount !== 1 ? 's' : ''}

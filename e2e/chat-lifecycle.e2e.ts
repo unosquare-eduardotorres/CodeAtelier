@@ -161,9 +161,7 @@ test.describe('Chat Lifecycle', () => {
     )
 
     // Wait for streaming to start
-    const isStreaming = await chat.stopButton
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const isStreaming = await chat.stopButton.isVisible({ timeout: 15_000 }).catch(() => false)
 
     if (!isStreaming) {
       // Response may have completed too quickly to test stop

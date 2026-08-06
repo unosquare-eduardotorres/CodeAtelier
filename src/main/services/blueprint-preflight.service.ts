@@ -56,7 +56,7 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     name: 'Docker',
     packagePatterns: [],
     fileMarkers: ['Dockerfile', 'docker-compose.yml', 'docker-compose.yaml', '.dockerignore'],
-    taskKeywords: ['docker', 'dockerfile'],  // B7: removed 'container' (React false positive)
+    taskKeywords: ['docker', 'dockerfile'], // B7: removed 'container' (React false positive)
     requiredEnvVars: [],
     presenceProbe: { cmd: 'docker', args: ['--version'] },
     livenessProbe: { cmd: 'docker', args: ['info'] }, // G7: daemon running check
@@ -67,10 +67,10 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     name: 'PostgreSQL',
     packagePatterns: ['pg', 'knex', 'prisma', 'drizzle-orm', 'typeorm', 'sequelize'],
     fileMarkers: ['prisma/schema.prisma'],
-    taskKeywords: ['postgres', 'postgresql', 'psql'],  // B7: removed 'database migration' (SQLite false positive)
+    taskKeywords: ['postgres', 'postgresql', 'psql'], // B7: removed 'database migration' (SQLite false positive)
     requiredEnvVars: ['DATABASE_URL'],
     presenceProbe: { cmd: 'psql', args: ['--version'] },
-    presenceWarnOnly: true,  // B5: hosted DBs don't need local psql
+    presenceWarnOnly: true, // B5: hosted DBs don't need local psql
     installHint: 'brew install postgresql  (or use Docker: docker run -p 5432:5432 postgres)'
   },
   {
@@ -78,11 +78,12 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     name: 'Stripe',
     packagePatterns: ['stripe', '@stripe/stripe-js', '@stripe/react-stripe-js'],
     fileMarkers: [],
-    taskKeywords: ['stripe'],  // B7: removed 'payment', 'billing' (generic false positives)
+    taskKeywords: ['stripe'], // B7: removed 'payment', 'billing' (generic false positives)
     requiredEnvVars: ['STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY'],
-    optionalEnvVars: ['STRIPE_WEBHOOK_SECRET'],  // B5: many projects don't use webhooks
+    optionalEnvVars: ['STRIPE_WEBHOOK_SECRET'], // B5: many projects don't use webhooks
     presenceProbe: { cmd: 'stripe', args: ['--version'] },
-    installHint: 'brew install stripe/stripe-cli/stripe  (or see https://stripe.com/docs/stripe-cli)'
+    installHint:
+      'brew install stripe/stripe-cli/stripe  (or see https://stripe.com/docs/stripe-cli)'
   },
   {
     id: 'firebase',
@@ -91,7 +92,7 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     fileMarkers: ['firebase.json', '.firebaserc'],
     taskKeywords: ['firebase', 'firestore', 'cloud functions'],
     requiredEnvVars: [],
-    optionalEnvVars: ['FIREBASE_PROJECT_ID'],  // B5: normally in .firebaserc, not env
+    optionalEnvVars: ['FIREBASE_PROJECT_ID'], // B5: normally in .firebaserc, not env
     presenceProbe: { cmd: 'firebase', args: ['--version'] },
     installHint: 'npm install -g firebase-tools'
   }
@@ -123,8 +124,9 @@ export function parseDotenvFile(filePath: string): Map<string, string> {
       const key = trimmed.substring(0, eqIdx).trim()
       let value = trimmed.substring(eqIdx + 1).trim()
       // Strip surrounding quotes first — if quoted, inline comments are part of the value
-      const isQuoted = (value.startsWith('"') && value.endsWith('"')) ||
-                       (value.startsWith("'") && value.endsWith("'"))
+      const isQuoted =
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
       if (isQuoted) {
         value = value.slice(1, -1)
       } else {
@@ -186,15 +188,20 @@ export async function captureLoginShellEnv(): Promise<Set<string>> {
 
     try {
       const output = await new Promise<string>((resolve, reject) => {
-        execFile(shell, ['-ilc', 'printenv'], {
-          encoding: 'utf-8',
-          timeout: 5000,
-          env: { ...process.env },
-          windowsHide: true
-        }, (err, stdout) => {
-          if (err) reject(err)
-          else resolve(stdout)
-        })
+        execFile(
+          shell,
+          ['-ilc', 'printenv'],
+          {
+            encoding: 'utf-8',
+            timeout: 5000,
+            env: { ...process.env },
+            windowsHide: true
+          },
+          (err, stdout) => {
+            if (err) reject(err)
+            else resolve(stdout)
+          }
+        )
       })
 
       for (const line of output.split('\n')) {
@@ -282,7 +289,11 @@ function getAllPackageDeps(candidates: string[]): Set<string> {
 
 // ── Async CLI probes (A1: replaces spawnSync, A7: adds cwd, A8: Windows shell) ──
 
-interface ProbeResult { ok: boolean; output: string; timedOut?: boolean }
+interface ProbeResult {
+  ok: boolean
+  output: string
+  timedOut?: boolean
+}
 
 /**
  * Run a single CLI probe asynchronously.
@@ -311,9 +322,10 @@ export function runProbeAsync(
         (err, stdout, _stderr) => {
           if (err) {
             const execErr = err as ExecFileException
-            const isTimeout = execErr.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
-                              execErr.message?.includes('ETIMEDOUT') ||
-                              execErr.killed
+            const isTimeout =
+              execErr.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ||
+              execErr.message?.includes('ETIMEDOUT') ||
+              execErr.killed
             resolve({
               ok: false,
               output: err.message || String(err),
@@ -488,7 +500,11 @@ export async function runPreflightChecks(
       const presencePromises = probeJobs.map(async (job) => {
         const result = await Promise.race([
           job.promise,
-          timeoutPromise.then((): ProbeResult => ({ ok: false, output: 'Global probe budget exceeded', timedOut: true }))
+          timeoutPromise.then((): ProbeResult => ({
+            ok: false,
+            output: 'Global probe budget exceeded',
+            timedOut: true
+          }))
         ])
         const entry = probeResults.get(job.def.id) ?? {}
         // R2-6 fix: .then() always returns ProbeResult, never a string
@@ -519,7 +535,11 @@ export async function runPreflightChecks(
         const livenessPromises = livenessJobs.map(async (job) => {
           const result = await Promise.race([
             job.promise,
-            timeoutPromise.then((): ProbeResult => ({ ok: false, output: 'Global probe budget exceeded', timedOut: true }))
+            timeoutPromise.then((): ProbeResult => ({
+              ok: false,
+              output: 'Global probe budget exceeded',
+              timedOut: true
+            }))
           ])
           const entry = probeResults.get(job.def.id) ?? {}
           // R2-6 fix: same as above — .then() always returns ProbeResult
@@ -613,9 +633,7 @@ export async function runPreflightChecks(
         message: isAvailable
           ? `${envVar} is set`
           : `${envVar} is not set (optional — some features may be limited)`,
-        remediation: isAvailable
-          ? undefined
-          : `Add ${envVar} to your .env file if needed`,
+        remediation: isAvailable ? undefined : `Add ${envVar} to your .env file if needed`,
         sources
       })
     }
@@ -657,9 +675,9 @@ export async function runPreflightChecks(
 
   pfLog.info(
     `[preflight] Complete: ${checks.length} checks — ` +
-    `${checks.filter((c) => c.status === 'blocker').length} blockers, ` +
-    `${checks.filter((c) => c.status === 'warn').length} warnings, ` +
-    `${checks.filter((c) => c.status === 'pass').length} passes`
+      `${checks.filter((c) => c.status === 'blocker').length} blockers, ` +
+      `${checks.filter((c) => c.status === 'warn').length} warnings, ` +
+      `${checks.filter((c) => c.status === 'pass').length} passes`
   )
 
   return result
@@ -704,11 +722,12 @@ export function buildPreflightDiscoveries(result: PreflightResult): string[] {
 
   for (const check of result.checks) {
     if (check.status === 'blocker') {
-      const guidance = check.kind === 'env-var'
-        ? `do not attempt operations requiring ${check.name}; write config/stubs only, mark task partial`
-        : check.kind === 'cli-tool'
-          ? `${check.name} is unavailable — skip commands that require it, document what was skipped`
-          : `${check.name} is not reachable — avoid live service calls, use mocks/stubs`
+      const guidance =
+        check.kind === 'env-var'
+          ? `do not attempt operations requiring ${check.name}; write config/stubs only, mark task partial`
+          : check.kind === 'cli-tool'
+            ? `${check.name} is unavailable — skip commands that require it, document what was skipped`
+            : `${check.name} is not reachable — avoid live service calls, use mocks/stubs`
       discoveries.push(`[PREFLIGHT] ${check.name} unavailable — ${guidance}`)
     }
     // D11: Warnings no longer injected into discoveries to prevent crowding verify gaps

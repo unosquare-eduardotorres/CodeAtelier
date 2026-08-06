@@ -41,7 +41,12 @@ export type HydratedChatMessage =
   | { type: 'user'; content: string; timestamp: number }
   | { type: 'system'; content: string; timestamp: number }
   | { type: 'findings'; findings: ClarifyFindingsBlock; round: number; timestamp: number }
-  | { type: 'qa'; questions: ClarifyQuestion[]; answers: Record<string, QuestionAnswerState>; timestamp: number }
+  | {
+      type: 'qa'
+      questions: ClarifyQuestion[]
+      answers: Record<string, QuestionAnswerState>
+      timestamp: number
+    }
   | { type: 'plan'; plan: Record<string, unknown>; timestamp: number }
   | { type: 'tasks'; tasks: Record<string, unknown>; timestamp: number }
 
@@ -140,15 +145,23 @@ export function journalEventsToChatMessages(events: JournalEvent[]): HydratedCha
           const status = (p.status as string) ?? 'complete'
           messages.push({ type: 'system', content: `${phaseLabel} phase ${status}`, timestamp: ts })
         } else if (ev === 'waveStart') {
-          const wave = p.wave as number ?? 0
-          const taskCount = p.taskCount as number ?? 0
-          messages.push({ type: 'system', content: `Wave ${wave} started — ${taskCount} tasks`, timestamp: ts })
+          const wave = (p.wave as number) ?? 0
+          const taskCount = (p.taskCount as number) ?? 0
+          messages.push({
+            type: 'system',
+            content: `Wave ${wave} started — ${taskCount} tasks`,
+            timestamp: ts
+          })
         } else if (ev === 'waveComplete') {
-          const wave = p.wave as number ?? 0
+          const wave = (p.wave as number) ?? 0
           messages.push({ type: 'system', content: `Wave ${wave} complete`, timestamp: ts })
         } else {
           // Generic system message (e.g. future event types)
-          messages.push({ type: 'system', content: String(p.message ?? p.event ?? 'System event'), timestamp: ts })
+          messages.push({
+            type: 'system',
+            content: String(p.message ?? p.event ?? 'System event'),
+            timestamp: ts
+          })
         }
         break
       }
@@ -187,7 +200,11 @@ export function journalEventsToChatMessages(events: JournalEvent[]): HydratedCha
           messages.push({ type: 'qa', questions, answers: answersRecord, timestamp: ts })
         } else if (p.event === 'gateReady') {
           // Gate-ready marker — render as system message
-          messages.push({ type: 'system', content: 'Clarify gate ready — review findings before proceeding', timestamp: ts })
+          messages.push({
+            type: 'system',
+            content: 'Clarify gate ready — review findings before proceeding',
+            timestamp: ts
+          })
         }
         break
       }
@@ -218,7 +235,12 @@ export function journalEventsToChatMessages(events: JournalEvent[]): HydratedCha
         const content = (p.contentMd as string) || (p.content as string) || ''
         const toolActivities = (p.toolActivities as ToolActivity[]) ?? []
         if (content.trim() || toolActivities.length > 0) {
-          messages.push({ type: 'agent', content: stripBlueprintBlocks(content), toolActivities, timestamp: ts })
+          messages.push({
+            type: 'agent',
+            content: stripBlueprintBlocks(content),
+            toolActivities,
+            timestamp: ts
+          })
         }
         break
       }

@@ -149,10 +149,11 @@ describe('Plan-Tool-Recovery Timeout Watchdog', () => {
     const elapsed = Date.now() - startTime
     assert.equal(result.done, true, 'Timeout should resolve with done=true')
     assert.ok(elapsed >= TIMEOUT_MS - 5, `Should wait at least ${TIMEOUT_MS}ms (got ${elapsed}ms)`)
-    // Under concurrent test execution the event loop may be busy, so allow
-    // generous headroom (2s) — the important assertion is that the timeout
-    // fires rather than hanging forever.
-    assert.ok(elapsed < TIMEOUT_MS + 3000, `Should not wait too long (got ${elapsed}ms)`)
+    // This bound only distinguishes "the timeout fired" from "it hung forever",
+    // and elapsed here is wall-clock on a shared event loop, so it must not be
+    // tight enough to trip on scheduling delay under load. 10s is still decisive
+    // against the failure it guards (an unresolvable await).
+    assert.ok(elapsed < TIMEOUT_MS + 10_000, `Should not wait too long (got ${elapsed}ms)`)
 
     // Fire-and-forget cleanup — the generator is stuck in an unresolvable
     // await, so iter.return() itself will hang.  We just let it GC.

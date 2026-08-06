@@ -5,11 +5,14 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach } from './test-harness'
-import { setupFullMock, getMockRepo, resetAllMocks } from './setup-full-mock'
+import { setupFullMock, getMockRepo, resetAllMocks, evictFromCache } from './setup-full-mock'
 
 setupFullMock()
 
 // ── Load the service under test ──
+// An earlier file in the shared run may already have cached this service bound
+// to the real repositories; drop it so it re-binds to the mocks below.
+evictFromCache('blueprint-build.service')
 const mod = require('../blueprint-build.service')
 const { BlueprintBuildService, EVIDENCE_ONLY_RX, abortAwareSleep, blueprintBuildService } = mod
 

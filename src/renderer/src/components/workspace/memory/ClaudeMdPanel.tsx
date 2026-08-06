@@ -189,10 +189,7 @@ export default function ClaudeMdPanel(): React.JSX.Element {
     <div className="relative space-y-4">
       {/* Regeneration overlay */}
       {feedStatus === 'running' && (
-        <RegenerateOverlay
-          message={feedMessage}
-          onCancel={cancelFeed}
-        />
+        <RegenerateOverlay message={feedMessage} onCancel={cancelFeed} />
       )}
 
       {/* Header with file path */}

@@ -9,10 +9,8 @@ import type { ConversationMode } from '../../shared/types'
 import {
   // Unified guidance blocks (full === lean after W2 unification)
   ASK_QUESTION_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
   GIT_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
   IMAGE_ATTACHMENTS_PROMPT,
   LIBRARY_DOCS_GUIDANCE_PROMPT,
   MAESTRO_GUIDANCE_PROMPT,
@@ -20,7 +18,9 @@ import {
   PROCESS_MANAGER_GUIDANCE_PROMPT,
   RECALL_TOOLS_PROMPT,
   REPOMAP_GUIDANCE_PROMPT,
+  REPOMAP_UNINDEXED_NOTE,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+  SEMANTIC_SEARCH_UNINDEXED_NOTE,
   // Guidance blocks that still differ between full/lean
   ESLINT_GUIDANCE_PROMPT,
   ESLINT_GUIDANCE_PROMPT_LEAN,
@@ -54,11 +54,17 @@ const RECALL_TRIGGER_RE =
 export interface PromptFeatureFlags {
   repomapEnabled: boolean
   semanticSearchEnabled: boolean
+  /**
+   * True only when the workspace actually has a persisted code-graph index.
+   * Undefined means "unknown" and is treated as indexed — never suppress
+   * guidance because index state could not be resolved.
+   */
+  repomapIndexed?: boolean
+  /** True only when the workspace actually has a persisted embedding index. */
+  semanticSearchIndexed?: boolean
   githubConfigured: boolean
   /** Whether git-context tools are mounted (default true). Set false for local-LLM adapters that skip git tools. */
   includeGitContext?: boolean
-  /** Whether checkpoint-context tools are mounted (default true). Set false for evaluation adapters that skip checkpoints. */
-  includeCheckpoint?: boolean
   /** External MCPs active for this chat (e.g. { maestro: true }) — drives prompt guidance injection */
   externalMcpActive?: Record<string, boolean>
   /** Whether code-analysis tools are mounted (default true). Set false for small-tier local LLMs. */
@@ -82,20 +88,64 @@ interface GuidanceSection {
   leanVariant?: string
   /** When set, skip the lean variant if basePrompt already contains this marker. */
   skipLeanWhen?: string
+  /**
+   * Replaces `prompt` when the feature is enabled but its index is missing.
+   * Returns false when the index is known to be absent; undefined/true keep the
+   * normal prompt (fail open).
+   */
+  indexed?: (f: PromptFeatureFlags) => boolean
+  /** Text used in place of `prompt` when `indexed` reports false. */
+  unindexedVariant?: string
 }
 
 const GUIDANCE_SECTIONS: GuidanceSection[] = [
-  { marker: '## Code Graph', flag: (f) => f.repomapEnabled, prompt: REPOMAP_GUIDANCE_PROMPT, skipLeanWhen: '## Code Exploration' },
-  { marker: '## Semantic Search', flag: (f) => f.semanticSearchEnabled, prompt: SEMANTIC_SEARCH_GUIDANCE_PROMPT },
-  { marker: '## Git Context', flag: (f) => f.includeGitContext !== false, prompt: GIT_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## Checkpoint Tools', flag: (f) => f.includeCheckpoint !== false, prompt: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## GitHub Tools', flag: (f) => f.githubConfigured, prompt: GITHUB_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## Code Analysis', flag: (f) => f.codeAnalysisEnabled !== false, prompt: CODE_ANALYSIS_GUIDANCE_PROMPT },
-  { marker: '## Library Doc', flag: (f) => f.codeAnalysisEnabled !== false, prompt: LIBRARY_DOCS_GUIDANCE_PROMPT },
-  { marker: '## Maestro', flag: (f) => !!f.externalMcpActive?.['maestro'], prompt: MAESTRO_GUIDANCE_PROMPT },
+  {
+    marker: '## Code Graph',
+    flag: (f) => f.repomapEnabled,
+    prompt: REPOMAP_GUIDANCE_PROMPT,
+    indexed: (f) => f.repomapIndexed !== false,
+    unindexedVariant: REPOMAP_UNINDEXED_NOTE,
+    skipLeanWhen: '## Code Exploration'
+  },
+  {
+    marker: '## Semantic Search',
+    flag: (f) => f.semanticSearchEnabled,
+    prompt: SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+    indexed: (f) => f.semanticSearchIndexed !== false,
+    unindexedVariant: SEMANTIC_SEARCH_UNINDEXED_NOTE
+  },
+  {
+    marker: '## Git Context',
+    flag: (f) => f.includeGitContext !== false,
+    prompt: GIT_CONTEXT_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Code Analysis',
+    flag: (f) => f.codeAnalysisEnabled !== false,
+    prompt: CODE_ANALYSIS_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Library Doc',
+    flag: (f) => f.codeAnalysisEnabled !== false,
+    prompt: LIBRARY_DOCS_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Maestro',
+    flag: (f) => !!f.externalMcpActive?.['maestro'],
+    prompt: MAESTRO_GUIDANCE_PROMPT
+  },
   // ESLint: only entry where lean differs (full includes "Warnings OK; errors are NOT")
-  { marker: '## ESLint', flag: () => true, prompt: ESLINT_GUIDANCE_PROMPT, leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN },
-  { marker: '## Background Processes', flag: (f) => f.processManagerEnabled !== false, prompt: PROCESS_MANAGER_GUIDANCE_PROMPT }
+  {
+    marker: '## ESLint',
+    flag: () => true,
+    prompt: ESLINT_GUIDANCE_PROMPT,
+    leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN
+  },
+  {
+    marker: '## Background Processes',
+    flag: (f) => f.processManagerEnabled !== false,
+    prompt: PROCESS_MANAGER_GUIDANCE_PROMPT
+  }
 ]
 
 /**
@@ -115,7 +165,12 @@ export function appendMcpToolGuidance(
   // Lean models already have tool priority in their identity prompt every turn.
   if (turnCount > 1) {
     const verbosity2 = resolvePromptVerbosity(model ?? '')
-    if (verbosity2 !== 'lean' && featureFlags.repomapEnabled) {
+    // Both flags matter: a semantic-search-only workspace was previously dropped
+    // from the reminder entirely.
+    if (
+      verbosity2 !== 'lean' &&
+      (featureFlags.repomapEnabled || featureFlags.semanticSearchEnabled)
+    ) {
       return basePrompt + TOOL_PRIORITY_DIRECTIVE
     }
     return basePrompt
@@ -126,8 +181,15 @@ export function appendMcpToolGuidance(
 
   for (const section of GUIDANCE_SECTIONS) {
     if (!section.flag(featureFlags) || basePrompt.includes(section.marker)) continue
-    if (verbosity === 'lean' && section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen)) continue
-    const text = (verbosity === 'lean' && section.leanVariant) ? section.leanVariant : section.prompt
+    if (verbosity === 'lean' && section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen))
+      continue
+    // Unindexed wins over the lean variant: telling the model to use a tool that
+    // cannot answer is worse than the extra tokens of saying so.
+    if (section.unindexedVariant && section.indexed && !section.indexed(featureFlags)) {
+      appendSections.push(section.unindexedVariant)
+      continue
+    }
+    const text = verbosity === 'lean' && section.leanVariant ? section.leanVariant : section.prompt
     appendSections.push(text)
   }
 
@@ -210,7 +272,8 @@ export function buildConditionalPrefix(opts: {
 
   if (planReminderInjected) {
     // Turn 1 + full-verbosity model: full reminder. All other cases: lean.
-    const planReminder = turnCount <= 1 && verbosity !== 'lean' ? PLAN_REMINDER_FULL : PLAN_REMINDER_LEAN
+    const planReminder =
+      turnCount <= 1 && verbosity !== 'lean' ? PLAN_REMINDER_FULL : PLAN_REMINDER_LEAN
     sections.push(planReminder)
   }
 
@@ -255,7 +318,8 @@ export function buildModeContextPrefix(
 
   let sections: Record<ConversationMode, string>
   if (useCompact) {
-    sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN_COMPACT : MODE_CONTEXT_SECTIONS_COMPACT
+    sections =
+      verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN_COMPACT : MODE_CONTEXT_SECTIONS_COMPACT
   } else {
     sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
   }

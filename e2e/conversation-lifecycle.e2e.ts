@@ -21,9 +21,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Conversation Lifecycle', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -48,7 +46,10 @@ test.describe('Conversation Lifecycle', () => {
 
   test('create a new conversation via chat-new-btn', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 
@@ -59,7 +60,10 @@ test.describe('Conversation Lifecycle', () => {
     // Click new chat button
     const newBtn = page.locator('[data-testid="chat-new-btn"]')
     const hasNewBtn = await newBtn.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasNewBtn) { test.skip(); return }
+    if (!hasNewBtn) {
+      test.skip()
+      return
+    }
 
     await newBtn.click()
     await page.waitForTimeout(2_000)
@@ -73,7 +77,10 @@ test.describe('Conversation Lifecycle', () => {
 
   test('new conversation appears in sidebar with default title', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 
@@ -92,9 +99,14 @@ test.describe('Conversation Lifecycle', () => {
     }
   })
 
-  test('type and send a message — message appears in message list', async ({ electronPage: page }) => {
+  test('type and send a message — message appears in message list', async ({
+    electronPage: page
+  }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 
@@ -108,11 +120,17 @@ test.describe('Conversation Lifecycle', () => {
 
     // Check if input is available
     const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
-    if (!inputReady) { test.skip(); return }
+    if (!inputReady) {
+      test.skip()
+      return
+    }
 
     await page.waitForTimeout(5_000)
     const isEnabled = await chat.isInputEnabled()
-    if (!isEnabled) { test.skip(); return }
+    if (!isEnabled) {
+      test.skip()
+      return
+    }
 
     // Count messages before
     const messages = chat.getMessages()
@@ -126,15 +144,23 @@ test.describe('Conversation Lifecycle', () => {
     expect(inputValue).toContain('E2E lifecycle test message')
   })
 
-  test('rename conversation in sidebar and verify title updates', async ({ electronPage: page }) => {
+  test('rename conversation in sidebar and verify title updates', async ({
+    electronPage: page
+  }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     const firstItem = chatItems.first()
     const _originalTitle = await firstItem.textContent()
@@ -163,15 +189,23 @@ test.describe('Conversation Lifecycle', () => {
     expect(await firstItem.isVisible()).toBeTruthy()
   })
 
-  test('switch between two conversations and verify state isolation', async ({ electronPage: page }) => {
+  test('switch between two conversations and verify state isolation', async ({
+    electronPage: page
+  }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
-    if (itemCount < 2) { test.skip(); return }
+    if (itemCount < 2) {
+      test.skip()
+      return
+    }
 
     // Click first conversation
     await chatItems.first().click()
@@ -198,13 +232,19 @@ test.describe('Conversation Lifecycle', () => {
 
   test('close conversation via close dialog', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     await chatItems.first().click()
     await page.waitForTimeout(1_500)
@@ -219,7 +259,10 @@ test.describe('Conversation Lifecycle', () => {
 
   test('closed conversation still visible in sidebar', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     await ensureChatTab(page)
 

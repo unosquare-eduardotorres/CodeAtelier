@@ -57,7 +57,10 @@ export default function AgentDetailPanel({
   const icon = meta?.icon ?? '🤖'
 
   return (
-    <div data-testid="agent-detail-panel" className="mt-4 bg-surface-overlay border border-border-subtle rounded p-5 space-y-4 animate-in fade-in duration-200">
+    <div
+      data-testid="agent-detail-panel"
+      className="mt-4 bg-surface-overlay border border-border-subtle rounded p-5 space-y-4 animate-in fade-in duration-200"
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

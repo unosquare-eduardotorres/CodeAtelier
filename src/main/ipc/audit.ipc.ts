@@ -38,6 +38,7 @@ import {
   specialistRepository
 } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
+import { requireObject, requireString } from './validate-args'
 import type { HandoffEnvelope } from '../../shared/handoff-types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { auditPlanGeneratorService } from '../services/audit-plan-generator.service'
@@ -348,15 +349,14 @@ function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
 
   // ── audit:deleteRun — delete a single past run ──────────────────────
 
-  ipcMain.handle(
-    IPC_CHANNELS.AUDIT_DELETE_RUN,
-    (event, args: { runId: string }): { deleted: boolean } => {
-      validateSender(event)
-      const deleted = auditRepository.deleteRun(args.runId)
-      auditLog.info(`[audit:deleteRun] runId=${args.runId} deleted=${deleted}`)
-      return { deleted }
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.AUDIT_DELETE_RUN, (event, rawArgs: unknown): { deleted: boolean } => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.AUDIT_DELETE_RUN
+    const runId = requireString(requireObject(rawArgs, ch), 'runId', ch)
+    const deleted = auditRepository.deleteRun(runId)
+    auditLog.info(`[audit:deleteRun] runId=${runId} deleted=${deleted}`)
+    return { deleted }
+  })
 
   // ── audit:generatePlan — synthesize a remediation plan from findings ──
 
@@ -378,13 +378,12 @@ function registerAuditQueryHandlers(mainWindow: BrowserWindow): void {
 
   // ── audit:getPlans — list plans persisted for a run ──
 
-  ipcMain.handle(
-    IPC_CHANNELS.AUDIT_GET_PLANS,
-    (event, args: { runId: string }): AuditPlanRecord[] => {
-      validateSender(event)
-      return auditPlanRepository.getPlansForRun(args.runId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.AUDIT_GET_PLANS, (event, rawArgs: unknown): AuditPlanRecord[] => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.AUDIT_GET_PLANS
+    const runId = requireString(requireObject(rawArgs, ch), 'runId', ch)
+    return auditPlanRepository.getPlansForRun(runId)
+  })
 }
 
 // ── Export Helpers ──────────────────────────────────────────────────────────
@@ -717,12 +716,15 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
               .map((f) => ({
                 title: f.title,
                 description: f.description,
-                priority: f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium'
+                priority:
+                  f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium'
               })),
             decisions: [],
             constraints: [],
             risks: [],
-            artifacts: [{ type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }],
+            artifacts: [
+              { type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }
+            ],
             suggestedTools: [],
             suggestedSkills: [],
             filesToReadFirst: result.findings
@@ -799,13 +801,20 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
               .map((f) => ({
                 title: f.title,
                 description: f.description,
-                priority: f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium' as const
+                priority:
+                  f.severity === 'critical'
+                    ? 'critical'
+                    : f.severity === 'high'
+                      ? 'high'
+                      : ('medium' as const)
               }))
           ),
           decisions: [],
           constraints: [],
           risks: [],
-          artifacts: [{ type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }],
+          artifacts: [
+            { type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }
+          ],
           suggestedTools: [],
           suggestedSkills: [],
           filesToReadFirst: completedResults
@@ -963,9 +972,10 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
           workspaceName: resolveWorkspaceName(workspaceId),
           service: 'audit',
           status: 'completed',
-          summary: finalStatus === 'partial'
-            ? `Audit finished (partial) — overall score: ${data.overallScore ?? 'N/A'}`
-            : `Audit completed — overall score: ${data.overallScore ?? 'N/A'}`,
+          summary:
+            finalStatus === 'partial'
+              ? `Audit finished (partial) — overall score: ${data.overallScore ?? 'N/A'}`
+              : `Audit completed — overall score: ${data.overallScore ?? 'N/A'}`,
           targetPage: 'audit'
         })
       }
@@ -984,7 +994,13 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     auditAgentService,
     'stream',
     (data) => {
-      processAuditStreamChunk(getSessionEventRouter(), workspaceId, workspacePath, data.trackId, data.chunk)
+      processAuditStreamChunk(
+        getSessionEventRouter(),
+        workspaceId,
+        workspacePath,
+        data.trackId,
+        data.chunk
+      )
     }
   )
 
@@ -995,7 +1011,9 @@ function wireAuditEvents(runId: string, workspaceId: string, workspacePath: stri
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, {
+        ...data.status
+      })
     }
   )
 

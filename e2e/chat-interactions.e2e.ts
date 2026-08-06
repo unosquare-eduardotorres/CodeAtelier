@@ -88,7 +88,9 @@ test.describe('Chat Interactions', () => {
 
   // ── BuildActionBar (in execution panel) ──
 
-  test('BuildActionBar renders in execution panel when plan exists', async ({ electronPage: page }) => {
+  test('BuildActionBar renders in execution panel when plan exists', async ({
+    electronPage: page
+  }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -270,9 +272,7 @@ test.describe('Chat Interactions', () => {
 
   // ── Budget cap banner ──
 
-  test('budget cap banner renders when cost cap is reached', async ({
-    electronPage: page
-  }) => {
+  test('budget cap banner renders when cost cap is reached', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -348,7 +348,10 @@ test.describe('Chat Interactions', () => {
     const hasTab = await codeChangesTab.isVisible({ timeout: 5_000 }).catch(() => false)
 
     // Tab may also be a tab element
-    const tabElement = page.locator('[role="tab"]').filter({ hasText: /changes/i }).first()
+    const tabElement = page
+      .locator('[role="tab"]')
+      .filter({ hasText: /changes/i })
+      .first()
     const hasTabElement = await tabElement.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (!hasTab && !hasTabElement) {
@@ -370,9 +373,7 @@ test.describe('Chat Interactions', () => {
 
   // ── Ask-user flow ──
 
-  test('ask-user question card renders with response options', async ({
-    electronPage: page
-  }) => {
+  test('ask-user question card renders with response options', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -391,7 +392,10 @@ test.describe('Chat Interactions', () => {
     if (!hasQuestionCard) {
       // Also check for radio/checkbox groups that indicate ask-user questions
       const optionGroups = page.locator('[role="radiogroup"], [role="group"]')
-      const hasGroups = await optionGroups.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasGroups = await optionGroups
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       if (!hasGroups) {
         test.skip()
@@ -437,7 +441,10 @@ test.describe('Chat Interactions', () => {
     if (!hasUndo) {
       // Check for hover-revealed action buttons
       const hoverActions = page.locator('[class*="opacity-0 group-hover:opacity-100"]')
-      const hasHoverActions = await hoverActions.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasHoverActions = await hoverActions
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       // Either explicit undo button or hover-revealed actions
       expect(hasUndo || hasHoverActions || true).toBeTruthy()
@@ -536,7 +543,10 @@ test.describe('Chat Interactions', () => {
 
     // Also look for SVG elements that indicate rendered diagrams
     const svgElements = page.locator('svg.mermaid, [class*="mermaid"] svg')
-    const hasSvg = await svgElements.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSvg = await svgElements
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasMermaid && !hasSvg) {
       // No mermaid diagrams in current conversation

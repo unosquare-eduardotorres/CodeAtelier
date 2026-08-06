@@ -97,8 +97,8 @@ export default function BootstrapKnowledge(): React.JSX.Element {
           Bootstrap Project Knowledge
         </h3>
         <p className="text-xs text-text-muted mt-0.5">
-          Scans docs, manifests, central source files and git history to build project memory.
-          Runs in the background — you can pause and resume without losing progress.
+          Scans docs, manifests, central source files and git history to build project memory. Runs
+          in the background — you can pause and resume without losing progress.
         </p>
       </div>
 

@@ -66,8 +66,6 @@ async function handleWorkspaceCreate(
     isGitRepo
   )
 
-
-
   try {
     const db = getDatabase()
     const existing = db

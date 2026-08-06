@@ -25,9 +25,7 @@ import { AppChrome } from './pages/app-chrome'
 import { ChatPage } from './pages/chat-page'
 
 test.describe('MessageListFooter', () => {
-  async function navigateToConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -51,7 +49,10 @@ test.describe('MessageListFooter', () => {
 
   test('footer renders in active conversation', async ({ electronPage: page }) => {
     const ready = await navigateToConversation(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const footer = page.locator('[data-testid="message-list-footer"]')
     const hasFooter = await footer.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -67,11 +68,17 @@ test.describe('MessageListFooter', () => {
 
   test('prompt suggestion button is visible in idle state', async ({ electronPage: page }) => {
     const ready = await navigateToConversation(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const footer = page.locator('[data-testid="message-list-footer"]')
     const hasFooter = await footer.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasFooter) { test.skip(); return }
+    if (!hasFooter) {
+      test.skip()
+      return
+    }
 
     // Prompt suggestion appears as a button with 💡 emoji
     const suggestion = footer.locator('button:has-text("💡")')
@@ -84,7 +91,10 @@ test.describe('MessageListFooter', () => {
 
   test('thinking indicator shows during streaming response', async ({ electronPage: page }) => {
     const ready = await navigateToConversation(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const chatPage = new ChatPage(page)
     const isStreaming = await chatPage.isStreaming()
@@ -104,7 +114,10 @@ test.describe('MessageListFooter', () => {
 
   test('stop confirm dialog triggers on stop action', async ({ electronPage: page }) => {
     const ready = await navigateToConversation(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // The stop-confirm-dialog testid is in MessageInputDialogs
     // It appears when user clicks stop during streaming
@@ -131,14 +144,20 @@ test.describe('MessageListFooter', () => {
 
   test('footer content updates on mode change', async ({ electronPage: page }) => {
     const ready = await navigateToConversation(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const footer = page.locator('[data-testid="message-list-footer"]')
     const hasFooter = await footer.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasFooter) { test.skip(); return }
+    if (!hasFooter) {
+      test.skip()
+      return
+    }
 
     // Capture initial footer state
-    const initialContent = await footer.textContent() ?? ''
+    const initialContent = (await footer.textContent()) ?? ''
 
     // Check for mode-related UI elements
     const statusBar = page.locator('[data-testid="status-bar"]')
@@ -150,11 +169,17 @@ test.describe('MessageListFooter', () => {
 
   test('auto-mode switch pill is conditionally visible', async ({ electronPage: page }) => {
     const ready = await navigateToConversation(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const footer = page.locator('[data-testid="message-list-footer"]')
     const hasFooter = await footer.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasFooter) { test.skip(); return }
+    if (!hasFooter) {
+      test.skip()
+      return
+    }
 
     // AutoModeSwitchPill is a child of the footer
     // It's conditionally rendered based on auto-mode state

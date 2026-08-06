@@ -348,7 +348,11 @@ export class GrillPersistenceController {
     // GRILL-SAVEANSWERS-NOGUARD-01: Wrap in try-catch to prevent a DB error
     // from propagating to the IPC handler as an unhandled exception.
     try {
-      grillSessionRepository.updateQuestionStates(sessionId, questionStates, session.currentIteration)
+      grillSessionRepository.updateQuestionStates(
+        sessionId,
+        questionStates,
+        session.currentIteration
+      )
     } catch (err) {
       ctrlLog.error(`[grill-persistence] saveAnswers failed for session=${sessionId}:`, err)
     }
@@ -439,7 +443,10 @@ export class GrillPersistenceController {
       // GRILL-FLUSH-ORPHAN-01: Inline flush instead of flushToDb() to prevent
       // the retry-then-delete race. flushToDb() schedules a retry on failure,
       // but the next line deletes the tracking state — the retry finds nothing.
-      if (tracking.flushTimer) { clearTimeout(tracking.flushTimer); tracking.flushTimer = null }
+      if (tracking.flushTimer) {
+        clearTimeout(tracking.flushTimer)
+        tracking.flushTimer = null
+      }
       if (tracking.messageBuffer.length > 0) {
         try {
           grillSessionRepository.appendMessages(tracking.sessionId, tracking.messageBuffer)

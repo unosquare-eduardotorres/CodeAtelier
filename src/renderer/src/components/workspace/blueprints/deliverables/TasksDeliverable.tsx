@@ -83,9 +83,9 @@ export function TasksDeliverable({
   const waves = useMemo(() => (json?.waves as WaveData[]) ?? [], [json])
   const flatTasks = useMemo(() => {
     if (waves.length > 0) {
-      return waves.flatMap((w) => (w.tasks ?? []))
+      return waves.flatMap((w) => w.tasks ?? [])
     }
-    return ((json?.tasks ?? json?.items ?? []) as Array<Record<string, unknown>>)
+    return (json?.tasks ?? json?.items ?? []) as Array<Record<string, unknown>>
   }, [waves, json])
 
   const totalTasks = flatTasks.length || dbTasks.length
@@ -103,7 +103,11 @@ export function TasksDeliverable({
   if (!json && tasksArt?.contentMd) {
     return (
       <div>
-        <DeliverableHeader config={config} summary="Task decomposition completed" duration={duration} />
+        <DeliverableHeader
+          config={config}
+          summary="Task decomposition completed"
+          duration={duration}
+        />
         <CappedMarkdownBlock content={tasksArt.contentMd} label="Task Details" className="" />
       </div>
     )
@@ -113,7 +117,9 @@ export function TasksDeliverable({
     return (
       <div>
         <DeliverableHeader config={config} summary="No tasks artifact found" duration={duration} />
-        <p className="text-xs text-text-muted italic">The tasks artifact was not produced by this phase.</p>
+        <p className="text-xs text-text-muted italic">
+          The tasks artifact was not produced by this phase.
+        </p>
       </div>
     )
   }
@@ -137,7 +143,9 @@ export function TasksDeliverable({
       {/* MVP Scope */}
       {mvpScope && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">MVP Scope</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
+            MVP Scope
+          </h3>
           <p className="text-sm text-text-secondary leading-relaxed border-l-2 border-accent/30 pl-4 italic">
             {mvpScope}
           </p>
@@ -147,7 +155,9 @@ export function TasksDeliverable({
       {/* Wave flow diagram */}
       {diagram && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Wave Execution Flow</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Wave Execution Flow
+          </h3>
           <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4 overflow-hidden">
             <MermaidDiagram definition={diagram} id="wave-flow" />
           </div>
@@ -156,20 +166,28 @@ export function TasksDeliverable({
 
       {/* Task table (reused component) */}
       <div className="mb-6">
-        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">Tasks by Wave</h3>
+        <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+          Tasks by Wave
+        </h3>
         <BlueprintTasksCard tasks={json} />
       </div>
 
       {/* User story mapping */}
       {userStories.length > 0 && (
         <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">User Story Mapping</h3>
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            User Story Mapping
+          </h3>
           <div className="rounded-xl border border-border-subtle overflow-hidden">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-surface-overlay border-b border-border-subtle">
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider">Story</th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider">Tasks</th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider">
+                    Story
+                  </th>
+                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider">
+                    Tasks
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -179,7 +197,10 @@ export function TasksDeliverable({
                     <td className="px-4 py-2">
                       <div className="flex flex-wrap gap-1">
                         {story.taskIds.map((tid) => (
-                          <span key={tid} className="inline-block text-xs font-mono bg-surface-inset px-1.5 py-0.5 rounded text-text-secondary">
+                          <span
+                            key={tid}
+                            className="inline-block text-xs font-mono bg-surface-inset px-1.5 py-0.5 rounded text-text-secondary"
+                          >
                             {tid}
                           </span>
                         ))}

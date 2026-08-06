@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('CompleteDialog Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,9 +34,7 @@ test.describe('CompleteDialog Deep', () => {
     return true
   }
 
-  async function openCompleteDialog(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openCompleteDialog(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to chats tab
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -55,7 +51,10 @@ test.describe('CompleteDialog Deep', () => {
 
     // Try to trigger the complete dialog — look for complete button
     const completeBtn = page.locator('button:has-text("Complete"), [data-testid="complete-btn"]')
-    const hasCompleteBtn = await completeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasCompleteBtn = await completeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasCompleteBtn) {
       await completeBtn.first().click()
       await page.waitForTimeout(1_500)
@@ -67,10 +66,16 @@ test.describe('CompleteDialog Deep', () => {
 
   test('complete dialog renders with task summary and options', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
     expect(await dialog.isVisible()).toBeTruthy()
@@ -86,16 +91,27 @@ test.describe('CompleteDialog Deep', () => {
     expect(buttonCount).toBeGreaterThanOrEqual(2) // Cancel + Confirm
   })
 
-  test('branch name field shows auto-generated default from conversation title', async ({ electronPage: page }) => {
+  test('branch name field shows auto-generated default from conversation title', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const branchInput = page.locator('[data-testid="complete-dialog-branch"]')
     const hasBranch = await branchInput.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasBranch) { test.skip(); return }
+    if (!hasBranch) {
+      test.skip()
+      return
+    }
 
     // Branch name should be pre-filled with "chat/" prefix
     const branchValue = await branchInput.inputValue()
@@ -105,14 +121,23 @@ test.describe('CompleteDialog Deep', () => {
 
   test('commit message textarea accepts custom description', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const commitInput = page.locator('[data-testid="complete-dialog-commit"]')
     const hasCommit = await commitInput.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCommit) { test.skip(); return }
+    if (!hasCommit) {
+      test.skip()
+      return
+    }
 
     // Commit message should be pre-filled from conversation title
     const commitValue = await commitInput.inputValue()
@@ -126,10 +151,16 @@ test.describe('CompleteDialog Deep', () => {
 
   test('Create PR description section is present', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
 
@@ -148,33 +179,55 @@ test.describe('CompleteDialog Deep', () => {
     expect(hasPrLabel || hasPrTextarea || isGenerating).toBeTruthy()
   })
 
-  test('auto-close conversation toggle controls post-complete behavior', async ({ electronPage: page }) => {
+  test('auto-close conversation toggle controls post-complete behavior', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
 
     // Check for button label that indicates git integration
-    const confirmBtn = dialog.locator('button:has-text("Complete"), button:has-text("Create PR"), button:has-text("Commit"), button:has-text("Push")')
-    const hasConfirmBtn = await confirmBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const confirmBtn = dialog.locator(
+      'button:has-text("Complete"), button:has-text("Create PR"), button:has-text("Commit"), button:has-text("Push")'
+    )
+    const hasConfirmBtn = await confirmBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(hasConfirmBtn).toBeTruthy()
 
     // The subtitle should indicate the configured behavior
     const subtitle = dialog.locator('p.text-xs')
-    const subtitleText = await subtitle.first().textContent().catch(() => '')
+    const subtitleText = await subtitle
+      .first()
+      .textContent()
+      .catch(() => '')
     expect(typeof subtitleText).toBe('string')
   })
 
   test('file change count displays number of modified files', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
 
@@ -191,10 +244,16 @@ test.describe('CompleteDialog Deep', () => {
 
   test('cancel button dismisses dialog without completing', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDialog = await openCompleteDialog(page)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
     expect(await dialog.isVisible()).toBeTruthy()
@@ -202,7 +261,10 @@ test.describe('CompleteDialog Deep', () => {
     // Click cancel button
     const cancelBtn = dialog.locator('button:has-text("Cancel")')
     const hasCancel = await cancelBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCancel) { test.skip(); return }
+    if (!hasCancel) {
+      test.skip()
+      return
+    }
 
     await cancelBtn.click()
     await page.waitForTimeout(1_000)

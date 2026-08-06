@@ -49,7 +49,10 @@ test.describe('Council Session Deep Interactions', () => {
 
     // Click "Start Council" or "New Council Review" button
     const startBtn = page.getByRole('button', { name: /start|new council/i })
-    const hasStart = await startBtn.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasStart = await startBtn
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     if (!hasStart) return false
 
     await startBtn.first().click()
@@ -160,7 +163,9 @@ test.describe('Council Session Deep Interactions', () => {
     const startBtn = page.locator('[data-testid="council-start-btn"]')
 
     // Fill content and start
-    await textarea.fill('Test plan: implement user authentication with JWT tokens and refresh token rotation')
+    await textarea.fill(
+      'Test plan: implement user authentication with JWT tokens and refresh token rotation'
+    )
     await page.waitForTimeout(300)
     await startBtn.click()
     await page.waitForTimeout(1_000)
@@ -194,7 +199,10 @@ test.describe('Council Session Deep Interactions', () => {
 
     // Reopen the modal
     const startBtn = page.getByRole('button', { name: /start|new council/i })
-    const hasStart = await startBtn.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasStart = await startBtn
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     if (!hasStart) return
 
     await startBtn.first().click()

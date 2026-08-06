@@ -51,7 +51,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const latestPlanMessageId = useMemo(() => {
     for (let i = allMessages.length - 1; i >= 0; i--) {
       const msg = allMessages[i]
-      if (msg.role !== 'user' && msg.contentMd && PLAN_BLOCK_RE.test(msg.contentMd) && !BUILD_SUMMARY_RE.test(msg.contentMd)) {
+      if (
+        msg.role !== 'user' &&
+        msg.contentMd &&
+        PLAN_BLOCK_RE.test(msg.contentMd) &&
+        !BUILD_SUMMARY_RE.test(msg.contentMd)
+      ) {
         return msg.id
       }
     }
@@ -103,7 +108,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const { virtualizer, measureElement } = useMessageVirtualizer(messages.length, scrollRef)
-
 
   // ── Scroll position preservation on plan supersession ──
   // When latestPlanMessageId changes, an old plan card collapses from ~400px to ~50px.

@@ -117,9 +117,7 @@ class AutofixPrService {
       )
       sections.push('2. Address each review comment by making the requested change')
       sections.push('3. Run the project tests to verify your fixes')
-      sections.push(
-        '4. Do NOT create a new commit — just fix the files. I will handle the commit.'
-      )
+      sections.push('4. Do NOT create a new commit — just fix the files. I will handle the commit.')
     }
 
     const context: AutofixContext = {

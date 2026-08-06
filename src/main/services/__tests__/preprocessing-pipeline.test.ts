@@ -11,6 +11,7 @@ import { test, describe, summaryAsync } from './test-harness'
 import {
   preprocessChunk,
   buildScopeContexts,
+  runPreprocessingPipeline,
   type RawChunk,
   type PreprocessingOptions,
   DEFAULT_PREPROCESSING_OPTIONS
@@ -587,6 +588,53 @@ describe('buildScopeContexts — sibling method signatures', () => {
     const scope = contexts.get('AuthService')
     assert.ok(scope)
     assert.equal(scope!.siblingMethodSignatures.length, 0)
+  })
+})
+
+// ── skipPatterns pass-through ───────────────────────────────────────
+// Semantic search never passed .atelierignore/.gitignore rules into the
+// pipeline, so the late-stage filter had nothing workspace-specific to match.
+
+describe('runPreprocessingPipeline — skipPatterns', () => {
+  const podsChunk = makeChunk({
+    id: 'pods-1',
+    filePath: 'apps/mobile/ios/Pods/Alamofire/Source/Alamofire.swift',
+    symbolName: 'request'
+  })
+  const libsChunk = makeChunk({ id: 'libs-1', filePath: 'libs/Domain/Order.ts' })
+  const ownChunk = makeChunk({ id: 'own-1', filePath: 'src/services/auth.service.ts' })
+  const contents = new Map([
+    [podsChunk.filePath, FILE_CONTENT],
+    [libsChunk.filePath, FILE_CONTENT],
+    [ownChunk.filePath, FILE_CONTENT]
+  ])
+
+  const runWith = async (skipPatterns: string[]): Promise<Set<string>> => {
+    const result = await runPreprocessingPipeline(
+      [podsChunk, libsChunk, ownChunk],
+      contents,
+      'proj',
+      defaultOpts({ skipPatterns }),
+      () => {}
+    )
+    return new Set(result.map((c) => c.metadata.filePath))
+  }
+
+  test('drops files matching a caller-supplied pattern', async () => {
+    const paths = await runWith(['**/libs/**'])
+    assert.equal(paths.has(libsChunk.filePath), false)
+    assert.equal(paths.has(ownChunk.filePath), true)
+  })
+
+  test('keeps generic Tier-2 directories when no pattern is supplied', async () => {
+    const paths = await runWith([])
+    assert.equal(paths.has(libsChunk.filePath), true)
+    assert.equal(paths.has(ownChunk.filePath), true)
+  })
+
+  test('built-in exclusions drop Pods even with no caller patterns', async () => {
+    const paths = await runWith([])
+    assert.equal(paths.has(podsChunk.filePath), false)
   })
 })
 

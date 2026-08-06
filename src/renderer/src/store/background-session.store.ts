@@ -34,8 +34,7 @@ interface BackgroundSessionState {
 
 // Preserve Zustand state across HMR (dev only)
 const previousState = import.meta.hot?.data?.backgroundSessionStoreState as
-  | Partial<BackgroundSessionState>
-  | undefined
+  Partial<BackgroundSessionState> | undefined
 
 export const useBackgroundSessionStore = create<BackgroundSessionState>((set, _get) => ({
   statuses: previousState?.statuses ?? {},

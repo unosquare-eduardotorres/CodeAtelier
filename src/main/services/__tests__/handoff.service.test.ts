@@ -967,6 +967,10 @@ describe('renderFull — codeAnchors edge cases', () => {
 
 // ── Standalone runner ────────────────────────────────────────────────
 
-if (typeof import.meta.url !== 'undefined' && import.meta.url.endsWith('handoff.service.test.ts')) {
+// NOTE: must compare against the entry script. `import.meta.url.endsWith(...)`
+// is always true for this module, so the previous form ran summaryAsync() — and
+// therefore process.exit() — even when loaded by run-tests.ts, silently
+// truncating the rest of the suite.
+if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

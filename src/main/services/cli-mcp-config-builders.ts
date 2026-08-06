@@ -41,7 +41,9 @@ export interface BuildCoreServersParams {
  * Build the core MCP server entries from feature flags and workspace params.
  * Returns a mutable record of server entries (before toggle/external overlay).
  */
-export function buildCoreServers(params: BuildCoreServersParams): Record<string, CliMcpServerEntry> {
+export function buildCoreServers(
+  params: BuildCoreServersParams
+): Record<string, CliMcpServerEntry> {
   const servers: Record<string, CliMcpServerEntry> = {}
   const { featureFlags, workspaceId, workspacePath, serverBasePath, dbDir } = params
   const join = (...parts: string[]): string => parts.join('/')
@@ -73,30 +75,6 @@ export function buildCoreServers(params: BuildCoreServersParams): Record<string,
     command: 'node',
     args: [join(serverBasePath, 'git-context-server.js')],
     env: { WORKSPACE_PATH: workspacePath }
-  }
-
-  // ── Checkpoint Context ── (only when resuming a conversation)
-  if (params.conversationId) {
-    servers['checkpoint-context'] = {
-      command: 'node',
-      args: [join(serverBasePath, 'checkpoint-context-server.js')],
-      env: {
-        CONVERSATION_ID: params.conversationId,
-        WORKSPACE_PATH: workspacePath
-      }
-    }
-  }
-
-  // ── GitHub Context ──
-  if (featureFlags.githubConfigured && workspaceId) {
-    servers['github-context'] = {
-      command: 'node',
-      args: [join(serverBasePath, 'github-context-server.js')],
-      env: {
-        WORKSPACE_ID: workspaceId,
-        WORKSPACE_PATH: workspacePath
-      }
-    }
   }
 
   // ── Code Analysis ──

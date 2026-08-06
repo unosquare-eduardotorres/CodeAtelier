@@ -9,10 +9,26 @@ import type { BootstrapPhaseLabel } from '../../../shared/types'
 
 /** Directories to skip during discovery */
 export const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'out', 'build', 'coverage',
-  '.next', '.nuxt', '.cache', '__pycache__', '.tox', '.venv',
-  'vendor', 'target', 'bin', 'obj', '.gradle', '.idea',
-  '.vscode', '.vs'
+  'node_modules',
+  '.git',
+  'dist',
+  'out',
+  'build',
+  'coverage',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '__pycache__',
+  '.tox',
+  '.venv',
+  'vendor',
+  'target',
+  'bin',
+  'obj',
+  '.gradle',
+  '.idea',
+  '.vscode',
+  '.vs'
 ])
 
 /** Max files to read per phase for safety */
@@ -35,37 +51,71 @@ export const MIN_DOC_CHARS = 400
 
 /** Doc patterns for the Docs phase */
 export const DOC_PATTERNS = [
-  'README.md', 'README.txt', 'README.rst', 'README',
-  'CLAUDE.md', 'AGENTS.md',
-  'ARCHITECTURE.md', 'ARCHITECTURE.txt',
-  'CONTRIBUTING.md', 'CONTRIBUTING.txt',
-  'CHANGELOG.md', 'CHANGELOG.txt',
-  'SECURITY.md', 'LICENSE.md'
+  'README.md',
+  'README.txt',
+  'README.rst',
+  'README',
+  'CLAUDE.md',
+  'AGENTS.md',
+  'ARCHITECTURE.md',
+  'ARCHITECTURE.txt',
+  'CONTRIBUTING.md',
+  'CONTRIBUTING.txt',
+  'CHANGELOG.md',
+  'CHANGELOG.txt',
+  'SECURITY.md',
+  'LICENSE.md'
 ]
 
 /** Globs for doc directories */
 export const DOC_DIRS = [
-  'docs', 'doc', 'documentation', '.github',
+  'docs',
+  'doc',
+  'documentation',
+  '.github',
   // Common documentation locations beyond the basics
-  'wiki', 'guides', 'specs', 'design',
-  'api-docs', 'api', 'reference',
-  'architecture', 'decisions', 'adr',
-  'manuals', 'handbooks', 'howto',
-  'notes', 'knowledge-base'
+  'wiki',
+  'guides',
+  'specs',
+  'design',
+  'api-docs',
+  'api',
+  'reference',
+  'architecture',
+  'decisions',
+  'adr',
+  'manuals',
+  'handbooks',
+  'howto',
+  'notes',
+  'knowledge-base'
 ]
 
 /** Manifest files for the Stack phase */
 export const MANIFEST_FILES = [
-  'package.json', 'tsconfig.json', 'tsconfig.base.json',
-  'requirements.txt', 'pyproject.toml', 'setup.py', 'setup.cfg',
-  'go.mod', 'go.sum',
+  'package.json',
+  'tsconfig.json',
+  'tsconfig.base.json',
+  'requirements.txt',
+  'pyproject.toml',
+  'setup.py',
+  'setup.cfg',
+  'go.mod',
+  'go.sum',
   'Cargo.toml',
   'Gemfile',
-  'pom.xml', 'build.gradle', 'build.gradle.kts',
-  'electron-builder.yml', 'electron-builder.json5',
-  'Dockerfile', 'docker-compose.yml', 'docker-compose.yaml',
-  '.github/workflows/*.yml', '.github/workflows/*.yaml',
-  'Makefile', 'justfile'
+  'pom.xml',
+  'build.gradle',
+  'build.gradle.kts',
+  'electron-builder.yml',
+  'electron-builder.json5',
+  'Dockerfile',
+  'docker-compose.yml',
+  'docker-compose.yaml',
+  '.github/workflows/*.yml',
+  '.github/workflows/*.yaml',
+  'Makefile',
+  'justfile'
 ]
 
 /**
@@ -84,11 +134,23 @@ export const SKIP_DOC_NAMES = [
 // ── Phase definitions ────────────────────────────────────────────────────────
 
 export const FULL_PHASES: BootstrapPhaseLabel[] = [
-  'preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize'
+  'preflight',
+  'docs',
+  'stack',
+  'architecture',
+  'history',
+  'structure',
+  'finalize'
 ]
 
 export const DEEP_SCAN_PHASES: BootstrapPhaseLabel[] = [
-  'preflight', 'docs', 'stack', 'architecture', 'history', 'agent-exploration', 'finalize'
+  'preflight',
+  'docs',
+  'stack',
+  'architecture',
+  'history',
+  'agent-exploration',
+  'finalize'
 ]
 
 /**
@@ -108,8 +170,8 @@ export const PHASE_BASE_PRIORITY: Record<string, number> = {
 
 /** Within-phase rank for documents. Lower drains first. */
 export const DOC_PRIORITY_INSTRUCTION = 5 // agent rule files: written for an agent, highest signal
-export const DOC_PRIORITY_TOP = 10       // README / ARCHITECTURE / CLAUDE.md / ADRs
-export const DOC_PRIORITY_DOCS_DIR = 50  // anything under a recognised docs dir
+export const DOC_PRIORITY_TOP = 10 // README / ARCHITECTURE / CLAUDE.md / ADRs
+export const DOC_PRIORITY_DOCS_DIR = 50 // anything under a recognised docs dir
 export const DOC_PRIORITY_SCATTERED = 100
 
 /**

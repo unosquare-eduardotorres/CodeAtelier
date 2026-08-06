@@ -111,7 +111,11 @@ describe('GrillPersistenceController (P26-W3)', () => {
 
     // Buffer an agent text chunk, then flush it to DB on stream complete.
     const router = fakeRouter()
-    controller.handleStreamChunk({ type: 'text', content: 'hello from the agent' }, 'ws-lifecycle', router)
+    controller.handleStreamChunk(
+      { type: 'text', content: 'hello from the agent' },
+      'ws-lifecycle',
+      router
+    )
     controller.handleComplete('ws-lifecycle', router)
     assert.equal(grillRepo.appendMessages.callCount, 1)
     assert.equal(grillRepo.appendMessages.lastCall[0], 'gs-lifecycle')

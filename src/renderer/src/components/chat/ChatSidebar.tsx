@@ -200,7 +200,10 @@ export default function ChatSidebar({
 
   return (
     <>
-      <div data-testid="chat-sidebar" className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
+      <div
+        data-testid="chat-sidebar"
+        className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2 min-w-0">

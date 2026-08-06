@@ -75,9 +75,7 @@ function makeResult(id: string, tier: number): MemoryRetrievalResult {
 const resultsByPrompt = new Map<string, MemoryRetrievalResult[]>()
 
 /** Synthetic fact ids that must never reach the real DB. */
-const SYNTHETIC_IDS = new Set([
-  'low-1', 'low-2', 'high-1', 'high-2', 'mixed-low', 'mixed-high'
-])
+const SYNTHETIC_IDS = new Set(['low-1', 'low-2', 'high-1', 'high-2', 'mixed-low', 'mixed-high'])
 
 if (loaded) {
   memoryRetrievalService.retrieve = async (
@@ -109,13 +107,19 @@ describe('getContextForTurn — session dedupe', () => {
     try {
       const injected = new Set<string>()
       const first = await memoryRetrievalService.getContextForTurn(
-        'ws-1', prompt, 'medium', injected
+        'ws-1',
+        prompt,
+        'medium',
+        injected
       )
       assert.ok(first.includes('low-1'), 'first turn injects the fact')
       assert.equal(injected.size, 2)
 
       const second = await memoryRetrievalService.getContextForTurn(
-        'ws-1', prompt, 'medium', injected
+        'ws-1',
+        prompt,
+        'medium',
+        injected
       )
       assert.equal(second, '', 'tier 0/1 facts are not repeated')
     } finally {
@@ -129,9 +133,7 @@ describe('getContextForTurn — session dedupe', () => {
     resultsByPrompt.set(prompt, [makeResult('high-1', 2), makeResult('high-2', 3)])
     try {
       const injected = new Set<string>(['high-1', 'high-2'])
-      const out = await memoryRetrievalService.getContextForTurn(
-        'ws-1', prompt, 'medium', injected
-      )
+      const out = await memoryRetrievalService.getContextForTurn('ws-1', prompt, 'medium', injected)
       assert.ok(out.includes('high-1'), 'Knowledge (tier 2) facts bypass suppression')
       assert.ok(out.includes('high-2'), 'Wisdom (tier 3) facts bypass suppression')
     } finally {
@@ -145,9 +147,7 @@ describe('getContextForTurn — session dedupe', () => {
     resultsByPrompt.set(prompt, [makeResult('mixed-low', 1), makeResult('mixed-high', 2)])
     try {
       const injected = new Set<string>(['mixed-low', 'mixed-high'])
-      const out = await memoryRetrievalService.getContextForTurn(
-        'ws-1', prompt, 'medium', injected
-      )
+      const out = await memoryRetrievalService.getContextForTurn('ws-1', prompt, 'medium', injected)
       assert.ok(!out.includes('mixed-low'), 'seen tier-1 fact stays suppressed')
       assert.ok(out.includes('mixed-high'), 'seen tier-2 fact is repeated')
     } finally {

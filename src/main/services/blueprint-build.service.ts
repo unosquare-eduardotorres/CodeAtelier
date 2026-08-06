@@ -18,7 +18,11 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import {
+  PhaseActivityWatchdog,
+  STALL_TIMEOUT_MS,
+  wireAskUserAutoResponder
+} from './blueprint-phase-watchdog'
 import type {
   BlueprintTask,
   BlueprintPhaseStartPayload,
@@ -33,7 +37,11 @@ import { AgentSessionService } from './agent-session.service'
 import { BlueprintBuildAdapter } from './role-adapters/blueprint/blueprint-build.adapter'
 import { buildBuildGoalCondition } from './blueprint-goal-conditions'
 import { blueprintVerifyService } from './blueprint-verify.service'
-import { parsePhaseCompletionBlock, parseDiscoveriesBlock, asStringArray } from './blueprint-artifact-parsers'
+import {
+  parsePhaseCompletionBlock,
+  parseDiscoveriesBlock,
+  asStringArray
+} from './blueprint-artifact-parsers'
 import { verifyTaskFileClaims } from './blueprint-task-verification'
 import { blueprintService } from './blueprint.service'
 import { codeGraphService } from './code-graph.service'
@@ -54,7 +62,8 @@ const OVERLOAD_MAX_RETRIES = 2 // 3 total attempts per task
 const OVERLOAD_BACKOFF_BASE_MS = 60_000 // 60s, then 120s (exponential)
 
 /** Matches evidence-only / re-run-verify task descriptions for soft-pass gating. Exported for tests (GAP-5). */
-export const EVIDENCE_ONLY_RX = /\bre-?run\b.*\b(verify|verification)\b|\bverif\w+ (pass|evidence)\b|\bevidence.*(eslint|tsc|vitest|complexity|dead.?code)/i
+export const EVIDENCE_ONLY_RX =
+  /\bre-?run\b.*\b(verify|verification)\b|\bverif\w+ (pass|evidence)\b|\bevidence.*(eslint|tsc|vitest|complexity|dead.?code)/i
 
 /**
  * Abort-aware sleep: resolves after `ms` OR rejects immediately if the signal
@@ -88,12 +97,12 @@ export function abortAwareSleep(ms: number, signal?: AbortSignal): Promise<void>
 export interface TaskTiming {
   taskId: string
   wave: number
-  tDispatch: number       // When dispatchTask was called
-  tSessionReady: number   // session.start() resolved
-  tFirstChunk: number     // First stream chunk received (prefill latency proxy)
-  tComplete: number       // session.send() promise settled
-  tSlotFreed: number      // Task promise resolved (slot available for next dispatch)
-  durationMs: number      // tSlotFreed - tDispatch (total wall time)
+  tDispatch: number // When dispatchTask was called
+  tSessionReady: number // session.start() resolved
+  tFirstChunk: number // First stream chunk received (prefill latency proxy)
+  tComplete: number // session.send() promise settled
+  tSlotFreed: number // Task promise resolved (slot available for next dispatch)
+  durationMs: number // tSlotFreed - tDispatch (total wall time)
 }
 
 /** Mutable accumulator passed through wave/task execution. */
@@ -191,7 +200,11 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintRepository.update(blueprintId, { currentPhase: 'build' })
 
       // 2. Assemble phase context (includes spec + clarify + plan + tasks + review artifacts + workspace docs)
-      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'build', workspacePath)
+      const phaseContext = await blueprintService.assemblePhaseContext(
+        blueprintId,
+        'build',
+        workspacePath
+      )
 
       // 2b. Seed discoveries from prior phases + previous build runs (crash-resume)
       if (buildPhase) {
@@ -227,11 +240,12 @@ export class BlueprintBuildService extends EventEmitter {
 
         if (preflightResult.hasBlockers || preflightResult.hasWarnings) {
           const currentBp = blueprintRepository.findById(blueprintId)
-          const preflightOverride = (currentBp?.settingsJson as Record<string, unknown>)?.preflightOverride as boolean | undefined
+          const preflightOverride = (currentBp?.settingsJson as Record<string, unknown>)
+            ?.preflightOverride as boolean | undefined
           bpLog.warn(
             `[startBuildPhase] Preflight: ${preflightResult.checks.filter((c) => c.status === 'blocker').length} blockers, ` +
-            `${preflightResult.checks.filter((c) => c.status === 'warn').length} warnings` +
-            (preflightOverride ? ' (override in effect)' : '')
+              `${preflightResult.checks.filter((c) => c.status === 'warn').length} warnings` +
+              (preflightOverride ? ' (override in effect)' : '')
           )
 
           // D11: Only blockers injected as discoveries (warns excluded to avoid crowding)
@@ -264,11 +278,17 @@ export class BlueprintBuildService extends EventEmitter {
       // Uses structured contentJson (parsed completion) over raw contentMd to avoid
       // seeding the agent's preamble and to keep the context concise.
       const currentBlueprint = blueprintRepository.findById(blueprintId)
-      const remediationRound = (currentBlueprint?.settingsJson as Record<string, unknown>)?.remediationRound as number | undefined
+      const remediationRound = (currentBlueprint?.settingsJson as Record<string, unknown>)
+        ?.remediationRound as number | undefined
       if (remediationRound && remediationRound > 0) {
-        const verifyPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
+        const verifyPhaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(
+          blueprintId,
+          'verify'
+        )
         if (verifyPhaseRecord) {
-          const verifyArtifact = verifyPhaseRecord.artifactsJson.findLast((a) => a.type === 'verify')
+          const verifyArtifact = verifyPhaseRecord.artifactsJson.findLast(
+            (a) => a.type === 'verify'
+          )
           let gapSummary: string | undefined
 
           // Strategy 1: Extract structured findings from parsed completion JSON
@@ -281,7 +301,9 @@ export class BlueprintBuildService extends EventEmitter {
               for (const f of findings.slice(0, 10)) {
                 if (!f || typeof f !== 'object') continue
                 const desc = String(f.description ?? f.issue ?? 'Unknown gap')
-                const files = Array.isArray(f.files) ? ` [${(f.files as string[]).slice(0, 5).join(', ')}]` : ''
+                const files = Array.isArray(f.files)
+                  ? ` [${(f.files as string[]).slice(0, 5).join(', ')}]`
+                  : ''
                 parts.push(`${desc}${files}`)
               }
               if (findings.length > 10) parts.push(`…and ${findings.length - 10} more`)
@@ -307,9 +329,7 @@ export class BlueprintBuildService extends EventEmitter {
           // findings are typically located, not the beginning which is preamble)
           if (!gapSummary && verifyArtifact?.contentMd) {
             const md = verifyArtifact.contentMd
-            gapSummary = md.length > 1500
-              ? '…' + md.slice(-1500)
-              : md
+            gapSummary = md.length > 1500 ? '…' + md.slice(-1500) : md
           }
 
           if (gapSummary) {
@@ -317,10 +337,10 @@ export class BlueprintBuildService extends EventEmitter {
             if (gapSummary.length > 2000) {
               gapSummary = gapSummary.slice(0, 2000) + '…[truncated]'
             }
-            result.discoveries.push(
-              `[VERIFY GAPS - Round ${remediationRound}] ${gapSummary}`
+            result.discoveries.push(`[VERIFY GAPS - Round ${remediationRound}] ${gapSummary}`)
+            bpLog.info(
+              `[startBuildPhase] Seeded verify findings (${gapSummary.length} chars) into remediation context`
             )
-            bpLog.info(`[startBuildPhase] Seeded verify findings (${gapSummary.length} chars) into remediation context`)
             // Re-apply cap after adding verify summary
             if (result.discoveries.length > 20) {
               result.discoveries = result.discoveries.slice(-20)
@@ -377,7 +397,8 @@ export class BlueprintBuildService extends EventEmitter {
       // 6. Save build phase artifact (summary)
       // Phase 0: Log aggregate timing per-wave
       if (result.taskTimings.length > 0) {
-        const avgDuration = result.taskTimings.reduce((s, t) => s + t.durationMs, 0) / result.taskTimings.length
+        const avgDuration =
+          result.taskTimings.reduce((s, t) => s + t.durationMs, 0) / result.taskTimings.length
         const avgSpawn = result.taskTimings
           .filter((t) => t.tSessionReady > 0)
           .map((t) => t.tSessionReady - t.tDispatch)
@@ -389,10 +410,10 @@ export class BlueprintBuildService extends EventEmitter {
           .map((t) => t.tComplete - t.tFirstChunk)
         bpLog.info(
           `[startBuildPhase] TIMING: ${result.taskTimings.length} tasks, ` +
-          `avg total=${Math.round(avgDuration)}ms, ` +
-          `avg spawn=${avgSpawn.length ? Math.round(avgSpawn.reduce((a, b) => a + b, 0) / avgSpawn.length) : '?'}ms, ` +
-          `avg prefill=${avgPrefill.length ? Math.round(avgPrefill.reduce((a, b) => a + b, 0) / avgPrefill.length) : '?'}ms, ` +
-          `avg llm=${avgLlm.length ? Math.round(avgLlm.reduce((a, b) => a + b, 0) / avgLlm.length) : '?'}ms`
+            `avg total=${Math.round(avgDuration)}ms, ` +
+            `avg spawn=${avgSpawn.length ? Math.round(avgSpawn.reduce((a, b) => a + b, 0) / avgSpawn.length) : '?'}ms, ` +
+            `avg prefill=${avgPrefill.length ? Math.round(avgPrefill.reduce((a, b) => a + b, 0) / avgPrefill.length) : '?'}ms, ` +
+            `avg llm=${avgLlm.length ? Math.round(avgLlm.reduce((a, b) => a + b, 0) / avgLlm.length) : '?'}ms`
         )
       }
 
@@ -431,9 +452,10 @@ export class BlueprintBuildService extends EventEmitter {
           }
         }
         // BP-TASK-FAILURE-REASON: Build per-task failure summary for UI surfacing
-        const failureSummary = result.taskFailures.length > 0
-          ? result.taskFailures.map((f) => `${f.taskId}: ${f.reason}`).join('; ')
-          : 'One or more build tasks failed'
+        const failureSummary =
+          result.taskFailures.length > 0
+            ? result.taskFailures.map((f) => `${f.taskId}: ${f.reason}`).join('; ')
+            : 'One or more build tasks failed'
         // BP-RETRY-CONTEXT: Save structured retry context with files/task progress
         try {
           blueprintService.saveRetryContext(blueprintId, 'build', {
@@ -443,8 +465,16 @@ export class BlueprintBuildService extends EventEmitter {
             tasksCompleted: result.tasksCompleted,
             totalTasks
           })
-        } catch { /* best effort */ }
-        this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null, failureSummary, workspacePath)
+        } catch {
+          /* best effort */
+        }
+        this.finalizeFailed(
+          blueprintId,
+          workspaceId,
+          buildPhase?.id ?? null,
+          failureSummary,
+          workspacePath
+        )
       } else {
         // BP-BUILD-VERIFY-STARTLOCK-COLLISION: Release BUILD's pipeline lock
         // before VERIFY acquires its own. Without this, VERIFY's markPipelineRunning()
@@ -473,8 +503,11 @@ export class BlueprintBuildService extends EventEmitter {
           // BP-CLEANUP-RUNNING-TASKS-01: Include 'running' — tasks marked 'running'
           // before executeTask() returned are stuck if the wave threw mid-execution.
           if (currentStatus === 'pending' || currentStatus === 'running') {
-            try { blueprintTaskRepository.updateStatus(task.id, 'skipped') }
-            catch { /* best effort — DB may be the cause of the original throw */ }
+            try {
+              blueprintTaskRepository.updateStatus(task.id, 'skipped')
+            } catch {
+              /* best effort — DB may be the cause of the original throw */
+            }
           }
         }
       }
@@ -493,7 +526,9 @@ export class BlueprintBuildService extends EventEmitter {
             type: 'build-partial',
             contentMd: `${summary}\n\n_Build interrupted by exception._`
           })
-        } catch { /* best effort — DB may be the cause of the original throw */ }
+        } catch {
+          /* best effort — DB may be the cause of the original throw */
+        }
       }
       // BP-RETRY-CONTEXT: Save structured retry context with files/task progress
       try {
@@ -504,8 +539,16 @@ export class BlueprintBuildService extends EventEmitter {
           tasksCompleted: result.tasksCompleted,
           totalTasks
         })
-      } catch { /* best effort */ }
-      this.finalizeFailed(blueprintId, workspaceId, buildPhase?.id ?? null, err instanceof Error ? err.message : String(err), workspacePath)
+      } catch {
+        /* best effort */
+      }
+      this.finalizeFailed(
+        blueprintId,
+        workspaceId,
+        buildPhase?.id ?? null,
+        err instanceof Error ? err.message : String(err),
+        workspacePath
+      )
     } finally {
       this.activeSessions.delete(workspaceId)
       this.activeBlueprintIds.delete(workspaceId)
@@ -569,8 +612,11 @@ export class BlueprintBuildService extends EventEmitter {
         skippedCount++
         bpLog.info(`[executeWave] Skipping complete task ${task.taskId} (resume)`)
         this.safeEmit('waveTaskComplete', {
-          blueprintId, workspaceId, wave: waveNum,
-          taskId: task.taskId, status: 'complete'
+          blueprintId,
+          workspaceId,
+          wave: waveNum,
+          taskId: task.taskId,
+          status: 'complete'
         } satisfies BlueprintWaveTaskCompletePayload)
       } else {
         pending.push(task)
@@ -578,7 +624,9 @@ export class BlueprintBuildService extends EventEmitter {
     }
     if (skippedCount > 0) {
       this.safeEmit('phaseProgress', {
-        blueprintId, workspaceId, phase: 'build',
+        blueprintId,
+        workspaceId,
+        phase: 'build',
         text: `Skipping ${skippedCount} already-completed task${skippedCount > 1 ? 's' : ''} in Wave ${waveNum}`,
         kind: 'system'
       })
@@ -663,8 +711,15 @@ export class BlueprintBuildService extends EventEmitter {
             if (inFlight.size === 0) {
               // Dispatch exclusive task
               this.dispatchTask({
-                task, blueprintId, workspaceId, workspacePath, phaseContext,
-                result, waveNum, inFlight, taskFiles
+                task,
+                blueprintId,
+                workspaceId,
+                workspacePath,
+                phaseContext,
+                result,
+                waveNum,
+                inFlight,
+                taskFiles
               })
               dispatched.add(task.taskId)
               // C4 FIX: Block all further dispatches while exclusive task runs.
@@ -689,8 +744,15 @@ export class BlueprintBuildService extends EventEmitter {
 
           // Dispatch
           this.dispatchTask({
-            task, blueprintId, workspaceId, workspacePath, phaseContext,
-            result, waveNum, inFlight, taskFiles
+            task,
+            blueprintId,
+            workspaceId,
+            workspacePath,
+            phaseContext,
+            result,
+            waveNum,
+            inFlight,
+            taskFiles
           })
           dispatched.add(task.taskId)
           syncRunningTasks()
@@ -712,8 +774,15 @@ export class BlueprintBuildService extends EventEmitter {
           const nextTask = pending[pendingIdx]
           const taskFiles = normalizePaths(nextTask.filePathsJson)
           this.dispatchTask({
-            task: nextTask, blueprintId, workspaceId, workspacePath, phaseContext,
-            result, waveNum, inFlight, taskFiles
+            task: nextTask,
+            blueprintId,
+            workspaceId,
+            workspacePath,
+            phaseContext,
+            result,
+            waveNum,
+            inFlight,
+            taskFiles
           })
           dispatched.add(nextTask.taskId)
           if (taskFiles.size === 0) exclusiveInFlight = true
@@ -759,7 +828,7 @@ export class BlueprintBuildService extends EventEmitter {
             const newCap = Math.max(1, Math.floor(cap / 2))
             bpLog.warn(
               `[executeWave] Task ${settled.taskId} hit API overload — ` +
-              `reducing parallel cap from ${cap} to ${newCap}`
+                `reducing parallel cap from ${cap} to ${newCap}`
             )
             cap = newCap
           }
@@ -767,13 +836,14 @@ export class BlueprintBuildService extends EventEmitter {
           const totalAttempts = OVERLOAD_MAX_RETRIES + 1
           bpLog.info(
             `[executeWave] Task ${settled.taskId} overload retry ${attempt + 1}/${totalAttempts} ` +
-            `— backing off ${delay / 1000}s`
+              `— backing off ${delay / 1000}s`
           )
           this.safeEmit('phaseProgress', {
             blueprintId,
             workspaceId,
             phase: 'build',
-            text: `⚠ Task ${settled.entry.task.taskId} hit API overload — ` +
+            text:
+              `⚠ Task ${settled.entry.task.taskId} hit API overload — ` +
               `retrying in ${delay / 1000}s (attempt ${attempt + 1}/${totalAttempts})`,
             kind: 'system'
           })
@@ -831,7 +901,10 @@ export class BlueprintBuildService extends EventEmitter {
       this.handleTaskCompletion({
         task: settled.entry.task,
         taskResult: settled.taskResult,
-        blueprintId, workspaceId, waveNum, result
+        blueprintId,
+        workspaceId,
+        waveNum,
+        result
       })
 
       // H2 FIX: Collect reported filesModified for post-wave overlap detection.
@@ -860,7 +933,7 @@ export class BlueprintBuildService extends EventEmitter {
           const totalAttempts = OVERLOAD_MAX_RETRIES + 1
           bpLog.warn(
             `[executeWave] Task ${settled.taskId} overload retries exhausted — ` +
-            `draining wave ${waveNum}`
+              `draining wave ${waveNum}`
           )
           // DEDUP-FIX: Terminal overload message — executeTask no longer emits for
           // overload, so this is the only UI message for a permanently-failed task.
@@ -868,7 +941,8 @@ export class BlueprintBuildService extends EventEmitter {
             blueprintId,
             workspaceId,
             phase: 'build',
-            text: `⚠ Task ${settled.entry.task.taskId} failed after ${totalAttempts} attempts ` +
+            text:
+              `⚠ Task ${settled.entry.task.taskId} failed after ${totalAttempts} attempts ` +
               `due to API overload — stopping build`,
             kind: 'system'
           })
@@ -896,7 +970,7 @@ export class BlueprintBuildService extends EventEmitter {
           const overlap = [...a].filter((f) => b.has(f))
           bpLog.warn(
             `[executeWave] REPORTED FILE OVERLAP: Tasks ${taskIdsForOverlap[i]} and ${taskIdsForOverlap[j]} ` +
-            `both modified: ${overlap.join(', ')}`
+              `both modified: ${overlap.join(', ')}`
           )
         }
       }
@@ -909,8 +983,11 @@ export class BlueprintBuildService extends EventEmitter {
         if (currentStatus === 'pending' || currentStatus === 'running') {
           blueprintTaskRepository.updateStatus(task.id, 'skipped')
           this.safeEmit('waveTaskComplete', {
-            blueprintId, workspaceId, wave: waveNum,
-            taskId: task.taskId, status: 'skipped'
+            blueprintId,
+            workspaceId,
+            wave: waveNum,
+            taskId: task.taskId,
+            status: 'skipped'
           } satisfies BlueprintWaveTaskCompletePayload)
         }
       }
@@ -919,7 +996,10 @@ export class BlueprintBuildService extends EventEmitter {
     const waveFailed = draining || result.failed
     const waveStatus = waveFailed ? 'failed' : 'complete'
     this.safeEmit('waveComplete', {
-      blueprintId, workspaceId, wave: waveNum, status: waveStatus
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
+      status: waveStatus
     } satisfies BlueprintWaveCompletePayload)
 
     if (waveFailed) {
@@ -945,13 +1025,25 @@ export class BlueprintBuildService extends EventEmitter {
     inFlight: Map<string, InFlightEntry>
     taskFiles: Set<string>
   }): void {
-    const { task, blueprintId, workspaceId, workspacePath, phaseContext, result, waveNum, inFlight, taskFiles } = params
+    const {
+      task,
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      phaseContext,
+      result,
+      waveNum,
+      inFlight,
+      taskFiles
+    } = params
 
     // Phase 0: Record dispatch timestamp
     const tDispatch = Date.now()
 
     this.safeEmit('waveTaskStart', {
-      blueprintId, workspaceId, wave: waveNum,
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
       taskId: task.taskId,
       description: task.description,
       goal: buildBuildGoalCondition(task.taskId, task.description)
@@ -963,7 +1055,11 @@ export class BlueprintBuildService extends EventEmitter {
     const discoverySnapshot = [...result.discoveries]
 
     const promise = this.executeTask({
-      task, blueprintId, workspaceId, workspacePath, phaseContext,
+      task,
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      phaseContext,
       priorDiscoveries: discoverySnapshot,
       tDispatch,
       waveNum
@@ -1033,7 +1129,9 @@ export class BlueprintBuildService extends EventEmitter {
     }
 
     this.safeEmit('waveTaskComplete', {
-      blueprintId, workspaceId, wave: waveNum,
+      blueprintId,
+      workspaceId,
+      wave: waveNum,
       taskId: task.taskId,
       status: taskResult.success ? 'complete' : 'failed'
     } satisfies BlueprintWaveTaskCompletePayload)
@@ -1081,7 +1179,11 @@ export class BlueprintBuildService extends EventEmitter {
 
     const autoRetrying = workspacePath
       ? blueprintService.scheduleAutoRetry({
-          blueprintId, workspaceId, workspacePath, phase: 'build', error: errorMsg
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          phase: 'build',
+          error: errorMsg
         })
       : false
 
@@ -1199,7 +1301,8 @@ export class BlueprintBuildService extends EventEmitter {
     tDispatch: number
     waveNum: number
   }): Promise<TaskResult> {
-    const { task, blueprintId, workspaceId, workspacePath, phaseContext, tDispatch, waveNum } = params
+    const { task, blueprintId, workspaceId, workspacePath, phaseContext, tDispatch, waveNum } =
+      params
 
     // Phase 0: Timing instrumentation
     let tSessionReady = 0
@@ -1218,7 +1321,11 @@ export class BlueprintBuildService extends EventEmitter {
     )
 
     // Build task-specific context string (with accumulated discoveries + prior attempt output)
-    const taskContext = this.buildTaskContext(task, params.priorDiscoveries, priorPartial?.contentMd)
+    const taskContext = this.buildTaskContext(
+      task,
+      params.priorDiscoveries,
+      priorPartial?.contentMd
+    )
 
     // Create adapter + session
     const adapter = new BlueprintBuildAdapter({
@@ -1263,11 +1370,14 @@ export class BlueprintBuildService extends EventEmitter {
         if (chunk.toolName === 'Bash') bashCalls++
       }
 
-      forwardBlueprintChunk(
-        (event, payload) => this.safeEmit(event, payload),
-        chunk,
-        { blueprintId, workspaceId, phase: 'build', workspacePath, mode: 'build', taskId: task.taskId }
-      )
+      forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        workspacePath,
+        mode: 'build',
+        taskId: task.taskId
+      })
     }
     // G2: Per-task status — derive workspace status from all active tasks
     // H4 FIX: Key by workspaceId:taskId to prevent cross-workspace collisions
@@ -1280,7 +1390,11 @@ export class BlueprintBuildService extends EventEmitter {
       const wsStatuses = [...this.perTaskStatus.entries()]
         .filter(([k]) => k.startsWith(wsPrefix))
         .map(([, v]) => v)
-      const derivedStatus = wsStatuses.some((s) => s !== 'idle' && s !== 'completed' && s !== 'failed') ? 'busy' : 'idle'
+      const derivedStatus = wsStatuses.some(
+        (s) => s !== 'idle' && s !== 'completed' && s !== 'failed'
+      )
+        ? 'busy'
+        : 'idle'
       this.safeEmit('status', { workspaceId, status: { ...status, status: derivedStatus } })
     }
     session.on('chunk', onChunk)
@@ -1357,156 +1471,191 @@ export class BlueprintBuildService extends EventEmitter {
             kind: 'system'
           })
         }
-        taskResult = { success: false, completion: null, discoveries: [], failureReason: sendOutcome }
+        taskResult = {
+          success: false,
+          completion: null,
+          discoveries: [],
+          failureReason: sendOutcome
+        }
       } else {
-      // Parse output
-      const text = session.getStreamedContent(syntheticConvId)
-      const completion = parsePhaseCompletionBlock(text, 'build') ?? null
+        // Parse output
+        const text = session.getStreamedContent(syntheticConvId)
+        const completion = parsePhaseCompletionBlock(text, 'build') ?? null
 
-      if (!completion && text.length > 200) {
-        bpLog.warn(`[executeTask] Task ${task.taskId}: no completion block in ${text.length}-char output`)
-      }
-      bpLog.info(
-        `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
-      )
-
-      // Parse discoveries block from task output
-      const taskDiscoveries = parseDiscoveriesBlock(text) ?? []
-
-      // BP-VERIFY-TASK-FILES-01: Deterministic disk verification — never trust unverified claims.
-      // Check that files the LLM claimed to create/modify actually exist on disk.
-      // FIX-3: Pass tDispatch as taskStartedAt for mtime freshness checking.
-      const verification = verifyTaskFileClaims(workspacePath, completion, task.filePathsJson, tDispatch)
-
-      // BP-EVIDENCE-ONLY-SOFTPASS: Defense-in-depth for verification/evidence-only tasks.
-      // When verification fails with stale-only or no-fresh-file (no files actually absent)
-      // AND the task description matches a verification/evidence pattern, soft-pass it.
-      // These tasks (e.g. "Re-run the full verify pass with evidence") modify no files
-      // by design, so the mtime-freshness net always rejects them. The remediation loop
-      // already re-runs verify — a build-wave verify task is redundant.
-      // GAP-4 FIX: Dropped bare `run` alternative — only match `re-run`/`rerun` to
-      // avoid false soft-pass on tasks like "Run migrations and verify schema".
-      // Regex exported at module level as EVIDENCE_ONLY_RX (GAP-5).
-      const isEvidenceOnlyTask =
-        !verification.ok &&
-        verification.missingClaimed.length === 0 &&
-        verification.missingPlanned.length === 0 &&
-        EVIDENCE_ONLY_RX.test(task.description)
-
-      if (isEvidenceOnlyTask) {
-        bpLog.warn(
-          `[executeTask] Task ${task.taskId} verification soft-pass — ` +
-          `evidence-only task with ${verification.staleClaimed.length} stale file(s), ` +
-          `no missing files. Description: "${task.description.slice(0, 120)}"`
-        )
-        // Append a warning artifact (not failure) so it's visible in Deliverables
-        const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-        if (buildPhase) {
-          blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-            type: 'verification-warning',
-            contentMd:
-              `## Task ${task.taskId} — verification soft-pass (evidence-only)\n\n` +
-              `This task is a verification/evidence-gathering task that modifies no files by design.\n` +
-              `The file-freshness check found ${verification.staleClaimed.length} stale file(s) but ` +
-              `no files are actually missing — treated as passed with warning.\n\n` +
-              (verification.staleClaimed.length > 0
-                ? `**Stale files (${verification.staleClaimed.length}):**\n` +
-                  verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') + '\n'
-                : '')
-          })
-        }
-        taskResult = { success: true, completion, discoveries: taskDiscoveries }
-      } else if (!verification.ok) {
-        const n = asStringArray(completion?.filesCreated).length + asStringArray(completion?.filesModified).length
-        const missingList = verification.missingClaimed.length > 0
-          ? verification.missingClaimed
-          : verification.missingPlanned
-        bpLog.error(
-          `[executeTask] Task ${task.taskId} FAILED verification — ` +
-          `${verification.missingClaimed.length} claimed missing, ` +
-          `${verification.staleClaimed.length} stale, ` +
-          `${verification.missingPlanned.length} planned missing: ` +
-          `${missingList.slice(0, 10).join(', ')}${missingList.length > 10 ? ` (+${missingList.length - 10} more)` : ''}`
-        )
-
-        // Append artifact so the discrepancy is visible in Deliverables
-        const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-        if (buildPhase) {
-          blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-            type: 'verification-failure',
-            contentMd:
-              `## Task ${task.taskId} — claimed files missing on disk\n\n` +
-              (verification.missingClaimed.length > 0
-                ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
-                  verification.missingClaimed.map((f) => `- \`${f}\``).join('\n') + '\n\n'
-                : '') +
-              (verification.staleClaimed.length > 0
-                ? `**Claimed but stale (${verification.staleClaimed.length}):**\n` +
-                  verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') + '\n\n'
-                : '') +
-              (verification.missingPlanned.length > 0
-                ? `**Planned but absent (${verification.missingPlanned.length}):**\n` +
-                  verification.missingPlanned.map((f) => `- \`${f}\``).join('\n') + '\n'
-                : '')
-          })
-        }
-
-        // Surface to UI via existing phaseProgress channel (system message)
-        // GAP-2 FIX: Include stale-aware branch so the message reflects the real reason
-        this.safeEmit('phaseProgress', {
-          blueprintId,
-          workspaceId,
-          phase: 'build',
-          text: `⚠ Task ${task.taskId} marked FAILED — ` +
-            (verification.missingClaimed.length > 0
-              ? `claimed ${n} file(s), ${verification.missingClaimed.length} missing on disk`
-              : verification.staleClaimed.length > 0
-                ? `${verification.staleClaimed.length} claimed file(s) stale on disk`
-                : `no output files found (${verification.missingPlanned.length} planned files absent)`),
-          kind: 'system'
-        })
-
-        // Append missingPlanned (non-fatal) to discoveries so subsequent waves see the drift
-        if (verification.missingPlanned.length > 0) {
-          taskDiscoveries.push(
-            `Task ${task.taskId} drift: planned files not found on disk: ${verification.missingPlanned.join(', ')}`
+        if (!completion && text.length > 200) {
+          bpLog.warn(
+            `[executeTask] Task ${task.taskId}: no completion block in ${text.length}-char output`
           )
         }
+        bpLog.info(
+          `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
+        )
 
-        // Build descriptive failure reason for UI surfacing
-        const verifyFailParts: string[] = []
-        if (verification.missingClaimed.length > 0) verifyFailParts.push(`${verification.missingClaimed.length} claimed missing`)
-        if (verification.staleClaimed.length > 0) verifyFailParts.push(`${verification.staleClaimed.length} stale`)
-        if (verification.missingPlanned.length > 0) verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
-        const verifyFailReason = `verification failed — ${verifyFailParts.join(', ')}`
+        // Parse discoveries block from task output
+        const taskDiscoveries = parseDiscoveriesBlock(text) ?? []
 
-        taskResult = { success: false, completion, discoveries: taskDiscoveries, failureReason: verifyFailReason }
-      } else {
-        // FIX-2: No-write-activity hard-fail rule.
-        // If the completion claims filesCreated/filesModified BUT the session never
-        // invoked a write-capable tool, the files on disk are stale from a prior run.
-        // Also fail when no completion + zero write calls + task has planned files.
-        const claimedFiles = asStringArray(completion?.filesCreated).length + asStringArray(completion?.filesModified).length
-        const hasPlannedFiles = task.filePathsJson?.length > 0
-        const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
+        // BP-VERIFY-TASK-FILES-01: Deterministic disk verification — never trust unverified claims.
+        // Check that files the LLM claimed to create/modify actually exist on disk.
+        // FIX-3: Pass tDispatch as taskStartedAt for mtime freshness checking.
+        const verification = verifyTaskFileClaims(
+          workspacePath,
+          completion,
+          task.filePathsJson,
+          tDispatch
+        )
 
-        if (noWriteActivity && (claimedFiles > 0 || (!completion && hasPlannedFiles))) {
+        // BP-EVIDENCE-ONLY-SOFTPASS: Defense-in-depth for verification/evidence-only tasks.
+        // When verification fails with stale-only or no-fresh-file (no files actually absent)
+        // AND the task description matches a verification/evidence pattern, soft-pass it.
+        // These tasks (e.g. "Re-run the full verify pass with evidence") modify no files
+        // by design, so the mtime-freshness net always rejects them. The remediation loop
+        // already re-runs verify — a build-wave verify task is redundant.
+        // GAP-4 FIX: Dropped bare `run` alternative — only match `re-run`/`rerun` to
+        // avoid false soft-pass on tasks like "Run migrations and verify schema".
+        // Regex exported at module level as EVIDENCE_ONLY_RX (GAP-5).
+        const isEvidenceOnlyTask =
+          !verification.ok &&
+          verification.missingClaimed.length === 0 &&
+          verification.missingPlanned.length === 0 &&
+          EVIDENCE_ONLY_RX.test(task.description)
+
+        if (isEvidenceOnlyTask) {
+          bpLog.warn(
+            `[executeTask] Task ${task.taskId} verification soft-pass — ` +
+              `evidence-only task with ${verification.staleClaimed.length} stale file(s), ` +
+              `no missing files. Description: "${task.description.slice(0, 120)}"`
+          )
+          // Append a warning artifact (not failure) so it's visible in Deliverables
+          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+          if (buildPhase) {
+            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+              type: 'verification-warning',
+              contentMd:
+                `## Task ${task.taskId} — verification soft-pass (evidence-only)\n\n` +
+                `This task is a verification/evidence-gathering task that modifies no files by design.\n` +
+                `The file-freshness check found ${verification.staleClaimed.length} stale file(s) but ` +
+                `no files are actually missing — treated as passed with warning.\n\n` +
+                (verification.staleClaimed.length > 0
+                  ? `**Stale files (${verification.staleClaimed.length}):**\n` +
+                    verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
+                    '\n'
+                  : '')
+            })
+          }
+          taskResult = { success: true, completion, discoveries: taskDiscoveries }
+        } else if (!verification.ok) {
+          const n =
+            asStringArray(completion?.filesCreated).length +
+            asStringArray(completion?.filesModified).length
+          const missingList =
+            verification.missingClaimed.length > 0
+              ? verification.missingClaimed
+              : verification.missingPlanned
           bpLog.error(
-            `[executeTask] Task ${task.taskId} FAILED — no-write-activity: ` +
-            `claimed ${claimedFiles} file(s) but session invoked 0 write tools and 0 Bash calls`
+            `[executeTask] Task ${task.taskId} FAILED verification — ` +
+              `${verification.missingClaimed.length} claimed missing, ` +
+              `${verification.staleClaimed.length} stale, ` +
+              `${verification.missingPlanned.length} planned missing: ` +
+              `${missingList.slice(0, 10).join(', ')}${missingList.length > 10 ? ` (+${missingList.length - 10} more)` : ''}`
           )
+
+          // Append artifact so the discrepancy is visible in Deliverables
+          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+          if (buildPhase) {
+            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+              type: 'verification-failure',
+              contentMd:
+                `## Task ${task.taskId} — claimed files missing on disk\n\n` +
+                (verification.missingClaimed.length > 0
+                  ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
+                    verification.missingClaimed.map((f) => `- \`${f}\``).join('\n') +
+                    '\n\n'
+                  : '') +
+                (verification.staleClaimed.length > 0
+                  ? `**Claimed but stale (${verification.staleClaimed.length}):**\n` +
+                    verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
+                    '\n\n'
+                  : '') +
+                (verification.missingPlanned.length > 0
+                  ? `**Planned but absent (${verification.missingPlanned.length}):**\n` +
+                    verification.missingPlanned.map((f) => `- \`${f}\``).join('\n') +
+                    '\n'
+                  : '')
+            })
+          }
+
+          // Surface to UI via existing phaseProgress channel (system message)
+          // GAP-2 FIX: Include stale-aware branch so the message reflects the real reason
           this.safeEmit('phaseProgress', {
             blueprintId,
             workspaceId,
             phase: 'build',
-            text: `⚠ Task ${task.taskId} FAILED — no write-tool activity detected (stale file guard)`,
+            text:
+              `⚠ Task ${task.taskId} marked FAILED — ` +
+              (verification.missingClaimed.length > 0
+                ? `claimed ${n} file(s), ${verification.missingClaimed.length} missing on disk`
+                : verification.staleClaimed.length > 0
+                  ? `${verification.staleClaimed.length} claimed file(s) stale on disk`
+                  : `no output files found (${verification.missingPlanned.length} planned files absent)`),
             kind: 'system'
           })
-          taskResult = { success: false, completion, discoveries: taskDiscoveries, failureReason: 'no-write-activity' }
+
+          // Append missingPlanned (non-fatal) to discoveries so subsequent waves see the drift
+          if (verification.missingPlanned.length > 0) {
+            taskDiscoveries.push(
+              `Task ${task.taskId} drift: planned files not found on disk: ${verification.missingPlanned.join(', ')}`
+            )
+          }
+
+          // Build descriptive failure reason for UI surfacing
+          const verifyFailParts: string[] = []
+          if (verification.missingClaimed.length > 0)
+            verifyFailParts.push(`${verification.missingClaimed.length} claimed missing`)
+          if (verification.staleClaimed.length > 0)
+            verifyFailParts.push(`${verification.staleClaimed.length} stale`)
+          if (verification.missingPlanned.length > 0)
+            verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
+          const verifyFailReason = `verification failed — ${verifyFailParts.join(', ')}`
+
+          taskResult = {
+            success: false,
+            completion,
+            discoveries: taskDiscoveries,
+            failureReason: verifyFailReason
+          }
         } else {
-          taskResult = { success: true, completion, discoveries: taskDiscoveries }
+          // FIX-2: No-write-activity hard-fail rule.
+          // If the completion claims filesCreated/filesModified BUT the session never
+          // invoked a write-capable tool, the files on disk are stale from a prior run.
+          // Also fail when no completion + zero write calls + task has planned files.
+          const claimedFiles =
+            asStringArray(completion?.filesCreated).length +
+            asStringArray(completion?.filesModified).length
+          const hasPlannedFiles = task.filePathsJson?.length > 0
+          const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
+
+          if (noWriteActivity && (claimedFiles > 0 || (!completion && hasPlannedFiles))) {
+            bpLog.error(
+              `[executeTask] Task ${task.taskId} FAILED — no-write-activity: ` +
+                `claimed ${claimedFiles} file(s) but session invoked 0 write tools and 0 Bash calls`
+            )
+            this.safeEmit('phaseProgress', {
+              blueprintId,
+              workspaceId,
+              phase: 'build',
+              text: `⚠ Task ${task.taskId} FAILED — no write-tool activity detected (stale file guard)`,
+              kind: 'system'
+            })
+            taskResult = {
+              success: false,
+              completion,
+              discoveries: taskDiscoveries,
+              failureReason: 'no-write-activity'
+            }
+          } else {
+            taskResult = { success: true, completion, discoveries: taskDiscoveries }
+          }
         }
-      }
       } // end of sendOutcome === 'ok' else block
     } catch (err) {
       tComplete = Date.now()
@@ -1525,7 +1674,12 @@ export class BlueprintBuildService extends EventEmitter {
       }
 
       // GAP-3 FIX: Include error message as failureReason for UI surfacing
-      taskResult = { success: false, completion: null, discoveries: [], failureReason: err instanceof Error ? err.message : String(err) }
+      taskResult = {
+        success: false,
+        completion: null,
+        discoveries: [],
+        failureReason: err instanceof Error ? err.message : String(err)
+      }
     } finally {
       // Phase 0: Record slot-freed time + build timing object
       const tSlotFreed = Date.now()
@@ -1545,10 +1699,10 @@ export class BlueprintBuildService extends EventEmitter {
       this.safeEmit('taskTiming', { workspaceId, blueprintId, timing })
       bpLog.info(
         `[executeTask] TIMING task=${task.taskId} ` +
-        `spawn=${tSessionReady ? tSessionReady - tDispatch : '?'}ms ` +
-        `prefill=${tFirstChunk && tSessionReady ? tFirstChunk - tSessionReady : '?'}ms ` +
-        `llm=${tComplete && tFirstChunk ? tComplete - tFirstChunk : '?'}ms ` +
-        `teardown=async total=${tSlotFreed - tDispatch}ms`
+          `spawn=${tSessionReady ? tSessionReady - tDispatch : '?'}ms ` +
+          `prefill=${tFirstChunk && tSessionReady ? tFirstChunk - tSessionReady : '?'}ms ` +
+          `llm=${tComplete && tFirstChunk ? tComplete - tFirstChunk : '?'}ms ` +
+          `teardown=async total=${tSlotFreed - tDispatch}ms`
       )
 
       cleanupAskUser()
@@ -1561,15 +1715,18 @@ export class BlueprintBuildService extends EventEmitter {
       // session fire-and-forget. The session remains in activeSessions until stop
       // settles so cancelBlueprint() can still find and kill it.
       // BP-SESSION-LEAK-01 preserved: stop() failure still triggers cleanup.
-      session.stop().catch((stopErr) => {
-        bpLog.error(`[executeTask] session.stop() failed for task ${task.taskId}:`, stopErr)
-      }).finally(() => {
-        const sessions = this.activeSessions.get(workspaceId)
-        if (sessions) {
-          sessions.delete(session)
-          if (sessions.size === 0) this.activeSessions.delete(workspaceId)
-        }
-      })
+      session
+        .stop()
+        .catch((stopErr) => {
+          bpLog.error(`[executeTask] session.stop() failed for task ${task.taskId}:`, stopErr)
+        })
+        .finally(() => {
+          const sessions = this.activeSessions.get(workspaceId)
+          if (sessions) {
+            sessions.delete(session)
+            if (sessions.size === 0) this.activeSessions.delete(workspaceId)
+          }
+        })
     }
 
     return taskResult
@@ -1581,7 +1738,11 @@ export class BlueprintBuildService extends EventEmitter {
    * Format a BlueprintTask into a context string for the adapter.
    * Includes task ID, description, file paths, user story, and dependencies.
    */
-  private buildTaskContext(task: BlueprintTask, priorDiscoveries?: string[], priorAttemptOutput?: string): string {
+  private buildTaskContext(
+    task: BlueprintTask,
+    priorDiscoveries?: string[],
+    priorAttemptOutput?: string
+  ): string {
     const lines: string[] = [
       `**Task ID**: ${task.taskId}`,
       `**Wave**: ${task.wave}`,
@@ -1615,12 +1776,15 @@ export class BlueprintBuildService extends EventEmitter {
       lines.push('**⚠️ Prior Attempt Output (this task failed previously):**')
       // Cap at 4K to avoid bloating the per-task prompt
       const MAX_PRIOR_CHARS = 4000
-      const capped = priorAttemptOutput.length > MAX_PRIOR_CHARS
-        ? priorAttemptOutput.slice(0, MAX_PRIOR_CHARS) + '\n…[truncated]'
-        : priorAttemptOutput
+      const capped =
+        priorAttemptOutput.length > MAX_PRIOR_CHARS
+          ? priorAttemptOutput.slice(0, MAX_PRIOR_CHARS) + '\n…[truncated]'
+          : priorAttemptOutput
       lines.push(capped)
       lines.push('')
-      lines.push('Build on this work — do NOT restart from scratch. Re-read modified files to verify state.')
+      lines.push(
+        'Build on this work — do NOT restart from scratch. Re-read modified files to verify state.'
+      )
     }
 
     return lines.join('\n')
@@ -1639,12 +1803,7 @@ export class BlueprintBuildService extends EventEmitter {
     if (tasksResumed && tasksResumed > 0) {
       taskLine += ` (${tasksResumed} resumed from prior run)`
     }
-    const lines = [
-      `# Build Phase Summary`,
-      '',
-      taskLine,
-      ''
-    ]
+    const lines = [`# Build Phase Summary`, '', taskLine, '']
 
     if (filesCreated.length) {
       lines.push(`**Files Created** (${filesCreated.length}):`)
@@ -1673,9 +1832,15 @@ export class BlueprintBuildService extends EventEmitter {
       if (bpId === blueprintId) {
         const sessions = this.activeSessions.get(wsId)
         if (sessions) {
-          bpLog.info(`[cancelBlueprint] Stopping ${sessions.size} active session(s) for blueprint ${blueprintId}`)
+          bpLog.info(
+            `[cancelBlueprint] Stopping ${sessions.size} active session(s) for blueprint ${blueprintId}`
+          )
           for (const session of sessions) {
-            try { await session.stop() } catch { /* best effort */ }
+            try {
+              await session.stop()
+            } catch {
+              /* best effort */
+            }
           }
           this.activeSessions.delete(wsId)
           this.activeBlueprintIds.delete(wsId)
@@ -1688,7 +1853,11 @@ export class BlueprintBuildService extends EventEmitter {
   async shutdown(): Promise<void> {
     for (const [wsId, sessions] of this.activeSessions) {
       for (const session of sessions) {
-        try { await session.stop() } catch { /* best effort */ }
+        try {
+          await session.stop()
+        } catch {
+          /* best effort */
+        }
       }
       this.activeBlueprintIds.delete(wsId)
     }

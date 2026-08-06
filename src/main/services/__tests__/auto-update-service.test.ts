@@ -15,7 +15,7 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { setupFullMock, mockService, mockMainWindow } from './setup-full-mock'
+import { setupFullMock, mockService, mockMainWindow, evictFromCache } from './setup-full-mock'
 
 setupFullMock()
 
@@ -78,6 +78,10 @@ mockService('update-feed-server', {
 })
 
 // Must be required AFTER the mocks above are registered.
+// An earlier file in the shared run caches this service bound to the REAL
+// electron-updater, so the double registered above would never be used and
+// init() would construct a MacUpdater against the stub `app`, throwing at load.
+evictFromCache('auto-update.service')
 const { autoUpdateService } = require('../auto-update.service')
 const electronMock = require('./__electron_mock.cjs')
 

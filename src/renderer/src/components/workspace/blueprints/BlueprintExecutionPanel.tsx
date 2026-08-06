@@ -47,8 +47,14 @@ function parseTaskMarkers(description: string): ParsedMarkers {
   let userStory: string | null = null
   let parallel = false
   const clean = description
-    .replace(/\[(US\d+)\]/gi, (_, us) => { userStory = us.toUpperCase(); return '' })
-    .replace(/\[P\]/gi, () => { parallel = true; return '' })
+    .replace(/\[(US\d+)\]/gi, (_, us) => {
+      userStory = us.toUpperCase()
+      return ''
+    })
+    .replace(/\[P\]/gi, () => {
+      parallel = true
+      return ''
+    })
     .replace(/\[S\]/gi, '')
     .trim()
   return { clean, userStory, parallel }
@@ -97,7 +103,9 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
   const { clean, userStory, parallel } = parseTaskMarkers(task.description)
 
   return (
-    <div className={`border-b border-border-subtle/50 last:border-b-0 ${status === 'failed' ? 'border-l-2 border-l-danger/60' : ''}`}>
+    <div
+      className={`border-b border-border-subtle/50 last:border-b-0 ${status === 'failed' ? 'border-l-2 border-l-danger/60' : ''}`}
+    >
       <button
         type="button"
         onClick={() => setExpanded(!expanded)}
@@ -105,12 +113,8 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
         className="w-full flex items-start gap-2 px-3 py-2.5 text-left hover:bg-surface-hover transition-colors cursor-pointer group"
       >
         <span className="mt-0.5">{TASK_STATUS_ICON[status]}</span>
-        <span className="text-xs font-mono text-text-muted flex-shrink-0 mt-px">
-          {task.taskId}
-        </span>
-        <span className="text-sm text-text-primary line-clamp-3 flex-1 min-w-0">
-          {clean}
-        </span>
+        <span className="text-xs font-mono text-text-muted flex-shrink-0 mt-px">{task.taskId}</span>
+        <span className="text-sm text-text-primary line-clamp-3 flex-1 min-w-0">{clean}</span>
         {/* Marker badges */}
         {userStory && (
           <span className="text-[10px] font-semibold text-accent bg-accent/10 px-1.5 py-0.5 rounded flex-shrink-0">
@@ -137,9 +141,7 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
       {expanded && (
         <div className="px-3 pb-3 pl-8 space-y-2">
           {/* Full description (wrapped, no clamp) */}
-          <p className="text-xs text-text-secondary leading-relaxed">
-            {clean}
-          </p>
+          <p className="text-xs text-text-secondary leading-relaxed">{clean}</p>
 
           {/* Files */}
           {task.filePathsJson.length > 0 && (
@@ -196,44 +198,45 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
               <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
                 User Story
               </span>
-              <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">
-                {task.userStory}
-              </p>
+              <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{task.userStory}</p>
             </div>
           )}
 
           {/* Goal → criteria checklist */}
-          {goal && (() => {
-            const criteria = splitGoalCriteria(goal)
-            return (
-              <div>
-                <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
-                  Goal criteria
-                </span>
-                {criteria.length > 1 ? (
-                  <ul className="mt-0.5 space-y-0.5">
-                    {criteria.map((c, i) => (
-                      <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
-                        <span className="text-text-muted mt-px">•</span>
-                        <span className="leading-relaxed">{c}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">
-                    {goal}
-                  </p>
-                )}
-              </div>
-            )
-          })()}
+          {goal &&
+            (() => {
+              const criteria = splitGoalCriteria(goal)
+              return (
+                <div>
+                  <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                    Goal criteria
+                  </span>
+                  {criteria.length > 1 ? (
+                    <ul className="mt-0.5 space-y-0.5">
+                      {criteria.map((c, i) => (
+                        <li key={i} className="text-xs text-text-secondary flex items-start gap-1">
+                          <span className="text-text-muted mt-px">•</span>
+                          <span className="leading-relaxed">{c}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-xs text-text-secondary mt-0.5 leading-relaxed">{goal}</p>
+                  )}
+                </div>
+              )
+            })()}
 
           {/* Duration instead of two timestamps */}
           {task.startedAt && (
             <div className="flex items-center gap-1 text-xs text-text-muted">
               <Clock size={12} />
               <span>
-                Started {new Date(task.startedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                Started{' '}
+                {new Date(task.startedAt).toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit'
+                })}
                 {task.completedAt && ` · ${formatDuration(task.startedAt, task.completedAt)}`}
               </span>
             </div>
@@ -301,7 +304,10 @@ function WaveAccordion({
         : 'text-text-muted'
 
   return (
-    <div ref={waveRef} className={`rounded-lg border overflow-hidden ${isRemediation ? 'border-warning/30' : 'border-border-subtle'}`}>
+    <div
+      ref={waveRef}
+      className={`rounded-lg border overflow-hidden ${isRemediation ? 'border-warning/30' : 'border-border-subtle'}`}
+    >
       {/* Sticky wave header */}
       <button
         type="button"
@@ -313,9 +319,13 @@ function WaveAccordion({
         ) : (
           <ChevronRight size={14} className="text-text-muted" />
         )}
-        <span className={`text-sm font-semibold ${isRemediation ? 'text-warning' : 'text-text-primary'}`}>
+        <span
+          className={`text-sm font-semibold ${isRemediation ? 'text-warning' : 'text-text-primary'}`}
+        >
           Wave {waveNum}
-          {isRemediation && <span className="text-xs font-normal ml-1.5 text-warning/70">(Remediation)</span>}
+          {isRemediation && (
+            <span className="text-xs font-normal ml-1.5 text-warning/70">(Remediation)</span>
+          )}
         </span>
         {allComplete && <CheckCircle2 size={14} className="text-success" />}
         <span className={`text-xs font-medium ml-auto ${progressColor}`}>
@@ -363,9 +373,7 @@ function PhaseCompletionCard({
     <div className="rounded-lg border border-success/20 bg-success/5 p-3 space-y-1.5">
       <div className="flex items-center gap-2">
         <CheckCircle2 size={12} className="text-success" />
-        <span className="text-xs font-semibold text-text-primary">
-          {phaseLabel} Phase Complete
-        </span>
+        <span className="text-xs font-semibold text-text-primary">{phaseLabel} Phase Complete</span>
       </div>
       <div className="grid grid-cols-2 gap-2 text-[10px]">
         {tasksCompleted !== undefined && totalTasks !== undefined && (
@@ -389,11 +397,7 @@ function PhaseCompletionCard({
           </div>
         )}
       </div>
-      {recommendation && (
-        <p className="text-[10px] text-text-secondary italic">
-          {recommendation}
-        </p>
-      )}
+      {recommendation && <p className="text-[10px] text-text-secondary italic">{recommendation}</p>}
     </div>
   )
 }
@@ -418,13 +422,29 @@ export interface BlueprintExecutionPanelProps {
 }
 
 /** Phase-aware empty state message for the Tasks tab. */
-const PHASE_TASK_MESSAGE: Partial<Record<BlueprintPhaseType, { title: string; subtitle: string }>> = {
-  specify: { title: 'Analyzing requirements', subtitle: 'Tasks will be created once the spec, plan, and task breakdown phases complete.' },
-  clarify: { title: 'Clarifying requirements', subtitle: 'Tasks will be created once the plan and task breakdown phases complete.' },
-  plan:    { title: 'Creating the plan', subtitle: 'Tasks will be created after the plan is broken down into executable work.' },
-  tasks:   { title: 'Breaking down tasks', subtitle: 'Tasks are being generated now — they\'ll appear here momentarily.' },
-  review:  { title: 'Reviewing the plan', subtitle: 'Tasks have been defined — they\'ll load once review is complete.' }
-}
+const PHASE_TASK_MESSAGE: Partial<Record<BlueprintPhaseType, { title: string; subtitle: string }>> =
+  {
+    specify: {
+      title: 'Analyzing requirements',
+      subtitle: 'Tasks will be created once the spec, plan, and task breakdown phases complete.'
+    },
+    clarify: {
+      title: 'Clarifying requirements',
+      subtitle: 'Tasks will be created once the plan and task breakdown phases complete.'
+    },
+    plan: {
+      title: 'Creating the plan',
+      subtitle: 'Tasks will be created after the plan is broken down into executable work.'
+    },
+    tasks: {
+      title: 'Breaking down tasks',
+      subtitle: "Tasks are being generated now — they'll appear here momentarily."
+    },
+    review: {
+      title: 'Reviewing the plan',
+      subtitle: "Tasks have been defined — they'll load once review is complete."
+    }
+  }
 
 export default function BlueprintExecutionPanel({
   tasks,
@@ -498,7 +518,10 @@ export default function BlueprintExecutionPanel({
   }).length
 
   return (
-    <div data-panel-root className="flex flex-col h-full min-h-0 bg-surface-base border-l border-border-subtle relative">
+    <div
+      data-panel-root
+      className="flex flex-col h-full min-h-0 bg-surface-base border-l border-border-subtle relative"
+    >
       {/* Drag handle for resizing */}
       {onResize && (
         <div
@@ -506,7 +529,10 @@ export default function BlueprintExecutionPanel({
           className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize z-10 flex items-center justify-center hover:bg-accent/20 transition-colors group"
           title="Drag to resize"
         >
-          <GripVertical size={10} className="text-text-muted/0 group-hover:text-text-muted transition-colors" />
+          <GripVertical
+            size={10}
+            className="text-text-muted/0 group-hover:text-text-muted transition-colors"
+          />
         </div>
       )}
       {/* Tab bar */}
@@ -550,7 +576,9 @@ export default function BlueprintExecutionPanel({
           className="w-full px-3 py-2 border-b border-border-subtle flex items-start gap-2 flex-shrink-0 text-left hover:bg-surface-hover/30 transition-colors"
         >
           <Target size={12} className="text-accent mt-0.5 flex-shrink-0" />
-          <p className={`text-xs text-text-secondary leading-relaxed ${goalExpanded ? '' : 'line-clamp-2'}`}>
+          <p
+            className={`text-xs text-text-secondary leading-relaxed ${goalExpanded ? '' : 'line-clamp-2'}`}
+          >
             {currentGoal}
           </p>
         </button>

@@ -100,7 +100,10 @@ export default function SpecialistWarningDialog({
         aria-label="Close specialist warning"
       />
 
-      <div data-testid="specialist-warning-dialog" className="relative w-full max-w-md mx-4 rounded-xl border border-border-default bg-surface-float shadow-2xl overflow-hidden">
+      <div
+        data-testid="specialist-warning-dialog"
+        className="relative w-full max-w-md mx-4 rounded-xl border border-border-default bg-surface-float shadow-2xl overflow-hidden"
+      >
         <div className="px-5 py-4 border-b border-border-subtle bg-warning-muted/40">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-full bg-warning-muted border border-warning/30 flex items-center justify-center text-warning shrink-0">

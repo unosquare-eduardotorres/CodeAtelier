@@ -4,6 +4,9 @@
  * all reference tools that exist in the canonical MCP_TOOLS registry.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 import { ALL_MCP_TOOL_NAMES, MCP_TOOLS, COUNCIL_ADVISORS } from '../../../shared/constants'
 import { buildReadOnlyToolConfig } from '../role-adapters/evaluation-mcp-config'
@@ -180,6 +183,108 @@ describe('MCP tool consistency — prompt guidance text references real tools', 
       )
     }
   })
+})
+
+const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../mcp-servers')
+
+/**
+ * Extracts `server.tool('name', '<description>' + '<more>', …)` pairs from source.
+ * Handles both single- and double-quoted description literals (a description
+ * containing an apostrophe, e.g. run_background, must use double quotes).
+ */
+function readToolDescriptions(file: string): { name: string; description: string }[] {
+  const src = readFileSync(resolve(serverDir, file), 'utf8')
+  const strLit = /(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")/.source
+  const call = new RegExp(`server\\.tool\\(\\s*'([a-z_]+)',\\s*((?:${strLit}\\s*\\+?\\s*)+),`, 'g')
+  const part = new RegExp(`'((?:[^'\\\\]|\\\\.)*)'|"((?:[^"\\\\]|\\\\.)*)"`, 'g')
+  const out: { name: string; description: string }[] = []
+  for (const m of src.matchAll(call)) {
+    const description = [...m[2].matchAll(part)]
+      .map((s) => (s[1] ?? s[2]).replace(/\\(['"\\])/g, '$1'))
+      .join('')
+    out.push({ name: m[1], description })
+  }
+  return out
+}
+
+describe('MCP tool consistency — registry matches the actual servers', () => {
+  // The registry drives the plan-mode allowedTools allowlist. A name in the
+  // registry that no server registers is a ghost the model can never call; a
+  // registered tool missing from the registry is silently unreachable in plan
+  // mode. Both drifted undetected before this test existed.
+  const SERVERS = [
+    ['code-graph-server.ts', MCP_TOOLS.CODE_GRAPH],
+    ['semantic-search-server.ts', MCP_TOOLS.SEMANTIC_SEARCH],
+    ['git-context-server.ts', MCP_TOOLS.GIT_CONTEXT],
+    ['code-analysis-server.ts', MCP_TOOLS.CODE_ANALYSIS],
+    ['memory-server.ts', MCP_TOOLS.MEMORY],
+    ['recall-server.ts', MCP_TOOLS.RECALL],
+    ['process-manager-server.ts', MCP_TOOLS.PROCESS_MANAGER],
+    ['control-actions-server.ts', MCP_TOOLS.CONTROL_ACTIONS]
+  ] as const
+
+  for (const [file, server] of SERVERS) {
+    test(`${file} — every registered tool was parsed with a description`, () => {
+      const parsed = readToolDescriptions(file)
+      const registered =
+        readFileSync(resolve(serverDir, file), 'utf8').match(/server\.tool\(/g) ?? []
+      assert.equal(
+        parsed.length,
+        registered.length,
+        `parsed ${parsed.length} descriptions but found ${registered.length} server.tool() calls — ` +
+          'a tool is registered without a string description, or the parser needs updating'
+      )
+    })
+
+    test(`${file} — registry names and registered names are identical`, () => {
+      const actual = new Set(readToolDescriptions(file).map((t) => t.name))
+      const declared = new Set(server._ALL_NAMES.map((n) => n.split('__').pop()!))
+      // Ghost: in the registry, allowlisted in plan mode, answered by nobody.
+      assert.deepEqual(
+        [...declared].filter((n) => !actual.has(n)),
+        [],
+        'ghost tools in registry'
+      )
+      // Orphan: real and callable, but missing from the plan-mode allowlist.
+      assert.deepEqual(
+        [...actual].filter((n) => !declared.has(n)),
+        [],
+        'tools missing from registry'
+      )
+    })
+
+    test(`${file} — no handler returns a "delegating to in-process service" placeholder`, () => {
+      assert.ok(
+        !readFileSync(resolve(serverDir, file), 'utf8').includes('delegating to in-process service'),
+        `${file} contains a placeholder handler — mount only tools that actually do the work`
+      )
+    })
+  }
+})
+
+describe('MCP tool consistency — tool descriptions stay affordable', () => {
+  // Descriptions ship on EVERY turn, unlike turn-1 prompt guidance, so an
+  // unbounded description is a permanent per-turn tax. 240 chars ≈ 60 tokens.
+  const MAX_DESCRIPTION_CHARS = 240
+
+  for (const file of [
+    'code-graph-server.ts',
+    'semantic-search-server.ts',
+    'git-context-server.ts',
+    'code-analysis-server.ts'
+  ]) {
+    const tools = readToolDescriptions(file)
+
+    for (const { name, description } of tools) {
+      test(`${file} — ${name} description is non-empty and <= ${MAX_DESCRIPTION_CHARS} chars`, () => {
+        assert.ok(description.trim().length > 0, `${name} has an empty description`)
+        assert.ok(
+          description.length <= MAX_DESCRIPTION_CHARS,
+          `${name} description is ${description.length} chars (max ${MAX_DESCRIPTION_CHARS})`
+        )
+      })
+    }
+  }
 })
 
 // Run standalone

@@ -25,7 +25,11 @@ import type {
   CreateHandoffParams,
   HandoffRenderFormat
 } from '../../shared/handoff-types'
-import { MAX_CHAIN_DEPTH, MAX_ENVELOPE_SIZE_BYTES, HANDOFF_TTL_DAYS } from '../../shared/handoff-types'
+import {
+  MAX_CHAIN_DEPTH,
+  MAX_ENVELOPE_SIZE_BYTES,
+  HANDOFF_TTL_DAYS
+} from '../../shared/handoff-types'
 import { calculateConfidence } from './handoff-adapters/base.adapter'
 import type { TargetAction } from './handoff-adapters/target-adapters'
 
@@ -60,17 +64,36 @@ export class HandoffService extends EventEmitter {
       throw new Error('HandoffEnvelope requires a workspaceId')
     }
 
-    const VALID_SOURCES: Set<string> = new Set(['chat', 'grill', 'audit', 'council', 'blueprint', 'mpa'])
-    const VALID_TARGETS: Set<string> = new Set(['chat', 'grill', 'audit', 'council', 'blueprint', 'goals'])
+    const VALID_SOURCES: Set<string> = new Set([
+      'chat',
+      'grill',
+      'audit',
+      'council',
+      'blueprint',
+      'mpa'
+    ])
+    const VALID_TARGETS: Set<string> = new Set([
+      'chat',
+      'grill',
+      'audit',
+      'council',
+      'blueprint',
+      'goals'
+    ])
     if (!VALID_SOURCES.has(params.source)) {
-      throw new Error(`Invalid handoff source: '${params.source}'. Valid: ${[...VALID_SOURCES].join(', ')}`)
+      throw new Error(
+        `Invalid handoff source: '${params.source}'. Valid: ${[...VALID_SOURCES].join(', ')}`
+      )
     }
     if (!VALID_TARGETS.has(params.target)) {
-      throw new Error(`Invalid handoff target: '${params.target}'. Valid: ${[...VALID_TARGETS].join(', ')}`)
+      throw new Error(
+        `Invalid handoff target: '${params.target}'. Valid: ${[...VALID_TARGETS].join(', ')}`
+      )
     }
 
     const now = new Date()
-    const expiresAt = params.expiresAt ??
+    const expiresAt =
+      params.expiresAt ??
       new Date(now.getTime() + HANDOFF_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString()
 
     const envelope: HandoffEnvelope = {
@@ -106,7 +129,7 @@ export class HandoffService extends EventEmitter {
       priority: params.priority ?? 'medium',
       createdAt: now.toISOString(),
       expiresAt,
-      createdBy: params.createdBy ?? 'system',
+      createdBy: params.createdBy ?? 'system'
     }
 
     // Validate extensions are JSON-serializable
@@ -151,7 +174,7 @@ export class HandoffService extends EventEmitter {
       if (chain.length >= MAX_CHAIN_DEPTH) {
         throw new Error(
           `Handoff chain depth exceeds maximum (${MAX_CHAIN_DEPTH}). ` +
-          `Chain: ${chain.map((r) => `${r.source}→${r.target}`).join(' → ')}`
+            `Chain: ${chain.map((r) => `${r.source}→${r.target}`).join(' → ')}`
         )
       }
 
@@ -167,7 +190,7 @@ export class HandoffService extends EventEmitter {
 
     handoffLog.info(
       `[handoff:created] id=${record.id} source=${envelope.source} target=${envelope.target} ` +
-      `confidence=${envelope.confidence} intent="${envelope.intent}"`
+        `confidence=${envelope.confidence} intent="${envelope.intent}"`
     )
 
     this.emit('handoffCreated', record)
@@ -187,9 +210,7 @@ export class HandoffService extends EventEmitter {
     const record = this.persist(envelope)
     const action = resolveTargetAction(envelope)
 
-    handoffLog.info(
-      `[handoff:execute] id=${record.id} target=${action.type}`
-    )
+    handoffLog.info(`[handoff:execute] id=${record.id} target=${action.type}`)
 
     this.emit('handoffExecuted', { record, action })
     return { record, action }
@@ -206,9 +227,7 @@ export class HandoffService extends EventEmitter {
       throw new Error(`Handoff '${handoffId}' not found or not in 'pending' status`)
     }
 
-    handoffLog.info(
-      `[handoff:accepted] id=${handoffId} targetSession=${targetSessionId}`
-    )
+    handoffLog.info(`[handoff:accepted] id=${handoffId} targetSession=${targetSessionId}`)
 
     this.emit('handoffAccepted', { handoffId, targetSessionId })
   }
@@ -224,9 +243,7 @@ export class HandoffService extends EventEmitter {
       throw new Error(`Handoff '${handoffId}' not found or not in 'pending' status`)
     }
 
-    handoffLog.info(
-      `[handoff:rejected] id=${handoffId} reason="${reason}"`
-    )
+    handoffLog.info(`[handoff:rejected] id=${handoffId} reason="${reason}"`)
 
     this.emit('handoffRejected', { handoffId, reason })
   }
@@ -239,7 +256,9 @@ export class HandoffService extends EventEmitter {
   expireStale(workspaceId: string): number {
     const count = handoffRepository.expireStale(workspaceId)
     if (count > 0) {
-      handoffLog.info(`[handoff:expire] Expired ${count} stale handoff(s) for workspace ${workspaceId}`)
+      handoffLog.info(
+        `[handoff:expire] Expired ${count} stale handoff(s) for workspace ${workspaceId}`
+      )
     }
     return count
   }
@@ -280,7 +299,10 @@ export class HandoffService extends EventEmitter {
    * Generate a preview of a handoff without persisting.
    * Returns the envelope + rendered markdown.
    */
-  preview(params: CreateHandoffParams, format: HandoffRenderFormat = 'standard'): {
+  preview(
+    params: CreateHandoffParams,
+    format: HandoffRenderFormat = 'standard'
+  ): {
     envelope: HandoffEnvelope
     markdown: string
     action: TargetAction
@@ -289,7 +311,7 @@ export class HandoffService extends EventEmitter {
     return {
       envelope,
       markdown: renderEnvelopeMarkdown(envelope, format),
-      action: resolveTargetAction(envelope),
+      action: resolveTargetAction(envelope)
     }
   }
 

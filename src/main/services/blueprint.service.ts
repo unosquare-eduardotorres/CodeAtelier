@@ -40,7 +40,10 @@ import type {
 import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../shared/blueprint-types'
 import { BlueprintStateMachine } from './blueprint-state-machine'
 import type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
-import type { ClarifyFindingsBlock, ClarifyQuestionsBlock } from '../../shared/blueprint-clarify-parsers'
+import type {
+  ClarifyFindingsBlock,
+  ClarifyQuestionsBlock
+} from '../../shared/blueprint-clarify-parsers'
 import type { BlueprintTaskStatus } from '../../shared/blueprint-types'
 import { resolveAssignment, buildResolveOpts } from './model-config.service'
 
@@ -54,13 +57,13 @@ const bpLog = log.scope('blueprint')
 
 /** @internal Exported for testing */
 export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> = {
-  specify: new Set(),                                              // first phase — no prior artifacts
-  clarify: new Set(['spec']),                                      // needs spec to ask about
-  plan:    new Set(['spec']),                                      // clarify merges resolutions into spec in-place (finalizeClarifyPhase)
-  tasks:   new Set(['spec', 'plan']),                              // needs spec + plan to decompose
-  review:  new Set(['spec', 'plan', 'tasks', 'discoveries']),      // cross-artifact analysis needs all three
-  build:   new Set(['plan', 'tasks', 'discoveries']),              // + current wave's tasks (injected separately)
-  verify:  new Set(['spec', 'plan', 'build', 'discoveries']),      // NOT full tasks JSON — uses build report
+  specify: new Set(), // first phase — no prior artifacts
+  clarify: new Set(['spec']), // needs spec to ask about
+  plan: new Set(['spec']), // clarify merges resolutions into spec in-place (finalizeClarifyPhase)
+  tasks: new Set(['spec', 'plan']), // needs spec + plan to decompose
+  review: new Set(['spec', 'plan', 'tasks', 'discoveries']), // cross-artifact analysis needs all three
+  build: new Set(['plan', 'tasks', 'discoveries']), // + current wave's tasks (injected separately)
+  verify: new Set(['spec', 'plan', 'build', 'discoveries']) // NOT full tasks JSON — uses build report
 }
 
 // ── Helpers ──
@@ -94,7 +97,12 @@ interface BlueprintPipelineState {
   abortController: AbortController | null
   // M2: Additional fields for snapshot sync
   phaseStartedAt: number | null
-  pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
+  pendingApproval: {
+    planSummary: string
+    completion?: Record<string, unknown>
+    reviewMarkdown?: string
+    preflight?: { result: Record<string, unknown>; overridden: boolean }
+  } | null
   lastError: string | null
   waveState: {
     wave: number
@@ -213,14 +221,27 @@ export class BlueprintService extends EventEmitter {
   }
 
   /** Set pending approval state (from review service). */
-  setPendingApproval(workspaceId: string, approval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null): void {
+  setPendingApproval(
+    workspaceId: string,
+    approval: {
+      planSummary: string
+      completion?: Record<string, unknown>
+      reviewMarkdown?: string
+      preflight?: { result: Record<string, unknown>; overridden: boolean }
+    } | null
+  ): void {
     const state = this.getOrCreatePipeline(workspaceId)
     state.pendingApproval = approval
     this.publishSnapshot(workspaceId)
   }
 
   /** Get pending approval state (for preflight re-run updates). */
-  getPendingApproval(workspaceId: string): { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null {
+  getPendingApproval(workspaceId: string): {
+    planSummary: string
+    completion?: Record<string, unknown>
+    reviewMarkdown?: string
+    preflight?: { result: Record<string, unknown>; overridden: boolean }
+  } | null {
     const state = this.getOrCreatePipeline(workspaceId)
     return state.pendingApproval
   }
@@ -253,10 +274,13 @@ export class BlueprintService extends EventEmitter {
 
   // ── M9: Clarify state pushed by spec service (removes require() hack) ──
 
-  private clarifyStateByWorkspace = new Map<string, {
-    findings: ClarifyFindingsBlock | null
-    questions: ClarifyQuestionsBlock | null
-  }>()
+  private clarifyStateByWorkspace = new Map<
+    string,
+    {
+      findings: ClarifyFindingsBlock | null
+      questions: ClarifyQuestionsBlock | null
+    }
+  >()
 
   /** Push clarify UI state from spec service — snapshot reads this instead of require() hack. */
   setClarifyState(
@@ -337,8 +361,8 @@ export class BlueprintService extends EventEmitter {
     const state = this.pipelines.get(workspaceId)
     if (state) {
       state.running = false
-      state.blueprintId = null       // Clear stale identity
-      state.currentPhase = null      // Clear stale phase
+      state.blueprintId = null // Clear stale identity
+      state.currentPhase = null // Clear stale phase
       state.abortController = null
       state.phaseStartedAt = null
       state.waveState = null
@@ -388,7 +412,10 @@ export class BlueprintService extends EventEmitter {
     /ECONNREFUSED/i,
     /EPIPE/i,
     /zero.?token/i,
-    /spawn.*ENOENT/i
+    /spawn.*ENOENT/i,
+    // Anthropic transient API errors — the whole point of an auto-retry.
+    /rate.?limit/i,
+    /overloaded/i
   ]
 
   /** Error patterns that should NOT be retried (deterministic failures). */
@@ -433,7 +460,9 @@ export class BlueprintService extends EventEmitter {
 
     const key = `${ctx.blueprintId}:${ctx.phase}`
     if (this.autoRetryAttempts.has(key)) {
-      bpLog.info(`[phase-auto-retry] Already retried ${ctx.phase} for blueprint ${ctx.blueprintId} — surfacing to user`)
+      bpLog.info(
+        `[phase-auto-retry] Already retried ${ctx.phase} for blueprint ${ctx.blueprintId} — surfacing to user`
+      )
       return false
     }
 
@@ -798,22 +827,34 @@ export class BlueprintService extends EventEmitter {
     // This recovers blueprints that were orphaned by a crash or app restart while
     // a phase was still active (e.g. status='clarifying' but no running pipeline).
     const MID_PIPELINE_STATUSES = new Set([
-      'specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying'
+      'specifying',
+      'clarifying',
+      'planning',
+      'tasking',
+      'reviewing',
+      'building',
+      'verifying'
     ])
     const isRetryable = blueprint.status === 'failed' || blueprint.status === 'cancelled'
-    const isOrphaned = MID_PIPELINE_STATUSES.has(blueprint.status) && !this.isRunning(blueprint.workspaceId)
+    const isOrphaned =
+      MID_PIPELINE_STATUSES.has(blueprint.status) && !this.isRunning(blueprint.workspaceId)
 
     // BP-COMPLETE-RETRY: Allow retrying 'complete' blueprints when verification
     // found gaps — user wants another build pass.
-    const isCompletedWithGaps = blueprint.status === 'complete' && (() => {
-      const verifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
-      if (!verifyPhaseRec) return false
-      const verifyArt = verifyPhaseRec.artifactsJson?.findLast(
-        (a) => a.type === 'verify' || a.type === 'verification'
-      )
-      const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
-      return overall === 'gaps_found' || overall === 'human_needed'
-    })()
+    const isCompletedWithGaps =
+      blueprint.status === 'complete' &&
+      (() => {
+        const verifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(
+          blueprintId,
+          'verify'
+        )
+        if (!verifyPhaseRec) return false
+        const verifyArt = verifyPhaseRec.artifactsJson?.findLast(
+          (a) => a.type === 'verify' || a.type === 'verification'
+        )
+        const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
+        return overall === 'gaps_found' || overall === 'human_needed'
+      })()
 
     if (!isRetryable && !isOrphaned && !isCompletedWithGaps) {
       if (MID_PIPELINE_STATUSES.has(blueprint.status) && this.isRunning(blueprint.workspaceId)) {
@@ -843,7 +884,10 @@ export class BlueprintService extends EventEmitter {
     // are reset to pending and used for retry.
     let targetPhase =
       phases.find((p) => p.status === 'failed') ??
-      phases.find((p) => p.phase === blueprint.currentPhase && (p.status === 'pending' || p.status === 'active')) ??
+      phases.find(
+        (p) =>
+          p.phase === blueprint.currentPhase && (p.status === 'pending' || p.status === 'active')
+      ) ??
       phases.find((p) => p.status === 'pending')
 
     // BP-COMPLETE-RETRY: For completed blueprints with gaps, the verify phase
@@ -866,7 +910,9 @@ export class BlueprintService extends EventEmitter {
       if (overallStatus === 'gaps_found') {
         // Check if remediation tasks exist (appended by verify service or fallback)
         const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
-        const hasRemediationTasks = tasks.some((t) => t.taskId.startsWith('R') && t.status !== 'complete')
+        const hasRemediationTasks = tasks.some(
+          (t) => t.taskId.startsWith('R') && t.status !== 'complete'
+        )
         if (hasRemediationTasks) {
           bpLog.info(
             `[retryPhase] gaps_found with pending remediation tasks — targeting build instead of verify`
@@ -890,14 +936,24 @@ export class BlueprintService extends EventEmitter {
     // stale partials and bloat the system prompt.
     // NOTE: Cleanup happens BEFORE status reset — we need the phase record in its
     // current state, and a fresh DB read guards against stale in-memory objects.
-    const freshPhaseForCleanup = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, targetPhase.phase)
+    const freshPhaseForCleanup = blueprintPhaseRepository.findByBlueprintAndPhase(
+      blueprintId,
+      targetPhase.phase
+    )
     if (freshPhaseForCleanup && freshPhaseForCleanup.artifactsJson.length > 0) {
       const partials = freshPhaseForCleanup.artifactsJson.filter((a) => a.type.endsWith('-partial'))
       if (partials.length > 1) {
-        const nonPartials = freshPhaseForCleanup.artifactsJson.filter((a) => !a.type.endsWith('-partial'))
+        const nonPartials = freshPhaseForCleanup.artifactsJson.filter(
+          (a) => !a.type.endsWith('-partial')
+        )
         const latestPartial = partials[partials.length - 1]
-        blueprintPhaseRepository.saveArtifacts(freshPhaseForCleanup.id, [...nonPartials, latestPartial])
-        bpLog.info(`[retryPhase] Cleaned ${partials.length - 1} stale partial artifact(s) for ${targetPhase.phase} phase`)
+        blueprintPhaseRepository.saveArtifacts(freshPhaseForCleanup.id, [
+          ...nonPartials,
+          latestPartial
+        ])
+        bpLog.info(
+          `[retryPhase] Cleaned ${partials.length - 1} stale partial artifact(s) for ${targetPhase.phase} phase`
+        )
       }
     }
 
@@ -919,7 +975,9 @@ export class BlueprintService extends EventEmitter {
         }
       }
       if (resetCount > 0) {
-        bpLog.info(`[retryPhase] Reset ${resetCount} non-complete task(s) to pending for build retry`)
+        bpLog.info(
+          `[retryPhase] Reset ${resetCount} non-complete task(s) to pending for build retry`
+        )
       }
     }
 
@@ -933,8 +991,10 @@ export class BlueprintService extends EventEmitter {
     // so remediation can trigger again if verify finds new gaps.
     // Skip reset during auto-retry — preserves the round counter so the 2-round
     // cap is enforced across transient failures (BUG-N).
-    if (opts?.resetRemediation !== false &&
-        (targetPhase.phase === 'build' || targetPhase.phase === 'verify')) {
+    if (
+      opts?.resetRemediation !== false &&
+      (targetPhase.phase === 'build' || targetPhase.phase === 'verify')
+    ) {
       const settings = blueprint.settingsJson ?? {}
       if ((settings as Record<string, unknown>).remediationRound != null) {
         blueprintRepository.update(blueprintId, {
@@ -981,7 +1041,11 @@ export class BlueprintService extends EventEmitter {
    * Uses PHASE_ARTIFACT_RELEVANCE to inject only the artifact types each phase needs,
    * instead of blindly accumulating all prior artifacts (which caused 146–214KB prompts).
    */
-  async assemblePhaseContext(blueprintId: string, phase: BlueprintPhaseType, workspacePath?: string): Promise<PhaseContext> {
+  async assemblePhaseContext(
+    blueprintId: string,
+    phase: BlueprintPhaseType,
+    workspacePath?: string
+  ): Promise<PhaseContext> {
     const blueprint = blueprintRepository.findById(blueprintId)
     if (!blueprint) {
       throw new Error(`Blueprint not found: ${blueprintId}`)
@@ -1016,7 +1080,8 @@ export class BlueprintService extends EventEmitter {
           if (artifact.contentMd && artifact.contentMd.length > MAX_PARTIAL_CHARS) {
             previousArtifacts.push({
               ...artifact,
-              contentMd: artifact.contentMd.slice(0, MAX_PARTIAL_CHARS) +
+              contentMd:
+                artifact.contentMd.slice(0, MAX_PARTIAL_CHARS) +
                 '\n\n…[truncated — prior attempt output exceeded 8K chars]'
             })
           } else {
@@ -1045,8 +1110,10 @@ export class BlueprintService extends EventEmitter {
           attempt: parsed.attempt + 1,
           previousError: String(parsed.previousError ?? 'Unknown error'),
           previousPhase: phase,
-          filesModified: Array.isArray(parsed.filesModified) ? parsed.filesModified as string[] : [],
-          filesCreated: Array.isArray(parsed.filesCreated) ? parsed.filesCreated as string[] : [],
+          filesModified: Array.isArray(parsed.filesModified)
+            ? (parsed.filesModified as string[])
+            : [],
+          filesCreated: Array.isArray(parsed.filesCreated) ? (parsed.filesCreated as string[]) : [],
           tasksCompleted: typeof parsed.tasksCompleted === 'number' ? parsed.tasksCompleted : 0,
           totalTasks: typeof parsed.totalTasks === 'number' ? parsed.totalTasks : 0
         }
@@ -1055,18 +1122,22 @@ export class BlueprintService extends EventEmitter {
 
     // Write prior artifacts to disk so agents can Read them if truncated from context
     if (workspacePath && previousArtifacts.length > 0) {
-      const artifactDir = resolve(workspacePath, `blueprints/${blueprint.shortName || blueprint.id}`)
+      const artifactDir = resolve(
+        workspacePath,
+        `blueprints/${blueprint.shortName || blueprint.id}`
+      )
       try {
         mkdirSync(artifactDir, { recursive: true })
         for (const a of previousArtifacts) {
           if (a.type.endsWith('-partial') || a.type === 'discoveries') continue
           const relativePath = `blueprints/${blueprint.shortName || blueprint.id}/${a.type}.md`
           const absPath = resolve(workspacePath, relativePath)
-          const content = a.contentMd
-            ?? (a.contentJson ? '```json\n' + JSON.stringify(a.contentJson, null, 2) + '\n```' : null)
+          const content =
+            a.contentMd ??
+            (a.contentJson ? '```json\n' + JSON.stringify(a.contentJson, null, 2) + '\n```' : null)
           if (content) {
             writeFileSync(absPath, content, 'utf-8')
-            a.filePath = relativePath  // set for renderSingleArtifact() to display
+            a.filePath = relativePath // set for renderSingleArtifact() to display
           }
         }
       } catch (err) {
@@ -1097,7 +1168,11 @@ export class BlueprintService extends EventEmitter {
   /**
    * Build the full system prompt for a phase (convenience wrapper).
    */
-  async buildSystemPrompt(blueprintId: string, phase: BlueprintPhaseType, workspacePath?: string): Promise<string> {
+  async buildSystemPrompt(
+    blueprintId: string,
+    phase: BlueprintPhaseType,
+    workspacePath?: string
+  ): Promise<string> {
     const context = await this.assemblePhaseContext(blueprintId, phase, workspacePath)
     return buildPhaseSystemPrompt(phase, context)
   }
@@ -1274,8 +1349,8 @@ export class BlueprintService extends EventEmitter {
     // Reference integrity and cross-wave ordering produce false positives for
     // partial batches (all tasks share one wave, may depend on existing T-tasks).
     const batchTaskIds = new Set(parsedTasks.map((t) => t.taskId))
-    const duplicates = parsedTasks.filter((t, i) =>
-      parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
+    const duplicates = parsedTasks.filter(
+      (t, i) => parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
     )
     if (duplicates.length > 0) {
       bpLog.warn(
@@ -1296,7 +1371,7 @@ export class BlueprintService extends EventEmitter {
       if (realErrors.length > 0) {
         bpLog.warn(
           `[appendTasks] Remediation task graph has ${realErrors.length} issue(s) for blueprint=${blueprintId}: ` +
-          realErrors.join('; ')
+            realErrors.join('; ')
         )
       }
     }
@@ -1389,7 +1464,13 @@ export class BlueprintService extends EventEmitter {
     if (this.isRunning(workspaceId)) return null
 
     const MID_PIPELINE_STATUSES = new Set([
-      'specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying'
+      'specifying',
+      'clarifying',
+      'planning',
+      'tasking',
+      'reviewing',
+      'building',
+      'verifying'
     ])
 
     // Find the most recent blueprint for this workspace
@@ -1447,9 +1528,9 @@ export class BlueprintService extends EventEmitter {
   reconcileStaleBlueprints(): void {
     // C10: Check for reviewing blueprints that can be restored before marking stale
     const db = getDatabase()
-    const reviewingRows = db.prepare(
-      `SELECT id, workspace_id FROM blueprints WHERE status = 'reviewing'`
-    ).all() as Array<{ id: string; workspace_id: string }>
+    const reviewingRows = db
+      .prepare(`SELECT id, workspace_id FROM blueprints WHERE status = 'reviewing'`)
+      .all() as Array<{ id: string; workspace_id: string }>
 
     const restoredIds: string[] = []
     for (const row of reviewingRows) {
@@ -1458,7 +1539,9 @@ export class BlueprintService extends EventEmitter {
     }
 
     if (restoredIds.length > 0) {
-      bpLog.info(`[reconcile] Restored ${restoredIds.length} blueprint(s) to awaiting-approval state`)
+      bpLog.info(
+        `[reconcile] Restored ${restoredIds.length} blueprint(s) to awaiting-approval state`
+      )
     }
 
     // R2-1 fix: pass restored IDs so markStaleAsFailed skips them — they
@@ -1521,7 +1604,9 @@ export class BlueprintService extends EventEmitter {
       // Publish snapshot so renderer picks it up
       this.publishSnapshot(workspaceId)
 
-      bpLog.info(`[reconcile] Restored blueprint ${blueprintId} to awaiting-approval for workspace ${workspaceId}`)
+      bpLog.info(
+        `[reconcile] Restored blueprint ${blueprintId} to awaiting-approval for workspace ${workspaceId}`
+      )
       return true
     } catch (err) {
       bpLog.warn(`[reconcile] Failed to restore blueprint ${blueprintId}:`, err)
@@ -1536,9 +1621,9 @@ export class BlueprintService extends EventEmitter {
    */
   private buildApprovalSummaryFromCompletion(completion: Record<string, unknown>): string {
     const findings = completion.findings as
-      | { critical?: number; high?: number; medium?: number; low?: number }
-      | undefined
-    const recommendation = typeof completion.recommendation === 'string' ? completion.recommendation : 'unknown'
+      { critical?: number; high?: number; medium?: number; low?: number } | undefined
+    const recommendation =
+      typeof completion.recommendation === 'string' ? completion.recommendation : 'unknown'
     const coverage = completion.coveragePercent as number | undefined
 
     const lines: string[] = []

@@ -22,7 +22,12 @@ import { GithubIcon } from '../common/icons/GithubIcon'
 import { useProfileStore, useWorkspaceStore, useAuditStore } from '@renderer/store'
 import { useClipboardImagePaste, IMAGE_REGEX } from '@renderer/hooks'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../../../shared/types'
+import type {
+  CommunicationTone,
+  ConversationMode,
+  LLMProvider,
+  ModelRoleMap
+} from '../../../../shared/types'
 import {
   COMMUNICATION_TONES,
   EXTERNAL_MCP_INTEGRATIONS,
@@ -104,9 +109,7 @@ function useMcpSettings(activeWorkspace: { id: string } | null) {
         }
         setMcpOverrides((prev) => ({ ...localDefaults, ...prev }))
       })
-      .catch((err) =>
-        console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err)
-      )
+      .catch((err) => console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err))
   }, [activeWorkspace])
 
   return {
@@ -131,8 +134,7 @@ function ToneSelector({
   return (
     <div data-testid="new-chat-tone-selector" className="w-full mb-5">
       <label className="block text-sm font-medium text-text-primary mb-1.5">
-        Tone{' '}
-        <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+        Tone <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
       </label>
       <div className="flex items-center gap-1.5 flex-wrap">
         <button
@@ -243,7 +245,12 @@ export default function NewChatPage({
 
   useEffect(() => {
     if (pendingFixContext) {
-      const { title: ctxTitle, description: ctxDesc, autoSend, sourceAuditRunId } = pendingFixContext
+      const {
+        title: ctxTitle,
+        description: ctxDesc,
+        autoSend,
+        sourceAuditRunId
+      } = pendingFixContext
       // Consume immediately to prevent re-application
       setPendingFixContext(null)
 
@@ -275,7 +282,11 @@ export default function NewChatPage({
     // Model defaults are now configured exclusively in Settings → Models tab.
     // Chat creation should not silently rewrite workspace-wide settings.
 
-    const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
+    const mcpOverridesPayload = buildMcpPayload(
+      availableLocalMcps,
+      availableIntegrations,
+      mcpOverrides
+    )
 
     // Derive provider from routing overrides or workspace routing
     const effectiveProvider = routingOverrides['specialist:plan']?.provider ?? derivedProvider
@@ -301,7 +312,7 @@ export default function NewChatPage({
       autoBranch,
       llmProvider: effectiveProvider,
       routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined,
-      mcpOverrides: mcpOverridesPayload,
+      mcpOverrides: mcpOverridesPayload
     })
   }, [
     title,

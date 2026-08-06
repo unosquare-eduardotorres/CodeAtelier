@@ -304,7 +304,14 @@ export const useCodeChangesStore = create<CodeChangesState & CodeChangesActions>
   },
 
   setComparisonMode: (mode: DiffComparisonMode, conversationId: string): void => {
-    set({ comparisonMode: mode, selectedFile: null, currentDiff: null, checkedFiles: new Set(), files: [], isLoadingFiles: true })
+    set({
+      comparisonMode: mode,
+      selectedFile: null,
+      currentDiff: null,
+      checkedFiles: new Set(),
+      files: [],
+      isLoadingFiles: true
+    })
     void get().loadFiles(conversationId)
   },
 

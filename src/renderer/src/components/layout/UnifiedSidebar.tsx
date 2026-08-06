@@ -250,9 +250,19 @@ export default function UnifiedSidebar({
           )}
           {activeTab === 'settings' && (
             <div className="w-full px-1.5">
-              <SettingsMenuGroup group="tools" isCollapsed activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
+              <SettingsMenuGroup
+                group="tools"
+                isCollapsed
+                activeTab={activeSettingsTab}
+                onSelect={onSettingsTabChange}
+              />
               <div className="my-2 mx-1 border-t border-border-subtle" />
-              <SettingsMenuGroup group="configuration" isCollapsed activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
+              <SettingsMenuGroup
+                group="configuration"
+                isCollapsed
+                activeTab={activeSettingsTab}
+                onSelect={onSettingsTabChange}
+              />
             </div>
           )}
         </div>
@@ -334,7 +344,12 @@ export default function UnifiedSidebar({
                   Tools
                 </span>
               </div>
-              <SettingsMenuGroup group="tools" isCollapsed={false} activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
+              <SettingsMenuGroup
+                group="tools"
+                isCollapsed={false}
+                activeTab={activeSettingsTab}
+                onSelect={onSettingsTabChange}
+              />
 
               <div className="my-2 mx-2 border-t border-border-subtle" />
 
@@ -343,7 +358,12 @@ export default function UnifiedSidebar({
                   Configuration
                 </span>
               </div>
-              <SettingsMenuGroup group="configuration" isCollapsed={false} activeTab={activeSettingsTab} onSelect={onSettingsTabChange} />
+              <SettingsMenuGroup
+                group="configuration"
+                isCollapsed={false}
+                activeTab={activeSettingsTab}
+                onSelect={onSettingsTabChange}
+              />
             </nav>
           )}
         </div>

@@ -103,9 +103,8 @@ export class HandoffRepository extends BaseRepository<HandoffRow, HandoffRecord>
 
   /** Get a single handoff by ID. */
   getById(id: string): HandoffRecord | null {
-    const row = this.db()
-      .prepare('SELECT * FROM handoff_events WHERE id = ?')
-      .get(id) as HandoffRow | undefined
+    const row = this.db().prepare('SELECT * FROM handoff_events WHERE id = ?').get(id) as
+      HandoffRow | undefined
     return row ? mapRow(row) : null
   }
 
@@ -196,9 +195,7 @@ export class HandoffRepository extends BaseRepository<HandoffRow, HandoffRecord>
   /** Get handoffs originating from a specific session. */
   getBySourceSession(sourceSessionId: string): HandoffRecord[] {
     const rows = this.db()
-      .prepare(
-        'SELECT * FROM handoff_events WHERE source_session_id = ? ORDER BY created_at DESC'
-      )
+      .prepare('SELECT * FROM handoff_events WHERE source_session_id = ? ORDER BY created_at DESC')
       .all(sourceSessionId) as HandoffRow[]
     return rows.map(mapRow)
   }
@@ -216,9 +213,7 @@ export class HandoffRepository extends BaseRepository<HandoffRow, HandoffRecord>
 
   /** Delete a handoff by ID. Returns true if deleted. */
   deleteHandoff(id: string): boolean {
-    const result = this.db()
-      .prepare('DELETE FROM handoff_events WHERE id = ?')
-      .run(id)
+    const result = this.db().prepare('DELETE FROM handoff_events WHERE id = ?').run(id)
     return result.changes > 0
   }
 

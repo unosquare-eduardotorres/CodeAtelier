@@ -209,7 +209,10 @@ export default function WorkspaceFileTree({
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div data-testid="workspace-file-tree" className="w-full max-w-md bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]">
+      <div
+        data-testid="workspace-file-tree"
+        className="w-full max-w-md bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[70vh]"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2">

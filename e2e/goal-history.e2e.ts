@@ -21,9 +21,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('GoalHistory', () => {
-  async function navigateToGoalsPage(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToGoalsPage(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -43,7 +41,10 @@ test.describe('GoalHistory', () => {
 
   test('run history list renders with chronological entries', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const runHistory = page.locator('[data-testid="goal-run-history"]')
     const hasRunHistory = await runHistory.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -72,10 +73,15 @@ test.describe('GoalHistory', () => {
 
   test('campaign history shows status icons per campaign', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const campaignHistory = page.locator('[data-testid="goal-campaign-history"]')
-    const hasCampaignHistory = await campaignHistory.isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasCampaignHistory = await campaignHistory
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasCampaignHistory) {
       // No campaign history — this is normal if no campaigns have been run
@@ -96,21 +102,34 @@ test.describe('GoalHistory', () => {
 
     // Each entry should have an SVG status icon
     const firstEntry = campaignEntries.first()
-    const hasSvg = await firstEntry.locator('svg').first().isVisible().catch(() => false)
+    const hasSvg = await firstEntry
+      .locator('svg')
+      .first()
+      .isVisible()
+      .catch(() => false)
     expect(hasSvg).toBe(true)
   })
 
   test('clicking a history entry loads its detail view', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const runHistory = page.locator('[data-testid="goal-run-history"]')
     const hasRunHistory = await runHistory.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasRunHistory) { test.skip(); return }
+    if (!hasRunHistory) {
+      test.skip()
+      return
+    }
 
     const entries = runHistory.locator('button.group')
     const entryCount = await entries.count()
-    if (entryCount === 0) { test.skip(); return }
+    if (entryCount === 0) {
+      test.skip()
+      return
+    }
 
     // Click the first history entry
     await entries.first().click()
@@ -126,15 +145,24 @@ test.describe('GoalHistory', () => {
 
   test('failed run shows resume banner with Resume button', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const runHistory = page.locator('[data-testid="goal-run-history"]')
     const hasRunHistory = await runHistory.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasRunHistory) { test.skip(); return }
+    if (!hasRunHistory) {
+      test.skip()
+      return
+    }
 
     // Look for "resumable" text in any entry (indicates failed/cancelled run)
     const resumableEntry = runHistory.locator('text=resumable')
-    const hasResumable = await resumableEntry.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasResumable = await resumableEntry
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasResumable) {
       // No failed/cancelled runs to test
@@ -144,9 +172,9 @@ test.describe('GoalHistory', () => {
 
     // Click the resumable entry to load detail
     const entries = runHistory.locator('button.group')
-    for (let i = 0; i < await entries.count(); i++) {
+    for (let i = 0; i < (await entries.count()); i++) {
       const entry = entries.nth(i)
-      const text = await entry.textContent() ?? ''
+      const text = (await entry.textContent()) ?? ''
       if (text.includes('resumable')) {
         await entry.click()
         await page.waitForTimeout(1_500)
@@ -162,19 +190,28 @@ test.describe('GoalHistory', () => {
 
   test('history entries show date and status badge', async ({ electronPage: page }) => {
     const ready = await navigateToGoalsPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const runHistory = page.locator('[data-testid="goal-run-history"]')
     const hasRunHistory = await runHistory.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasRunHistory) { test.skip(); return }
+    if (!hasRunHistory) {
+      test.skip()
+      return
+    }
 
     const entries = runHistory.locator('button.group')
     const entryCount = await entries.count()
-    if (entryCount === 0) { test.skip(); return }
+    if (entryCount === 0) {
+      test.skip()
+      return
+    }
 
     // Each entry should show a date (month abbreviation like "Jan", "Feb", etc.)
     const firstEntry = entries.first()
-    const entryText = await firstEntry.textContent() ?? ''
+    const entryText = (await firstEntry.textContent()) ?? ''
 
     // Date should contain month abbreviation and a dot separator
     const monthPattern = /(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d+/

@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Create Project Dialog Deep', () => {
-  async function ensureOnWelcomeScreen(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureOnWelcomeScreen(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,15 +40,24 @@ test.describe('Create Project Dialog Deep', () => {
 
   test('description textarea accepts input', async ({ electronPage: page }) => {
     const isOnWelcome = await ensureOnWelcomeScreen(page)
-    if (!isOnWelcome) { test.skip(); return }
+    if (!isOnWelcome) {
+      test.skip()
+      return
+    }
 
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="create-project-dialog"]')
     const textarea = dialog.locator('textarea')
     const hasTextarea = await textarea.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTextarea) { test.skip(); return }
+    if (!hasTextarea) {
+      test.skip()
+      return
+    }
 
     await textarea.fill('A React app with authentication and dashboard')
     await page.waitForTimeout(300)
@@ -61,10 +68,16 @@ test.describe('Create Project Dialog Deep', () => {
 
   test('tip block is visible', async ({ electronPage: page }) => {
     const isOnWelcome = await ensureOnWelcomeScreen(page)
-    if (!isOnWelcome) { test.skip(); return }
+    if (!isOnWelcome) {
+      test.skip()
+      return
+    }
 
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     // Tip block should mention "PLAN.md"
     const tipText = page.getByText(/PLAN\.md/i)
@@ -74,10 +87,16 @@ test.describe('Create Project Dialog Deep', () => {
 
   test('escape key closes dialog', async ({ electronPage: page }) => {
     const isOnWelcome = await ensureOnWelcomeScreen(page)
-    if (!isOnWelcome) { test.skip(); return }
+    if (!isOnWelcome) {
+      test.skip()
+      return
+    }
 
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="create-project-dialog"]')
     await expect(dialog).toBeVisible()
@@ -90,10 +109,16 @@ test.describe('Create Project Dialog Deep', () => {
 
   test('backdrop click closes dialog', async ({ electronPage: page }) => {
     const isOnWelcome = await ensureOnWelcomeScreen(page)
-    if (!isOnWelcome) { test.skip(); return }
+    if (!isOnWelcome) {
+      test.skip()
+      return
+    }
 
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="create-project-dialog"]')
     await expect(dialog).toBeVisible()

@@ -15,7 +15,13 @@ import { lifecycleRegistry } from '../services/conversation-lifecycle'
 import { chatStreamService } from '../services/chat-stream.service'
 import { repoService } from '../services/repo.service'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../shared/constants'
-import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap, ConversationModelSnapshot } from '../../shared/types'
+import type {
+  CommunicationTone,
+  ConversationMode,
+  LLMProvider,
+  ModelRoleMap,
+  ConversationModelSnapshot
+} from '../../shared/types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
@@ -144,7 +150,11 @@ async function handleCreateConversation(args: {
         }
 
         // Branch-per-conversation: create/checkout branch if explicitly requested, auto-branch selected, or gitAutoBranch enabled
-        if (explicitBranchName || autoBranch === true || (autoBranch !== false && settings.gitAutoBranch)) {
+        if (
+          explicitBranchName ||
+          autoBranch === true ||
+          (autoBranch !== false && settings.gitAutoBranch)
+        ) {
           try {
             let branchName: string
             if (explicitBranchName) {

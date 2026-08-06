@@ -15,7 +15,7 @@ import { extractTypedTags, releaseTypedParser } from './code-graph-tags'
 import { detectCommunities, findGodNodes } from './code-graph-communities'
 import type { Community, GodNode } from './code-graph-communities'
 import {
-  CaseInsensitiveSet,
+  REPOMAP_EXCLUDED_DIRS,
   isExcludedPath,
   isExcludedDirName,
   isMarkupFile,
@@ -25,16 +25,6 @@ import {
 } from './code-graph-exclusions'
 import { loadAllIgnorePatterns } from './workspace-ignore'
 import { memoryCheckpoint } from './indexing-diagnostics'
-
-/**
- * Directories repomap-mcp prunes internally — mirrored so our walker matches.
- * Uses CaseInsensitiveSet so "Build", "Dist", "Vendor" etc. are excluded on
- * case-insensitive filesystems (Windows NTFS, macOS HFS+).
- */
-const REPOMAP_EXCLUDED_DIRS = new CaseInsensitiveSet([
-  'node_modules', '__pycache__', 'venv', 'env', '.venv', '.env', 'dist', 'build',
-  '.next', '.nuxt', 'target', 'vendor', '.bundle', 'coverage', '.nyc_output', '.tox', 'egg-info'
-])
 
 export interface DiscoveryResult {
   files: string[]
@@ -792,7 +782,7 @@ class CodeGraphService extends EventEmitter {
     // Small/medium workspace: full rebuild is fast enough
     const allTags = codeGraphTagRepository.findAllByWorkspace(workspaceId)
     await this.buildAndPersistGraph(workspaceId, allTags)
-    allTags.length = 0  // release after persist
+    allTags.length = 0 // release after persist
 
     log.info(`[CodeGraph] Incremental: ${changedRelPaths.length} files, ${newTags.length} new tags`)
 
@@ -1279,14 +1269,10 @@ class CodeGraphService extends EventEmitter {
       })
 
     if (options.filePath) {
-      pairs = pairs.filter(
-        (p) => p.fileA === options.filePath || p.fileB === options.filePath
-      )
+      pairs = pairs.filter((p) => p.fileA === options.filePath || p.fileB === options.filePath)
     }
 
-    return pairs
-      .sort((a, b) => b.coChangeCount - a.coChangeCount)
-      .slice(0, maxResults)
+    return pairs.sort((a, b) => b.coChangeCount - a.coChangeCount).slice(0, maxResults)
   }
 
   // ── Hotspot Scoring ────────────────────────────────────────────────────────
@@ -1317,7 +1303,10 @@ class CodeGraphService extends EventEmitter {
     for (const h of symbolHotspots) {
       const file = (h as { file?: string }).file ?? ''
       if (!file) continue
-      fileRefCounts.set(file, (fileRefCounts.get(file) ?? 0) + ((h as { refCount?: number }).refCount ?? 1))
+      fileRefCounts.set(
+        file,
+        (fileRefCounts.get(file) ?? 0) + ((h as { refCount?: number }).refCount ?? 1)
+      )
     }
 
     // 2. Get git churn per file
@@ -1368,9 +1357,7 @@ class CodeGraphService extends EventEmitter {
       }
     }
 
-    return hotspots
-      .sort((a, b) => b.hotspotScore - a.hotspotScore)
-      .slice(0, maxResults)
+    return hotspots.sort((a, b) => b.hotspotScore - a.hotspotScore).slice(0, maxResults)
   }
 
   // ── Code Clone Detection ──────────────────────────────────────────────────
@@ -1389,7 +1376,13 @@ class CodeGraphService extends EventEmitter {
     const maxResults = options.maxResults ?? 20
 
     // Use code_chunks table which has body text + line ranges
-    let chunks: { filePath: string; symbolName: string; startLine: number; endLine: number; body: string }[]
+    let chunks: {
+      filePath: string
+      symbolName: string
+      startLine: number
+      endLine: number
+      body: string
+    }[]
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { codeChunkRepository } = require('../db/repositories') as {
@@ -1403,8 +1396,12 @@ class CodeGraphService extends EventEmitter {
            WHERE workspace_id = ? AND (end_line - start_line) >= ?`
         )
         .all(workspaceId, minBodyLines) as {
-          file_path: string; symbol_name: string; start_line: number; end_line: number; body: string
-        }[]
+        file_path: string
+        symbol_name: string
+        start_line: number
+        end_line: number
+        body: string
+      }[]
       chunks = rows.map((r) => ({
         filePath: r.file_path,
         symbolName: r.symbol_name,
@@ -1420,7 +1417,10 @@ class CodeGraphService extends EventEmitter {
       chunks = chunks.filter((c) => c.filePath.startsWith(options.path!))
     }
 
-    const hashGroups = new Map<string, { file: string; symbol: string; line: number; lines: number }[]>()
+    const hashGroups = new Map<
+      string,
+      { file: string; symbol: string; line: number; lines: number }[]
+    >()
 
     for (const chunk of chunks) {
       const lineCount = chunk.endLine - chunk.startLine + 1
@@ -1494,7 +1494,9 @@ class CodeGraphService extends EventEmitter {
       // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
       const { getDatabase } = require('../db')
       getDatabase().pragma('shrink_memory')
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
     // 5. Nudge V8 GC (available when Electron runs with --expose-gc,
     //    already used by vector-search.service.ts)

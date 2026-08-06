@@ -33,7 +33,12 @@ import type { CouncilInputType, CouncilVerdict } from '../../../../../shared/typ
 // ── Props ──────────────────────────────────────────────────────────────────
 
 interface CouncilLandingProps {
-  onUpdatePlan?: (sessionId: string, verdict: CouncilVerdict, originConversationId: string, workspaceId: string) => void
+  onUpdatePlan?: (
+    sessionId: string,
+    verdict: CouncilVerdict,
+    originConversationId: string,
+    workspaceId: string
+  ) => void
   onAcceptAndBuild?: (sessionId: string, workspaceId: string) => void
   onDismiss?: () => void
   isProcessing?: boolean
@@ -42,9 +47,7 @@ interface CouncilLandingProps {
 
 /** Batch-fetch plan titles for completed council sessions (concurrent Promise.all). */
 async function loadPlanTitles(sessions: CouncilSessionSummary[]): Promise<Map<string, string>> {
-  const completedIds = sessions
-    .filter((s) => s.status === 'completed')
-    .map((s) => s.id)
+  const completedIds = sessions.filter((s) => s.status === 'completed').map((s) => s.id)
   if (completedIds.length === 0) return new Map()
 
   const results = await Promise.all(
@@ -295,14 +298,12 @@ export default function CouncilLanding({
     if (!workspaceId) return
     const cleanup = window.api.onCouncilPhaseChanged((data) => {
       if (data.phase === 'complete' || data.phase === 'failed' || data.phase === 'cancelled') {
-        window.api
-          .councilGetHistory({ workspaceId, limit: 50 })
-          .then(async (records) => {
-            const sessions = records as CouncilSessionSummary[]
-            setHistory(sessions)
-            const planMap = await loadPlanTitles(sessions)
-            setPlanTitleMap(planMap)
-          })
+        window.api.councilGetHistory({ workspaceId, limit: 50 }).then(async (records) => {
+          const sessions = records as CouncilSessionSummary[]
+          setHistory(sessions)
+          const planMap = await loadPlanTitles(sessions)
+          setPlanTitleMap(planMap)
+        })
       }
     })
     return cleanup
@@ -501,9 +502,7 @@ export default function CouncilLanding({
       {filteredHistory.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-8 text-center">
           <Landmark size={32} className="text-indigo-400/30 mb-3" />
-          <p className="text-sm text-text-secondary">
-            {getEmptyMessage(filter, searchQuery)}
-          </p>
+          <p className="text-sm text-text-secondary">{getEmptyMessage(filter, searchQuery)}</p>
         </div>
       ) : (
         <div className="space-y-2">

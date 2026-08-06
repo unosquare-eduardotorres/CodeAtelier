@@ -21,9 +21,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('ConfirmDialog', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,9 +36,7 @@ test.describe('ConfirmDialog', () => {
   }
 
   /** Try to trigger a ConfirmDialog via a destructive action in settings. */
-  async function triggerConfirmDialog(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function triggerConfirmDialog(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
@@ -50,8 +46,13 @@ test.describe('ConfirmDialog', () => {
     await page.waitForTimeout(1_000)
 
     // Look for any delete button on agents or skills
-    const deleteBtn = page.locator('button[aria-label*="Delete"], button[aria-label*="delete"], button[aria-label*="Remove"]')
-    const hasDelete = await deleteBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const deleteBtn = page.locator(
+      'button[aria-label*="Delete"], button[aria-label*="delete"], button[aria-label*="Remove"]'
+    )
+    const hasDelete = await deleteBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasDelete) {
       await deleteBtn.first().click()
       await page.waitForTimeout(500)
@@ -62,8 +63,13 @@ test.describe('ConfirmDialog', () => {
     await settingsNav.navigateToSettingsTab('team')
     await page.waitForTimeout(1_000)
 
-    const skillDelete = page.locator('[data-testid="skill-management-section"] button[aria-label*="delete" i]')
-    const hasSkillDelete = await skillDelete.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const skillDelete = page.locator(
+      '[data-testid="skill-management-section"] button[aria-label*="delete" i]'
+    )
+    const hasSkillDelete = await skillDelete
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasSkillDelete) {
       await skillDelete.first().click()
       await page.waitForTimeout(500)
@@ -75,14 +81,23 @@ test.describe('ConfirmDialog', () => {
 
   test('default variant renders with title and message', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const triggered = await triggerConfirmDialog(page)
-    if (!triggered) { test.skip(); return }
+    if (!triggered) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="confirm-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(dialog).toBeVisible()
 
@@ -104,14 +119,23 @@ test.describe('ConfirmDialog', () => {
 
   test('danger variant shows warning icon and red styling', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const triggered = await triggerConfirmDialog(page)
-    if (!triggered) { test.skip(); return }
+    if (!triggered) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="confirm-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Check for danger variant styling — warning icon in danger circle
     const dangerIcon = dialog.locator('.bg-danger-muted')
@@ -134,14 +158,23 @@ test.describe('ConfirmDialog', () => {
 
   test('confirm button receives auto-focus when dialog opens', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const triggered = await triggerConfirmDialog(page)
-    if (!triggered) { test.skip(); return }
+    if (!triggered) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="confirm-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for auto-focus to apply
     await page.waitForTimeout(300)
@@ -158,14 +191,23 @@ test.describe('ConfirmDialog', () => {
 
   test('escape key closes dialog without confirming', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const triggered = await triggerConfirmDialog(page)
-    if (!triggered) { test.skip(); return }
+    if (!triggered) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="confirm-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Press Escape
     await page.keyboard.press('Escape')
@@ -177,14 +219,23 @@ test.describe('ConfirmDialog', () => {
 
   test('backdrop click closes dialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const triggered = await triggerConfirmDialog(page)
-    if (!triggered) { test.skip(); return }
+    if (!triggered) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="confirm-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Click backdrop — the overlay area behind the dialog
     const backdrop = page.locator('[role="dialog"] > .absolute.inset-0').first()
@@ -205,14 +256,23 @@ test.describe('ConfirmDialog', () => {
 
   test('custom labels display for confirm/cancel buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const triggered = await triggerConfirmDialog(page)
-    if (!triggered) { test.skip(); return }
+    if (!triggered) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="confirm-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Should have two buttons (cancel + confirm)
     const buttons = dialog.locator('button')

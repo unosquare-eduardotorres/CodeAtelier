@@ -1,5 +1,10 @@
 import type { BrowserWindow } from 'electron'
-import { conversationRepository, messageRepository, workspaceRepository, appPreferenceRepository } from '../db/repositories'
+import {
+  conversationRepository,
+  messageRepository,
+  workspaceRepository,
+  appPreferenceRepository
+} from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -219,9 +224,7 @@ export class ChatStreamService {
     // tied to the lastActiveConversationId's stream processing. With multiple
     // concurrent streams, the first streamingLocks entry (Set insertion order) is
     // arbitrary and may attribute events to the wrong conversation.
-    return chatAgentService.getCurrentConversationId()
-      ?? [...this.streamingLocks].pop()
-      ?? ''
+    return chatAgentService.getCurrentConversationId() ?? [...this.streamingLocks].pop() ?? ''
   }
 
   private registerEventForwarders(): void {
@@ -418,7 +421,12 @@ export class ChatStreamService {
     // use the toast flow because they need explicit approve/deny, not free-text.
     const onPermissionRequestWs = (
       workspaceId: string,
-      data: { toolName?: string; inputSummary?: string; requestId?: string; input?: Record<string, unknown> }
+      data: {
+        toolName?: string
+        inputSummary?: string
+        requestId?: string
+        input?: Record<string, unknown>
+      }
     ): void => {
       try {
         const router = getSessionEventRouter()
@@ -432,7 +440,9 @@ export class ChatStreamService {
           try {
             const conv = conversationRepository.findById(conversationId)
             conversationTitle = conv?.title
-          } catch { /* non-critical */ }
+          } catch {
+            /* non-critical */
+          }
         }
         const mode = session?.getMode()
 
@@ -455,7 +465,9 @@ export class ChatStreamService {
       }
     }
     chatAgentService.on('permissionRequest:ws', onPermissionRequestWs)
-    this.eventCleanups.push(() => chatAgentService.off('permissionRequest:ws', onPermissionRequestWs))
+    this.eventCleanups.push(() =>
+      chatAgentService.off('permissionRequest:ws', onPermissionRequestWs)
+    )
   }
 
   // ── Busy-state authority ─────────────────────────────────────────
@@ -644,7 +656,7 @@ export class ChatStreamService {
       )
       throw new Error(
         `Too many chats are processing simultaneously (max ${MAX_CONCURRENT_STREAMS}). ` +
-        `Please wait for one to complete or stop it first. (blockedBy:${busyConvId})`
+          `Please wait for one to complete or stop it first. (blockedBy:${busyConvId})`
       )
     }
 
@@ -828,7 +840,9 @@ export class ChatStreamService {
             `conversationId=${conversationId} requestId=${requestId}`
         )
         this.releaseConversation(conversationId, 'max-lifetime', requestId)
-        rejectDone(new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`))
+        rejectDone(
+          new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`)
+        )
       }
     }, MAX_STREAM_LIFETIME_MS)
 
@@ -859,7 +873,16 @@ export class ChatStreamService {
     mode: 'plan' | 'build'
     attachments?: string[]
   }): Promise<string | null> {
-    const { text, conversationId, requestId, signal, streamingRole, workspaceId, mode, attachments } = params
+    const {
+      text,
+      conversationId,
+      requestId,
+      signal,
+      streamingRole,
+      workspaceId,
+      mode,
+      attachments
+    } = params
 
     const guardReason = promptOptimizerService.checkGuards({ text, workspaceId })
     if (guardReason) return text // guarded — use original
@@ -887,7 +910,12 @@ export class ChatStreamService {
       }
       this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-        createToolActivityChunk({ conversationId, requestId, role: streamingRole, toolActivity: activity })
+        createToolActivityChunk({
+          conversationId,
+          requestId,
+          role: streamingRole,
+          toolActivity: activity
+        })
       )
       recordExternalToolActivity(conversationId, activity)
     }
@@ -903,7 +931,10 @@ export class ChatStreamService {
     })
 
     const optimizeResult = await promptOptimizerService.optimize({
-      text, workspaceId, conversationId, mode
+      text,
+      workspaceId,
+      conversationId,
+      mode
     })
 
     if (signal.aborted) {
@@ -944,7 +975,10 @@ export class ChatStreamService {
     } else if (optimizeResult.skippedReason) {
       // parse-error | empty-output | oversize — surface the real failure
       const reason = optimizeResult.skippedReason
-      emitCard({ status: 'error', result: `Optimization failed (${reason}) — original prompt sent` })
+      emitCard({
+        status: 'error',
+        result: `Optimization failed (${reason}) — original prompt sent`
+      })
       notifyChunkTaps(requestId, {
         type: 'tool_result',
         toolName: 'Prompt Optimizer',
@@ -1126,7 +1160,9 @@ export class ChatStreamService {
       // Per-turn memory injection: prepend relevant facts to the user message
       let enrichedContent = fullContent
       try {
-        const workspace = ctx.workspacePath ? workspaceRepository.findByPath(ctx.workspacePath) : undefined
+        const workspace = ctx.workspacePath
+          ? workspaceRepository.findByPath(ctx.workspacePath)
+          : undefined
         if (workspace) {
           // Get or create the dedupe set for this conversation
           if (!this.injectedFactIds.has(conversationId)) {
@@ -1230,7 +1266,10 @@ export class ChatStreamService {
    * Persist the streamed message to DB, process memory blocks, and notify renderer.
    * Extracted from the onComplete closure — all error paths transition the state machine.
    */
-  private async finalizeStreamMessage(ctx: StreamContext, lifecycle: ConversationLifecycle): Promise<void> {
+  private async finalizeStreamMessage(
+    ctx: StreamContext,
+    lifecycle: ConversationLifecycle
+  ): Promise<void> {
     // CHAT-STOP-COMPLETE-RACE-01: Re-check after the async gap between onComplete's
     // guard and this method's DB write. If stop() ran between the guard passing and
     // this point, it already saved a "stopped" message — skip to avoid duplicates.
@@ -1246,7 +1285,7 @@ export class ChatStreamService {
     if (lifecycle.requestId !== ctx.requestId) {
       log.info(
         `[PIPELINE:finalize-orphaned] requestId mismatch ` +
-        `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping`
+          `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping`
       )
       return
     }
@@ -1269,8 +1308,8 @@ export class ChatStreamService {
           const data = sessionState.planIntent.plan
           log.warn(
             `[PIPELINE:plan-late-inject] Plan received by session but missed by stream listener — ` +
-            `injecting late. conversationId=${ctx.conversationId} workspaceId=${ctx.workspaceId} ` +
-            `rawContentLen=${data.rawContent.length}`
+              `injecting late. conversationId=${ctx.conversationId} workspaceId=${ctx.workspaceId} ` +
+              `rawContentLen=${data.rawContent.length}`
           )
           const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
           ctx.streamedContent += planBlock
@@ -1443,7 +1482,7 @@ export class ChatStreamService {
     } else {
       log.info(
         `[PIPELINE:finalize-orphaned-transition] requestId mismatch after DB write ` +
-        `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping transition`
+          `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping transition`
       )
     }
 
@@ -1590,8 +1629,8 @@ export class ChatStreamService {
     const onPlanEvent = (data: PlanDetectedEvent): void => {
       log.info(
         `[PIPELINE:plan-event-received] conversationId=${ctx.conversationId} ` +
-        `planInjected=${ctx.planInjected} rawContentLen=${data.rawContent.length} ` +
-        `lifecycleActive=${lifecycle.isActive}`
+          `planInjected=${ctx.planInjected} rawContentLen=${data.rawContent.length} ` +
+          `lifecycleActive=${lifecycle.isActive}`
       )
       if (ctx.planInjected) {
         log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
@@ -1678,7 +1717,9 @@ export class ChatStreamService {
 
     // Stage 6: Save original user message + run prompt optimization
     const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
-    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson, { hidden: opts?.hidden })
+    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson, {
+      hidden: opts?.hidden
+    })
     log.info('User message saved to DB')
 
     // Stage 6.5: Prompt Optimization (chat plan/build only — skipped for programmatic callers)
@@ -1686,8 +1727,14 @@ export class ChatStreamService {
     const convMode = (conv?.mode ?? chatAgentService.getMode()) as 'plan' | 'build'
     if (opts?.optimizePrompt !== false && conv && (convMode === 'plan' || convMode === 'build')) {
       const result = await this.runPromptOptimization({
-        text, conversationId, requestId, signal, streamingRole,
-        workspaceId: conv.workspaceId, mode: convMode, attachments
+        text,
+        conversationId,
+        requestId,
+        signal,
+        streamingRole,
+        workspaceId: conv.workspaceId,
+        mode: convMode,
+        attachments
       })
       if (result === null) {
         // H1-FIX: settle the done promise before returning
@@ -1709,13 +1756,22 @@ export class ChatStreamService {
         // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred: only needed on this rare path
         const { exec } = require('node:child_process')
         startSha = await new Promise<string | undefined>((resolve) => {
-          exec('git rev-parse HEAD 2>/dev/null || true', {
-            cwd: wpPath, encoding: 'utf-8', timeout: 2000, windowsHide: true
-          }, (err: Error | null, stdout: string) => {
-            resolve(err ? undefined : (stdout?.trim() || undefined))
-          })
+          exec(
+            'git rev-parse HEAD 2>/dev/null || true',
+            {
+              cwd: wpPath,
+              encoding: 'utf-8',
+              timeout: 2000,
+              windowsHide: true
+            },
+            (err: Error | null, stdout: string) => {
+              resolve(err ? undefined : stdout?.trim() || undefined)
+            }
+          )
         })
-      } catch { /* no git — fine */ }
+      } catch {
+        /* no git — fine */
+      }
     }
 
     const ctx: StreamContext = {
@@ -1740,7 +1796,14 @@ export class ChatStreamService {
     )
 
     // Stage 8: Register disposers (needs listener refs)
-    this.registerStreamDisposers(lifecycle, conversationId, onChunk, onComplete, onIntent, onPlanEvent)
+    this.registerStreamDisposers(
+      lifecycle,
+      conversationId,
+      onChunk,
+      onComplete,
+      onIntent,
+      onPlanEvent
+    )
 
     // Stage 9: Dispatch to agent
     await this.dispatchToAgent(
@@ -1855,7 +1918,9 @@ export class ChatStreamService {
 
     const lifecycle = conversationId ? lifecycleRegistry.get(conversationId) : undefined
     const requestId = conversationId
-      ? (this.activeRequestIds.get(conversationId) ?? lifecycle?.requestId ?? `req-stop-${Date.now()}`)
+      ? (this.activeRequestIds.get(conversationId) ??
+        lifecycle?.requestId ??
+        `req-stop-${Date.now()}`)
       : `req-stop-${Date.now()}`
 
     try {
@@ -1881,15 +1946,15 @@ export class ChatStreamService {
           // A3-FIX: Only read persona/role from chatAgentService when this
           // conversation owns the active session, otherwise use defaults.
           const isActiveSession = chatAgentService.getCurrentConversationId() === conversationId
-          const stopPersona = isActiveSession
-            ? chatAgentService.getActivePersona()
-            : undefined
-          const stopRole = stopPersona ? 'specialist' : (
-            isActiveSession ? chatAgentService.getActiveMessageRole() : 'specialist'
-          )
-          const stopAgentId = stopPersona?.agentId ?? (
-            isActiveSession ? chatAgentService.getActiveAgentId() : 'specialist'
-          )
+          const stopPersona = isActiveSession ? chatAgentService.getActivePersona() : undefined
+          const stopRole = stopPersona
+            ? 'specialist'
+            : isActiveSession
+              ? chatAgentService.getActiveMessageRole()
+              : 'specialist'
+          const stopAgentId =
+            stopPersona?.agentId ??
+            (isActiveSession ? chatAgentService.getActiveAgentId() : 'specialist')
           const savedMessage = messageRepository.create(
             conversationId,
             stopRole,
@@ -1955,7 +2020,7 @@ export class ChatStreamService {
     if (activeStreams.length > 0 || this.streamingLocks.size > 0 || smStuck) {
       log.warn(
         `[STREAM:force-reset] activeStreams=${activeStreams.length} locks=${this.streamingLocks.size} ` +
-        `smStuck=${smStuck} — aborting all (fixes P12)`
+          `smStuck=${smStuck} — aborting all (fixes P12)`
       )
       // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
       for (const stream of activeStreams) {

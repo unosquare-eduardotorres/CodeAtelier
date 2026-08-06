@@ -164,7 +164,8 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/close': 'Close and permanently delete this conversation',
   '/compact': 'Compress conversation context to save tokens',
   '/clear': 'Clear chat display (keeps AI context)',
-  '/effort': 'Set thinking depth — `/effort low` | `/effort medium` | `/effort high` | `/effort xhigh` | `/effort max`',
+  '/effort':
+    'Set thinking depth — `/effort low` | `/effort medium` | `/effort high` | `/effort xhigh` | `/effort max`',
   '/todos': 'Show/hide agent task list',
   '/grillme': 'Grill an idea — AI-led Q&A across 8 specialist tracks',
   '/voice': 'Toggle push-to-talk voice input',
@@ -172,7 +173,8 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/rewind': 'Rewind to a previous checkpoint — reverts code AND removes messages after that point',
   '/recap': 'Get a summary of what was done in this conversation',
   '/council': 'Run the LLM Council — 5 independent AI advisors review and cross-examine your plan',
-  '/audit': 'Post-implementation audit — checks wiring, bugs, tests, complexity, dead code, and runs a premortem',
+  '/audit':
+    'Post-implementation audit — checks wiring, bugs, tests, complexity, dead code, and runs a premortem',
   '/help': 'Show available commands'
 }
 
@@ -217,7 +219,7 @@ Combine tool-based scanning with reasoning:
 
 ### Check 3 — Test Coverage
 Use tools + reasoning to evaluate test adequacy:
-- Run **analyze_test_coverage** — identify which changed files lack corresponding test files
+- Run the suite with **Bash** (\`npm test\`) — and identify which changed files lack corresponding test files
 - Check if new test files are registered in the test runner (e.g. run-tests.ts imports)
 - Are critical paths tested (happy path + main error paths)?
 - Are edge cases covered (empty inputs, nulls, boundary values)?
@@ -306,7 +308,7 @@ List files from conversation + \`git diff --name-only\`. Print scope. Exclude ou
 ## Checks (in order)
 1. **Wiring** — Run wiring_check with all changed file paths + key new symbol names in a single call. Verify exports have importers, new symbols are called, IPC/routes/tests registered.
 2. **Bugs** — Run audit_scan on changed files (combines eslint_check + analyze_complexity + find_dead_code). Grep for \`as any\`, TODO, HACK, empty catches. Reason about edge cases, error handling, races, type safety, off-by-one, stale state.
-3. **Tests** — Run analyze_test_coverage. Check test runner registration. Evaluate happy path + error path + edge case coverage.
+3. **Tests** — Run the suite with Bash (\`npm test\`). Check test runner registration. Evaluate happy path + error path + edge case coverage.
 4. **Complexity** — Check audit_scan results for functions above threshold. Flag >10 as high, 7–10 as approaching.
 5. **Dead Code** — Check audit_scan results. Grep for TODO, HACK, FIXME. Check commented-out code, unused imports.
 6. **Premortem 🔮** — For each: scaling, maintenance, silent corruption, security, assumptions → state failure + prevention.
@@ -388,7 +390,9 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
             opts.setEffort(opts.currentConversationId, effort)
             opts.appendLocalMessage(`Thinking effort set to **${effort}**`)
           } else {
-            opts.appendLocalMessage('Usage: `/effort low` | `/effort medium` | `/effort high` | `/effort xhigh` | `/effort max`')
+            opts.appendLocalMessage(
+              'Usage: `/effort low` | `/effort medium` | `/effort high` | `/effort xhigh` | `/effort max`'
+            )
           }
         },
 

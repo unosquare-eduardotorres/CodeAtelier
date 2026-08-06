@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('RewindDialog Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,9 +34,7 @@ test.describe('RewindDialog Deep', () => {
     return true
   }
 
-  async function openRewindDialog(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openRewindDialog(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to chats tab
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -55,7 +51,10 @@ test.describe('RewindDialog Deep', () => {
 
     // Try to trigger the rewind dialog — look for rewind/history button
     const rewindBtn = page.locator('button:has-text("Rewind"), [data-testid="rewind-btn"]')
-    const hasRewindBtn = await rewindBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasRewindBtn = await rewindBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasRewindBtn) {
       await rewindBtn.first().click()
       await page.waitForTimeout(500)
@@ -66,12 +65,18 @@ test.describe('RewindDialog Deep', () => {
 
   test('rewind dialog renders with header and warning text', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(dialog).toBeVisible()
 
@@ -90,12 +95,18 @@ test.describe('RewindDialog Deep', () => {
 
   test('checkpoint list shows loading spinner initially', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Either loading spinner or checkpoint list should be present
     const loader = dialog.locator('text=Loading checkpoints')
@@ -103,28 +114,42 @@ test.describe('RewindDialog Deep', () => {
     const noCheckpoints = dialog.locator('text=No checkpoints found')
 
     const hasLoader = await loader.isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasCheckpoints = await checkpoints.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasCheckpoints = await checkpoints
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     const hasNone = await noCheckpoints.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // One of the three states must be true
     expect(hasLoader || hasCheckpoints || hasNone).toBe(true)
   })
 
-  test('checkpoint items display label, git SHA, and relative time', async ({ electronPage: page }) => {
+  test('checkpoint items display label, git SHA, and relative time', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for checkpoints to load
     await page.waitForTimeout(2_000)
 
     const checkpoints = dialog.locator('[data-testid="rewind-checkpoint-item"]')
     const count = await checkpoints.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // First checkpoint should have label text
     const firstCheckpoint = checkpoints.first()
@@ -132,24 +157,36 @@ test.describe('RewindDialog Deep', () => {
     expect(labelText).toBeTruthy()
 
     // Should have relative time (e.g., "min ago", "h ago", "d ago", "just now")
-    const timeText = await firstCheckpoint.locator('.text-xs.text-text-secondary').last().textContent()
+    const timeText = await firstCheckpoint
+      .locator('.text-xs.text-text-secondary')
+      .last()
+      .textContent()
     expect(timeText).toBeTruthy()
   })
 
   test('clicking a checkpoint selects it with radio indicator', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await page.waitForTimeout(2_000)
 
     const checkpoints = dialog.locator('[data-testid="rewind-checkpoint-item"]')
     const count = await checkpoints.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Click first checkpoint
     await checkpoints.first().click()
@@ -162,20 +199,31 @@ test.describe('RewindDialog Deep', () => {
     expect(classes).toContain('border-orange-400')
   })
 
-  test('rewind button is disabled until a checkpoint is selected', async ({ electronPage: page }) => {
+  test('rewind button is disabled until a checkpoint is selected', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await page.waitForTimeout(2_000)
 
     const rewindConfirm = dialog.locator('[data-testid="rewind-confirm-btn"]')
     const hasBtn = await rewindConfirm.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     // Button should be disabled initially (no checkpoint selected)
     await expect(rewindConfirm).toBeDisabled()
@@ -193,12 +241,18 @@ test.describe('RewindDialog Deep', () => {
 
   test('cancel button dismisses dialog without rewinding', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Click Cancel button
     const cancelBtn = dialog.locator('button:has-text("Cancel")')
@@ -212,12 +266,18 @@ test.describe('RewindDialog Deep', () => {
 
   test('escape key dismisses dialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openRewindDialog(page)
 
     const dialog = page.locator('[data-testid="rewind-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Press Escape
     await page.keyboard.press('Escape')

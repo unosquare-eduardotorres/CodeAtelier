@@ -21,7 +21,11 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import { PhaseActivityWatchdog, STALL_TIMEOUT_MS, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import {
+  PhaseActivityWatchdog,
+  STALL_TIMEOUT_MS,
+  wireAskUserAutoResponder
+} from './blueprint-phase-watchdog'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintVerifyAdapter } from './role-adapters/blueprint/blueprint-verify.adapter'
 import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
@@ -50,7 +54,8 @@ const bpLog = log.scope('blueprint-verify')
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 /** Matches circular re-run-verify task descriptions. Exported for tests (GAP-5). */
-export const RERUN_VERIFY_RX = /\bre-?run\b.*\b(verify|verification)\b|\bverif\w+ (pass|evidence)\b/i
+export const RERUN_VERIFY_RX =
+  /\bre-?run\b.*\b(verify|verification)\b|\bverif\w+ (pass|evidence)\b/i
 
 /** Generic remediation task description (Strategy-3 / GAP-B rescue). Exported for tests (GAP-F). */
 export const GENERIC_REMEDIATION_TASK_DESC =
@@ -85,7 +90,11 @@ export class BlueprintVerifyService extends EventEmitter {
     let onStatus: ((status: AgentStatus) => void) | null = null
     let verifyPhase: ReturnType<typeof blueprintPhaseRepository.findByBlueprintAndPhase> = undefined
     let cleanupAskUser: (() => void) | undefined
-    let pendingRemediation: { blueprintId: string; workspaceId: string; workspacePath: string } | null = null
+    let pendingRemediation: {
+      blueprintId: string
+      workspaceId: string
+      workspacePath: string
+    } | null = null
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
 
@@ -96,7 +105,9 @@ export class BlueprintVerifyService extends EventEmitter {
       // running=false; deletion removes the row entirely.
       const existingBlueprint = blueprintRepository.findById(blueprintId)
       if (!existingBlueprint || existingBlueprint.status === 'cancelled') {
-        bpLog.info(`[startVerifyPhase] Blueprint ${blueprintId} ${!existingBlueprint ? 'deleted' : 'cancelled'} — skipping VERIFY`)
+        bpLog.info(
+          `[startVerifyPhase] Blueprint ${blueprintId} ${!existingBlueprint ? 'deleted' : 'cancelled'} — skipping VERIFY`
+        )
         return
       }
 
@@ -112,7 +123,11 @@ export class BlueprintVerifyService extends EventEmitter {
       blueprintRepository.update(blueprintId, { currentPhase: 'verify' })
 
       // 2. Assemble context (includes ALL prior artifacts: spec → build + workspace docs)
-      const phaseContext = await blueprintService.assemblePhaseContext(blueprintId, 'verify', workspacePath)
+      const phaseContext = await blueprintService.assemblePhaseContext(
+        blueprintId,
+        'verify',
+        workspacePath
+      )
 
       // 3. Create adapter + session
       const adapter = new BlueprintVerifyAdapter({ workspaceId, blueprintId, phaseContext })
@@ -135,11 +150,13 @@ export class BlueprintVerifyService extends EventEmitter {
 
       onChunk = (chunk: StreamChunk): void => {
         stallWatchdog.touch()
-        forwardBlueprintChunk(
-          (event, payload) => this.safeEmit(event, payload),
-          chunk,
-          { blueprintId, workspaceId, phase: 'verify', workspacePath, mode: 'build' }
-        )
+        forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          workspacePath,
+          mode: 'build'
+        })
       }
       onStatus = (status: AgentStatus): void => {
         this.safeEmit('status', { workspaceId, status })
@@ -175,8 +192,11 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // Persist conversation ID early so retries can find it
       if (verifyPhaseRec) {
-        try { blueprintPhaseRepository.setConversation(verifyPhaseRec.id, syntheticConvId) }
-        catch { /* conversation may not exist yet in DB */ }
+        try {
+          blueprintPhaseRepository.setConversation(verifyPhaseRec.id, syntheticConvId)
+        } catch {
+          /* conversation may not exist yet in DB */
+        }
       }
 
       let timeoutId: NodeJS.Timeout | undefined
@@ -240,9 +260,14 @@ export class BlueprintVerifyService extends EventEmitter {
       // mirror the extractor's guard. This prevents an LLM emitting e.g. "partial"
       // or "PASSED" from bypassing both Haiku extraction AND the unknown-status diagnostic.
       const VALID_OVERALL_STATUSES = new Set(['passed', 'gaps_found', 'human_needed'])
-      if (completion?.overallStatus && !VALID_OVERALL_STATUSES.has(String(completion.overallStatus))) {
-        bpLog.warn(`[startVerifyPhase] Invalid overallStatus '${completion.overallStatus}' from fence block — treating as missing`)
-        delete completion.overallStatus  // → GAP 2 trigger fires → Haiku extraction rescues
+      if (
+        completion?.overallStatus &&
+        !VALID_OVERALL_STATUSES.has(String(completion.overallStatus))
+      ) {
+        bpLog.warn(
+          `[startVerifyPhase] Invalid overallStatus '${completion.overallStatus}' from fence block — treating as missing`
+        )
+        delete completion.overallStatus // → GAP 2 trigger fires → Haiku extraction rescues
       }
 
       // BP-VERIFY-DETERMINISTIC-EXTRACT: When the agent doesn't emit the structured
@@ -282,14 +307,21 @@ export class BlueprintVerifyService extends EventEmitter {
       const allTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
       const missingByTask = scanCompletedTaskFiles(workspacePath, allTasks)
       if (missingByTask.size > 0) {
-        const totalClaimed = [...missingByTask.values()].reduce((sum, v) => sum + v.missingClaimed.length, 0)
-        const totalDrift = [...missingByTask.values()].reduce((sum, v) => sum + v.driftFiles.length, 0)
+        const totalClaimed = [...missingByTask.values()].reduce(
+          (sum, v) => sum + v.missingClaimed.length,
+          0
+        )
+        const totalDrift = [...missingByTask.values()].reduce(
+          (sum, v) => sum + v.driftFiles.length,
+          0
+        )
         bpLog.warn(
           `[verify] Deterministic disk check: ${totalClaimed} claimed file(s) missing, ${totalDrift} drift file(s) across ${missingByTask.size} task(s)`
         )
 
         const beforeStatus = completion?.overallStatus
-        completion = applyDeterministicFileCheck(completion, missingByTask) as BlueprintPhaseCompletion | undefined
+        completion = applyDeterministicFileCheck(completion, missingByTask) as
+          BlueprintPhaseCompletion | undefined
         const afterStatus = completion?.overallStatus
 
         if (beforeStatus !== afterStatus) {
@@ -310,19 +342,19 @@ export class BlueprintVerifyService extends EventEmitter {
       // of the verify agent's self-reported results.
       const gateResults = await this.runDeterministicQualityGates(workspacePath)
       if (gateResults.failed) {
-        bpLog.warn(
-          `[startVerifyPhase] Deterministic quality gate(s) failed — forcing gaps_found`
-        )
+        bpLog.warn(`[startVerifyPhase] Deterministic quality gate(s) failed — forcing gaps_found`)
         if (!completion) {
-          completion = { phase: 'verify', status: 'complete', overallStatus: 'gaps_found', findings: [] }
+          completion = {
+            phase: 'verify',
+            status: 'complete',
+            overallStatus: 'gaps_found',
+            findings: []
+          }
         }
         completion = { ...completion, overallStatus: 'gaps_found' } as BlueprintPhaseCompletion
         // Inject deterministic findings
         const existingFindings = Array.isArray(completion.findings) ? completion.findings : []
-        completion.findings = [
-          ...existingFindings,
-          ...gateResults.findings
-        ]
+        completion.findings = [...existingFindings, ...gateResults.findings]
         this.safeEmit('phaseProgress', {
           blueprintId,
           workspaceId,
@@ -337,7 +369,7 @@ export class BlueprintVerifyService extends EventEmitter {
       if (gateResults.gatesAvailable && completion && !completion.qualityGates) {
         bpLog.warn(
           `[startVerifyPhase] Blueprint ${blueprintId}: completion lacks qualityGates ` +
-          `while tsc/tests were available — agent may have skipped running them`
+            `while tsc/tests were available — agent may have skipped running them`
         )
         this.safeEmit('phaseProgress', {
           blueprintId,
@@ -356,8 +388,8 @@ export class BlueprintVerifyService extends EventEmitter {
       if (overallStatus === 'unknown') {
         bpLog.warn(
           `[startVerifyPhase] Blueprint ${blueprintId}: overallStatus='unknown' — ` +
-          `completion was ${completion ? 'parsed but missing overallStatus' : 'null (parser failed)'}. ` +
-          `Output length: ${text.length} chars`
+            `completion was ${completion ? 'parsed but missing overallStatus' : 'null (parser failed)'}. ` +
+            `Output length: ${text.length} chars`
         )
 
         // BP-VERIFY-UNKNOWN-SURFACE: Surface the dead-end to the user so they
@@ -375,9 +407,10 @@ export class BlueprintVerifyService extends EventEmitter {
       // triggered, mark verify phase 'failed' (not 'complete') so retryPhase()
       // can find a retryable phase and the Retry banner renders. 'passed' and
       // 'human_needed' are genuine completions.
-      const verifyPhaseStatus = (overallStatus === 'passed' || overallStatus === 'human_needed')
-        ? 'complete' as const
-        : 'failed' as const
+      const verifyPhaseStatus =
+        overallStatus === 'passed' || overallStatus === 'human_needed'
+          ? ('complete' as const)
+          : ('failed' as const)
 
       if (verifyPhase) {
         blueprintPhaseRepository.appendArtifact(verifyPhase.id, {
@@ -400,21 +433,29 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 9. Remediation check — when gaps_found with actionable tasks, auto-fix
       // BP-REMEDIATION-01: Parse remediationTasks from completion block.
-      let remediationTasks: Array<{ taskId: string; description: string; files: string[]; dependsOn?: string[] }> =
-        Array.isArray(completion?.remediationTasks)
-          ? (completion.remediationTasks as Array<Record<string, unknown>>)
-              .filter((t): t is Record<string, unknown> & { taskId: string; description: string } =>
-                t != null && typeof t === 'object' && typeof t.taskId === 'string' && typeof t.description === 'string'
-              )
-              .map((t) => ({
-                taskId: t.taskId,
-                description: t.description,
-                files: asStringArray(t.files),
-                dependsOn: Array.isArray(t.dependsOn)
-                  ? (t.dependsOn as unknown[]).filter((d): d is string => typeof d === 'string')
-                  : undefined
-              }))
-          : []
+      let remediationTasks: Array<{
+        taskId: string
+        description: string
+        files: string[]
+        dependsOn?: string[]
+      }> = Array.isArray(completion?.remediationTasks)
+        ? (completion.remediationTasks as Array<Record<string, unknown>>)
+            .filter(
+              (t): t is Record<string, unknown> & { taskId: string; description: string } =>
+                t != null &&
+                typeof t === 'object' &&
+                typeof t.taskId === 'string' &&
+                typeof t.description === 'string'
+            )
+            .map((t) => ({
+              taskId: t.taskId,
+              description: t.description,
+              files: asStringArray(t.files),
+              dependsOn: Array.isArray(t.dependsOn)
+                ? (t.dependsOn as unknown[]).filter((d): d is string => typeof d === 'string')
+                : undefined
+            }))
+        : []
 
       // BP-CIRCULAR-VERIFY-FILTER: Drop remediation tasks that circularly request
       // re-running the verify phase. The remediation loop already re-runs verify
@@ -426,7 +467,9 @@ export class BlueprintVerifyService extends EventEmitter {
         const before = tasks.length
         const filtered = tasks.filter((t) => {
           if (RERUN_VERIFY_RX.test(t.description)) {
-            bpLog.info(`[remediation] Dropping circular re-run-verify task: ${t.taskId} — "${t.description}"`)
+            bpLog.info(
+              `[remediation] Dropping circular re-run-verify task: ${t.taskId} — "${t.description}"`
+            )
             return false
           }
           return true
@@ -434,7 +477,7 @@ export class BlueprintVerifyService extends EventEmitter {
         if (filtered.length < before) {
           bpLog.info(
             `[remediation] Filtered ${before - filtered.length} circular verify task(s), ` +
-            `${filtered.length} remaining`
+              `${filtered.length} remaining`
           )
         }
         return filtered
@@ -446,7 +489,11 @@ export class BlueprintVerifyService extends EventEmitter {
       // Step 2: BP-REMEDIATION-FALLBACK: When agent reports gaps but doesn't provide
       // usable remediation tasks (after filtering), auto-generate from completion data.
       if (overallStatus === 'gaps_found' && remediationTasks.length === 0) {
-        const generated = this.generateFallbackRemediationTasks(completion ?? null, text, blueprintId)
+        const generated = this.generateFallbackRemediationTasks(
+          completion ?? null,
+          text,
+          blueprintId
+        )
         if (generated.length > 0) {
           bpLog.info(
             `[startVerifyPhase] No usable remediationTasks (omitted or all filtered) — auto-generated ${generated.length} from findings`
@@ -461,11 +508,13 @@ export class BlueprintVerifyService extends EventEmitter {
             bpLog.info(
               `[startVerifyPhase] Defensive filter emptied ${generated.length} generated task(s) — substituting generic remediation task`
             )
-            remediationTasks = [{
-              taskId: 'R001',
-              description: GENERIC_REMEDIATION_TASK_DESC,
-              files: []
-            }]
+            remediationTasks = [
+              {
+                taskId: 'R001',
+                description: GENERIC_REMEDIATION_TASK_DESC,
+                files: []
+              }
+            ]
           }
         }
       }
@@ -489,7 +538,9 @@ export class BlueprintVerifyService extends EventEmitter {
         remediationTasks = remediationTasks.map((t) => ({
           ...t,
           taskId: idMap.get(t.taskId)!,
-          dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.map((dep) => idMap.get(dep) ?? dep) : undefined
+          dependsOn: Array.isArray(t.dependsOn)
+            ? t.dependsOn.map((dep) => idMap.get(dep) ?? dep)
+            : undefined
         }))
       }
 
@@ -497,9 +548,7 @@ export class BlueprintVerifyService extends EventEmitter {
       const currentSettings = currentBlueprint?.settingsJson ?? {}
       const remediationRound = (currentSettings.remediationRound as number) ?? 0
       const canRemediate =
-        overallStatus === 'gaps_found' &&
-        remediationTasks.length > 0 &&
-        remediationRound < 2
+        overallStatus === 'gaps_found' && remediationTasks.length > 0 && remediationRound < 2
 
       if (canRemediate) {
         // 9a. Increment remediationRound FIRST — prevents infinite retry loops
@@ -511,7 +560,7 @@ export class BlueprintVerifyService extends EventEmitter {
         // 9b. Append remediation tasks as new wave(s)
         bpLog.info(
           `[startVerifyPhase] gaps_found with ${remediationTasks.length} remediation task(s) — ` +
-          `round ${remediationRound + 1}/2, appending tasks and re-triggering build`
+            `round ${remediationRound + 1}/2, appending tasks and re-triggering build`
         )
         blueprintService.appendTasks(blueprintId, remediationTasks)
 
@@ -571,7 +620,9 @@ export class BlueprintVerifyService extends EventEmitter {
               blueprintService.saveRetryContext(blueprintId, 'verify', {
                 error: `Verify failed with status: ${overallStatus}`
               })
-            } catch { /* best effort */ }
+            } catch {
+              /* best effort */
+            }
             blueprintRepository.updateStatus(blueprintId, 'failed')
           }
         }
@@ -588,8 +639,10 @@ export class BlueprintVerifyService extends EventEmitter {
         // MEM-BP-COMPLETE-01: Enqueue memory extraction for completed/failed blueprint.
         // Non-blocking — runs after all DB and event work is done.
         this.enqueueBlueprintMemoryExtraction(
-          blueprintId, workspaceId, workspacePath,
-          (overallStatus === 'passed' || overallStatus === 'human_needed') ? 'complete' : 'failed'
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
         )
       }
 
@@ -626,11 +679,18 @@ export class BlueprintVerifyService extends EventEmitter {
       blueprintService.failPipeline(workspaceId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
-      try { blueprintService.saveRetryContext(blueprintId, 'verify', { error: errorMsg }) }
-      catch { /* best effort */ }
+      try {
+        blueprintService.saveRetryContext(blueprintId, 'verify', { error: errorMsg })
+      } catch {
+        /* best effort */
+      }
 
       const autoRetrying = blueprintService.scheduleAutoRetry({
-        blueprintId, workspaceId, workspacePath, phase: 'verify', error: errorMsg
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        phase: 'verify',
+        error: errorMsg
       })
 
       this.safeEmit('phaseComplete', {
@@ -684,30 +744,43 @@ export class BlueprintVerifyService extends EventEmitter {
     gatesAvailable: boolean
     findings: Array<{ source: string; severity: string; gate: string; description: string }>
   }> {
-    const findings: Array<{ source: string; severity: string; gate: string; description: string }> = []
+    const findings: Array<{ source: string; severity: string; gate: string; description: string }> =
+      []
     let gatesAvailable = false
     const GATE_TIMEOUT_MS = 120_000 // 2 min per gate
 
     // Gate 1: TypeScript typecheck (only if tsconfig.json exists)
     const hasTsConfig = existsSync(join(workspacePath, 'tsconfig.json'))
     if (hasTsConfig) {
-      gatesAvailable = true
       try {
         const tscOutput = await this.execGateCommand(
-          'npx', ['tsc', '--noEmit'],
-          workspacePath, GATE_TIMEOUT_MS
+          'npx',
+          ['tsc', '--noEmit'],
+          workspacePath,
+          GATE_TIMEOUT_MS
         )
-        if (tscOutput.exitCode !== 0) {
-          findings.push({
-            source: 'deterministic-quality-gate',
-            severity: 'error',
-            gate: 'tsc',
-            description: `TypeScript typecheck failed (exit ${tscOutput.exitCode}): ${tscOutput.output.slice(0, 2048)}`
-          })
+        if (!tscOutput.launched) {
+          // The gate could not be spawned (npx missing from PATH, permissions,
+          // broken install). A gate that never ran must not force gaps_found.
+          bpLog.warn(
+            '[verify:quality-gates] tsc gate could not be launched — skipping (no finding recorded)'
+          )
         } else {
-          bpLog.info('[verify:quality-gates] tsc --noEmit passed')
+          gatesAvailable = true
+          if (tscOutput.exitCode !== 0) {
+            findings.push({
+              source: 'deterministic-quality-gate',
+              severity: 'error',
+              gate: 'tsc',
+              description: `TypeScript typecheck failed (exit ${tscOutput.exitCode}): ${tscOutput.output.slice(0, 2048)}`
+            })
+          } else {
+            bpLog.info('[verify:quality-gates] tsc --noEmit passed')
+          }
         }
       } catch (err) {
+        // Timeout — the gate did launch, so it counts as available.
+        gatesAvailable = true
         bpLog.warn('[verify:quality-gates] tsc gate skipped:', err)
       }
     }
@@ -718,23 +791,32 @@ export class BlueprintVerifyService extends EventEmitter {
       if (existsSync(pkgPath)) {
         const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
         if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
-          gatesAvailable = true
           try {
             const testOutput = await this.execGateCommand(
-              'npm', ['test', '--silent'],
-              workspacePath, GATE_TIMEOUT_MS
+              'npm',
+              ['test', '--silent'],
+              workspacePath,
+              GATE_TIMEOUT_MS
             )
-            if (testOutput.exitCode !== 0) {
-              findings.push({
-                source: 'deterministic-quality-gate',
-                severity: 'error',
-                gate: 'npm-test',
-                description: `Test suite failed (exit ${testOutput.exitCode}): ${testOutput.output.slice(0, 2048)}`
-              })
+            if (!testOutput.launched) {
+              bpLog.warn(
+                '[verify:quality-gates] npm test gate could not be launched — skipping (no finding recorded)'
+              )
             } else {
-              bpLog.info('[verify:quality-gates] npm test passed')
+              gatesAvailable = true
+              if (testOutput.exitCode !== 0) {
+                findings.push({
+                  source: 'deterministic-quality-gate',
+                  severity: 'error',
+                  gate: 'npm-test',
+                  description: `Test suite failed (exit ${testOutput.exitCode}): ${testOutput.output.slice(0, 2048)}`
+                })
+              } else {
+                bpLog.info('[verify:quality-gates] npm test passed')
+              }
             }
           } catch (err) {
+            gatesAvailable = true
             bpLog.warn('[verify:quality-gates] npm test gate skipped:', err)
           }
         }
@@ -752,34 +834,51 @@ export class BlueprintVerifyService extends EventEmitter {
 
   /**
    * Execute a gate command with timeout. Returns exit code + combined output.
+   *
+   * `launched` distinguishes "the gate ran and reported a result" from "the gate
+   * process never started". Node reports spawn failures with a *string* `code`
+   * (ENOENT, EACCES, EINVAL, ENOTDIR); a genuine non-zero exit carries a *number*.
+   * Collapsing the two made an unspawnable `npx` look like a failing typecheck.
    */
   private execGateCommand(
     cmd: string,
     args: string[],
     cwd: string,
     timeoutMs: number
-  ): Promise<{ exitCode: number; output: string }> {
+  ): Promise<{ exitCode: number; output: string; launched: boolean }> {
     return new Promise((resolve, reject) => {
-      execFile(cmd, args, {
-        cwd,
-        timeout: timeoutMs,
-        encoding: 'utf-8',
-        maxBuffer: 5 * 1024 * 1024, // 5MB
-        env: { ...process.env, CI: '1', NODE_ENV: 'test' },
-        windowsHide: true
-      }, (error, stdout, stderr) => {
-        if (error && (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
-          reject(new Error(`Gate timed out after ${timeoutMs}ms`))
-          return
+      execFile(
+        cmd,
+        args,
+        {
+          cwd,
+          timeout: timeoutMs,
+          encoding: 'utf-8',
+          maxBuffer: 5 * 1024 * 1024, // 5MB
+          env: { ...process.env, CI: '1', NODE_ENV: 'test' },
+          shell: process.platform === 'win32', // .cmd shim resolution (npx/npm)
+          windowsHide: true
+        },
+        (error, stdout, stderr) => {
+          const output = (stdout ?? '') + (stderr ?? '')
+          if (error && (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
+            reject(new Error(`Gate timed out after ${timeoutMs}ms`))
+            return
+          }
+          if (error) {
+            const execErr = error as ExecFileException
+            const code = execErr.code ?? 1
+            if (typeof code !== 'number') {
+              // Spawn failure — the command never executed. Not a code defect.
+              resolve({ exitCode: 1, output, launched: false })
+              return
+            }
+            resolve({ exitCode: code, output, launched: true })
+          } else {
+            resolve({ exitCode: 0, output, launched: true })
+          }
         }
-        if (error) {
-          const execErr = error as ExecFileException
-          const code = execErr.code ?? 1
-          resolve({ exitCode: typeof code === 'number' ? code : 1, output: (stdout ?? '') + (stderr ?? '') })
-        } else {
-          resolve({ exitCode: 0, output: (stdout ?? '') + (stderr ?? '') })
-        }
-      })
+      )
     })
   }
 
@@ -816,10 +915,24 @@ export class BlueprintVerifyService extends EventEmitter {
           // ARE actionable and should generate remediation tasks — the
           // remediationRound < 2 cap prevents loops for those.
           const source = String(finding.source ?? '')
-          if (source === 'deterministic-disk-check' || source === 'deterministic-disk-check-drift') continue
+          if (source === 'deterministic-disk-check' || source === 'deterministic-disk-check-drift')
+            continue
 
           const desc = String(finding.description ?? finding.issue ?? '')
           let files = Array.isArray(finding.files) ? finding.files.map(String) : []
+
+          // A quality-gate finding with no error text after the "(exit N): "
+          // marker is unactionable by construction — remediating it produces an
+          // empty task that fails the same gate again, forever. Drop it.
+          if (source === 'deterministic-quality-gate') {
+            const bodyStart = desc.indexOf('): ')
+            if (bodyStart !== -1 && desc.slice(bodyStart + 3).trim().length === 0) {
+              bpLog.warn(
+                `[verify:remediation] Skipping empty-bodied quality-gate finding: ${desc.slice(0, 120)}`
+              )
+              continue
+            }
+          }
 
           // Extract file paths from quality gate error output (e.g., TSC errors)
           // Format: "src/components/Foo.tsx(83,7): error TS2345: ..."
@@ -918,10 +1031,12 @@ export class BlueprintVerifyService extends EventEmitter {
         const events = blueprintEventRepository.findByBlueprint(blueprintId)
         const qaEvents = events.filter((e: any) => e.type === 'qa' || e.type === 'user')
         if (qaEvents.length > 0) {
-          clarifyQA = qaEvents.map((e: any) => ({
-            question: e.content?.question ?? e.content ?? '',
-            answer: e.content?.answer ?? ''
-          })).filter((qa: any) => qa.question)
+          clarifyQA = qaEvents
+            .map((e: any) => ({
+              question: e.content?.question ?? e.content ?? '',
+              answer: e.content?.answer ?? ''
+            }))
+            .filter((qa: any) => qa.question)
         }
       } catch {
         // Events may not exist — fine

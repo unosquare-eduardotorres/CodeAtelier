@@ -11,9 +11,21 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach } from './test-harness'
-import { setupFullMock, getMockRepo, resetAllMocks } from './setup-full-mock'
+import { setupFullMock, getMockRepo, resetAllMocks, evictFromCache } from './setup-full-mock'
 setupFullMock()
 
+// Clear service mocks registered by earlier files before re-requiring below.
+// `restoreFullMock()` un-patches the loader but does NOT clear `serviceMocks`,
+// and those entries match on substring — a stale one can intercept this
+// service's own imports (e.g. '../logger'), leaving its module-level `log`
+// undefined.
+resetAllMocks()
+
+// An earlier file in the shared run may already have cached this service bound
+// to the real repositories; drop it so it re-binds to the mocks below. The
+// scoped-logger module goes with it: re-executing the service against a
+// half-shared module graph is what left its module-level `log` undefined.
+evictFromCache('memory-engine.service', '/main/logger')
 const mod = require('../memory-engine.service')
 const { memoryEngineService, CAPTURE_CAPS } = mod
 const { MAX_FACTS_PER_SESSION } = CAPTURE_CAPS
@@ -67,7 +79,11 @@ describe('MemoryEngine pipeline (P26-W3)', () => {
   // test so the call sequence — and therefore the assertions below — is
   // deterministic.
   test('writeFact bypasses the capture cap for manual sourceType, then enforces the per-session cap', async () => {
-    memoryRepo.createFact.mockImplementation((p: any) => ({ id: `f-${p.title}`, tier: 0, volatile: false }))
+    memoryRepo.createFact.mockImplementation((p: any) => ({
+      id: `f-${p.title}`,
+      tier: 0,
+      volatile: false
+    }))
 
     const manualResult = await memoryEngineService.writeFact({
       workspaceId: null,
@@ -104,10 +120,21 @@ describe('MemoryEngine pipeline (P26-W3)', () => {
 
   // ─── backfillAllPendingEmbeddings ────────────────────────────────────────
   test('backfillAllPendingEmbeddings is a no-op when the embedding provider is not ready', async () => {
-    // No local embedding model is loaded in the test environment — isReady is false,
-    // so this must short-circuit to 0 without ever touching findPendingEmbeddings.
-    const processed = await memoryEngineService.backfillAllPendingEmbeddings()
-    assert.equal(processed, 0)
-    assert.equal(memoryRepo.findPendingEmbeddings.callCount, 0)
+    // `localEmbeddingProvider` is a process-wide singleton and an earlier file in
+    // the shared run can leave it reporting ready, so pin `isReady` to false for
+    // the duration rather than relying on ambient state. The own property shadows
+    // the prototype getter and is deleted afterwards.
+    const { localEmbeddingProvider } = require('../local-embedding.provider')
+    Object.defineProperty(localEmbeddingProvider, 'isReady', {
+      get: () => false,
+      configurable: true
+    })
+    try {
+      const processed = await memoryEngineService.backfillAllPendingEmbeddings()
+      assert.equal(processed, 0)
+      assert.equal(memoryRepo.findPendingEmbeddings.callCount, 0)
+    } finally {
+      delete (localEmbeddingProvider as Record<string, unknown>).isReady
+    }
   })
 })

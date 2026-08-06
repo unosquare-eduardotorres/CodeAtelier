@@ -190,9 +190,7 @@ export function resolveAppliedThresholds(
  * process is already running, so they're a no-op there (still returned for a
  * consistent option shape and testability).
  */
-export function resolveClaudeCompactionEnv(
-  effectiveContextWindow: number
-): Record<string, string> {
+export function resolveClaudeCompactionEnv(effectiveContextWindow: number): Record<string, string> {
   return {
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(effectiveContextWindow),
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(COMPACTION_RATIOS.auto * 100)

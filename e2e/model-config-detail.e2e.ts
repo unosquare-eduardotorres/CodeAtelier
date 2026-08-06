@@ -24,9 +24,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Model Config Detail', () => {
-  async function navigateToModelsTab(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToModelsTab(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -50,11 +48,17 @@ test.describe('Model Config Detail', () => {
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="local-llm-config"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
 
@@ -72,20 +76,27 @@ test.describe('Model Config Detail', () => {
     expect(sectionText).toMatch(/Connection|Backend|Host|Port|Model/i)
   })
 
-  test('context window slider adjusts the token limit', async ({
-    electronPage: page
-  }) => {
+  test('context window slider adjusts the token limit', async ({ electronPage: page }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="local-llm-config"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Look for range slider or context window controls
     const slider = section.locator('input[type="range"]').first()
     const hasSlider = await slider.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSlider) { test.skip(); return }
+    if (!hasSlider) {
+      test.skip()
+      return
+    }
 
     await expect(slider).toBeVisible()
 
@@ -95,20 +106,27 @@ test.describe('Model Config Detail', () => {
     expect(min !== null || max !== null).toBeTruthy()
   })
 
-  test('system prompt override textarea accepts custom text', async ({
-    electronPage: page
-  }) => {
+  test('system prompt override textarea accepts custom text', async ({ electronPage: page }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="local-llm-config"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Look for system prompt textarea
     const textarea = section.locator('textarea').first()
     const hasTextarea = await textarea.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTextarea) { test.skip(); return }
+    if (!hasTextarea) {
+      test.skip()
+      return
+    }
 
     await expect(textarea).toBeVisible()
 
@@ -122,23 +140,39 @@ test.describe('Model Config Detail', () => {
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="local-llm-config"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Look for test connection button
-    const testBtn = section.locator('button').filter({ hasText: /Test|Connect|Check/i }).first()
+    const testBtn = section
+      .locator('button')
+      .filter({ hasText: /Test|Connect|Check/i })
+      .first()
     const hasTestBtn = await testBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTestBtn) { test.skip(); return }
+    if (!hasTestBtn) {
+      test.skip()
+      return
+    }
 
     await expect(testBtn).toBeEnabled()
     await testBtn.click()
     await page.waitForTimeout(2_000)
 
     // After clicking, should show some result (connected/error status chips)
-    const statusIndicator = section.locator('[class*="text-success"], [class*="text-green"], [class*="text-red"], [class*="text-yellow"], [class*="text-amber"]').first()
+    const statusIndicator = section
+      .locator(
+        '[class*="text-success"], [class*="text-green"], [class*="text-red"], [class*="text-yellow"], [class*="text-amber"]'
+      )
+      .first()
     const hasStatus = await statusIndicator.isVisible({ timeout: 3_000 }).catch(() => false)
     // Either status appeared or button changed state
     expect(hasTestBtn).toBeTruthy()
@@ -147,15 +181,19 @@ test.describe('Model Config Detail', () => {
     }
   })
 
-  test('claude card shows CLI status (no backend selector)', async ({
-    electronPage: page
-  }) => {
+  test('claude card shows CLI status (no backend selector)', async ({ electronPage: page }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="claude-config-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
 
@@ -169,11 +207,17 @@ test.describe('Model Config Detail', () => {
     electronPage: page
   }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="model-roles-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
 
@@ -189,16 +233,20 @@ test.describe('Model Config Detail', () => {
     }
   })
 
-  test('workspace defaults shows communication tone selector', async ({
-    electronPage: page
-  }) => {
+  test('workspace defaults shows communication tone selector', async ({ electronPage: page }) => {
     const ready = await navigateToModelsTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Tone is in the "Workspace Defaults" section at the bottom of the page
     const section = page.locator('[data-testid="conversation-defaults-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Should have communication tone options
     const sectionText = await section.textContent()
@@ -206,7 +254,9 @@ test.describe('Model Config Detail', () => {
     expect(hasToneOptions).toBeTruthy()
 
     // Should have clickable tone selector buttons
-    const toneBtns = section.locator('button').filter({ hasText: /Default|Calm|Optimistic|Brutal|Caveman/i })
+    const toneBtns = section
+      .locator('button')
+      .filter({ hasText: /Default|Calm|Optimistic|Brutal|Caveman/i })
     if ((await toneBtns.count()) > 0) {
       await expect(toneBtns.first()).toBeVisible()
 

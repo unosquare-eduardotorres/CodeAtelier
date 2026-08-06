@@ -168,9 +168,8 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
   }
 
   getWorkspaceId(id: string): string | undefined {
-    const row = this.db()
-      .prepare('SELECT workspace_id FROM conversations WHERE id = ?')
-      .get(id) as { workspace_id: string } | undefined
+    const row = this.db().prepare('SELECT workspace_id FROM conversations WHERE id = ?').get(id) as
+      { workspace_id: string } | undefined
     return row?.workspace_id
   }
 
@@ -179,7 +178,9 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
   }
 
   updateSourceBranch(id: string, sourceBranch: string): void {
-    this.db().prepare('UPDATE conversations SET source_branch = ? WHERE id = ?').run(sourceBranch, id)
+    this.db()
+      .prepare('UPDATE conversations SET source_branch = ? WHERE id = ?')
+      .run(sourceBranch, id)
   }
 
   updatePrInfo(id: string, prUrl: string, prNumber: number, branchName: string): void {
@@ -228,12 +229,9 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
    */
   getSummary(id: string): string | undefined {
     const row = this.db().prepare('SELECT summary FROM conversations WHERE id = ?').get(id) as
-      | { summary: string | null }
-      | undefined
+      { summary: string | null } | undefined
     return row?.summary ?? undefined
   }
-
-
 
   /** Update handoff context injected when switching providers mid-chat */
   updateHandoffContext(conversationId: string, handoffContext: string | null): void {
@@ -274,7 +272,6 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
       orderedIds.forEach((id, i) => stmt.run(i, id))
     })
   }
-
 }
 
 export const conversationRepository = new ConversationRepository()

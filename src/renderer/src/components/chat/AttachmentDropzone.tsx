@@ -2,11 +2,7 @@ import { useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Paperclip, X } from 'lucide-react'
 import type React from 'react'
-import {
-  useClipboardImagePaste,
-  MAX_IMAGE_ATTACHMENTS,
-  IMAGE_REGEX
-} from '@renderer/hooks'
+import { useClipboardImagePaste, MAX_IMAGE_ATTACHMENTS, IMAGE_REGEX } from '@renderer/hooks'
 import ImagePreviewThumbnail from './ImagePreviewThumbnail'
 
 interface AttachmentDropzoneProps {

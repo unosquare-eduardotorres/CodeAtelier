@@ -20,9 +20,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('Bug Detail Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,16 +34,17 @@ test.describe('Bug Detail Deep', () => {
     return true
   }
 
-  async function navigateToBugDetail(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToBugDetail(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to bug tracker
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     await page.waitForTimeout(500)
 
     // Look for bug tracker tab
-    const bugTab = page.locator('button').filter({ hasText: /bug|tracker/i }).first()
+    const bugTab = page
+      .locator('button')
+      .filter({ hasText: /bug|tracker/i })
+      .first()
     if (await bugTab.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await bugTab.click()
       await page.waitForTimeout(800)
@@ -63,13 +62,17 @@ test.describe('Bug Detail Deep', () => {
     return bugDetail.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('detail panel renders with bug title and timestamp', async ({
-    electronPage: page
-  }) => {
+  test('detail panel renders with bug title and timestamp', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasDetail = await navigateToBugDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
     await expect(detail).toBeVisible()
@@ -91,9 +94,15 @@ test.describe('Bug Detail Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasDetail = await navigateToBugDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
 
@@ -114,9 +123,15 @@ test.describe('Bug Detail Deep', () => {
 
   test('resolve button marks bug as resolved', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasDetail = await navigateToBugDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
 
@@ -131,13 +146,17 @@ test.describe('Bug Detail Deep', () => {
     expect(hasResolve || hasReopen).toBeTruthy()
   })
 
-  test('unresolve returns resolved bug to open state', async ({
-    electronPage: page
-  }) => {
+  test('unresolve returns resolved bug to open state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasDetail = await navigateToBugDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
 
@@ -155,13 +174,17 @@ test.describe('Bug Detail Deep', () => {
     await expect(reopenBtn).toBeEnabled()
   })
 
-  test('note textarea allows saving user annotations', async ({
-    electronPage: page
-  }) => {
+  test('note textarea allows saving user annotations', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasDetail = await navigateToBugDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
 
@@ -193,13 +216,17 @@ test.describe('Bug Detail Deep', () => {
     await expect(saveBtn).toBeVisible()
   })
 
-  test('delete button shows confirmation before removal', async ({
-    electronPage: page
-  }) => {
+  test('delete button shows confirmation before removal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasDetail = await navigateToBugDetail(page)
-    if (!hasDetail) { test.skip(); return }
+    if (!hasDetail) {
+      test.skip()
+      return
+    }
 
     const detail = page.locator('[data-testid="bug-detail-panel"]')
 

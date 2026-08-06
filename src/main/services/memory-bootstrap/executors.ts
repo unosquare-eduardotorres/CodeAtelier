@@ -11,11 +11,7 @@ import { statSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { join, relative } from 'node:path'
 import log from 'electron-log'
-import type {
-  BootstrapItemStatus,
-  BootstrapItemView,
-  BootstrapScope
-} from '../../../shared/types'
+import type { BootstrapItemStatus, BootstrapItemView, BootstrapScope } from '../../../shared/types'
 import { memoryExtractionService } from '../memory-extraction.service'
 import type { ExtractContentOptions } from '../memory-extraction.service'
 import { memoryEngineService } from '../memory-engine.service'
@@ -24,10 +20,7 @@ import { codeGraphService } from '../code-graph.service'
 import { readDocument } from '../document-reader'
 import { chunkDocument, detectStrategy } from '../document-chunker'
 import { runAgenticClaude } from '../agentic-claude-runner'
-import {
-  classifyInstructionPath,
-  instructionScopePaths
-} from '../instruction-sources.service'
+import { classifyInstructionPath, instructionScopePaths } from '../instruction-sources.service'
 import { MCP_TOOLS } from '../../../shared/constants'
 import {
   MAX_CHUNKS_PER_FILE,
@@ -237,7 +230,9 @@ async function executeHotspots(ctx: ExecContext): Promise<ExecResult> {
   if (hotspots.length === 0) return { facts: 0, status: 'skipped' }
 
   const hotspotList = hotspots
-    .map((h) => `${h.file} (refs=${h.referenceCount}, churn=${h.gitChurn}, score=${h.hotspotScore})`)
+    .map(
+      (h) => `${h.file} (refs=${h.referenceCount}, churn=${h.gitChurn}, score=${h.hotspotScore})`
+    )
     .join('\n  ')
 
   const written = await memoryEngineService.writeFact({
@@ -341,7 +336,10 @@ async function executeCycles(ctx: ExecContext): Promise<ExecResult> {
   const cycles = codeGraphService.findCircularDependencies(ctx.workspaceId, { maxCycles: 10 })
   if (cycles.length === 0) return { facts: 0, status: 'skipped' }
 
-  const cycleList = cycles.slice(0, 5).map((c) => c.join(' → ')).join('\n  ')
+  const cycleList = cycles
+    .slice(0, 5)
+    .map((c) => c.join(' → '))
+    .join('\n  ')
 
   const written = await memoryEngineService.writeFact({
     workspaceId: ctx.workspaceId,
@@ -390,12 +388,17 @@ async function executeAgent(ctx: ExecContext): Promise<ExecResult> {
   try {
     const existing = memoryFactRepository.findByWorkspace(workspaceId)
     if (existing.length > 0) {
-      const titles = existing.slice(0, 30).map((f) => `- ${f.title}`).join('\n')
+      const titles = existing
+        .slice(0, 30)
+        .map((f) => `- ${f.title}`)
+        .join('\n')
       existingFactsSummary =
         `\n\nFacts already recorded (avoid duplicates):\n${titles}` +
         (existing.length > 30 ? `\n…and ${existing.length - 30} more` : '')
     }
-  } catch { /* ok */ }
+  } catch {
+    /* ok */
+  }
 
   const prompt = buildDeepScanPrompt(topFilesContext, existingFactsSummary, budget)
   const factsBefore = memoryFactRepository.countByWorkspace(workspaceId).active
@@ -437,7 +440,9 @@ async function executeAgent(ctx: ExecContext): Promise<ExecResult> {
       workspacePath,
       prompt,
       allowedTools: [
-        'Read', 'Grep', 'Glob',
+        'Read',
+        'Grep',
+        'Glob',
         ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
         ...MCP_TOOLS.MEMORY._ALL_NAMES
       ],

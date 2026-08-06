@@ -14,11 +14,12 @@ const eventRepo = getMockRepo('event')
 
 // Require after mocking
 const mod = require('../event-logger.service')
-const { EventLoggerService, eventLoggerService } = mod
+const { eventLoggerService } = mod
 
 describe('EventLoggerService — deep body coverage (P27)', () => {
-  test('EventLoggerService class is exported', () => {
-    assert.equal(typeof EventLoggerService, 'function')
+  // The module exports only the singleton — the class itself is not exported.
+  test('event-logger.service exports the singleton only', () => {
+    assert.equal(typeof mod.EventLoggerService, 'undefined')
   })
 
   test('eventLoggerService singleton is exported', () => {
@@ -28,7 +29,7 @@ describe('EventLoggerService — deep body coverage (P27)', () => {
   test('log method exists and can be called', () => {
     if (typeof eventLoggerService.log !== 'function') return
 
-    eventRepo.insert.mockReturnValue({ id: 'evt-1' })
+    eventRepo.create.mockReturnValue({ id: 'evt-1' })
     try {
       eventLoggerService.log({
         workspaceId: 'ws-1',
@@ -45,7 +46,7 @@ describe('EventLoggerService — deep body coverage (P27)', () => {
   test('getHistory method returns array', () => {
     if (typeof eventLoggerService.getHistory !== 'function') return
 
-    eventRepo.findByBlueprint.mockReturnValue([])
+    eventRepo.getRecent.mockReturnValue([])
     try {
       const result = eventLoggerService.getHistory('bp-1')
       assert.ok(Array.isArray(result))

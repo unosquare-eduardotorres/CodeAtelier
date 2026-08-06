@@ -10,12 +10,17 @@
  */
 
 import { useState, useMemo, useCallback } from 'react'
-import { ChevronDown, ChevronRight, Layers, CheckCircle2, AlertTriangle, AlertCircle, Lock } from 'lucide-react'
-import { SettingsCard } from '@renderer/components/common'
 import {
-  AVAILABLE_MODELS,
-  DEFAULT_MODEL_CONFIG
-} from '../../../../../shared/constants'
+  ChevronDown,
+  ChevronRight,
+  Layers,
+  CheckCircle2,
+  AlertTriangle,
+  AlertCircle,
+  Lock
+} from 'lucide-react'
+import { SettingsCard } from '@renderer/components/common'
+import { AVAILABLE_MODELS, DEFAULT_MODEL_CONFIG } from '../../../../../shared/constants'
 import type {
   LLMProvider,
   ModelAction,
@@ -73,7 +78,13 @@ const BLUEPRINT_ROLES: RoleRowDef[] = [
   {
     label: 'Plan',
     description: 'Specify, clarify, plan, tasks, and review phases',
-    actions: ['blueprint:specify', 'blueprint:clarify', 'blueprint:plan', 'blueprint:tasks', 'blueprint:review'],
+    actions: [
+      'blueprint:specify',
+      'blueprint:clarify',
+      'blueprint:plan',
+      'blueprint:tasks',
+      'blueprint:review'
+    ],
     primaryAction: 'blueprint:specify'
   },
   {
@@ -231,11 +242,18 @@ function RoleRow({
   }, [modelRoles, claudeModelOverrides, workspaceProvider, role.primaryAction])
 
   const selectedId = effective.modelId
-  const claudeOptions = useMemo(() => modelOptions.filter((o) => o.group === 'claude'), [modelOptions])
-  const localOptions = useMemo(() => modelOptions.filter((o) => o.group === 'local'), [modelOptions])
+  const claudeOptions = useMemo(
+    () => modelOptions.filter((o) => o.group === 'claude'),
+    [modelOptions]
+  )
+  const localOptions = useMemo(
+    () => modelOptions.filter((o) => o.group === 'local'),
+    [modelOptions]
+  )
 
   // Check if the selected local model is missing from the current server list
-  const isUnavailable = effective.provider === 'local-llm' && !localOptions.some((o) => o.id === selectedId)
+  const isUnavailable =
+    effective.provider === 'local-llm' && !localOptions.some((o) => o.id === selectedId)
 
   const handleSelect = useCallback(
     (optId: string) => {
@@ -274,11 +292,7 @@ function RoleRow({
                 {opt.id}
               </option>
             ))}
-            {isUnavailable && (
-              <option value={selectedId}>
-                ⚠ {selectedId} (unavailable)
-              </option>
-            )}
+            {isUnavailable && <option value={selectedId}>⚠ {selectedId} (unavailable)</option>}
           </optgroup>
         )}
       </select>
@@ -292,7 +306,11 @@ function RoleRow({
         <option>Medium</option>
       </select>
       {isUnavailable && (
-        <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
+        <AlertTriangle
+          size={14}
+          className="text-amber-400 shrink-0"
+          aria-label="Model not found on current server"
+        />
       )}
     </div>
   )
@@ -346,12 +364,20 @@ export default function ModelRolesSection({
 
   // Check if selected blueprint model is unavailable
   const blueprintProvider = modelRoles['blueprint:specify']?.provider
-  const claudeOptions = useMemo(() => modelOptions.filter((o) => o.group === 'claude'), [modelOptions])
-  const localOptions = useMemo(() => modelOptions.filter((o) => o.group === 'local'), [modelOptions])
-  const isBlueprintUnavailable = blueprintProvider === 'local-llm' && !localOptions.some((o) => o.id === blueprintPrimaryModel)
+  const claudeOptions = useMemo(
+    () => modelOptions.filter((o) => o.group === 'claude'),
+    [modelOptions]
+  )
+  const localOptions = useMemo(
+    () => modelOptions.filter((o) => o.group === 'local'),
+    [modelOptions]
+  )
+  const isBlueprintUnavailable =
+    blueprintProvider === 'local-llm' && !localOptions.some((o) => o.id === blueprintPrimaryModel)
 
   // Check if selected fallback model is unavailable
-  const isFallbackUnavailable = !!fallbackModel &&
+  const isFallbackUnavailable =
+    !!fallbackModel &&
     !claudeOptions.some((o) => o.id === fallbackModel) &&
     !localOptions.some((o) => o.id === fallbackModel)
 
@@ -450,17 +476,23 @@ export default function ModelRolesSection({
                 className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 shrink-0 max-w-xs"
               >
                 {!blueprintAllSame && (
-                  <option value="" disabled>Mixed — customize below</option>
+                  <option value="" disabled>
+                    Mixed — customize below
+                  </option>
                 )}
                 <optgroup label="Claude">
                   {claudeOptions.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.label}</option>
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
                   ))}
                 </optgroup>
                 {(localOptions.length > 0 || isBlueprintUnavailable) && (
                   <optgroup label="Local (oMLX)">
                     {localOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>{opt.id}</option>
+                      <option key={opt.id} value={opt.id}>
+                        {opt.id}
+                      </option>
                     ))}
                     {isBlueprintUnavailable && (
                       <option value={blueprintPrimaryModel}>
@@ -471,7 +503,11 @@ export default function ModelRolesSection({
                 )}
               </select>
               {isBlueprintUnavailable && (
-                <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
+                <AlertTriangle
+                  size={14}
+                  className="text-amber-400 shrink-0"
+                  aria-label="Model not found on current server"
+                />
               )}
             </div>
           </div>
@@ -575,9 +611,9 @@ export default function ModelRolesSection({
         <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
           <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-300">
-            <span className="font-medium">Mixed providers</span> — all actions will use the
-            Plan model&apos;s provider ({crossProviderWarning}) in the same conversation. Full cross-provider
-            support coming soon.
+            <span className="font-medium">Mixed providers</span> — all actions will use the Plan
+            model&apos;s provider ({crossProviderWarning}) in the same conversation. Full
+            cross-provider support coming soon.
           </p>
         </div>
       )}
@@ -601,13 +637,17 @@ export default function ModelRolesSection({
             >
               <optgroup label="Claude">
                 {claudeOptions.map((opt) => (
-                  <option key={opt.id} value={opt.id}>{opt.label}</option>
+                  <option key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </option>
                 ))}
               </optgroup>
               {(localOptions.length > 0 || isFallbackUnavailable) && (
                 <optgroup label="Local (oMLX)">
                   {localOptions.map((opt) => (
-                    <option key={opt.id} value={opt.id}>{opt.id}</option>
+                    <option key={opt.id} value={opt.id}>
+                      {opt.id}
+                    </option>
                   ))}
                   {isFallbackUnavailable && (
                     <option value={fallbackModel}>⚠ {fallbackModel} (unavailable)</option>
@@ -616,7 +656,11 @@ export default function ModelRolesSection({
               )}
             </select>
             {isFallbackUnavailable && (
-              <AlertTriangle size={14} className="text-amber-400 shrink-0" aria-label="Model not found on current server" />
+              <AlertTriangle
+                size={14}
+                className="text-amber-400 shrink-0"
+                aria-label="Model not found on current server"
+              />
             )}
           </div>
         </SettingsCard>
@@ -626,7 +670,10 @@ export default function ModelRolesSection({
       <div className="px-1">
         <p className="text-xs text-text-muted">
           Embeddings model is managed in{' '}
-          <span className="text-text-secondary font-medium">Code Intelligence → Embedding Model</span>.
+          <span className="text-text-secondary font-medium">
+            Code Intelligence → Embedding Model
+          </span>
+          .
         </p>
       </div>
     </div>

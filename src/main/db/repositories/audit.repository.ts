@@ -262,8 +262,7 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
   findRunById(runId: string): AuditRun | null {
     const db = this.db()
     const runRow = db.prepare('SELECT * FROM audit_runs WHERE id = ?').get(runId) as
-      | AuditRunRow
-      | undefined
+      AuditRunRow | undefined
     if (!runRow) return null
     const resultRows = db
       .prepare('SELECT * FROM audit_results WHERE audit_run_id = ? ORDER BY created_at')
@@ -298,8 +297,7 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
   findResultById(resultId: string): AuditResult | null {
     const db = this.db()
     const row = db.prepare('SELECT * FROM audit_results WHERE id = ?').get(resultId) as
-      | AuditResultRow
-      | undefined
+      AuditResultRow | undefined
     return row ? mapResultRow(row) : null
   }
 

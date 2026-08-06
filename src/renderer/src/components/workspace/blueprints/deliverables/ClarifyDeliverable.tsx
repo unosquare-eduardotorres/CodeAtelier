@@ -114,10 +114,14 @@ function FindingsSection({ findings }: { findings: ClarifyFinding[] }): JSX.Elem
       {findings.map((f) => (
         <div key={f.id} className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
           <div className="flex items-center gap-2 mb-2">
-            <span className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border ${severityColor[f.severity] ?? severityColor.medium}`}>
+            <span
+              className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full border ${severityColor[f.severity] ?? severityColor.medium}`}
+            >
               {f.severity.charAt(0).toUpperCase() + f.severity.slice(1)}
             </span>
-            <span className={`text-[10px] font-medium ${f.status === 'resolved' ? 'text-success' : 'text-warning'}`}>
+            <span
+              className={`text-[10px] font-medium ${f.status === 'resolved' ? 'text-success' : 'text-warning'}`}
+            >
               {statusIcon[f.status] ?? ''} {f.status.charAt(0).toUpperCase() + f.status.slice(1)}
             </span>
           </div>
@@ -173,13 +177,31 @@ export function ClarifyDeliverable({
             variant={findings.length - resolved > 0 ? 'warning' : 'success'}
           />
           {questionsAsked != null && <MetricTile label="Questions Asked" value={questionsAsked} />}
-          {questionsAnswered != null && <MetricTile label="Answered" value={questionsAnswered} variant="success" />}
+          {questionsAnswered != null && (
+            <MetricTile label="Answered" value={questionsAnswered} variant="success" />
+          )}
           {coverageSummary && (
             <>
-              {coverageSummary.resolved != null && <MetricTile label="Cov. Resolved" value={coverageSummary.resolved} variant="success" />}
-              {coverageSummary.deferred != null && <MetricTile label="Cov. Deferred" value={coverageSummary.deferred} variant="warning" />}
+              {coverageSummary.resolved != null && (
+                <MetricTile
+                  label="Cov. Resolved"
+                  value={coverageSummary.resolved}
+                  variant="success"
+                />
+              )}
+              {coverageSummary.deferred != null && (
+                <MetricTile
+                  label="Cov. Deferred"
+                  value={coverageSummary.deferred}
+                  variant="warning"
+                />
+              )}
               {coverageSummary.outstanding != null && (
-                <MetricTile label="Cov. Outstanding" value={coverageSummary.outstanding} variant={coverageSummary.outstanding > 0 ? 'danger' : 'success'} />
+                <MetricTile
+                  label="Cov. Outstanding"
+                  value={coverageSummary.outstanding}
+                  variant={coverageSummary.outstanding > 0 ? 'danger' : 'success'}
+                />
               )}
             </>
           )}
@@ -199,7 +221,11 @@ export function ClarifyDeliverable({
     return (
       <div>
         <DeliverableHeader config={config} summary="Clarification completed" duration={duration} />
-        <CappedMarkdownBlock content={mdArtifact.contentMd} label="Clarification Details" className="" />
+        <CappedMarkdownBlock
+          content={mdArtifact.contentMd}
+          label="Clarification Details"
+          className=""
+        />
       </div>
     )
   }
@@ -207,8 +233,14 @@ export function ClarifyDeliverable({
   if (rounds.length === 0) {
     return (
       <div>
-        <DeliverableHeader config={config} summary="No clarification data found" duration={duration} />
-        <p className="text-xs text-text-muted italic">No Q&A artifacts were produced by this phase.</p>
+        <DeliverableHeader
+          config={config}
+          summary="No clarification data found"
+          duration={duration}
+        />
+        <p className="text-xs text-text-muted italic">
+          No Q&A artifacts were produced by this phase.
+        </p>
       </div>
     )
   }
@@ -243,7 +275,10 @@ export function ClarifyDeliverable({
             )}
             <div className="space-y-3">
               {round.pairs.map((pair, i) => (
-                <div key={i} className="rounded-xl border border-border-subtle bg-surface-overlay p-4 space-y-2.5">
+                <div
+                  key={i}
+                  className="rounded-xl border border-border-subtle bg-surface-overlay p-4 space-y-2.5"
+                >
                   <div className="flex items-start gap-2">
                     <MessageCircleQuestion size={14} className="text-accent mt-0.5 flex-shrink-0" />
                     <span className="text-sm font-medium text-text-primary">{pair.question}</span>

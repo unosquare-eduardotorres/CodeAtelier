@@ -103,11 +103,16 @@ if (loaded) {
   describe('MemoryEngineService — singleton (Phase 25)', () => {
     test('exists', () => assert.ok(memoryEngineService !== undefined))
     test('has writeFact', () => assert.equal(typeof memoryEngineService.writeFact, 'function'))
-    test('has deleteFact', () => assert.equal(typeof memoryEngineService.deleteFact, 'function'))
-    test('has searchFacts', () => assert.equal(typeof memoryEngineService.searchFacts, 'function'))
-    test('has getFactsForWorkspace', () =>
-      assert.equal(typeof memoryEngineService.getFactsForWorkspace, 'function'))
-    test('has shutdown', () => assert.equal(typeof memoryEngineService.shutdown, 'function'))
+    test('has confirmFactWithPromotion', () =>
+      assert.equal(typeof memoryEngineService.confirmFactWithPromotion, 'function'))
+    test('has scanForDuplicates', () =>
+      assert.equal(typeof memoryEngineService.scanForDuplicates, 'function'))
+    test('has runDecaySweepIfDue', () =>
+      assert.equal(typeof memoryEngineService.runDecaySweepIfDue, 'function'))
+    test('has backfillPendingEmbeddings', () =>
+      assert.equal(typeof memoryEngineService.backfillPendingEmbeddings, 'function'))
+    test('has setBootstrapActive', () =>
+      assert.equal(typeof memoryEngineService.setBootstrapActive, 'function'))
   })
 }
 

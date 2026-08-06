@@ -9,12 +9,7 @@ import { setupFullMock, resetAllMocks } from './setup-full-mock'
 setupFullMock()
 
 const mod = require('../opencode-executor')
-const {
-  OpenCodeExecutor,
-  openCodeExecutor,
-  TRANSIENT_ERROR_PATTERNS,
-  MAX_TRANSIENT_RETRIES
-} = mod
+const { OpenCodeExecutor, openCodeExecutor, TRANSIENT_ERROR_PATTERNS, MAX_TRANSIENT_RETRIES } = mod
 
 describe('OpenCodeExecutor — deep body (P26)', () => {
   beforeEach(() => {

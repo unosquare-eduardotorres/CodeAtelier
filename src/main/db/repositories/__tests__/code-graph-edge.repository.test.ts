@@ -16,10 +16,38 @@ if (!env) {
   const { codeGraphEdgeRepository } = require('../code-graph-edge.repository')
 
   const sampleEdges = [
-    { workspaceId: wsId, sourceFile: 'src/a.ts', sourceSymbol: 'fnA', targetFile: 'src/b.ts', targetSymbol: 'fnB', edgeType: 'calls' as const },
-    { workspaceId: wsId, sourceFile: 'src/a.ts', sourceSymbol: 'fnA', targetFile: 'src/c.ts', targetSymbol: 'ClassC', edgeType: 'imports' as const },
-    { workspaceId: wsId, sourceFile: 'src/b.ts', sourceSymbol: 'fnB', targetFile: 'src/c.ts', targetSymbol: 'ClassC', edgeType: 'calls' as const },
-    { workspaceId: wsId, sourceFile: 'src/d.ts', sourceSymbol: 'ClassD', targetFile: 'src/c.ts', targetSymbol: 'ClassC', edgeType: 'extends' as const }
+    {
+      workspaceId: wsId,
+      sourceFile: 'src/a.ts',
+      sourceSymbol: 'fnA',
+      targetFile: 'src/b.ts',
+      targetSymbol: 'fnB',
+      edgeType: 'calls' as const
+    },
+    {
+      workspaceId: wsId,
+      sourceFile: 'src/a.ts',
+      sourceSymbol: 'fnA',
+      targetFile: 'src/c.ts',
+      targetSymbol: 'ClassC',
+      edgeType: 'imports' as const
+    },
+    {
+      workspaceId: wsId,
+      sourceFile: 'src/b.ts',
+      sourceSymbol: 'fnB',
+      targetFile: 'src/c.ts',
+      targetSymbol: 'ClassC',
+      edgeType: 'calls' as const
+    },
+    {
+      workspaceId: wsId,
+      sourceFile: 'src/d.ts',
+      sourceSymbol: 'ClassD',
+      targetFile: 'src/c.ts',
+      targetSymbol: 'ClassC',
+      edgeType: 'extends' as const
+    }
   ]
 
   describe('CodeGraphEdgeRepository', () => {
@@ -86,7 +114,8 @@ if (!env) {
 
     test('findCoupledFiles() respects path filter', () => {
       const coupled = codeGraphEdgeRepository.findCoupledFiles(wsId, {
-        minCoupling: 1, path: 'src/a'
+        minCoupling: 1,
+        path: 'src/a'
       })
       assert.ok(
         coupled.every(

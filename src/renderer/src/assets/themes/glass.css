@@ -3,7 +3,7 @@
    Translucent surfaces with backdrop blur, frosted borders, and
    blue-violet/lavender accents. Sophisticated, no neon.
    ═══════════════════════════════════════════════════════════════════════════ */
-[data-theme="glass"] {
+[data-theme='glass'] {
   /* ── Surface layers (darker slate-navy, translucent raised) ── */
   --color-surface-base: #0c0e1a;
   --color-surface-raised: rgba(16, 20, 36, 0.72);
@@ -146,7 +146,7 @@
   --grain-opacity: 0.02;
 
   /* ── Glass-specific: chat-icon pulse (blue-violet) ── */
-  --color-chat-icon-pulse: rgba(124, 140, 247, 0.40);
+  --color-chat-icon-pulse: rgba(124, 140, 247, 0.4);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -154,52 +154,57 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── Glass backdrop-filter on structural surfaces ── */
-[data-theme="glass"] .bg-sidebar-bg,
-[data-theme="glass"] .bg-surface-raised {
+[data-theme='glass'] .bg-sidebar-bg,
+[data-theme='glass'] .bg-surface-raised {
   backdrop-filter: blur(16px) saturate(160%);
   -webkit-backdrop-filter: blur(16px) saturate(160%);
 }
 
-[data-theme="glass"] .bg-surface-overlay {
+[data-theme='glass'] .bg-surface-overlay {
   backdrop-filter: blur(12px) saturate(150%);
   -webkit-backdrop-filter: blur(12px) saturate(150%);
 }
 
-[data-theme="glass"] .bg-surface-float,
-[data-theme="glass"] .bg-modal-bg {
+[data-theme='glass'] .bg-surface-float,
+[data-theme='glass'] .bg-modal-bg {
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
 }
 
 /* ── Glass shadow elevation — blue-violet-tinted depth ── */
-[data-theme="glass"] .shadow-sm {
-  --tw-shadow: 0 2px 8px rgba(0, 0, 0, 0.30), 0 0 1px rgba(124, 140, 247, 0.10);
-  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+[data-theme='glass'] .shadow-sm {
+  --tw-shadow: 0 2px 8px rgba(0, 0, 0, 0.3), 0 0 1px rgba(124, 140, 247, 0.1);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
-[data-theme="glass"] .shadow-lg {
-  --tw-shadow: 0 4px 20px rgba(0, 0, 0, 0.40), 0 0 1px rgba(124, 140, 247, 0.12);
-  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+[data-theme='glass'] .shadow-lg {
+  --tw-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 1px rgba(124, 140, 247, 0.12);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
-[data-theme="glass"] .shadow-xl {
-  --tw-shadow: 0 8px 32px rgba(0, 0, 0, 0.50), 0 0 1px rgba(124, 140, 247, 0.15);
-  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+[data-theme='glass'] .shadow-xl {
+  --tw-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 1px rgba(124, 140, 247, 0.15);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
-[data-theme="glass"] .hover-lift:hover {
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.40), 0 0 20px rgba(124, 140, 247, 0.12);
+[data-theme='glass'] .hover-lift:hover {
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 20px rgba(124, 140, 247, 0.12);
 }
 
 /* ── Glass scrollbar ── */
-[data-theme="glass"] ::-webkit-scrollbar-track {
+[data-theme='glass'] ::-webkit-scrollbar-track {
   background: rgba(12, 14, 26, 0.5);
 }
 
-[data-theme="glass"] ::-webkit-scrollbar-thumb {
+[data-theme='glass'] ::-webkit-scrollbar-thumb {
   background: rgba(124, 140, 247, 0.25);
 }
 
-[data-theme="glass"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(124, 140, 247, 0.40);
+[data-theme='glass'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(124, 140, 247, 0.4);
 }

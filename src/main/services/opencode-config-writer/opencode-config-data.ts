@@ -54,26 +54,6 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
     timeout: 10_000
   },
   {
-    id: 'checkpoint-context',
-    serverScript: 'checkpoint-context-server.js',
-    condition: (opts) => !!opts.conversationId,
-    environment: (opts) => ({
-      CONVERSATION_ID: opts.conversationId!,
-      WORKSPACE_PATH: opts.workspacePath
-    }),
-    timeout: 8_000
-  },
-  {
-    id: 'github-context',
-    serverScript: 'github-context-server.js',
-    condition: (opts) => !!(opts.featureFlags.githubConfigured && opts.workspaceId),
-    environment: (opts) => ({
-      WORKSPACE_ID: opts.workspaceId!,
-      WORKSPACE_PATH: opts.workspacePath
-    }),
-    timeout: 8_000
-  },
-  {
     id: 'code-analysis',
     serverScript: 'code-analysis-server.js',
     condition: () => true,

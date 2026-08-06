@@ -1,5 +1,13 @@
 import { app } from 'electron'
-import { writeSync, openSync, closeSync, fsyncSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
+import {
+  writeSync,
+  openSync,
+  closeSync,
+  fsyncSync,
+  existsSync,
+  mkdirSync,
+  unlinkSync
+} from 'node:fs'
 import { join } from 'node:path'
 import log from './logger'
 
@@ -45,7 +53,7 @@ let vitalsPath: string | undefined
 let lastRss = 0
 const processStartTime = Date.now()
 let initialised = false // one-time setup (file, signals, exit handler)
-let running = false     // heartbeat is actively ticking
+let running = false // heartbeat is actively ticking
 
 /** Register app-specific gauges. Safe to call before or after {@link startVitals}. */
 export function setVitalsProviders(p: VitalsProviders): void {
@@ -72,7 +80,8 @@ function sample(): string {
     `arrayBuffers=${mb(m.arrayBuffers)}MB`
   ]
   try {
-    if (providers.activeOpenCodeSessions) parts.push(`ocSessions=${providers.activeOpenCodeSessions()}`)
+    if (providers.activeOpenCodeSessions)
+      parts.push(`ocSessions=${providers.activeOpenCodeSessions()}`)
     if (providers.pendingRetryTimers) parts.push(`retryTimers=${providers.pendingRetryTimers()}`)
     if (providers.childProcessCount) parts.push(`childProcs=${providers.childProcessCount()}`)
     if (providers.fdCount) parts.push(`fds=${providers.fdCount()}`)
@@ -115,14 +124,22 @@ function resolveVitalsPath(): string {
   for (const candidate of candidates) {
     const dir = join(candidate, '..')
     if (!existsSync(dir)) {
-      try { mkdirSync(dir, { recursive: true }) } catch { /* skip */ }
+      try {
+        mkdirSync(dir, { recursive: true })
+      } catch {
+        /* skip */
+      }
     }
     // Quick write test — does the path have write permission?
     try {
       const fd = openSync(candidate, 'a')
       writeSync(fd, `TEST: path resolution test ok\n`)
       closeSync(fd)
-      try { unlinkSync(candidate) } catch { /* non-fatal */ }
+      try {
+        unlinkSync(candidate)
+      } catch {
+        /* non-fatal */
+      }
       return candidate
     } catch {
       /* Not writable, try next */
@@ -202,7 +219,9 @@ export function startVitals(intervalMs = 5000): void {
     const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT']
     for (const sig of signals) {
       process.once(sig, () => {
-        vitalsLog.error(`Received ${sig} — terminating. Final vitals: ${sample()} uptime=${elapsed()}`)
+        vitalsLog.error(
+          `Received ${sig} — terminating. Final vitals: ${sample()} uptime=${elapsed()}`
+        )
         writeVitals(`SIGNAL ${sig} `)
         // Handler was `once`, so re-raising now hits the default action (terminate).
         process.kill(process.pid, sig)
@@ -231,7 +250,9 @@ export function startVitals(intervalMs = 5000): void {
     // Surface a sudden doubling of RSS — the fingerprint of a runaway/leak
     // building toward an OOM before an external kill.
     if (lastRss > 0 && rss > lastRss * 2) {
-      vitalsLog.warn(`RSS doubled since last tick (${mb(lastRss)}MB → ${mb(rss)}MB): ${sample()} uptime=${elapsed()}`)
+      vitalsLog.warn(
+        `RSS doubled since last tick (${mb(lastRss)}MB → ${mb(rss)}MB): ${sample()} uptime=${elapsed()}`
+      )
     }
     lastRss = rss
     writeVitals('')

@@ -26,7 +26,10 @@ export default function MemoryFeedBanner(): React.JSX.Element | null {
 
   if (feedStatus === 'error') {
     return (
-      <div data-testid="memory-feed-banner" className="flex items-center gap-3 px-4 py-2.5 bg-danger-muted border-b border-danger/50 text-sm">
+      <div
+        data-testid="memory-feed-banner"
+        className="flex items-center gap-3 px-4 py-2.5 bg-danger-muted border-b border-danger/50 text-sm"
+      >
         <AlertCircle size={14} className="text-danger shrink-0" />
         <span className="text-danger flex-1">
           {label} failed: {feedError}
@@ -44,7 +47,10 @@ export default function MemoryFeedBanner(): React.JSX.Element | null {
 
   if (feedStatus === 'completed') {
     return (
-      <div data-testid="memory-feed-banner" className="flex items-center gap-3 px-4 py-2.5 bg-success-muted border-b border-success/50 text-sm">
+      <div
+        data-testid="memory-feed-banner"
+        className="flex items-center gap-3 px-4 py-2.5 bg-success-muted border-b border-success/50 text-sm"
+      >
         <CheckCircle2 size={14} className="text-success shrink-0" />
         <span className="text-success flex-1">{feedMessage}</span>
         <button
@@ -60,7 +66,10 @@ export default function MemoryFeedBanner(): React.JSX.Element | null {
 
   // feedStatus === 'running'
   return (
-    <div data-testid="memory-feed-banner" className="flex items-center gap-3 px-4 py-2.5 bg-mode-plan-muted border-b border-mode-plan/50 text-sm">
+    <div
+      data-testid="memory-feed-banner"
+      className="flex items-center gap-3 px-4 py-2.5 bg-mode-plan-muted border-b border-mode-plan/50 text-sm"
+    >
       <Loader2 size={14} className="text-mode-plan-text shrink-0 animate-spin" />
       <Database size={14} className="text-mode-plan-text shrink-0" />
       <span className="text-mode-plan-text flex-1">

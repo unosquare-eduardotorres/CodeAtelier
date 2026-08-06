@@ -72,7 +72,9 @@ if (!env) {
 
   function seedWorkspace(db: InstanceType<typeof import('better-sqlite3')>, id = 'ws-1'): void {
     db.prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`).run(
-      id, 'Test Workspace', `/tmp/test-${id}`
+      id,
+      'Test Workspace',
+      `/tmp/test-${id}`
     )
   }
 
@@ -82,9 +84,9 @@ if (!env) {
     wsId = 'ws-1'
   ): void {
     seedWorkspace(db, wsId)
-    db.prepare(`INSERT OR IGNORE INTO conversations (id, workspace_id, title) VALUES (?, ?, ?)`).run(
-      id, wsId, 'Test Conversation'
-    )
+    db.prepare(
+      `INSERT OR IGNORE INTO conversations (id, workspace_id, title) VALUES (?, ?, ?)`
+    ).run(id, wsId, 'Test Conversation')
   }
 
   // ── §1: Blueprint deeper branches ────────────────────────────────────
@@ -94,10 +96,15 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO blueprints (id, workspace_id, title, status)
-          VALUES ('bp-1', 'ws-1', 'Test Blueprint', 'draft')`).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title, status)
+          VALUES ('bp-1', 'ws-1', 'Test Blueprint', 'draft')`
+        ).run()
 
-        const row = db.prepare('SELECT * FROM blueprints WHERE id = ?').get('bp-1') as Record<string, unknown>
+        const row = db.prepare('SELECT * FROM blueprints WHERE id = ?').get('bp-1') as Record<
+          string,
+          unknown
+        >
         assert.equal(row.title, 'Test Blueprint')
         assert.equal(row.status, 'draft')
       } finally {
@@ -109,12 +116,18 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO blueprints (id, workspace_id, title, status)
-          VALUES ('bp-1', 'ws-1', 'Blueprint 1', 'draft')`).run()
-        db.prepare(`INSERT INTO blueprints (id, workspace_id, title, status)
-          VALUES ('bp-2', 'ws-1', 'Blueprint 2', 'specifying')`).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title, status)
+          VALUES ('bp-1', 'ws-1', 'Blueprint 1', 'draft')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title, status)
+          VALUES ('bp-2', 'ws-1', 'Blueprint 2', 'specifying')`
+        ).run()
 
-        const rows = db.prepare('SELECT * FROM blueprints WHERE workspace_id = ? ORDER BY created_at').all('ws-1') as unknown[]
+        const rows = db
+          .prepare('SELECT * FROM blueprints WHERE workspace_id = ? ORDER BY created_at')
+          .all('ws-1') as unknown[]
         assert.equal(rows.length, 2)
       } finally {
         db.close()
@@ -125,19 +138,31 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO blueprints (id, workspace_id, title, status)
-          VALUES ('bp-1', 'ws-1', 'Full Blueprint', 'specifying')`).run()
-        db.prepare(`INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
-          VALUES ('ph-1', 'bp-1', 'specify', 'complete')`).run()
-        db.prepare(`INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
-          VALUES ('ph-2', 'bp-1', 'plan', 'pending')`).run()
-        db.prepare(`INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description, status)
-          VALUES ('t-1', 'bp-1', 'task-1', 'Gather requirements', 'complete')`).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title, status)
+          VALUES ('bp-1', 'ws-1', 'Full Blueprint', 'specifying')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
+          VALUES ('ph-1', 'bp-1', 'specify', 'complete')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
+          VALUES ('ph-2', 'bp-1', 'plan', 'pending')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description, status)
+          VALUES ('t-1', 'bp-1', 'task-1', 'Gather requirements', 'complete')`
+        ).run()
 
-        const phases = db.prepare('SELECT * FROM blueprint_phases WHERE blueprint_id = ?').all('bp-1') as unknown[]
+        const phases = db
+          .prepare('SELECT * FROM blueprint_phases WHERE blueprint_id = ?')
+          .all('bp-1') as unknown[]
         assert.equal(phases.length, 2)
 
-        const tasks = db.prepare('SELECT * FROM blueprint_tasks WHERE blueprint_id = ?').all('bp-1') as unknown[]
+        const tasks = db
+          .prepare('SELECT * FROM blueprint_tasks WHERE blueprint_id = ?')
+          .all('bp-1') as unknown[]
         assert.equal(tasks.length, 1)
       } finally {
         db.close()
@@ -148,13 +173,19 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO blueprints (id, workspace_id, title, status)
-          VALUES ('bp-del', 'ws-1', 'Deletable', 'draft')`).run()
-        db.prepare(`INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
-          VALUES ('ph-del', 'bp-del', 'plan', 'pending')`).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title, status)
+          VALUES ('bp-del', 'ws-1', 'Deletable', 'draft')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
+          VALUES ('ph-del', 'bp-del', 'plan', 'pending')`
+        ).run()
 
         db.prepare('DELETE FROM blueprints WHERE id = ?').run('bp-del')
-        const phases = db.prepare('SELECT * FROM blueprint_phases WHERE blueprint_id = ?').all('bp-del') as unknown[]
+        const phases = db
+          .prepare('SELECT * FROM blueprint_phases WHERE blueprint_id = ?')
+          .all('bp-del') as unknown[]
         assert.equal(phases.length, 0)
       } finally {
         db.close()
@@ -169,10 +200,14 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO specialists (id, agent_id, display_name, icon, color, priority, workspace_id)
-          VALUES ('sp-1', 'my-agent', 'My Agent', '🤖', '#FF0000', 10, 'ws-1')`).run()
+        db.prepare(
+          `INSERT INTO specialists (id, agent_id, display_name, icon, color, priority, workspace_id)
+          VALUES ('sp-1', 'my-agent', 'My Agent', '🤖', '#FF0000', 10, 'ws-1')`
+        ).run()
 
-        const row = db.prepare('SELECT * FROM specialists WHERE workspace_id = ?').get('ws-1') as Record<string, unknown>
+        const row = db
+          .prepare('SELECT * FROM specialists WHERE workspace_id = ?')
+          .get('ws-1') as Record<string, unknown>
         assert.ok(row)
         assert.equal(row.agent_id, 'my-agent')
         assert.equal(row.workspace_id, 'ws-1')
@@ -184,14 +219,22 @@ if (!env) {
     test('specialist_skills_association', () => {
       const db = createTestDb()
       try {
-        db.prepare(`INSERT INTO specialists (id, agent_id, display_name, icon, color, priority)
-          VALUES ('sp-1', 'test-agent', 'Test', '🔧', '#000', 0)`).run()
-        db.prepare(`INSERT INTO skills (id, name, filename, file_path, is_active)
-          VALUES ('sk-1', 'Coding', 'coding.md', '/skills/coding.md', 1)`).run()
-        db.prepare(`INSERT INTO specialist_skills (specialist_id, skill_id)
-          VALUES ('sp-1', 'sk-1')`).run()
+        db.prepare(
+          `INSERT INTO specialists (id, agent_id, display_name, icon, color, priority)
+          VALUES ('sp-1', 'test-agent', 'Test', '🔧', '#000', 0)`
+        ).run()
+        db.prepare(
+          `INSERT INTO skills (id, name, filename, file_path, is_active)
+          VALUES ('sk-1', 'Coding', 'coding.md', '/skills/coding.md', 1)`
+        ).run()
+        db.prepare(
+          `INSERT INTO specialist_skills (specialist_id, skill_id)
+          VALUES ('sp-1', 'sk-1')`
+        ).run()
 
-        const skills = db.prepare('SELECT * FROM specialist_skills WHERE specialist_id = ?').all('sp-1') as unknown[]
+        const skills = db
+          .prepare('SELECT * FROM specialist_skills WHERE specialist_id = ?')
+          .all('sp-1') as unknown[]
         assert.equal(skills.length, 1)
       } finally {
         db.close()
@@ -206,15 +249,24 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO audit_runs (id, workspace_id, status)
-          VALUES ('ar-1', 'ws-1', 'completed')`).run()
-        db.prepare(`INSERT INTO audit_results (id, audit_run_id, track_id, score)
-          VALUES ('res-1', 'ar-1', 'security', 85)`).run()
+        db.prepare(
+          `INSERT INTO audit_runs (id, workspace_id, status)
+          VALUES ('ar-1', 'ws-1', 'completed')`
+        ).run()
+        db.prepare(
+          `INSERT INTO audit_results (id, audit_run_id, track_id, score)
+          VALUES ('res-1', 'ar-1', 'security', 85)`
+        ).run()
 
-        const run = db.prepare('SELECT * FROM audit_runs WHERE id = ?').get('ar-1') as Record<string, unknown>
+        const run = db.prepare('SELECT * FROM audit_runs WHERE id = ?').get('ar-1') as Record<
+          string,
+          unknown
+        >
         assert.equal(run.status, 'completed')
 
-        const results = db.prepare('SELECT * FROM audit_results WHERE audit_run_id = ?').all('ar-1') as unknown[]
+        const results = db
+          .prepare('SELECT * FROM audit_results WHERE audit_run_id = ?')
+          .all('ar-1') as unknown[]
         assert.equal(results.length, 1)
       } finally {
         db.close()
@@ -225,13 +277,19 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO audit_runs (id, workspace_id, status)
-          VALUES ('ar-del', 'ws-1', 'completed')`).run()
-        db.prepare(`INSERT INTO audit_results (id, audit_run_id, track_id, score)
-          VALUES ('res-del', 'ar-del', 'code', 50)`).run()
+        db.prepare(
+          `INSERT INTO audit_runs (id, workspace_id, status)
+          VALUES ('ar-del', 'ws-1', 'completed')`
+        ).run()
+        db.prepare(
+          `INSERT INTO audit_results (id, audit_run_id, track_id, score)
+          VALUES ('res-del', 'ar-del', 'code', 50)`
+        ).run()
 
         db.prepare('DELETE FROM audit_runs WHERE id = ?').run('ar-del')
-        const results = db.prepare('SELECT * FROM audit_results WHERE audit_run_id = ?').all('ar-del') as unknown[]
+        const results = db
+          .prepare('SELECT * FROM audit_results WHERE audit_run_id = ?')
+          .all('ar-del') as unknown[]
         assert.equal(results.length, 0)
       } finally {
         db.close()
@@ -246,17 +304,27 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO mpa_runs (id, workspace_id, title, goal, status)
-          VALUES ('mpa-1', 'ws-1', 'API Run', 'Build API', 'completed')`).run()
-        db.prepare(`INSERT INTO mpa_phases (id, run_id, phase_type, status, agent_role)
-          VALUES ('mp-1', 'mpa-1', 'plan', 'completed', 'planner')`).run()
-        db.prepare(`INSERT INTO mpa_artifacts (id, run_id, phase_id, artifact_type, content_json)
-          VALUES ('ma-1', 'mpa-1', 'mp-1', 'plan', '{"items":[]}')`).run()
+        db.prepare(
+          `INSERT INTO mpa_runs (id, workspace_id, title, goal, status)
+          VALUES ('mpa-1', 'ws-1', 'API Run', 'Build API', 'completed')`
+        ).run()
+        db.prepare(
+          `INSERT INTO mpa_phases (id, run_id, phase_type, status, agent_role)
+          VALUES ('mp-1', 'mpa-1', 'plan', 'completed', 'planner')`
+        ).run()
+        db.prepare(
+          `INSERT INTO mpa_artifacts (id, run_id, phase_id, artifact_type, content_json)
+          VALUES ('ma-1', 'mpa-1', 'mp-1', 'plan', '{"items":[]}')`
+        ).run()
 
-        const phases = db.prepare('SELECT * FROM mpa_phases WHERE run_id = ?').all('mpa-1') as unknown[]
+        const phases = db
+          .prepare('SELECT * FROM mpa_phases WHERE run_id = ?')
+          .all('mpa-1') as unknown[]
         assert.equal(phases.length, 1)
 
-        const artifacts = db.prepare('SELECT * FROM mpa_artifacts WHERE phase_id = ?').all('mp-1') as unknown[]
+        const artifacts = db
+          .prepare('SELECT * FROM mpa_artifacts WHERE phase_id = ?')
+          .all('mp-1') as unknown[]
         assert.equal(artifacts.length, 1)
       } finally {
         db.close()
@@ -267,14 +335,22 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO mpa_campaigns (id, workspace_id, title, status)
-          VALUES ('camp-1', 'ws-1', 'Campaign 1', 'running')`).run()
-        db.prepare(`INSERT INTO mpa_runs (id, workspace_id, title, goal, status, campaign_id, order_index)
-          VALUES ('run-1', 'ws-1', 'Run 1', 'Build feature A', 'running', 'camp-1', 0)`).run()
-        db.prepare(`INSERT INTO mpa_runs (id, workspace_id, title, goal, status, campaign_id, order_index)
-          VALUES ('run-2', 'ws-1', 'Run 2', 'Build feature B', 'paused', 'camp-1', 1)`).run()
+        db.prepare(
+          `INSERT INTO mpa_campaigns (id, workspace_id, title, status)
+          VALUES ('camp-1', 'ws-1', 'Campaign 1', 'running')`
+        ).run()
+        db.prepare(
+          `INSERT INTO mpa_runs (id, workspace_id, title, goal, status, campaign_id, order_index)
+          VALUES ('run-1', 'ws-1', 'Run 1', 'Build feature A', 'running', 'camp-1', 0)`
+        ).run()
+        db.prepare(
+          `INSERT INTO mpa_runs (id, workspace_id, title, goal, status, campaign_id, order_index)
+          VALUES ('run-2', 'ws-1', 'Run 2', 'Build feature B', 'paused', 'camp-1', 1)`
+        ).run()
 
-        const runs = db.prepare('SELECT * FROM mpa_runs WHERE campaign_id = ?').all('camp-1') as unknown[]
+        const runs = db
+          .prepare('SELECT * FROM mpa_runs WHERE campaign_id = ?')
+          .all('camp-1') as unknown[]
         assert.equal(runs.length, 2)
       } finally {
         db.close()
@@ -289,11 +365,15 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO council_sessions (id, workspace_id, input_type, input_content, status, phase, verdict_json)
+        db.prepare(
+          `INSERT INTO council_sessions (id, workspace_id, input_type, input_content, status, phase, verdict_json)
           VALUES ('cs-1', 'ws-1', 'plan', 'Architecture Review', 'completed', 'framing',
-                  '{"recommendation":"approve"}')`).run()
+                  '{"recommendation":"approve"}')`
+        ).run()
 
-        const session = db.prepare('SELECT * FROM council_sessions WHERE id = ?').get('cs-1') as Record<string, unknown>
+        const session = db
+          .prepare('SELECT * FROM council_sessions WHERE id = ?')
+          .get('cs-1') as Record<string, unknown>
         assert.equal(session.input_content, 'Architecture Review')
         assert.equal(session.phase, 'framing')
         assert.ok(typeof session.verdict_json === 'string')
@@ -310,21 +390,29 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
-          VALUES ('chat', 'ws-1', 100, 50, 5)`).run()
-        db.prepare(`INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
-          VALUES ('chat', 'ws-1', 200, 100, 10)`).run()
-        db.prepare(`INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
-          VALUES ('audit', 'ws-1', 500, 200, 20)`).run()
+        db.prepare(
+          `INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
+          VALUES ('chat', 'ws-1', 100, 50, 5)`
+        ).run()
+        db.prepare(
+          `INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
+          VALUES ('chat', 'ws-1', 200, 100, 10)`
+        ).run()
+        db.prepare(
+          `INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
+          VALUES ('audit', 'ws-1', 500, 200, 20)`
+        ).run()
 
-        const chatTotal = db.prepare(
-          `SELECT SUM(cost_cents) as total FROM usage_log WHERE workspace_id = ? AND feature = ?`
-        ).get('ws-1', 'chat') as { total: number }
+        const chatTotal = db
+          .prepare(
+            `SELECT SUM(cost_cents) as total FROM usage_log WHERE workspace_id = ? AND feature = ?`
+          )
+          .get('ws-1', 'chat') as { total: number }
         assert.equal(chatTotal.total, 15)
 
-        const allTotal = db.prepare(
-          `SELECT SUM(cost_cents) as total FROM usage_log WHERE workspace_id = ?`
-        ).get('ws-1') as { total: number }
+        const allTotal = db
+          .prepare(`SELECT SUM(cost_cents) as total FROM usage_log WHERE workspace_id = ?`)
+          .get('ws-1') as { total: number }
         assert.equal(allTotal.total, 35)
       } finally {
         db.close()
@@ -340,10 +428,15 @@ if (!env) {
       try {
         seedWorkspace(db)
         seedConversation(db)
-        db.prepare(`INSERT INTO plans (id, workspace_id, source, source_id, title, structured_plan_json, status)
-          VALUES ('plan-1', 'ws-1', 'grill', 'src-1', 'Test Plan', '{}', 'saved')`).run()
+        db.prepare(
+          `INSERT INTO plans (id, workspace_id, source, source_id, title, structured_plan_json, status)
+          VALUES ('plan-1', 'ws-1', 'grill', 'src-1', 'Test Plan', '{}', 'saved')`
+        ).run()
 
-        const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get('plan-1') as Record<string, unknown>
+        const plan = db.prepare('SELECT * FROM plans WHERE id = ?').get('plan-1') as Record<
+          string,
+          unknown
+        >
         assert.equal(plan.source, 'grill')
         assert.equal(plan.title, 'Test Plan')
         assert.equal(plan.status, 'saved')
@@ -357,12 +450,18 @@ if (!env) {
       try {
         seedWorkspace(db)
         seedConversation(db)
-        db.prepare(`INSERT INTO plans (id, workspace_id, source, source_id, title, structured_plan_json, status)
-          VALUES ('p-1', 'ws-1', 'audit', 'src-1', 'Plan A', '{}', 'saved')`).run()
-        db.prepare(`INSERT INTO plans (id, workspace_id, source, source_id, title, structured_plan_json, status)
-          VALUES ('p-2', 'ws-1', 'grill', 'src-2', 'Plan B', '{}', 'archived')`).run()
+        db.prepare(
+          `INSERT INTO plans (id, workspace_id, source, source_id, title, structured_plan_json, status)
+          VALUES ('p-1', 'ws-1', 'audit', 'src-1', 'Plan A', '{}', 'saved')`
+        ).run()
+        db.prepare(
+          `INSERT INTO plans (id, workspace_id, source, source_id, title, structured_plan_json, status)
+          VALUES ('p-2', 'ws-1', 'grill', 'src-2', 'Plan B', '{}', 'archived')`
+        ).run()
 
-        const plans = db.prepare('SELECT * FROM plans WHERE workspace_id = ?').all('ws-1') as unknown[]
+        const plans = db
+          .prepare('SELECT * FROM plans WHERE workspace_id = ?')
+          .all('ws-1') as unknown[]
         assert.equal(plans.length, 2)
       } finally {
         db.close()
@@ -377,10 +476,14 @@ if (!env) {
       const db = createTestDb()
       try {
         seedWorkspace(db)
-        db.prepare(`INSERT INTO memory_facts (id, workspace_id, category, title, content, source_type, source_ref)
-          VALUES ('mem-1', 'ws-1', 'convention', 'Pattern', 'Important pattern', 'manual', 'test')`).run()
+        db.prepare(
+          `INSERT INTO memory_facts (id, workspace_id, category, title, content, source_type, source_ref)
+          VALUES ('mem-1', 'ws-1', 'convention', 'Pattern', 'Important pattern', 'manual', 'test')`
+        ).run()
 
-        const mem = db.prepare('SELECT * FROM memory_facts WHERE workspace_id = ?').get('ws-1') as Record<string, unknown>
+        const mem = db
+          .prepare('SELECT * FROM memory_facts WHERE workspace_id = ?')
+          .get('ws-1') as Record<string, unknown>
         assert.ok(mem)
         assert.equal(mem.content, 'Important pattern')
         assert.equal(mem.category, 'convention')
@@ -392,10 +495,14 @@ if (!env) {
     test('memory_fact_without_workspace_scope', () => {
       const db = createTestDb()
       try {
-        db.prepare(`INSERT INTO memory_facts (id, category, title, content, source_type, source_ref)
-          VALUES ('mem-global', 'reference', 'Note', 'Global note', 'manual', 'test')`).run()
+        db.prepare(
+          `INSERT INTO memory_facts (id, category, title, content, source_type, source_ref)
+          VALUES ('mem-global', 'reference', 'Note', 'Global note', 'manual', 'test')`
+        ).run()
 
-        const mem = db.prepare('SELECT * FROM memory_facts WHERE id = ?').get('mem-global') as Record<string, unknown>
+        const mem = db
+          .prepare('SELECT * FROM memory_facts WHERE id = ?')
+          .get('mem-global') as Record<string, unknown>
         assert.ok(mem)
         assert.equal(mem.workspace_id, null)
       } finally {
@@ -410,9 +517,14 @@ if (!env) {
     test('set_and_get_preference', () => {
       const db = createTestDb()
       try {
-        db.prepare(`INSERT OR REPLACE INTO app_preferences (key, value) VALUES (?, ?)`).run('theme', 'dark')
+        db.prepare(`INSERT OR REPLACE INTO app_preferences (key, value) VALUES (?, ?)`).run(
+          'theme',
+          'dark'
+        )
 
-        const pref = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('theme') as { value: string }
+        const pref = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('theme') as {
+          value: string
+        }
         assert.equal(pref.value, 'dark')
       } finally {
         db.close()
@@ -422,10 +534,18 @@ if (!env) {
     test('update_existing_preference', () => {
       const db = createTestDb()
       try {
-        db.prepare(`INSERT OR REPLACE INTO app_preferences (key, value) VALUES (?, ?)`).run('theme', 'light')
-        db.prepare(`INSERT OR REPLACE INTO app_preferences (key, value) VALUES (?, ?)`).run('theme', 'dark')
+        db.prepare(`INSERT OR REPLACE INTO app_preferences (key, value) VALUES (?, ?)`).run(
+          'theme',
+          'light'
+        )
+        db.prepare(`INSERT OR REPLACE INTO app_preferences (key, value) VALUES (?, ?)`).run(
+          'theme',
+          'dark'
+        )
 
-        const pref = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('theme') as { value: string }
+        const pref = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('theme') as {
+          value: string
+        }
         assert.equal(pref.value, 'dark')
       } finally {
         db.close()
@@ -435,7 +555,9 @@ if (!env) {
     test('missing_preference_returns_undefined', () => {
       const db = createTestDb()
       try {
-        const pref = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('nonexistent')
+        const pref = db
+          .prepare('SELECT value FROM app_preferences WHERE key = ?')
+          .get('nonexistent')
         assert.equal(pref, undefined)
       } finally {
         db.close()

@@ -37,7 +37,11 @@ const repoServiceMock = {
   listBranches: createSpy(async () => ({ local: ['main'], remote: ['main'], current: 'main' })),
   getPushStatus: createSpy(async () => ({ branch: 'main', commitsAhead: 0, hasRemote: true })),
   getRefDiffFiles: createSpy(async () => []),
-  getRefFileDiff: createSpy(async () => ({ oldContent: '', newContent: '', language: 'typescript' })),
+  getRefFileDiff: createSpy(async () => ({
+    oldContent: '',
+    newContent: '',
+    language: 'typescript'
+  })),
   fetchOrigin: createSpy(async () => ({ fetched: true }))
 }
 mockService('repo.service', { repoService: repoServiceMock })

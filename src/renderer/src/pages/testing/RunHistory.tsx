@@ -80,8 +80,7 @@ export default function RunHistory({
       <div className="flex gap-2 overflow-x-auto px-3 py-2 pb-3">
         {runs.map((run) => {
           const isActive = run.id === selectedRunId
-          const total =
-            run.totalPassed + run.totalFailed + run.totalSkipped + run.totalError
+          const total = run.totalPassed + run.totalFailed + run.totalSkipped + run.totalError
           const duration = runDuration(run)
 
           return (
@@ -126,9 +125,7 @@ export default function RunHistory({
                       {run.totalError > 0 && (
                         <span className="text-warning">{run.totalError}!</span>
                       )}
-                      {run.totalSkipped > 0 && (
-                        <span>{run.totalSkipped} skip</span>
-                      )}
+                      {run.totalSkipped > 0 && <span>{run.totalSkipped} skip</span>}
                       <span className="text-text-muted">/ {total}</span>
                     </div>
                   </div>
@@ -139,13 +136,22 @@ export default function RunHistory({
               {total > 0 && (
                 <div className="h-1 rounded-full bg-surface-base overflow-hidden flex w-full mt-1.5">
                   {run.totalPassed > 0 && (
-                    <div className="bg-success" style={{ width: `${(run.totalPassed / total) * 100}%` }} />
+                    <div
+                      className="bg-success"
+                      style={{ width: `${(run.totalPassed / total) * 100}%` }}
+                    />
                   )}
                   {run.totalFailed > 0 && (
-                    <div className="bg-danger" style={{ width: `${(run.totalFailed / total) * 100}%` }} />
+                    <div
+                      className="bg-danger"
+                      style={{ width: `${(run.totalFailed / total) * 100}%` }}
+                    />
                   )}
                   {run.totalError > 0 && (
-                    <div className="bg-warning" style={{ width: `${(run.totalError / total) * 100}%` }} />
+                    <div
+                      className="bg-warning"
+                      style={{ width: `${(run.totalError / total) * 100}%` }}
+                    />
                   )}
                 </div>
               )}

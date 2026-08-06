@@ -86,7 +86,10 @@ test.describe('Error Recovery', () => {
     const spinner = banner.locator('.animate-spin')
     const warningIcon = banner.locator('svg')
     const hasSpinner = await spinner.isVisible({ timeout: 1_000 }).catch(() => false)
-    const hasIcon = await warningIcon.first().isVisible({ timeout: 1_000 }).catch(() => false)
+    const hasIcon = await warningIcon
+      .first()
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
 
     expect(hasSpinner || hasIcon).toBeTruthy()
   })

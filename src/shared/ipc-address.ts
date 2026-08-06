@@ -10,8 +10,7 @@
  */
 
 export type IpcAddress =
-  | { type: 'unix'; path: string }
-  | { type: 'tcp'; host: string; port: number }
+  { type: 'unix'; path: string } | { type: 'tcp'; host: string; port: number }
 
 /**
  * Parse an IPC_SOCKET_PATH value into a typed address.

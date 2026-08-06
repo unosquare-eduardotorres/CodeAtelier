@@ -434,7 +434,10 @@ if (extractionLoaded) {
 
     test('prompt instructs JSON output per line', () => {
       assert.ok(extractionSource.includes('one per line'))
-      assert.ok(extractionSource.includes('Extract UP TO'), 'Prompt should instruct dynamic extraction budget')
+      assert.ok(
+        extractionSource.includes('Extract UP TO'),
+        'Prompt should instruct dynamic extraction budget'
+      )
     })
 
     test('prompt lists all 5 valid categories', () => {
@@ -457,7 +460,10 @@ if (extractionLoaded) {
       'preference',
       'reference'
     ] as const
-    function parseExtractedFacts(text: string, maxFacts: number = 3): Array<{
+    function parseExtractedFacts(
+      text: string,
+      maxFacts: number = 3
+    ): Array<{
       category: string
       title: string
       content: string

@@ -15,8 +15,14 @@ import type {
   QuestionAnswerState
 } from '../../../shared/blueprint-clarify-parsers'
 import { parseBlueprintPlan, parseBlueprintTasks } from '../../../shared/blueprint-artifact-parsers'
-import { journalEventsToChatMessages, type JournalEvent } from '../../../shared/blueprint-journal-mapper'
-import { resolveHydrationAction, resolvePostFetchAction } from '../../../shared/blueprint-hydration-helpers'
+import {
+  journalEventsToChatMessages,
+  type JournalEvent
+} from '../../../shared/blueprint-journal-mapper'
+import {
+  resolveHydrationAction,
+  resolvePostFetchAction
+} from '../../../shared/blueprint-hydration-helpers'
 import type {
   Blueprint,
   BlueprintWithDetails,
@@ -33,7 +39,12 @@ export type BlueprintChatMessage =
   | { type: 'user'; content: string; timestamp: number }
   | { type: 'system'; content: string; timestamp: number }
   | { type: 'findings'; findings: ClarifyFindingsBlock; round: number; timestamp: number }
-  | { type: 'qa'; questions: ClarifyQuestion[]; answers: Record<string, QuestionAnswerState>; timestamp: number }
+  | {
+      type: 'qa'
+      questions: ClarifyQuestion[]
+      answers: Record<string, QuestionAnswerState>
+      timestamp: number
+    }
   | { type: 'plan'; plan: Record<string, unknown>; timestamp: number }
   | { type: 'tasks'; tasks: Record<string, unknown>; timestamp: number }
 
@@ -57,7 +68,11 @@ export function formatPhaseDuration(ms: number): string {
 }
 
 // Phase 1: Re-export mapper from shared module for consumers importing from the store
-export { journalEventsToChatMessages, type JournalEvent, type HydratedChatMessage } from '../../../shared/blueprint-journal-mapper'
+export {
+  journalEventsToChatMessages,
+  type JournalEvent,
+  type HydratedChatMessage
+} from '../../../shared/blueprint-journal-mapper'
 
 // ── Cancelled-event guard ──
 
@@ -170,10 +185,17 @@ interface BlueprintState {
     preflight?: {
       result: {
         checks: Array<{
-          id: string; name: string; kind: string; status: string
-          message: string; remediation?: string; sources: string[]
+          id: string
+          name: string
+          kind: string
+          status: string
+          message: string
+          remediation?: string
+          sources: string[]
         }>
-        ranAt: string; hasBlockers: boolean; hasWarnings: boolean
+        ranAt: string
+        hasBlockers: boolean
+        hasWarnings: boolean
       }
       overridden: boolean
     }
@@ -240,7 +262,12 @@ interface BlueprintState {
   cancelBlueprint: (workspaceId: string) => Promise<string | null>
   respondToApproval: (blueprintId: string, approved: boolean, feedback?: string) => Promise<void>
   rerunPreflight: (blueprintId: string, workspaceId: string) => Promise<void>
-  sendClarifyAnswer: (blueprintId: string, workspaceId: string, message: string, answers?: Record<string, QuestionAnswerState>) => Promise<void>
+  sendClarifyAnswer: (
+    blueprintId: string,
+    workspaceId: string,
+    message: string,
+    answers?: Record<string, QuestionAnswerState>
+  ) => Promise<void>
   skipClarify: (blueprintId: string) => Promise<void>
   proceedClarifyGate: (blueprintId: string, workspaceId: string) => Promise<void>
   iterateClarify: (blueprintId: string, workspaceId: string) => Promise<void>
@@ -326,9 +353,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         }
         if (get().totalWaves === 0 && data.tasks?.length) {
           // Derive wave count from max wave number across tasks
-          const maxWave = data.tasks.reduce(
-            (max, t) => Math.max(max, t.wave ?? 0), 0
-          )
+          const maxWave = data.tasks.reduce((max, t) => Math.max(max, t.wave ?? 0), 0)
           if (maxWave > 0) updates.totalWaves = maxWave
         }
 
@@ -472,7 +497,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       set((s) => ({ history: s.history.filter((b) => b.id !== blueprintId) }))
     } catch (error) {
       rendererLog.error('Failed to delete blueprint:', error)
-      set({ lastError: { blueprintId, message: error instanceof Error ? error.message : String(error) } })
+      set({
+        lastError: { blueprintId, message: error instanceof Error ? error.message : String(error) }
+      })
     }
   },
 
@@ -524,7 +551,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     }
   },
 
-  sendClarifyAnswer: async (blueprintId: string, workspaceId: string, message: string, answers?: Record<string, QuestionAnswerState>) => {
+  sendClarifyAnswer: async (
+    blueprintId: string,
+    workspaceId: string,
+    message: string,
+    answers?: Record<string, QuestionAnswerState>
+  ) => {
     if (get().clarifyInFlight) return // B3-FIX: block double-click
     // B3-FIX: Capture prior state for rollback
     const prior = {
@@ -537,7 +569,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     set((state) => {
       const msgs = [...state.chatMessages]
       if (answers && currentQuestions) {
-        msgs.push({ type: 'qa' as const, questions: currentQuestions, answers, timestamp: Date.now() })
+        msgs.push({
+          type: 'qa' as const,
+          questions: currentQuestions,
+          answers,
+          timestamp: Date.now()
+        })
       } else {
         msgs.push({ type: 'user' as const, content: message, timestamp: Date.now() })
       }
@@ -563,7 +600,13 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   },
 
   skipClarify: async (blueprintId: string) => {
-    set({ clarifyAwaitingInput: false, clarifyQuestions: null, clarifyFindings: null, clarifyGateReady: false, clarifyBlueprintId: null })
+    set({
+      clarifyAwaitingInput: false,
+      clarifyQuestions: null,
+      clarifyFindings: null,
+      clarifyGateReady: false,
+      clarifyBlueprintId: null
+    })
     try {
       await window.api.blueprintSkipClarify({ blueprintId })
     } catch (error) {
@@ -584,7 +627,10 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyQuestions: null,
       clarifyInFlight: true,
       // Audit trail: system message
-      chatMessages: [...state.chatMessages, { type: 'system' as const, content: 'Continuing to Plan phase', timestamp: Date.now() }]
+      chatMessages: [
+        ...state.chatMessages,
+        { type: 'system' as const, content: 'Continuing to Plan phase', timestamp: Date.now() }
+      ]
     }))
     try {
       await window.api.blueprintClarifyProceed({ blueprintId, workspaceId })
@@ -613,7 +659,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       clarifyQuestions: null,
       clarifyInFlight: true,
       // Audit trail: system message
-      chatMessages: [...state.chatMessages, { type: 'system' as const, content: 'Requested more clarification rounds', timestamp: Date.now() }]
+      chatMessages: [
+        ...state.chatMessages,
+        {
+          type: 'system' as const,
+          content: 'Requested more clarification rounds',
+          timestamp: Date.now()
+        }
+      ]
     }))
     try {
       await window.api.blueprintClarifyIterate({ blueprintId, workspaceId })
@@ -700,12 +753,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       })
 
       // B2-FIX: Hydrate clarify UI state on reload when pipeline is at clarify phase
-      const clarifyState = (status as Record<string, unknown>).clarifyState as {
-        awaitingGate: boolean
-        latestFindings: BlueprintState['clarifyFindings']
-        pendingQuestions: BlueprintState['clarifyQuestions']
-        awaitingInput: boolean
-      } | undefined
+      const clarifyState = (status as Record<string, unknown>).clarifyState as
+        | {
+            awaitingGate: boolean
+            latestFindings: BlueprintState['clarifyFindings']
+            pendingQuestions: BlueprintState['clarifyQuestions']
+            awaitingInput: boolean
+          }
+        | undefined
       if (clarifyState) {
         set({
           clarifyGateReady: clarifyState.awaitingGate,
@@ -829,7 +884,10 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (content.trim() || toolActivities.length > 0) {
         set((state) => {
           const now = Date.now()
-          const msgs = [...state.chatMessages, { type: 'agent' as const, content, toolActivities, timestamp: now }]
+          const msgs = [
+            ...state.chatMessages,
+            { type: 'agent' as const, content, toolActivities, timestamp: now }
+          ]
           if (parsedPlan) msgs.push({ type: 'plan' as const, plan: parsedPlan, timestamp: now })
           if (parsedTasks) msgs.push({ type: 'tasks' as const, tasks: parsedTasks, timestamp: now })
           return { chatMessages: msgs }
@@ -881,7 +939,10 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       set((state) => {
         // System message for EVERY phase start (unified transcript)
         const phaseLabel = data.phase.charAt(0).toUpperCase() + data.phase.slice(1)
-        const msgs = [...state.chatMessages, { type: 'system' as const, content: `${phaseLabel} phase started`, timestamp: now }]
+        const msgs = [
+          ...state.chatMessages,
+          { type: 'system' as const, content: `${phaseLabel} phase started`, timestamp: now }
+        ]
         return {
           currentPhase: data.phase as BlueprintPhaseType,
           isRunning: true,
@@ -889,7 +950,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           lastChunkAt: null,
           chatMessages: msgs,
           // Store phase goal for UI display
-          currentGoal: payloadData.goal as string | null ?? null,
+          currentGoal: (payloadData.goal as string | null) ?? null,
           // Part A: Clear running tasks on phase start
           runningTasks: {},
           // FIX-B: Clear wave task statuses on phase boundary so each fresh
@@ -916,7 +977,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       const action = resolveAction(data.workspaceId)
       if (action === 'drop') return
       const key = data.phase
-      const kind: StreamEvent['kind'] = (data as Record<string, unknown>).kind === 'tool' ? 'tool' : 'text'
+      const kind: StreamEvent['kind'] =
+        (data as Record<string, unknown>).kind === 'tool' ? 'tool' : 'text'
 
       // Resolve target stream store: keyed lane for build-phase tasks, un-keyed for all others.
       const taskId = data.taskId
@@ -928,8 +990,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         // Use real toolActivity from the forwarder when available; fall back
         // to a name-only stub for backward compatibility with old payloads.
         const rawTA = (data as Record<string, unknown>).toolActivity as
-          | Record<string, unknown>
-          | undefined
+          Record<string, unknown> | undefined
         targetStore.handleStreamChunk({
           type: 'tool_activity',
           toolActivity: rawTA
@@ -1028,8 +1089,10 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       const duration = startTs ? Date.now() - startTs : null
 
       // Store completion metrics if provided
-      const completionMetrics = (data as Record<string, unknown>).completionMetrics as Record<string, unknown> | undefined
-      const completionData = (data as Record<string, unknown>).completion as Record<string, unknown> | undefined
+      const completionMetrics = (data as Record<string, unknown>).completionMetrics as
+        Record<string, unknown> | undefined
+      const completionData = (data as Record<string, unknown>).completion as
+        Record<string, unknown> | undefined
 
       // System message with duration
       const phaseLabel = data.phase.charAt(0).toUpperCase() + data.phase.slice(1)
@@ -1041,10 +1104,14 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         phaseDurations: duration
           ? { ...state.phaseDurations, [phaseKey]: duration }
           : state.phaseDurations,
-        phaseCompletions: (completionMetrics || completionData)
-          ? { ...state.phaseCompletions, [phaseKey]: completionMetrics ?? completionData ?? {} }
-          : state.phaseCompletions,
-        chatMessages: [...state.chatMessages, { type: 'system' as const, content: systemMsg, timestamp: Date.now() }]
+        phaseCompletions:
+          completionMetrics || completionData
+            ? { ...state.phaseCompletions, [phaseKey]: completionMetrics ?? completionData ?? {} }
+            : state.phaseCompletions,
+        chatMessages: [
+          ...state.chatMessages,
+          { type: 'system' as const, content: systemMsg, timestamp: Date.now() }
+        ]
       }))
 
       // Refresh full blueprint details so the phases array stays complete
@@ -1057,7 +1124,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // BP-REMEDIATION-AWARE: Check remediationTriggered before de-adopting.
       const remediationTriggered =
         (data as Record<string, unknown>).remediationTriggered === true ||
-        ((data as Record<string, unknown>).completion as Record<string, unknown> | undefined)?._remediationTriggered === true
+        ((data as Record<string, unknown>).completion as Record<string, unknown> | undefined)
+          ?._remediationTriggered === true
 
       if (data.status === 'complete' && data.phase === 'verify' && !remediationTriggered) {
         const wsId = get().activeWorkspaceId
@@ -1086,9 +1154,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         set({
           isRunning: false,
           activeWorkspaceId: null,
-          lastError: errorMsg
-            ? { blueprintId: data.blueprintId, message: errorMsg }
-            : null
+          lastError: errorMsg ? { blueprintId: data.blueprintId, message: errorMsg } : null
         })
         if (wsId) void get().loadHistory(wsId)
       }
@@ -1102,21 +1168,13 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // Merge artifact into currentBlueprint.phases[].artifactsJson so the
       // Deliverables view can display phase outputs during execution.
       const state = get()
-      if (
-        state.currentBlueprint &&
-        state.currentBlueprint.id === data.blueprintId
-      ) {
-        const phaseIndex = state.currentBlueprint.phases.findIndex(
-          (p) => p.phase === data.phase
-        )
+      if (state.currentBlueprint && state.currentBlueprint.id === data.blueprintId) {
+        const phaseIndex = state.currentBlueprint.phases.findIndex((p) => p.phase === data.phase)
         if (phaseIndex !== -1) {
           const updatedPhases = [...state.currentBlueprint.phases]
           updatedPhases[phaseIndex] = {
             ...updatedPhases[phaseIndex],
-            artifactsJson: [
-              ...updatedPhases[phaseIndex].artifactsJson,
-              data.artifact
-            ]
+            artifactsJson: [...updatedPhases[phaseIndex].artifactsJson, data.artifact]
           }
           set({
             currentBlueprint: {
@@ -1130,20 +1188,25 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
 
     // ── Clarify-specific events ──
 
-    safeSubscribe(window.api.onBlueprintClarifyAwaitingInput, 'onBlueprintClarifyAwaitingInput', (data) => {
-      if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
-      if (resolveAction(data.workspaceId) === 'drop') return
-      rendererLog.info(`[blueprint] Clarify awaiting input for ${data.blueprintId}`)
-      // Commit streamed content as agent bubble
-      commitStreamAsAgentMessage()
-      // Only set awaitingInput if no questions are already pending (questions win)
-      if (!get().clarifyQuestions) {
-        set({ clarifyAwaitingInput: true, clarifyBlueprintId: data.blueprintId })
+    safeSubscribe(
+      window.api.onBlueprintClarifyAwaitingInput,
+      'onBlueprintClarifyAwaitingInput',
+      (data) => {
+        if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
+        if (resolveAction(data.workspaceId) === 'drop') return
+        rendererLog.info(`[blueprint] Clarify awaiting input for ${data.blueprintId}`)
+        // Commit streamed content as agent bubble
+        commitStreamAsAgentMessage()
+        // Only set awaitingInput if no questions are already pending (questions win)
+        if (!get().clarifyQuestions) {
+          set({ clarifyAwaitingInput: true, clarifyBlueprintId: data.blueprintId })
+        }
       }
-    })
+    )
 
     safeSubscribe(
-      window.api.onBlueprintClarifyFindings as ((cb: (data: unknown) => void) => () => void) | undefined,
+      window.api.onBlueprintClarifyFindings as
+        ((cb: (data: unknown) => void) => () => void) | undefined,
       'onBlueprintClarifyFindings',
       (data: unknown) => {
         const payload = data as { blueprintId: string; workspaceId: string; findings: unknown }
@@ -1161,14 +1224,20 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           clarifyBlueprintId: payload.blueprintId,
           chatMessages: [
             ...state.chatMessages,
-            { type: 'findings' as const, findings, round: state.clarifyRound + 1, timestamp: Date.now() }
+            {
+              type: 'findings' as const,
+              findings,
+              round: state.clarifyRound + 1,
+              timestamp: Date.now()
+            }
           ]
         }))
       }
     )
 
     safeSubscribe(
-      window.api.onBlueprintClarifyQuestions as ((cb: (data: unknown) => void) => () => void) | undefined,
+      window.api.onBlueprintClarifyQuestions as
+        ((cb: (data: unknown) => void) => () => void) | undefined,
       'onBlueprintClarifyQuestions',
       (data: unknown) => {
         const payload = data as { blueprintId: string; workspaceId: string; questions: unknown }
@@ -1187,7 +1256,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     )
 
     safeSubscribe(
-      window.api.onBlueprintClarifyGate as ((cb: (data: unknown) => void) => () => void) | undefined,
+      window.api.onBlueprintClarifyGate as
+        ((cb: (data: unknown) => void) => () => void) | undefined,
       'onBlueprintClarifyGate',
       (data: unknown) => {
         const payload = data as { blueprintId: string; workspaceId: string; findings: unknown }
@@ -1226,7 +1296,11 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         },
         chatMessages: [
           ...state.chatMessages,
-          { type: 'system' as const, content: 'Awaiting approval — review the plan before building', timestamp: Date.now() }
+          {
+            type: 'system' as const,
+            content: 'Awaiting approval — review the plan before building',
+            timestamp: Date.now()
+          }
         ]
       }))
     })
@@ -1264,7 +1338,11 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         runningTasks: {},
         chatMessages: [
           ...state.chatMessages,
-          { type: 'system' as const, content: `Wave ${data.wave} started — ${data.taskCount} tasks`, timestamp: Date.now() }
+          {
+            type: 'system' as const,
+            content: `Wave ${data.wave} started — ${data.taskCount} tasks`,
+            timestamp: Date.now()
+          }
         ]
       }))
     })
@@ -1278,9 +1356,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         waveTasks: { ...state.waveTasks, [data.taskId]: 'running' as const },
         // Part A: Don't overwrite currentGoal — keep phase goal in header.
         // Store per-task goal in taskGoals for the panel detail view.
-        taskGoals: taskGoal
-          ? { ...state.taskGoals, [data.taskId]: taskGoal }
-          : state.taskGoals,
+        taskGoals: taskGoal ? { ...state.taskGoals, [data.taskId]: taskGoal } : state.taskGoals,
         // Part A: Track currently executing tasks for header chip (G3: multi-task).
         runningTasks: {
           ...state.runningTasks,
@@ -1320,7 +1396,11 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         runningTasks: {},
         chatMessages: [
           ...state.chatMessages,
-          { type: 'system' as const, content: `Wave ${data.wave} complete — ${data.status}`, timestamp: Date.now() }
+          {
+            type: 'system' as const,
+            content: `Wave ${data.wave} complete — ${data.status}`,
+            timestamp: Date.now()
+          }
         ]
       }))
       // Part E: Refresh currentBlueprint.tasks from DB for accurate statuses
@@ -1346,7 +1426,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     const terminalPhaseSeenAt = new Map<string, number>()
 
     // M7: Apply a snapshot to the store (shared by push + pull paths)
-    const applySnapshot = (snap: Parameters<Parameters<typeof window.api.onBlueprintStateSync>[0]>[0]): void => {
+    const applySnapshot = (
+      snap: Parameters<Parameters<typeof window.api.onBlueprintStateSync>[0]>[0]
+    ): void => {
       // Drop stale/reordered snapshots (per-workspace tracking)
       const lastSeq = lastSnapshotSeqByWorkspace.get(snap.workspaceId) ?? -1
       if (snap.seq <= lastSeq) return
@@ -1373,7 +1455,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         !snap.running &&
         Date.now() - terminalTs < 10_000
       ) {
-        rendererLog.info('[blueprint] Dropping stale phase-running snapshot after terminal completion')
+        rendererLog.info(
+          '[blueprint] Dropping stale phase-running snapshot after terminal completion'
+        )
         return
       }
 
@@ -1382,12 +1466,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // and flash the "Interrupted" banner. Only drop machineState==='idle' —
       // failed/cancelled snapshots must still propagate.
       const remTs = remediationPendingAt.get(snap.workspaceId)
-      if (
-        remTs &&
-        machineState === 'idle' &&
-        !snap.running &&
-        Date.now() - remTs < 10_000
-      ) {
+      if (remTs && machineState === 'idle' && !snap.running && Date.now() - remTs < 10_000) {
         rendererLog.info('[blueprint] Dropping transient idle snapshot during remediation handoff')
         return
       }
@@ -1396,8 +1475,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // running:true is impossible during correct operation, but if a stale
       // snapshot sneaks through, this prevents permanent "Analyzing…".
       const IDLE_OR_TERMINAL: BlueprintMachineState[] = ['idle', 'failed', 'cancelled']
-      const isRunning = machineState === 'phase-running'
-        || (snap.running && !IDLE_OR_TERMINAL.includes(machineState))
+      const isRunning =
+        machineState === 'phase-running' ||
+        (snap.running && !IDLE_OR_TERMINAL.includes(machineState))
       const isClarifyGate = machineState === 'awaiting-clarify-gate'
       const isClarifyQuestions = machineState === 'awaiting-clarify-questions'
       const isClarifyInput = machineState === 'awaiting-clarify-input'
@@ -1422,18 +1502,20 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
               reviewMarkdown: snap.pendingApproval.reviewMarkdown,
               // IPC boundary types preflight.result as Record<string,unknown> but runtime data
               // matches the strongly-typed PreflightResult shape used by the store
-              preflight: snap.pendingApproval.preflight as NonNullable<BlueprintState['pendingApproval']>['preflight']
+              preflight: snap.pendingApproval.preflight as NonNullable<
+                BlueprintState['pendingApproval']
+              >['preflight']
             }
           : null,
         // Wave state
-        currentWave: snap.wave
-          ? { wave: snap.wave.wave, taskCount: snap.wave.taskCount }
-          : null,
-        waveTasks: snap.wave?.tasks
-          ? (snap.wave.tasks as Record<string, BlueprintTaskStatus>)
-          : {},
+        currentWave: snap.wave ? { wave: snap.wave.wave, taskCount: snap.wave.taskCount } : null,
+        waveTasks: snap.wave?.tasks ? (snap.wave.tasks as Record<string, BlueprintTaskStatus>) : {},
         // G3: Running tasks from snapshot
-        runningTasks: (snap as Record<string, unknown>).runningTasks as Record<string, { taskId: string; description: string }> ?? {},
+        runningTasks:
+          ((snap as Record<string, unknown>).runningTasks as Record<
+            string,
+            { taskId: string; description: string }
+          >) ?? {},
         // Error state
         lastError: snap.lastError
           ? { blueprintId: snap.blueprintId ?? 'unknown', message: snap.lastError }
@@ -1450,7 +1532,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     // doesn't wait for the next state mutation to hydrate.
     const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id
     if (viewedWsId && typeof window.api.blueprintGetSnapshot === 'function') {
-      window.api.blueprintGetSnapshot({ workspaceId: viewedWsId })
+      window.api
+        .blueprintGetSnapshot({ workspaceId: viewedWsId })
         .then((snap) => {
           if (snap) applySnapshot(snap)
         })
@@ -1494,7 +1577,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     hydrationInFlight.add(blueprintId)
     try {
       rendererLog.info(`[blueprint] Hydrating transcript for ${blueprintId} (action=${action})`)
-      const events = await window.api.blueprintGetTranscript({ blueprintId }) as JournalEvent[]
+      const events = (await window.api.blueprintGetTranscript({ blueprintId })) as JournalEvent[]
       if (!events.length) {
         hydratedBlueprintId = blueprintId
         return
@@ -1513,7 +1596,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           chatMessages: messages,
           clarifyRound: findingsCount
         })
-        rendererLog.info(`[blueprint] Hydrated ${messages.length} transcript messages (${findingsCount} findings rounds)`)
+        rendererLog.info(
+          `[blueprint] Hydrated ${messages.length} transcript messages (${findingsCount} findings rounds)`
+        )
       } else {
         // BUG-5 fix: merge hydrated history with live messages that arrived
         // during the async fetch (restart-during-active-run race).
@@ -1524,7 +1609,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
           chatMessages: merged,
           clarifyRound: findingsCount
         })
-        rendererLog.info(`[blueprint] Merged ${messages.length} hydrated + ${liveMessages.length} live messages`)
+        rendererLog.info(
+          `[blueprint] Merged ${messages.length} hydrated + ${liveMessages.length} live messages`
+        )
       }
     } catch (error) {
       rendererLog.error('Failed to hydrate blueprint transcript:', error)

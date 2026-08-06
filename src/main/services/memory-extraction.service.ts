@@ -200,16 +200,13 @@ class MemoryExtractionService {
     // Git changes since session start
     if (workspacePath && startSha) {
       try {
-        const gitLog = execSync(
-          `git log --stat ${startSha}..HEAD 2>/dev/null || true`,
-          {
-            cwd: workspacePath,
-            timeout: 5000,
-            encoding: 'utf-8',
-            maxBuffer: 10_000,
-            windowsHide: true
-          }
-        ).trim()
+        const gitLog = execSync(`git log --stat ${startSha}..HEAD 2>/dev/null || true`, {
+          cwd: workspacePath,
+          timeout: 5000,
+          encoding: 'utf-8',
+          maxBuffer: 10_000,
+          windowsHide: true
+        }).trim()
         if (gitLog) {
           parts.push(`## Git Changes Since Session Start\n${gitLog.slice(0, 3000)}`)
         }
@@ -246,7 +243,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Session extraction: ${created} facts from conversation ${conversationId}`)
+        log.info(
+          `[MemoryExtraction] Session extraction: ${created} facts from conversation ${conversationId}`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Session extraction failed:', err)
@@ -369,7 +368,12 @@ class MemoryExtractionService {
     onProgress?: ProgressCallback
   ): Promise<number> {
     if (!existsSync(filePath)) {
-      onProgress?.({ status: 'error', message: 'File not found', source: 'document', timestamp: Date.now() })
+      onProgress?.({
+        status: 'error',
+        message: 'File not found',
+        source: 'document',
+        timestamp: Date.now()
+      })
       return 0
     }
 
@@ -402,35 +406,31 @@ class MemoryExtractionService {
     const { workspaceId, workspacePath, startSha, endSha } = params
 
     try {
-      const diffStat = execSync(
-        `git diff --stat ${startSha}..${endSha} 2>/dev/null || true`,
-        {
-          cwd: workspacePath,
-          timeout: 5000,
-          encoding: 'utf-8',
-          maxBuffer: 20_000,
-          windowsHide: true
-        }
-      ).trim()
+      const diffStat = execSync(`git diff --stat ${startSha}..${endSha} 2>/dev/null || true`, {
+        cwd: workspacePath,
+        timeout: 5000,
+        encoding: 'utf-8',
+        maxBuffer: 20_000,
+        windowsHide: true
+      }).trim()
 
       if (!diffStat || diffStat.length < 20) return
 
-      const logOutput = execSync(
-        `git log --oneline ${startSha}..${endSha} 2>/dev/null || true`,
-        {
-          cwd: workspacePath,
-          timeout: 5000,
-          encoding: 'utf-8',
-          maxBuffer: 10_000,
-          windowsHide: true
-        }
-      ).trim()
+      const logOutput = execSync(`git log --oneline ${startSha}..${endSha} 2>/dev/null || true`, {
+        cwd: workspacePath,
+        timeout: 5000,
+        encoding: 'utf-8',
+        maxBuffer: 10_000,
+        windowsHide: true
+      }).trim()
 
       // Extract touched file paths from diff stat
       const touchedPaths = diffStat
         .split('\n')
         .map((line) => line.trim().split(/\s+/)[0])
-        .filter((p) => p && !p.includes('changed') && !p.includes('insertion') && !p.includes('deletion'))
+        .filter(
+          (p) => p && !p.includes('changed') && !p.includes('insertion') && !p.includes('deletion')
+        )
 
       const prompt = buildExtractionPrompt(
         `## Commit Changes (${startSha.slice(0, 7)}..${endSha.slice(0, 7)})\n\n### Commits\n${logOutput.slice(0, 2000)}\n\n### Files Changed\n${diffStat.slice(0, 3000)}`
@@ -460,7 +460,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Commit extraction: ${created} facts from ${startSha.slice(0, 7)}..${endSha.slice(0, 7)}`)
+        log.info(
+          `[MemoryExtraction] Commit extraction: ${created} facts from ${startSha.slice(0, 7)}..${endSha.slice(0, 7)}`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Commit extraction failed:', err)
@@ -484,7 +486,10 @@ class MemoryExtractionService {
     workspacePath: string
     title: string
     status: 'complete' | 'failed'
-    phases: Array<{ phase: string; artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }> }>
+    phases: Array<{
+      phase: string
+      artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }>
+    }>
     tasks: Array<{ taskId: string; description: string; status: string }>
     clarifyQA?: Array<{ question: string; answer: string }>
   }): void {
@@ -499,11 +504,15 @@ class MemoryExtractionService {
     workspacePath: string
     title: string
     status: 'complete' | 'failed'
-    phases: Array<{ phase: string; artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }> }>
+    phases: Array<{
+      phase: string
+      artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }>
+    }>
     tasks: Array<{ taskId: string; description: string; status: string }>
     clarifyQA?: Array<{ question: string; answer: string }>
   }): Promise<void> {
-    const { blueprintId, workspaceId, workspacePath, title, status, phases, tasks, clarifyQA } = params
+    const { blueprintId, workspaceId, workspacePath, title, status, phases, tasks, clarifyQA } =
+      params
 
     const parts: string[] = []
     parts.push(`## Blueprint: ${title}\nFinal status: ${status}\n`)
@@ -532,7 +541,9 @@ class MemoryExtractionService {
     const completed = tasks.filter((t) => t.status === 'complete')
     const failed = tasks.filter((t) => t.status === 'failed')
     const skipped = tasks.filter((t) => t.status === 'skipped')
-    parts.push(`### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`)
+    parts.push(
+      `### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`
+    )
     if (failed.length > 0) {
       parts.push('#### Failed Tasks')
       for (const t of failed.slice(0, 10)) {
@@ -568,7 +579,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Blueprint extraction: ${created} facts from "${title}" (${status})`)
+        log.info(
+          `[MemoryExtraction] Blueprint extraction: ${created} facts from "${title}" (${status})`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Blueprint extraction failed:', err)
@@ -620,10 +633,21 @@ class MemoryExtractionService {
     }>
     durationMs: number
   }): Promise<void> {
-    const { workspaceId, workspacePath, conversationId, planTitle, planGoal, status, phases, durationMs } = params
+    const {
+      workspaceId,
+      workspacePath,
+      conversationId,
+      planTitle,
+      planGoal,
+      status,
+      phases,
+      durationMs
+    } = params
 
     const parts: string[] = []
-    parts.push(`## Chat Plan Execution: ${planTitle}\nFinal status: ${status}\nDuration: ${Math.round(durationMs / 1000)}s\n`)
+    parts.push(
+      `## Chat Plan Execution: ${planTitle}\nFinal status: ${status}\nDuration: ${Math.round(durationMs / 1000)}s\n`
+    )
 
     if (planGoal) {
       parts.push(`### Goal\n${planGoal}`)
@@ -632,24 +656,26 @@ class MemoryExtractionService {
     // Phase summary
     parts.push('### Phases')
     for (const phase of phases) {
-      const taskSummary = phase.tasks.length > 0
-        ? phase.tasks.map(t => `  - [${t.status}] ${t.title}`).join('\n')
-        : '  (no tasks)'
-      const filesSummary = phase.touchedFiles.length > 0
-        ? `  Files: ${phase.touchedFiles.join(', ')}`
-        : ''
-      parts.push(`- **${phase.phaseTitle}** (${phase.status})\n${taskSummary}${filesSummary ? '\n' + filesSummary : ''}`)
+      const taskSummary =
+        phase.tasks.length > 0
+          ? phase.tasks.map((t) => `  - [${t.status}] ${t.title}`).join('\n')
+          : '  (no tasks)'
+      const filesSummary =
+        phase.touchedFiles.length > 0 ? `  Files: ${phase.touchedFiles.join(', ')}` : ''
+      parts.push(
+        `- **${phase.phaseTitle}** (${phase.status})\n${taskSummary}${filesSummary ? '\n' + filesSummary : ''}`
+      )
     }
 
     // All touched files (deduped)
-    const allFiles = [...new Set(phases.flatMap(p => p.touchedFiles))]
+    const allFiles = [...new Set(phases.flatMap((p) => p.touchedFiles))]
     if (allFiles.length > 0) {
       parts.push(`### Files Modified\n${allFiles.slice(0, 30).join('\n')}`)
     }
 
     // Failed phases/tasks for gotcha extraction
-    const failedPhases = phases.filter(p => p.status === 'failed')
-    const failedTasks = phases.flatMap(p => p.tasks.filter(t => t.status === 'failed'))
+    const failedPhases = phases.filter((p) => p.status === 'failed')
+    const failedTasks = phases.flatMap((p) => p.tasks.filter((t) => t.status === 'failed'))
     if (failedPhases.length > 0 || failedTasks.length > 0) {
       parts.push('### Failures')
       for (const fp of failedPhases) {
@@ -688,7 +714,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Plan execution extraction: ${created} facts from "${planTitle}" (${status})`)
+        log.info(
+          `[MemoryExtraction] Plan execution extraction: ${created} facts from "${planTitle}" (${status})`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Plan execution extraction failed:', err)
@@ -710,9 +738,7 @@ class MemoryExtractionService {
 
     // Try Haiku extraction first
     try {
-      const prompt = buildExtractionPrompt(
-        `## Chat Message\n${messageContent.substring(0, 8000)}`
-      )
+      const prompt = buildExtractionPrompt(`## Chat Message\n${messageContent.substring(0, 8000)}`)
       const result = await this.spawnSummarizer(prompt, workspacePath ?? undefined, workspaceId)
       const facts = parseExtractedFacts(result)
 
@@ -760,7 +786,11 @@ class MemoryExtractionService {
 
     this.isBusy = true
     try {
-      onProgress?.({ source: 'document', status: 'running', message: 'Gathering project sources...' })
+      onProgress?.({
+        source: 'document',
+        status: 'running',
+        message: 'Gathering project sources...'
+      })
 
       const keyFiles = this.readKeyFiles(workspacePath)
       const treeListing = this.getTreeListing(workspacePath)
@@ -778,16 +808,30 @@ class MemoryExtractionService {
       let existingClaudeMd: string | null = null
       try {
         existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
-      } catch { /* none */ }
+      } catch {
+        /* none */
+      }
 
       let schemaContent: string | null = null
       try {
-        schemaContent = readFileSync(join(workspacePath, 'src/main/db/schema.sql'), 'utf-8')?.substring(0, 5000)
-      } catch { /* none */ }
+        schemaContent = readFileSync(
+          join(workspacePath, 'src/main/db/schema.sql'),
+          'utf-8'
+        )?.substring(0, 5000)
+      } catch {
+        /* none */
+      }
 
       onProgress?.({ source: 'document', status: 'running', message: 'Generating CLAUDE.md...' })
 
-      const prompt = buildRegeneratePrompt({ keyFiles, treeListing, agents, skills, existingClaudeMd, schemaContent })
+      const prompt = buildRegeneratePrompt({
+        keyFiles,
+        treeListing,
+        agents,
+        skills,
+        existingClaudeMd,
+        schemaContent
+      })
       // B2: Intentionally passes only workspacePath (no workspaceId) — regenerateClaudeMd
       // always uses the Claude CLI path because CLAUDE.md generation is a large-context task
       // ill-suited to the 10s local one-shot timeout.
@@ -825,22 +869,25 @@ class MemoryExtractionService {
 
     this.isBusy = true
     try {
-      onProgress?.({ source: 'document', status: 'running', message: 'Starting agentic CLAUDE.md generation...' })
+      onProgress?.({
+        source: 'document',
+        status: 'running',
+        message: 'Starting agentic CLAUDE.md generation...'
+      })
 
       // Read existing CLAUDE.md for context
       let existingClaudeMd = ''
       try {
         existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
-      } catch { /* none */ }
+      } catch {
+        /* none */
+      }
 
       const prompt = buildAgenticClaudeMdPrompt(existingClaudeMd)
 
       onProgress?.({ source: 'document', status: 'running', message: 'Agent exploring project...' })
 
-      const allowedTools = [
-        'Read', 'Grep', 'Glob',
-        ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-      ]
+      const allowedTools = ['Read', 'Grep', 'Glob', ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES]
 
       const result = await runAgenticClaude({
         workspaceId,
@@ -853,8 +900,16 @@ class MemoryExtractionService {
         mcpServers: ['code-graph'], // No memory tools for CLAUDE.md gen
         onLine: (line) => {
           // Surface progress to the UI
-          if (line.length > 10 && !line.startsWith(SENTINELS.BEGIN) && !line.startsWith(SENTINELS.END)) {
-            onProgress?.({ source: 'document', status: 'running', message: `Agent: ${line.substring(0, 100)}` })
+          if (
+            line.length > 10 &&
+            !line.startsWith(SENTINELS.BEGIN) &&
+            !line.startsWith(SENTINELS.END)
+          ) {
+            onProgress?.({
+              source: 'document',
+              status: 'running',
+              message: `Agent: ${line.substring(0, 100)}`
+            })
           }
         }
       })
@@ -870,14 +925,19 @@ class MemoryExtractionService {
       const trimmed = result.stdout.trim()
       if (trimmed.length > 50) {
         log.warn('[regenerateClaudeMdAgentic] Sentinels missing — falling back to full stdout')
-        onProgress?.({ source: 'document', status: 'done', message: 'CLAUDE.md generated (no sentinels)' })
+        onProgress?.({
+          source: 'document',
+          status: 'done',
+          message: 'CLAUDE.md generated (no sentinels)'
+        })
         return { success: true, content: trimmed }
       }
 
       // Empty output
-      const errorMsg = result.exitCode !== 0
-        ? `Claude CLI exited with code ${result.exitCode}`
-        : 'Agent produced no output'
+      const errorMsg =
+        result.exitCode !== 0
+          ? `Claude CLI exited with code ${result.exitCode}`
+          : 'Agent produced no output'
       log.error(`[regenerateClaudeMdAgentic] Failed: ${errorMsg}`)
       onProgress?.({ source: 'document', status: 'error', message: errorMsg })
       return { success: false, content: '', error: errorMsg }
@@ -954,11 +1014,18 @@ class MemoryExtractionService {
     throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
   }
 
-  private async spawnSummarizer(prompt: string, workspacePath?: string, workspaceId?: string): Promise<string> {
+  private async spawnSummarizer(
+    prompt: string,
+    workspacePath?: string,
+    workspaceId?: string
+  ): Promise<string> {
     // G5: Gate memoryFeed through resolveAssignment — route to local LLM when assigned
     // A2: Guard workspacePath — null paths fall through to the Claude CLI path below
     if (workspaceId && workspacePath) {
-      const assignment = resolveAssignment({ action: 'memoryFeed', ...buildResolveOpts(workspaceId) })
+      const assignment = resolveAssignment({
+        action: 'memoryFeed',
+        ...buildResolveOpts(workspaceId)
+      })
       if (assignment.provider === 'local-llm') {
         // A3: Local path does not wire an abort controller — bounded by
         // runOneShotLocal's internal 10s timeout (LOCAL_REQUEST_TIMEOUT_MS).
@@ -1009,7 +1076,8 @@ class MemoryExtractionService {
       const MAX_OUTPUT = 2 * 1024 * 1024
 
       child.stdout?.on('data', (data: Buffer) => {
-        if (stdout.length < MAX_OUTPUT) stdout += data.toString().slice(0, MAX_OUTPUT - stdout.length)
+        if (stdout.length < MAX_OUTPUT)
+          stdout += data.toString().slice(0, MAX_OUTPUT - stdout.length)
       })
       child.stderr?.on('data', (data: Buffer) => {
         const chunk = data.toString()
@@ -1023,7 +1091,8 @@ class MemoryExtractionService {
         if (code === 0 && stdout.trim()) {
           resolve(stdout.trim())
         } else {
-          const details = stderr.trim() || (stdout.trim() ? `Unexpected: ${stdout.slice(0, 200)}` : 'No output')
+          const details =
+            stderr.trim() || (stdout.trim() ? `Unexpected: ${stdout.slice(0, 200)}` : 'No output')
           reject(new Error(`Extraction failed (exit ${code}): ${details}`))
         }
       })
@@ -1046,19 +1115,36 @@ class MemoryExtractionService {
           const content = readFileSync(filePath, 'utf-8')
           sections.push(`### ${name}\n\`\`\`\n${content.substring(0, 5000)}\n\`\`\``)
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     return sections.join('\n\n')
   }
 
   private getTreeListing(workspacePath: string, depth = 3): string {
     const lines: string[] = []
-    const ignored = new Set(['node_modules', '.git', 'dist', 'out', 'build', '.next', '.cache', 'coverage', '.idea', '.vscode', '__pycache__', '.DS_Store'])
+    const ignored = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'out',
+      'build',
+      '.next',
+      '.cache',
+      'coverage',
+      '.idea',
+      '.vscode',
+      '__pycache__',
+      '.DS_Store'
+    ])
 
     const walk = (dir: string, prefix: string, currentDepth: number): void => {
       if (currentDepth > depth) return
       try {
-        const entries = readdirSync(dir).filter((e) => !ignored.has(e)).sort()
+        const entries = readdirSync(dir)
+          .filter((e) => !ignored.has(e))
+          .sort()
         for (const entry of entries) {
           const fullPath = join(dir, entry)
           try {
@@ -1069,9 +1155,13 @@ class MemoryExtractionService {
             } else {
               lines.push(`${prefix}${entry}`)
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
     walk(workspacePath, '', 0)
@@ -1108,7 +1198,13 @@ function resolveScopePaths(
 
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-const VALID_CATEGORIES: MemoryFactCategory[] = ['decision', 'convention', 'gotcha', 'preference', 'reference']
+const VALID_CATEGORIES: MemoryFactCategory[] = [
+  'decision',
+  'convention',
+  'gotcha',
+  'preference',
+  'reference'
+]
 
 /** Score content richness to determine extraction budget per chunk. */
 function estimateExtractionBudget(content: string, sourceRef: string): number {
@@ -1120,11 +1216,21 @@ function estimateExtractionBudget(content: string, sourceRef: string): number {
 
   // Decision language signals
   const decisionSignals = [
-    /\bwe chose\b/gi, /\bdecision\b/gi, /\bconvention\b/gi,
-    /\bmust\b/gi, /\bnever\b/gi, /\balways\b/gi,
-    /\barchitecture\b/gi, /\bpattern\b/gi, /\brequired?\b/gi,
-    /\bIMPORTANT\b/g, /\bWARNING\b/g, /\bNOTE\b/g,
-    /\bdo not\b/gi, /\bdon't\b/gi, /\bavoid\b/gi
+    /\bwe chose\b/gi,
+    /\bdecision\b/gi,
+    /\bconvention\b/gi,
+    /\bmust\b/gi,
+    /\bnever\b/gi,
+    /\balways\b/gi,
+    /\barchitecture\b/gi,
+    /\bpattern\b/gi,
+    /\brequired?\b/gi,
+    /\bIMPORTANT\b/g,
+    /\bWARNING\b/g,
+    /\bNOTE\b/g,
+    /\bdo not\b/gi,
+    /\bdon't\b/gi,
+    /\bavoid\b/gi
   ]
   for (const signal of decisionSignals) {
     score += Math.min((content.match(signal) || []).length, 3)
@@ -1219,13 +1325,22 @@ interface RegenerateSources {
 }
 
 function buildRegeneratePrompt(sources: RegenerateSources): string {
-  const agentLines = sources.agents.length > 0
-    ? sources.agents.map((a) => `- ${a.parsed.name}: ${a.parsed.description || 'no description'} (model: ${a.parsed.model}, skills: ${a.parsed.skills.join(', ') || 'none'})`).join('\n')
-    : '(none deployed)'
+  const agentLines =
+    sources.agents.length > 0
+      ? sources.agents
+          .map(
+            (a) =>
+              `- ${a.parsed.name}: ${a.parsed.description || 'no description'} (model: ${a.parsed.model}, skills: ${a.parsed.skills.join(', ') || 'none'})`
+          )
+          .join('\n')
+      : '(none deployed)'
 
-  const skillLines = sources.skills.length > 0
-    ? sources.skills.map((s) => `- ${s.name}: ${s.frontmatter?.description || 'no description'}`).join('\n')
-    : '(none deployed)'
+  const skillLines =
+    sources.skills.length > 0
+      ? sources.skills
+          .map((s) => `- ${s.name}: ${s.frontmatter?.description || 'no description'}`)
+          .join('\n')
+      : '(none deployed)'
 
   const existingSection = sources.existingClaudeMd
     ? `### Existing CLAUDE.md (for reference)\n${sources.existingClaudeMd.substring(0, 10000)}`

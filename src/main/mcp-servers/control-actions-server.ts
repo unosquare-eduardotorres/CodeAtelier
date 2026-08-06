@@ -59,7 +59,9 @@ function connectIpc(): void {
       ipcSocket = createConnection({ host: parsed.host, port: parsed.port })
       // Prevent idle TCP connection drops during long ask_user waits (Windows)
       ipcSocket.setKeepAlive(true, 30_000)
-      console.error(`[control-actions-server] Connecting to IPC via TCP: ${parsed.host}:${parsed.port}`)
+      console.error(
+        `[control-actions-server] Connecting to IPC via TCP: ${parsed.host}:${parsed.port}`
+      )
     } else {
       ipcSocket = createConnection(parsed.path)
       console.error(`[control-actions-server] Connecting to IPC via Unix socket: ${parsed.path}`)
@@ -194,11 +196,14 @@ const planSchema = z.object({
     .describe('Plan classification'),
   title: z.string().describe('Short title for the plan'),
   summary: z.string().describe('1-3 sentence overview'),
-  goal: z.string().optional().describe(
-    'Clear, measurable completion condition defining what "done" looks like. ' +
-    'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
-    'no regressions in existing tests"'
-  ),
+  goal: z
+    .string()
+    .optional()
+    .describe(
+      'Clear, measurable completion condition defining what "done" looks like. ' +
+        'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
+        'no regressions in existing tests"'
+    ),
   problemSummary: z.string().optional(),
   rootCause: z.string().optional(),
   decisions: z.array(z.object({ what: z.string(), why: z.string() })).optional(),
@@ -295,8 +300,8 @@ server.tool(
     const plan = planSchema.parse(args)
     console.error(
       `[control-actions-server] emit_plan called — title="${plan.title}" ` +
-      `phases=${plan.phases?.length ?? 0} ` +
-      `ipcConnected=${!!ipcSocket && !ipcSocket.destroyed}`
+        `phases=${plan.phases?.length ?? 0} ` +
+        `ipcConnected=${!!ipcSocket && !ipcSocket.destroyed}`
     )
     emitEvent('plan', plan)
     return {
@@ -393,7 +398,12 @@ server.tool(
     // Auto-approve safe tools without UI roundtrip
     if (shouldAutoApprove(tool_name, input, CONVERSATION_MODE)) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'allow', updatedInput: input }) }]
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ behavior: 'allow', updatedInput: input })
+          }
+        ]
       }
     }
 

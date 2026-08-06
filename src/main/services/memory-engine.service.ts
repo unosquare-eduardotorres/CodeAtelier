@@ -34,7 +34,7 @@ import type {
 const log = dbLogger
 
 // ── Similarity thresholds ───────────────────────────────────────────────────
-const DUPLICATE_THRESHOLD = 0.90
+const DUPLICATE_THRESHOLD = 0.9
 /** Relaxed threshold used during bootstrap so related-but-distinct facts survive. */
 const BOOTSTRAP_DUPLICATE_THRESHOLD = 0.93
 const AMBIGUOUS_THRESHOLD = 0.82 // raised from 0.70 — reduces false-positive LLM classifier calls
@@ -224,7 +224,9 @@ class MemoryEngineService {
     if (!embedding && workspaceId && !params.skipSimilarity) {
       const existingMatch = this.titleFallbackDedup(workspaceId, params.title, params.category)
       if (existingMatch) {
-        log.info(`[MemoryEngine] Title-fallback dedup: "${params.title}" matches existing ${existingMatch.id}`)
+        log.info(
+          `[MemoryEngine] Title-fallback dedup: "${params.title}" matches existing ${existingMatch.id}`
+        )
         return this.handleDuplicate(existingMatch, params.sourceType)
       }
     }
@@ -232,7 +234,9 @@ class MemoryEngineService {
     // 4. No match or no embedding — insert as new fact.
     //    Capture cap only gates new-fact creation, not re-confirmations above.
     if (!this.checkCaptureCap(params)) {
-      log.debug(`[MemoryEngine] Capture cap reached for ${params.sourceType}/${params.sourceRef}, skipping new fact`)
+      log.debug(
+        `[MemoryEngine] Capture cap reached for ${params.sourceType}/${params.sourceRef}, skipping new fact`
+      )
       return null
     }
 
@@ -255,7 +259,9 @@ class MemoryEngineService {
       memoryFactRepository.setVolatile(fact.id, true)
     }
 
-    log.info(`[MemoryEngine] New fact created: ${fact.id} (tier=${fact.tier}, pending=${embeddingPending}, volatile=${isVolatile})`)
+    log.info(
+      `[MemoryEngine] New fact created: ${fact.id} (tier=${fact.tier}, pending=${embeddingPending}, volatile=${isVolatile})`
+    )
 
     // 5. Do NOT record a confirmation at creation — the fact starts at T0 and must
     // earn its first confirmation through a separate re-observation event.
@@ -364,9 +370,7 @@ class MemoryEngineService {
     // Consume a capture-cap slot — this is a real mutation (content rewrite)
     this.incrementCaptureCap(newParams)
 
-    log.info(
-      `[MemoryEngine] Updated in-place: ${existing.id} (volatile=${existing.volatile})`
-    )
+    log.info(`[MemoryEngine] Updated in-place: ${existing.id} (volatile=${existing.volatile})`)
     return confirmed
   }
 
@@ -384,7 +388,10 @@ class MemoryEngineService {
     // Build context from top matches for classifier
     const matchContext = topMatches
       .slice(0, 3)
-      .map((m, i) => `Match ${i + 1} (similarity: ${m.similarity.toFixed(3)}):\n  Title: ${m.fact.title}\n  Content: ${m.fact.content}`)
+      .map(
+        (m, i) =>
+          `Match ${i + 1} (similarity: ${m.similarity.toFixed(3)}):\n  Title: ${m.fact.title}\n  Content: ${m.fact.content}`
+      )
       .join('\n\n')
 
     const prompt = `You are a knowledge base curator. A new fact is being proposed. Compare it against the existing facts and decide what to do.
@@ -479,63 +486,63 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
     this.draining = true
     try {
-    while (this.classifyQueue.length > 0) {
-      const item = this.classifyQueue.shift()!
+      while (this.classifyQueue.length > 0) {
+        const item = this.classifyQueue.shift()!
 
-      try {
-        // Re-compute similarity against current embeddings (fresh, not stale)
-        const candidates = memoryFactRepository.findWithEmbeddings(item.workspaceId)
-        const queryVec = new Float32Array(
-          item.embedding.buffer,
-          item.embedding.byteOffset,
-          item.embedding.byteLength / 4
-        )
-        const scored = candidates
-          .map(({ fact, embedding: existingVec }) => ({
-            fact,
-            similarity: cosineSimilarity(queryVec, existingVec)
-          }))
-          .sort((a, b) => b.similarity - a.similarity)
-          .slice(0, TOP_K_MATCHES)
-
-        const bestMatch = scored[0]
-        if (!bestMatch || bestMatch.similarity < AMBIGUOUS_THRESHOLD) {
-          // No match — resolve undefined so writeFact inserts as new
-          item.resolve(undefined)
-          continue
-        }
-
-        // Fast-path: mirror the pipeline's branch order to skip the LLM classifier
-        // when fresh similarity is high enough for a deterministic outcome.
-        const isVolatile = this.detectVolatility(item.factText)
-        const effectiveDupThreshold = this.resolveDupThreshold(item.sourceType)
-        if (
-          isVolatile &&
-          bestMatch.similarity >= effectiveDupThreshold &&
-          bestMatch.fact.category === item.params.category
-        ) {
-          item.resolve(this.handleUpdate(bestMatch.fact, item.params, item.embedding))
-          continue
-        }
-        if (bestMatch.similarity >= AUTO_MERGE_THRESHOLD) {
-          item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
-          continue
-        }
-        if (bestMatch.similarity >= effectiveDupThreshold) {
-          item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
-          continue
-        }
-
-        // Build the real prompt with actual match context
-        const matchContext = scored
-          .slice(0, 3)
-          .map(
-            (m, i) =>
-              `Match ${i + 1} (similarity: ${m.similarity.toFixed(3)}):\n  Title: ${m.fact.title}\n  Content: ${m.fact.content}`
+        try {
+          // Re-compute similarity against current embeddings (fresh, not stale)
+          const candidates = memoryFactRepository.findWithEmbeddings(item.workspaceId)
+          const queryVec = new Float32Array(
+            item.embedding.buffer,
+            item.embedding.byteOffset,
+            item.embedding.byteLength / 4
           )
-          .join('\n\n')
+          const scored = candidates
+            .map(({ fact, embedding: existingVec }) => ({
+              fact,
+              similarity: cosineSimilarity(queryVec, existingVec)
+            }))
+            .sort((a, b) => b.similarity - a.similarity)
+            .slice(0, TOP_K_MATCHES)
 
-        const prompt = `You are a knowledge base curator. A new fact is being proposed. Compare it against the existing facts and decide what to do.
+          const bestMatch = scored[0]
+          if (!bestMatch || bestMatch.similarity < AMBIGUOUS_THRESHOLD) {
+            // No match — resolve undefined so writeFact inserts as new
+            item.resolve(undefined)
+            continue
+          }
+
+          // Fast-path: mirror the pipeline's branch order to skip the LLM classifier
+          // when fresh similarity is high enough for a deterministic outcome.
+          const isVolatile = this.detectVolatility(item.factText)
+          const effectiveDupThreshold = this.resolveDupThreshold(item.sourceType)
+          if (
+            isVolatile &&
+            bestMatch.similarity >= effectiveDupThreshold &&
+            bestMatch.fact.category === item.params.category
+          ) {
+            item.resolve(this.handleUpdate(bestMatch.fact, item.params, item.embedding))
+            continue
+          }
+          if (bestMatch.similarity >= AUTO_MERGE_THRESHOLD) {
+            item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
+            continue
+          }
+          if (bestMatch.similarity >= effectiveDupThreshold) {
+            item.resolve(this.handleDuplicate(bestMatch.fact, item.params.sourceType))
+            continue
+          }
+
+          // Build the real prompt with actual match context
+          const matchContext = scored
+            .slice(0, 3)
+            .map(
+              (m, i) =>
+                `Match ${i + 1} (similarity: ${m.similarity.toFixed(3)}):\n  Title: ${m.fact.title}\n  Content: ${m.fact.content}`
+            )
+            .join('\n\n')
+
+          const prompt = `You are a knowledge base curator. A new fact is being proposed. Compare it against the existing facts and decide what to do.
 
 EXISTING FACTS:
 ${matchContext}
@@ -551,17 +558,17 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 - "NOOP" = the new fact says the same thing as an existing fact — skip it
 - "SUPERSEDE" = the new fact contradicts Match 1 — replace it`
 
-        const result = await this.executeClassification(
-          prompt,
-          bestMatch.fact,
-          item.params,
-          item.embedding
-        )
-        item.resolve(result as MemoryFact | null | undefined)
-      } catch (err) {
-        item.reject(err as Error)
+          const result = await this.executeClassification(
+            prompt,
+            bestMatch.fact,
+            item.params,
+            item.embedding
+          )
+          item.resolve(result as MemoryFact | null | undefined)
+        } catch (err) {
+          item.reject(err as Error)
+        }
       }
-    }
     } finally {
       this.draining = false
     }
@@ -603,9 +610,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     // Consume a capture-cap slot — this is a real mutation (new fact inserted + old superseded)
     this.incrementCaptureCap(newParams)
 
-    log.info(
-      `[MemoryEngine] Contradiction: ${oldFact.id} superseded by ${newFact.id}`
-    )
+    log.info(`[MemoryEngine] Contradiction: ${oldFact.id} superseded by ${newFact.id}`)
     return newFact
   }
 
@@ -616,14 +621,20 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
    * This is the single entry point for UI confirms, MCP tool confirms,
    * and internal dedup confirms — all paths compute promotion.
    */
-  confirmFactWithPromotion(factId: string, sourceType: ConfirmationSourceType = 'human'): MemoryFact {
+  confirmFactWithPromotion(
+    factId: string,
+    sourceType: ConfirmationSourceType = 'human'
+  ): MemoryFact {
     const existing = memoryFactRepository.findById(factId)
     if (!existing) throw new Error(`MemoryFact not found: ${factId}`)
     return this.confirmFactWithEvidence(existing, sourceType)
   }
 
   /** Core confirmation logic with evidence-based promotion. */
-  private confirmFactWithEvidence(fact: MemoryFact, sourceType: ConfirmationSourceType): MemoryFact {
+  private confirmFactWithEvidence(
+    fact: MemoryFact,
+    sourceType: ConfirmationSourceType
+  ): MemoryFact {
     // Record the confirmation event
     // auto_dedup only records the event for audit — zero weight prevents
     // repetition from inflating tier promotions (dedup ≠ independent evidence)
@@ -653,7 +664,8 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
   /** Check if a write is within capture caps. Returns true if allowed. */
   private checkCaptureCap(params: WriteFactParams): boolean {
     // User-initiated and agent-driven writes always bypass per-source caps
-    if (['manual', 'tool', 'bootstrap', 'blueprint', 'grill'].includes(params.sourceType)) return true
+    if (['manual', 'tool', 'bootstrap', 'blueprint', 'grill'].includes(params.sourceType))
+      return true
 
     const { sourceType, sourceRef } = params
 
@@ -675,7 +687,10 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     const { sourceType, sourceRef } = params
 
     if (sourceType === 'session' && sourceRef) {
-      this.captureCounts.session.set(sourceRef, (this.captureCounts.session.get(sourceRef) ?? 0) + 1)
+      this.captureCounts.session.set(
+        sourceRef,
+        (this.captureCounts.session.get(sourceRef) ?? 0) + 1
+      )
     }
     if (sourceType === 'commit' && sourceRef) {
       this.captureCounts.commit.set(sourceRef, (this.captureCounts.commit.get(sourceRef) ?? 0) + 1)
@@ -697,12 +712,16 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     newCategory: string
   ): MemoryFact | null {
     const normalize = (t: string): string =>
-      t.toLowerCase().trim().replace(/\s+/g, ' ').replace(/[^\w\s]/g, '')
+      t
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, ' ')
+        .replace(/[^\w\s]/g, '')
 
     const newNorm = normalize(newTitle)
     if (newNorm.length < 5) return null // too short to match reliably
 
-    const newTokens = new Set(newNorm.split(' ').filter(t => t.length > 2))
+    const newTokens = new Set(newNorm.split(' ').filter((t) => t.length > 2))
     if (newTokens.size === 0) return null
 
     const existing = memoryFactRepository.findByWorkspace(workspaceId, 'active')
@@ -716,14 +735,14 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
       if (existingNorm === newNorm) return fact
 
       // 2. Token overlap ≥ 80%
-      const existingTokens = new Set(existingNorm.split(' ').filter(t => t.length > 2))
+      const existingTokens = new Set(existingNorm.split(' ').filter((t) => t.length > 2))
       if (existingTokens.size === 0) continue
 
-      const intersection = [...newTokens].filter(t => existingTokens.has(t)).length
+      const intersection = [...newTokens].filter((t) => existingTokens.has(t)).length
       const union = new Set([...newTokens, ...existingTokens]).size
       const jaccard = union > 0 ? intersection / union : 0
 
-      if (jaccard >= 0.80) return fact
+      if (jaccard >= 0.8) return fact
     }
 
     return null
@@ -835,7 +854,9 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
           log.warn(`[MemoryEngine] Backfill failed for fact ${fact.id}:`, err)
           // Report final progress before returning on provider failure
           onProgress?.(processed, total)
-          log.info(`[MemoryEngine] Backfill stopped after ${processed}/${total} embeddings (provider failure)`)
+          log.info(
+            `[MemoryEngine] Backfill stopped after ${processed}/${total} embeddings (provider failure)`
+          )
           return processed
         }
         processed++
@@ -858,7 +879,7 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     if (embedded.length < 2) return { clustersFound: 0, autoMerged: 0 }
 
     // Build adjacency list for connected components
-    const THRESHOLD = 0.90
+    const THRESHOLD = 0.9
     const adjacency = new Map<number, Set<number>>()
     const pairSimilarities = new Map<string, number>()
 
@@ -913,9 +934,11 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
         // Auto-merge: keep the highest-tier, most-confirmed fact as canonical
         const clusterFacts = cluster.map((idx) => embedded[idx].fact)
         clusterFacts.sort((a, b) =>
-          b.tier !== a.tier ? b.tier - a.tier :
-          b.confirmationCount !== a.confirmationCount ? b.confirmationCount - a.confirmationCount :
-          new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          b.tier !== a.tier
+            ? b.tier - a.tier
+            : b.confirmationCount !== a.confirmationCount
+              ? b.confirmationCount - a.confirmationCount
+              : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
         )
         const canonical = clusterFacts[0]
         for (let k = 1; k < clusterFacts.length; k++) {
@@ -949,11 +972,18 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
   // ── Haiku classifier ───────────────────────────────────────────────────
 
-  private async spawnClassifier(prompt: string, workspacePath?: string, workspaceId?: string): Promise<string> {
+  private async spawnClassifier(
+    prompt: string,
+    workspacePath?: string,
+    workspaceId?: string
+  ): Promise<string> {
     // G5: Gate memoryFeed through resolveAssignment — route to local LLM when assigned
     // A2: Guard workspacePath — null paths fall through to the Claude CLI path below
     if (workspaceId && workspacePath) {
-      const assignment = resolveAssignment({ action: 'memoryFeed', ...buildResolveOpts(workspaceId) })
+      const assignment = resolveAssignment({
+        action: 'memoryFeed',
+        ...buildResolveOpts(workspaceId)
+      })
       if (assignment.provider === 'local-llm') {
         const localCfg = modelConfigService.getLocalLLMConfig(workspacePath)
         const result = await runOneShotLocal({
@@ -1067,10 +1097,12 @@ function computePromotionTierPure(
   if (tier === 0 && totalCount >= 3 && distinctDays >= 3) return 1
 
   // T1 → T2: 5+ confirms across 3+ source types over 14+ days, confidence ≥ 0.75
-  if (tier === 1 && totalCount >= 5 && distinctSources >= 3 && daySpan >= 14 && confidence >= 0.75) return 2
+  if (tier === 1 && totalCount >= 5 && distinctSources >= 3 && daySpan >= 14 && confidence >= 0.75)
+    return 2
 
   // T2 → T3: 2+ human confirms + 8+ weighted confirms over 30+ days, confidence ≥ 0.90
-  if (tier === 2 && humanCount >= 2 && weightedSum >= 8 && daySpan >= 30 && confidence >= 0.90) return 3
+  if (tier === 2 && humanCount >= 2 && weightedSum >= 8 && daySpan >= 30 && confidence >= 0.9)
+    return 3
 
   return tier
 }
@@ -1078,7 +1110,7 @@ function computePromotionTierPure(
 /** Capture cap constants — exported for testing. */
 export const CAPTURE_CAPS = {
   MAX_FACTS_PER_SESSION,
-  MAX_FACTS_PER_COMMIT,
+  MAX_FACTS_PER_COMMIT
 } as const
 
 /** Volatile detection patterns — exported for testing. */
@@ -1089,7 +1121,7 @@ export const memoryEngineService = new MemoryEngineService()
 
 // Backfill pending embeddings when the oMLX model becomes ready
 localEmbeddingProvider.on('modelReady', () => {
-  memoryEngineService.backfillPendingEmbeddings().catch((e) =>
-    log.warn('[MemoryEngine] modelReady backfill error:', e)
-  )
+  memoryEngineService
+    .backfillPendingEmbeddings()
+    .catch((e) => log.warn('[MemoryEngine] modelReady backfill error:', e))
 })

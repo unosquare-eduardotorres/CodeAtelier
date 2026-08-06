@@ -49,7 +49,10 @@ test.describe('MCP Integrations', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -280,8 +283,14 @@ test.describe('MCP Integrations', () => {
     const externalTab = page.getByText(/external/i)
     const systemTab = page.getByText(/system/i)
 
-    const hasExternal = await externalTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasSystem = await systemTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasExternal = await externalTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasSystem = await systemTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // At least one sub-tab should be visible when MCP section is open
     expect(hasExternal || hasSystem).toBeTruthy()
@@ -327,9 +336,7 @@ test.describe('MCP Integrations', () => {
     expect(blockText).toMatch(/\d+\s*tool/)
   })
 
-  test('tool activity block expand/collapse toggles tool list', async ({
-    electronPage: page
-  }) => {
+  test('tool activity block expand/collapse toggles tool list', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -418,8 +425,14 @@ test.describe('MCP Integrations', () => {
     const inputLabel = firstRow.getByText(/input|command/i)
     const outputLabel = firstRow.getByText(/output|error/i)
 
-    const hasInput = await inputLabel.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasOutput = await outputLabel.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasInput = await inputLabel
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasOutput = await outputLabel
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(hasInput || hasOutput).toBeTruthy()
   })
@@ -449,7 +462,10 @@ test.describe('MCP Integrations', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)

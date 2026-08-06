@@ -24,7 +24,15 @@ import type { BlueprintPhaseType } from '../../../../../shared/blueprint-types'
 
 // ── Phase order for step counter ──
 
-const PHASE_ORDER: PhaseIconKey[] = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify']
+const PHASE_ORDER: PhaseIconKey[] = [
+  'specify',
+  'clarify',
+  'plan',
+  'tasks',
+  'review',
+  'build',
+  'verify'
+]
 
 function getPhaseIndex(phase: BlueprintPhaseType | null): number {
   if (!phase) return -1
@@ -39,7 +47,13 @@ function stripTaskMarkers(description: string): string {
 
 // ── PhaseElapsed — live-ticking per-phase elapsed ──
 
-function PhaseElapsed({ startedAt, ticking }: { startedAt: number; ticking: boolean }): JSX.Element {
+function PhaseElapsed({
+  startedAt,
+  ticking
+}: {
+  startedAt: number
+  ticking: boolean
+}): JSX.Element {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     if (!ticking) return
@@ -134,7 +148,9 @@ export function BlueprintRunHeader({
         <div className="relative flex-shrink-0">
           <span className={`inline-block w-2.5 h-2.5 rounded-full ${statusDotClass}`} />
           {isRunning && (
-            <span className={`absolute inset-[-2px] rounded-full border-2 border-success/30 animate-ping`} />
+            <span
+              className={`absolute inset-[-2px] rounded-full border-2 border-success/30 animate-ping`}
+            />
           )}
         </div>
 
@@ -220,9 +236,10 @@ export function BlueprintRunHeader({
             className={`
               inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
               transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none
-              ${activeTab === 'execution'
-                ? 'bg-surface-overlay text-text-primary shadow-sm border border-border-default'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay/50'
+              ${
+                activeTab === 'execution'
+                  ? 'bg-surface-overlay text-text-primary shadow-sm border border-border-default'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay/50'
               }
             `}
             role="tab"
@@ -237,9 +254,10 @@ export function BlueprintRunHeader({
             className={`
               inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium
               transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 outline-none
-              ${activeTab === 'deliverables'
-                ? 'bg-surface-overlay text-text-primary shadow-sm border border-border-default'
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay/50'
+              ${
+                activeTab === 'deliverables'
+                  ? 'bg-surface-overlay text-text-primary shadow-sm border border-border-default'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay/50'
               }
             `}
             role="tab"
@@ -261,7 +279,9 @@ export function BlueprintRunHeader({
               style={{ width: `${progressPct}%` }}
             />
           </div>
-          <span className="text-xs font-mono text-text-muted tabular-nums flex-shrink-0">{progressPct}%</span>
+          <span className="text-xs font-mono text-text-muted tabular-nums flex-shrink-0">
+            {progressPct}%
+          </span>
 
           {/* Tasks chip */}
           <span className="inline-flex items-center gap-1 text-xs text-text-secondary bg-surface-inset px-2 py-0.5 rounded-md flex-shrink-0">
@@ -273,38 +293,43 @@ export function BlueprintRunHeader({
           {currentWave && (
             <span className="inline-flex items-center gap-1 text-xs text-text-secondary bg-surface-inset px-2 py-0.5 rounded-md flex-shrink-0">
               <Layers size={12} />
-              Wave {currentWave.wave}{totalWaves > 0 ? `/${totalWaves}` : ''}
+              Wave {currentWave.wave}
+              {totalWaves > 0 ? `/${totalWaves}` : ''}
               {currentPhase === 'verify' && tasksDone === taskTotal && ' ✓'}
             </span>
           )}
 
           {/* Running task chips — shows active parallel tasks */}
-          {Object.keys(runningTasks).length > 0 && currentPhase === 'build' && (
-            Object.keys(runningTasks).length === 1 ? (() => {
-              const task = Object.values(runningTasks)[0]
-              return (
-                <span
-                  className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md flex-1 min-w-0 truncate text-info bg-info/10"
-                  title={`${task.taskId} · ${stripTaskMarkers(task.description)}`}
-                >
-                  {task.taskId.startsWith('R') ? (
-                    <Wrench size={12} className="flex-shrink-0" />
-                  ) : (
-                    <Loader2 size={12} className="animate-spin flex-shrink-0" />
-                  )}
-                  {task.taskId.startsWith('R') && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0">Remediation</span>
-                  )}
-                  {task.taskId} · {stripTaskMarkers(task.description)}
-                </span>
-              )
-            })() : (
+          {Object.keys(runningTasks).length > 0 &&
+            currentPhase === 'build' &&
+            (Object.keys(runningTasks).length === 1 ? (
+              (() => {
+                const task = Object.values(runningTasks)[0]
+                return (
+                  <span
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md flex-1 min-w-0 truncate text-info bg-info/10"
+                    title={`${task.taskId} · ${stripTaskMarkers(task.description)}`}
+                  >
+                    {task.taskId.startsWith('R') ? (
+                      <Wrench size={12} className="flex-shrink-0" />
+                    ) : (
+                      <Loader2 size={12} className="animate-spin flex-shrink-0" />
+                    )}
+                    {task.taskId.startsWith('R') && (
+                      <span className="text-[10px] font-semibold uppercase tracking-wider flex-shrink-0">
+                        Remediation
+                      </span>
+                    )}
+                    {task.taskId} · {stripTaskMarkers(task.description)}
+                  </span>
+                )
+              })()
+            ) : (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 text-xs font-medium rounded-md text-info bg-info/10">
                 <Loader2 size={12} className="animate-spin flex-shrink-0" />
                 {Object.keys(runningTasks).length} tasks running
               </span>
-            )
-          )}
+            ))}
         </div>
       ) : currentGoal && isRunning ? (
         <button
@@ -316,7 +341,9 @@ export function BlueprintRunHeader({
             <Target size={10} />
             Goal
           </span>
-          <p className={`text-xs text-text-secondary flex-1 min-w-0 ${goalExpanded ? '' : 'line-clamp-1'}`}>
+          <p
+            className={`text-xs text-text-secondary flex-1 min-w-0 ${goalExpanded ? '' : 'line-clamp-1'}`}
+          >
             {currentGoal}
           </p>
         </button>

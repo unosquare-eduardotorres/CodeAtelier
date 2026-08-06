@@ -239,7 +239,11 @@ describe('IpcBridge — stop() TCP unlink skip', () => {
 
   afterEach(async () => {
     if (activeBridge) {
-      try { await activeBridge.stop() } catch { /* ignore */ }
+      try {
+        await activeBridge.stop()
+      } catch {
+        /* ignore */
+      }
       activeBridge = null
     }
   })

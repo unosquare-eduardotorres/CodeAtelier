@@ -45,7 +45,7 @@ describe('detectComplexTask', () => {
       'Port the backend from Express to Fastify',
       'Move from Supabase to Azure and update the entire backend',
       'Set up CI/CD pipeline for the monorepo with Docker and Kubernetes',
-      'Implement SSO with Azure AD for the entire frontend and backend',
+      'Implement SSO with Azure AD for the entire frontend and backend'
     ]
 
     for (const msg of COMPLEX_MESSAGES) {
@@ -64,7 +64,7 @@ describe('detectComplexTask', () => {
       'Delete the unused import',
       'Change the color to blue',
       'Run the tests',
-      'Migrate', // single word — only 1 signal (scope), no structural/scale
+      'Migrate' // single word — only 1 signal (scope), no structural/scale
     ]
 
     for (const msg of SIMPLE_MESSAGES) {

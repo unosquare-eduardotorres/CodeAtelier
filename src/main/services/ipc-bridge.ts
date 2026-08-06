@@ -90,7 +90,11 @@ export class IpcBridge extends EventEmitter {
 
     // Clean up any stale socket file
     if (existsSync(unixPath)) {
-      try { unlinkSync(unixPath) } catch { /* non-fatal */ }
+      try {
+        unlinkSync(unixPath)
+      } catch {
+        /* non-fatal */
+      }
     }
 
     try {

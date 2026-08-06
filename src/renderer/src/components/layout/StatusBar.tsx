@@ -70,10 +70,8 @@ function BlueprintIndicatorWithDropdown({
     return undefined
   }, [dropdownOpen, handleClickOutside])
 
-  const indicatorProps = computeBlueprintIndicator(
-    blueprintStatus,
-    onNavigateToBlueprint,
-    () => setDropdownOpen((v) => !v)
+  const indicatorProps = computeBlueprintIndicator(blueprintStatus, onNavigateToBlueprint, () =>
+    setDropdownOpen((v) => !v)
   )
 
   return (

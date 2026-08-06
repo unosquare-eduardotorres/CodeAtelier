@@ -192,9 +192,7 @@ describe('ingestSingleFile — cancellation wiring', () => {
       // from cache instead of cold-loading into the `BaseRepository` TDZ cycle.
       const { memoryIngestionService } = await import('../memory-ingestion.service')
       const { memoryExtractionService } = await import('../memory-extraction.service')
-      const { memoryFactRepository } = await import(
-        '../../db/repositories/memory-fact.repository'
-      )
+      const { memoryFactRepository } = await import('../../db/repositories/memory-fact.repository')
 
       const dir = join(tmpdir(), `ingest-signal-${process.pid}-${Date.now()}`)
       mkdirSync(dir, { recursive: true })

@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Code Changes & PR', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -39,9 +37,7 @@ test.describe('Code Changes & PR', () => {
   }
 
   /** Attempt to navigate to the code changes panel in an active conversation. */
-  async function navigateToCodeChanges(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToCodeChanges(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for the code changes tab/button in the chat panel
     const codeChangesTab = page.getByText(/code changes|changes|files changed/i).first()
     const hasTab = await codeChangesTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -54,12 +50,20 @@ test.describe('Code Changes & PR', () => {
     return panel.isVisible({ timeout: 3_000 }).catch(() => false)
   }
 
-  test('code changes panel renders with file list and diff pane', async ({ electronPage: page }) => {
+  test('code changes panel renders with file list and diff pane', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPanel = await navigateToCodeChanges(page)
-    if (!hasPanel) { test.skip(); return }
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="code-changes-panel"]')
     await expect(panel).toBeVisible({ timeout: 5_000 })
@@ -72,14 +76,23 @@ test.describe('Code Changes & PR', () => {
 
   test('file list shows changed files with status badges', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPanel = await navigateToCodeChanges(page)
-    if (!hasPanel) { test.skip(); return }
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
     const fileList = page.locator('[data-testid="file-change-list"]')
     const hasFileList = await fileList.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasFileList) { test.skip(); return }
+    if (!hasFileList) {
+      test.skip()
+      return
+    }
 
     // Look for file entries or empty state messages
     const fileEntries = fileList.locator('button, [role="button"]')
@@ -96,19 +109,31 @@ test.describe('Code Changes & PR', () => {
 
   test('selecting a file shows its diff in the viewer', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPanel = await navigateToCodeChanges(page)
-    if (!hasPanel) { test.skip(); return }
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
     const fileList = page.locator('[data-testid="file-change-list"]')
     const hasFileList = await fileList.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasFileList) { test.skip(); return }
+    if (!hasFileList) {
+      test.skip()
+      return
+    }
 
     // Try to click a file entry
     const fileEntries = fileList.locator('button, [role="button"]')
     const fileCount = await fileEntries.count()
-    if (fileCount <= 1) { test.skip(); return } // skip if only header buttons
+    if (fileCount <= 1) {
+      test.skip()
+      return
+    } // skip if only header buttons
 
     // Click the first clickable file (skip header buttons)
     for (let i = 0; i < fileCount; i++) {
@@ -130,19 +155,31 @@ test.describe('Code Changes & PR', () => {
 
   test('file checkboxes toggle for selective commit', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPanel = await navigateToCodeChanges(page)
-    if (!hasPanel) { test.skip(); return }
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
     const fileList = page.locator('[data-testid="file-change-list"]')
     const hasFileList = await fileList.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasFileList) { test.skip(); return }
+    if (!hasFileList) {
+      test.skip()
+      return
+    }
 
     // Look for select all / deselect all button
     const selectAllBtn = fileList.getByText(/select all|deselect all/i).first()
     const hasSelectAll = await selectAllBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasSelectAll) { test.skip(); return }
+    if (!hasSelectAll) {
+      test.skip()
+      return
+    }
 
     // Click select all to toggle
     const _initialText = await selectAllBtn.textContent()
@@ -156,35 +193,58 @@ test.describe('Code Changes & PR', () => {
 
   test('commit bar shows branch info and action buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPanel = await navigateToCodeChanges(page)
-    if (!hasPanel) { test.skip(); return }
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
     const commitBar = page.locator('[data-testid="commit-bar"]')
     const hasCommitBar = await commitBar.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCommitBar) { test.skip(); return }
+    if (!hasCommitBar) {
+      test.skip()
+      return
+    }
 
     // Commit bar should have buttons or branch info
     const content = await commitBar.textContent()
     expect(content!.length).toBeGreaterThan(0)
   })
 
-  test('Create PR modal opens with title pre-filled from branch', async ({ electronPage: page }) => {
+  test('Create PR modal opens with title pre-filled from branch', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPanel = await navigateToCodeChanges(page)
-    if (!hasPanel) { test.skip(); return }
+    if (!hasPanel) {
+      test.skip()
+      return
+    }
 
     const commitBar = page.locator('[data-testid="commit-bar"]')
     const hasCommitBar = await commitBar.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCommitBar) { test.skip(); return }
+    if (!hasCommitBar) {
+      test.skip()
+      return
+    }
 
     // Look for Create PR button
     const prBtn = commitBar.getByText(/create pr/i).first()
     const hasPrBtn = await prBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasPrBtn) { test.skip(); return }
+    if (!hasPrBtn) {
+      test.skip()
+      return
+    }
 
     await prBtn.click()
     await page.waitForTimeout(1_000)

@@ -102,9 +102,7 @@ if (!env) {
       e2eTestResultRepository.updateStatus(result.id, 'passed', {
         durationMs: 1500,
         assertionResults: [{ name: 'streamCompleted', passed: true }],
-        transcriptJson: [
-          { role: 'user', type: 'text', content: 'Hello', timestamp: 1000 }
-        ],
+        transcriptJson: [{ role: 'user', type: 'text', content: 'Hello', timestamp: 1000 }],
         conversationId: 'conv-123'
       })
 

@@ -22,12 +22,7 @@ const isLog = log.scope('instruction-sources')
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export type InstructionFormat =
-  | 'claude-md'
-  | 'agents-md'
-  | 'cursor-mdc'
-  | 'copilot'
-  | 'cline'
-  | 'windsurf'
+  'claude-md' | 'agents-md' | 'cursor-mdc' | 'copilot' | 'cline' | 'windsurf'
 
 /**
  * Precedence class. Ordering matters: later scopes override earlier ones when
@@ -52,9 +47,25 @@ export interface InstructionSource {
 
 /** Directories never descended into when looking for nested rule files. */
 const IGNORE_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'out', 'build', 'coverage',
-  '.next', '.nuxt', '.cache', '__pycache__', '.tox', '.venv',
-  'vendor', 'target', 'bin', 'obj', '.gradle', '.idea', '.vs'
+  'node_modules',
+  '.git',
+  'dist',
+  'out',
+  'build',
+  'coverage',
+  '.next',
+  '.nuxt',
+  '.cache',
+  '__pycache__',
+  '.tox',
+  '.venv',
+  'vendor',
+  'target',
+  'bin',
+  'obj',
+  '.gradle',
+  '.idea',
+  '.vs'
 ])
 
 /** How deep to search for nested AGENTS.md / CLAUDE.md below the root. */
@@ -279,11 +290,7 @@ export function collectInstructionRefs(workspacePath: string): InstructionRef[] 
   const found: InstructionRef[] = []
   const seen = new Set<string>()
 
-  const add = (
-    path: string,
-    format: InstructionFormat,
-    scope: InstructionScope
-  ): void => {
+  const add = (path: string, format: InstructionFormat, scope: InstructionScope): void => {
     if (found.length >= MAX_SOURCES) return
     if (seen.has(path)) return
     seen.add(path)
@@ -316,7 +323,10 @@ export function collectInstructionRefs(workspacePath: string): InstructionRef[] 
 
   // Bounded in work as well as depth, and stops early once the source cap is
   // already reached — further walking cannot add anything.
-  const budget: WalkBudget = { entriesLeft: MAX_NESTED_ENTRIES, isFull: () => found.length >= MAX_SOURCES }
+  const budget: WalkBudget = {
+    entriesLeft: MAX_NESTED_ENTRIES,
+    isFull: () => found.length >= MAX_SOURCES
+  }
   collectNested(workspacePath, 0, add, budget)
   if (budget.entriesLeft <= 0) {
     isLog.debug(

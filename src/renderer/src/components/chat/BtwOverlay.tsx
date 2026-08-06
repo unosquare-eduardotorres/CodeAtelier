@@ -103,7 +103,8 @@ export default function BtwOverlay({
         {/* Footer */}
         <div className="px-5 py-2 border-t border-border-subtle">
           <p className="text-xs text-text-muted text-center">
-            Press <kbd className="px-1 py-0.5 bg-surface-base rounded text-[10px]">Esc</kbd> to dismiss
+            Press <kbd className="px-1 py-0.5 bg-surface-base rounded text-[10px]">Esc</kbd> to
+            dismiss
             {!isLoading && answer && (
               <>
                 {' · '}

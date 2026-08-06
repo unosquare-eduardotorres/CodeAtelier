@@ -19,9 +19,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('Remaining Orphan Testids', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -39,7 +37,10 @@ test.describe('Remaining Orphan Testids', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to chat view
     const chrome = new AppChrome(page)
@@ -64,11 +65,12 @@ test.describe('Remaining Orphan Testids', () => {
     }
   })
 
-  test('new-chat-create-idea-btn is visible on new chat page', async ({
-    electronPage: page
-  }) => {
+  test('new-chat-create-idea-btn is visible on new chat page', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to new chat page
     const chrome = new AppChrome(page)
@@ -86,7 +88,10 @@ test.describe('Remaining Orphan Testids', () => {
     // Check for the new-chat-page testid
     const newChatPage = page.locator('[data-testid="new-chat-page"]')
     const hasPage = await newChatPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // The "Create Idea" button should be visible
     const createIdeaBtn = page.locator('[data-testid="new-chat-create-idea-btn"]')
@@ -94,11 +99,12 @@ test.describe('Remaining Orphan Testids', () => {
     expect(hasIdeaBtn).toBeTruthy()
   })
 
-  test('clicking create-idea button triggers idea popover', async ({
-    electronPage: page
-  }) => {
+  test('clicking create-idea button triggers idea popover', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to new chat page
     const chrome = new AppChrome(page)
@@ -113,7 +119,10 @@ test.describe('Remaining Orphan Testids', () => {
 
     const createIdeaBtn = page.locator('[data-testid="new-chat-create-idea-btn"]')
     const hasIdeaBtn = await createIdeaBtn.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasIdeaBtn) { test.skip(); return }
+    if (!hasIdeaBtn) {
+      test.skip()
+      return
+    }
 
     await createIdeaBtn.click()
     await page.waitForTimeout(500)
@@ -127,9 +136,7 @@ test.describe('Remaining Orphan Testids', () => {
     expect(true).toBeTruthy()
   })
 
-  test('welcome-modal renders during first-launch flow', async ({
-    electronPage: page
-  }) => {
+  test('welcome-modal renders during first-launch flow', async ({ electronPage: page }) => {
     // Don't call ensureWorkspaceReady — we want to check for the modal
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -154,9 +161,7 @@ test.describe('Remaining Orphan Testids', () => {
     }
   })
 
-  test('welcome-modal has name input field and Continue button', async ({
-    electronPage: page
-  }) => {
+  test('welcome-modal has name input field and Continue button', async ({ electronPage: page }) => {
     // Don't call ensureWorkspaceReady — we want to check for the modal
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()

@@ -44,12 +44,11 @@ export default function LastRunSummary({
             {' · '}
             {settled}/{run.itemsTotal} items · {run.factsCreated} memories
           </span>
-          {run.itemsFailed > 0 && (
-            <span className="text-red-400"> · {run.itemsFailed} failed</span>
-          )}
+          {run.itemsFailed > 0 && <span className="text-red-400"> · {run.itemsFailed} failed</span>}
         </div>
         <div className="text-[10px] text-text-muted mt-0.5">
-          {STATUS_LABEL[run.status] ?? run.status} · {run.mode === 'deep-scan' ? 'Deep Scan' : 'Feed Brain'} · scope: {run.scope}
+          {STATUS_LABEL[run.status] ?? run.status} ·{' '}
+          {run.mode === 'deep-scan' ? 'Deep Scan' : 'Feed Brain'} · scope: {run.scope}
           {run.error && (
             <span className="text-red-400/80">
               {' '}

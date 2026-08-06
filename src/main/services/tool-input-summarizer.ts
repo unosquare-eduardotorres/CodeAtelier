@@ -162,9 +162,11 @@ const STRATEGIES: Record<string, Strategy> = {
   },
 
   // MCP tools: Code Analysis
-  [MCP_TOOLS.CODE_ANALYSIS.FIND_CODE_SMELLS.name]: { type: 'static', value: 'find code smells' },
-  [MCP_TOOLS.CODE_ANALYSIS.ANALYZE_DEPENDENCIES.name]: { type: 'static', value: 'analyze dependencies' },
-  [MCP_TOOLS.CODE_ANALYSIS.ANALYZE_TEST_COVERAGE.name]: { type: 'static', value: 'test coverage map' },
+  [MCP_TOOLS.CODE_ANALYSIS.AUDIT_SCAN.name]: { type: 'static', value: 'audit scan' },
+  [MCP_TOOLS.CODE_ANALYSIS.ANALYZE_COMPLEXITY.name]: {
+    type: 'template',
+    fn: (i, wp) => `complexity${i.path ? ` ${toRelativePath(i.path as string, wp)}` : ''}`
+  },
 
   // MCP tools: Semantic Search
   [MCP_TOOLS.SEMANTIC_SEARCH.SEMANTIC_SEARCH.name]: {
@@ -185,27 +187,10 @@ const STRATEGIES: Record<string, Strategy> = {
     type: 'template',
     fn: (i, wp) => `git blame ${toRelativePath((i.path as string) || '', wp)}`
   },
-
-  // MCP tools: Checkpoint Context
-  [MCP_TOOLS.CHECKPOINT_CONTEXT.LIST_CHECKPOINTS.name]: {
-    type: 'static',
-    value: 'list checkpoints'
-  },
-  [MCP_TOOLS.CHECKPOINT_CONTEXT.GET_CHECKPOINT.name]: {
+  [MCP_TOOLS.GIT_CONTEXT.GIT_SHOW.name]: {
     type: 'template',
-    fn: (i) => `checkpoint ${(i.checkpointId as string)?.slice(0, 7) ?? ''}…`
-  },
-
-  // MCP tools: GitHub Context
-  [MCP_TOOLS.GITHUB_CONTEXT.GET_PR_STATUS.name]: {
-    type: 'template',
-    fn: (i) => `PR #${(i.prNumber as string) || ''}`
-  },
-  [MCP_TOOLS.GITHUB_CONTEXT.LIST_PR_COMMENTS.name]: {
-    type: 'template',
-    fn: (i) => `PR #${(i.prNumber as string) || ''} comments`
-  },
-  [MCP_TOOLS.GITHUB_CONTEXT.LIST_ISSUES.name]: { type: 'static', value: 'list issues' }
+    fn: (i) => `git show ${(i.ref as string)?.slice(0, 7) ?? ''}`
+  }
 }
 
 /**

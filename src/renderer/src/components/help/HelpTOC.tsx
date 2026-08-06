@@ -200,7 +200,10 @@ export default function HelpTOC({
           )}
 
           {filteredSections.length === 0 && (
-            <li data-testid="help-toc-empty" className="px-3 py-6 text-center text-sm text-text-muted">
+            <li
+              data-testid="help-toc-empty"
+              className="px-3 py-6 text-center text-sm text-text-muted"
+            >
               No matching topics found
             </li>
           )}

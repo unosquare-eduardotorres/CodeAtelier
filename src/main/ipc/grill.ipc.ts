@@ -82,90 +82,94 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
     grillStartLocks.add(workspaceId)
 
     try {
-    // ── Greenfield path: no workspace lookup needed ──
-    if (greenfield) {
-      grillLog.info(
-        `[grill:evaluate:greenfield] track=${trackId} project="${(projectName ?? ideaTitle).slice(0, 40)}"`
-      )
+      // ── Greenfield path: no workspace lookup needed ──
+      if (greenfield) {
+        grillLog.info(
+          `[grill:evaluate:greenfield] track=${trackId} project="${(projectName ?? ideaTitle).slice(0, 40)}"`
+        )
 
-      const llmProvider: LLMProvider = explicitProvider ?? 'claude'
+        const llmProvider: LLMProvider = explicitProvider ?? 'claude'
 
-      // Wire event forwarding (no persistence controller for greenfield)
-      wireGrillEvents(workspaceId, '')
+        // Wire event forwarding (no persistence controller for greenfield)
+        wireGrillEvents(workspaceId, '')
 
-      // Emit transient 'evaluating' status so the bottom bar shows "Grilling…"
-      // immediately. The standard path gets this from startTracking, but
-      // greenfield skips the persistence controller.
-      try {
-        getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.GRILL_STATUS_CHANGED, workspaceId, {
-          status: 'evaluating',
-          ideaId: '',
-          trackId,
-          score: null
-        })
-      } catch {
-        /* router not initialized */
+        // Emit transient 'evaluating' status so the bottom bar shows "Grilling…"
+        // immediately. The standard path gets this from startTracking, but
+        // greenfield skips the persistence controller.
+        try {
+          getSessionEventRouter().sendWorkspaceEvent(
+            IPC_CHANNELS.GRILL_STATUS_CHANGED,
+            workspaceId,
+            {
+              status: 'evaluating',
+              ideaId: '',
+              trackId,
+              score: null
+            }
+          )
+        } catch {
+          /* router not initialized */
+        }
+
+        grillAgentService
+          .evaluateGreenfield({
+            trackId,
+            projectName: projectName ?? ideaTitle,
+            projectDescription: ideaDescription,
+            iterationHistory,
+            previousScore,
+            llmProvider,
+            workspaceId // GRILL-04: pass for event routing
+          })
+          .catch((err) => {
+            grillLog.error('[grill:evaluate:greenfield] evaluate failed:', err)
+          })
+          .finally(() => {
+            grillStartLocks.delete(workspaceId)
+          })
+        return
       }
 
+      // ── Standard path: existing workspace ──
+      // Resolve workspace path
+      const workspace = workspaceRepository.findById(workspaceId)
+      if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
+      if (!workspace.repoPath) throw new Error(`Workspace ${workspaceId} has no repo path`)
+
+      grillLog.info(
+        `[grill:evaluate] workspaceId=${workspaceId} track=${trackId} title="${ideaTitle.slice(0, 40)}"`
+      )
+
+      // Start persistence tracking (if ideaId is provided)
+      if (ideaId) {
+        await grillPersistenceController.startTracking(ideaId, workspaceId, trackId)
+      }
+
+      // Resolve LLM provider: explicit selection → workspace setting → 'claude'
+      const settings = workspaceRepository.getSettings(workspace.id)
+      const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
+
+      // Wire event forwarding (through persistence controller)
+      wireGrillEvents(workspaceId, workspace.repoPath)
+
+      // Start the evaluation (non-blocking — runs in background)
       grillAgentService
-        .evaluateGreenfield({
+        .evaluate({
+          workspaceId,
+          workspacePath: workspace.repoPath,
           trackId,
-          projectName: projectName ?? ideaTitle,
-          projectDescription: ideaDescription,
+          ideaTitle,
+          ideaDescription,
           iterationHistory,
           previousScore,
-          llmProvider,
-          workspaceId  // GRILL-04: pass for event routing
+          llmProvider
         })
         .catch((err) => {
-          grillLog.error('[grill:evaluate:greenfield] evaluate failed:', err)
+          grillLog.error('[grill:evaluate] evaluate failed:', err)
         })
         .finally(() => {
           grillStartLocks.delete(workspaceId)
         })
-      return
-    }
-
-    // ── Standard path: existing workspace ──
-    // Resolve workspace path
-    const workspace = workspaceRepository.findById(workspaceId)
-    if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
-    if (!workspace.repoPath) throw new Error(`Workspace ${workspaceId} has no repo path`)
-
-    grillLog.info(
-      `[grill:evaluate] workspaceId=${workspaceId} track=${trackId} title="${ideaTitle.slice(0, 40)}"`
-    )
-
-    // Start persistence tracking (if ideaId is provided)
-    if (ideaId) {
-      await grillPersistenceController.startTracking(ideaId, workspaceId, trackId)
-    }
-
-    // Resolve LLM provider: explicit selection → workspace setting → 'claude'
-    const settings = workspaceRepository.getSettings(workspace.id)
-    const llmProvider: LLMProvider = explicitProvider ?? settings.llmProvider ?? 'claude'
-
-    // Wire event forwarding (through persistence controller)
-    wireGrillEvents(workspaceId, workspace.repoPath)
-
-    // Start the evaluation (non-blocking — runs in background)
-    grillAgentService
-      .evaluate({
-        workspaceId,
-        workspacePath: workspace.repoPath,
-        trackId,
-        ideaTitle,
-        ideaDescription,
-        iterationHistory,
-        previousScore,
-        llmProvider
-      })
-      .catch((err) => {
-        grillLog.error('[grill:evaluate] evaluate failed:', err)
-      })
-      .finally(() => {
-        grillStartLocks.delete(workspaceId)
-      })
     } catch (e) {
       // GRILL-DUALSTART-01: Release lock if synchronous setup fails
       // (e.g. workspace not found, startTracking throws)
@@ -179,9 +183,14 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
   // GRILL-02: Accept workspaceId so cancel targets the correct workspace
   ipcMain.handle(IPC_CHANNELS.GRILL_CANCEL, (event, rawArgs?: unknown): void => {
     validateSender(event)
-    const workspaceId = rawArgs && typeof rawArgs === 'object'
-      ? optionalString(rawArgs as Record<string, unknown>, 'workspaceId', IPC_CHANNELS.GRILL_CANCEL)
-      : undefined
+    const workspaceId =
+      rawArgs && typeof rawArgs === 'object'
+        ? optionalString(
+            rawArgs as Record<string, unknown>,
+            'workspaceId',
+            IPC_CHANNELS.GRILL_CANCEL
+          )
+        : undefined
     grillAgentService.cancel(workspaceId ?? undefined)
     grillPersistenceController.clearTracking(workspaceId ?? undefined)
   })
@@ -278,10 +287,9 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
 
       // Validate trackScores if present
       const rawTrackScores = args.trackScores
-      const trackScores =
-        Array.isArray(rawTrackScores)
-          ? (rawTrackScores.slice(0, 100) as GrillTrackScore[])
-          : undefined
+      const trackScores = Array.isArray(rawTrackScores)
+        ? (rawTrackScores.slice(0, 100) as GrillTrackScore[])
+        : undefined
 
       grillLog.info(
         `[grill:generatePlanFromDecisions] Generating plan for project="${projectName}" (${grillDecisions?.length ?? 0} decisions)`
@@ -386,7 +394,11 @@ export function registerGrillIpc(_mainWindow: BrowserWindow): void {
       validateSender(event)
       const args = requireObject(rawArgs, IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT)
       const text = requireString(args, 'text', IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT)
-      const workspaceId = optionalString(args, 'workspaceId', IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT)
+      const workspaceId = optionalString(
+        args,
+        'workspaceId',
+        IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT
+      )
       if (text.length < 1000) {
         return { condensed: text }
       }

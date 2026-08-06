@@ -19,7 +19,7 @@
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+_GATE: Must pass before Phase 0 research. Re-check after Phase 1 design._
 
 [Gates determined based on constitution content]
 
@@ -41,6 +41,6 @@
 
 > **Fill ONLY if Constitution Check has violations that must be justified**
 
-| Violation | Why Needed | Simpler Alternative Rejected Because |
-|-----------|------------|-------------------------------------|
-| [e.g., extra project] | [current need] | [why simpler insufficient] |
+| Violation             | Why Needed     | Simpler Alternative Rejected Because |
+| --------------------- | -------------- | ------------------------------------ |
+| [e.g., extra project] | [current need] | [why simpler insufficient]           |

@@ -48,7 +48,10 @@ test.describe('Plans Hub', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -92,7 +95,8 @@ test.describe('Plans Hub', () => {
     const emptyStateById = page.locator('[data-testid="plan-empty-state"]')
     const emptyState = page.getByText(/no plans yet/i)
     const hasEmptyById = await emptyStateById.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasEmpty = hasEmptyById || await emptyState.isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasEmpty =
+      hasEmptyById || (await emptyState.isVisible({ timeout: 3_000 }).catch(() => false))
 
     if (hasEmpty) {
       // Empty state should explain where plans come from

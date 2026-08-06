@@ -17,6 +17,10 @@
  *
  * NOTE: the harness runs async tests concurrently, so the singleton stubs are
  * installed once and dispatch per file path instead of being swapped per test.
+ * Because they are never uninstalled, and the singletons are shared with every
+ * other file in the runner, each stub delegates to the captured original for
+ * any path this fixture does not own. Do not "simplify" that away — without it
+ * the stubs silently rewrite later files' behaviour for the rest of the process.
  */
 
 import assert from 'node:assert/strict'
@@ -107,24 +111,33 @@ interface Scenario {
 const scenarios = new Map<string, Scenario>()
 
 if (loaded) {
-  memoryFactRepository.getDocState = (_ws: string, filePath: string) => {
+  // Captured before the stubs below replace them, so an unregistered path can
+  // fall through to the real implementation.
+  const realGetDocState = memoryFactRepository.getDocState.bind(memoryFactRepository)
+  const realUpsertDocState = memoryFactRepository.upsertDocState.bind(memoryFactRepository)
+  const realExtract = memoryExtractionService.extractFromContent.bind(memoryExtractionService)
+
+  memoryFactRepository.getDocState = (ws: string, filePath: string) => {
     const s = scenarios.get(basename(filePath))
-    return s?.storedHash ? { contentHash: s.storedHash } : undefined
+    if (!s) return realGetDocState(ws, filePath)
+    return s.storedHash ? { contentHash: s.storedHash } : undefined
   }
-  memoryFactRepository.upsertDocState = (_ws: string, filePath: string) => {
+  memoryFactRepository.upsertDocState = (ws: string, filePath: string, contentHash: string) => {
     const s = scenarios.get(basename(filePath))
-    if (s) s.upserts++
+    if (!s) return realUpsertDocState(ws, filePath, contentHash)
+    s.upserts++
+    return undefined
   }
   memoryExtractionService.extractFromContent = async (
-    _ws: string,
-    _wsPath: string,
+    ws: string,
+    wsPath: string,
     relPath: string,
-    _content: string,
+    content: string,
     onProgress?: unknown,
     opts?: any
   ) => {
     const s = scenarios.get(basename(relPath))
-    if (!s) return 0
+    if (!s) return realExtract(ws, wsPath, relPath, content, onProgress, opts)
     s.chunkCalls++
     s.lastOpts = opts
     s.lastOnProgress = onProgress

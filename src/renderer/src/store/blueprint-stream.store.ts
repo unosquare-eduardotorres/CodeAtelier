@@ -11,7 +11,12 @@
  */
 
 import { create } from 'zustand'
-import { createStreamingStore, getFlatContent, getFlatToolActivities, type StreamingStoreState } from './createStreamingStore'
+import {
+  createStreamingStore,
+  getFlatContent,
+  getFlatToolActivities,
+  type StreamingStoreState
+} from './createStreamingStore'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { StoreApi, UseBoundStore } from 'zustand'
 

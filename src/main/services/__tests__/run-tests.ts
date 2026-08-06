@@ -27,6 +27,7 @@ const TEST_FILES: string[] = [
   './code-graph-typed-tags-smoke.test',
   './rationale-miner.test',
   './is-excluded-path.test',
+  './index-exclusion-preflight.test',
   './vector-search.test',
   './code-graph-db.test',
   './mcp-tool-wiring.test',
@@ -369,6 +370,7 @@ const TEST_FILES: string[] = [
   '../../mcp-servers/__tests__/native-module-smoke.test',
   // ─── Blueprint Environment Preflight (dependency validation before BUILD) ───
   './blueprint-preflight.test',
+  './blueprint-gate-launch.test',
   // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
   './blueprint-task-verification.test',
   // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───

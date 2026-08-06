@@ -30,9 +30,7 @@ function trySetup(): MigrationEnv | null {
     const { migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION } = require('../../index')
     return { Database, migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION }
   } catch (err) {
-    console.log(
-      `\n⚠ better-sqlite3 native module not available — migration-replay tests skipped.`
-    )
+    console.log(`\n⚠ better-sqlite3 native module not available — migration-replay tests skipped.`)
     console.log(`  (${(err as Error).message.split('\n')[0]})`)
     return null
   }
@@ -60,7 +58,9 @@ if (!env) {
 
   function getTableNames(db: InstanceType<typeof import('better-sqlite3')>): string[] {
     const rows = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+      )
       .all() as Array<{ name: string }>
     return rows.map((r) => r.name)
   }
@@ -140,14 +140,36 @@ if (!env) {
 
         const tables = getTableNames(db)
         const required = [
-          'workspaces', 'conversations', 'messages', 'specialists', 'skills',
-          'agent_sessions', 'turn_usage', 'events', 'ideas',
-          'checkpoints', 'grill_sessions', 'app_preferences',
-          'audit_runs', 'audit_results', 'mpa_runs', 'mpa_phases', 'mpa_artifacts',
-          'council_sessions', 'blueprints', 'blueprint_phases', 'blueprint_tasks',
-          'plans', 'usage_log', 'llm_presets', 'library_docs', 'library_docs_fts',
+          'workspaces',
+          'conversations',
+          'messages',
+          'specialists',
+          'skills',
+          'agent_sessions',
+          'turn_usage',
+          'events',
+          'ideas',
+          'checkpoints',
+          'grill_sessions',
+          'app_preferences',
+          'audit_runs',
+          'audit_results',
+          'mpa_runs',
+          'mpa_phases',
+          'mpa_artifacts',
+          'council_sessions',
+          'blueprints',
+          'blueprint_phases',
+          'blueprint_tasks',
+          'plans',
+          'usage_log',
+          'llm_presets',
+          'library_docs',
+          'library_docs_fts',
           'mpa_campaigns',
-          'memory_facts', 'memory_contradictions', 'memory_doc_state'
+          'memory_facts',
+          'memory_contradictions',
+          'memory_doc_state'
         ]
         for (const table of required) {
           assert.ok(tables.includes(table), `Table "${table}" should exist after full replay`)
@@ -434,7 +456,10 @@ if (!env) {
 
         // Verify indexes
         const bpIdx = getIndexNames(db, 'blueprints')
-        assert.ok(bpIdx.some((n) => n.includes('workspace')), 'blueprint workspace index')
+        assert.ok(
+          bpIdx.some((n) => n.includes('workspace')),
+          'blueprint workspace index'
+        )
       } finally {
         db.close()
       }
@@ -498,20 +523,28 @@ if (!env) {
         db.transaction(() => migration.up(db))()
 
         // Should be able to insert a task with 'skipped' status
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 'test', '/tmp')
-        `).run()
-        db.prepare(`
+        `
+        ).run()
+        db.prepare(
+          `
           INSERT INTO blueprints (id, workspace_id, title, status) VALUES ('bp-1', 'ws-1', 'BP', 'draft')
-        `).run()
-        db.prepare(`
+        `
+        ).run()
+        db.prepare(
+          `
           INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
           VALUES ('ph-1', 'bp-1', 'plan', 'pending')
-        `).run()
-        db.prepare(`
+        `
+        ).run()
+        db.prepare(
+          `
           INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description, status)
           VALUES ('t-1', 'bp-1', 'task-1', 'Test Task', 'skipped')
-        `).run()
+        `
+        ).run()
         const row = db.prepare('SELECT status FROM blueprint_tasks WHERE id = ?').get('t-1') as {
           status: string
         }
@@ -528,14 +561,18 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
           VALUES (?, ?, ?, ?, ?)
-        `).run('chat', 'ws-test', 500, 200, 15)
+        `
+        ).run('chat', 'ws-test', 500, 200, 15)
 
-        const row = db.prepare(
-          'SELECT feature, input_tokens, output_tokens, cost_cents, id, created_at FROM usage_log'
-        ).get() as Record<string, unknown>
+        const row = db
+          .prepare(
+            'SELECT feature, input_tokens, output_tokens, cost_cents, id, created_at FROM usage_log'
+          )
+          .get() as Record<string, unknown>
         assert.equal(row.feature, 'chat')
         assert.equal(row.input_tokens, 500)
         assert.ok(row.id, 'auto-generated id')
@@ -550,15 +587,19 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path)
           VALUES ('ws-1', 'test', '/tmp/test')
-        `).run()
+        `
+        ).run()
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO blueprints (id, workspace_id, title, status)
           VALUES ('bp-1', 'ws-1', 'Test Blueprint', 'draft')
-        `).run()
+        `
+        ).run()
 
         const row = db.prepare('SELECT * FROM blueprints WHERE id = ?').get('bp-1') as Record<
           string,
@@ -576,15 +617,19 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path)
           VALUES ('ws-1', 'test', '/tmp/test')
-        `).run()
+        `
+        ).run()
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO council_sessions (id, workspace_id, input_type, input_content, status, phase)
           VALUES ('cs-1', 'ws-1', 'plan', 'Test Topic', 'running', 'framing')
-        `).run()
+        `
+        ).run()
 
         const row = db.prepare('SELECT * FROM council_sessions WHERE id = ?').get('cs-1') as Record<
           string,
@@ -602,15 +647,19 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path)
           VALUES ('ws-1', 'test', '/tmp/test')
-        `).run()
+        `
+        ).run()
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json)
           VALUES ('p-1', 'ws-1', 'Test Preset', 0, '{"model":"test"}')
-        `).run()
+        `
+        ).run()
 
         const row = db.prepare('SELECT * FROM llm_presets WHERE id = ?').get('p-1') as Record<
           string,
@@ -627,7 +676,11 @@ if (!env) {
   describe('Migration Replay — invariants', () => {
     test('all_migration_versions_are_sequential', () => {
       for (let i = 0; i < migrations.length; i++) {
-        assert.equal(migrations[i].version, i + 1, `Migration at index ${i} should be version ${i + 1}`)
+        assert.equal(
+          migrations[i].version,
+          i + 1,
+          `Migration at index ${i} should be version ${i + 1}`
+        )
       }
     })
 

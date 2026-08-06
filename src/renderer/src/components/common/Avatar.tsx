@@ -84,9 +84,7 @@ export default function Avatar({
   const px = SIZE_MAP[size]
 
   // Resolve 'user' role key → specific variant image key
-  const resolvedKey = avatarKey === 'user'
-    ? resolveUserAvatarKey(userAvatarVariant)
-    : avatarKey
+  const resolvedKey = avatarKey === 'user' ? resolveUserAvatarKey(userAvatarVariant) : avatarKey
 
   const src = getAvatarImage(resolvedKey as AvatarKey, theme)
   const [isPlaceholder, setIsPlaceholder] = useState(false)
@@ -116,7 +114,10 @@ export default function Avatar({
       ...(accentColor ? { outline: `2px solid ${accentColor}`, outlineOffset: 2 } : {})
     }
     return (
-      <div className="relative inline-flex" style={{ width: px, height: px, minWidth: px, minHeight: px }}>
+      <div
+        className="relative inline-flex"
+        style={{ width: px, height: px, minWidth: px, minHeight: px }}
+      >
         <div
           className={`inline-flex items-center justify-center rounded-full ${colorClass} ${className}`}
           style={initialsStyle}

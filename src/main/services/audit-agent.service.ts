@@ -199,19 +199,21 @@ export class AuditAgentService extends EventEmitter {
         const wsSettings = workspaceRepository.getSettings(params.workspaceId)
         if ((wsSettings as any).memoryCaptureBlueprints !== false) {
           for (const finding of highFindings.slice(0, 10)) {
-            await memoryEngineService.writeFact({
-              workspaceId: params.workspaceId,
-              category: 'gotcha',
-              title: `Audit: ${finding.title}`,
-              content: `${finding.description}${finding.recommendation ? `\n\n**Recommendation**: ${finding.recommendation}` : ''}`,
-              tags: ['audit', finding.severity],
-              scopePaths: finding.filePath ? [finding.filePath] : [],
-              sourceType: 'blueprint',
-              sourceRef: `audit:${params.workspaceId}`,
-              workspacePath: params.workspacePath
-            }).catch((err) => {
-              auditLog.warn(`[audit] Failed to write finding fact: ${err}`)
-            })
+            await memoryEngineService
+              .writeFact({
+                workspaceId: params.workspaceId,
+                category: 'gotcha',
+                title: `Audit: ${finding.title}`,
+                content: `${finding.description}${finding.recommendation ? `\n\n**Recommendation**: ${finding.recommendation}` : ''}`,
+                tags: ['audit', finding.severity],
+                scopePaths: finding.filePath ? [finding.filePath] : [],
+                sourceType: 'blueprint',
+                sourceRef: `audit:${params.workspaceId}`,
+                workspacePath: params.workspacePath
+              })
+              .catch((err) => {
+                auditLog.warn(`[audit] Failed to write finding fact: ${err}`)
+              })
           }
         }
       }

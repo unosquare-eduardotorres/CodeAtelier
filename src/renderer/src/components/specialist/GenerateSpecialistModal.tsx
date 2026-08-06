@@ -15,7 +15,10 @@
 import { useEffect, useMemo } from 'react'
 import { Sparkles, Loader2, CheckCircle2, AlertTriangle, X, type LucideIcon } from 'lucide-react'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
-import type { ProjectSpecialist, BuildProgressEvent } from '@renderer/store/project-specialist.store'
+import type {
+  ProjectSpecialist,
+  BuildProgressEvent
+} from '@renderer/store/project-specialist.store'
 
 interface Props {
   open: boolean
@@ -76,7 +79,7 @@ const VIEW_CONFIG: Record<
     Icon: AlertTriangle,
     iconClass: 'text-rose-500',
     title: 'Build Failed',
-    subtitle: () => "We couldn’t finish building your specialist",
+    subtitle: () => 'We couldn’t finish building your specialist',
     dismissLabel: 'Dismiss',
     actionLabel: 'Retry'
   }
@@ -111,7 +114,10 @@ export default function GenerateSpecialistModal({
   const error = useProjectSpecialistStore((s) => s.error)
   const clearError = useProjectSpecialistStore((s) => s.clearError)
 
-  const view: ViewState = useMemo(() => resolveViewState(specialist ?? undefined, progress), [specialist, progress])
+  const view: ViewState = useMemo(
+    () => resolveViewState(specialist ?? undefined, progress),
+    [specialist, progress]
+  )
 
   // Auto-close 1.5s after success
   useEffect(() => {
@@ -139,7 +145,12 @@ export default function GenerateSpecialistModal({
   const techCount = specialist?.detectedTechs?.length ?? 0
   const techPlural = techCount === 1 ? '' : 's'
   const cfg = VIEW_CONFIG[view]
-  const viewCtx: ViewContext = { workspaceName, techCount, techPlural, progressMessage: progress?.message }
+  const viewCtx: ViewContext = {
+    workspaceName,
+    techCount,
+    techPlural,
+    progressMessage: progress?.message
+  }
   const HeaderIcon = cfg.Icon
 
   return (

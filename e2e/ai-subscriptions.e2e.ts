@@ -23,9 +23,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('AISubscriptionsSection', () => {
-  async function navigateToSubscriptions(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToSubscriptions(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -53,9 +51,14 @@ test.describe('AISubscriptionsSection', () => {
     return section.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('check rows render with status icons for each credential type', async ({ electronPage: page }) => {
+  test('check rows render with status icons for each credential type', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToSubscriptions(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
@@ -75,7 +78,10 @@ test.describe('AISubscriptionsSection', () => {
 
   test('validation spinner shows during credential check', async ({ electronPage: page }) => {
     const ready = await navigateToSubscriptions(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
@@ -87,19 +93,39 @@ test.describe('AISubscriptionsSection', () => {
     await expect(firstRow).toBeVisible()
 
     // The row should have a status indicator (spinner, checkmark, warning, or error icon)
-    const hasSpinner = await firstRow.locator('.animate-spin').isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasStatus = await firstRow.locator('text=Checking').isVisible({ timeout: 1_000 }).catch(() => false)
-    const hasResult = await firstRow.locator('text=Installed').isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasNotFound = await firstRow.locator('text=Not Found').isVisible({ timeout: 1_000 }).catch(() => false)
-    const hasPending = await firstRow.locator('text=Pending').isVisible({ timeout: 1_000 }).catch(() => false)
+    const hasSpinner = await firstRow
+      .locator('.animate-spin')
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
+    const hasStatus = await firstRow
+      .locator('text=Checking')
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
+    const hasResult = await firstRow
+      .locator('text=Installed')
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasNotFound = await firstRow
+      .locator('text=Not Found')
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
+    const hasPending = await firstRow
+      .locator('text=Pending')
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
 
     // One of these states should be present
     expect(hasSpinner || hasStatus || hasResult || hasNotFound || hasPending).toBe(true)
   })
 
-  test('success state shows green checkmark for validated credentials', async ({ electronPage: page }) => {
+  test('success state shows green checkmark for validated credentials', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToSubscriptions(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
@@ -112,9 +138,18 @@ test.describe('AISubscriptionsSection', () => {
     const loggedInTexts = section.locator('text=Logged In')
     const activeTexts = section.locator('text=Active')
 
-    const hasInstalled = await successTexts.first().isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasLoggedIn = await loggedInTexts.first().isVisible({ timeout: 1_000 }).catch(() => false)
-    const hasActive = await activeTexts.first().isVisible({ timeout: 1_000 }).catch(() => false)
+    const hasInstalled = await successTexts
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
+    const hasLoggedIn = await loggedInTexts
+      .first()
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
+    const hasActive = await activeTexts
+      .first()
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
 
     // At least check that the section has completed validation (no more "Pending" states)
     const pendingRows = section.locator('text=Pending')
@@ -126,7 +161,10 @@ test.describe('AISubscriptionsSection', () => {
 
   test('warning or error state shows expandable detail row', async ({ electronPage: page }) => {
     const ready = await navigateToSubscriptions(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
@@ -156,8 +194,12 @@ test.describe('AISubscriptionsSection', () => {
 
     for (let i = 0; i < rowCount; i++) {
       const row = checkRows.nth(i)
-      const rowText = await row.textContent() ?? ''
-      if (rowText.includes('Not Found') || rowText.includes('Not Authenticated') || rowText.includes('error')) {
+      const rowText = (await row.textContent()) ?? ''
+      if (
+        rowText.includes('Not Found') ||
+        rowText.includes('Not Authenticated') ||
+        rowText.includes('error')
+      ) {
         await row.locator('button').click()
         clicked = true
         await page.waitForTimeout(500)
@@ -171,7 +213,10 @@ test.describe('AISubscriptionsSection', () => {
 
   test('auto-configure button appears when CLI is missing', async ({ electronPage: page }) => {
     const ready = await navigateToSubscriptions(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
@@ -188,7 +233,7 @@ test.describe('AISubscriptionsSection', () => {
 
     // Auto-configure is conditional — check if it appears based on CLI status
     const cliRow = section.locator('[data-testid="ai-check-row"]').first()
-    const cliText = await cliRow.textContent() ?? ''
+    const cliText = (await cliRow.textContent()) ?? ''
     const cliMissing = cliText.includes('Not Found')
 
     if (cliMissing) {
@@ -205,7 +250,10 @@ test.describe('AISubscriptionsSection', () => {
 
   test('re-check button triggers fresh validation', async ({ electronPage: page }) => {
     const ready = await navigateToSubscriptions(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="ai-subscriptions-section"]')
     await expect(section).toBeVisible()
@@ -223,7 +271,10 @@ test.describe('AISubscriptionsSection', () => {
 
     // Button text should change to "Validating..." or show spinner
     const btnText = await validateBtn.textContent()
-    const hasSpinner = await validateBtn.locator('.animate-spin').isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasSpinner = await validateBtn
+      .locator('.animate-spin')
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     // Either the button text changed or a spinner appeared
     expect(btnText?.includes('Validating') || hasSpinner || true).toBe(true)

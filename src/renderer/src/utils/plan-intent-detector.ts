@@ -45,7 +45,7 @@ const SCOPE_ACTION_PATTERNS = [
   /\bcut\b.*\b(over|off)\b.*\b(to|from|onto)\b/i,
   /\b(transition|move)\b.*\b(to|from|onto)\b/i,
   /\b(set\s+up|stand\s+up|bootstrap)\b.*\b(pipeline|infrastructure|ci\/?cd|deployment)\b/i,
-  /\b(implement|add\s+support\s+for|introduce)\b.*\b(sso|oauth|auth|i18n|internationali[sz]ation|multi.?tenant|real.?time)\b/i,
+  /\b(implement|add\s+support\s+for|introduce)\b.*\b(sso|oauth|auth|i18n|internationali[sz]ation|multi.?tenant|real.?time)\b/i
 ]
 
 // ── Category 2: Scale / breadth indicators ──
@@ -53,7 +53,7 @@ const SCALE_PATTERNS = [
   /\b(across\s+the\s+(app|codebase|project|repo|system))\b/i,
   /\b(entire|whole|all\s+(of\s+)?(the\s+)?)\b.*\b(app|system|codebase|project|backend|frontend|stack)\b/i,
   /\b(frontend\s+and\s+backend|client\s+and\s+server|ui\s+and\s+api)\b/i,
-  /\b(database|schema|api|authentication|authorization)\b.*\b(and)\b.*\b(database|schema|api|authentication|authorization)\b/i,
+  /\b(database|schema|api|authentication|authorization)\b.*\b(and)\b.*\b(database|schema|api|authentication|authorization)\b/i
 ]
 
 // ── Category 3: Structural complexity ──

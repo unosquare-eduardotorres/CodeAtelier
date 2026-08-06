@@ -44,7 +44,10 @@ test.describe('Blueprint Clarify & Artifacts', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -74,9 +77,7 @@ test.describe('Blueprint Clarify & Artifacts', () => {
         await historyItems.first().click()
         await page.waitForTimeout(2_000)
 
-        const hasClarifyAfter = await clarifyInput
-          .isVisible({ timeout: 5_000 })
-          .catch(() => false)
+        const hasClarifyAfter = await clarifyInput.isVisible({ timeout: 5_000 }).catch(() => false)
         if (!hasClarifyAfter) {
           test.skip()
           return
@@ -168,7 +169,10 @@ test.describe('Blueprint Clarify & Artifacts', () => {
 
     // After expansion, artifacts should be visible (markdown content)
     const artifacts = firstPhase.locator('[class*="prose"], [class*="markdown"]')
-    const hasArtifacts = await artifacts.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasArtifacts = await artifacts
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Or at minimum some content should expand
     const expandedContent = firstPhase.locator('div').nth(1)
@@ -177,9 +181,7 @@ test.describe('Blueprint Clarify & Artifacts', () => {
     expect(hasArtifacts || hasExpanded).toBeTruthy()
   })
 
-  test('Phase artifact copy button shows "Copied" feedback', async ({
-    electronPage: page
-  }) => {
+  test('Phase artifact copy button shows "Copied" feedback', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     // Navigate into a blueprint detail with completed phases
@@ -310,7 +312,10 @@ test.describe('Blueprint Clarify & Artifacts', () => {
 
     // Should show grouped chips (Files and/or URLs groups)
     const groupHeaders = docList.getByText(/files|urls/i)
-    const hasGroups = await groupHeaders.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasGroups = await groupHeaders
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Individual document chips should have remove buttons
     const removeButtons = docList.locator('button').filter({ has: page.locator('svg') })
@@ -337,7 +342,9 @@ test.describe('Blueprint Clarify & Artifacts', () => {
     await page.waitForTimeout(1_000)
 
     // Look for "Browse workspace" or file tree trigger button
-    const browseBtn = page.getByRole('button', { name: /browse|workspace.*file|add.*file/i }).first()
+    const browseBtn = page
+      .getByRole('button', { name: /browse|workspace.*file|add.*file/i })
+      .first()
     const hasBrowse = await browseBtn.isVisible({ timeout: 5_000 }).catch(() => false)
 
     if (!hasBrowse) {
@@ -368,7 +375,10 @@ test.describe('Blueprint Clarify & Artifacts', () => {
     expect(entryCount).toBeGreaterThan(0)
 
     // Close button should work
-    const closeBtn = fileTree.locator('button').filter({ has: page.locator('svg') }).first()
+    const closeBtn = fileTree
+      .locator('button')
+      .filter({ has: page.locator('svg') })
+      .first()
     const hasClose = await closeBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (hasClose) {

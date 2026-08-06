@@ -152,11 +152,10 @@ describe('E2EContracts', () => {
 
     const unknownTools: string[] = []
     for (const tool of referencedTools) {
-      // Tool name matching: MCP tools use contains-match (e.g. 'checkpoint_list'
-      // matches 'checkpoint-context_checkpoint_list')
-      const inMcp = [...mcpToolNames].some(
-        (mcpName) => mcpName === tool || mcpName.includes(tool) || tool.includes(mcpName)
-      )
+      // Exact match only. The previous contains-match existed to paper over
+      // registry drift (catalog said 'checkpoint_list', registry said
+      // 'list_checkpoints') and would silently accept a ghost tool name again.
+      const inMcp = mcpToolNames.has(tool)
       const isAlias = tool in CATALOG_TOOL_ALIASES
       if (!inMcp && !SDK_NATIVE_TOOLS.has(tool) && !isAlias) {
         unknownTools.push(tool)

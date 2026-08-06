@@ -209,8 +209,7 @@ if (UNIT_RUNNERS.every((p) => existsSync(p))) {
 
   const inScope = (f) => SCAN_DIRS.some((d) => f.startsWith(path.normalize(d) + path.sep))
   const covOnly = [...registered].filter(
-    (f) =>
-      inScope(f) && !unitRegistered.has(f) && !DENY_SET.has(f) && !KNOWN_UNIT_RUNNER_GAP.has(f)
+    (f) => inScope(f) && !unitRegistered.has(f) && !DENY_SET.has(f) && !KNOWN_UNIT_RUNNER_GAP.has(f)
   )
   const unitOnly = [...unitRegistered].filter((f) => !registered.has(f)).sort()
 

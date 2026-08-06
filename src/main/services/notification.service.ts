@@ -14,7 +14,12 @@
  * macOS system sounds are used — no custom audio files required.
  */
 
-import { Notification, app, type BrowserWindow, type NotificationConstructorOptions } from 'electron'
+import {
+  Notification,
+  app,
+  type BrowserWindow,
+  type NotificationConstructorOptions
+} from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { safeWindowSend } from '../ipc/safe-send'

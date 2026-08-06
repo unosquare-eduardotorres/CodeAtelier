@@ -28,7 +28,7 @@ interface TodoRow {
   updated_at: string
 }
 
-function db() {
+function db(): ReturnType<typeof getDatabase> {
   return getDatabase()
 }
 
@@ -127,9 +127,7 @@ export class TodoRepository {
   }
 
   clearByConversation(conversationId: string): void {
-    db()
-      .prepare('DELETE FROM conversation_todos WHERE conversation_id = ?')
-      .run(conversationId)
+    db().prepare('DELETE FROM conversation_todos WHERE conversation_id = ?').run(conversationId)
   }
 }
 

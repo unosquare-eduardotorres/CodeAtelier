@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Prompt Editor', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,9 +35,7 @@ test.describe('Prompt Editor', () => {
   }
 
   /** Navigate to specialist settings and open the prompt preview modal. */
-  async function openPromptModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openPromptModal(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to specialist settings tab
     const specialistTab = page.locator('[data-testid="settings-tab-specialist"]')
     const hasTab = await specialistTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -74,12 +70,20 @@ test.describe('Prompt Editor', () => {
     return modal.isVisible({ timeout: 3_000 }).catch(() => false)
   }
 
-  test('prompt preview modal opens from system prompt section edit button', async ({ electronPage: page }) => {
+  test('prompt preview modal opens from system prompt section edit button', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPromptModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
     await expect(modal).toBeVisible()
@@ -89,12 +93,20 @@ test.describe('Prompt Editor', () => {
     await expect(heading).toBeVisible()
   })
 
-  test('modal shows editable textarea with current prompt content', async ({ electronPage: page }) => {
+  test('modal shows editable textarea with current prompt content', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPromptModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
     const textarea = modal.locator('textarea')
@@ -107,10 +119,16 @@ test.describe('Prompt Editor', () => {
 
   test('character count updates as user types', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPromptModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
 
@@ -133,19 +151,30 @@ test.describe('Prompt Editor', () => {
     expect(updatedText).not.toBe(initialText)
   })
 
-  test('save button disabled when no changes made (isDirty check)', async ({ electronPage: page }) => {
+  test('save button disabled when no changes made (isDirty check)', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPromptModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
 
     // Save button should be disabled when no changes
     const saveBtn = modal.locator('button').filter({ hasText: /save/i })
     const hasSave = await saveBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasSave) { test.skip(); return }
+    if (!hasSave) {
+      test.skip()
+      return
+    }
 
     await expect(saveBtn).toBeDisabled()
 
@@ -161,10 +190,16 @@ test.describe('Prompt Editor', () => {
 
   test('escape key closes the prompt editor modal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modalOpen = await openPromptModal(page)
-    if (!modalOpen) { test.skip(); return }
+    if (!modalOpen) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="prompt-preview-modal"]')
     await expect(modal).toBeVisible()

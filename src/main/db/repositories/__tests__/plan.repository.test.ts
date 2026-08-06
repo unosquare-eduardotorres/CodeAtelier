@@ -62,11 +62,20 @@ if (!env) {
         linkedConversationId: seedConversation(env.db, wsId, 'Plan Conv'),
         linkedMpaRunId: (() => {
           const { mpaRunRepository } = require('../mpa-run.repository')
-          return mpaRunRepository.createRun({ workspaceId: wsId, title: 'Plan Run', goal: 'g', goalType: 'feature' }).id
+          return mpaRunRepository.createRun({
+            workspaceId: wsId,
+            title: 'Plan Run',
+            goal: 'g',
+            goalType: 'feature'
+          }).id
         })(),
         linkedCouncilSessionId: (() => {
           const { councilSessionRepository } = require('../council-session.repository')
-          return councilSessionRepository.createSession({ workspaceId: wsId, inputType: 'plan', inputContent: 'c' }).id
+          return councilSessionRepository.createSession({
+            workspaceId: wsId,
+            inputType: 'plan',
+            inputContent: 'c'
+          }).id
         })()
       })
       assert.ok(plan.linkedConversationId)

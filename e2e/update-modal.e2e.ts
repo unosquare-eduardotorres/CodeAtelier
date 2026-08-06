@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Update Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,12 +40,18 @@ test.describe('Update Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="update-available-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Should have a title
     const title = modal.locator('#update-modal-title')
@@ -61,40 +65,56 @@ test.describe('Update Modal', () => {
     expect(modalText).toBeTruthy()
   })
 
-  test('release notes section shows when notes are present', async ({
-    electronPage: page
-  }) => {
+  test('release notes section shows when notes are present', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="update-available-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Check for release notes section
     const releaseNotes = modal.getByText(/release notes/i)
     const hasNotes = await releaseNotes.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasNotes) { test.skip(); return }
+    if (!hasNotes) {
+      test.skip()
+      return
+    }
 
     await expect(releaseNotes).toBeVisible()
   })
 
   test('"Update Now" button triggers download', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="update-available-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Look for "Update Now" button (available state)
     const updateBtn = modal.getByRole('button', { name: /update now/i })
     const hasUpdateBtn = await updateBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasUpdateBtn) { test.skip(); return }
+    if (!hasUpdateBtn) {
+      test.skip()
+      return
+    }
 
     await expect(updateBtn).toBeEnabled()
 
@@ -103,22 +123,29 @@ test.describe('Update Modal', () => {
     await expect(downloadIcon).toBeVisible()
   })
 
-  test('downloading state shows progress ring with percentage', async ({
-    electronPage: page
-  }) => {
+  test('downloading state shows progress ring with percentage', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="update-available-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Check for downloading state (Downloading Update title + progress bar)
     const downloadingTitle = modal.getByText(/downloading/i)
     const hasDownloading = await downloadingTitle.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasDownloading) { test.skip(); return }
+    if (!hasDownloading) {
+      test.skip()
+      return
+    }
 
     // Should show the circular progress ring
     const progressRing = modal.locator('[data-testid="update-progress-ring"]')
@@ -138,24 +165,36 @@ test.describe('Update Modal', () => {
 
   test('ready state shows "Restart & Install" button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="update-available-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Check for "Ready to Install" title
     const readyTitle = modal.getByText(/ready to install/i)
     const hasReady = await readyTitle.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasReady) { test.skip(); return }
+    if (!hasReady) {
+      test.skip()
+      return
+    }
 
     // Should show "Restart & Install" button
     const installBtn = modal.getByRole('button', { name: /restart.*install/i })
     const hasInstallBtn = await installBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasInstallBtn) { test.skip(); return }
+    if (!hasInstallBtn) {
+      test.skip()
+      return
+    }
 
     await expect(installBtn).toBeEnabled()
   })
@@ -164,22 +203,34 @@ test.describe('Update Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="update-available-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Check for error state (Update Error title)
     const errorTitle = modal.getByText(/update error/i)
     const hasError = await errorTitle.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasError) { test.skip(); return }
+    if (!hasError) {
+      test.skip()
+      return
+    }
 
     // Should show error message in a danger box
     const errorMsg = modal.locator('.text-danger')
-    const hasErrMsg = await errorMsg.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasErrMsg = await errorMsg
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     if (hasErrMsg) {
       await expect(errorMsg.first()).toBeVisible()
     }

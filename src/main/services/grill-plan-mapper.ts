@@ -36,9 +36,7 @@ export function grillPlanToStructuredPlan(grill: GrillStructuredPlan): Structure
       complexity: Math.min(10, Math.max(1, files.length + deps.length)),
       fileCount: files.length,
       risk: (deps.length > 2 ? 'high' : files.length > 5 ? 'medium' : 'low') as
-        | 'low'
-        | 'medium'
-        | 'high',
+        'low' | 'medium' | 'high',
       description: item.description,
       files: files.map((f) => ({ file: f, change: `[${item.scope}] ${item.title}` }))
     }

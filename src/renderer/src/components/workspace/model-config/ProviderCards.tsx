@@ -11,16 +11,21 @@
  */
 
 import { useState } from 'react'
-import { Loader2, Cloud, Cpu, CheckCircle2, ChevronDown, ChevronRight, Save, AlertTriangle } from 'lucide-react'
+import {
+  Loader2,
+  Cloud,
+  Cpu,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Save,
+  AlertTriangle
+} from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
 import { useToastStore } from '@renderer/store'
 import { OMLX_DEFAULT_PORT } from '../../../../../shared/constants'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
-import type {
-  LocalLLMBackend,
-  OmlxExtendedStatus,
-  PlatformInfo
-} from '../../../../../shared/types'
+import type { LocalLLMBackend, OmlxExtendedStatus, PlatformInfo } from '../../../../../shared/types'
 import type { ClaudeCliStatus, ConnectionDraft } from './useModelConfig'
 import LocalModelSelector from '../LocalModelSelector'
 
@@ -117,7 +122,8 @@ function ConnectionStatusChips({
   }
 
   const modelCount = localStatus.models.length
-  const allModels = 'allModels' in localStatus && localStatus.allModels ? localStatus.allModels : null
+  const allModels =
+    'allModels' in localStatus && localStatus.allModels ? localStatus.allModels : null
   const embeddingModel = allModels?.find((m) => m.loaded && m.modelType === 'embedding')
 
   return (
@@ -199,11 +205,11 @@ interface ClaudeProviderCardProps {
   claudeCliStatus: ClaudeCliStatus | null
 }
 
-function ClaudeProviderCard({
-  claudeCliStatus
-}: ClaudeProviderCardProps): React.JSX.Element {
+function ClaudeProviderCard({ claudeCliStatus }: ClaudeProviderCardProps): React.JSX.Element {
   const statusDot: StatusDotColor = claudeCliStatus
-    ? claudeCliStatus.installed ? 'green' : 'red'
+    ? claudeCliStatus.installed
+      ? 'green'
+      : 'red'
     : 'gray'
 
   const statusText = claudeCliStatus
@@ -213,7 +219,10 @@ function ClaudeProviderCard({
     : 'Checking…'
 
   return (
-    <div data-testid="claude-config-section" className="rounded-lg border border-border-subtle bg-surface-float p-4">
+    <div
+      data-testid="claude-config-section"
+      className="rounded-lg border border-border-subtle bg-surface-float p-4"
+    >
       <ProviderCardHeader
         icon={<Cloud size={16} className="text-text-secondary" />}
         name="Claude"
@@ -228,15 +237,21 @@ function ClaudeProviderCard({
           <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
           <div className="text-xs text-text-secondary">
             <span className="font-medium text-warning">Claude CLI required</span>
-            <p className="mt-0.5">Claude models need the Claude CLI installed. Run <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">npm install -g @anthropic-ai/claude-code</code> to install it.</p>
+            <p className="mt-0.5">
+              Claude models need the Claude CLI installed. Run{' '}
+              <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">
+                npm install -g @anthropic-ai/claude-code
+              </code>{' '}
+              to install it.
+            </p>
           </div>
         </div>
       )}
 
       {claudeCliStatus?.installed && (
         <p className="mt-2 text-xs text-text-muted">
-          Executor is automatically selected based on your model routing.
-          Claude models use the Claude CLI.
+          Executor is automatically selected based on your model routing. Claude models use the
+          Claude CLI.
         </p>
       )}
     </div>
@@ -250,9 +265,7 @@ interface OpenCodeCardProps {
 }
 
 function OpenCodeCard({ status }: OpenCodeCardProps): React.JSX.Element {
-  const statusDot: StatusDotColor = status
-    ? status.available ? 'green' : 'red'
-    : 'gray'
+  const statusDot: StatusDotColor = status ? (status.available ? 'green' : 'red') : 'gray'
 
   const statusText = status
     ? status.available
@@ -261,7 +274,10 @@ function OpenCodeCard({ status }: OpenCodeCardProps): React.JSX.Element {
     : 'Checking…'
 
   return (
-    <div data-testid="opencode-config-section" className="rounded-lg border border-border-subtle bg-surface-float p-4">
+    <div
+      data-testid="opencode-config-section"
+      className="rounded-lg border border-border-subtle bg-surface-float p-4"
+    >
       <ProviderCardHeader
         icon={<Cpu size={16} className="text-text-secondary" />}
         name="OpenCode"
@@ -270,15 +286,20 @@ function OpenCodeCard({ status }: OpenCodeCardProps): React.JSX.Element {
         statusText={statusText}
       />
       <p className="mt-2 text-xs text-text-muted">
-        Drives all non-Claude providers (local LLMs, OpenAI, custom endpoints).
-        Executor is automatically selected based on your model routing.
+        Drives all non-Claude providers (local LLMs, OpenAI, custom endpoints). Executor is
+        automatically selected based on your model routing.
       </p>
       {status && !status.available && (
         <div className="mt-3 flex items-start gap-2 rounded-md bg-warning-muted/10 border border-warning/20 p-2.5">
           <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
           <div className="text-xs text-text-secondary">
             <span className="font-medium text-warning">OpenCode CLI not found</span>
-            <p className="mt-0.5">Install with <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">npm install -g @opencode-ai/cli</code></p>
+            <p className="mt-0.5">
+              Install with{' '}
+              <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">
+                npm install -g @opencode-ai/cli
+              </code>
+            </p>
           </div>
         </div>
       )}
@@ -359,8 +380,12 @@ function OmlxProviderCard({
   const statusText = localStatus
     ? localStatus.running
       ? `Connected · ${modelCount} model${modelCount !== 1 ? 's' : ''}`
-      : localStatus.installed ? 'Not running' : 'Not reachable'
-    : connectionTesting ? 'Connecting…' : 'Not configured'
+      : localStatus.installed
+        ? 'Not running'
+        : 'Not reachable'
+    : connectionTesting
+      ? 'Connecting…'
+      : 'Not configured'
 
   const handleContextWindowChange: React.ChangeEventHandler<HTMLInputElement> = (e) => {
     const raw = e.target.value
@@ -375,7 +400,10 @@ function OmlxProviderCard({
   }
 
   return (
-    <div data-testid="local-llm-config" className="rounded-lg border border-border-subtle bg-surface-float p-4">
+    <div
+      data-testid="local-llm-config"
+      className="rounded-lg border border-border-subtle bg-surface-float p-4"
+    >
       <ProviderCardHeader
         icon={<Cpu size={16} className="text-text-secondary" />}
         name="Local Models"
@@ -417,7 +445,12 @@ function OmlxProviderCard({
               <span className="text-text-muted text-sm">:</span>
               <input
                 value={connectionDraft.localPort}
-                onChange={(e) => onPortChange(parseInt(e.target.value) || (localLlmBackend === 'ollama' ? 11434 : OMLX_DEFAULT_PORT))}
+                onChange={(e) =>
+                  onPortChange(
+                    parseInt(e.target.value) ||
+                      (localLlmBackend === 'ollama' ? 11434 : OMLX_DEFAULT_PORT)
+                  )
+                }
                 onBlur={() => onAutoTest()}
                 type="number"
                 placeholder={localLlmBackend === 'ollama' ? '11434' : '8000'}
@@ -562,7 +595,8 @@ function OmlxProviderCard({
                 const otherModels = allModels.filter((m) => !EMBEDDING_MODEL_PATTERN.test(m))
                 // Ensure the persisted model always appears as an option even before
                 // the connection test completes (prevents dropdown showing "Select...")
-                const persistedNotInList = ollamaEmbeddingModel && !allModels.includes(ollamaEmbeddingModel)
+                const persistedNotInList =
+                  ollamaEmbeddingModel && !allModels.includes(ollamaEmbeddingModel)
                 return (
                   <select
                     value={ollamaEmbeddingModel}
@@ -576,14 +610,18 @@ function OmlxProviderCard({
                     {embeddingCandidates.length > 0 && (
                       <optgroup label="Embedding Models">
                         {embeddingCandidates.map((m) => (
-                          <option key={m} value={m}>{m}</option>
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
                         ))}
                       </optgroup>
                     )}
                     {otherModels.length > 0 && (
                       <optgroup label="Other Models">
                         {otherModels.map((m) => (
-                          <option key={m} value={m}>{m}</option>
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
                         ))}
                       </optgroup>
                     )}
@@ -699,12 +737,8 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
     <div data-testid="provider-toggle" className="space-y-4 mb-6">
       {/* Runtime status row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ClaudeProviderCard
-          claudeCliStatus={props.claudeCliStatus}
-        />
-        <OpenCodeCard
-          status={props.openCodeCliStatus}
-        />
+        <ClaudeProviderCard claudeCliStatus={props.claudeCliStatus} />
+        <OpenCodeCard status={props.openCodeCliStatus} />
       </div>
       {/* Local models (full width) */}
       <OmlxProviderCard

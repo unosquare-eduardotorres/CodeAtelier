@@ -49,8 +49,17 @@ const MIN_TOPIC_SIZE = 3
 
 /** Tags that describe provenance rather than subject matter. */
 const NON_TOPIC_TAGS = new Set([
-  'bootstrap', 'docs', 'architecture', 'history', 'stack', 'structure',
-  'instructions', 'session', 'commit', 'manual', 'agent-exploration'
+  'bootstrap',
+  'docs',
+  'architecture',
+  'history',
+  'stack',
+  'structure',
+  'instructions',
+  'session',
+  'commit',
+  'manual',
+  'agent-exploration'
 ])
 
 const TIER_LABELS = ['Observed', 'Confirmed', 'Established', 'Wisdom'] as const
@@ -199,7 +208,10 @@ function rankForIndex(a: MemoryFact, b: MemoryFact): number {
 
 /** Titles differing only in case, punctuation or spacing are the same title. */
 function normalizeTitle(title: string): string {
-  return title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
 }
 
 // ── Topic grouping ──────────────────────────────────────────────────────────
@@ -322,7 +334,9 @@ export function renderTopicFile(topic: string, facts: MemoryFact[], now: string)
         `tier ${fact.tier} (${TIER_LABELS[fact.tier] ?? 'Observed'})`,
         `confidence ${(fact.confidence * 100).toFixed(0)}%`,
         fact.scopePaths.length > 0 ? `scope ${fact.scopePaths.join(', ')}` : null,
-        fact.sourceRef ? `source ${fact.sourceType} (${fact.sourceRef})` : `source ${fact.sourceType}`
+        fact.sourceRef
+          ? `source ${fact.sourceType} (${fact.sourceRef})`
+          : `source ${fact.sourceType}`
       ]
         .filter(Boolean)
         .join(' · ')

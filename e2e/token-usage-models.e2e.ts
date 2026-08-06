@@ -46,7 +46,10 @@ test.describe('Token Usage & Local Models', () => {
 
     const settings = new WorkspaceSettings(page)
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -99,9 +102,7 @@ test.describe('Token Usage & Local Models', () => {
 
   // ── CacheEfficiencyPanel ──
 
-  test('CacheEfficiencyPanel shows cache hit rate information', async ({
-    electronPage: page
-  }) => {
+  test('CacheEfficiencyPanel shows cache hit rate information', async ({ electronPage: page }) => {
     await navigateToSettings(page, 'token-usage')
 
     // CacheEfficiencyPanel shows cache read/write percentages
@@ -116,7 +117,10 @@ test.describe('Token Usage & Local Models', () => {
 
     // Should show percentage values
     const percentText = page.getByText(/\d+%/)
-    const hasPercent = await percentText.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasPercent = await percentText
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     expect(hasPercent).toBeTruthy()
   })
 
@@ -176,7 +180,9 @@ test.describe('Token Usage & Local Models', () => {
 
     if (!hasModal) {
       // Try to trigger the modal via a setup/configure button
-      const setupBtn = page.getByRole('button', { name: /setup|configure|install.*ollama/i }).first()
+      const setupBtn = page
+        .getByRole('button', { name: /setup|configure|install.*ollama/i })
+        .first()
       const hasSetup = await setupBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
       if (hasSetup) {
@@ -206,7 +212,10 @@ test.describe('Token Usage & Local Models', () => {
     expect(hasContent).toBeTruthy()
 
     // Close modal
-    const closable = modal.locator('button').filter({ hasText: /close|cancel|×/ }).first()
+    const closable = modal
+      .locator('button')
+      .filter({ hasText: /close|cancel|×/ })
+      .first()
     const hasClosable = await closable.isVisible({ timeout: 2_000 }).catch(() => false)
     if (hasClosable) {
       await closable.click()

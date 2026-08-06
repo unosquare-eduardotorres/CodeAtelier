@@ -89,7 +89,10 @@ export default function HealthTrackSidebar({
   onShowOverview
 }: HealthTrackSidebarProps): React.JSX.Element {
   return (
-    <div data-testid="health-track-sidebar" className="w-72 flex-shrink-0 border-r border-border-subtle bg-surface-raised overflow-y-auto">
+    <div
+      data-testid="health-track-sidebar"
+      className="w-72 flex-shrink-0 border-r border-border-subtle bg-surface-raised overflow-y-auto"
+    >
       {/* Overview entry — shown once a run has results */}
       {hasResults && (
         <button

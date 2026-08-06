@@ -98,17 +98,11 @@ describe('control-actions-server — output-cap', () => {
 
 describe('stripCdPrefix', () => {
   test('strips cd with double-quoted path', () => {
-    assert.equal(
-      stripCdPrefix('cd "C:/Users/eduardo/MULLIGAN" && git grep foo'),
-      'git grep foo'
-    )
+    assert.equal(stripCdPrefix('cd "C:/Users/eduardo/MULLIGAN" && git grep foo'), 'git grep foo')
   })
 
   test('strips cd with single-quoted path', () => {
-    assert.equal(
-      stripCdPrefix("cd '/tmp/project' && npm test"),
-      'npm test'
-    )
+    assert.equal(stripCdPrefix("cd '/tmp/project' && npm test"), 'npm test')
   })
 
   test('strips cd with unquoted path', () => {
@@ -170,21 +164,27 @@ describe('shouldAutoApprove — Bash commands', () => {
   })
 
   test('auto-approves compound cd + git command', () => {
-    assert.ok(shouldAutoApprove('Bash', {
-      command: 'cd "C:/Users/eduardo.torres/Documents/Development/MULLIGAN" && git grep foo'
-    }))
+    assert.ok(
+      shouldAutoApprove('Bash', {
+        command: 'cd "C:/Users/eduardo.torres/Documents/Development/MULLIGAN" && git grep foo'
+      })
+    )
   })
 
   test('auto-approves compound cd + npm test', () => {
-    assert.ok(shouldAutoApprove('Bash', {
-      command: 'cd /home/user/project && npm test'
-    }))
+    assert.ok(
+      shouldAutoApprove('Bash', {
+        command: 'cd /home/user/project && npm test'
+      })
+    )
   })
 
   test('auto-approves npx tsx (test runner)', () => {
-    assert.ok(shouldAutoApprove('Bash', {
-      command: 'npx tsx src/main/services/__tests__/run-tests.ts'
-    }))
+    assert.ok(
+      shouldAutoApprove('Bash', {
+        command: 'npx tsx src/main/services/__tests__/run-tests.ts'
+      })
+    )
   })
 
   test('auto-approves dotnet test', () => {

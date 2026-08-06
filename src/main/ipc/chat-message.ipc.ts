@@ -92,7 +92,8 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_SET_GOAL)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_SET_GOAL)
     const goal = requireString(args, 'goal', IPC_CHANNELS.CHAT_SET_GOAL)
-    const goalMode = (args.goalMode === 'advisory' ? 'advisory' : 'enforce') as 'advisory' | 'enforce'
+    const goalMode = (args.goalMode === 'advisory' ? 'advisory' : 'enforce') as
+      'advisory' | 'enforce'
 
     // Validate goal length (CLI caps at 4000 chars)
     if (goal.length > 4000) {
@@ -111,7 +112,10 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     if (adapter && 'setGoalCondition' in adapter) {
       ;(adapter as ProjectSpecialistRoleAdapter).setGoalCondition(conversationId, goal, goalMode)
     } else {
-      log.warn('[CHAT_SET_GOAL] Adapter not found or missing setGoalCondition for workspace:', workspaceId)
+      log.warn(
+        '[CHAT_SET_GOAL] Adapter not found or missing setGoalCondition for workspace:',
+        workspaceId
+      )
     }
 
     log.info('SET_GOAL received:', { conversationId, goalLen: goal.length, goalMode, workspaceId })

@@ -51,7 +51,10 @@ export default function CommitBar({
 
   return (
     <>
-      <div data-testid="commit-bar" className="shrink-0 border-t border-border-subtle bg-surface-float/80 backdrop-blur-sm px-4 py-3">
+      <div
+        data-testid="commit-bar"
+        className="shrink-0 border-t border-border-subtle bg-surface-float/80 backdrop-blur-sm px-4 py-3"
+      >
         {shownError && (
           <div className="mb-2 px-3 py-1.5 rounded-md bg-danger/10 border border-danger/20 text-xs text-danger">
             {shownError}
@@ -63,11 +66,14 @@ export default function CommitBar({
           <div className="text-xs text-text-muted text-center py-1 flex items-center justify-center gap-2">
             <GitCompareArrows size={14} />
             <span>
-              Showing differences: <span className="font-medium text-text-secondary">{currentBranch || 'HEAD'}</span>
+              Showing differences:{' '}
+              <span className="font-medium text-text-secondary">{currentBranch || 'HEAD'}</span>
               {' → '}
               <span className="font-medium text-text-secondary">{targetBranch}</span>
               {fileCount > 0 && (
-                <span className="text-text-muted ml-1">· {fileCount} file{fileCount !== 1 ? 's' : ''} changed</span>
+                <span className="text-text-muted ml-1">
+                  · {fileCount} file{fileCount !== 1 ? 's' : ''} changed
+                </span>
               )}
             </span>
           </div>

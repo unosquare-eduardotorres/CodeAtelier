@@ -22,9 +22,7 @@ import { SettingsNav } from './pages/settings-nav'
 // navigateToSettingsTab('events') can no longer find a button. The page and its
 // route are intact; unhide the entry to restore this coverage.
 test.describe.skip('Event Log', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,19 +36,23 @@ test.describe.skip('Event Log', () => {
     return true
   }
 
-  async function navigateToEvents(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToEvents(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('events')
   }
 
   test('event log page renders with recent events', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToEvents(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const eventLog = page.locator('[data-testid="event-log-page"]')
     await expect(eventLog).toBeVisible({ timeout: 5_000 })
@@ -60,18 +62,32 @@ test.describe.skip('Event Log', () => {
     await expect(header).toBeVisible()
 
     // Either events table or empty state should be visible
-    const hasTable = await page.locator('table').first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasEmpty = await page.getByText(/no events/i).first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasTable = await page
+      .locator('table')
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasEmpty = await page
+      .getByText(/no events/i)
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     expect(hasTable || hasEmpty).toBeTruthy()
   })
 
   test('category filter tabs switch event views', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToEvents(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const filterSection = page.locator('[data-testid="event-category-filter"]')
     await expect(filterSection).toBeVisible({ timeout: 5_000 })
@@ -96,14 +112,23 @@ test.describe.skip('Event Log', () => {
 
   test('event row shows timestamp, category badge, and summary', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToEvents(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const eventLog = page.locator('[data-testid="event-log-page"]')
     const hasPage = await eventLog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Look for event rows in the table
     const tableRows = page.locator('tbody tr')
@@ -121,19 +146,31 @@ test.describe.skip('Event Log', () => {
 
   test('click event row expands to show JSON detail', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToEvents(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const eventLog = page.locator('[data-testid="event-log-page"]')
     const hasPage = await eventLog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     const tableRows = page.locator('tbody tr')
     const rowCount = await tableRows.count()
 
-    if (rowCount === 0) { test.skip(); return }
+    if (rowCount === 0) {
+      test.skip()
+      return
+    }
 
     // Click the first event row to expand it
     await tableRows.first().click()
@@ -141,7 +178,10 @@ test.describe.skip('Event Log', () => {
 
     // Look for expanded JSON detail (pre element with formatted JSON)
     const jsonDetail = page.locator('pre')
-    const hasJson = await jsonDetail.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasJson = await jsonDetail
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     // Some events might not have data — that's okay
     expect(typeof hasJson).toBe('boolean')
@@ -149,14 +189,23 @@ test.describe.skip('Event Log', () => {
 
   test('load more button fetches additional events', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToEvents(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const eventLog = page.locator('[data-testid="event-log-page"]')
     const hasPage = await eventLog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // "Load more events" button only appears when there are >= 200 events
     const loadMore = page.getByText(/load more/i).first()

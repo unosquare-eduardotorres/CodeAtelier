@@ -23,9 +23,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('SkillsList', () => {
-  async function navigateToSkillsList(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToSkillsList(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -47,9 +45,14 @@ test.describe('SkillsList', () => {
     return skillsList.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('skills list renders with skill items sorted active first', async ({ electronPage: page }) => {
+  test('skills list renders with skill items sorted active first', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToSkillsList(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const skillsList = page.locator('[data-testid="skills-list"]')
     await expect(skillsList).toBeVisible()
@@ -65,11 +68,12 @@ test.describe('SkillsList', () => {
 
     if (itemCount >= 2) {
       // Verify sorting: active (Deployed) items should come before inactive
-      const firstItemText = await skillItems.first().textContent() ?? ''
-      const lastItemText = await skillItems.last().textContent() ?? ''
+      const firstItemText = (await skillItems.first().textContent()) ?? ''
+      const lastItemText = (await skillItems.last().textContent()) ?? ''
 
       // If first has "Deployed" and last has "Not deployed", sorting is correct
-      const firstDeployed = firstItemText.includes('Deployed') && !firstItemText.includes('Not deployed')
+      const firstDeployed =
+        firstItemText.includes('Deployed') && !firstItemText.includes('Not deployed')
       const lastNotDeployed = lastItemText.includes('Not deployed')
       if (firstDeployed && lastNotDeployed) {
         expect(true).toBe(true) // Correct sort order confirmed
@@ -79,20 +83,32 @@ test.describe('SkillsList', () => {
 
   test('stale skill shows warning indicator', async ({ electronPage: page }) => {
     const ready = await navigateToSkillsList(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const skillItems = page.locator('[data-testid="skills-list-item"]')
     const itemCount = await skillItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Look for stale warning text
     const staleWarning = page.locator('text=This skill might require an update')
-    const hasStale = await staleWarning.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasStale = await staleWarning
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Stale warnings are conditional on skill age, so we check structure
     // Each skill item should have a "Last updated" label if lastUpdated exists
     const lastUpdatedLabels = page.locator('text=Last updated')
-    const hasLastUpdated = await lastUpdatedLabels.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasLastUpdated = await lastUpdatedLabels
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     // Either stale warning is shown for old skills, or date labels exist
     expect(hasStale || hasLastUpdated || itemCount > 0).toBe(true)
@@ -100,18 +116,27 @@ test.describe('SkillsList', () => {
 
   test('sync to workspace button triggers re-scan', async ({ electronPage: page }) => {
     const ready = await navigateToSkillsList(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const skillItems = page.locator('[data-testid="skills-list-item"]')
     const itemCount = await skillItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Each skill item should have a sync button with aria-label
     const firstItem = skillItems.first()
     const syncBtn = firstItem.locator('button[aria-label*="Sync"]')
     const hasSyncBtn = await syncBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasSyncBtn) { test.skip(); return }
+    if (!hasSyncBtn) {
+      test.skip()
+      return
+    }
 
     await expect(syncBtn).toBeVisible()
 
@@ -129,18 +154,27 @@ test.describe('SkillsList', () => {
 
   test('delete skill shows confirmation dialog before removal', async ({ electronPage: page }) => {
     const ready = await navigateToSkillsList(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const skillItems = page.locator('[data-testid="skills-list-item"]')
     const itemCount = await skillItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Each skill item should have a delete button
     const firstItem = skillItems.first()
     const deleteBtn = firstItem.locator('button[aria-label*="Delete"]')
     const hasDeleteBtn = await deleteBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasDeleteBtn) { test.skip(); return }
+    if (!hasDeleteBtn) {
+      test.skip()
+      return
+    }
 
     // Click delete button
     await deleteBtn.click()
@@ -152,7 +186,7 @@ test.describe('SkillsList', () => {
 
     if (hasDialog) {
       await expect(confirmDialog).toBeVisible()
-      const dialogText = await confirmDialog.textContent() ?? ''
+      const dialogText = (await confirmDialog.textContent()) ?? ''
       expect(dialogText).toContain('Delete')
 
       // Cancel the dialog to not actually delete
@@ -169,11 +203,17 @@ test.describe('SkillsList', () => {
 
   test('deployed badge distinguishes active vs inactive skills', async ({ electronPage: page }) => {
     const ready = await navigateToSkillsList(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const skillItems = page.locator('[data-testid="skills-list-item"]')
     const itemCount = await skillItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Each skill should show "Deployed" or "Not deployed" badge
     let hasDeployed = false
@@ -181,7 +221,7 @@ test.describe('SkillsList', () => {
 
     for (let i = 0; i < itemCount; i++) {
       const item = skillItems.nth(i)
-      const text = await item.textContent() ?? ''
+      const text = (await item.textContent()) ?? ''
       if (text.includes('Not deployed')) hasNotDeployed = true
       else if (text.includes('Deployed')) hasDeployed = true
     }
@@ -199,18 +239,27 @@ test.describe('SkillsList', () => {
 
   test('view detail button navigates to skill detail page', async ({ electronPage: page }) => {
     const ready = await navigateToSkillsList(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const skillItems = page.locator('[data-testid="skills-list-item"]')
     const itemCount = await skillItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Each skill should have a "View" button
     const firstItem = skillItems.first()
     const viewBtn = firstItem.locator('button:has-text("View")')
     const hasViewBtn = await viewBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasViewBtn) { test.skip(); return }
+    if (!hasViewBtn) {
+      test.skip()
+      return
+    }
 
     await expect(viewBtn).toBeVisible()
 

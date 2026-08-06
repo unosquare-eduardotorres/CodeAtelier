@@ -22,7 +22,8 @@ export default function BugSummaryBar({ bugs }: BugSummaryBarProps): React.JSX.E
   const fatalCount = bugs.filter((b) => b.severity === 'fatal' && !b.isResolved).length
   const errorCount = bugs.filter((b) => b.severity === 'error' && !b.isResolved).length
   const resolvedCount = bugs.filter((b) => b.isResolved).length
-  const unresolvedPct = bugs.length > 0 ? Math.round(((bugs.length - resolvedCount) / bugs.length) * 100) : 0
+  const unresolvedPct =
+    bugs.length > 0 ? Math.round(((bugs.length - resolvedCount) / bugs.length) * 100) : 0
   const resolvedPct = 100 - unresolvedPct
   const mostRecent = bugs[0] ?? null
 

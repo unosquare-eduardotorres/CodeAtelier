@@ -146,7 +146,9 @@ export const test = base.extend<{}, ElectronWorkerFixtures>({
           }
           // Listen for new pages (splash → main transition creates a new page)
           if (!page) {
-            const newPagePromise = context.waitForEvent('page', { timeout: 5_000 }).catch(() => null)
+            const newPagePromise = context
+              .waitForEvent('page', { timeout: 5_000 })
+              .catch(() => null)
             const newPage = await newPagePromise
             if (newPage && newPage.url().includes('index.html')) {
               page = newPage
@@ -170,7 +172,7 @@ export const test = base.extend<{}, ElectronWorkerFixtures>({
         // The renderer runs with contextIsolation + sandbox, so process.env is
         // unreachable — this window flag is the only way isE2ETesting() returns true.
         await page.evaluate(() => {
-          (window as unknown as Record<string, unknown>).__E2E_TESTING__ = true
+          ;(window as unknown as Record<string, unknown>).__E2E_TESTING__ = true
         })
 
         // Provide the ready page to the test

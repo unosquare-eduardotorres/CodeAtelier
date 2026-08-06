@@ -74,7 +74,7 @@ class MpaHandoffAdapter extends HandoffSourceAdapter<MpaAdapterInput> {
       .filter((g) => g.status === 'completed')
       .map(({ goal }) => ({
         title: goal.title,
-        outcome: goal.outcome,
+        outcome: goal.outcome
       }))
   }
 
@@ -84,8 +84,8 @@ class MpaHandoffAdapter extends HandoffSourceAdapter<MpaAdapterInput> {
       .map(({ goal, status }) => ({
         title: goal.title,
         description: `${goal.outcome}\n\nSuccess criteria:\n${goal.successCriteria.map((c) => `- ${c}`).join('\n')}`,
-        priority: status === 'failed' ? 'high' as const : 'medium' as const,
-        estimatedComplexity: goal.phases.length * 3,
+        priority: status === 'failed' ? ('high' as const) : ('medium' as const),
+        estimatedComplexity: goal.phases.length * 3
       }))
   }
 
@@ -103,16 +103,18 @@ class MpaHandoffAdapter extends HandoffSourceAdapter<MpaAdapterInput> {
     return failed.map(({ goal }) => ({
       risk: `Goal failed: ${goal.title}`,
       severity: 'high' as const,
-      mitigation: `Review and retry: ${goal.outcome}`,
+      mitigation: `Review and retry: ${goal.outcome}`
     }))
   }
 
   extractArtifacts(input: MpaAdapterInput): ArtifactRef[] {
-    return [{
-      type: 'plan',
-      path: `mpa-campaign:${input.campaign.id}`,
-      description: `MPA campaign: ${input.campaign.title}`,
-    }]
+    return [
+      {
+        type: 'plan',
+        path: `mpa-campaign:${input.campaign.id}`,
+        description: `MPA campaign: ${input.campaign.title}`
+      }
+    ]
   }
 
   extractStructuredPlanRef(input: MpaAdapterInput): string | undefined {
@@ -125,7 +127,7 @@ class MpaHandoffAdapter extends HandoffSourceAdapter<MpaAdapterInput> {
       campaignStatus: input.campaign.status,
       totalGoals: input.goals.length,
       completedGoals: input.goals.filter((g) => g.status === 'completed').length,
-      failedGoals: input.goals.filter((g) => g.status === 'failed').length,
+      failedGoals: input.goals.filter((g) => g.status === 'failed').length
     }
   }
 }

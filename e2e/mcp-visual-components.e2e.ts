@@ -42,7 +42,10 @@ test.describe('MCP Visual Components', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -78,9 +81,7 @@ test.describe('MCP Visual Components', () => {
 
   // ── 1. UseCaseGrid renders use-case cards with icons ──────────────
 
-  test('UseCaseGrid renders use-case cards with icons', async ({
-    electronPage: page
-  }) => {
+  test('UseCaseGrid renders use-case cards with icons', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const hasCard = await expandFirstIntegrationCard(page)
@@ -127,7 +128,11 @@ test.describe('MCP Visual Components', () => {
 
     // Each card should have a title and icon
     const firstUseCase = useCaseCards.first()
-    const hasIcon = await firstUseCase.locator('svg').first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasIcon = await firstUseCase
+      .locator('svg')
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     const useCaseText = await firstUseCase.textContent()
 
     expect(hasIcon).toBeTruthy()
@@ -136,9 +141,7 @@ test.describe('MCP Visual Components', () => {
 
   // ── 2. WorkflowStepper shows numbered steps in correct order ──────
 
-  test('WorkflowStepper shows numbered steps in correct order', async ({
-    electronPage: page
-  }) => {
+  test('WorkflowStepper shows numbered steps in correct order', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const hasCard = await expandFirstIntegrationCard(page)
@@ -205,9 +208,7 @@ test.describe('MCP Visual Components', () => {
 
   // ── 3. McpExplainerBanner renders content ─────────────────────────
 
-  test('McpExplainerBanner renders MCP explanation content', async ({
-    electronPage: page
-  }) => {
+  test('McpExplainerBanner renders MCP explanation content', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     // Look for the McpExplainerBanner
@@ -247,15 +248,16 @@ test.describe('MCP Visual Components', () => {
 
     // Token safety callout
     const tokenNote = banner.getByText(/token/i)
-    const hasTokenNote = await tokenNote.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTokenNote = await tokenNote
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasTokenNote).toBeTruthy()
   })
 
   // ── 4. UseCaseGrid card click navigates to relevant feature ──────
 
-  test('UseCaseGrid card click navigates to relevant feature', async ({
-    electronPage: page
-  }) => {
+  test('UseCaseGrid card click navigates to relevant feature', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const hasCard = await expandFirstIntegrationCard(page)
@@ -292,9 +294,7 @@ test.describe('MCP Visual Components', () => {
 
   // ── 5. WorkflowStepper active step highlighting ─────────────────
 
-  test('WorkflowStepper active step highlighting', async ({
-    electronPage: page
-  }) => {
+  test('WorkflowStepper active step highlighting', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
     const hasCard = await expandFirstIntegrationCard(page)

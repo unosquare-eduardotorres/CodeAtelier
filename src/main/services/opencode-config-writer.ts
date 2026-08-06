@@ -292,7 +292,12 @@ export class OpenCodeConfigWriter {
     const smallModel = this.resolveSmallModel(provider.providerId)
 
     // Build provider config with timeouts (#15)
-    const providers = this.buildProviderConfig(provider, isLocal, contextTier, contextWindowConfident)
+    const providers = this.buildProviderConfig(
+      provider,
+      isLocal,
+      contextTier,
+      contextWindowConfident
+    )
 
     // Build MCP server config
     const mcp = this.buildMcpServers(opts)

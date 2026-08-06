@@ -46,14 +46,7 @@ export interface HandoffRisk {
 }
 
 export type ArtifactType =
-  | 'plan'
-  | 'spec'
-  | 'adr'
-  | 'blueprint'
-  | 'issue'
-  | 'commit'
-  | 'diff'
-  | 'finding'
+  'plan' | 'spec' | 'adr' | 'blueprint' | 'issue' | 'commit' | 'diff' | 'finding'
 
 export interface ArtifactRef {
   type: ArtifactType

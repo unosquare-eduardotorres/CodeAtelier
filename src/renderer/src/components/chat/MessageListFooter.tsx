@@ -69,12 +69,15 @@ export default function MessageListFooter({
   )
 
   // Stable identity ref — avoids busting React.memo on MessageBubble when thinkingIdentity hasn't changed
-  const liveIdentity = useMemo(() => ({
-    displayName: thinkingIdentity.name,
-    subtitle: null as string | null,
-    avatarKey: thinkingIdentity.avatarKey,
-    accentColor: thinkingIdentity.accentColor
-  }), [thinkingIdentity.name, thinkingIdentity.avatarKey, thinkingIdentity.accentColor])
+  const liveIdentity = useMemo(
+    () => ({
+      displayName: thinkingIdentity.name,
+      subtitle: null as string | null,
+      avatarKey: thinkingIdentity.avatarKey,
+      accentColor: thinkingIdentity.accentColor
+    }),
+    [thinkingIdentity.name, thinkingIdentity.avatarKey, thinkingIdentity.accentColor]
+  )
 
   return (
     <div data-testid="message-list-footer">
@@ -178,8 +181,9 @@ export default function MessageListFooter({
       )}
 
       {/* Live narration bubble (sentence-buffered) or thinking indicator */}
-      {isStreaming && !hasPendingQuestions && (
-        hasLiveContent ? (
+      {isStreaming &&
+        !hasPendingQuestions &&
+        (hasLiveContent ? (
           <div data-testid="live-narration-bubble">
             <MessageBubble
               message={liveMessage}
@@ -198,8 +202,7 @@ export default function MessageListFooter({
             toolActivities={allStreamingTools}
             showHookIndicator
           />
-        )
-      )}
+        ))}
     </div>
   )
 }

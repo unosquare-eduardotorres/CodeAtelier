@@ -18,7 +18,10 @@ export default function VoiceIndicator({
   // Error state
   if (error) {
     return (
-      <div data-testid="voice-indicator-error" className="flex items-center gap-2 px-3 py-1.5 mb-1 text-xs text-danger bg-danger-muted rounded-lg border border-danger/20">
+      <div
+        data-testid="voice-indicator-error"
+        className="flex items-center gap-2 px-3 py-1.5 mb-1 text-xs text-danger bg-danger-muted rounded-lg border border-danger/20"
+      >
         <Mic size={12} />
         <span className="flex-1">{error}</span>
         {onDismissError && (
@@ -36,7 +39,10 @@ export default function VoiceIndicator({
 
   // Recording state
   return (
-    <div data-testid="voice-indicator-listening" className="flex items-center gap-2 px-3 py-1.5 mb-1 text-xs text-danger bg-danger-muted rounded-lg border border-danger/20 animate-pulse">
+    <div
+      data-testid="voice-indicator-listening"
+      className="flex items-center gap-2 px-3 py-1.5 mb-1 text-xs text-danger bg-danger-muted rounded-lg border border-danger/20 animate-pulse"
+    >
       <Mic size={12} className="text-danger" />
       <span className="text-text-secondary truncate flex-1">{interimText || 'Listening...'}</span>
       {/* Animated recording dots */}

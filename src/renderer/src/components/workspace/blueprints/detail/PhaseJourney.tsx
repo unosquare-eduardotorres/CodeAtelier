@@ -15,13 +15,7 @@
  */
 
 import { useState, useEffect, type JSX } from 'react'
-import {
-  CheckCircle2,
-  XCircle,
-  ChevronDown,
-  Loader2,
-  SkipForward
-} from 'lucide-react'
+import { CheckCircle2, XCircle, ChevronDown, Loader2, SkipForward } from 'lucide-react'
 import type { BlueprintPhase, BlueprintTask } from '../../../../../../shared/blueprint-types'
 import { PHASE_CONFIG } from '../phase-config'
 import type { BlueprintPhaseType } from '../../../../../../shared/blueprint-types'
@@ -66,7 +60,11 @@ interface PhaseJourneyProps {
   autoExpandActive?: boolean
 }
 
-export function PhaseJourney({ phases, tasks, autoExpandActive = true }: PhaseJourneyProps): JSX.Element {
+export function PhaseJourney({
+  phases,
+  tasks,
+  autoExpandActive = true
+}: PhaseJourneyProps): JSX.Element {
   // Track which phases are expanded — auto-expand active + failed
   const [expandedSet, setExpandedSet] = useState<Set<string>>(() => {
     const initial = new Set<string>()
@@ -110,7 +108,8 @@ export function PhaseJourney({ phases, tasks, autoExpandActive = true }: PhaseJo
       <h5 className="text-xs font-medium text-text-secondary mb-2">Phase Journey</h5>
       {phases.map((phase) => {
         const config = PHASE_CONFIG[phase.phase as BlueprintPhaseType]
-        const isExpandable = phase.status === 'complete' || phase.status === 'failed' || phase.status === 'active'
+        const isExpandable =
+          phase.status === 'complete' || phase.status === 'failed' || phase.status === 'active'
         const isExpanded = expandedSet.has(phase.id)
         const isPending = phase.status === 'pending'
         const { summary, duration } = getPhaseSummary(phase, tasks)
@@ -123,8 +122,8 @@ export function PhaseJourney({ phases, tasks, autoExpandActive = true }: PhaseJo
               phase.status === 'failed'
                 ? 'border-danger/30 bg-danger/5'
                 : phase.status === 'active'
-                ? 'border-info/30 bg-info/5'
-                : 'border-border-subtle bg-surface-base'
+                  ? 'border-info/30 bg-info/5'
+                  : 'border-border-subtle bg-surface-base'
             } ${isPending ? 'opacity-50' : ''}`}
           >
             {/* Row header */}
@@ -150,17 +149,18 @@ export function PhaseJourney({ phases, tasks, autoExpandActive = true }: PhaseJo
               <span className="text-sm flex-shrink-0 text-text-muted">{phaseNum}</span>
 
               {/* Phase icon + label */}
-              {config && (() => {
-                const PhaseIcon = config.icon
-                return (
-                  <PhaseIcon
-                    size={14}
-                    className={`${isPending ? 'text-text-muted' : config.color} flex-shrink-0 ${
-                      phase.status === 'active' ? 'animate-pulse' : ''
-                    }`}
-                  />
-                )
-              })()}
+              {config &&
+                (() => {
+                  const PhaseIcon = config.icon
+                  return (
+                    <PhaseIcon
+                      size={14}
+                      className={`${isPending ? 'text-text-muted' : config.color} flex-shrink-0 ${
+                        phase.status === 'active' ? 'animate-pulse' : ''
+                      }`}
+                    />
+                  )
+                })()}
               <span className="text-xs font-medium text-text-primary flex-shrink-0">
                 {config?.label ?? phase.phase}
               </span>
@@ -174,9 +174,7 @@ export function PhaseJourney({ phases, tasks, autoExpandActive = true }: PhaseJo
               </span>
 
               {/* One-line summary (pushed right) */}
-              <span className="text-xs text-text-secondary truncate ml-auto">
-                {summary}
-              </span>
+              <span className="text-xs text-text-secondary truncate ml-auto">{summary}</span>
             </button>
 
             {/* Expanded content */}

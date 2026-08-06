@@ -85,13 +85,13 @@ export function isAgentToolMistake(content: string | undefined): boolean {
 export function isCliInteractionError(content: string | undefined): boolean {
   if (!content) return false
   return (
-    /has been denied/i.test(content) ||               // "Permission to use Bash...has been denied"
-    /denied by timeout/i.test(content) ||             // "No user response — denied by timeout"
-    /doesn.t want to proceed/i.test(content) ||       // "The user doesn't want to proceed"
-    /does not want to proceed/i.test(content) ||      // alternate phrasing
-    /requires approval/i.test(content) ||             // "The following part requires approval"
-    /has been modified since read/i.test(content) ||  // "File has been modified since read"
-    /exists but is not enabled/i.test(content)        // "Bash exists but is not enabled in this context"
+    /has been denied/i.test(content) || // "Permission to use Bash...has been denied"
+    /denied by timeout/i.test(content) || // "No user response — denied by timeout"
+    /doesn.t want to proceed/i.test(content) || // "The user doesn't want to proceed"
+    /does not want to proceed/i.test(content) || // alternate phrasing
+    /requires approval/i.test(content) || // "The following part requires approval"
+    /has been modified since read/i.test(content) || // "File has been modified since read"
+    /exists but is not enabled/i.test(content) // "Bash exists but is not enabled in this context"
   )
 }
 

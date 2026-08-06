@@ -40,7 +40,7 @@ mac:
   notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
-  title: "${productName}"
+  title: '${productName}'
   background: build/background.png
   iconSize: 120
   iconTextSize: 13

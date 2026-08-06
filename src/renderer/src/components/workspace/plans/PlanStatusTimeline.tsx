@@ -39,9 +39,7 @@ export default function PlanStatusTimeline({
   history: PlanStatusHistoryEntry[]
 }): React.JSX.Element {
   if (history.length === 0) {
-    return (
-      <p className="text-xs text-text-muted italic">No status history available.</p>
-    )
+    return <p className="text-xs text-text-muted italic">No status history available.</p>
   }
 
   return (

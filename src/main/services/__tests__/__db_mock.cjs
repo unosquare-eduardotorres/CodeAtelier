@@ -102,8 +102,8 @@ function createMockDatabase() {
         return []
       },
       iterate: function* () {
-    /* no rows to yield in this mock */
-  }
+        /* no rows to yield in this mock */
+      }
     })),
     transaction: createSpy(function (fn) {
       const txFn = function (...args) {
@@ -167,6 +167,7 @@ const repos = {
     'getSessionId',
     'getWorkspaceId',
     'updateBranchName',
+    'updateSourceBranch',
     'updatePrInfo',
     'updateMcpOverrides',
     'updateEffort',
@@ -186,7 +187,8 @@ const repos = {
     'findById',
     'truncateAfterTimestamp',
     'updateToolActivities',
-    'updatePlanAction'
+    'updatePlanAction',
+    'findPlanBlockMessages'
   ]),
   workspaceRepository: stubRepo([
     'create',
@@ -333,6 +335,15 @@ const repos = {
     'findAllDocStates',
     'addConfirmation',
     'getConfirmations',
+    'searchFts',
+    'findEmbeddingsByIds',
+    'getLastMutationAt',
+    'reopenValidity',
+    'createEdge',
+    'deleteEdge',
+    'findEdgesForFact',
+    'findEdgesByWorkspace',
+    'findNeighbours',
     'countConfirmationDays',
     'countConfirmationSourceTypes',
     'hasHumanConfirmation',
@@ -480,7 +491,9 @@ const repos = {
     'countByWorkspace',
     'findCoupledFiles',
     'getModuleBoundaryMetrics',
-    'findTransitiveDependents'
+    'findTransitiveDependents',
+    'findFilePairs',
+    'findShortestPath'
   ]),
   codeGraphTagRepository: stubRepo([
     'upsertTags',
@@ -493,7 +506,8 @@ const repos = {
     'findAllByWorkspace',
     'findDeadCode',
     'findSymbolHotspots',
-    'countByWorkspace'
+    'countByWorkspace',
+    'hasUntypedIndex'
   ]),
   codeGraphRankRepository: stubRepo([
     'upsertRanks',
@@ -576,6 +590,25 @@ const repos = {
   ]),
   coreAgentAliasRepository: stubRepo(['findAll', 'upsert']),
   coreAgentPromptRepository: stubRepo(['findAll', 'findByRoleAndMode', 'upsert', 'resetToDefault'])
+}
+
+// ── Collection-returning defaults ───────────────────────────────────────
+// Production code calls `.length` / `.map()` on these without a null guard, so a
+// bare spy returning `undefined` turns "no rows" into a TypeError. This default
+// survives mockReset(); tests can still override it with mockReturnValue().
+for (const [repoName, methodNames] of Object.entries({
+  grillSessionRepository: ['getActiveForWorkspace'],
+  memoryFactRepository: [
+    'findPendingEmbeddings',
+    'findWithEmbeddings',
+    'findEdgesForFact',
+    'findEdgesByWorkspace',
+    'findNeighbours'
+  ]
+})) {
+  for (const methodName of methodNames) {
+    repos[repoName][methodName] = createSpy(() => [])
+  }
 }
 
 // ── Utility exports for chunk-embedding ──────────────────────────────────────

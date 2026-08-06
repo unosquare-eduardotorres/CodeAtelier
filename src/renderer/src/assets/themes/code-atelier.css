@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Code Atelier — Renaissance-inspired gold/teal palette (default theme)
    ═══════════════════════════════════════════════════════════════════════════ */
-[data-theme="code-atelier"] {
+[data-theme='code-atelier'] {
   /* ── Surface layers (dark → light) ── */
   --color-surface-base: #111a1e;
   --color-surface-raised: #182428;

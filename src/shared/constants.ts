@@ -387,6 +387,8 @@ export const IPC_CHANNELS = {
   INDEXING_PROGRESS: 'indexing:progress',
   INDEXING_GET_STATUS: 'indexing:getStatus',
   INDEXING_LOAD_PERSISTED: 'indexing:loadPersisted',
+  INDEXING_PREFLIGHT_EXCLUSIONS: 'indexing:preflightExclusions',
+  INDEXING_APPLY_EXCLUSIONS: 'indexing:applyExclusions',
 
   // Semantic Search query
   SEMANTIC_SEARCH_QUERY: 'semanticSearch:query',
@@ -504,6 +506,16 @@ export const IPC_CHANNELS = {
   PLAN_IMPORT: 'plan:import',
   PLAN_GET_STATUS_HISTORY: 'plan:getStatusHistory',
   PLAN_FIND_BY_SOURCE: 'plan:findBySource',
+
+  // UltraPlan (CLI teleport-back response)
+  ULTRAPLAN_RESPOND: 'ultraplan:respond',
+
+  // Autofix PR (CI/review-driven fix run)
+  AUTOFIX_PR_START: 'autofixPr:start',
+  AUTOFIX_PR_STATUS: 'autofixPr:status',
+
+  // BTW (side-question answered against conversation context)
+  CHAT_BTW: 'chat:btw',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
@@ -679,7 +691,6 @@ export const IPC_CHANNELS = {
   HANDOFF_GET_HISTORY: 'handoff:getHistory',
   HANDOFF_GET_CHAIN: 'handoff:getChain',
   HANDOFF_PREVIEW: 'handoff:preview'
-
 } as const
 
 /** Attribution trailer appended to commits made through the app UI. */
@@ -795,7 +806,7 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   // Background one-shot actions
   'commit-message': 'claude-haiku-4-5-20251001',
   'pr-description': 'claude-haiku-4-5-20251001',
-  'condense': 'claude-haiku-4-5-20251001'
+  condense: 'claude-haiku-4-5-20251001'
 } as const
 
 // ── Role Groups (retained for Phase 2 role assignments) ──
@@ -813,11 +824,7 @@ export const ACTION_GROUPS: ActionGroup[] = [
     icon: '💬',
     description: 'Plan & Build mode conversations',
     providerConstrained: true,
-    actions: [
-      'specialist',
-      'specialist:plan',
-      'specialist:build'
-    ]
+    actions: ['specialist', 'specialist:plan', 'specialist:build']
   },
   {
     id: 'blueprint',
@@ -853,7 +860,15 @@ export const ACTION_GROUPS: ActionGroup[] = [
     label: 'Background Tasks',
     icon: '⚙️',
     description: 'Memory extraction, prompt optimization, and lightweight tasks',
-    actions: ['memoryFeed', 'activation', 'haiku', 'prompt:optimize', 'commit-message', 'pr-description', 'condense']
+    actions: [
+      'memoryFeed',
+      'activation',
+      'haiku',
+      'prompt:optimize',
+      'commit-message',
+      'pr-description',
+      'condense'
+    ]
   },
   {
     id: 'specialist',
@@ -880,7 +895,9 @@ export const ACTION_GROUPS: ActionGroup[] = [
  * Blueprint phases map to `blueprint:*` actions (mode is irrelevant — each phase IS its action).
  * MPA phases ride on specialist plan/build tiers.
  */
-const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./types').ModelAction>> = {
+const FIXED_ROLE_ACTIONS: Partial<
+  Record<import('./types').AgentRole, import('./types').ModelAction>
+> = {
   'blueprint-specify': 'blueprint:specify',
   'blueprint-clarify': 'blueprint:clarify',
   'blueprint-plan': 'blueprint:plan',
@@ -889,20 +906,25 @@ const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./
   'blueprint-build': 'blueprint:build',
   'blueprint-verify': 'blueprint:verify',
   // Mode-independent session roles (always plan mode)
-  'audit': 'audit',
-  'grill': 'grill',
+  audit: 'audit',
+  grill: 'grill',
   'council-member': 'council-member',
-  'council-chairman': 'council-chairman',
+  'council-chairman': 'council-chairman'
 }
 
 /**
  * MPA roles use specialist tiers for model resolution.
  * Planner/verifier share plan-tier; builder uses build-tier.
  */
-const MPA_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, { plan: import('./types').ModelAction; build: import('./types').ModelAction }>> = {
+const MPA_ROLE_ACTIONS: Partial<
+  Record<
+    import('./types').AgentRole,
+    { plan: import('./types').ModelAction; build: import('./types').ModelAction }
+  >
+> = {
   'mpa-planner': { plan: 'specialist:plan', build: 'specialist:plan' },
   'mpa-builder': { plan: 'specialist:build', build: 'specialist:build' },
-  'mpa-verifier': { plan: 'specialist:plan', build: 'specialist:plan' },
+  'mpa-verifier': { plan: 'specialist:plan', build: 'specialist:plan' }
 }
 
 /**
@@ -993,8 +1015,7 @@ export const COMPACTION_RATIOS = {
 } as const
 
 /** critical ÷ auto — lets classifyCompaction derive the ceiling without new state. */
-export const AUTO_TO_CRITICAL_MULTIPLIER =
-  COMPACTION_RATIOS.critical / COMPACTION_RATIOS.auto // 1.2
+export const AUTO_TO_CRITICAL_MULTIPLIER = COMPACTION_RATIOS.critical / COMPACTION_RATIOS.auto // 1.2
 
 /**
  * Check whether a model supports 1M context.
@@ -1774,7 +1795,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
       "Only cares about one thing: can this actually be done, and what's the fastest path? If the plan sounds brilliant but has no clear first step, says so.",
     toolAccess: 'full',
     toolGuidance:
-      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `analyze_test_coverage` to verify test claims.'
+      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Run the suite with `Bash` (`npm test`) to verify test claims.'
   }
 } as const
 
@@ -1870,42 +1891,14 @@ export const MCP_TOOLS = {
   GIT_CONTEXT: mcpServer('git-context', {
     GIT_LOG: mcpTool('git-context', 'git_log', 'Git · log'),
     GIT_DIFF: mcpTool('git-context', 'git_diff', 'Git · diff'),
-    GIT_BLAME: mcpTool('git-context', 'git_blame', 'Git · blame')
-  }),
-  CHECKPOINT_CONTEXT: mcpServer('checkpoint-context', {
-    LIST_CHECKPOINTS: mcpTool('checkpoint-context', 'list_checkpoints', 'Checkpoints · list'),
-    GET_CHECKPOINT: mcpTool('checkpoint-context', 'get_checkpoint', 'Checkpoints · get')
-  }),
-  GITHUB_CONTEXT: mcpServer('github-context', {
-    GET_PR_STATUS: mcpTool('github-context', 'get_pr_status', 'GitHub · PR status'),
-    LIST_PR_COMMENTS: mcpTool('github-context', 'list_pr_comments', 'GitHub · PR comments'),
-    LIST_ISSUES: mcpTool('github-context', 'list_issues', 'GitHub · issues')
+    GIT_BLAME: mcpTool('git-context', 'git_blame', 'Git · blame'),
+    GIT_SHOW: mcpTool('git-context', 'git_show', 'Git · show')
   }),
   CODE_ANALYSIS: mcpServer('code-analysis', {
     ANALYZE_COMPLEXITY: mcpTool(
       'code-analysis',
       'analyze_complexity',
       'Analysis · analyze_complexity'
-    ),
-    ANALYZE_DEPENDENCIES: mcpTool(
-      'code-analysis',
-      'analyze_dependencies',
-      'Analysis · analyze_dependencies'
-    ),
-    ANALYZE_TEST_COVERAGE: mcpTool(
-      'code-analysis',
-      'analyze_test_coverage',
-      'Analysis · analyze_test_coverage'
-    ),
-    FIND_CODE_SMELLS: mcpTool(
-      'code-analysis',
-      'find_code_smells',
-      'Analysis · find_code_smells'
-    ),
-    SUGGEST_REFACTORING: mcpTool(
-      'code-analysis',
-      'suggest_refactoring',
-      'Analysis · suggest_refactoring'
     ),
     RESOLVE_LIBRARY_ID: mcpTool(
       'code-analysis',
@@ -1925,7 +1918,11 @@ export const MCP_TOOLS = {
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
     ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
-    PERMISSION_PROMPT: mcpTool('control-actions', 'permission_prompt', 'Control · permission_prompt'),
+    PERMISSION_PROMPT: mcpTool(
+      'control-actions',
+      'permission_prompt',
+      'Control · permission_prompt'
+    ),
     EMIT_PHASE_PROGRESS: mcpTool(
       'control-actions',
       'emit_phase_progress',
@@ -1985,7 +1982,7 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
     description: 'AST-based navigation — callers, references, dead code, coupling',
     icon: 'Network',
     tokenImpact: 'high',
-    toolCount: 13,
+    toolCount: 15,
     featureFlagKey: 'repomapEnabled',
     defaultEnabled: true
   },
@@ -2002,40 +1999,20 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'git-context',
     displayName: 'Git Context',
-    description: 'Git log, diff, and blame for version history',
+    description: 'Git log, diff, blame, and show for version history',
     icon: 'GitBranch',
     tokenImpact: 'low',
-    toolCount: 3,
+    toolCount: 4,
     featureFlagKey: null,
-    defaultEnabled: true
-  },
-  {
-    id: 'checkpoint-context',
-    displayName: 'Checkpoints',
-    description: 'List and restore conversation checkpoints',
-    icon: 'Clock',
-    tokenImpact: 'low',
-    toolCount: 2,
-    featureFlagKey: null,
-    defaultEnabled: true
-  },
-  {
-    id: 'github-context',
-    displayName: 'GitHub',
-    description: 'PR status, comments, and issue tracking',
-    icon: 'Github',
-    tokenImpact: 'low',
-    toolCount: 3,
-    featureFlagKey: 'githubConfigured',
     defaultEnabled: true
   },
   {
     id: 'code-analysis',
     displayName: 'Code Analysis',
-    description: 'TODO scanning, dependency health, test coverage, library documentation, and ESLint',
+    description: 'Lint, complexity, dead-code audit, and library documentation',
     icon: 'BarChart3',
     tokenImpact: 'low',
-    toolCount: 8,
+    toolCount: 7,
     featureFlagKey: null,
     defaultEnabled: true
   },
@@ -2204,7 +2181,8 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     mlxOptimized: true,
     recommended: true,
     supportsVision: true,
-    description: 'Top pick for 64GB+ Macs — native vision, near-lossless 8-bit. Unsloth chat-template fixes for OpenCode tool calls',
+    description:
+      'Top pick for 64GB+ Macs — native vision, near-lossless 8-bit. Unsloth chat-template fixes for OpenCode tool calls',
     toolCallingNotes: 'Native tool calling, parallel support, thinking preservation',
     supportsParallelTools: true,
     supportsThinking: true
@@ -2495,7 +2473,19 @@ export const OMLX_EMBEDDING = {
   },
   /** Alternative models users can install in oMLX */
   alternativeModels: [
-    { id: 'mlx-community/bge-m3-mlx-4bit', label: 'BGE-M3 (4-bit, smaller)', modelName: 'bge-m3-4bit', dimensions: 1024, estimatedSizeMB: 350 },
-    { id: 'mlx-community/answerdotai-ModernBERT-base-4bit', label: 'ModernBERT Base (4-bit)', modelName: 'modernbert-base', dimensions: 768, estimatedSizeMB: 150 }
+    {
+      id: 'mlx-community/bge-m3-mlx-4bit',
+      label: 'BGE-M3 (4-bit, smaller)',
+      modelName: 'bge-m3-4bit',
+      dimensions: 1024,
+      estimatedSizeMB: 350
+    },
+    {
+      id: 'mlx-community/answerdotai-ModernBERT-base-4bit',
+      label: 'ModernBERT Base (4-bit)',
+      modelName: 'modernbert-base',
+      dimensions: 768,
+      estimatedSizeMB: 150
+    }
   ]
 } as const

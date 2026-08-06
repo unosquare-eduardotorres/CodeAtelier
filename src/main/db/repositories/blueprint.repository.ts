@@ -119,7 +119,8 @@ function mapTaskRow(row: BlueprintTaskRow): BlueprintTask {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     completionJson: safeParseJSON<{ filesCreated: string[]; filesModified: string[] } | null>(
-      row.completion_json, null
+      row.completion_json,
+      null
     )
   }
 }
@@ -240,7 +241,8 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
       sets.push('status = ?')
       values.push(data.status)
       // Sync completed_at with terminal status transitions
-      const isTerminal = data.status === 'complete' || data.status === 'failed' || data.status === 'cancelled'
+      const isTerminal =
+        data.status === 'complete' || data.status === 'failed' || data.status === 'cancelled'
       if (isTerminal) {
         sets.push("completed_at = datetime('now')")
       } else {
@@ -452,8 +454,12 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
    * on stale artifact lists. Returns the updated phase, or undefined if the
    * phase doesn't exist.
    */
-  replaceArtifactOfType(id: string, type: string, artifact: BlueprintArtifact): BlueprintPhase | undefined {
-    const existing = this.findById(id)          // fresh read inside the repo
+  replaceArtifactOfType(
+    id: string,
+    type: string,
+    artifact: BlueprintArtifact
+  ): BlueprintPhase | undefined {
+    const existing = this.findById(id) // fresh read inside the repo
     if (!existing) return undefined
     const filtered = existing.artifactsJson.filter((a) => a.type !== type)
     return this.saveArtifacts(id, [...filtered, artifact])

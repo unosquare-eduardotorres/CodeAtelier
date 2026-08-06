@@ -12,9 +12,18 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach } from './test-harness'
-import { setupFullMock, getMockRepo, createSpy, resetAllMocks } from './setup-full-mock'
+import {
+  setupFullMock,
+  getMockRepo,
+  createSpy,
+  resetAllMocks,
+  evictFromCache
+} from './setup-full-mock'
 setupFullMock()
 
+// An earlier file in the shared run may already have cached this service bound
+// to the real repositories; drop it so it re-binds to the mocks below.
+evictFromCache('mpa-orchestration.service')
 const mod = require('../mpa-orchestration.service')
 const { mpaOrchestrationService: svc } = mod
 const mpaRunRepo = getMockRepo('mpaRun')
@@ -57,7 +66,14 @@ describe('MpaOrchestrationService (P26-W3)', () => {
   test('orchestrate rejects when a start lock is already held for the workspace', async () => {
     svc['startLocks'].add('ws-locked')
     await assert.rejects(
-      svc.orchestrate({ workspaceId: 'ws-locked', workspacePath: '/tmp/x', goal: 'g', title: 't', goalType: 'feature', phases: [] }),
+      svc.orchestrate({
+        workspaceId: 'ws-locked',
+        workspacePath: '/tmp/x',
+        goal: 'g',
+        title: 't',
+        goalType: 'feature',
+        phases: []
+      }),
       /MPA start lock held for workspace ws-locked/
     )
   })
@@ -72,7 +88,14 @@ describe('MpaOrchestrationService (P26-W3)', () => {
     })
 
     await assert.rejects(
-      svc.orchestrate({ workspaceId: 'ws-running', workspacePath: '/tmp/x', goal: 'g', title: 't', goalType: 'feature', phases: [] }),
+      svc.orchestrate({
+        workspaceId: 'ws-running',
+        workspacePath: '/tmp/x',
+        goal: 'g',
+        title: 't',
+        goalType: 'feature',
+        phases: []
+      }),
       /MPA pipeline already running for workspace ws-running/
     )
   })
@@ -137,7 +160,11 @@ describe('MpaOrchestrationService (P26-W3)', () => {
   })
 
   test('resumeRun rejects a run that already completed', async () => {
-    mpaRunRepo.findById.mockReturnValue({ id: 'run-done', status: 'completed', workspaceId: 'ws-1' })
+    mpaRunRepo.findById.mockReturnValue({
+      id: 'run-done',
+      status: 'completed',
+      workspaceId: 'ws-1'
+    })
     await assert.rejects(svc.resumeRun('run-done'), /Run already completed/)
   })
 
@@ -147,9 +174,16 @@ describe('MpaOrchestrationService (P26-W3)', () => {
   })
 
   test('resumeRun rejects when a start lock is already held for the run workspace', async () => {
-    mpaRunRepo.findById.mockReturnValue({ id: 'run-locked', status: 'failed', workspaceId: 'ws-resume-locked' })
+    mpaRunRepo.findById.mockReturnValue({
+      id: 'run-locked',
+      status: 'failed',
+      workspaceId: 'ws-resume-locked'
+    })
     svc['startLocks'].add('ws-resume-locked')
 
-    await assert.rejects(svc.resumeRun('run-locked'), /MPA start lock held for workspace ws-resume-locked/)
+    await assert.rejects(
+      svc.resumeRun('run-locked'),
+      /MPA start lock held for workspace ws-resume-locked/
+    )
   })
 })

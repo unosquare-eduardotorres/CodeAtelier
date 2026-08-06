@@ -49,14 +49,62 @@ Or, if the prompt is already good:
 NO_CHANGES`
 
 const STOP_WORDS = new Set([
-  'this', 'that', 'with', 'from', 'have', 'been', 'were', 'will',
-  'would', 'could', 'should', 'their', 'there', 'about', 'which',
-  'when', 'what', 'your', 'also', 'more', 'some', 'make', 'like',
-  'them', 'then', 'than', 'each', 'into', 'only', 'very', 'just',
-  'does', 'here', 'much', 'well', 'back', 'even', 'most', 'made',
-  'after', 'those', 'these', 'other', 'being', 'over', 'such',
-  'before', 'between', 'under', 'using', 'based', 'please',
-  'ensure', 'include', 'following', 'currently',
+  'this',
+  'that',
+  'with',
+  'from',
+  'have',
+  'been',
+  'were',
+  'will',
+  'would',
+  'could',
+  'should',
+  'their',
+  'there',
+  'about',
+  'which',
+  'when',
+  'what',
+  'your',
+  'also',
+  'more',
+  'some',
+  'make',
+  'like',
+  'them',
+  'then',
+  'than',
+  'each',
+  'into',
+  'only',
+  'very',
+  'just',
+  'does',
+  'here',
+  'much',
+  'well',
+  'back',
+  'even',
+  'most',
+  'made',
+  'after',
+  'those',
+  'these',
+  'other',
+  'being',
+  'over',
+  'such',
+  'before',
+  'between',
+  'under',
+  'using',
+  'based',
+  'please',
+  'ensure',
+  'include',
+  'following',
+  'currently'
 ])
 
 // ── Result types ─────────────────────────────────────────────────────────
@@ -85,15 +133,12 @@ class PromptOptimizerService {
    * Only honors the assignment when it explicitly targets a local provider —
    * default assignments resolve to Claude models, which oMLX 404s on.
    */
-  resolveLocalModel(
-    workspaceId: string,
-    localCfg: { localModel?: string }
-  ): string {
+  resolveLocalModel(workspaceId: string, localCfg: { localModel?: string }): string {
     const assignment = resolveAssignment({
       action: 'prompt:optimize',
       ...buildResolveOpts(workspaceId)
     })
-    return (assignment.provider === 'local-llm' && assignment.modelId)
+    return assignment.provider === 'local-llm' && assignment.modelId
       ? assignment.modelId
       : (localCfg.localModel ?? 'qwen3-coder')
   }
@@ -103,10 +148,7 @@ class PromptOptimizerService {
    * Returns null if the optimizer should proceed, or a skip reason string if not.
    * Call this BEFORE emitting a running card so guarded prompts produce no card.
    */
-  checkGuards(params: {
-    text: string
-    workspaceId: string
-  }): string | null {
+  checkGuards(params: { text: string; workspaceId: string }): string | null {
     const { text, workspaceId } = params
 
     const settings = workspaceRepository.getSettings(workspaceId)
@@ -152,9 +194,10 @@ class PromptOptimizerService {
       return { optimizedText: text, changed: false, skippedReason: guardReason }
     }
 
-    const modeHint = mode === 'plan'
-      ? 'The user is in Plan mode (thinking, planning, Q&A — no code execution).'
-      : 'The user is in Build mode (code writing, execution, and tool use).'
+    const modeHint =
+      mode === 'plan'
+        ? 'The user is in Plan mode (thinking, planning, Q&A — no code execution).'
+        : 'The user is in Build mode (code writing, execution, and tool use).'
     const wrappedPrompt = `<original_prompt>\n${text}\n</original_prompt>\n\n${modeHint}`
 
     // ── R6-B1: Local LLM path via runOneShotLocal ──
@@ -178,12 +221,18 @@ class PromptOptimizerService {
           workspaceId,
           conversationId: params.conversationId,
           args: [
-            '-p', wrappedPrompt,
-            '--model', model,
-            '--system-prompt', META_PROMPT,
-            '--permission-mode', 'plan',
-            '--max-turns', '1',
-            '--tools', '',
+            '-p',
+            wrappedPrompt,
+            '--model',
+            model,
+            '--system-prompt',
+            META_PROMPT,
+            '--permission-mode',
+            'plan',
+            '--max-turns',
+            '1',
+            '--tools',
+            '',
             '--no-session-persistence'
           ],
           cli: { timeout: 60_000 },
@@ -210,8 +259,10 @@ class PromptOptimizerService {
             tokens: usage
           })
         } catch (warmErr) {
-          optimizerLog.warn('[optimize] Warm session failed, falling back to one-shot:',
-            (warmErr as Error).message)
+          optimizerLog.warn(
+            '[optimize] Warm session failed, falling back to one-shot:',
+            (warmErr as Error).message
+          )
           // Fallback: fresh one-shot `claude -p` call
           const { text: t } = await runOneShotClaude({
             feature: 'prompt_optimize',
@@ -219,12 +270,18 @@ class PromptOptimizerService {
             workspaceId,
             conversationId: params.conversationId,
             args: [
-              '-p', wrappedPrompt,
-              '--model', model,
-              '--system-prompt', META_PROMPT,
-              '--permission-mode', 'plan',
-              '--max-turns', '1',
-              '--tools', '',
+              '-p',
+              wrappedPrompt,
+              '--model',
+              model,
+              '--system-prompt',
+              META_PROMPT,
+              '--permission-mode',
+              'plan',
+              '--max-turns',
+              '1',
+              '--tools',
+              '',
               '--no-session-persistence'
             ],
             cli: { timeout: 60_000 }
@@ -266,7 +323,12 @@ class PromptOptimizerService {
         const workspacePath = ws?.repoPath
         if (!workspacePath) {
           optimizerLog.warn('[optimize] No workspace path found, using original')
-          return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: 'No workspace path found' }
+          return {
+            optimizedText: text,
+            changed: false,
+            skippedReason: 'error',
+            errorDetail: 'No workspace path found'
+          }
         }
 
         const localCfg = modelConfigService.getLocalLLMConfig(workspacePath)
@@ -291,7 +353,12 @@ class PromptOptimizerService {
 
       if (!responseText) {
         optimizerLog.warn('[optimize] Empty local LLM response, using original')
-        return { optimizedText: text, changed: false, skippedReason: 'error', errorDetail: 'Empty response from local LLM' }
+        return {
+          optimizedText: text,
+          changed: false,
+          skippedReason: 'error',
+          errorDetail: 'Empty response from local LLM'
+        }
       }
 
       // R6-B1: Strip <think>…</think> blocks from local model reasoning leakage
@@ -318,7 +385,10 @@ class PromptOptimizerService {
    */
   private stemWord(word: string): string {
     return word
-      .replace(/(ation|tion|sion|ment|ness|ence|ance|ity|ous|ive|ing|ied|ies|ers|est|ful|less|able|ible)$/, '')
+      .replace(
+        /(ation|tion|sion|ment|ness|ence|ance|ity|ous|ive|ing|ied|ies|ers|est|ful|less|able|ible)$/,
+        ''
+      )
       .replace(/(ed|ly|er|al)$/, '')
   }
 
@@ -330,9 +400,9 @@ class PromptOptimizerService {
     const words = text.toLowerCase().match(/[a-z]{4,}/g) ?? []
     return new Set(
       words
-        .filter(w => !STOP_WORDS.has(w))
-        .map(w => this.stemWord(w))
-        .filter(w => w.length >= 3)
+        .filter((w) => !STOP_WORDS.has(w))
+        .map((w) => this.stemWord(w))
+        .filter((w) => w.length >= 3)
     )
   }
 

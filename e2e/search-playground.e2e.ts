@@ -21,9 +21,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Search Playground', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -72,12 +70,20 @@ test.describe('Search Playground', () => {
     return playground.isVisible({ timeout: 3_000 }).catch(() => false)
   }
 
-  test('search playground renders with query input and search button', async ({ electronPage: page }) => {
+  test('search playground renders with query input and search button', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPlayground = await navigateToSearchPlayground(page)
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
     await expect(playground).toBeVisible()
@@ -95,19 +101,30 @@ test.describe('Search Playground', () => {
     await expect(searchBtn).toBeVisible()
   })
 
-  test('query input accepts text and search triggers on button click', async ({ electronPage: page }) => {
+  test('query input accepts text and search triggers on button click', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPlayground = await navigateToSearchPlayground(page)
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
     const input = playground.locator('input[type="text"]')
 
     // Check if search is enabled (index must be loaded)
     const isDisabled = await input.isDisabled()
-    if (isDisabled) { test.skip(); return }
+    if (isDisabled) {
+      test.skip()
+      return
+    }
 
     // Type a search query
     await input.fill('authentication')
@@ -119,15 +136,24 @@ test.describe('Search Playground', () => {
 
   test('search results show file path and similarity score', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPlayground = await navigateToSearchPlayground(page)
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
     const input = playground.locator('input[type="text"]')
     const isDisabled = await input.isDisabled()
-    if (isDisabled) { test.skip(); return }
+    if (isDisabled) {
+      test.skip()
+      return
+    }
 
     // Type and search
     await input.fill('function')
@@ -158,15 +184,24 @@ test.describe('Search Playground', () => {
 
   test('query time displays after search completes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPlayground = await navigateToSearchPlayground(page)
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
     const input = playground.locator('input[type="text"]')
     const isDisabled = await input.isDisabled()
-    if (isDisabled) { test.skip(); return }
+    if (isDisabled) {
+      test.skip()
+      return
+    }
 
     await input.fill('test query')
     const searchBtn = playground.locator('button').filter({ hasText: /search/i })
@@ -183,15 +218,24 @@ test.describe('Search Playground', () => {
 
   test('empty results show "No results found" message', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPlayground = await navigateToSearchPlayground(page)
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
     const input = playground.locator('input[type="text"]')
     const isDisabled = await input.isDisabled()
-    if (isDisabled) { test.skip(); return }
+    if (isDisabled) {
+      test.skip()
+      return
+    }
 
     // Search for something unlikely to match
     await input.fill('xyzzy_nonexistent_symbol_12345')
@@ -210,10 +254,16 @@ test.describe('Search Playground', () => {
 
   test('error state shows error message with alert icon', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasPlayground = await navigateToSearchPlayground(page)
-    if (!hasPlayground) { test.skip(); return }
+    if (!hasPlayground) {
+      test.skip()
+      return
+    }
 
     const playground = page.locator('[data-testid="search-playground"]')
 

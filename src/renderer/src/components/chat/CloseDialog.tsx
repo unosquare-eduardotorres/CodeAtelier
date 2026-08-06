@@ -71,7 +71,10 @@ export default function CloseDialog({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
       {/* Dialog */}
-      <div data-testid="close-dialog" className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 animate-in fade-in zoom-in-95">
+      <div
+        data-testid="close-dialog"
+        className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-md w-full mx-4 animate-in fade-in zoom-in-95"
+      >
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-danger-muted flex items-center justify-center">

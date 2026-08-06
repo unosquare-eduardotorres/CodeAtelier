@@ -25,7 +25,9 @@ interface SearchPlaygroundProps {
   workspaceId: string
 }
 
-export default function SearchPlayground({ workspaceId }: SearchPlaygroundProps): React.JSX.Element {
+export default function SearchPlayground({
+  workspaceId
+}: SearchPlaygroundProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<(MemoryFact & { _matchType?: string })[]>([])
   const [searching, setSearching] = useState(false)
@@ -75,21 +77,24 @@ export default function SearchPlayground({ workspaceId }: SearchPlaygroundProps)
       {/* Results */}
       {results.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs text-text-muted">{results.length} result{results.length !== 1 ? 's' : ''}</p>
+          <p className="text-xs text-text-muted">
+            {results.length} result{results.length !== 1 ? 's' : ''}
+          </p>
           {results.map((fact) => (
             <div key={fact.id} className="relative">
-              {fact._matchType && (() => {
-                const { label, styled } = matchTypeDisplay(fact._matchType)
-                return (
-                  <span className={`absolute top-2 right-2 px-1.5 py-0.5 text-[10px] rounded z-10 ${
-                    styled
-                      ? 'bg-info-muted text-info'
-                      : 'bg-surface-overlay text-text-muted'
-                  }`}>
-                    {label}
-                  </span>
-                )
-              })()}
+              {fact._matchType &&
+                (() => {
+                  const { label, styled } = matchTypeDisplay(fact._matchType)
+                  return (
+                    <span
+                      className={`absolute top-2 right-2 px-1.5 py-0.5 text-[10px] rounded z-10 ${
+                        styled ? 'bg-info-muted text-info' : 'bg-surface-overlay text-text-muted'
+                      }`}
+                    >
+                      {label}
+                    </span>
+                  )
+                })()}
               <FactCard fact={fact} />
             </div>
           ))}
@@ -101,7 +106,9 @@ export default function SearchPlayground({ workspaceId }: SearchPlaygroundProps)
         <div className="text-center py-12 text-text-muted">
           <SearchX className="w-8 h-8 mx-auto mb-2 opacity-50" />
           <p className="text-sm">No matches found.</p>
-          <p className="text-xs mt-1">Try different keywords or embed more memories for semantic search.</p>
+          <p className="text-xs mt-1">
+            Try different keywords or embed more memories for semantic search.
+          </p>
         </div>
       )}
     </div>

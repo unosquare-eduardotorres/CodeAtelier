@@ -185,7 +185,7 @@ class ModelConfigService {
     if (storedBackend && storedBackend !== (provider === 'claude' ? 'cli' : 'opencode')) {
       log.info(
         `[getExecutorBackend] Ignoring stored executorBackend='${storedBackend}' — ` +
-        `now derived from provider='${provider}' → '${provider === 'claude' ? 'cli' : 'opencode'}'`
+          `now derived from provider='${provider}' → '${provider === 'claude' ? 'cli' : 'opencode'}'`
       )
     }
 
@@ -335,7 +335,7 @@ export function buildResolveOpts(workspaceId: string): {
     modelRoles: (settings.modelRoles ?? undefined) as ModelRoleMap | undefined,
     modelOverrides: (settings.modelOverrides ?? undefined) as ModelOverrides | undefined,
     workspaceProvider: (settings.llmProvider as LLMProvider) ?? 'claude',
-    workspaceBackend: (settings.localLlmBackend as LocalLLMBackend) ?? undefined,
+    workspaceBackend: (settings.localLlmBackend as LocalLLMBackend) ?? undefined
   }
 }
 

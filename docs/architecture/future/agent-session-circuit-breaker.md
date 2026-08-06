@@ -8,13 +8,13 @@ service fails simultaneously with no recovery path short of app restart.
 
 ## Failure Modes
 
-| Mode | Cause | Impact |
-|------|-------|--------|
-| Executor binary missing | Corrupt install, PATH issue | All streams fail to start |
-| MCP config write failure | Disk full, permissions | Agent has no tools (now throws — Phase 5C) |
-| IPC bridge socket conflict | Port collision, stale socket | Control tools unavailable (now logged — Phase 5A) |
-| Context overflow | Prompt > model window | Stream terminates early, partial output |
-| Infinite recovery loop | circuitBreaker.isBroken never triggers | Session hangs indefinitely |
+| Mode                       | Cause                                  | Impact                                            |
+| -------------------------- | -------------------------------------- | ------------------------------------------------- |
+| Executor binary missing    | Corrupt install, PATH issue            | All streams fail to start                         |
+| MCP config write failure   | Disk full, permissions                 | Agent has no tools (now throws — Phase 5C)        |
+| IPC bridge socket conflict | Port collision, stale socket           | Control tools unavailable (now logged — Phase 5A) |
+| Context overflow           | Prompt > model window                  | Stream terminates early, partial output           |
+| Infinite recovery loop     | circuitBreaker.isBroken never triggers | Session hangs indefinitely                        |
 
 ## Proposed Design
 
@@ -45,6 +45,7 @@ class SessionHealthTracker {
 ### Cooldown Behavior
 
 When circuit opens (3 failures in 5 min):
+
 - New `send()` calls immediately emit `{ type: 'error', content: 'Session cooldown' }`
 - Cooldown lasts 30 seconds
 - After cooldown, next attempt is a "half-open" probe
@@ -52,13 +53,13 @@ When circuit opens (3 failures in 5 min):
 
 ### Service-Level Impact
 
-| Service | On Circuit Open | Recovery |
-|---------|----------------|----------|
-| Chat | Error message in chat | User retries manually |
-| Grill | Evaluation marked 'failed' | Re-run available |
-| Audit | Track marked 'failed' | Resume picks up remaining tracks |
-| Council | Advisor marked 'failed' | Council continues with fewer advisors |
-| MPA | Phase marked 'failed' | Pipeline pauses, user can resume |
+| Service | On Circuit Open            | Recovery                              |
+| ------- | -------------------------- | ------------------------------------- |
+| Chat    | Error message in chat      | User retries manually                 |
+| Grill   | Evaluation marked 'failed' | Re-run available                      |
+| Audit   | Track marked 'failed'      | Resume picks up remaining tracks      |
+| Council | Advisor marked 'failed'    | Council continues with fewer advisors |
+| MPA     | Phase marked 'failed'      | Pipeline pauses, user can resume      |
 
 ## Why Not Now
 

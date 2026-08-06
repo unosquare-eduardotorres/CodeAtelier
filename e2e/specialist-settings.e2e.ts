@@ -21,9 +21,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Specialist Settings', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,19 +35,23 @@ test.describe('Specialist Settings', () => {
     return true
   }
 
-  async function navigateToSpecialist(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToSpecialist(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('specialist')
   }
 
   test('specialist page renders with hero banner', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const specialistPage = page.locator('[data-testid="specialist-page"]')
     const hasPage = await specialistPage.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -66,14 +68,23 @@ test.describe('Specialist Settings', () => {
 
   test('detected stack shows technology badges', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const specialistPage = page.locator('[data-testid="specialist-page"]')
     const hasPage = await specialistPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Check for detected stack section
     const stackSection = page.getByText(/detected stack/i).first()
@@ -91,10 +102,16 @@ test.describe('Specialist Settings', () => {
 
   test('skill market grid shows attached vs available skills', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const skillsGrid = page.locator('[data-testid="specialist-skills-grid"]')
     const hasGrid = await skillsGrid.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -112,10 +129,16 @@ test.describe('Specialist Settings', () => {
 
   test('rebuild button triggers specialist rebuild', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const rebuildBtn = page.locator('[data-testid="specialist-rebuild-btn"]')
     const hasRebuild = await rebuildBtn.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -133,14 +156,23 @@ test.describe('Specialist Settings', () => {
 
   test('system prompt section renders current prompt', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const specialistPage = page.locator('[data-testid="specialist-page"]')
     const hasPage = await specialistPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Look for the System Prompt section
     const promptSection = page.getByText(/system prompt/i).first()
@@ -157,10 +189,16 @@ test.describe('Specialist Settings', () => {
 
   test('skill toggle enables/disables individual skills', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const skillsGrid = page.locator('[data-testid="specialist-skills-grid"]')
     const hasGrid = await skillsGrid.isVisible({ timeout: 5_000 }).catch(() => false)

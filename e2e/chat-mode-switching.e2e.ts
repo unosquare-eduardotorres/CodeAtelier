@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('ChatModeSwitching', () => {
-  async function navigateToChat(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToChat(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -46,16 +44,22 @@ test.describe('ChatModeSwitching', () => {
 
   test('mode indicator in status bar shows current mode', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     await expect(statusBar).toBeVisible()
 
     // Status bar should show a mode indicator (plan, build, or danger)
-    const statusText = await statusBar.textContent() ?? ''
+    const statusText = (await statusBar.textContent()) ?? ''
     const modeNames = ['plan', 'build', 'danger', 'Plan', 'Build', 'Danger']
     const hasMode = modeNames.some((mode) => statusText.toLowerCase().includes(mode.toLowerCase()))
 
@@ -64,21 +68,27 @@ test.describe('ChatModeSwitching', () => {
 
   test('switching mode updates status bar text', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Record initial mode text
-    const initialText = await statusBar.textContent() ?? ''
+    const initialText = (await statusBar.textContent()) ?? ''
 
     // Use Cmd+. to switch mode
     await page.keyboard.press('Meta+.')
     await page.waitForTimeout(500)
 
     // Status bar text should change
-    const newText = await statusBar.textContent() ?? ''
+    const newText = (await statusBar.textContent()) ?? ''
 
     // Mode text should have changed (or at least status bar is responsive)
     expect(newText.length > 0).toBe(true)
@@ -90,21 +100,32 @@ test.describe('ChatModeSwitching', () => {
 
   test('danger mode shows distinct warning indicator', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Cycle through modes until we find danger mode
     for (let i = 0; i < 4; i++) {
-      const statusText = await statusBar.textContent() ?? ''
+      const statusText = (await statusBar.textContent()) ?? ''
       if (statusText.toLowerCase().includes('danger')) {
         // In danger mode — check for warning styling
-        const dangerClasses = await statusBar.getAttribute('class') ?? ''
-        const innerDanger = statusBar.locator('[class*="danger"], [class*="red"], [class*="warning"]')
-        const hasDangerStyle = (dangerClasses.includes('danger') || dangerClasses.includes('red'))
-        const hasInnerDanger = await innerDanger.first().isVisible({ timeout: 1_000 }).catch(() => false)
+        const dangerClasses = (await statusBar.getAttribute('class')) ?? ''
+        const innerDanger = statusBar.locator(
+          '[class*="danger"], [class*="red"], [class*="warning"]'
+        )
+        const hasDangerStyle = dangerClasses.includes('danger') || dangerClasses.includes('red')
+        const hasInnerDanger = await innerDanger
+          .first()
+          .isVisible({ timeout: 1_000 })
+          .catch(() => false)
 
         expect(hasDangerStyle || hasInnerDanger || statusText.includes('danger')).toBe(true)
         return
@@ -117,16 +138,24 @@ test.describe('ChatModeSwitching', () => {
     expect(true).toBe(true)
   })
 
-  test('mode persists across message sends within same conversation', async ({ electronPage: page }) => {
+  test('mode persists across message sends within same conversation', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Record current mode
-    const modeBeforeSend = await statusBar.textContent() ?? ''
+    const modeBeforeSend = (await statusBar.textContent()) ?? ''
 
     // Check that message input is available
     const messageInput = page.locator('[data-testid="message-input"]')
@@ -134,7 +163,7 @@ test.describe('ChatModeSwitching', () => {
 
     if (hasInput) {
       // Mode should remain the same without sending
-      const modeAfter = await statusBar.textContent() ?? ''
+      const modeAfter = (await statusBar.textContent()) ?? ''
       expect(modeAfter).toBe(modeBeforeSend)
     }
 
@@ -143,7 +172,10 @@ test.describe('ChatModeSwitching', () => {
 
   test('new chat page mode toggle reflects in conversation', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Check for new-chat mode toggle
     const modeToggle = page.locator('[data-testid="new-chat-mode-toggle"]')
@@ -153,7 +185,7 @@ test.describe('ChatModeSwitching', () => {
       await expect(modeToggle).toBeVisible()
 
       // Toggle should show current mode
-      const toggleText = await modeToggle.textContent() ?? ''
+      const toggleText = (await modeToggle.textContent()) ?? ''
       expect(toggleText.length).toBeGreaterThan(0)
     }
 
@@ -162,18 +194,26 @@ test.describe('ChatModeSwitching', () => {
     expect(hasToggle || true).toBe(true)
   })
 
-  test('cmd dot cycles through all three modes with UI verification', async ({ electronPage: page }) => {
+  test('cmd dot cycles through all three modes with UI verification', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Collect mode texts through 3 cycles
     const modes: string[] = []
     for (let i = 0; i < 4; i++) {
-      const text = (await statusBar.textContent() ?? '').trim()
+      const text = ((await statusBar.textContent()) ?? '').trim()
       modes.push(text)
       await page.keyboard.press('Meta+.')
       await page.waitForTimeout(500)

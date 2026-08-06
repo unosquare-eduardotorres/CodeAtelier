@@ -14,7 +14,7 @@ const logger = log.scope('CodeChangesIpc')
 
 /** Reject ref strings that look like flags or contain dangerous chars */
 function validateRef(ref: string, channel: string): void {
-  if (ref === 'WORKING_TREE') return  // Sentinel value is allowed
+  if (ref === 'WORKING_TREE') return // Sentinel value is allowed
   if (ref.startsWith('-')) {
     throw new Error(`${channel}: invalid ref — must not start with "-"`)
   }
@@ -142,9 +142,7 @@ export function registerCodeChangesIpc(): void {
       IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE
     )
 
-    const messages = messageRepository
-      .findByConversation(conversationId)
-      .filter((m) => !m.hidden)
+    const messages = messageRepository.findByConversation(conversationId).filter((m) => !m.hidden)
 
     const prompt = `You are generating a concise git commit message. Follow conventional commit style.
 
@@ -204,7 +202,11 @@ Respond with ONLY the commit message, no preamble or explanation.`
   ipcMain.handle(IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS, async (event, rawArgs: unknown) => {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
-    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    const conversationId = requireString(
+      args,
+      'conversationId',
+      IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS
+    )
     const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
     const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
     validateRef(fromRef, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
@@ -218,7 +220,11 @@ Respond with ONLY the commit message, no preamble or explanation.`
   ipcMain.handle(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, async (event, rawArgs: unknown) => {
     validateSender(event)
     const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
-    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const conversationId = requireString(
+      args,
+      'conversationId',
+      IPC_CHANNELS.REPO_GET_REF_FILE_DIFF
+    )
     const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
     const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
     const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)

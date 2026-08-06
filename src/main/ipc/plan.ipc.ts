@@ -67,13 +67,10 @@ export function registerPlanIpc(): void {
   })
 
   // ── plan:getStatusHistory — Fetch plan status timeline ──
-  ipcMain.handle(
-    IPC_CHANNELS.PLAN_GET_STATUS_HISTORY,
-    (event, args: { planId: string }) => {
-      validateSender(event)
-      return planRepository.getStatusHistory(args.planId)
-    }
-  )
+  ipcMain.handle(IPC_CHANNELS.PLAN_GET_STATUS_HISTORY, (event, args: { planId: string }) => {
+    validateSender(event)
+    return planRepository.getStatusHistory(args.planId)
+  })
 
   // ── plan:getPhaseProgress — Retrieve phase progress for a conversation's active plan ──
   ipcMain.handle(
@@ -149,7 +146,9 @@ export function registerPlanIpc(): void {
         return { conversationId: conversation.id, planId: plan.id }
       })()
 
-      planLog.info(`[plan:import] Plan ${result.planId} imported into conversation ${result.conversationId}`)
+      planLog.info(
+        `[plan:import] Plan ${result.planId} imported into conversation ${result.conversationId}`
+      )
 
       return result
     }

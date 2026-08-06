@@ -1,14 +1,14 @@
 /**
  * OpenCode CLI Path Utilities
- * 
+ *
  * NOTE: This is MAIN PROCESS ONLY. While located in shared/,
  * the functions that use child_process (spawn, execSync) cannot
  * be used from the renderer process.
- * 
+ *
  * Use this for:
  * - PATH augmentation early in index.ts
  * - Locating binaries for child_process.spawn
- * 
+ *
  * Do NOT import in renderer or preload scripts.
  */
 
@@ -37,7 +37,7 @@ export interface OpenCodeCliCheckResult {
  * Resolve opencode path using npm config detection.
  * This is more robust than hardcoded paths because it uses npm's actual
  * configuration to determine where global packages are installed.
- * 
+ *
  * Cached after first resolution - try once, keep result.
  */
 export function resolveOpencodePath(): string | null {
@@ -50,7 +50,7 @@ export function resolveOpencodePath(): string | null {
     const whichResult = spawnSync('which', ['opencode'], {
       encoding: 'utf-8',
       timeout: 5000,
-      windowsHide: true,
+      windowsHide: true
     })
 
     if (whichResult.stdout?.trim()) {
@@ -68,7 +68,7 @@ export function resolveOpencodePath(): string | null {
     const npmPrefixResult = spawnSync('npm', ['config', 'get', 'prefix'], {
       encoding: 'utf-8',
       timeout: 5000,
-      windowsHide: true,
+      windowsHide: true
     })
 
     if (npmPrefixResult.stdout?.trim()) {
@@ -131,19 +131,19 @@ export function augmentOpenCodeCliPath(): void {
 
   const CLI_PATHS = {
     darwin: [
-      '/opt/homebrew/bin',                    // Apple Silicon Homebrew
-      '/usr/local/bin',                       // Intel Mac Homebrew
-      join(HOME, '.npm-global', 'bin'),       // npm global on macOS
+      '/opt/homebrew/bin', // Apple Silicon Homebrew
+      '/usr/local/bin', // Intel Mac Homebrew
+      join(HOME, '.npm-global', 'bin') // npm global on macOS
     ],
     win32: [
-      join(HOME, 'AppData', 'Roaming', 'npm'),  // Windows npm global
+      join(HOME, 'AppData', 'Roaming', 'npm') // Windows npm global
     ],
     linux: [
-      '/snap/bin',                             // Snap packages
-      '/usr/local/bin',                        // System-wide
-      join(HOME, '.local', 'bin'),             // ~/.local (pip, cargo, etc.)
-      join(HOME, '.npm-global', 'bin'),        // npm global on Linux
-    ],
+      '/snap/bin', // Snap packages
+      '/usr/local/bin', // System-wide
+      join(HOME, '.local', 'bin'), // ~/.local (pip, cargo, etc.)
+      join(HOME, '.npm-global', 'bin') // npm global on Linux
+    ]
   }
 
   const paths = CLI_PATHS[process.platform as keyof typeof CLI_PATHS] || []
@@ -170,13 +170,13 @@ export async function locateOpenCodeCli(): Promise<OpenCodeCliCheckResult> {
       const version = execSync('opencode --version', {
         timeout: 5000,
         encoding: 'utf-8',
-        windowsHide: true,
+        windowsHide: true
       }).trim()
       return {
         available: true,
         path: opencodePath,
         version,
-        source: cachedOpencodeDir ? 'resolved' : 'direct',
+        source: cachedOpencodeDir ? 'resolved' : 'direct'
       }
     } catch {
       // File exists but may not be executable
@@ -184,7 +184,7 @@ export async function locateOpenCodeCli(): Promise<OpenCodeCliCheckResult> {
         available: true,
         path: opencodePath,
         source: 'exists',
-        error: 'exists but not executable',
+        error: 'exists but not executable'
       }
     }
   }
@@ -194,7 +194,7 @@ export async function locateOpenCodeCli(): Promise<OpenCodeCliCheckResult> {
     error:
       'OpenCode CLI not found. Install it by running:\n' +
       '  npm install -g @opencode-ai/cli\n' +
-      'Or download from: https://opencode.ai/getting-started',
+      'Or download from: https://opencode.ai/getting-started'
   }
 }
 
@@ -211,7 +211,7 @@ export function checkOpenCodeCliSync(): { available: boolean; path?: string; err
     const result = spawnSync(opencodePath, ['--version'], {
       timeout: 3000,
       stdio: 'pipe',
-      windowsHide: true,
+      windowsHide: true
     })
     if (!result.error) {
       // Also ensure path is in PATH
@@ -222,6 +222,6 @@ export function checkOpenCodeCliSync(): { available: boolean; path?: string; err
 
   return {
     available: false,
-    error: 'OpenCode CLI not found in PATH',
+    error: 'OpenCode CLI not found in PATH'
   }
 }

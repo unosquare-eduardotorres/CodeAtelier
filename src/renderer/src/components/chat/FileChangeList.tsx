@@ -156,7 +156,10 @@ export default function FileChangeList({
   }
 
   return (
-    <div data-testid="file-change-list" className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col min-h-0">
+    <div
+      data-testid="file-change-list"
+      className="w-[30%] min-w-[240px] border-r border-border-subtle flex flex-col min-h-0"
+    >
       {/* Header with select all */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-border-subtle bg-surface-overlay/50">
         {comparisonMode === 'uncommitted' ? (

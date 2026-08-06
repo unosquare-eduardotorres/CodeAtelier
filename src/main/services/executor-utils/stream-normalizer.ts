@@ -92,9 +92,7 @@ export function* normalizeMessage(
     const initTools = msg.tools as Array<{ name: string }> | undefined
     if (initTools?.length) {
       const mcpToolCount = initTools.filter((t) => t.name?.startsWith('mcp__')).length
-      executorLog.info(
-        `[init:tools] totalTools=${initTools.length} mcpTools=${mcpToolCount}`
-      )
+      executorLog.info(`[init:tools] totalTools=${initTools.length} mcpTools=${mcpToolCount}`)
     }
 
     return

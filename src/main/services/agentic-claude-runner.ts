@@ -82,12 +82,7 @@ export function buildMinimalMcpConfig(
   servers: Array<'memory' | 'code-graph'> = ['memory', 'code-graph']
 ): { mcpServers: Record<string, McpServerEntry> } {
   const serverBasePath = app.isPackaged
-    ? join(
-        app.getAppPath().replace('app.asar', 'app.asar.unpacked'),
-        'out',
-        'main',
-        'mcp-servers'
-      )
+    ? join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'out', 'main', 'mcp-servers')
     : join(__dirname, 'mcp-servers')
 
   const dbDir = app.getPath('userData')
@@ -165,7 +160,9 @@ export async function runAgenticClaude(opts: AgenticRunnerOptions): Promise<Agen
   const mcpConfig = buildMinimalMcpConfig(workspaceId, workspacePath, mcpServers)
 
   writeFileSync(configPath, JSON.stringify(mcpConfig, null, 2), 'utf-8')
-  runnerLog.info(`[runAgenticClaude] MCP config written: ${configPath} (servers: ${Object.keys(mcpConfig.mcpServers).join(', ')})`)
+  runnerLog.info(
+    `[runAgenticClaude] MCP config written: ${configPath} (servers: ${Object.keys(mcpConfig.mcpServers).join(', ')})`
+  )
 
   try {
     return await spawnClaudeProcess({
@@ -204,7 +201,17 @@ interface SpawnOptions {
 }
 
 function spawnClaudeProcess(opts: SpawnOptions): Promise<AgenticRunnerResult> {
-  const { configPath, prompt, allowedTools, model, maxTurns, timeoutMs, workspacePath, signal, onLine } = opts
+  const {
+    configPath,
+    prompt,
+    allowedTools,
+    model,
+    maxTurns,
+    timeoutMs,
+    workspacePath,
+    signal,
+    onLine
+  } = opts
 
   return new Promise<AgenticRunnerResult>((resolve, reject) => {
     // Check abort before spawning
@@ -227,7 +234,9 @@ function spawnClaudeProcess(opts: SpawnOptions): Promise<AgenticRunnerResult> {
       windowsHide: true
     })
 
-    runnerLog.info(`[runAgenticClaude] Spawned claude (model=${model}, maxTurns=${maxTurns}, allowedTools=${allowedTools.length})`)
+    runnerLog.info(
+      `[runAgenticClaude] Spawned claude (model=${model}, maxTurns=${maxTurns}, allowedTools=${allowedTools.length})`
+    )
 
     let stdout = ''
     let lineBuffer = ''
@@ -313,12 +322,19 @@ export interface ClaudeArgsBuildInput {
  */
 export function buildClaudeArgs(input: ClaudeArgsBuildInput): string[] {
   return [
-    '-p', input.prompt,
-    '--mcp-config', input.configPath,
-    '--permission-mode', 'bypassPermissions',
-    '--allowedTools', input.allowedTools.join(','),
-    '--model', input.model,
-    '--output-format', 'text',
-    '--max-turns', String(input.maxTurns)
+    '-p',
+    input.prompt,
+    '--mcp-config',
+    input.configPath,
+    '--permission-mode',
+    'bypassPermissions',
+    '--allowedTools',
+    input.allowedTools.join(','),
+    '--model',
+    input.model,
+    '--output-format',
+    'text',
+    '--max-turns',
+    String(input.maxTurns)
   ]
 }

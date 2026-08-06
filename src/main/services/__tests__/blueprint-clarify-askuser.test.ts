@@ -208,7 +208,7 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     let rejected = false
 
     // Access promise to start timer
-    const p = watchdog.promise.catch(() => {
+    void watchdog.promise.catch(() => {
       rejected = true
     })
 
@@ -225,9 +225,11 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     assert.equal(rejected, false, 'Paused watchdog should not reject')
     assert.equal(watchdog.stalled, false)
 
-    // Clean up
+    // Clean up. Do NOT await `p`: the watchdog promise only ever settles by
+    // rejecting on stall, and dispose() drops the reject fn without settling it
+    // (by design — it is consumed via Promise.race). Awaiting it here hangs the
+    // test forever, and the runner then reports it as never having run.
     watchdog.dispose()
-    await p.catch(() => {}) // suppress any rejection
   })
 
   test('resume() restarts the timer', async () => {
@@ -264,7 +266,7 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     const watchdog = new PhaseActivityWatchdog(80, 'TEST', clock)
     let rejected = false
 
-    const p = watchdog.promise.catch(() => {
+    void watchdog.promise.catch(() => {
       rejected = true
     })
 
@@ -276,8 +278,8 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     await Promise.resolve()
     assert.equal(rejected, false, 'Touch while paused should not restart timer')
 
+    // See the note above — `p` must not be awaited after dispose().
     watchdog.dispose()
-    await p.catch(() => {})
   })
 
   test('pause() is idempotent', () => {

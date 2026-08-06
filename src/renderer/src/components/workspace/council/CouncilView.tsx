@@ -14,7 +14,11 @@ import { useEffect, useMemo, useState } from 'react'
 import { Hammer, Play, RefreshCw, X, Landmark, Loader2, GitFork, FileText } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
-import type { CouncilAdvisorRole, CouncilPeerReview, CouncilVerdict } from '../../../../../shared/types'
+import type {
+  CouncilAdvisorRole,
+  CouncilPeerReview,
+  CouncilVerdict
+} from '../../../../../shared/types'
 import CouncilMemberColumn, { StatusBadge } from './CouncilMemberColumn'
 import CouncilVerdictCard from './CouncilVerdictCard'
 import CouncilRankingsMatrix from './CouncilRankingsMatrix'
@@ -29,7 +33,12 @@ interface CouncilViewProps {
   /** Title of the content being reviewed */
   inputTitle?: string
   /** Called when user clicks "Update Plan" (from-chat flow) */
-  onUpdatePlan?: (sessionId: string, verdict: CouncilVerdict, originConversationId: string, workspaceId: string) => void
+  onUpdatePlan?: (
+    sessionId: string,
+    verdict: CouncilVerdict,
+    originConversationId: string,
+    workspaceId: string
+  ) => void
   /** Called when user clicks "Accept & Build" (standalone flow) */
   onAcceptAndBuild?: (sessionId: string, workspaceId: string) => void
   /** Called when user clicks "Back to Sessions" / dismiss */
@@ -88,7 +97,12 @@ interface CouncilActionBarProps {
   originConversationId: string | null
   currentSessionId: string
   currentWorkspaceId: string
-  onUpdatePlan: (sessionId: string, verdict: CouncilVerdict, originConversationId: string, workspaceId: string) => void
+  onUpdatePlan: (
+    sessionId: string,
+    verdict: CouncilVerdict,
+    originConversationId: string,
+    workspaceId: string
+  ) => void
   onAcceptAndBuild: (sessionId: string, workspaceId: string) => void
   onDismiss?: () => void
   onReset: () => void
@@ -227,9 +241,7 @@ function FramingPhaseContent({
                 <StatusBadge status={advisor.status} />
               </div>
               {advisor.review && (
-                <span className="text-sm font-bold text-text-primary">
-                  {advisor.review.score}
-                </span>
+                <span className="text-sm font-bold text-text-primary">{advisor.review.score}</span>
               )}
             </button>
           )
@@ -255,8 +267,8 @@ function PeerReviewPhaseContent({
           <Loader2 size={24} className="animate-spin text-indigo-400 mx-auto mb-2" />
           <p className="text-sm text-text-primary font-medium">Peer review in progress</p>
           <p className="text-xs text-text-muted mt-1">
-            Advisors are anonymously cross-examining each other&apos;s findings. This
-            typically takes ~90 seconds.
+            Advisors are anonymously cross-examining each other&apos;s findings. This typically
+            takes ~90 seconds.
           </p>
         </div>
         <div className="grid grid-cols-5 gap-2">
@@ -299,9 +311,7 @@ function PeerReviewPhaseContent({
                       className="text-text-secondary mt-0.5 flex-shrink-0"
                     />
                     <div>
-                      <span className="text-xs font-semibold text-text-primary">
-                        {def.name}
-                      </span>
+                      <span className="text-xs font-semibold text-text-primary">{def.name}</span>
                       <ul className="text-xs text-text-body mt-0.5 space-y-0.5">
                         {advisor.review.keyFindings.slice(0, 2).map((f, i) => (
                           <li key={i}>• {f}</li>
@@ -331,9 +341,7 @@ function SynthesizingPhaseContent({
         {!verdict && (
           <div className="text-center py-8">
             <Loader2 size={24} className="animate-spin text-primary mx-auto mb-2" />
-            <p className="text-sm text-text-secondary">
-              The Chairman is synthesizing all reviews…
-            </p>
+            <p className="text-sm text-text-secondary">The Chairman is synthesizing all reviews…</p>
           </div>
         )}
         {verdict && <CouncilVerdictCard verdict={verdict} />}
@@ -488,11 +496,10 @@ function CouncilFooterBar({
               const wid = currentWorkspaceId
               startCouncil()
               setSessionIdentity(sid, wid)
-              window.api.councilResume({ sessionId: sid, workspaceId: wid })
-                .catch((err) => {
-                  console.error('[council] Resume failed:', err)
-                  reset()
-                })
+              window.api.councilResume({ sessionId: sid, workspaceId: wid }).catch((err) => {
+                console.error('[council] Resume failed:', err)
+                reset()
+              })
             }
           }}
           className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors press-scale"
@@ -600,8 +607,12 @@ export default function CouncilView({
       .then((plan) => {
         if (!cancelled && plan?.title) setLinkedPlanTitle(plan.title)
       })
-      .catch(() => { /* best-effort */ })
-    return () => { cancelled = true }
+      .catch(() => {
+        /* best-effort */
+      })
+    return () => {
+      cancelled = true
+    }
   }, [isHydrated, currentSessionId, phase])
 
   // Local UI state
@@ -687,9 +698,7 @@ export default function CouncilView({
       {isHydrated && linkedPlanTitle && (
         <div className="flex items-center gap-2 px-5 py-2 border-b border-border-subtle bg-indigo-500/5">
           <FileText size={14} className="text-indigo-400 flex-shrink-0" />
-          <span className="text-xs text-text-secondary">
-            This council produced a plan:
-          </span>
+          <span className="text-xs text-text-secondary">This council produced a plan:</span>
           <span className="text-xs font-medium text-text-primary truncate">
             &ldquo;{linkedPlanTitle}&rdquo;
           </span>

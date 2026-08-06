@@ -121,9 +121,7 @@ if (!dbReady) {
         'a paused run with an empty queue is not worth resuming'
       )
 
-      repo.planItems(emptyPaused, wsId, [
-        { phase: 'docs', kind: 'doc', sourceRef: 'README.md' }
-      ])
+      repo.planItems(emptyPaused, wsId, [{ phase: 'docs', kind: 'doc', sourceRef: 'README.md' }])
       assert.equal(
         svc.getSnapshot(wsId).resumableRunId,
         emptyPaused,
@@ -197,10 +195,10 @@ if (!dbReady) {
 
       const { items, total } = svc.listItems(runId)
       assert.equal(total, 2)
-      assert.deepEqual(
-        items.map((i: { sourceRef: string }) => i.sourceRef).sort(),
-        ['README.md', 'docs/guide.md']
-      )
+      assert.deepEqual(items.map((i: { sourceRef: string }) => i.sourceRef).sort(), [
+        'README.md',
+        'docs/guide.md'
+      ])
     })
 
     test('listItems filters by status', () => {

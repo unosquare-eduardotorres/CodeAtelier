@@ -45,7 +45,9 @@ if (!env) {
         description: 'Detailed desc',
         priority: 'P2',
         sourceIdeaId: (() => {
-          const row = env.db.prepare('INSERT INTO ideas (workspace_id, title) VALUES (?, ?) RETURNING id').get(wsId, 'BP Source Idea') as { id: string }
+          const row = env.db
+            .prepare('INSERT INTO ideas (workspace_id, title) VALUES (?, ?) RETURNING id')
+            .get(wsId, 'BP Source Idea') as { id: string }
           return row.id
         })(),
         constitutionSnapshot: 'snapshot text',
@@ -197,12 +199,20 @@ if (!env) {
       // Reviewing blueprint should be untouched
       const foundReviewing = blueprintRepository.findById(reviewing.id)
       assert.ok(foundReviewing)
-      assert.equal(foundReviewing.status, 'reviewing', 'Excluded blueprint must keep reviewing status')
+      assert.equal(
+        foundReviewing.status,
+        'reviewing',
+        'Excluded blueprint must keep reviewing status'
+      )
 
       // Its phase should remain active (not cascaded to failed)
       const foundPhase = blueprintPhaseRepository.findById(phase.id)
       assert.ok(foundPhase)
-      assert.equal(foundPhase.status, 'active', 'Excluded blueprint phases must not be cascaded to failed')
+      assert.equal(
+        foundPhase.status,
+        'active',
+        'Excluded blueprint phases must not be cascaded to failed'
+      )
 
       // Building blueprint should be failed
       const foundBuilding = blueprintRepository.findById(building.id)
@@ -300,13 +310,21 @@ if (!env) {
       blueprintPhaseRepository.saveArtifacts(phase.id, [
         { type: 'review', contentMd: 'review text', contentJson: { recommendation: 'proceed' } },
         { type: 'discoveries', contentJson: { phase: 'review', entries: [] } },
-        { type: 'preflight', contentJson: { checks: [], ranAt: 'old', hasBlockers: false, hasWarnings: false } }
+        {
+          type: 'preflight',
+          contentJson: { checks: [], ranAt: 'old', hasBlockers: false, hasWarnings: false }
+        }
       ] as any)
 
       // Replace preflight with new data
       const updated = blueprintPhaseRepository.replaceArtifactOfType(phase.id, 'preflight', {
         type: 'preflight',
-        contentJson: { checks: [{ id: 'new-check' }], ranAt: 'new', hasBlockers: true, hasWarnings: false }
+        contentJson: {
+          checks: [{ id: 'new-check' }],
+          ranAt: 'new',
+          hasBlockers: true,
+          hasWarnings: false
+        }
       } as any)
 
       assert.ok(updated)
@@ -337,12 +355,14 @@ if (!env) {
 
       // First replace
       blueprintPhaseRepository.replaceArtifactOfType(phase.id, 'preflight', {
-        type: 'preflight', contentJson: { ranAt: 'v2' }
+        type: 'preflight',
+        contentJson: { ranAt: 'v2' }
       } as any)
 
       // Second replace
       const final = blueprintPhaseRepository.replaceArtifactOfType(phase.id, 'preflight', {
-        type: 'preflight', contentJson: { ranAt: 'v3' }
+        type: 'preflight',
+        contentJson: { ranAt: 'v3' }
       } as any)
 
       assert.ok(final)
@@ -355,7 +375,8 @@ if (!env) {
 
     test('replaceArtifactOfType() returns undefined for nonexistent phase', () => {
       const result = blueprintPhaseRepository.replaceArtifactOfType('nonexistent', 'preflight', {
-        type: 'preflight', contentJson: {}
+        type: 'preflight',
+        contentJson: {}
       } as any)
       assert.equal(result, undefined)
     })
@@ -419,16 +440,36 @@ if (!env) {
 
     test('findByBlueprint() returns tasks ordered by wave', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Ordered Tasks' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'W2', wave: 2, description: 'W2' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'W1', wave: 1, description: 'W1' })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'W2',
+        wave: 2,
+        description: 'W2'
+      })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'W1',
+        wave: 1,
+        description: 'W1'
+      })
       const tasks = blueprintTaskRepository.findByBlueprint(bp.id)
       assert.ok(tasks[0].wave <= tasks[tasks.length - 1].wave)
     })
 
     test('findByWave() filters by wave number', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Wave Filter' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'WF1', wave: 1, description: 'd' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'WF2', wave: 2, description: 'd' })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'WF1',
+        wave: 1,
+        description: 'd'
+      })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'WF2',
+        wave: 2,
+        description: 'd'
+      })
       const wave1 = blueprintTaskRepository.findByWave(bp.id, 1)
       assert.ok(wave1.length >= 1)
       assert.ok(wave1.every((t: any) => t.wave === 1))
@@ -436,8 +477,18 @@ if (!env) {
 
     test('getWaveCount() returns max wave number', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Wave Count' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'WC1', wave: 1, description: 'd' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'WC2', wave: 3, description: 'd' })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'WC1',
+        wave: 1,
+        description: 'd'
+      })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'WC2',
+        wave: 3,
+        description: 'd'
+      })
       assert.equal(blueprintTaskRepository.getWaveCount(bp.id), 3)
     })
 
@@ -470,7 +521,12 @@ if (!env) {
       })
       // executor_run_id references mpa_runs — seed a real MPA run
       const { mpaRunRepository } = require('../mpa-run.repository')
-      const mpaRun = mpaRunRepository.createRun({ workspaceId: wsId, title: 'Test Run', goal: 'test', goalType: 'feature' })
+      const mpaRun = mpaRunRepository.createRun({
+        workspaceId: wsId,
+        title: 'Test Run',
+        goal: 'test',
+        goalType: 'feature'
+      })
       const updated = blueprintTaskRepository.setExecutorRun(task.id, mpaRun.id)
       assert.ok(updated)
       assert.equal(updated.executorRunId, mpaRun.id)
@@ -478,8 +534,18 @@ if (!env) {
 
     test('deleteByBlueprint() removes all tasks for a blueprint', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Delete Tasks' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'DT1', wave: 1, description: 'd' })
-      blueprintTaskRepository.create({ blueprintId: bp.id, taskId: 'DT2', wave: 1, description: 'd' })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'DT1',
+        wave: 1,
+        description: 'd'
+      })
+      blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'DT2',
+        wave: 1,
+        description: 'd'
+      })
       const deleted = blueprintTaskRepository.deleteByBlueprint(bp.id)
       assert.equal(deleted, 2)
       assert.equal(blueprintTaskRepository.findByBlueprint(bp.id).length, 0)

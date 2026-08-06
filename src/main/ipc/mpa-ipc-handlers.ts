@@ -4,12 +4,7 @@
  * No Electron, no I/O, no service references — only computation over plain data.
  */
 
-import type {
-  MpaRun,
-  MpaPhase,
-  MpaPhaseType,
-  MpaStatus
-} from '../../shared/mpa-types'
+import type { MpaRun, MpaPhase, MpaPhaseType, MpaStatus } from '../../shared/mpa-types'
 
 // ── Status Construction ──────────────────────────────────────────────────────
 
@@ -19,11 +14,7 @@ import type {
  * Encapsulates the index computation, fallback chains, and phase resolution
  * that was previously inline in the mpa:getStatus handler.
  */
-export function computeMpaStatus(
-  run: MpaRun | null,
-  runId: string,
-  phases: MpaPhase[]
-): MpaStatus {
+export function computeMpaStatus(run: MpaRun | null, runId: string, phases: MpaPhase[]): MpaStatus {
   if (!run) {
     // Run was in the orchestrator but not yet persisted (race)
     return {

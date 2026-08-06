@@ -26,6 +26,30 @@ import log from 'electron-log/main'
 
 const openCodeLog = log.scope('OpenCodeExecutor')
 
+/** The subset of opencode.json this executor reads. */
+interface OpenCodeConfigProviderEntry {
+  options?: { baseURL?: string; apiKey?: string }
+  npm?: string
+}
+interface OpenCodeConfigFile {
+  provider?: Record<string, OpenCodeConfigProviderEntry>
+  [key: string]: unknown
+}
+
+/** Error body returned by the OpenCode server on 4xx/5xx. */
+interface OpenCodeErrorPayload {
+  message?: string
+  data?: { message?: string }
+}
+
+/** Node spawn/system error fields that aren't on the base Error type. */
+type SpawnError = Error & {
+  code?: string | number
+  syscall?: string
+  path?: string
+  spawnargs?: string[]
+}
+
 // ── Types ──
 
 /**
@@ -167,13 +191,13 @@ export class OpenCodeExecutor {
     sessionMap: this.sessionMap
   }
 
-   /**
-    * Check if the OpenCode CLI is installed and available in PATH.
-    * Returns an error message if CLI is not found, null if available.
-    */
-   async checkCliAvailable(): Promise<string | null> {
-     try {
-       const { execSync } = await import('node:child_process')
+  /**
+   * Check if the OpenCode CLI is installed and available in PATH.
+   * Returns an error message if CLI is not found, null if available.
+   */
+  async checkCliAvailable(): Promise<string | null> {
+    try {
+      const { execSync } = await import('node:child_process')
 
       // Use the cached resolved path (set at startup via resolveOpencodePath)
       const opencodePath = getOpencodePath()
@@ -265,7 +289,7 @@ export class OpenCodeExecutor {
       // OC-02: Read config content to pass inline via the SDK.
       // The SDK sets OPENCODE_CONFIG_CONTENT from options.config — if we don't pass it,
       // it defaults to "{}" which overrides any file-based OPENCODE_CONFIG.
-      let configContent: Record<string, unknown> | undefined
+      let configContent: OpenCodeConfigFile | undefined
       if (config?.configPath) {
         try {
           const { readFileSync } = await import('node:fs')
@@ -278,14 +302,14 @@ export class OpenCodeExecutor {
 
       // OC-08: Log provider config summary for diagnostics (mask apiKey)
       if (configContent) {
-        const providers = (configContent as any).provider ?? {}
+        const providers = configContent.provider ?? {}
         for (const [provId, provConfig] of Object.entries(providers)) {
-          const opts = (provConfig as any)?.options ?? {}
+          const opts = provConfig?.options ?? {}
           openCodeLog.info(
             `[opencode] Config provider [${provId}]: ` +
-            `baseURL=${opts.baseURL ?? '(none)'}, ` +
-            `apiKey=${opts.apiKey ? '***' + String(opts.apiKey).slice(-3) : '(none)'}, ` +
-            `npm=${(provConfig as any)?.npm ?? '(builtin)'}`
+              `baseURL=${opts.baseURL ?? '(none)'}, ` +
+              `apiKey=${opts.apiKey ? '***' + String(opts.apiKey).slice(-3) : '(none)'}, ` +
+              `npm=${provConfig?.npm ?? '(builtin)'}`
           )
         }
       }
@@ -317,9 +341,9 @@ export class OpenCodeExecutor {
       // We must not create a conflicting package.json — just install into the
       // existing node_modules if the package is missing.
       if (configContent) {
-        const providers = (configContent as any).provider ?? {}
+        const providers = configContent.provider ?? {}
         for (const [provId, provConfig] of Object.entries(providers)) {
-          const npmPkg = (provConfig as any)?.npm
+          const npmPkg = provConfig?.npm
           if (npmPkg) {
             const { join } = await import('node:path')
             const { existsSync } = await import('node:fs')
@@ -349,7 +373,9 @@ export class OpenCodeExecutor {
         }
       }
 
-      openCodeLog.info(`[opencode] Calling createOpencode with port ${OPENCODE_SERVER_PORT}, timeout ${startupTimeout}ms`)
+      openCodeLog.info(
+        `[opencode] Calling createOpencode with port ${OPENCODE_SERVER_PORT}, timeout ${startupTimeout}ms`
+      )
 
       // Import the SDK to get createOpencode function
       const { createOpencode } = await import('@opencode-ai/sdk')
@@ -372,13 +398,17 @@ export class OpenCodeExecutor {
       mkdirSync(join(isolatedConfigHome, 'opencode'), { recursive: true })
       const savedXdgConfigHome = process.env.XDG_CONFIG_HOME
       process.env.XDG_CONFIG_HOME = isolatedConfigHome
-      openCodeLog.info(`[opencode] Set XDG_CONFIG_HOME=${isolatedConfigHome} (was ${savedXdgConfigHome ?? 'unset'})`)
+      openCodeLog.info(
+        `[opencode] Set XDG_CONFIG_HOME=${isolatedConfigHome} (was ${savedXdgConfigHome ?? 'unset'})`
+      )
 
       // OC-10: Force XDG_DATA_HOME to temp dir so the opencode SQLite database
       // lives alongside the config — e2e-runner can reliably clean it.
       const savedXdgDataHome = process.env.XDG_DATA_HOME
       process.env.XDG_DATA_HOME = isolatedConfigHome
-      openCodeLog.info(`[opencode] Set XDG_DATA_HOME=${isolatedConfigHome} (was ${savedXdgDataHome ?? 'unset'})`)
+      openCodeLog.info(
+        `[opencode] Set XDG_DATA_HOME=${isolatedConfigHome} (was ${savedXdgDataHome ?? 'unset'})`
+      )
 
       let result: Awaited<ReturnType<typeof createOpencode>>
       try {
@@ -388,7 +418,7 @@ export class OpenCodeExecutor {
           signal: this.startupAbortController.signal,
           // OC-02: Pass config inline so the SDK sets OPENCODE_CONFIG_CONTENT correctly.
           // Without this, the SDK defaults to "{}" which the server prioritizes over file-based config.
-          ...(configContent ? { config: configContent as any } : {})
+          ...(configContent ? { config: configContent as Record<string, unknown> } : {})
         })
       } finally {
         process.chdir(originalCwd)
@@ -525,7 +555,10 @@ export class OpenCodeExecutor {
         // Handle transient errors with retry
         if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
           const retryGen = this.handleTransientRetry(
-            chunk, transientRetryCount, openCodeSessionId, promptBody
+            chunk,
+            transientRetryCount,
+            openCodeSessionId,
+            promptBody
           )
           let retryResult = await retryGen.next()
           while (!retryResult.done) {
@@ -655,7 +688,7 @@ export class OpenCodeExecutor {
         .then((response) => {
           // OC-07: Check the error field — HTTP 4xx/5xx errors land here.
           // promptAsync returns 204 (void) on success, so data is undefined.
-          const errorData = (response as any)?.error
+          const errorData = (response as { error?: OpenCodeErrorPayload })?.error
           if (errorData) {
             const errorMsg =
               errorData?.data?.message ?? errorData?.message ?? JSON.stringify(errorData)
@@ -741,20 +774,18 @@ export class OpenCodeExecutor {
           message: (error as Error).message,
           name: (error as Error).name,
           stack: (error as Error).stack,
-          code: (error as any)?.code,
-          syscall: (error as any)?.syscall,
-          path: (error as any)?.path,
-          spawnargs: (error as any)?.spawnargs,
+          code: (error as SpawnError)?.code,
+          syscall: (error as SpawnError)?.syscall,
+          path: (error as SpawnError)?.path,
+          spawnargs: (error as SpawnError)?.spawnargs,
           platform: process.platform,
-          envPATH: process.env.PATH?.slice(0, 600),
+          envPATH: process.env.PATH?.slice(0, 600)
         }
         openCodeLog.error(
           `[opencode] Execution error (consecutive=${this.consecutiveErrors}):`,
           errorDetails
         )
-        openCodeLog.error(
-          `[opencode] Current PATH: ${process.env.PATH || 'not set'}`
-        )
+        openCodeLog.error(`[opencode] Current PATH: ${process.env.PATH || 'not set'}`)
 
         // Provide helpful troubleshooting info in the error message
         const helpMessage = `OpenCode error: ${(error as Error).message}
@@ -1521,14 +1552,17 @@ Troubleshooting:
     try {
       const { execSync } = await import('node:child_process')
       // lsof finds PIDs listening on our port; awk extracts the PID column
-      const output = execSync(
-        `lsof -ti :${OPENCODE_SERVER_PORT} 2>/dev/null`,
-        { encoding: 'utf-8', timeout: 3000, windowsHide: true }
-      ).trim()
+      const output = execSync(`lsof -ti :${OPENCODE_SERVER_PORT} 2>/dev/null`, {
+        encoding: 'utf-8',
+        timeout: 3000,
+        windowsHide: true
+      }).trim()
       if (output) {
         const pids = output.split('\n').filter(Boolean)
         for (const pid of pids) {
-          openCodeLog.warn(`[opencode] Killing stale server process on port ${OPENCODE_SERVER_PORT} (PID ${pid})`)
+          openCodeLog.warn(
+            `[opencode] Killing stale server process on port ${OPENCODE_SERVER_PORT} (PID ${pid})`
+          )
           try {
             process.kill(Number(pid), 'SIGTERM')
           } catch {

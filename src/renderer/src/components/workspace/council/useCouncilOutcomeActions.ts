@@ -32,7 +32,7 @@ function buildUpdatePlanMessage(verdict: CouncilVerdict, currentGoal?: string): 
   lines.push(
     '',
     `Regenerate the plan incorporating these revisions${currentGoal ? ' and the goal above' : ', including an updated `goal` field that reflects the revised scope'}. ` +
-    'Output the updated plan in a ```plan``` block.'
+      'Output the updated plan in a ```plan``` block.'
   )
   return lines.join('\n')
 }
@@ -58,7 +58,9 @@ export function useCouncilOutcomeActions(onNavigateToChat: () => void): OutcomeA
 
   useEffect(() => {
     mountedRef.current = true
-    return () => { mountedRef.current = false }
+    return () => {
+      mountedRef.current = false
+    }
   }, [])
 
   const handleUpdatePlan = useCallback(
@@ -103,7 +105,11 @@ export function useCouncilOutcomeActions(onNavigateToChat: () => void): OutcomeA
         onNavigateToChat()
 
         // Guard: don't send into an active stream
-        const { isStreaming, sendingConversationIds, activeConversation: activeConv } = useChatStore.getState()
+        const {
+          isStreaming,
+          sendingConversationIds,
+          activeConversation: activeConv
+        } = useChatStore.getState()
         if (isStreaming || sendingConversationIds.has(activeConv?.id ?? '')) {
           useCouncilStore.getState().reset()
           useToastStore.getState().addToast({

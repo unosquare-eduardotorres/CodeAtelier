@@ -3,27 +3,32 @@
 ## Summary of Changes
 
 ### 1. Added `checkCliAvailable()` method to OpenCodeExecutor
+
 - **File**: `src/main/services/opencode-executor.ts`
 - **Purpose**: Validates OpenCode CLI installation before attempting to start server
 - **Returns**: `Promise<string | null>` - null if available, error message if not
 
 ### 2. Improved Error Messaging in `agent-session.service.ts`
+
 - Detects `ENOENT` and `spawn opencode` errors
 - Provides helpful installation instructions to users
 
 ### 3. Added Comprehensive Tests
 
 #### Integration Tests
+
 - **File**: `src/main/services/__tests__/opencode-executor-integration.test.ts`
 - Tests CLI availability check
 - Tests helpful error messages when CLI missing
 
-#### Unit Tests 
+#### Unit Tests
+
 - **File**: `src/main/services/__tests__/opencode-cli-check.test.ts`
 - Tests `checkCliAvailable()` method
 - Tests `start()` validation before server startup
 
 #### New Utility Module
+
 - **File**: `src/shared/opencode-check.ts`
 - Reusable CLI check functions
 
@@ -40,11 +45,13 @@ npx tsx src/main/services/__tests__/opencode-cli-check.test.ts
 ## Expected Behavior
 
 ### When OpenCode CLI IS installed:
+
 - `checkCliAvailable()` returns `null`
 - Server starts normally
 - Tests pass
 
 ### When OpenCode CLI is NOT installed:
+
 - `checkCliAvailable()` returns helpful error:
   ```
   OpenCode CLI not found. Install it by running:
@@ -71,4 +78,3 @@ which opencode || echo "Not found"
 # Check version
 opencode --version 2>&1 || echo "CLI not installed"
 ```
-

@@ -25,9 +25,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Feed Brain Ingestion', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,9 +40,7 @@ test.describe('Feed Brain Ingestion', () => {
   }
 
   /** Navigate to Memory → Ingestion, where BootstrapKnowledge renders. */
-  async function openIngestionTab(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openIngestionTab(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     if (!(await nav.navigateToSettingsTab('memory'))) return false
 
@@ -61,10 +57,16 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('scope selector offers all four scopes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openIngestionTab(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     for (const scope of ['changed', 'docs', 'deep-scan', 'full']) {
       await expect(page.locator(`[data-testid="bootstrap-scope-${scope}"]`)).toBeVisible()
@@ -73,10 +75,16 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('selecting a scope updates the explanatory hint', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openIngestionTab(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     await page.locator('[data-testid="bootstrap-scope-full"]').click()
     await page.waitForTimeout(300)
@@ -93,10 +101,16 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('the old force re-scan checkbox is gone', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openIngestionTab(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const forceCheckbox = page.getByText(/force full re-scan/i)
     expect(await forceCheckbox.count()).toBe(0)
@@ -104,10 +118,16 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('switching to Deep Scan swaps the phase preview', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openIngestionTab(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     // Feed Brain (default) shows the Structure phase, not the Agent Scan phase.
     await expect(page.getByText('Structure', { exact: true }).first()).toBeVisible({
@@ -125,10 +145,16 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('start control is enabled with a workspace open', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openIngestionTab(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const start = page.locator('[data-testid="bootstrap-start"]')
     await expect(start).toBeVisible()
@@ -137,14 +163,23 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('throughput setting is exposed with a value in range', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openIngestionTab(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const slider = page.locator('input[type="range"]').first()
     const hasSlider = await slider.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSlider) { test.skip(); return }
+    if (!hasSlider) {
+      test.skip()
+      return
+    }
 
     const value = Number(await slider.inputValue())
     expect(value).toBeGreaterThanOrEqual(1)
@@ -153,11 +188,17 @@ test.describe('Feed Brain Ingestion', () => {
 
   test('status bar exposes no Feed Brain indicator while idle', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // The indicator is deliberately hidden when nothing is ingesting — a
     // finished run is not news, and the bar should stay quiet.

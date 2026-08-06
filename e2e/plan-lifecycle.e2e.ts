@@ -46,7 +46,10 @@ test.describe('Plan Lifecycle — Status Transitions & Cross-Modal', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -73,9 +76,7 @@ test.describe('Plan Lifecycle — Status Transitions & Cross-Modal', () => {
 
   // ── 1. Chat-sourced plans ──
 
-  test('plan created from Chat appears in Plans tab as "saved"', async ({
-    electronPage: page
-  }) => {
+  test('plan created from Chat appears in Plans tab as "saved"', async ({ electronPage: page }) => {
     await navigateToPlans(page)
     await selectFilter(page, 'all')
 
@@ -114,9 +115,7 @@ test.describe('Plan Lifecycle — Status Transitions & Cross-Modal', () => {
 
   // ── 2. Grill-sourced plans ──
 
-  test('plan created from Grill appears with 🔥 source badge', async ({
-    electronPage: page
-  }) => {
+  test('plan created from Grill appears with 🔥 source badge', async ({ electronPage: page }) => {
     await navigateToPlans(page)
     await selectFilter(page, 'all')
 
@@ -230,7 +229,10 @@ test.describe('Plan Lifecycle — Status Transitions & Cross-Modal', () => {
 
     // Navigate back to Plans to verify status changed
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasSettingsTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSettingsTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasSettingsTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)

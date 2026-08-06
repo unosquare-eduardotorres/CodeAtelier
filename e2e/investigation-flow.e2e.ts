@@ -224,7 +224,10 @@ test.describe('Investigation Flow', () => {
 
     // Check if any error state is rendered in the investigation flow
     const errorCard = page!.locator('[data-testid="error-card"], [class*="danger"]')
-    const hasError = await errorCard.first().isVisible({ timeout: 3000 }).catch(() => false)
+    const hasError = await errorCard
+      .first()
+      .isVisible({ timeout: 3000 })
+      .catch(() => false)
 
     if (!hasError) {
       // No failure state currently visible — this is expected in happy path

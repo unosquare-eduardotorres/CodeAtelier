@@ -351,7 +351,11 @@ export class AgentStreamProcessor {
     streamState.hasTextAfterLastTool = false
     const cbResult = this.s.circuitBreaker.onToolUse({
       isBuildMode,
-      accumulatedTextLength: (this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length,
+      accumulatedTextLength: (
+        this.s.activeStreams?.get(conversationId)?.accumulatedText ??
+        this.s.accumulatedText ??
+        ''
+      ).length,
       conversationId,
       isLocalProvider: this.s.llmProvider === 'local-llm',
       contextTier: ctx.contextTier
@@ -401,7 +405,11 @@ export class AgentStreamProcessor {
     for (let i = 0; i < 10; i++) {
       const cbResult = this.s.circuitBreaker.onToolUse({
         isBuildMode,
-        accumulatedTextLength: (this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length,
+        accumulatedTextLength: (
+          this.s.activeStreams?.get(conversationId)?.accumulatedText ??
+          this.s.accumulatedText ??
+          ''
+        ).length,
         conversationId,
         isLocalProvider: this.s.llmProvider === 'local-llm',
         contextTier: ctx.contextTier

@@ -35,10 +35,26 @@ import type {
 
 // ── Constants ──
 
-const ALL_CATEGORIES: MemoryFactCategory[] = ['decision', 'convention', 'gotcha', 'preference', 'reference']
+const ALL_CATEGORIES: MemoryFactCategory[] = [
+  'decision',
+  'convention',
+  'gotcha',
+  'preference',
+  'reference'
+]
 const ALL_TIERS = [0, 1, 2, 3] as const
-const TIER_LABELS: Record<number, string> = { 0: 'T0 Observed', 1: 'T1 Confirmed', 2: 'T2 Established', 3: 'T3 Wisdom' }
-const TIER_COLORS: Record<number, string> = { 0: 'text-text-muted', 1: 'text-info', 2: 'text-success', 3: 'text-primary-text' }
+const TIER_LABELS: Record<number, string> = {
+  0: 'T0 Observed',
+  1: 'T1 Confirmed',
+  2: 'T2 Established',
+  3: 'T3 Wisdom'
+}
+const TIER_COLORS: Record<number, string> = {
+  0: 'text-text-muted',
+  1: 'text-info',
+  2: 'text-success',
+  3: 'text-primary-text'
+}
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest' },
   { value: 'tier', label: 'Tier' },
@@ -106,9 +122,13 @@ export default function MemorySettingsPage(): React.JSX.Element {
   const [showSearchPlayground, setShowSearchPlayground] = useState(false)
 
   // ── Toolbar state ──
-  const [filterCategories, setFilterCategories] = useState<Set<MemoryFactCategory>>(new Set(ALL_CATEGORIES))
+  const [filterCategories, setFilterCategories] = useState<Set<MemoryFactCategory>>(
+    new Set(ALL_CATEGORIES)
+  )
   const [filterTiers, setFilterTiers] = useState<Set<number>>(new Set([0, 1, 2, 3]))
-  const [filterStatus, setFilterStatus] = useState<'all' | 'validated' | 'unvalidated' | 'pending-embedding'>('all')
+  const [filterStatus, setFilterStatus] = useState<
+    'all' | 'validated' | 'unvalidated' | 'pending-embedding'
+  >('all')
   const [sortMode, setSortMode] = useState<SortMode>('tier')
   const [visibleCount, setVisibleCount] = useState(BATCH_SIZE)
 
@@ -215,11 +235,13 @@ export default function MemorySettingsPage(): React.JSX.Element {
 
       {/* ── Brain Tab (Graph) ── */}
       {activeTab === 'graph' && (
-        <ErrorBoundary fallback={
-          <div className="flex items-center justify-center h-64 text-text-muted text-sm">
-            Graph visualization encountered an error. Switch tabs and back to retry.
-          </div>
-        }>
+        <ErrorBoundary
+          fallback={
+            <div className="flex items-center justify-center h-64 text-text-muted text-sm">
+              Graph visualization encountered an error. Switch tabs and back to retry.
+            </div>
+          }
+        >
           <GraphView workspaceId={workspaceId} />
         </ErrorBoundary>
       )}
@@ -317,7 +339,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
                 setDedupResult(null)
                 const result = await scanForDuplicates(workspaceId)
                 setDedupResult(
-                  (result.clustersFound > 0 || result.autoMerged > 0)
+                  result.clustersFound > 0 || result.autoMerged > 0
                     ? `Found ${result.clustersFound} cluster${result.clustersFound !== 1 ? 's' : ''}, auto-merged ${result.autoMerged}`
                     : 'No duplicates found'
                 )
@@ -366,7 +388,8 @@ export default function MemorySettingsPage(): React.JSX.Element {
           {contradictionsTotal > 0 && (
             <div className="text-xs text-text-muted">
               Showing {contradictions.length === 0 ? 0 : contradictionsPage * 25 + 1}–
-              {Math.min((contradictionsPage + 1) * 25, contradictionsTotal)} of {contradictionsTotal}
+              {Math.min((contradictionsPage + 1) * 25, contradictionsTotal)} of{' '}
+              {contradictionsTotal}
             </div>
           )}
 
@@ -413,9 +436,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
       )}
 
       {/* ── CLAUDE.md Tab ── */}
-      {activeTab === 'claudemd' && (
-        <ClaudeMdPanel />
-      )}
+      {activeTab === 'claudemd' && <ClaudeMdPanel />}
     </div>
   )
 }
@@ -485,7 +506,8 @@ function FactsTab({
     () => activeFacts.filter((f) => f.tier >= 1 || (f.evidenceCount ?? 0) > 0).length,
     [activeFacts]
   )
-  const validatedPct = activeFacts.length > 0 ? Math.round((validatedCount / activeFacts.length) * 100) : 0
+  const validatedPct =
+    activeFacts.length > 0 ? Math.round((validatedCount / activeFacts.length) * 100) : 0
 
   // ── Filter + Sort ──
   const filteredAndSorted = useMemo(() => {
@@ -493,7 +515,8 @@ function FactsTab({
       if (!filterCategories.has(f.category)) return false
       if (!filterTiers.has(Math.min(f.tier, 3))) return false
       if (filterStatus === 'validated' && f.tier < 1 && (f.evidenceCount ?? 0) === 0) return false
-      if (filterStatus === 'unvalidated' && (f.tier >= 1 || (f.evidenceCount ?? 0) > 0)) return false
+      if (filterStatus === 'unvalidated' && (f.tier >= 1 || (f.evidenceCount ?? 0) > 0))
+        return false
       if (filterStatus === 'pending-embedding' && !f.embeddingPending) return false
       return true
     })
@@ -578,9 +601,7 @@ function FactsTab({
             <span className="text-text-muted">{tierCounts[t]}</span>
           </button>
         ))}
-        <span className="text-xs text-text-muted ml-1">
-          {validatedPct}% validated
-        </span>
+        <span className="text-xs text-text-muted ml-1">{validatedPct}% validated</span>
       </div>
 
       {/* ── Toolbar Row ── */}
@@ -632,7 +653,9 @@ function FactsTab({
             className="px-2 py-1 text-xs bg-input-bg border border-border-default rounded text-text-secondary focus:outline-none focus:ring-1 focus:ring-input-focus"
           >
             {SORT_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
             ))}
           </select>
         </div>
@@ -773,11 +796,12 @@ function EmbeddingStatusStrip({
     return (
       <div className="flex items-center gap-3 px-4 py-2.5 bg-danger/10 border border-danger/30 rounded-md text-sm">
         <AlertTriangle className="w-3.5 h-3.5 text-danger shrink-0" />
-        <span className="flex-1 text-danger text-xs">
-          {backfillError}
-        </span>
+        <span className="flex-1 text-danger text-xs">{backfillError}</span>
         <button
-          onClick={() => { onDismissError(); onBackfill() }}
+          onClick={() => {
+            onDismissError()
+            onBackfill()
+          }}
           className="flex items-center gap-1 px-2.5 py-1 text-xs bg-primary-muted text-primary-text border border-border-default rounded hover:bg-primary/20"
         >
           <RefreshCw className="w-3 h-3" /> Retry
@@ -791,9 +815,7 @@ function EmbeddingStatusStrip({
     return (
       <div className="flex items-center gap-3 px-4 py-2.5 bg-surface-overlay border border-border-default rounded-md text-sm">
         <CircleDot className="w-3.5 h-3.5 text-warning shrink-0" />
-        <span className="flex-1 text-text-secondary">
-          Embedding model offline (oMLX)
-        </span>
+        <span className="flex-1 text-text-secondary">Embedding model offline (oMLX)</span>
         <button
           onClick={onBackfill}
           className="flex items-center gap-1 px-2.5 py-1 text-xs bg-primary-muted text-primary-text border border-border-default rounded hover:bg-primary/20"
@@ -806,9 +828,10 @@ function EmbeddingStatusStrip({
 
   // Running state
   if (isRunning && backfillProgress) {
-    const pct = backfillProgress.total > 0
-      ? Math.round((backfillProgress.processed / backfillProgress.total) * 100)
-      : 0
+    const pct =
+      backfillProgress.total > 0
+        ? Math.round((backfillProgress.processed / backfillProgress.total) * 100)
+        : 0
     return (
       <div className="px-4 py-2.5 bg-surface-overlay border border-border-default rounded-md text-sm space-y-1.5">
         <div className="flex items-center gap-3">
@@ -850,7 +873,9 @@ function EmbeddingStatusStrip({
   return (
     <div className="flex items-center gap-3 px-4 py-2 bg-surface-overlay/50 border border-border-default/50 rounded-md text-xs text-text-muted">
       <CircleDot className="w-3 h-3 text-success shrink-0" />
-      <span>{status.modelName ?? 'Embedding'} · {embeddedCount} of {status.totalCount} embedded</span>
+      <span>
+        {status.modelName ?? 'Embedding'} · {embeddedCount} of {status.totalCount} embedded
+      </span>
     </div>
   )
 }

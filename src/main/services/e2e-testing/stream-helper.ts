@@ -88,33 +88,72 @@ export function chunkToTranscriptEntry(chunk: StreamChunk): E2ETranscriptEntry |
     case 'tool_use': {
       let parsedArgs: Record<string, unknown> | undefined
       if (chunk.toolInput) {
-        try { parsedArgs = JSON.parse(chunk.toolInput) } catch { /* ignore */ }
+        try {
+          parsedArgs = JSON.parse(chunk.toolInput)
+        } catch {
+          /* ignore */
+        }
       }
-      return { role: 'assistant', type: 'tool_use', toolName: chunk.toolName, toolArgs: parsedArgs, timestamp: now }
+      return {
+        role: 'assistant',
+        type: 'tool_use',
+        toolName: chunk.toolName,
+        toolArgs: parsedArgs,
+        timestamp: now
+      }
     }
     case 'tool_result':
-      return { role: 'assistant', type: 'tool_result', toolName: chunk.toolName, toolResult: chunk.content ?? '', timestamp: now }
+      return {
+        role: 'assistant',
+        type: 'tool_result',
+        toolName: chunk.toolName,
+        toolResult: chunk.content ?? '',
+        timestamp: now
+      }
     case 'error':
-      return { role: 'system', type: 'error', content: chunk.error ?? chunk.content ?? 'Unknown error', timestamp: now }
+      return {
+        role: 'system',
+        type: 'error',
+        content: chunk.error ?? chunk.content ?? 'Unknown error',
+        timestamp: now
+      }
     case 'status':
       return { role: 'system', type: 'status', content: chunk.content ?? '', timestamp: now }
     case 'compact_boundary':
-      return { role: 'system', type: 'status', content: 'compact_boundary: ' + (chunk.content ?? ''), timestamp: now }
+      return {
+        role: 'system',
+        type: 'status',
+        content: 'compact_boundary: ' + (chunk.content ?? ''),
+        timestamp: now
+      }
     case 'context_usage_update':
       return { role: 'system', type: 'status', content: 'context_usage_update', timestamp: now }
     case 'permission_request':
-      return { role: 'system', type: 'status', content: 'permission_request: ' + (chunk.toolName ?? 'unknown'), timestamp: now }
+      return {
+        role: 'system',
+        type: 'status',
+        content: 'permission_request: ' + (chunk.toolName ?? 'unknown'),
+        timestamp: now
+      }
     case 'todo_update':
       return { role: 'system', type: 'status', content: 'todo_update', timestamp: now }
     case 'phase_progress':
-      return { role: 'system', type: 'status', content: 'phase_progress: ' + (chunk.phaseProgress?.phaseTitle ?? ''), timestamp: now }
+      return {
+        role: 'system',
+        type: 'status',
+        content: 'phase_progress: ' + (chunk.phaseProgress?.phaseTitle ?? ''),
+        timestamp: now
+      }
     case 'turn_boundary':
       return { role: 'system', type: 'status', content: 'turn_boundary', timestamp: now }
     default:
       return {
         role: 'system',
         type: 'status',
-        content: chunk.type + (chunk.toolName ? `: ${chunk.toolName}` : '') + (chunk.content ? ` — ${chunk.content.slice(0, 200)}` : ''),
+        content:
+          chunk.type +
+          (chunk.toolName ? `: ${chunk.toolName}` : '') +
+          (chunk.content ? ` — ${chunk.content.slice(0, 200)}` : ''),
         timestamp: now
       }
   }
@@ -140,18 +179,22 @@ function setupPermissionAutoResponder(
         setTimeout(() => {
           // The opencode-executor.respondToPermission requires sessionId + permissionId.
           // Since we're in the E2E runner context, we access it via the import.
-          import('../opencode-executor').then(({ openCodeExecutor }) => {
-            // We need the sessionId from the active agent session
-            const session = chatAgentService.getStatus()
-            const sessionId = (session as { sessionId?: string })?.sessionId
-            if (sessionId) {
-              openCodeExecutor.respondToPermission(sessionId, permissionId, false).catch((err: Error) => {
-                log.warn(`[streamHelper] permission auto-deny failed:`, err.message)
-              })
-            }
-          }).catch(() => {
-            log.warn('[streamHelper] Could not import opencode-executor for permission auto-deny')
-          })
+          import('../opencode-executor')
+            .then(({ openCodeExecutor }) => {
+              // We need the sessionId from the active agent session
+              const session = chatAgentService.getStatus()
+              const sessionId = (session as { sessionId?: string })?.sessionId
+              if (sessionId) {
+                openCodeExecutor
+                  .respondToPermission(sessionId, permissionId, false)
+                  .catch((err: Error) => {
+                    log.warn(`[streamHelper] permission auto-deny failed:`, err.message)
+                  })
+              }
+            })
+            .catch(() => {
+              log.warn('[streamHelper] Could not import opencode-executor for permission auto-deny')
+            })
         }, 300)
       }
     }
@@ -221,11 +264,18 @@ export async function streamPrompt(opts: StreamPromptOptions): Promise<E2ETransc
 
   // ask_user auto-responder
   const ASK_USER_DELAY_MS = 500
-  const onAskQuestion = (data: { questions?: { question: string }[]; action?: string; requestId?: string }): void => {
+  const onAskQuestion = (data: {
+    questions?: { question: string }[]
+    action?: string
+    requestId?: string
+  }): void => {
     if (data.requestId) {
       log.info(`[streamPrompt] ask_user auto-responder: answering requestId=${data.requestId}`)
       setTimeout(() => {
-        chatAgentService.respondToAskUser(data.requestId!, 'Option A — proceed with the first option.')
+        chatAgentService.respondToAskUser(
+          data.requestId!,
+          'Option A — proceed with the first option.'
+        )
       }, ASK_USER_DELAY_MS)
     }
   }
@@ -237,7 +287,10 @@ export async function streamPrompt(opts: StreamPromptOptions): Promise<E2ETransc
     const GRACE_MS = 5_000
     const streamPromise = chatStreamService.stream(conversationId, text, attachments)
     streamPromise
-      .then((h) => { handle = h; ourRequestId = h.requestId })
+      .then((h) => {
+        handle = h
+        ourRequestId = h.requestId
+      })
       .catch(() => {})
 
     const timeoutPromise = new Promise<'timeout'>((resolve) => {
@@ -245,7 +298,10 @@ export async function streamPrompt(opts: StreamPromptOptions): Promise<E2ETransc
     })
 
     const result = await Promise.race([
-      streamPromise.then((h) => h.done).then(() => 'done' as const).catch(() => 'done' as const),
+      streamPromise
+        .then((h) => h.done)
+        .then(() => 'done' as const)
+        .catch(() => 'done' as const),
       timeoutPromise
     ])
 
@@ -259,7 +315,12 @@ export async function streamPrompt(opts: StreamPromptOptions): Promise<E2ETransc
       } else {
         await new Promise<void>((r) => setTimeout(r, GRACE_MS))
       }
-      transcript.push({ role: 'system', type: 'error', content: `Prompt timed out after ${timeoutMs}ms`, timestamp: Date.now() })
+      transcript.push({
+        role: 'system',
+        type: 'error',
+        content: `Prompt timed out after ${timeoutMs}ms`,
+        timestamp: Date.now()
+      })
     }
   } catch (err) {
     transcript.push({

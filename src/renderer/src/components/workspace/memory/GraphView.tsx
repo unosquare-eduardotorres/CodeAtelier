@@ -160,7 +160,8 @@ function getGlowTexture(): CanvasTexture {
 const _planetTextures = new Map<string, CanvasTexture>()
 
 function createPlanetTexture(hexColor: string): CanvasTexture {
-  const w = 128, h = 64
+  const w = 128,
+    h = 64
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
@@ -194,9 +195,7 @@ function createPlanetTexture(hexColor: string): CanvasTexture {
     const ny = Math.random() * h
     const ns = 1 + Math.random() * 2
     const nAlpha = Math.random() * 0.15
-    ctx.fillStyle = Math.random() > 0.5
-      ? `rgba(255,255,255,${nAlpha})`
-      : `rgba(0,0,0,${nAlpha})`
+    ctx.fillStyle = Math.random() > 0.5 ? `rgba(255,255,255,${nAlpha})` : `rgba(0,0,0,${nAlpha})`
     ctx.fillRect(nx, ny, ns, ns * 0.5)
   }
 
@@ -596,13 +595,13 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         const sizes = new Float32Array(count)
 
         for (let i = 0; i < count; i++) {
-          positions[i * 3]     = (Math.random() - 0.5) * spread
+          positions[i * 3] = (Math.random() - 0.5) * spread
           positions[i * 3 + 1] = (Math.random() - 0.5) * spread
           positions[i * 3 + 2] = (Math.random() - 0.5) * spread
-          phases[i]        = Math.random() * Math.PI * 2      // random phase offset
-          speeds[i]        = 0.3 + Math.random() * 1.2        // twinkle speed
-          baseOpacities[i] = 0.25 + Math.random() * 0.75      // brightness variety
-          sizes[i]         = 0.6 + Math.random() * 2.4        // size variety
+          phases[i] = Math.random() * Math.PI * 2 // random phase offset
+          speeds[i] = 0.3 + Math.random() * 1.2 // twinkle speed
+          baseOpacities[i] = 0.25 + Math.random() * 0.75 // brightness variety
+          sizes[i] = 0.6 + Math.random() * 2.4 // size variety
         }
 
         const geo = new BufferGeometry()
@@ -621,7 +620,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         })
 
         const stars = new Points(geo, mat)
-        stars.raycast = () => {}  // non-interactive
+        stars.raycast = () => {} // non-interactive
         scene.add(stars)
         starfieldRef.current = stars
 
@@ -634,7 +633,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
                 shaderMat.uniforms.uTime.value = performance.now() / 1000
               }
             }
-          }, 33)  // ~30fps — sufficient for subtle twinkle
+          }, 33) // ~30fps — sufficient for subtle twinkle
         }
       } catch (err) {
         console.warn('[GraphView] Starfield setup failed (non-fatal):', err)
@@ -792,11 +791,11 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       const texMat = new MeshBasicMaterial({
         map: getPlanetTexture(hexColor),
         transparent: true,
-        opacity: [0.3, 0.35, 0.4, 0.5][tier],   // higher tiers = more visible texture
+        opacity: [0.3, 0.35, 0.4, 0.5][tier], // higher tiers = more visible texture
         depthWrite: false
       })
       const texSphere = new Mesh(texGeo, texMat)
-      texSphere.raycast = () => {}  // non-interactive
+      texSphere.raycast = () => {} // non-interactive
       // Random axis tilt per node for visual variety
       texSphere.rotation.x = Math.random() * Math.PI
       texSphere.rotation.z = Math.random() * 0.5
@@ -808,12 +807,12 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       const atmoMat = new MeshBasicMaterial({
         color: threeColor,
         transparent: true,
-        opacity: [0.04, 0.07, 0.10, 0.15][tier],  // subtle for T0, vivid for T3
+        opacity: [0.04, 0.07, 0.1, 0.15][tier], // subtle for T0, vivid for T3
         side: BackSide,
         depthWrite: false
       })
       const atmoShell = new Mesh(atmoGeo, atmoMat)
-      atmoShell.raycast = () => {}  // non-interactive
+      atmoShell.raycast = () => {} // non-interactive
       group.add(atmoShell)
 
       // ── Glow halo sprite (additive blending = neon bloom) ──
@@ -830,7 +829,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       const glow = new Sprite(glowMat)
       const glowScale = baseRadius * [2.2, 2.8, 3.5, 4.5][tier]
       glow.scale.set(glowScale, glowScale, 1)
-      glow.raycast = () => {}  // prevent glow from intercepting clicks
+      glow.raycast = () => {} // prevent glow from intercepting clicks
       group.add(glow)
 
       // ── Orbital ring for hub nodes (5+ connections) ──
@@ -844,7 +843,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
           depthWrite: false
         })
         const ring = new Mesh(ringGeo, ringMat)
-        ring.raycast = () => {}  // non-interactive
+        ring.raycast = () => {} // non-interactive
         ring.rotation.x = Math.PI * 0.4
         ring.rotation.y = reducedMotion.current ? 0 : Math.random() * Math.PI
         group.add(ring)
@@ -900,8 +899,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
 
       // Configure charge force — MUCH stronger for 1000+ nodes, no distanceMax cap
       const chargeForce = fg.d3Force('charge') as
-        | ForceManyBody<NodeObject<GNode> & SimulationNodeDatum>
-        | undefined
+        ForceManyBody<NodeObject<GNode> & SimulationNodeDatum> | undefined
       if (chargeForce) {
         chargeForce.strength(-300)
       }

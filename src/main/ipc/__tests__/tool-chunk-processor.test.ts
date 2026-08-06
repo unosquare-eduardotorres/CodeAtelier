@@ -635,43 +635,47 @@ describe('isAgentToolMistake', () => {
 
 describe('isCliInteractionError', () => {
   test('true for Bash permission denied', () => {
-    assert.ok(isCliInteractionError(
-      'Permission to use Bash with command rm -rf coverage/tmp has been denied.'
-    ))
+    assert.ok(
+      isCliInteractionError(
+        'Permission to use Bash with command rm -rf coverage/tmp has been denied.'
+      )
+    )
   })
 
   test('true for user timeout', () => {
     assert.ok(isCliInteractionError('No user response — denied by timeout.'))
   })
 
-  test('true for user rejection (doesn\'t)', () => {
-    assert.ok(isCliInteractionError(
-      "The user doesn't want to proceed with this tool use."
-    ))
+  test("true for user rejection (doesn't)", () => {
+    assert.ok(isCliInteractionError("The user doesn't want to proceed with this tool use."))
   })
 
   test('true for user rejection (does not)', () => {
-    assert.ok(isCliInteractionError(
-      'The user does not want to proceed with this tool use.'
-    ))
+    assert.ok(isCliInteractionError('The user does not want to proceed with this tool use.'))
   })
 
   test('true for multi-operation approval', () => {
-    assert.ok(isCliInteractionError(
-      'This Bash command contains multiple operations. The following part requires approval: grep -q "run-all.ts"'
-    ))
+    assert.ok(
+      isCliInteractionError(
+        'This Bash command contains multiple operations. The following part requires approval: grep -q "run-all.ts"'
+      )
+    )
   })
 
   test('true for file modification race', () => {
-    assert.ok(isCliInteractionError(
-      '<tool_use_error>File has been modified since read, either by the user or by a linter.</tool_use_error>'
-    ))
+    assert.ok(
+      isCliInteractionError(
+        '<tool_use_error>File has been modified since read, either by the user or by a linter.</tool_use_error>'
+      )
+    )
   })
 
   test('true for tool not enabled in context', () => {
-    assert.ok(isCliInteractionError(
-      '<tool_use_error>Error: No such tool available: Bash. Bash exists but is not enabled in this context.</tool_use_error>'
-    ))
+    assert.ok(
+      isCliInteractionError(
+        '<tool_use_error>Error: No such tool available: Bash. Bash exists but is not enabled in this context.</tool_use_error>'
+      )
+    )
   })
 
   test('false for real tool errors', () => {
@@ -720,7 +724,8 @@ describe('processToolChunk — CLI interaction error suppression', () => {
       type: 'tool_result',
       toolName: 'Edit',
       toolId: 'cli-int-3',
-      content: '<tool_use_error>File has been modified since read, either by the user or by a linter.</tool_use_error>'
+      content:
+        '<tool_use_error>File has been modified since read, either by the user or by a linter.</tool_use_error>'
     }
     const result = processToolChunk(chunk, BASE_OPTIONS)
     assert.ok(result)
@@ -732,7 +737,8 @@ describe('processToolChunk — CLI interaction error suppression', () => {
       type: 'tool_result',
       toolName: 'Bash',
       toolId: 'cli-int-4',
-      content: '<tool_use_error>Error: No such tool available: Bash. Bash exists but is not enabled in this context.</tool_use_error>'
+      content:
+        '<tool_use_error>Error: No such tool available: Bash. Bash exists but is not enabled in this context.</tool_use_error>'
     }
     const result = processToolChunk(chunk, BASE_OPTIONS)
     assert.ok(result)

@@ -105,6 +105,29 @@ export function getMockDb(): any {
   return getDbMock().getDatabase()
 }
 
+/**
+ * Drop cached modules whose path contains any of `fragments`, so the next
+ * `require()` re-executes them under the currently-installed mock loader.
+ *
+ * Call this AFTER `setupFullMock()` and BEFORE requiring the module under test.
+ *
+ * Why it is needed: `Module._load` interception only affects modules loaded
+ * while it is installed. If an earlier file in a shared run already imported
+ * the service under test, that module sits in `require.cache` bound to the REAL
+ * repositories, and `getMockRepo(...).mockReturnValue(...)` then configures an
+ * object the service never reads — the test passes standalone and fails in the
+ * suite. Evicting just the leaf module under test re-binds it to the mocks.
+ *
+ * Keep the fragments narrow (one service file). Evicting broadly re-executes
+ * half of a circular import pair while its partner stays cached, which is what
+ * `restoreFullMock()`'s notes warn about.
+ */
+export function evictFromCache(...fragments: string[]): void {
+  for (const key of Object.keys(require.cache)) {
+    if (fragments.some((f) => key.includes(f))) delete require.cache[key]
+  }
+}
+
 // ── Service singleton mocks ──────────────────────────────────────────────────
 // Services that are imported as singletons by other services.
 // We intercept their module paths to return controllable mock objects.

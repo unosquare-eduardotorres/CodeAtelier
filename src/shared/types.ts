@@ -301,13 +301,7 @@ export interface ProcessCancelWatchResult {
 
 // ── Tool Activity ──
 export type ToolOperationType =
-  | 'read'
-  | 'write'
-  | 'edit'
-  | 'search'
-  | 'shell'
-  | 'codegraph'
-  | 'other'
+  'read' | 'write' | 'edit' | 'search' | 'shell' | 'codegraph' | 'other'
 
 /** A single before/after segment from an Edit / MultiEdit tool call. */
 export interface ToolEditDiff {
@@ -1012,8 +1006,15 @@ export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
  * `memory-source-type-guard.test.ts` enforces the match.
  */
 export const MEMORY_SOURCE_TYPES = [
-  'session', 'commit', 'document', 'tool', 'manual',
-  'claude-md', 'blueprint', 'grill', 'bootstrap'
+  'session',
+  'commit',
+  'document',
+  'tool',
+  'manual',
+  'claude-md',
+  'blueprint',
+  'grill',
+  'bootstrap'
 ] as const
 
 export type MemorySourceType = (typeof MEMORY_SOURCE_TYPES)[number]
@@ -1073,7 +1074,11 @@ export interface MemoryContradiction {
  * MUST stay in sync with the `source_type` CHECK on `memory_confirmations`.
  */
 export const CONFIRMATION_SOURCE_TYPES = [
-  'auto_dedup', 'human', 'tool', 'extraction', 'bootstrap'
+  'auto_dedup',
+  'human',
+  'tool',
+  'extraction',
+  'bootstrap'
 ] as const
 
 export type ConfirmationSourceType = (typeof CONFIRMATION_SOURCE_TYPES)[number]
@@ -1204,26 +1209,14 @@ export type BootstrapScope = 'changed' | 'docs' | 'deep-scan' | 'full'
 
 /** Lifecycle of a durable bootstrap run (memory_bootstrap_runs.status). */
 export type BootstrapRunStatus =
-  | 'planning'
-  | 'running'
-  | 'paused'
-  | 'completed'
-  | 'cancelled'
-  | 'failed'
+  'planning' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed'
 
 /** Lifecycle of a single queued work item (memory_bootstrap_items.status). */
 export type BootstrapItemStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed'
 
 /** What a queued item represents — selects the executor that drains it. */
 export type BootstrapItemKind =
-  | 'doc'
-  | 'arch-file'
-  | 'manifests'
-  | 'commits'
-  | 'hotspots'
-  | 'cochange'
-  | 'cycles'
-  | 'agent'
+  'doc' | 'arch-file' | 'manifests' | 'commits' | 'hotspots' | 'cochange' | 'cycles' | 'agent'
 
 /** The item currently being drained, for "what is it doing right now" display. */
 export interface BootstrapCurrentItem {
@@ -1470,11 +1463,7 @@ export type DiffComparisonMode = 'uncommitted' | 'branch-vs-target' | 'all-vs-ta
  * differing blobs yet we resolved equal content — an app bug, never a quiet state.
  */
 export type DiffIdenticalReason =
-  | 'mode-change'
-  | 'rename-only'
-  | 'empty-file'
-  | 'no-diff-entry'
-  | 'unexplained'
+  'mode-change' | 'rename-only' | 'empty-file' | 'no-diff-entry' | 'unexplained'
 
 export interface FileDiffResult {
   oldContent: string
@@ -1645,6 +1634,46 @@ export interface SemanticSearchResult {
   metadata: Record<string, unknown>
 }
 
+// ── Index exclusion preflight ──
+
+/** How the preflight classified a candidate directory. */
+export type ExclusionVerdict = 'auto-exclude' | 'needs-confirmation' | 'keep'
+
+/**
+ * A directory the exclusion preflight considered excluding from indexing,
+ * with the evidence behind its verdict. Tier-2 names (lib, libs, Library, ...)
+ * are never excluded without confirmation because they are just as often
+ * first-party code.
+ */
+export interface ExclusionCandidate {
+  /** Workspace-relative POSIX path, e.g. "apps/mobile/ios/Pods" */
+  relPath: string
+  dirName: string
+  fileCount: number
+  totalBytes: number
+  /** Top 5 file extensions by count */
+  extensions: Array<{ ext: string; count: number }>
+  gitIgnored: boolean
+  gitTracked: boolean
+  /** LICENSE, *.podspec, Package.swift, *.nuspec, bower.json, CMakeLists.txt */
+  vendorMarkers: string[]
+  /** Signals the directory holds first-party code (tracked source, recent edits) */
+  firstPartyHints: string[]
+  verdict: ExclusionVerdict
+  reason: string
+  /** Whether the UI checkbox should start checked (needs-confirmation only) */
+  defaultChecked: boolean
+  /** The .atelierignore rule that would be written if confirmed */
+  suggestedRule: string
+}
+
+export interface ExclusionPreflightResult {
+  candidates: ExclusionCandidate[]
+  /** True when the walk hit the depth/time budget before finishing */
+  truncated: boolean
+  durationMs: number
+}
+
 // ── Elicitation (MCP server user input requests) ──
 
 /** Bug Tracker record — shared between main and renderer */
@@ -1794,13 +1823,7 @@ export interface PlatformInfo {
 // ── Workspace Health Audit ──
 
 export type AuditTrackId =
-  | 'database'
-  | 'code'
-  | 'testing'
-  | 'architecture'
-  | 'security'
-  | 'documentation'
-  | 'ui-ux'
+  'database' | 'code' | 'testing' | 'architecture' | 'security' | 'documentation' | 'ui-ux'
 
 export type AuditMode = 'light' | 'deep'
 export type AuditRunStatus = 'pending' | 'running' | 'completed' | 'partial' | 'cancelled'
@@ -2013,11 +2036,7 @@ export interface RecommendedLocalModel {
 
 /** The five council advisor roles — thinking styles with built-in tension */
 export type CouncilAdvisorRole =
-  | 'contrarian'
-  | 'first-principles'
-  | 'expansionist'
-  | 'outsider'
-  | 'executor'
+  'contrarian' | 'first-principles' | 'expansionist' | 'outsider' | 'executor'
 
 /** Council session lifecycle status */
 export type CouncilSessionStatus = 'running' | 'completed' | 'cancelled' | 'failed'

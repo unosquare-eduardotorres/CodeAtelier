@@ -21,9 +21,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Elicitation Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -49,10 +47,16 @@ test.describe('Elicitation Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = await findElicitationModal(page)
-    if (!modal) { test.skip(); return }
+    if (!modal) {
+      test.skip()
+      return
+    }
 
     // Modal should be visible with proper structure
     await expect(modal).toBeVisible()
@@ -62,14 +66,18 @@ test.describe('Elicitation Modal', () => {
     await expect(header).toBeVisible()
   })
 
-  test('modal shows server name in header', async ({
-    electronPage: page
-  }) => {
+  test('modal shows server name in header', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = await findElicitationModal(page)
-    if (!modal) { test.skip(); return }
+    if (!modal) {
+      test.skip()
+      return
+    }
 
     // Header should contain the server name + "needs authentication"
     const header = modal.locator('h3')
@@ -80,14 +88,18 @@ test.describe('Elicitation Modal', () => {
     expect(headerText?.length).toBeGreaterThan('needs authentication'.length)
   })
 
-  test('message content displays the server\'s elicitation text', async ({
-    electronPage: page
-  }) => {
+  test("message content displays the server's elicitation text", async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = await findElicitationModal(page)
-    if (!modal) { test.skip(); return }
+    if (!modal) {
+      test.skip()
+      return
+    }
 
     // Body section should have message content (paragraph text)
     const bodyText = modal.locator('p').first()
@@ -97,14 +109,18 @@ test.describe('Elicitation Modal', () => {
     expect(text?.length).toBeGreaterThan(0)
   })
 
-  test('accept button sends approval response', async ({
-    electronPage: page
-  }) => {
+  test('accept button sends approval response', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = await findElicitationModal(page)
-    if (!modal) { test.skip(); return }
+    if (!modal) {
+      test.skip()
+      return
+    }
 
     // Accept button should be visible
     const acceptBtn = page.locator('[data-testid="elicitation-accept-btn"]')
@@ -115,20 +131,27 @@ test.describe('Elicitation Modal', () => {
     expect(text?.includes('authenticated') || text?.includes('Done')).toBeTruthy()
   })
 
-  test('decline button sends rejection and closes modal', async ({
-    electronPage: page
-  }) => {
+  test('decline button sends rejection and closes modal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = await findElicitationModal(page)
-    if (!modal) { test.skip(); return }
+    if (!modal) {
+      test.skip()
+      return
+    }
 
     // Cancel/decline button should be visible
     const declineBtn = modal.locator('button:has-text("Cancel")')
     const hasDecline = await declineBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasDecline) { test.skip(); return }
+    if (!hasDecline) {
+      test.skip()
+      return
+    }
 
     await expect(declineBtn).toBeVisible()
 

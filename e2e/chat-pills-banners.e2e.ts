@@ -66,8 +66,9 @@ test.describe('Chat Pills & Banners', () => {
     // Prefer testid locator, fall back to text
     const rateLimitBadge = page.locator('[data-testid="rate-limit-badge"]')
     const rateLimitByText = page.getByText(/claude usage \d+%/i)
-    const hasBadge = await rateLimitBadge.isVisible({ timeout: 5_000 }).catch(() => false)
-      || await rateLimitByText.isVisible({ timeout: 1_000 }).catch(() => false)
+    const hasBadge =
+      (await rateLimitBadge.isVisible({ timeout: 5_000 }).catch(() => false)) ||
+      (await rateLimitByText.isVisible({ timeout: 1_000 }).catch(() => false))
 
     if (!hasBadge) {
       // No rate limit warning in current state — this is expected in normal usage
@@ -114,8 +115,9 @@ test.describe('Chat Pills & Banners', () => {
     // ContextBadge — prefer testid, fall back to text
     const contextBadgeById = page.locator('[data-testid="context-badge"]')
     const contextBadge = page.getByText(/\d+% context/i)
-    const hasBadge = await contextBadgeById.isVisible({ timeout: 5_000 }).catch(() => false)
-      || await contextBadge.isVisible({ timeout: 1_000 }).catch(() => false)
+    const hasBadge =
+      (await contextBadgeById.isVisible({ timeout: 5_000 }).catch(() => false)) ||
+      (await contextBadge.isVisible({ timeout: 1_000 }).catch(() => false))
 
     if (!hasBadge) {
       // Context badge may not be visible if no active conversation or usage is 0%

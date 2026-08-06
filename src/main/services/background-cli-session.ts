@@ -21,7 +21,11 @@ import { writeFileSync, unlinkSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { parseNdjsonStream, writeNdjsonMessage, buildUserMessage } from './cli-executor/ndjson-parser'
+import {
+  parseNdjsonStream,
+  writeNdjsonMessage,
+  buildUserMessage
+} from './cli-executor/ndjson-parser'
 import type { OneShotUsage } from './one-shot-claude'
 import { buildEnvWithPath } from './env-utils'
 
@@ -102,9 +106,7 @@ async function readOneShotResult(
     const type = event.type as string | undefined
 
     if (type === 'result') {
-      const resultText = typeof event.result === 'string'
-        ? event.result
-        : ''
+      const resultText = typeof event.result === 'string' ? event.result : ''
       const usageObj = (event.usage ?? {}) as Record<string, unknown>
       const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
       usage = {
@@ -173,10 +175,7 @@ export class BackgroundCliSession {
    * Send a user message to the warm CLI session and return the response.
    * Serializes concurrent callers via mutex.
    */
-  async run(params: {
-    userMessage: string
-    timeoutMs?: number
-  }): Promise<BackgroundCliRunResult> {
+  async run(params: { userMessage: string; timeoutMs?: number }): Promise<BackgroundCliRunResult> {
     const { userMessage, timeoutMs = DEFAULT_CALL_TIMEOUT_MS } = params
 
     // Mutex: serialize concurrent callers
@@ -312,13 +311,19 @@ export class BackgroundCliSession {
     this.systemPromptFile = this.writeSystemPromptFile(this.systemPrompt)
 
     const args = [
-      '--output-format', 'stream-json',
-      '--input-format', 'stream-json',
-      '--system-prompt-file', this.systemPromptFile,
-      '--model', this.model,
-      '--permission-mode', 'plan',
+      '--output-format',
+      'stream-json',
+      '--input-format',
+      'stream-json',
+      '--system-prompt-file',
+      this.systemPromptFile,
+      '--model',
+      this.model,
+      '--permission-mode',
+      'plan',
       '--verbose',
-      '--tools', ''
+      '--tools',
+      ''
     ]
 
     sessionLog.info(`[bg-cli] Spawning warm process: claude ${args.join(' ')}`)
@@ -408,7 +413,7 @@ export class BackgroundCliSession {
         const detail = this.stderrBuffer.trim()
         throw new Error(
           'Background CLI session: stream ended during init' +
-          (detail ? ` — stderr: ${detail.slice(0, 500)}` : '')
+            (detail ? ` — stderr: ${detail.slice(0, 500)}` : '')
         )
       }
 
@@ -453,11 +458,7 @@ export class BackgroundCliSession {
         sessionLog.info('[bg-cli] Drain timeout — continuing')
         return
       }
-      const race = raceWithTimeout(
-        this.ndjsonIterator.next(),
-        remaining,
-        'drain timeout'
-      )
+      const race = raceWithTimeout(this.ndjsonIterator.next(), remaining, 'drain timeout')
       try {
         const iterResult = await race.result
         if (iterResult.done) return

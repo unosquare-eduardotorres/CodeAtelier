@@ -184,7 +184,9 @@ export async function runMemoryDedupNear(ctx: E2EServiceContext): Promise<E2ETra
 
     log.info(`[memory-dedup-near] Active matching facts: ${matching.length}`)
     // 1 = perfect dedup, 2 = paraphrase wasn't close enough (still acceptable)
-    transcript.push(statusEntry(matching.length <= 1 ? 'dedup_near_ok' : `dedup_near_count: ${matching.length}`))
+    transcript.push(
+      statusEntry(matching.length <= 1 ? 'dedup_near_ok' : `dedup_near_count: ${matching.length}`)
+    )
   } catch (err) {
     transcript.push(errorEntry((err as Error).message))
   }
@@ -240,12 +242,16 @@ export async function runMemoryAmbiguous(ctx: E2EServiceContext): Promise<E2ETra
 
     // Check for contradiction records (findContradictions takes optional status, not workspaceId)
     const contradictions = memoryFactRepository.findContradictions()
-    const recent = contradictions.filter((c) =>
-      c.resolution?.includes(uniqueTag) || c.createdAt > new Date(Date.now() - 30_000).toISOString()
+    const recent = contradictions.filter(
+      (c) =>
+        c.resolution?.includes(uniqueTag) ||
+        c.createdAt > new Date(Date.now() - 30_000).toISOString()
     )
 
     log.info(`[memory-ambiguous] Contradictions found: ${recent.length}`)
-    transcript.push(statusEntry(recent.length > 0 ? 'ambiguous_band_ok' : 'ambiguous_band_no_contradiction'))
+    transcript.push(
+      statusEntry(recent.length > 0 ? 'ambiguous_band_ok' : 'ambiguous_band_no_contradiction')
+    )
   } catch (err) {
     transcript.push(errorEntry((err as Error).message))
   }
@@ -283,7 +289,9 @@ export async function runMemoryIsolation(ctx: E2EServiceContext): Promise<E2ETra
     const results = await memoryRetrievalService.retrieve(fakeWorkspaceId, uniqueTag, 10)
 
     log.info(`[memory-isolation] Results from other workspace: ${results.length}`)
-    transcript.push(statusEntry(results.length === 0 ? 'isolation_ok' : `isolation_leak: ${results.length}`))
+    transcript.push(
+      statusEntry(results.length === 0 ? 'isolation_ok' : `isolation_leak: ${results.length}`)
+    )
   } catch (err) {
     transcript.push(errorEntry((err as Error).message))
   }
@@ -329,13 +337,19 @@ export async function runMemoryScopeBoost(ctx: E2EServiceContext): Promise<E2ETr
     await new Promise((r) => setTimeout(r, 1500))
 
     // Search with a query mentioning the scoped path
-    const results = await memoryRetrievalService.retrieve(ctx.workspaceId, `src/hello.ts greeting ${uniqueTag}`, 10)
+    const results = await memoryRetrievalService.retrieve(
+      ctx.workspaceId,
+      `src/hello.ts greeting ${uniqueTag}`,
+      10
+    )
     const matchingResults = results.filter((r) => r.fact.content.includes(uniqueTag))
 
     if (matchingResults.length >= 2) {
       // The scoped fact should rank higher
       const scopedFirst = matchingResults[0].fact.scopePaths.includes('src/hello.ts')
-      log.info(`[memory-scope-boost] Scoped fact first: ${scopedFirst}, results: ${matchingResults.length}`)
+      log.info(
+        `[memory-scope-boost] Scoped fact first: ${scopedFirst}, results: ${matchingResults.length}`
+      )
       transcript.push(statusEntry(scopedFirst ? 'scope_boost_ok' : 'scope_boost_wrong_order'))
     } else if (matchingResults.length === 1) {
       // Only one found — check if it's the scoped one
@@ -355,7 +369,9 @@ export async function runMemoryScopeBoost(ctx: E2EServiceContext): Promise<E2ETr
  * Session dedupe: getContextForTurn twice with same injectedIds set →
  * second call excludes already-injected facts.
  */
-export async function runMemorySessionDedupe(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runMemorySessionDedupe(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -387,7 +403,9 @@ export async function runMemorySessionDedupe(ctx: E2EServiceContext): Promise<E2
     )
 
     const firstCallHadContent = ctx1.length > 0
-    log.info(`[memory-session-dedupe] First call: ${ctx1.length} chars, injected IDs: ${injectedIds.size}`)
+    log.info(
+      `[memory-session-dedupe] First call: ${ctx1.length} chars, injected IDs: ${injectedIds.size}`
+    )
 
     // Second call with same injectedIds — should exclude the already-injected fact
     const ctx2 = await memoryRetrievalService.getContextForTurn(

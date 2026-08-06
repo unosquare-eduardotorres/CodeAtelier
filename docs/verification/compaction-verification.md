@@ -6,10 +6,10 @@ context-usage badge, combining the **automated tests** (deterministic) with a
 
 ## Background — the two paths
 
-| Path | Provider | Mechanism |
-|---|---|---|
+| Path  | Provider                | Mechanism                                                                                                                                                                                                                                      |
+| ----- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **A** | Local LLM (Ollama/oMLX) | No SDK resume. Per-turn `enrichLocalLLMContext()` rebuilds context via `LocalContextReconstructor.buildContextFromHistory` (budget = 25% of window). Manual `compact()` is unavailable → emits `compactNeeded { level: 'local-unsupported' }`. |
-| **B** | Claude (CLI) | SDK/CLI auto-compact. Window + firing point are controlled via **process env vars** (the `claude` CLI does **not** read `contextWindowSize`/`autoCompactEnabled` from argv). |
+| **B** | Claude (CLI)            | SDK/CLI auto-compact. Window + firing point are controlled via **process env vars** (the `claude` CLI does **not** read `contextWindowSize`/`autoCompactEnabled` from argv).                                                                   |
 
 ## Key fix — context-usage badge over-count
 
@@ -60,13 +60,13 @@ Run 17 covers:
 
 Structured logs were added at each decision point. Tail the app log and grep:
 
-| Grep | Where | Confirms |
-|---|---|---|
-| `[compaction:config]` | `agent-executor-factory` | `model`, `supports1M`, `contextWindowSize`, `autoCompactWindow`, `pctOverride` on each new spawn |
-| `[compaction:thresholds]` | `agent-stream-processor.checkCompaction` | resolved `suggest` / `auto` thresholds + `isAutoCompactEnabled` every turn |
-| `[compaction:boundary]` | `stream-normalizer` | the CLI/SDK auto-compact actually fired (`trigger`, `preTokens`) |
-| `[S12:context-reconstructed]` | `agent-session.enrichLocalLLMContext` | local-LLM reconstruction used (with length) |
-| `[S6:context-injected]` / `[S6:no-context]` | `agent-session.enrichLocalLLMContext` | summary fallback / raw-message fallback |
+| Grep                                        | Where                                    | Confirms                                                                                         |
+| ------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `[compaction:config]`                       | `agent-executor-factory`                 | `model`, `supports1M`, `contextWindowSize`, `autoCompactWindow`, `pctOverride` on each new spawn |
+| `[compaction:thresholds]`                   | `agent-stream-processor.checkCompaction` | resolved `suggest` / `auto` thresholds + `isAutoCompactEnabled` every turn                       |
+| `[compaction:boundary]`                     | `stream-normalizer`                      | the CLI/SDK auto-compact actually fired (`trigger`, `preTokens`)                                 |
+| `[S12:context-reconstructed]`               | `agent-session.enrichLocalLLMContext`    | local-LLM reconstruction used (with length)                                                      |
+| `[S6:context-injected]` / `[S6:no-context]` | `agent-session.enrichLocalLLMContext`    | summary fallback / raw-message fallback                                                          |
 
 ---
 

@@ -15,7 +15,7 @@ export function WorkspaceTransition({
   animationType,
   workspaceName,
   onAnimationComplete,
-  onAnimationError,
+  onAnimationError
 }: WorkspaceTransitionProps): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
   const animationRef = useRef<GoldParticleAnimation | null>(null)
@@ -31,7 +31,7 @@ export function WorkspaceTransition({
         container,
         workspaceName: workspaceName ?? 'Workspace',
         onComplete: onAnimationComplete,
-        onError: onAnimationError,
+        onError: onAnimationError
       })
     }
 
@@ -40,7 +40,7 @@ export function WorkspaceTransition({
       animationRef.current?.dispose()
       animationRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, animationType, workspaceName, onAnimationComplete, onAnimationError])
 
   // Dispose when entering disposing phase
@@ -70,7 +70,7 @@ export function WorkspaceTransition({
         className="fixed inset-0 z-50 transition-opacity duration-200"
         style={{
           opacity: phase === 'disposing' ? 0 : 1,
-          background: '#010208',
+          background: '#010208'
         }}
         data-testid="workspace-transition-overlay"
       />

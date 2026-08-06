@@ -448,15 +448,18 @@ describe('Process group kill (-pid)', () => {
       /* already dead */
     }
 
-    await new Promise((r) => setTimeout(r, 200))
-
-    // Verify the group leader is dead
-    let stillAlive = false
-    try {
-      process.kill(pid, 0)
-      stillAlive = true
-    } catch {
-      /* dead */
+    // Poll rather than sleeping a fixed 200ms: reaping is the OS's business and
+    // on a loaded machine it can take noticeably longer than one fixed wait.
+    let stillAlive = true
+    const deadline = Date.now() + 5_000
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0)
+      } catch {
+        stillAlive = false
+        break
+      }
+      await new Promise((r) => setTimeout(r, 50))
     }
     assert.ok(!stillAlive, 'Process group leader should be dead after -pid kill')
   })
