@@ -126,7 +126,7 @@ Generate a well-structured markdown document with the following sections:
 
 // ── Private helpers ────────────────────────────────────────────────────────
 
-function formatDecisions(decisions: GrillDecision[]): string {
+export function formatDecisions(decisions: GrillDecision[]): string {
   if (decisions.length === 0) return 'No decisions captured.'
 
   // Group decisions by track
@@ -151,7 +151,7 @@ function formatDecisions(decisions: GrillDecision[]): string {
   return parts.join('\n')
 }
 
-function formatTrackScores(scores: GrillTrackScore[]): string {
+export function formatTrackScores(scores: GrillTrackScore[]): string {
   if (scores.length === 0) return 'No track scores available.'
 
   return scores
@@ -159,7 +159,7 @@ function formatTrackScores(scores: GrillTrackScore[]): string {
     .join('\n')
 }
 
-function buildTemplateFallback(
+export function buildTemplateFallback(
   projectName: string,
   description: string,
   decisions?: GrillDecision[]

@@ -48,7 +48,7 @@ interface PlanStateRow {
   updated_at: string
 }
 
-function mapRow(row: PlanStateRow): LocalPlanState {
+export function mapRow(row: PlanStateRow): LocalPlanState {
   let discoveredContext: DiscoveredContext
   try {
     discoveredContext = JSON.parse(row.discovered_context) as DiscoveredContext

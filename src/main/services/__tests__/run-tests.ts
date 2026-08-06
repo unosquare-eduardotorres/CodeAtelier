@@ -586,7 +586,14 @@ const TEST_FILES: string[] = [
   './specialist-builder-handlers.test',
   './specialist-builder-logic.test',
   './task-execution-tracking.test',
-  './usage-tracker-helpers.test'
+  './usage-tracker-helpers.test',
+  // These three asserted helpers their own doc comments described as exported
+  // from the service, but which were module-private — so the tests could only
+  // ever have failed. The helpers are now exported; see the commit for why
+  // exporting was preferred to deleting the cases.
+  './claude-md-generator-formatters.test',
+  './language-detector.test',
+  './local-plan-state-maprow.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

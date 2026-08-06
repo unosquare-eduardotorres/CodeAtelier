@@ -8,7 +8,7 @@ import log from 'electron-log'
 const logger = log.scope('Repo')
 
 /** Map file extensions to Prism language identifiers */
-const EXT_TO_LANGUAGE: Record<string, string> = {
+export const EXT_TO_LANGUAGE: Record<string, string> = {
   '.ts': 'typescript',
   '.tsx': 'tsx',
   '.js': 'javascript',
@@ -65,7 +65,7 @@ function appendAttribution(message: string): string {
   return `${message}\n\n${COMMIT_ATTRIBUTION}`
 }
 
-function detectLanguage(filePath: string): string {
+export function detectLanguage(filePath: string): string {
   const ext = extname(filePath).toLowerCase()
   // Handle Dockerfile without extension
   if (filePath.toLowerCase().endsWith('dockerfile')) return 'docker'
