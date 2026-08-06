@@ -13,31 +13,36 @@ export class WorkspaceSettings {
 
   constructor(page: Page) {
     this.page = page
-    this.settingsPanel = page.locator('[data-testid="workspace-settings"]')
+    // The panel renders data-testid="workspace-settings-panel". This used to
+    // look for "workspace-settings", which matched nothing -- so every spec
+    // guarding on `hasPanel` silently test.skip()'d instead of running.
+    this.settingsPanel = page.locator('[data-testid="workspace-settings-panel"]')
+  }
+
+  /**
+   * Locator for one tab. Every tab button carries the same
+   * data-testid="workspace-settings-tab", so the id is read off the companion
+   * data-tab-id attribute; `settings-tab-<id>` was never rendered.
+   */
+  getTab(tabId: string): Locator {
+    return this.page.locator(`[data-testid="workspace-settings-tab"][data-tab-id="${tabId}"]`)
   }
 
   /** Open a specific settings tab by its id. */
   async openTab(tabId: string): Promise<void> {
-    const tab = this.page.locator(`[data-testid="settings-tab-${tabId}"]`)
-    await tab.click()
+    await this.getTab(tabId).click()
     await this.page.waitForTimeout(300)
   }
 
   /** Check if a specific tab is the active one. */
   async isTabActive(tabId: string): Promise<boolean> {
-    const tab = this.page.locator(`[data-testid="settings-tab-${tabId}"]`)
-    const classList = await tab.getAttribute('class')
+    const classList = await this.getTab(tabId).getAttribute('class')
     return classList?.includes('bg-primary-muted') ?? false
   }
 
   /** Get all settings tab locators. */
   getAllTabs(): Locator {
-    return this.page.locator('[data-testid^="settings-tab-"]')
-  }
-
-  /** Get a tab button by its id. */
-  getTab(tabId: string): Locator {
-    return this.page.locator(`[data-testid="settings-tab-${tabId}"]`)
+    return this.page.locator('[data-testid="workspace-settings-tab"]')
   }
 
   /** Collapse the settings panel. */

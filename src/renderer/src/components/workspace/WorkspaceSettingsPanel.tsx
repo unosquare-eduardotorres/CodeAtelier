@@ -232,6 +232,9 @@ export default function WorkspaceSettingsPanel({
               <button
                 key={item.id}
                 data-testid="workspace-settings-tab"
+                // Every tab shares one data-testid, so tests cannot address a
+                // specific tab by it. This carries the id for that.
+                data-tab-id={item.id}
                 onClick={() => onTabChange(item.id)}
                 className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'
@@ -268,6 +271,7 @@ export default function WorkspaceSettingsPanel({
               <button
                 key={item.id}
                 data-testid="workspace-settings-tab"
+                data-tab-id={item.id}
                 onClick={() => onTabChange(item.id)}
                 className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'
