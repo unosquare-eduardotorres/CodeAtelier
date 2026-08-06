@@ -44,7 +44,7 @@ test.describe('Integration Cards Deep', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('integrations')
+    await settingsNav.navigateToSettingsTab('integrations')
     await page.waitForTimeout(800)
 
     // Check for integration cards

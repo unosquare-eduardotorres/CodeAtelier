@@ -49,7 +49,7 @@ test.describe('Blueprint Workflow Deep', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('blueprints')
+    await settingsNav.navigateToSettingsTab('blueprints')
     await page.waitForTimeout(800)
 
     // Check for blueprint page or timeline

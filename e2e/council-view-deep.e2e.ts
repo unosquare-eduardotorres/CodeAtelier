@@ -44,7 +44,7 @@ test.describe('Council View Deep', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
     await page.waitForTimeout(800)
 
     // Check if already on council view (active session)

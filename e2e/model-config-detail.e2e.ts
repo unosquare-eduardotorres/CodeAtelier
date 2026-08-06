@@ -41,7 +41,7 @@ test.describe('Model Config Detail', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('models')
+    await settingsNav.navigateToSettingsTab('models')
     await page.waitForTimeout(1_000)
     return true
   }

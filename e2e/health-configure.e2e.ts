@@ -44,7 +44,7 @@ test.describe('Health Configure', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('health')
+    await settingsNav.navigateToSettingsTab('health')
     await page.waitForTimeout(800)
 
     // Look for "New Audit" or "Run Audit" or configure button

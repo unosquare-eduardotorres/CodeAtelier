@@ -40,7 +40,7 @@ test.describe('Skill Management', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('team')
+    await settingsNav.navigateToSettingsTab('team')
     await page.waitForTimeout(1_000)
     return true
   }

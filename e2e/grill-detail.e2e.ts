@@ -41,7 +41,7 @@ test.describe('Grill Detail Views', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('ideas')
+    await settingsNav.navigateToSettingsTab('ideas')
     await page.waitForTimeout(1_000)
     return true
   }

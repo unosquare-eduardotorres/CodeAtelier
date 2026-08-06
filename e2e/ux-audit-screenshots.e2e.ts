@@ -11,7 +11,7 @@
  *   1. Build the app first: npx electron-vite build
  *   2. Run: npx playwright test e2e/ux-audit-screenshots.e2e.ts
  */
-import { test, chromium } from '@playwright/test'
+import { test, expect, chromium } from '@playwright/test'
 import type { Browser, Page } from '@playwright/test'
 import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'

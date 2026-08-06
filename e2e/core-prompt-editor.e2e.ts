@@ -43,7 +43,7 @@ test.describe('Core Prompt Editor', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('specialist')
+    await settingsNav.navigateToSettingsTab('specialist')
     await page.waitForTimeout(800)
 
     // Look for the core prompt editor section

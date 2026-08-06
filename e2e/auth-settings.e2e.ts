@@ -57,7 +57,7 @@ test.describe('Auth Settings', () => {
 
     // Try via specialist settings (auth may be nested there)
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('specialist')
+    await settingsNav.navigateToSettingsTab('specialist')
     await page.waitForTimeout(800)
 
     // Look for auth settings tab within workspace settings

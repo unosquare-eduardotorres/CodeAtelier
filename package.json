@@ -10,6 +10,7 @@
     "lint": "eslint --cache .",
     "typecheck:node": "node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck:e2e": "node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.e2e.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",

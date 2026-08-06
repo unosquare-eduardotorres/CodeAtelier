@@ -57,7 +57,7 @@ test.describe('TaskSummaryBadge', () => {
     // Inject a fake plan execution with tasks into the store via evaluate
     const injected = await page.evaluate(() => {
       try {
-        const storeModule = (window as Record<string, unknown>).__PLAN_EXEC_STORE as {
+        const storeModule = (window as unknown as Record<string, unknown>).__PLAN_EXEC_STORE as {
           getState: () => {
             startExecution: (
               convId: string,
@@ -121,7 +121,7 @@ test.describe('TaskSummaryBadge', () => {
     // Inject tasks to make the badge visible
     const injected = await page.evaluate(() => {
       try {
-        const storeModule = (window as Record<string, unknown>).__PLAN_EXEC_STORE as {
+        const storeModule = (window as unknown as Record<string, unknown>).__PLAN_EXEC_STORE as {
           getState: () => {
             startExecution: (
               convId: string,

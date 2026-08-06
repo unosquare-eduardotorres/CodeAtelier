@@ -46,7 +46,7 @@ test.describe('ConfirmDialog', () => {
     const settingsNav = new SettingsNav(page)
 
     // Try team tab first for agent/skill delete
-    await settingsNav.selectTab('team')
+    await settingsNav.navigateToSettingsTab('team')
     await page.waitForTimeout(1_000)
 
     // Look for any delete button on agents or skills
@@ -59,7 +59,7 @@ test.describe('ConfirmDialog', () => {
     }
 
     // Try skills tab
-    await settingsNav.selectTab('team')
+    await settingsNav.navigateToSettingsTab('team')
     await page.waitForTimeout(1_000)
 
     const skillDelete = page.locator('[data-testid="skill-management-section"] button[aria-label*="delete" i]')

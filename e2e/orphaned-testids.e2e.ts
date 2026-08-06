@@ -50,7 +50,7 @@ test.describe('Orphaned TestID Coverage', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('code-intelligence')
+    await settingsNav.navigateToSettingsTab('code-intelligence')
     await page.waitForTimeout(1_000)
 
     const embeddingStatus = page.locator('[data-testid="embedding-status"]')
@@ -104,7 +104,7 @@ test.describe('Orphaned TestID Coverage', () => {
       const chrome = new AppChrome(page)
       await chrome.navigateToTab('settings')
       const settingsNav = new SettingsNav(page)
-      await settingsNav.selectTab('specialist')
+      await settingsNav.navigateToSettingsTab('specialist')
       await page.waitForTimeout(1_000)
 
       const toggleRetry = page.locator('[data-testid="markdown-edit-toggle"]')

@@ -43,7 +43,7 @@ test.describe('Council Landing Deep', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
     await page.waitForTimeout(800)
 
     // Either landing, active view, or filter bar should be visible
@@ -161,7 +161,7 @@ test.describe('Council Landing Deep', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
 
     // Check for skeleton loaders (may be very brief)
     const skeleton = page.locator('.animate-pulse, [class*="skeleton"]').first()

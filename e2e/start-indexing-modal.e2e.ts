@@ -40,7 +40,7 @@ test.describe('StartIndexingModal', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('code-intelligence')
+    await settingsNav.navigateToSettingsTab('code-intelligence')
     await page.waitForTimeout(1_000)
     return true
   }
