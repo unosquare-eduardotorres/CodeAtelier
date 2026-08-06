@@ -593,7 +593,8 @@ const TEST_FILES: string[] = [
   // exporting was preferred to deleting the cases.
   './claude-md-generator-formatters.test',
   './language-detector.test',
-  './local-plan-state-maprow.test'
+  './local-plan-state-maprow.test',
+  './tool-result-timeout.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

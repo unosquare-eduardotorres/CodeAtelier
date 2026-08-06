@@ -1,87 +1,127 @@
 /**
- * Unit tests for tool-result timeout and ToolTracker extensions.
+ * Unit tests for the ToolTracker surface that cli-executor's read-timeout
+ * branching depends on.
  *
- * Covers:
- *   Fix 2.1 — Tool-result timeout (getToolName, allPendingAreAskUser)
- *   Fix 2.2 — killOrphanedChildren (indirect — verifies field exists)
- *   Fix 3.1 — Crash detection after 1+ messages (type validation)
+ * cli-executor picks one of three waits per read: untimed when a human-input
+ * tool is pending, TOOL_RESULT_TIMEOUT_MS (10min) when any other tool is
+ * pending, MESSAGE_TIMEOUT_MS (5min) when none is. pendingToolCount and
+ * hasAskUserPending() are the two inputs to that choice, so they are what this
+ * file pins down.
+ *
+ * This file previously asserted getToolName() and allPendingAreAskUser().
+ * Neither has existed on ToolTracker at any commit — the file was never
+ * registered in run-tests.ts, so the failures were never surfaced. Rewritten
+ * against resolve() and hasAskUserPending(), which are what actually ship.
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 
-const { ToolTracker } = require('../executor-utils/tool-tracker') as any
+const { ToolTracker, stripMcpNamespace } = require('../executor-utils/tool-tracker') as any
 
-describe('ToolTracker — getToolName', () => {
-  test('returns name for registered tool', () => {
-    const tracker = new ToolTracker()
-    tracker.register('tool-1', 'mcp__code-graph__FindSymbol')
-    assert.equal(tracker.getToolName('tool-1'), 'mcp__code-graph__FindSymbol')
+describe('stripMcpNamespace', () => {
+  test('strips the mcp__<server>__ prefix', () => {
+    assert.equal(stripMcpNamespace('mcp__control-actions__ask_user'), 'ask_user')
   })
 
-  test('returns undefined for unregistered tool', () => {
-    const tracker = new ToolTracker()
-    assert.equal(tracker.getToolName('nonexistent'), undefined)
+  test('handles server names containing hyphens and tools containing underscores', () => {
+    assert.equal(
+      stripMcpNamespace('mcp__control-actions__emit_phase_progress'),
+      'emit_phase_progress'
+    )
+    assert.equal(stripMcpNamespace('mcp__file-tools__Read'), 'Read')
   })
 
-  test('returns undefined after consume', () => {
-    const tracker = new ToolTracker()
-    tracker.register('tool-2', 'mcp__file-tools__Read')
-    tracker.consume('tool-2')
-    assert.equal(tracker.getToolName('tool-2'), undefined)
+  test('leaves built-in (non-MCP) tool names untouched', () => {
+    assert.equal(stripMcpNamespace('Edit'), 'Edit')
+    assert.equal(stripMcpNamespace('Bash'), 'Bash')
+    assert.equal(stripMcpNamespace('ask_user'), 'ask_user')
+  })
+
+  test('leaves a malformed mcp name with no second separator untouched', () => {
+    assert.equal(stripMcpNamespace('mcp__weird'), 'mcp__weird')
   })
 })
 
-describe('ToolTracker — allPendingAreAskUser', () => {
-  test('no pending tools → false', () => {
+describe('ToolTracker — resolve', () => {
+  test('returns the name for a registered tool', () => {
     const tracker = new ToolTracker()
-    assert.equal(tracker.allPendingAreAskUser(), false)
+    tracker.register('tool-1', 'mcp__code-graph__FindSymbol')
+    assert.equal(tracker.resolve('tool-1'), 'mcp__code-graph__FindSymbol')
   })
 
-  test('single ask_user pending → true', () => {
+  test("returns 'Unknown' for an unregistered id", () => {
+    const tracker = new ToolTracker()
+    assert.equal(tracker.resolve('nonexistent'), 'Unknown')
+  })
+
+  test("returns 'Unknown' for an undefined id", () => {
+    const tracker = new ToolTracker()
+    assert.equal(tracker.resolve(undefined), 'Unknown')
+  })
+
+  test("returns 'Unknown' after consume", () => {
+    const tracker = new ToolTracker()
+    tracker.register('tool-2', 'mcp__file-tools__Read')
+    tracker.consume('tool-2')
+    assert.equal(tracker.resolve('tool-2'), 'Unknown')
+  })
+})
+
+describe('ToolTracker — hasAskUserPending', () => {
+  test('no pending tools → false', () => {
+    const tracker = new ToolTracker()
+    assert.equal(tracker.hasAskUserPending(), false)
+  })
+
+  // Regression: ask_user is only reachable over MCP, so the stream always
+  // registers it fully qualified. Matching the bare name made cli-executor's
+  // untimed human-input branch dead code and put every ask_user wait on the
+  // 10-minute tool-result timeout instead.
+  test('fully-qualified MCP ask_user is recognised', () => {
     const tracker = new ToolTracker()
     tracker.register('tool-1', 'mcp__control-actions__ask_user')
-    assert.equal(tracker.allPendingAreAskUser(), true)
+    assert.equal(tracker.hasAskUserPending(), true)
+  })
+
+  test('bare ask_user is still recognised', () => {
+    const tracker = new ToolTracker()
+    tracker.register('tool-1', 'ask_user')
+    assert.equal(tracker.hasAskUserPending(), true)
   })
 
   test('single non-ask_user pending → false', () => {
     const tracker = new ToolTracker()
     tracker.register('tool-1', 'mcp__code-graph__FindSymbol')
-    assert.equal(tracker.allPendingAreAskUser(), false)
+    assert.equal(tracker.hasAskUserPending(), false)
   })
 
-  test('mixed: ask_user + non-ask_user → false', () => {
+  // "has ... pending" is an ANY predicate, not an ALL one: a mixed batch still
+  // contains a human wait, so the turn must not be put on a wall clock.
+  test('mixed ask_user + non-ask_user → true', () => {
     const tracker = new ToolTracker()
     tracker.register('tool-1', 'mcp__control-actions__ask_user')
     tracker.register('tool-2', 'mcp__file-tools__Read')
-    assert.equal(tracker.allPendingAreAskUser(), false)
+    assert.equal(tracker.hasAskUserPending(), true)
   })
 
-  test('multiple ask_user pending → true', () => {
-    const tracker = new ToolTracker()
-    tracker.register('tool-1', 'mcp__control-actions__ask_user')
-    tracker.register('tool-2', 'mcp__control-actions__ask_user_question')
-    assert.equal(tracker.allPendingAreAskUser(), true)
-  })
-
-  test('ask_user consumed, non-ask_user remaining → false', () => {
+  test('goes false again once the ask_user result is consumed', () => {
     const tracker = new ToolTracker()
     tracker.register('tool-1', 'mcp__control-actions__ask_user')
     tracker.register('tool-2', 'mcp__file-tools__Write')
     tracker.consume('tool-1')
-    assert.equal(tracker.allPendingAreAskUser(), false)
+    assert.equal(tracker.hasAskUserPending(), false)
+    assert.equal(tracker.pendingToolCount, 1)
   })
 
-  test('all tools consumed → false', () => {
+  test('emit_plan is not treated as a human wait', () => {
     const tracker = new ToolTracker()
-    tracker.register('tool-1', 'mcp__control-actions__ask_user')
-    tracker.consume('tool-1')
-    assert.equal(tracker.allPendingAreAskUser(), false)
-    assert.equal(tracker.pendingToolCount, 0)
+    tracker.register('tool-1', 'mcp__control-actions__emit_plan')
+    assert.equal(tracker.hasAskUserPending(), false)
   })
 })
 
 describe('ToolTracker — pendingToolCount with timeout interactions', () => {
-  test('pendingToolCount increments on register, decrements on consume', () => {
+  test('increments on register, decrements on consume', () => {
     const tracker = new ToolTracker()
     assert.equal(tracker.pendingToolCount, 0)
 
@@ -98,18 +138,26 @@ describe('ToolTracker — pendingToolCount with timeout interactions', () => {
     assert.equal(tracker.pendingToolCount, 0)
   })
 
+  test('consume reports whether anything was actually removed', () => {
+    const tracker = new ToolTracker()
+    tracker.register('t1', 'tool-a')
+    assert.equal(tracker.consume('t1'), true)
+    // A miss must be visible to callers: it pins pendingToolCount above zero
+    // and keeps the executor on the tool-result branch forever.
+    assert.equal(tracker.consume('t1'), false)
+    assert.equal(tracker.consume(undefined), false)
+  })
+
   test('multiple tools: stale detection scenario', () => {
     const tracker = new ToolTracker()
     tracker.register('t1', 'mcp__code-graph__FindSymbol')
     tracker.register('t2', 'mcp__file-tools__Bash')
 
-    // Both are non-ask_user
-    assert.equal(tracker.allPendingAreAskUser(), false)
+    assert.equal(tracker.hasAskUserPending(), false)
 
-    // One consumed, one still pending
     tracker.consume('t1')
     assert.equal(tracker.pendingToolCount, 1)
-    assert.equal(tracker.allPendingAreAskUser(), false)
+    assert.equal(tracker.hasAskUserPending(), false)
   })
 })
 

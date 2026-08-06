@@ -1,4 +1,28 @@
 /**
+ * Tool names that block on human input and so have no meaningful wall-clock
+ * timeout. Compared against the *bare* name — see stripMcpNamespace.
+ */
+const HUMAN_INPUT_TOOLS = new Set(['ask_user', 'elicitation'])
+
+/**
+ * Strip the `mcp__<server>__` namespace from a tool name.
+ *
+ * Tools mounted over MCP arrive on the stream fully qualified — the `name` on
+ * a tool_use block is `mcp__control-actions__ask_user`, and that is verbatim
+ * what register() stores. Built-in tools (Read, Edit, Bash) arrive bare. Any
+ * check against a bare tool name therefore has to normalise first, or it
+ * silently never matches the MCP case.
+ *
+ * Splits after the second `__`, so server names containing `-` or `_`
+ * ('control-actions', 'file-tools') are handled.
+ */
+export function stripMcpNamespace(name: string): string {
+  if (!name.startsWith('mcp__')) return name
+  const sep = name.indexOf('__', 'mcp__'.length)
+  return sep === -1 ? name : name.slice(sep + 2)
+}
+
+/**
  * Maps tool use IDs to tool names, enabling tool_result events to include
  * the correct tool name (tool_result only provides the tool_use_id).
  *
@@ -56,10 +80,16 @@ export class ToolTracker {
    * Whether any pending tool is an ask_user-type tool that legitimately waits
    * for human input. These tools have no meaningful timeout — the user decides
    * when to respond.
+   *
+   * Matches on the namespace-stripped name. ask_user is only ever reachable
+   * over MCP, so it is registered as `mcp__control-actions__ask_user`; the
+   * previous exact comparison against 'ask_user' could not match it, which
+   * made cli-executor's untimed human-input branch unreachable and put every
+   * ask_user wait on the 10-minute TOOL_RESULT_TIMEOUT_MS instead.
    */
   hasAskUserPending(): boolean {
     for (const name of this.toolIdToName.values()) {
-      if (name === 'ask_user' || name === 'elicitation') return true
+      if (HUMAN_INPUT_TOOLS.has(stripMcpNamespace(name))) return true
     }
     return false
   }
