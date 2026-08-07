@@ -111,7 +111,12 @@ export const planSchema = z.object({
     .array(
       z.object({
         heading: z.string(),
-        icon: z.string().optional(),
+        icon: z
+          .string()
+          .optional()
+          .describe(
+            'Optional Lucide icon id in kebab-case, e.g. "list-checks", "triangle-alert", "file-text". Bare id only - no "lucide:" prefix and no emoji.'
+          ),
         content: z.string().describe('Markdown content for this section'),
         mermaid: z.string().optional().describe('Optional mermaid diagram for this section')
       })

@@ -25,6 +25,7 @@ import { remarkStripStrayBackticks } from '../remark-plugins'
 import type { StructuredPlan, PlanRootCause, PlanPhase } from '../../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
 import { RootCausesList, PhasesList, SectionCard } from './PlanHelpers'
+import { PlanSectionIcon } from './PlanSectionIcon'
 
 // ── Helpers ──
 
@@ -422,8 +423,8 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
           key={`${section.heading}-${index}`}
           className="rounded border border-mode-plan-border bg-mode-plan-muted overflow-hidden"
         >
-          <div className="px-4 py-3">
-            {section.icon && <span className="text-base mr-2">{section.icon}</span>}
+          <div className="px-4 py-3 flex items-center gap-2">
+            <PlanSectionIcon icon={section.icon} />
             <span className="text-sm font-semibold text-mode-plan-text">{section.heading}</span>
           </div>
           <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">

@@ -395,6 +395,7 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/store/__tests__/update-snooze.test',
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
+  '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -606,7 +607,9 @@ const TEST_FILES: string[] = [
   './opencode-executor-logic.test',
   './prompt-builder-extractors.test',
   './prompt-builder-local.test',
-  './workspace-mcp-config-builder.test'
+  './workspace-mcp-config-builder.test',
+  // ─── Plan section icon ids ───
+  '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

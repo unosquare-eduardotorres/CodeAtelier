@@ -313,6 +313,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/prompt-optimizer.test',
   // ─── Pipeline Stabilization Round 2 — phase watchdog + registry sync guard ───
   '../services/__tests__/blueprint-phase-watchdog.test',
+  '../services/__tests__/blueprint-gate-launch.test',
   // ─── Memory Engine (knowledge-aware) ───
   '../services/__tests__/memory-engine.test',
   '../services/__tests__/memory-retrieval.test',
@@ -630,8 +631,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../ipc/__tests__/process-ipc.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
+  '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   '../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
+  '../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
   '../services/__tests__/repo-service-utils.test',
