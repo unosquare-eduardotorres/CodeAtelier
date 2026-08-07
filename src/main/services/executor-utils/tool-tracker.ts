@@ -173,6 +173,27 @@ export class ToolTracker {
   }
 
   /**
+   * Fill in a tool's input *only when it is currently missing*.
+   *
+   * With `--include-partial-messages` the CLI emits Anthropic SSE-shaped
+   * events, where a tool_use `content_block_start` always carries `input: {}`
+   * — the real arguments stream separately as `input_json_delta`, which the
+   * normalizer does not accumulate. The complete `assistant` message that
+   * follows *does* carry the full input, so it is used as the backfill source.
+   *
+   * Never clobbers a value the streaming path did capture (non-partial
+   * backends put the real input on content_block_start).
+   */
+  backfillInput(toolId: string, inputSummary?: string, rawInputJson?: string): void {
+    if (inputSummary && !this.toolIdToInput.has(toolId)) {
+      this.toolIdToInput.set(toolId, inputSummary)
+    }
+    if (rawInputJson && !this.toolIdToRawInput.has(toolId)) {
+      this.toolIdToRawInput.set(toolId, rawInputJson)
+    }
+  }
+
+  /**
    * Register tool mappings from an assistant message (complete replay).
    * Only registers tools not already tracked.
    */

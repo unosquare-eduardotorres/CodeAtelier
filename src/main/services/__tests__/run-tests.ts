@@ -25,6 +25,7 @@ const TEST_FILES: string[] = [
   './code-graph-logic.test',
   './code-graph-typed-edges.test',
   './code-graph-typed-tags-smoke.test',
+  './code-graph-query-pack.test',
   './rationale-miner.test',
   './is-excluded-path.test',
   './index-exclusion-preflight.test',

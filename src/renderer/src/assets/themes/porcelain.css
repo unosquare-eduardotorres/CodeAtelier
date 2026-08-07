@@ -145,7 +145,7 @@
 
   /* ── Knowledge-graph: dark island inside the light UI ── */
   --graph-bg: #040610;
-  --graph-link: rgba(80, 120, 200, 0.3);
+  --graph-link: #4a94a3;
 
   /* ── Porcelain-specific: chat-icon pulse for light bg ── */
   --color-chat-icon-pulse: rgba(2, 132, 199, 0.35);

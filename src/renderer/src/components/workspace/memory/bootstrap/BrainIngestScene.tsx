@@ -14,11 +14,14 @@
  *  - rAF loop stops on unmount, on `document.hidden`, and when scrolled out of
  *    view via IntersectionObserver
  *  - every geometry/material/renderer disposed on unmount
- *  - honours prefers-reduced-motion and falls back to CSS if WebGL is refused
+ *  - honours prefers-reduced-motion by drawing the scene *once* — see
+ *    ./scene-mode — and falls back to CSS only if WebGL is refused
  */
 
 import { useEffect, useRef, useState } from 'react'
+import { Brain } from 'lucide-react'
 import * as THREE from 'three'
+import { resolveSceneMode } from './scene-mode'
 
 const PARTICLE_COUNT = 90
 const LATTICE_POINTS = 1800
@@ -28,21 +31,22 @@ interface BrainIngestSceneProps {
   itemsPerMinute: number | null
   /** A dim, motionless core reads as "stopped" at a glance. */
   paused: boolean
+  /** User opt-in that overrides a machine-level prefers-reduced-motion. */
+  forceAnimation?: boolean
   className?: string
 }
 
 export default function BrainIngestScene({
   itemsPerMinute,
   paused,
+  forceAnimation = false,
   className = ''
 }: BrainIngestSceneProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Resolved once: a WebGL context that cannot be created, or a user who asked
-  // for reduced motion, both mean "render the CSS fallback and do nothing else".
-  const [supported] = useState(() => {
+  // Whether a context can be created never changes for the life of the window.
+  const [webglOk] = useState(() => {
     if (typeof window === 'undefined') return false
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return false
     try {
       const probe = document.createElement('canvas')
       return Boolean(probe.getContext('webgl2') ?? probe.getContext('webgl'))
@@ -50,6 +54,26 @@ export default function BrainIngestScene({
       return false
     }
   })
+
+  // The motion preference does change — Windows exposes it under Accessibility
+  // and under "Adjust for best performance". Reading it once meant an app
+  // restart was needed before a toggle took effect.
+  const [reducedMotion, setReducedMotion] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
+  )
+  useEffect(() => {
+    const mql = window.matchMedia?.('(prefers-reduced-motion: reduce)')
+    if (!mql) return undefined
+    const onChange = (e: MediaQueryListEvent): void => setReducedMotion(e.matches)
+    // No initial read here — the useState initialiser above already took one
+    // this same tick, and a sync setState in an effect cascades a render.
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+
+  const mode = resolveSceneMode(webglOk, reducedMotion && !forceAnimation)
 
   // Latest props without re-running the effect (which would rebuild the scene).
   const stateRef = useRef({ itemsPerMinute, paused })
@@ -59,7 +83,7 @@ export default function BrainIngestScene({
 
   useEffect(() => {
     const container = containerRef.current
-    if (!container || !supported) return undefined
+    if (!container || mode === 'fallback') return undefined
 
     let renderer: THREE.WebGLRenderer
     try {
@@ -72,7 +96,11 @@ export default function BrainIngestScene({
     const height = container.clientHeight || 180
 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
-    renderer.setSize(width, height, false)
+    // `true` (update the CSS size) is load-bearing: with `false` the canvas
+    // lays out at its attribute size — width × pixelRatio CSS px — so on any
+    // HiDPI display it overflowed its 180px box and showed a cropped, zoomed
+    // slice of the scene.
+    renderer.setSize(width, height, true)
     renderer.setClearColor(0x000000, 0)
     container.appendChild(renderer.domElement)
 
@@ -150,6 +178,18 @@ export default function BrainIngestScene({
     }))
 
     const dummy = new THREE.Object3D()
+
+    // Instance matrices start out as the identity, which would stack all 90
+    // spheres at the origin. Anything that renders without running the loop
+    // has to park them first.
+    const parkParticles = (): void => {
+      dummy.position.set(0, 0, -999)
+      dummy.scale.setScalar(0.001)
+      dummy.updateMatrix()
+      for (let i = 0; i < PARTICLE_COUNT; i++) particles.setMatrixAt(i, dummy.matrix)
+      particles.instanceMatrix.needsUpdate = true
+    }
+
     const spawn = (p: Particle, index: number): void => {
       const theta = Math.random() * Math.PI * 2
       const phi = Math.acos(2 * Math.random() - 1)
@@ -235,6 +275,45 @@ export default function BrainIngestScene({
       cancelAnimationFrame(rafId)
     }
 
+    const onResize = (): void => {
+      const w = container.clientWidth || width
+      const h = container.clientHeight || height
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+      renderer.setSize(w, h, true)
+      if (mode === 'static') renderer.render(scene, camera)
+    }
+    const resizeObserver = new ResizeObserver(onResize)
+    resizeObserver.observe(container)
+
+    const disposeScene = (): void => {
+      latticeGeom.dispose()
+      latticeMat.dispose()
+      coreGeom.dispose()
+      coreMat.dispose()
+      particleGeom.dispose()
+      particleMat.dispose()
+      renderer.dispose()
+      if (renderer.domElement.parentNode === container) {
+        container.removeChild(renderer.domElement)
+      }
+    }
+
+    // ── Reduced motion: the same scene, drawn once and left alone ──
+    // The preference is about motion, not about hiding content, so the lattice
+    // and core still render — just at a fixed angle with no loop, no particle
+    // flight and no pulse.
+    if (mode === 'static') {
+      parkParticles()
+      lattice.rotation.y = 0.6
+      core.rotation.x = 0.4
+      renderer.render(scene, camera)
+      return () => {
+        resizeObserver.disconnect()
+        disposeScene()
+      }
+    }
+
     // Only animate while actually on screen and in a visible window.
     const observer = new IntersectionObserver(
       ([entry]) => (entry.isIntersecting && !document.hidden ? start() : stop()),
@@ -248,42 +327,25 @@ export default function BrainIngestScene({
     }
     document.addEventListener('visibilitychange', onVisibility)
 
-    const onResize = (): void => {
-      const w = container.clientWidth || width
-      const h = container.clientHeight || height
-      camera.aspect = w / h
-      camera.updateProjectionMatrix()
-      renderer.setSize(w, h, false)
-    }
-    const resizeObserver = new ResizeObserver(onResize)
-    resizeObserver.observe(container)
-
     return () => {
       stop()
       observer.disconnect()
       resizeObserver.disconnect()
       document.removeEventListener('visibilitychange', onVisibility)
-
-      latticeGeom.dispose()
-      latticeMat.dispose()
-      coreGeom.dispose()
-      coreMat.dispose()
-      particleGeom.dispose()
-      particleMat.dispose()
-      renderer.dispose()
-      if (renderer.domElement.parentNode === container) {
-        container.removeChild(renderer.domElement)
-      }
+      disposeScene()
     }
-  }, [supported])
+  }, [mode])
 
-  if (!supported) {
-    // CSS-only fallback: no WebGL context, or the user asked for less motion.
+  if (mode === 'fallback') {
+    // No WebGL context at all. Legible on purpose: the old 10%-opacity
+    // gradient was indistinguishable from an empty broken box.
     return (
       <div
-        className={`rounded-lg bg-gradient-to-br from-teal/15 via-surface-overlay to-purple-500/10 ${className}`}
+        className={`rounded-lg border border-teal/20 bg-gradient-to-br from-teal/20 via-surface-overlay to-purple-500/20 flex items-center justify-center ${className}`}
         aria-hidden="true"
-      />
+      >
+        <Brain className="w-8 h-8 text-teal/50" />
+      </div>
     )
   }
 

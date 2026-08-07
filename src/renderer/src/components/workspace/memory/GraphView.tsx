@@ -92,16 +92,17 @@ const GRAPH_CSS_VARS = [
   '--graph-glow',
   '--graph-edge-superseded',
   '--graph-edge-contradiction',
+  '--graph-edge-derived',
   '--graph-bg'
 ] as const
 
 // ── Edge styles (adapted for 3D — no dashes, using opacity/color differentiation) ──
 
 const EDGE_STYLES: Record<MemoryGraphEdgeKind, { colorVar: string; alpha: number }> = {
-  similarity: { colorVar: EDGE_COLOR_VAR.similarity, alpha: 0.25 },
-  superseded: { colorVar: EDGE_COLOR_VAR.superseded, alpha: 0.45 },
-  contradiction: { colorVar: EDGE_COLOR_VAR.contradiction, alpha: 0.6 },
-  derived: { colorVar: EDGE_COLOR_VAR.derived, alpha: 0.5 }
+  similarity: { colorVar: EDGE_COLOR_VAR.similarity, alpha: 0.42 },
+  superseded: { colorVar: EDGE_COLOR_VAR.superseded, alpha: 0.55 },
+  contradiction: { colorVar: EDGE_COLOR_VAR.contradiction, alpha: 0.75 },
+  derived: { colorVar: EDGE_COLOR_VAR.derived, alpha: 0.62 }
 }
 
 // ── Physics freeze constant (d3-force default) ──
@@ -125,6 +126,15 @@ function hexToRgba(hex: string, alpha: number): string {
     const r = parseInt(hex[1] + hex[1], 16)
     const g = parseInt(hex[2] + hex[2], 16)
     const b = parseInt(hex[3] + hex[3], 16)
+    return `rgba(${r},${g},${b},${alpha})`
+  }
+  // Defensive: a CSS token authored as rgb()/rgba() would otherwise be returned
+  // verbatim, silently discarding every per-state alpha the callers compute.
+  const rgbMatch = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/i.exec(hex)
+  if (rgbMatch) {
+    const r = Math.round(Number(rgbMatch[1]))
+    const g = Math.round(Number(rgbMatch[2]))
+    const b = Math.round(Number(rgbMatch[3]))
     return `rgba(${r},${g},${b},${alpha})`
   }
   return hex
@@ -215,11 +225,13 @@ function getPlanetTexture(hexColor: string): CanvasTexture {
 
 // ── Shared per-tier geometries (4 tiers × 2 types = 8 total, created once) ──
 
+// NOTE: the multiplier must stay in lockstep with <ForceGraph3D nodeRelSize>,
+// otherwise the texture/atmosphere shells detach from the native sphere.
 const TIER_BASE_RADII = [
-  Math.cbrt(1) * 5,
-  Math.cbrt(2.5) * 5,
-  Math.cbrt(5) * 5,
-  Math.cbrt(9) * 5
+  Math.cbrt(1) * 6,
+  Math.cbrt(2.5) * 6,
+  Math.cbrt(5) * 6,
+  Math.cbrt(9) * 6
 ] as const
 
 const _texGeometries = TIER_BASE_RADII.map((r) => new SphereGeometry(r * 1.02, 24, 24))
@@ -236,10 +248,11 @@ const STAR_VERTEX_SHADER = `
   varying float vOpacity;
   void main() {
     // Twinkle: sinusoidal oscillation per star
-    float twinkle = sin(uTime * aSpeed + aPhase) * 0.35 + 0.65;
+    float twinkle = sin(uTime * aSpeed + aPhase) * 0.25 + 0.75;
     vOpacity = aBaseOpacity * twinkle;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = aSize * (200.0 / -mvPosition.z);
+    // Clamped so a near-camera star can never grow to node scale
+    gl_PointSize = min(aSize * (200.0 / -mvPosition.z), 2.0);
     gl_Position = projectionMatrix * mvPosition;
   }
 `
@@ -251,7 +264,7 @@ const STAR_FRAGMENT_SHADER = `
     float dist = length(gl_PointCoord - vec2(0.5));
     if (dist > 0.5) discard;
     float alpha = smoothstep(0.5, 0.15, dist) * vOpacity;
-    gl_FragColor = vec4(0.88, 0.92, 1.0, alpha);
+    gl_FragColor = vec4(0.60, 0.68, 0.86, alpha);
   }
 `
 
@@ -561,9 +574,9 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         const size = renderer.getSize(new Vector2())
         const bloomPass = new UnrealBloomPass(
           new Vector2(size.x, size.y),
-          0.5, // strength — subtle glow
-          0.3, // radius — tight halos
-          0.8 // threshold — higher = less bloom on mid-range colors
+          0.7, // strength — glow carried by the nodes
+          0.4, // radius — tight halos
+          0.55 // threshold — low enough for category colors, above the dimmed starfield
         )
         composer.addPass(bloomPass)
         composer.addPass(new OutputPass())
@@ -586,8 +599,10 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
           twinkleTimerRef.current = null
         }
 
-        const count = 5000
+        const count = 2600
         const spread = 3000
+        // Empty core so stars never sit inside the graph volume
+        const coreRadius = 900
         const positions = new Float32Array(count * 3)
         const phases = new Float32Array(count)
         const speeds = new Float32Array(count)
@@ -595,13 +610,30 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         const sizes = new Float32Array(count)
 
         for (let i = 0; i < count; i++) {
-          positions[i * 3] = (Math.random() - 0.5) * spread
-          positions[i * 3 + 1] = (Math.random() - 0.5) * spread
-          positions[i * 3 + 2] = (Math.random() - 0.5) * spread
+          let x = (Math.random() - 0.5) * spread
+          let y = (Math.random() - 0.5) * spread
+          let z = (Math.random() - 0.5) * spread
+          // Push anything inside the core out onto the shell
+          const radius = Math.sqrt(x * x + y * y + z * z)
+          if (radius < coreRadius) {
+            if (radius < 1e-4) {
+              x = coreRadius
+              y = 0
+              z = 0
+            } else {
+              const push = coreRadius / radius
+              x *= push
+              y *= push
+              z *= push
+            }
+          }
+          positions[i * 3] = x
+          positions[i * 3 + 1] = y
+          positions[i * 3 + 2] = z
           phases[i] = Math.random() * Math.PI * 2 // random phase offset
           speeds[i] = 0.3 + Math.random() * 1.2 // twinkle speed
-          baseOpacities[i] = 0.25 + Math.random() * 0.75 // brightness variety
-          sizes[i] = 0.6 + Math.random() * 2.4 // size variety
+          baseOpacities[i] = 0.1 + Math.random() * 0.28 // brightness variety
+          sizes[i] = 0.5 + Math.random() * 1.2 // size variety
         }
 
         const geo = new BufferGeometry()
@@ -757,12 +789,12 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
 
       let alpha: number
       if (searchMatchIds.size > 0) {
-        alpha = searchMatchIds.has(nodeId) ? 1.0 : 0.1
+        alpha = searchMatchIds.has(nodeId) ? 1.0 : 0.15
       } else if (hoveredNode) {
         const isHoverTarget = nodeId === (hoveredNode.id as string)
-        alpha = isHoverTarget ? 1.0 : neighborIds.has(nodeId) ? (isDimmed ? 0.45 : 0.85) : 0.06
+        alpha = isHoverTarget ? 1.0 : neighborIds.has(nodeId) ? (isDimmed ? 0.45 : 0.85) : 0.12
       } else {
-        alpha = isDimmed ? 0.3 : 0.75
+        alpha = isDimmed ? 0.5 : 1.0
       }
 
       return hexToRgba(baseColor, alpha)
@@ -807,7 +839,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
       const atmoMat = new MeshBasicMaterial({
         color: threeColor,
         transparent: true,
-        opacity: [0.04, 0.07, 0.1, 0.15][tier], // subtle for T0, vivid for T3
+        opacity: [0.08, 0.12, 0.18, 0.26][tier], // subtle for T0, vivid for T3
         side: BackSide,
         depthWrite: false
       })
@@ -822,8 +854,8 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
         transparent: true,
         blending: AdditiveBlending,
         opacity: reducedMotion.current
-          ? [0.06, 0.08, 0.12, 0.18][tier]
-          : [0.08, 0.12, 0.2, 0.3][tier],
+          ? [0.12, 0.15, 0.2, 0.27][tier]
+          : [0.16, 0.22, 0.32, 0.45][tier],
         depthWrite: false
       })
       const glow = new Sprite(glowMat)
@@ -971,10 +1003,10 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
   )
 
   const linkWidth = useCallback((link: LinkObject<GNode, GLink>) => {
-    if (link.kind === 'similarity') return 0.5 + (link.weight ?? 0) * 1.5
-    if (link.kind === 'contradiction') return 2
-    if (link.kind === 'superseded') return 1.2
-    if (link.kind === 'derived') return 1.8
+    if (link.kind === 'similarity') return 0.8 + (link.weight ?? 0) * 2.2
+    if (link.kind === 'contradiction') return 2.6
+    if (link.kind === 'superseded') return 1.6
+    if (link.kind === 'derived') return 2.2
     return 1.5
   }, [])
 
@@ -1324,7 +1356,7 @@ export default function GraphView({ workspaceId }: GraphViewProps): React.JSX.El
             showNavInfo={false}
             // ── Node rendering — sphere + glow halo + rings ──
             nodeVal={nodeVal}
-            nodeRelSize={5}
+            nodeRelSize={6}
             nodeResolution={24}
             nodeColor={nodeColor}
             nodeOpacity={1}

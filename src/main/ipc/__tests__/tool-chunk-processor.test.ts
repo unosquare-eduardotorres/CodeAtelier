@@ -251,6 +251,28 @@ describe('processToolChunk — editDiffs', () => {
     assert.equal(result.toolActivity.editDiffs?.length, 1)
   })
 
+  // The tool_result path is the only place an Edit's input surfaces when the
+  // CLI streams partial messages (tool_use starts with `input: {}`), so it must
+  // carry the file path as well as the diffs — the row's path chip depends on it.
+  test('edit_tool_result_carries_file_path_and_diffs', () => {
+    const chunk: StreamChunk = {
+      type: 'tool_result',
+      toolName: 'Edit',
+      toolId: 'edit-4',
+      content: 'Done',
+      toolInputRaw: JSON.stringify({
+        file_path: 'src/a.ts',
+        old_string: 'const a = 1',
+        new_string: 'const a = 2'
+      })
+    }
+    const result = processToolChunk(chunk, BASE_OPTIONS)
+    assert.ok(result)
+    assert.equal(result.toolActivity.filePath, 'src/a.ts')
+    assert.equal(result.toolActivity.editDiffs?.length, 1)
+    assert.equal(result.toolActivity.editDiffs?.[0].newString, 'const a = 2')
+  })
+
   test('read_tool_has_no_edit_diffs', () => {
     const chunk: StreamChunk = {
       type: 'tool_use',

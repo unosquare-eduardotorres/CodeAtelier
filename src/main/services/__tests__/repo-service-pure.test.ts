@@ -13,6 +13,7 @@ import {
   assertWithinRepo,
   buildRefDiffArgs,
   changeTypeForStatus,
+  detectEol,
   expandRenamePaths,
   isMissingPathError,
   gitlinkSideContent,
@@ -20,6 +21,7 @@ import {
   isZeroSha,
   mergeStatusEntries,
   mergeUntrackedIntoRefDiff,
+  normalizeEol,
   parseNameStatusZ,
   parseRawDiffEntry,
   resolveIdenticalReason,
@@ -606,6 +608,54 @@ describe('expandRenamePaths', () => {
     const input = ['b.ts']
     expandRenamePaths(input, [{ from: 'a.ts', to: 'b.ts' }])
     assert.deepEqual(input, ['b.ts'])
+  })
+})
+
+describe('detectEol', () => {
+  test('lf_only', () => {
+    assert.equal(detectEol('a\nb\n'), 'lf')
+  })
+
+  test('crlf_only', () => {
+    assert.equal(detectEol('a\r\nb\r\n'), 'crlf')
+  })
+
+  test('mixed_reports_mixed', () => {
+    assert.equal(detectEol('a\r\nb\nc\n'), 'mixed')
+  })
+
+  test('no_line_break_reports_none', () => {
+    assert.equal(detectEol('single line'), 'none')
+    assert.equal(detectEol(''), 'none')
+  })
+
+  // normalizeEol only folds CRLF, so a lone \r must not claim a style we
+  // cannot actually normalize away.
+  test('lone_cr_is_not_treated_as_a_line_ending', () => {
+    assert.equal(detectEol('a\rb\rc'), 'none')
+  })
+
+  test('consecutive_blank_lines_still_detected', () => {
+    assert.equal(detectEol('a\n\n\nb'), 'lf')
+    assert.equal(detectEol('a\r\n\r\n\r\nb'), 'crlf')
+  })
+})
+
+describe('normalizeEol', () => {
+  test('folds_crlf_to_lf', () => {
+    assert.equal(normalizeEol('a\r\nb\r\n'), 'a\nb\n')
+  })
+
+  test('lf_input_is_unchanged', () => {
+    assert.equal(normalizeEol('a\nb\n'), 'a\nb\n')
+  })
+
+  test('lone_cr_is_left_alone', () => {
+    assert.equal(normalizeEol('a\rb'), 'a\rb')
+  })
+
+  test('makes_the_two_sides_of_a_crlf_checkout_compare_equal', () => {
+    assert.equal(normalizeEol('l1\r\nl2\r\n'), normalizeEol('l1\nl2\n'))
   })
 })
 

@@ -195,6 +195,64 @@ describe('RepoService × real git — uncommitted mode', () => {
     },
     skip
   )
+
+  // Regression guard for "+868 −867 with every line identical": under
+  // core.autocrlf the object database holds LF while the checkout holds CRLF,
+  // so the blob side and the working-tree side differ on EVERY line.
+  test(
+    'a_one_line_edit_in_a_crlf_checkout_shows_only_that_line_as_changed',
+    async () => {
+      await withRepo(async (git, dir) => {
+        await git.addConfig('core.autocrlf', 'true')
+        const lines = Array.from({ length: 20 }, (_, i) => `line ${i}`)
+        await writeFile(join(dir, 'w.csproj'), lines.join('\r\n') + '\r\n')
+        await commitAll(git, 'add crlf file')
+
+        lines[7] = 'line 7 CHANGED'
+        await writeFile(join(dir, 'w.csproj'), lines.join('\r\n') + '\r\n')
+
+        const diff = await repoService.getFileDiff(dir, 'w.csproj')
+        const oldLines = diff.oldContent.split('\n')
+        const newLines = diff.newContent.split('\n')
+        assert.equal(oldLines.length, newLines.length, 'both sides split to equal line counts')
+
+        const differing = oldLines.filter((l, i) => l !== newLines[i])
+        assert.deepEqual(
+          differing,
+          ['line 7'],
+          `exactly one line must differ — got ${differing.length}`
+        )
+        assert.equal(diff.eolChange?.from, 'lf')
+        assert.equal(diff.eolChange?.to, 'crlf')
+        assert.ok(diff.warning?.includes('Line endings differ'))
+      })
+    },
+    skip
+  )
+
+  test(
+    'a_pure_line_ending_flip_is_reported_as_eol_only_not_unexplained',
+    async () => {
+      await withRepo(async (git, dir) => {
+        // autocrlf off, so the LF rewrite is a genuine content change git sees.
+        await git.addConfig('core.autocrlf', 'false')
+        const lines = Array.from({ length: 10 }, (_, i) => `line ${i}`)
+        await writeFile(join(dir, 'w.csproj'), lines.join('\r\n') + '\r\n')
+        await commitAll(git, 'add crlf file')
+
+        // Same text, LF endings — the whole file would otherwise render red.
+        await writeFile(join(dir, 'w.csproj'), lines.join('\n') + '\n')
+
+        const diff = await repoService.getFileDiff(dir, 'w.csproj')
+        assert.equal(diff.identicalReason, 'eol-only')
+        assert.equal(diff.eolChange?.from, 'crlf')
+        assert.equal(diff.eolChange?.to, 'lf')
+        // Never the 'unexplained' app-bug banner, and never a silent clean pane.
+        assert.equal(diff.oldContent, diff.newContent)
+      })
+    },
+    skip
+  )
 })
 
 describe('RepoService × real git — ref comparison modes', () => {

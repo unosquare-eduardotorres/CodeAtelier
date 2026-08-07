@@ -1463,7 +1463,7 @@ export type DiffComparisonMode = 'uncommitted' | 'branch-vs-target' | 'all-vs-ta
  * differing blobs yet we resolved equal content — an app bug, never a quiet state.
  */
 export type DiffIdenticalReason =
-  'mode-change' | 'rename-only' | 'empty-file' | 'no-diff-entry' | 'unexplained'
+  'mode-change' | 'rename-only' | 'empty-file' | 'no-diff-entry' | 'eol-only' | 'unexplained'
 
 export interface FileDiffResult {
   oldContent: string
@@ -1479,6 +1479,13 @@ export interface FileDiffResult {
   identicalReason?: DiffIdenticalReason
   /** File-mode transition (e.g. 100644 → 100755) behind a `mode-change` reason. */
   modeChange?: { from: string; to: string }
+  /**
+   * Line-ending transition (e.g. crlf → lf) detected between the two sides.
+   * Set whenever the styles differ — both when that is the *only* difference
+   * (`identicalReason: 'eol-only'`) and when real changes remain alongside it,
+   * in which case the content was normalized for display.
+   */
+  eolChange?: { from: string; to: string }
 }
 
 // ── AI Subscriptions ──

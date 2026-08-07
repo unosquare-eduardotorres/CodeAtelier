@@ -161,9 +161,12 @@ export class AgentSessionService extends AgentBaseService {
   // common default since specialist plan mode uses Opus).
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
+  /** Idle budget — max silence from the executor before the turn is aborted. Not a wall-clock cap. */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
-  /** Extended timeout when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each. */
+  /** Extended idle budget when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each. */
   private static readonly EXTERNAL_MCP_INTERACTION_TIMEOUT_MS = 30 * 60_000 // 30 minutes
+  /** Minimum gap between idle-timer restarts, so per-token chunks don't churn timers. */
+  private static readonly IDLE_TIMER_RESET_THROTTLE_MS = 5_000
 
   private workspacePath: string | null = null
   private workspaceId: string | null = null
@@ -1505,14 +1508,23 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   /**
-   * Build the interaction timeout timer, extending for external MCP integrations.
-   * Returns the timeout duration and the timer handle for cleanup.
+   * Build the interaction *idle* timer, extending for external MCP integrations.
+   *
+   * IDLE-NOT-WALLCLOCK: this budget measures silence, not total runtime. It used
+   * to be a fixed wall-clock deadline, which aborted healthy long-running builds
+   * mid-tool-call once they crossed 10 minutes regardless of how much work they
+   * were producing. `notifyActivity()` restarts the countdown on every executor
+   * chunk, so the timer only fires when the executor has genuinely gone quiet.
+   * The absolute ceiling still exists one layer up — chat-stream.service's
+   * max-lifetime timer (maxStreamLifetimeMin preference, default 30 min).
+   *
+   * Returns the idle budget plus activity/cleanup handles.
    */
   private buildStreamTimeout(
     mcpServers: Record<string, unknown> | undefined,
     abortController: AbortController,
     conversationId: string
-  ): { timeoutMs: number; timer: NodeJS.Timeout } {
+  ): { timeoutMs: number; notifyActivity: () => void; cancel: () => void } {
     const baseTimeoutMs =
       this.adapter.interactionTimeoutMs ?? AgentSessionService.MAX_INTERACTION_TIMEOUT_MS
 
@@ -1523,21 +1535,49 @@ export class AgentSessionService extends AgentBaseService {
       ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
       : baseTimeoutMs
 
-    const timer = setTimeout(() => {
+    const startedAt = Date.now()
+    let cancelled = false
+
+    const fire = (): void => {
       this._lastTimedOut = true
       this.log.error(
-        `Interaction timeout after ${timeoutMs / 60_000} minutes — ${this.circuitBreaker.count} tool calls made`
+        `Interaction timeout — no executor activity for ${timeoutMs / 60_000} minutes ` +
+          `(${Math.round((Date.now() - startedAt) / 60_000)} min into the turn, ` +
+          `${this.circuitBreaker.count} tool calls made)`
       )
       eventLoggerService.logAgentTimeout({
         agentId: this.adapter.agentId,
         conversationId,
-        elapsedMs: timeoutMs,
+        elapsedMs: Date.now() - startedAt,
         toolCallCount: this.circuitBreaker.count
       })
       abortController.abort()
-    }, timeoutMs)
+    }
 
-    return { timeoutMs, timer }
+    let timer = setTimeout(fire, timeoutMs)
+
+    // Throttled so a token-by-token stream doesn't churn a timer per chunk.
+    // Capped at a tenth of the budget so short adapter budgets still reset.
+    const throttleMs = Math.min(
+      AgentSessionService.IDLE_TIMER_RESET_THROTTLE_MS,
+      Math.floor(timeoutMs / 10)
+    )
+    let lastReset = startedAt
+    const notifyActivity = (): void => {
+      if (cancelled) return
+      const now = Date.now()
+      if (now - lastReset < throttleMs) return
+      lastReset = now
+      clearTimeout(timer)
+      timer = setTimeout(fire, timeoutMs)
+    }
+
+    const cancel = (): void => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+
+    return { timeoutMs, notifyActivity, cancel }
   }
 
   // ── Stream orchestration ──────────────────────────────────────────
@@ -1571,11 +1611,11 @@ export class AgentSessionService extends AgentBaseService {
 
     // Reset timeout flag before building timer (buildStreamTimeout sets _lastTimedOut on fire)
     this._lastTimedOut = false
-    const { timeoutMs, timer: interactionTimer } = this.buildStreamTimeout(
-      mcpResult.mcpServers,
-      abortController,
-      conversationId
-    )
+    const {
+      timeoutMs,
+      notifyActivity: notifyStreamActivity,
+      cancel: cancelInteractionTimer
+    } = this.buildStreamTimeout(mcpResult.mcpServers, abortController, conversationId)
 
     try {
       const streamState: StreamLoopState = {
@@ -1640,6 +1680,9 @@ export class AgentSessionService extends AgentBaseService {
       }
 
       for await (const chunk of executorStream) {
+        // Any chunk — text, tool_use, tool_result, api_retry — proves the executor
+        // is alive, so the idle budget restarts from here.
+        notifyStreamActivity()
         if (this.circuitBreaker.isBroken) break
 
         if ('_meta' in chunk && chunk._meta) {
@@ -1660,7 +1703,7 @@ export class AgentSessionService extends AgentBaseService {
         }
       }
 
-      clearTimeout(interactionTimer)
+      cancelInteractionTimer()
       // Clear per-conversation abort controller
       const postCtx = this.activeStreams.get(conversationId)
       if (postCtx) postCtx.abortController = null
@@ -1714,7 +1757,7 @@ export class AgentSessionService extends AgentBaseService {
         this.log.debug('[executeStream] Memory extraction enqueue failed (non-fatal):', memErr)
       }
     } catch (error) {
-      clearTimeout(interactionTimer)
+      cancelInteractionTimer()
       await this.handleStreamError(error as Error, this._lastTimedOut, recoveryDepth, timeoutMs)
     }
   }

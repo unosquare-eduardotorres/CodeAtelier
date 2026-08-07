@@ -109,6 +109,10 @@ export const ADDITIONAL_EXCLUDED_DIRS = new CaseInsensitiveSet([
   'NuGet',
   '.nuget',
   'Setup',
+  // .NET — checked-in binary dependency drops. Pure assemblies plus the odd
+  // decompiled/bundled source file; never hand-edited, so indexing them only
+  // multiplies edge counts for common symbols.
+  'ReferencedAssemblies',
   // iOS / macOS — CocoaPods vendors full C++/ObjC source trees (boost,
   // ReactNativeDependencies). `Pods/` is `pod install` output: never
   // hand-edited, so it is wrong to index regardless of VCS policy.
@@ -253,6 +257,22 @@ export function matchesSkipPattern(filePath: string, patterns: string[]): boolea
     }
   }
   return false
+}
+
+/**
+ * Drop paths that should never reach an LLM-facing view of the repository:
+ * the built-in excluded directories plus the workspace's own
+ * `.atelierignore` / `.gitignore` rules.
+ *
+ * PageRank is computed over whatever the index happens to contain, so a
+ * vendored tree indexed before an exclusion decision (or excluded only after
+ * the fact) still dominates the top of the ranking — three copies of
+ * `angular.js` multiply every common symbol by three. Filtering the ranked
+ * list means no such file is ever queued for extraction, whatever state the
+ * index is in.
+ */
+export function filterRankedFiles(relPaths: string[], ignorePatterns: string[]): string[] {
+  return relPaths.filter((rel) => !isExcludedPath(rel) && !matchesSkipPattern(rel, ignorePatterns))
 }
 
 /**

@@ -98,6 +98,16 @@ const VENDOR_MARKER_EXTENSIONS = new Set(['.podspec', '.nuspec', '.gemspec'])
 /** A directory is "recently edited" (first-party hint) within this window. */
 const RECENT_EDIT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000
 
+/**
+ * Vendor markers are sniffed at the candidate root AND one level down, because
+ * the common vendoring layout puts them in the library folder rather than the
+ * container: `lib/angularjs-1.2.25/LICENSE`, not `lib/LICENSE`.
+ */
+const VENDOR_MARKER_MAX_DEPTH = 1
+
+/** `angularjs-1.2.25`, `jquery_v1.11.0`, `bootstrap.3.4.1` — stem + version. */
+const VERSIONED_NAME_RE = /^(.+?)[-_.]v?\d+\.\d+/
+
 interface DirStats {
   fileCount: number
   totalBytes: number
@@ -106,6 +116,49 @@ interface DirStats {
   binaryFileCount: number
   newestMtimeMs: number
   vendorMarkers: string[]
+  /** Sibling directories that are versioned copies of one library. */
+  versionedSiblings: Array<{ stem: string; count: number }>
+  /** Files shipped as `x.js` alongside `x.min.js` — distributed artefacts. */
+  minifiedPairs: number
+}
+
+/**
+ * Sibling directories sharing a stem but differing in version
+ * (`angularjs-1.2.0`, `angularjs-1.2.25`, `angularjs-1.2.0-rc.3`) are
+ * near-conclusive evidence of vendoring: nobody keeps three versioned copies
+ * of their own source tree side by side.
+ *
+ * Exported for unit testing.
+ */
+export function findVersionedSiblings(names: string[]): Array<{ stem: string; count: number }> {
+  const groups = new Map<string, number>()
+  for (const name of names) {
+    const match = VERSIONED_NAME_RE.exec(name)
+    if (!match) continue
+    const stem = match[1].toLowerCase()
+    groups.set(stem, (groups.get(stem) ?? 0) + 1)
+  }
+  return [...groups.entries()]
+    .filter(([, count]) => count >= 2)
+    .map(([stem, count]) => ({ stem, count }))
+    .sort((a, b) => b.count - a.count)
+}
+
+/**
+ * Count files that exist in both plain and minified form in one directory.
+ * A `.min.js` next to its source is a distributed build artefact, never a
+ * file anyone edits — and indexing both doubles every symbol in it.
+ *
+ * Exported for unit testing.
+ */
+export function countMinifiedPairs(fileNames: string[]): number {
+  const lower = new Set(fileNames.map((n) => n.toLowerCase()))
+  let pairs = 0
+  for (const name of lower) {
+    const match = /^(.+)\.min(\.[^.]+)$/.exec(name)
+    if (match && lower.has(`${match[1]}${match[2]}`)) pairs++
+  }
+  return pairs
 }
 
 /**
@@ -121,10 +174,12 @@ function collectDirStats(absDir: string, deadline: number): DirStats {
     sourceFileCount: 0,
     binaryFileCount: 0,
     newestMtimeMs: 0,
-    vendorMarkers: []
+    vendorMarkers: [],
+    versionedSiblings: [],
+    minifiedPairs: 0
   }
 
-  const walk = (dir: string, isRoot: boolean): void => {
+  const walk = (dir: string, depth: number): void => {
     if (stats.fileCount >= MAX_FILES_PER_CANDIDATE || Date.now() > deadline) return
 
     let entries: import('node:fs').Dirent[]
@@ -134,19 +189,24 @@ function collectDirStats(absDir: string, deadline: number): DirStats {
       return
     }
 
+    const dirNames: string[] = []
+    const fileNames: string[] = []
+
     for (const entry of entries) {
-      if (stats.fileCount >= MAX_FILES_PER_CANDIDATE || Date.now() > deadline) return
+      if (stats.fileCount >= MAX_FILES_PER_CANDIDATE || Date.now() > deadline) break
       const full = path.join(dir, entry.name)
 
       if (entry.isDirectory()) {
         if (entry.name.startsWith('.')) continue
-        walk(full, false)
+        dirNames.push(entry.name)
+        walk(full, depth + 1)
         continue
       }
       if (!entry.isFile()) continue
 
       const ext = path.extname(entry.name).toLowerCase()
       stats.fileCount++
+      fileNames.push(entry.name)
       stats.extCounts.set(ext || '(none)', (stats.extCounts.get(ext || '(none)') ?? 0) + 1)
       if (SOURCE_EXTENSIONS.has(ext)) stats.sourceFileCount++
       if (BINARY_EXTENSIONS.has(ext)) stats.binaryFileCount++
@@ -159,16 +219,24 @@ function collectDirStats(absDir: string, deadline: number): DirStats {
         /* unreadable file — ignore */
       }
 
-      if (isRoot) {
+      if (depth <= VENDOR_MARKER_MAX_DEPTH) {
         const lower = entry.name.toLowerCase()
         if (VENDOR_MARKER_FILES.has(lower) || VENDOR_MARKER_EXTENSIONS.has(ext)) {
-          stats.vendorMarkers.push(entry.name)
+          stats.vendorMarkers.push(
+            depth === 0 ? entry.name : `${path.basename(dir)}/${entry.name}`
+          )
         }
       }
     }
+
+    // Versioned copies are only conclusive as *siblings*, so they are read off
+    // the candidate root. Minified pairs are counted per-directory wherever
+    // they occur, since a bundle can sit any number of levels down.
+    if (depth === 0) stats.versionedSiblings = findVersionedSiblings(dirNames)
+    stats.minifiedPairs += countMinifiedPairs(fileNames)
   }
 
-  walk(absDir, true)
+  walk(absDir, 0)
   return stats
 }
 
@@ -293,6 +361,25 @@ export function classifyCandidate(input: ClassifyInput): {
         firstPartyHints
       }
     }
+    if (stats.versionedSiblings.length > 0) {
+      const { stem, count } = stats.versionedSiblings[0]
+      return {
+        verdict: 'needs-confirmation',
+        reason: `${count} versioned copies of the same library (${stem})`,
+        defaultChecked: true,
+        firstPartyHints
+      }
+    }
+    if (stats.minifiedPairs > 0) {
+      return {
+        verdict: 'needs-confirmation',
+        reason:
+          `${stats.minifiedPairs} minified/source file pair(s) — ` +
+          `distributed library builds, not hand-written source`,
+        defaultChecked: true,
+        firstPartyHints
+      }
+    }
     if (gitTracked && stats.sourceFileCount > 0) {
       return {
         verdict: 'needs-confirmation',
@@ -372,6 +459,12 @@ export function runExclusionPreflight(workspacePath: string): ExclusionPreflight
     }
 
     if (found.length > MAX_CANDIDATES) {
+      // Tier-1 is auto-excluded and listed for transparency only — it must
+      // never displace a Tier-2 candidate, which is the only kind that needs a
+      // human decision. A .NET solution has hundreds of bin/obj pairs, and
+      // before this they crowded out every `lib/` in the tree. Array.sort is
+      // stable, so breadth-first order survives within each tier.
+      found.sort((a, b) => Number(a.tier1) - Number(b.tier1))
       found.length = MAX_CANDIDATES
       truncated = true
     }

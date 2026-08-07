@@ -22,7 +22,7 @@ function SettingsMenuGroup({
   activeTab: SettingsTab
   onSelect: (tab: SettingsTab) => void
 }): React.JSX.Element {
-  const items = SETTINGS_MENU.filter((item) => item.group === group)
+  const items = SETTINGS_MENU.filter((item) => item.group === group && !item.hidden)
   return (
     <div className="space-y-0.5">
       {items.map((item) => {

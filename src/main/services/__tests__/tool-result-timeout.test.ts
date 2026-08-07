@@ -161,6 +161,40 @@ describe('ToolTracker — pendingToolCount with timeout interactions', () => {
   })
 })
 
+describe('ToolTracker — backfillInput', () => {
+  test('fills input for an id registered without one', () => {
+    const tracker = new ToolTracker()
+    tracker.register('t1', 'Edit')
+    tracker.backfillInput('t1', 'src/a.ts (1 edit)', '{"file_path":"src/a.ts"}')
+    assert.equal(tracker.resolveInput('t1'), 'src/a.ts (1 edit)')
+    assert.equal(tracker.resolveRawInput('t1'), '{"file_path":"src/a.ts"}')
+  })
+
+  test('does not overwrite an input the streaming path already captured', () => {
+    const tracker = new ToolTracker()
+    tracker.register('t1', 'Edit', 'streamed', '{"file_path":"streamed.ts"}')
+    tracker.backfillInput('t1', 'replay', '{"file_path":"replay.ts"}')
+    assert.equal(tracker.resolveInput('t1'), 'streamed')
+    assert.equal(tracker.resolveRawInput('t1'), '{"file_path":"streamed.ts"}')
+  })
+
+  test('undefined values are no-ops', () => {
+    const tracker = new ToolTracker()
+    tracker.register('t1', 'Edit')
+    tracker.backfillInput('t1', undefined, undefined)
+    assert.equal(tracker.resolveInput('t1'), undefined)
+    assert.equal(tracker.resolveRawInput('t1'), undefined)
+  })
+
+  test('consume clears backfilled input', () => {
+    const tracker = new ToolTracker()
+    tracker.register('t1', 'Edit')
+    tracker.backfillInput('t1', 'summary', '{}')
+    tracker.consume('t1')
+    assert.equal(tracker.resolveRawInput('t1'), undefined)
+  })
+})
+
 // ─── Guardian: run summary only when standalone ───
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()

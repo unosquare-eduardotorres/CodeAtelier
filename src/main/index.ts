@@ -26,7 +26,8 @@ import {
   agentSessionRepository,
   grillSessionRepository,
   usageLogRepository,
-  turnUsageRepository
+  turnUsageRepository,
+  workspaceRepository
 } from './db/repositories'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
@@ -528,12 +529,19 @@ app.whenReady().then(() => {
   //  because there's no real workspace ID until the user opens one)
 
   // ── Embedding: auto-load model at startup (delayed, non-fatal) ──
-  setTimeout(() => {
-    import('./services/local-embedding.provider').then(({ localEmbeddingProvider }) =>
-      localEmbeddingProvider
-        .ensureEmbeddingReady()
-        .catch((e) => log.debug('Startup embedding auto-load (non-fatal):', e))
-    )
+  // Configure against the last-opened workspace first — the facade defaults to
+  // the oMLX backend, which can never succeed on Windows.
+  setTimeout(async () => {
+    try {
+      const [lastWorkspace] = workspaceRepository.findAll() // ORDER BY last_opened_at DESC
+      if (lastWorkspace) localEmbeddingProvider.configureForWorkspace(lastWorkspace.id)
+      const ready = await localEmbeddingProvider.ensureEmbeddingReady()
+      log.info(
+        `Startup embedding probe: ready=${ready} model=${localEmbeddingProvider.activeModelName || '(none)'}`
+      )
+    } catch (e) {
+      log.info('Startup embedding auto-load failed (non-fatal):', e)
+    }
   }, 5000)
 
   // ── Prompt Optimizer: pre-warm CLI session (delayed, non-fatal) ──

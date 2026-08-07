@@ -374,7 +374,7 @@ async function executeAgent(ctx: ExecContext): Promise<ExecResult> {
 
   let topFilesContext = ''
   try {
-    const topFiles = await codeGraphService.getTopRankedFiles(workspaceId, [], 40)
+    const topFiles = await codeGraphService.getTopRankedFiles(workspaceId, [], 40, workspacePath)
     if (topFiles.length > 0) {
       topFilesContext = `\n\nTop 40 files by PageRank (most central/coupled):\n${topFiles
         .map((f, i) => `  ${i + 1}. ${f}`)

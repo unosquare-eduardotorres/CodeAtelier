@@ -143,7 +143,7 @@
   --graph-node-gotcha: #c77260; /* burnt sienna — red giant        */
   --graph-node-preference: #8e7db5; /* muted lavender — nebula violet  */
   --graph-node-reference: #8a9bb0; /* cool slate — white dwarf        */
-  --graph-link: rgba(70, 110, 170, 0.22);
+  --graph-link: #3f8391; /* teal — similarity links, distinct from stars */
   --graph-glow: 0.35; /* glow strength multiplier        */
   --graph-text: #dbe4f4; /* light label ink for dark canvas  */
   --graph-edge-superseded: #b89050; /* muted amber                     */

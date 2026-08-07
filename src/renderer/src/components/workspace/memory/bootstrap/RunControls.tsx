@@ -81,7 +81,7 @@ export default function RunControls({
             <button
               data-testid="bootstrap-resume"
               onClick={() => onResume(resumableRunId)}
-              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-teal/10 text-teal rounded hover:bg-teal/20"
+              className="flex items-center gap-1 px-2.5 py-1 text-xs bg-teal/10 text-teal-text rounded hover:bg-teal/20"
             >
               <PlayCircle className="w-3.5 h-3.5" />
               Resume

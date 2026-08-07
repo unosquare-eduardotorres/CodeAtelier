@@ -128,20 +128,56 @@ let treeSitterModule: WebTreeSitter | null = null
 const languageCache = new Map<string, TsLanguage>()
 const queryCache = new Map<string, TsQuery | null>()
 
+/**
+ * What happened when a language's `.scm` was compiled.
+ *
+ * A query that compiles to nothing is indistinguishable from a file with no
+ * symbols, which is how seven languages stayed silently dead. Recording the
+ * outcome per language is what makes that visible.
+ */
+export interface QueryDiagnostic {
+  lang: string
+  /** Top-level patterns found in the `.scm`. */
+  totalPatterns: number
+  /** Patterns that failed to compile against the shipped grammar. */
+  droppedPatterns: number
+  /** Compile error from the whole-file attempt — why the split was needed. */
+  error: string
+}
+
+/** Languages whose query pack did not fully compile, keyed by language. */
+const queryDiagnostics = new Map<string, QueryDiagnostic>()
+
+/** One-shot guard so a runtime-wide WASM failure logs once, not once per file. */
+let unavailableLogged = false
+
+/** Degraded/dead query packs seen since the last parser release. */
+export function getQueryDiagnostics(): QueryDiagnostic[] {
+  return [...queryDiagnostics.values()]
+}
+
 /** Reset cached grammars/queries — called after indexing releases the parser. */
 export function releaseTypedParser(): void {
   languageCache.clear()
   queryCache.clear()
+  queryDiagnostics.clear()
+  unavailableLogged = false
   treeSitterModule = null
 }
 
 async function getTreeSitter(): Promise<WebTreeSitter> {
   if (!treeSitterModule) {
-    // repomap-mcp's initParser() owns Parser.init() and is idempotent; reusing it
-    // avoids creating a second Emscripten instance.
-    const { initParser } = await import('repomap-mcp/dist/tags.js')
-    await initParser()
-    treeSitterModule = await import('web-tree-sitter')
+    // `Parser.init()` must run on the instance we hand back. repomap-mcp's
+    // initParser() only initialises the copy Vite bundled into *its* chunk; in
+    // the packaged app this dynamic import resolves to a different module
+    // instance whose Emscripten `Module` is still undefined, so `Language.load`
+    // fails with "Cannot read properties of undefined (reading
+    // 'loadWebAssemblyModule')" and every language falls back to untyped tags.
+    // web-tree-sitter memoises its own binding, so re-initialising the same
+    // instance is a no-op rather than a second Emscripten module.
+    const mod = await import('web-tree-sitter')
+    await mod.Parser.init()
+    treeSitterModule = mod
   }
   return treeSitterModule
 }
@@ -155,6 +191,154 @@ async function loadLanguage(lang: string): Promise<TsLanguage> {
   return language
 }
 
+/**
+ * Split a `.scm` query pack into its top-level patterns.
+ *
+ * Tree-sitter compiles a `.scm` as a unit, so a single pattern referencing a
+ * node the grammar renamed invalidates the *entire* query. Splitting lets us
+ * keep the patterns that still match the shipped grammar.
+ *
+ * A top-level pattern is one balanced `(...)`/`[...]` form plus any trailing
+ * `@captures` and quantifiers. Comments and strings are skipped so a `;` or a
+ * paren inside them cannot desynchronise the scan. Pure — the unit-testable
+ * core of the recovery path.
+ */
+export function splitTopLevelPatterns(source: string): string[] {
+  const patterns: string[] = []
+  const n = source.length
+  let i = 0
+
+  while (i < n) {
+    const ch = source[i]
+    if (ch === ';') {
+      while (i < n && source[i] !== '\n') i++
+      continue
+    }
+    if (ch !== '(' && ch !== '[') {
+      i++
+      continue
+    }
+
+    const start = i
+    let depth = 0
+    let inString = false
+    while (i < n) {
+      const c = source[i]
+      if (inString) {
+        if (c === '\\') i++
+        else if (c === '"') inString = false
+        i++
+        continue
+      }
+      if (c === '"') {
+        inString = true
+        i++
+        continue
+      }
+      if (c === ';') {
+        while (i < n && source[i] !== '\n') i++
+        continue
+      }
+      if (c === '(' || c === '[') depth++
+      else if (c === ')' || c === ']') {
+        depth--
+        if (depth === 0) {
+          i++
+          break
+        }
+      }
+      i++
+    }
+
+    // Trailing `@capture` names and quantifiers belong to the form just closed.
+    let end = i
+    for (;;) {
+      let k = end
+      while (k < n && /\s/.test(source[k])) k++
+      if (k < n && (source[k] === '?' || source[k] === '*' || source[k] === '+')) {
+        end = k + 1
+        continue
+      }
+      if (k < n && source[k] === '@') {
+        k++
+        while (k < n && /[\w.-]/.test(source[k])) k++
+        end = k
+        continue
+      }
+      break
+    }
+
+    patterns.push(source.slice(start, end).trim())
+    i = end
+  }
+
+  return patterns
+}
+
+/**
+ * Compile a language's query pack, salvaging what the grammar still accepts.
+ *
+ * Fast path: compile the whole file — unchanged for every language whose pack
+ * matches its grammar. Only when that fails do we split and compile pattern by
+ * pattern, keeping the survivors. C# recovers 11 of 12 patterns this way
+ * (classes, interfaces, methods, namespaces); only the stale generic-constraint
+ * reference is lost. Self-healing across grammar bumps, rather than pinning a
+ * package-version pair we do not control.
+ */
+function compileQuery(
+  Query: WebTreeSitter['Query'],
+  language: TsLanguage,
+  lang: string,
+  source: string
+): TsQuery | null {
+  try {
+    return new Query(language, source)
+  } catch (error) {
+    const message = (error as Error).message
+    const patterns = splitTopLevelPatterns(source)
+    const kept: string[] = []
+    for (const pattern of patterns) {
+      try {
+        new Query(language, pattern).delete()
+        kept.push(pattern)
+      } catch {
+        /* pattern no longer matches the shipped grammar — drop just this one */
+      }
+    }
+
+    let recovered: TsQuery | null = null
+    if (kept.length > 0) {
+      try {
+        recovered = new Query(language, kept.join('\n\n'))
+      } catch {
+        recovered = null
+      }
+    }
+
+    const dropped = recovered ? patterns.length - kept.length : patterns.length
+    queryDiagnostics.set(lang, {
+      lang,
+      totalPatterns: patterns.length,
+      droppedPatterns: dropped,
+      error: message
+    })
+    if (recovered) {
+      log.warn(
+        `[CodeGraph] Query pack for '${lang}' does not fully match its grammar: ` +
+          `${dropped}/${patterns.length} pattern(s) dropped (${message}). ` +
+          `Indexing continues with the remaining ${kept.length}.`
+      )
+    } else {
+      log.error(
+        `[CodeGraph] Query pack for '${lang}' is unusable — 0/${patterns.length} pattern(s) ` +
+          `compile against the shipped grammar (${message}). ` +
+          `Files of this language will produce NO tags.`
+      )
+    }
+    return recovered
+  }
+}
+
 async function loadQuery(language: TsLanguage, lang: string): Promise<TsQuery | null> {
   const cached = queryCache.get(lang)
   if (cached !== undefined) return cached
@@ -164,19 +348,17 @@ async function loadQuery(language: TsLanguage, lang: string): Promise<TsQuery | 
     return null
   }
   const { Query } = await getTreeSitter()
+  let query: TsQuery | null = null
   try {
-    const query = new Query(language, readFileSync(queryPath, 'utf-8'))
-    queryCache.set(lang, query)
-    return query
-  } catch {
-    queryCache.set(lang, null)
-    return null
+    query = compileQuery(Query, language, lang, readFileSync(queryPath, 'utf-8'))
+  } catch (error) {
+    log.error(`[CodeGraph] Could not read query pack for '${lang}': ${(error as Error).message}`)
   }
+  queryCache.set(lang, query)
+  return query
 }
 
 // ── Extraction ──────────────────────────────────────────────────────────────
-
-let unavailableLogged = false
 
 /**
  * Extract typed tags for a single file.

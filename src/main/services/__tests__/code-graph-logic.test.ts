@@ -3,7 +3,13 @@
  * Tests edge building from tags, rank boosting, and rank sorting/filtering — zero DB deps.
  */
 import assert from 'node:assert/strict'
-import { buildEdgesFromTags, applyRankBoosts, sortAndFilterByRank } from '../code-graph.service'
+import {
+  buildEdgesFromTags,
+  applyRankBoosts,
+  sortAndFilterByRank,
+  pickHealthCheckSamples
+} from '../code-graph.service'
+import { filterRankedFiles } from '../code-graph-exclusions'
 import type { RepomapTag } from '../../db/repositories/code-graph-tag.repository'
 
 let passed = 0
@@ -221,6 +227,56 @@ describe('sortAndFilterByRank', () => {
   test('empty map returns empty array', () => {
     const result = sortAndFilterByRank(new Map(), true)
     assert.equal(result.length, 0)
+  })
+})
+
+// ── filterRankedFiles ──
+
+describe('filterRankedFiles — keeps vendored code out of LLM extraction', () => {
+  test('drops built-in excluded directories', () => {
+    const result = filterRankedFiles(['src/app.ts', 'BuildSystem/Tools/nunit.cs', 'obj/gen.cs'], [])
+    assert.deepEqual(result, ['src/app.ts'])
+  })
+
+  test('drops paths matched by workspace ignore patterns', () => {
+    const result = filterRankedFiles(
+      ['Content/js/lib/angular.js', 'src/app.ts'],
+      ['**/Content/js/lib/**']
+    )
+    assert.deepEqual(result, ['src/app.ts'])
+  })
+
+  test('handles Windows backslash paths', () => {
+    const result = filterRankedFiles(['src\\bin\\gen.cs', 'src\\app.ts'], [])
+    assert.deepEqual(result, ['src\\app.ts'])
+  })
+
+  test('no patterns and no excluded dirs is a pass-through', () => {
+    const files = ['a.ts', 'b/c.ts']
+    assert.deepEqual(filterRankedFiles(files, []), files)
+  })
+
+  test('a filename resembling an excluded dir is not dropped', () => {
+    assert.deepEqual(filterRankedFiles(['src/binary-utils.ts'], []), ['src/binary-utils.ts'])
+  })
+})
+
+// The parse health check used to probe allFiles[0] alone. On .NET repos that is
+// Common/AssemblyVersion.cs — attributes only, legitimately zero tags — so it
+// printed "Tree-sitter parsing may be broken" on every single index run.
+describe('pickHealthCheckSamples', () => {
+  test('spreads across the list instead of taking the head', () => {
+    const files = Array.from({ length: 100 }, (_, i) => `f${i}.cs`)
+    const samples = pickHealthCheckSamples(files, 8)
+    assert.equal(samples.length, 8)
+    assert.equal(samples[0], 'f0.cs')
+    assert.equal(new Set(samples).size, 8, 'samples must be distinct')
+    assert.notDeepEqual(samples, files.slice(0, 8), 'must not just be the first N files')
+  })
+
+  test('returns everything when the workspace is smaller than the sample size', () => {
+    assert.deepEqual(pickHealthCheckSamples(['a.ts', 'b.ts'], 8), ['a.ts', 'b.ts'])
+    assert.deepEqual(pickHealthCheckSamples([]), [])
   })
 })
 

@@ -61,7 +61,7 @@ export default function LastRunSummary({
       {canResume && (
         <button
           onClick={() => onResume(resumableRunId)}
-          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-teal/10 text-teal rounded hover:bg-teal/20 shrink-0"
+          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-teal/10 text-teal-text rounded hover:bg-teal/20 shrink-0"
           title="Continue from where the last run stopped — nothing already extracted is redone"
         >
           <PlayCircle className="w-3.5 h-3.5" />

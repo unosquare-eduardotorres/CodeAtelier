@@ -182,6 +182,13 @@ describe('isExcludedPath — vendored trees', () => {
     assert.equal(isExcludedPath('src/NuGet/packages.config'), true)
   })
 
+  test('excludes ReferencedAssemblies, whatever its casing', () => {
+    assert.equal(isExcludedPath('ReferencedAssemblies/Newtonsoft.Json/Linq/JObject.cs'), true)
+    assert.equal(isExcludedPath('referencedassemblies/log4net/Appender.cs'), true)
+    assert.equal(isExcludedPath('src\\ReferencedAssemblies\\Interop.cs'), true)
+    assert.equal(isExcludedDirName('ReferencedAssemblies'), true)
+  })
+
   test('does NOT exclude first-party names that merely contain a keyword', () => {
     assert.equal(isExcludedPath('src/Toolset/Builder.cs'), false)
     assert.equal(isExcludedPath('src/tools.ts'), false)

@@ -145,6 +145,19 @@ async function handleWorkspaceOpen(
     dbLogger.warn('Failed to start memory consolidation idle job:', e)
   }
 
+  // Align the global embedding facade with this workspace's persisted backend
+  // (omlx | ollama) and probe it, so embeddings resolve without the user having
+  // to visit Code Intelligence first.
+  try {
+    const { localEmbeddingProvider } = await import('../services/local-embedding.provider')
+    localEmbeddingProvider.configureForWorkspace(workspace.id)
+    // Fire-and-forget: an Ollama probe does a real test-embed (30s timeout)
+    // and must not delay workspace open.
+    void localEmbeddingProvider.ensureEmbeddingReady().catch(() => {})
+  } catch (e) {
+    dbLogger.warn('Failed to configure embedding provider on workspace open:', e)
+  }
+
   return workspace
 }
 
@@ -172,6 +185,15 @@ async function handleSettingsUpdate(
     }
   } catch (e) {
     dbLogger.warn('Failed to update file watcher on settings change:', e)
+  }
+
+  // Re-align the embedding facade whenever local-model settings change
+  // (backend switch, embedding model, host/port all route through here).
+  try {
+    const { localEmbeddingProvider } = await import('../services/local-embedding.provider')
+    localEmbeddingProvider.configureForWorkspace(workspaceId)
+  } catch (e) {
+    dbLogger.warn('Failed to re-configure embedding provider on settings change:', e)
   }
 
   try {

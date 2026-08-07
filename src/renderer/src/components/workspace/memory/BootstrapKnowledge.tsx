@@ -19,6 +19,14 @@ import {
   BrainIngestScene
 } from './bootstrap'
 
+/**
+ * Escape hatch for the scene. A machine-level prefers-reduced-motion (Windows
+ * ships it with "Adjust for best performance", so it is on far more often than
+ * users realise) otherwise leaves the visual frozen with no way back short of
+ * changing an OS accessibility setting globally.
+ */
+const ANIMATION_KEY = 'brain-ingest-animation'
+
 export default function BootstrapKnowledge(): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const {
@@ -40,6 +48,13 @@ export default function BootstrapKnowledge(): React.JSX.Element {
 
   const [selectedMode, setSelectedMode] = useState<BootstrapMode>('full')
   const [selectedScope, setSelectedScope] = useState<BootstrapScope>('changed')
+  const [forceAnimation, setForceAnimation] = useState(
+    () => localStorage.getItem(ANIMATION_KEY) === 'true'
+  )
+
+  useEffect(() => {
+    localStorage.setItem(ANIMATION_KEY, String(forceAnimation))
+  }, [forceAnimation])
 
   const workspaceId = activeWorkspace?.id
   const workspacePath = activeWorkspace?.repoPath
@@ -116,11 +131,27 @@ export default function BootstrapKnowledge(): React.JSX.Element {
           <div className={showScene ? 'grid grid-cols-[1fr_180px] gap-3 items-start' : ''}>
             <RunProgressPanel progress={bootstrap} />
             {showScene && (
-              <BrainIngestScene
-                itemsPerMinute={bootstrap.itemsPerMinute}
-                paused={bootstrap.jobStatus === 'paused'}
-                className="h-[180px]"
-              />
+              <div className="space-y-1">
+                <BrainIngestScene
+                  itemsPerMinute={bootstrap.itemsPerMinute}
+                  paused={bootstrap.jobStatus === 'paused'}
+                  forceAnimation={forceAnimation}
+                  className="h-[180px]"
+                />
+                <label
+                  className="flex items-center gap-1.5 text-[10px] text-text-muted cursor-pointer select-none"
+                  title="Draw the scene even when your system asks for reduced motion."
+                >
+                  <input
+                    type="checkbox"
+                    data-testid="bootstrap-animation-toggle"
+                    checked={forceAnimation}
+                    onChange={(e) => setForceAnimation(e.target.checked)}
+                    className="w-3 h-3 accent-teal"
+                  />
+                  Show ingestion animation
+                </label>
+              </div>
             )}
           </div>
 

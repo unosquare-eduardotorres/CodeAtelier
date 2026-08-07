@@ -36,6 +36,16 @@ export function describeIdenticalReason(
         title: 'The file is empty',
         detail: 'It was added or removed with no content — there is nothing to compare.'
       }
+    case 'eol-only': {
+      const eols = diff.eolChange
+        ? ` (${diff.eolChange.from.toUpperCase()} → ${diff.eolChange.to.toUpperCase()})`
+        : ''
+      return {
+        title: `Only the line endings changed${eols}`,
+        detail:
+          'Every line is otherwise identical — the file was rewritten with a different newline convention.'
+      }
+    }
     case 'no-diff-entry':
       return {
         title: 'This file no longer differs from the comparison base',

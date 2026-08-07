@@ -133,7 +133,24 @@ export function* normalizeMessage(
   if (msg.type === 'assistant') {
     const assistantMsg = msg.message as Record<string, unknown> | undefined
     if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
-      tools.registerFromAssistantMessage(assistantMsg.content as Record<string, unknown>[])
+      const blocks = assistantMsg.content as Record<string, unknown>[]
+      tools.registerFromAssistantMessage(blocks)
+      // Backfill tool inputs. Under --include-partial-messages the tool_use
+      // content_block_start carries `input: {}` (the arguments stream as
+      // input_json_delta, which is not accumulated), so without this the
+      // tool_result chunk ships no toolInputRaw and downstream metadata
+      // extraction — file path chip, Input section, Edit diffs — never runs.
+      for (const block of blocks) {
+        if (block.type !== 'tool_use') continue
+        const toolId = block.id as string | undefined
+        const toolInput = block.input as Record<string, unknown> | undefined
+        if (!toolId || !toolInput || Object.keys(toolInput).length === 0) continue
+        tools.backfillInput(
+          toolId,
+          summarizeToolInput(block.name as string, toolInput, cwd),
+          JSON.stringify(toolInput)
+        )
+      }
     }
     return
   }

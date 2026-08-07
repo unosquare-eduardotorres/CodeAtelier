@@ -292,6 +292,36 @@ export function resolveIdenticalReason(
   return 'unexplained'
 }
 
+export type EolStyle = 'lf' | 'crlf' | 'mixed' | 'none'
+
+/** Display labels for EolStyle, for the normalization warning. */
+const EOL_LABELS: Record<EolStyle, string> = {
+  lf: 'LF',
+  crlf: 'CRLF',
+  mixed: 'mixed',
+  none: 'none'
+}
+
+/**
+ * Which line-ending convention a blob uses.
+ *
+ * A lone `\r` (classic Mac) counts as no line ending: normalizeEol only folds
+ * CRLF, so claiming a style we don't normalize would promise a fix we can't make.
+ */
+export function detectEol(s: string): EolStyle {
+  const crlf = (s.match(/\r\n/g) ?? []).length
+  // Every `\n` not already accounted for by a CRLF pair is a bare LF.
+  const lf = (s.match(/\n/g) ?? []).length - crlf
+  if (crlf === 0 && lf === 0) return 'none'
+  if (crlf > 0 && lf > 0) return 'mixed'
+  return crlf > 0 ? 'crlf' : 'lf'
+}
+
+/** Fold CRLF to LF so two sides stored with different conventions compare equal. */
+export function normalizeEol(s: string): string {
+  return s.replace(/\r\n/g, '\n')
+}
+
 /**
  * Union untracked paths into a ref-diff listing as 'created'.
  * `git diff <base>` only sees files git already tracks, so a brand-new file is
@@ -995,12 +1025,44 @@ export class RepoService {
       }
     }
 
+    // ── Line endings ──
+    // The previous side comes from the object database (`git cat-file blob`,
+    // which stores LF once core.autocrlf has normalized on commit) while the
+    // working-tree side is read from disk verbatim (CRLF on a Windows
+    // checkout). Every line then differs textually even for a file git itself
+    // reports as clean — an 868-line file renders +868 −867. Compare and render
+    // the normalized text so only genuine changes highlight, and never hide the
+    // line-ending difference itself: name it instead.
+    let displayOld = oldContent
+    let displayNew = newContent
+    let eolChange: { from: string; to: string } | undefined
+    const oldEol = detectEol(oldContent)
+    const newEol = detectEol(newContent)
+    // An absent side (add/delete) has no convention of its own — reporting a
+    // transition there would flag every newly added CRLF file.
+    if (oldEol !== newEol && oldContent !== '' && newContent !== '') {
+      eolChange = { from: oldEol, to: newEol }
+      displayOld = normalizeEol(oldContent)
+      displayNew = normalizeEol(newContent)
+      if (displayOld !== displayNew) {
+        warnings.push(
+          `Line endings differ (${EOL_LABELS[oldEol]} → ${EOL_LABELS[newEol]}) — normalized for display.`
+        )
+      }
+    }
+
     let identicalReason: DiffIdenticalReason | undefined
     let modeChange: { from: string; to: string } | undefined
-    if (oldContent === newContent) {
-      identicalReason = resolveIdenticalReason(entry, oldContent === '')
+    if (displayOld === displayNew) {
+      identicalReason = resolveIdenticalReason(entry, displayOld === '')
       if (identicalReason === 'mode-change' && entry) {
         modeChange = { from: entry.srcMode, to: entry.dstMode }
+      }
+      // A pure line-ending flip is a real, explainable change — not the app bug
+      // that 'unexplained' reports. Only that verdict is overridden; a mode
+      // change or rename remains the more specific explanation.
+      if (identicalReason === 'unexplained' && eolChange) {
+        identicalReason = 'eol-only'
       }
       if (identicalReason === 'unexplained') {
         warnings.push(
@@ -1010,13 +1072,14 @@ export class RepoService {
     }
 
     return {
-      oldContent,
-      newContent,
+      oldContent: displayOld,
+      newContent: displayNew,
       language,
       warning: warnings.length > 0 ? warnings.join(' — ') : undefined,
       baseSha,
       identicalReason,
-      modeChange
+      modeChange,
+      eolChange
     }
   }
 

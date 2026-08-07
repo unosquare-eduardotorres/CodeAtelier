@@ -11,6 +11,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { localEmbeddingProvider } from '../local-embedding.provider'
+import { workspaceRepository } from '../../db/repositories'
 
 /**
  * `localEmbeddingProvider` is a process-wide singleton. When an earlier test
@@ -177,6 +178,79 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
     localEmbeddingProvider.removeListener('modelReady', readyHandler)
     localEmbeddingProvider.removeListener('modelError', errorHandler)
     localEmbeddingProvider.setBackend('omlx')
+  })
+})
+
+describe('LocalEmbeddingProvider — configureForWorkspace', () => {
+  /**
+   * Regression guard: the facade defaults to the oMLX backend, which cannot
+   * work on Windows. configureForWorkspace() is what aligns it with the
+   * workspace's persisted settings — if it stops selecting Ollama, embeddings
+   * silently fail everywhere off Apple Silicon.
+   */
+  function withSettings(settings: Record<string, unknown>, fn: () => void): void {
+    const original = workspaceRepository.getSettings
+    ;(workspaceRepository as any).getSettings = () => settings
+    try {
+      fn()
+    } finally {
+      ;(workspaceRepository as any).getSettings = original
+    }
+  }
+
+  test('selects the Ollama backend and applies model + base URL from settings', () => {
+    localEmbeddingProvider.setBackend('omlx')
+    localEmbeddingProvider.dispose()
+    dropLeakedListeners()
+
+    withSettings(
+      {
+        localLlmBackend: 'ollama',
+        localHost: '192.168.1.50',
+        localPort: 11500,
+        ollamaEmbeddingModel: 'bge-m3'
+      },
+      () => {
+        localEmbeddingProvider.configureForWorkspace('ws-1')
+      }
+    )
+
+    // activeModelName reads the Ollama model only when the Ollama backend is active,
+    // so this asserts both the backend switch and the model in one shot.
+    assert.equal(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  test('leaves the oMLX backend selected when settings say omlx', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    localEmbeddingProvider.setOllamaEmbeddingModel('bge-m3')
+    dropLeakedListeners()
+
+    withSettings({ localLlmBackend: 'omlx' }, () => {
+      localEmbeddingProvider.configureForWorkspace('ws-2')
+    })
+
+    // Back on oMLX, activeModelName delegates to omlxEmbeddingProvider and must
+    // no longer report the Ollama model.
+    assert.notEqual(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  test('does not throw when settings lookup fails', () => {
+    const original = workspaceRepository.getSettings
+    ;(workspaceRepository as any).getSettings = () => {
+      throw new Error('db unavailable')
+    }
+    try {
+      localEmbeddingProvider.configureForWorkspace('missing-ws')
+    } finally {
+      ;(workspaceRepository as any).getSettings = original
+      localEmbeddingProvider.setBackend('omlx')
+    }
   })
 })
 

@@ -134,7 +134,7 @@ export const SETTINGS_MENU: {
     group: 'configuration',
     hidden: true
   },
-  { id: 'tokens', label: 'Tokens', icon: Zap, group: 'configuration' },
+  { id: 'tokens', label: 'Tokens', icon: Zap, group: 'configuration', hidden: true },
   {
     id: 'events',
     label: 'Events',

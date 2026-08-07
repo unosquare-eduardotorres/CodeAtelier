@@ -11,7 +11,7 @@ import { codeGraphRankRepository } from '../db/repositories'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
 import type { EdgeType, EdgeResolution } from '../db/repositories/code-graph-edge.repository'
 import type { CodeGraphIndexingState } from '../../shared/types'
-import { extractTypedTags, releaseTypedParser } from './code-graph-tags'
+import { extractTypedTags, releaseTypedParser, getQueryDiagnostics } from './code-graph-tags'
 import { detectCommunities, findGodNodes } from './code-graph-communities'
 import type { Community, GodNode } from './code-graph-communities'
 import {
@@ -21,7 +21,8 @@ import {
   isMarkupFile,
   sizeCapForFile,
   toPosixRel,
-  matchesSkipPattern
+  matchesSkipPattern,
+  filterRankedFiles
 } from './code-graph-exclusions'
 import { loadAllIgnorePatterns } from './workspace-ignore'
 import { memoryCheckpoint } from './indexing-diagnostics'
@@ -336,6 +337,25 @@ export function sortAndFilterByRank(
     .sort((a, b) => b[1] - a[1])
 }
 
+/**
+ * Pick files for the parse health check.
+ *
+ * Spread across the discovery list rather than taking the head: `allFiles[0]`
+ * is alphabetically first, which on .NET repos is `Common/AssemblyVersion.cs`
+ * — assembly attributes only, legitimately zero tags. Sampling one file there
+ * printed "Tree-sitter parsing may be broken" on every single index run.
+ *
+ * Pure — deterministic for a given list so the check is reproducible.
+ */
+export function pickHealthCheckSamples(allFiles: string[], count = 8): string[] {
+  if (allFiles.length === 0) return []
+  if (allFiles.length <= count) return [...allFiles]
+  const stride = Math.floor(allFiles.length / count)
+  const samples: string[] = []
+  for (let i = 0; i < count; i++) samples.push(allFiles[i * stride])
+  return samples
+}
+
 // ADDITIONAL_EXCLUDED_DIRS and isExcludedPath imported from ./code-graph-exclusions
 // (extracted to a dependency-free module for testability)
 
@@ -452,42 +472,52 @@ class CodeGraphService extends EventEmitter {
       )
 
       // ── Health check: verify tree-sitter parsing works ──
-      // getTagsRaw silently returns [] on failure. Test with a known file
-      // to catch Electron-specific WASM issues before processing all files.
+      // getTagsRaw silently returns [] on failure. Probe a spread of real files
+      // to catch Electron-specific WASM issues before processing all of them.
+      //
+      // Sampling only allFiles[0] produced a false alarm on every .NET repo:
+      // the first file alphabetically is typically AssemblyVersion.cs, which is
+      // assembly attributes only and legitimately yields zero tags. Warn only
+      // when EVERY sampled file comes back empty — that is the signal that
+      // actually means "parsing is broken", and it is the one worth acting on.
       try {
-        const testFile = allFiles[0]
-        if (testFile) {
+        const samples = pickHealthCheckSamples(allFiles)
+        let sampledTags = 0
+        let firstNonEmpty = ''
+        for (const testFile of samples) {
           const testRelFname = toPosixRel(testFile, workspacePath)
           const testTags = await getTags(testFile, testRelFname, null, false)
-          if (testTags.length === 0) {
-            const lang = filenameToLang(testFile)
-            log.warn(
-              `[CodeGraph] ⚠ Health check: 0 tags from ${testRelFname} (lang=${lang}). ` +
-                `Tree-sitter parsing may be broken in this runtime.`
-            )
+          sampledTags += testTags.length
+          if (testTags.length > 0 && !firstNonEmpty) firstNonEmpty = testRelFname
+        }
 
-            // Try a step-by-step diagnostic
-            try {
-              const tagsModule = (await import('repomap-mcp/dist/tags.js')) as Record<
-                string,
-                unknown
-              >
-              if (typeof tagsModule.getTagsRaw === 'function') {
-                const rawTags = await (
-                  tagsModule.getTagsRaw as (f: string, r: string) => Promise<RepomapTag[]>
-                )(testFile, testRelFname)
-                log.warn(`[CodeGraph] ⚠ getTagsRaw returned ${rawTags.length} tags`)
-              } else {
-                log.warn('[CodeGraph] ⚠ getTagsRaw not exported — cannot run deeper diagnostic')
-              }
-            } catch (rawErr) {
-              log.error(`[CodeGraph] ⚠ getTagsRaw threw: ${(rawErr as Error).message}`)
+        if (samples.length > 0 && sampledTags === 0) {
+          const langs = [...new Set(samples.map((f) => filenameToLang(f)))].join(', ')
+          log.warn(
+            `[CodeGraph] ⚠ Health check: 0 tags from all ${samples.length} sampled file(s) ` +
+              `(langs=${langs}). Tree-sitter parsing may be broken in this runtime.`
+          )
+
+          // Try a step-by-step diagnostic
+          try {
+            const tagsModule = (await import('repomap-mcp/dist/tags.js')) as Record<string, unknown>
+            if (typeof tagsModule.getTagsRaw === 'function') {
+              const probe = samples[0]
+              const rawTags = await (
+                tagsModule.getTagsRaw as (f: string, r: string) => Promise<RepomapTag[]>
+              )(probe, toPosixRel(probe, workspacePath))
+              log.warn(`[CodeGraph] ⚠ getTagsRaw returned ${rawTags.length} tags`)
+            } else {
+              log.warn('[CodeGraph] ⚠ getTagsRaw not exported — cannot run deeper diagnostic')
             }
-          } else {
-            log.info(
-              `[CodeGraph] ✓ Health check passed: ${testTags.length} tags from ${testRelFname}`
-            )
+          } catch (rawErr) {
+            log.error(`[CodeGraph] ⚠ getTagsRaw threw: ${(rawErr as Error).message}`)
           }
+        } else if (samples.length > 0) {
+          log.info(
+            `[CodeGraph] ✓ Health check passed: ${sampledTags} tags across ` +
+              `${samples.length} sampled file(s) (first: ${firstNonEmpty})`
+          )
         }
       } catch (healthErr) {
         log.error(`[CodeGraph] ⚠ Health check failed: ${(healthErr as Error).message}`)
@@ -607,11 +637,32 @@ class CodeGraphService extends EventEmitter {
           'Typed tag extraction unavailable - edges fall back to untyped `references`. ' +
           'Check the tree-sitter query pack in the packaged app.'
       }
+      // A query pack that compiles to nothing looks exactly like a language
+      // with no symbols. Name the degraded packs in the summary so "0 rows for
+      // .cs" is traceable to its cause instead of being re-diagnosed by hand.
+      const queryDiagnostics = getQueryDiagnostics()
+      if (queryDiagnostics.length > 0) {
+        const dead = queryDiagnostics.filter((d) => d.droppedPatterns === d.totalPatterns)
+        log.warn(
+          `[CodeGraph] Degraded query packs: ` +
+            queryDiagnostics
+              .map((d) => `${d.lang} (${d.droppedPatterns}/${d.totalPatterns} patterns dropped)`)
+              .join(', ')
+        )
+        if (dead.length > 0) {
+          const reason =
+            `No usable tree-sitter query for: ${dead.map((d) => d.lang).join(', ')} — ` +
+            `files of these languages produce no tags.`
+          state.degraded = true
+          state.degradedReason = state.degradedReason ? `${state.degradedReason} ${reason}` : reason
+        }
+      }
       log.info(
         `[CodeGraph] Indexing complete: ${fileCount} files, ${tagCount} tags, ${totalEdges} edges` +
           (typedFallbacks > 0
             ? `, ${typedFallbacks}/${filesParsed} file(s) fell back to untyped tags`
-            : '')
+            : '') +
+          (queryDiagnostics.length > 0 ? `, ${queryDiagnostics.length} degraded query pack(s)` : '')
       )
       this.emitProgress(state)
       this.mineRationales(workspaceId, workspacePath, changedFiles)
@@ -1046,13 +1097,25 @@ class CodeGraphService extends EventEmitter {
   /**
    * Get top-ranked files for decompose() — replaces prefetchRankedFiles().
    * Optionally boosts focus files by placing them first.
+   *
+   * Pass `workspacePath` to drop excluded/ignored files from the ranking.
+   * Callers that feed an LLM (memory bootstrap, Deep Scan) should always do
+   * so — otherwise a vendored tree still in the index supplies the whole
+   * budget. Over-fetching is what keeps the budget full after filtering:
+   * without it, filtering shrinks a 40-file budget to a handful on exactly
+   * the repositories that need it most.
    */
   async getTopRankedFiles(
     workspaceId: string,
     focusFiles: string[],
-    limit: number
+    limit: number,
+    workspacePath?: string
   ): Promise<string[]> {
-    const topFiles = codeGraphRankRepository.getTopRanked(workspaceId, limit + focusFiles.length)
+    const fetchLimit = (workspacePath ? limit * 4 : limit) + focusFiles.length
+    const ranked = codeGraphRankRepository.getTopRanked(workspaceId, fetchLimit)
+    const topFiles = workspacePath
+      ? filterRankedFiles(ranked, loadAllIgnorePatterns(workspacePath))
+      : ranked
 
     // Merge: focus files first, then top-ranked (deduplicated)
     const seen = new Set<string>()

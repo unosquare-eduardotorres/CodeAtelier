@@ -167,7 +167,10 @@ export async function planRun(ctx: PlanContext): Promise<PlanResult> {
       let topFiles = await codeGraphService.getTopRankedFiles(
         ctx.workspaceId,
         [],
-        MAX_ARCHITECTURE_FILES
+        MAX_ARCHITECTURE_FILES,
+        // Excluded/ignored paths must never be queued for LLM extraction, even
+        // when they still sit at the top of a stale index's PageRank.
+        ctx.workspacePath
       )
 
       // On an incremental run, only re-read central files that actually moved.

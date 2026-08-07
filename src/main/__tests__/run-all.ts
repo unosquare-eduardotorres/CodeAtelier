@@ -61,6 +61,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/code-graph-logic.test',
   '../services/__tests__/code-graph-typed-edges.test',
   '../services/__tests__/code-graph-typed-tags-smoke.test',
+  '../services/__tests__/code-graph-query-pack.test',
   '../services/__tests__/rationale-miner.test',
   '../services/__tests__/vector-search.test',
   '../services/__tests__/code-graph-db.test',

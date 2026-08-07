@@ -441,22 +441,7 @@ function buildClaudeProviderMcpConfig(opts: {
   const conditionalTools = [
     // Code graph MCP tools (workspace flag AND per-chat toggle)
     ...(repomapEnabled && workspaceId && isLocalMcpEnabled('code-graph', localActive)
-      ? [
-          MCP_TOOLS.CODE_GRAPH.GRAPH_MAP.name,
-          MCP_TOOLS.CODE_GRAPH.SEARCH_IDENTIFIERS.name,
-          MCP_TOOLS.CODE_GRAPH.FIND_DEAD_CODE.name,
-          MCP_TOOLS.CODE_GRAPH.FILE_OUTLINE.name,
-          MCP_TOOLS.CODE_GRAPH.FIND_CALLERS.name,
-          MCP_TOOLS.CODE_GRAPH.FIND_CALLEES.name,
-          MCP_TOOLS.CODE_GRAPH.FIND_REFERENCES.name,
-          MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENCIES.name,
-          MCP_TOOLS.CODE_GRAPH.FILE_DEPENDENTS.name,
-          MCP_TOOLS.CODE_GRAPH.SYMBOL_HOTSPOTS.name,
-          MCP_TOOLS.CODE_GRAPH.COUPLING_ANALYSIS.name,
-          MCP_TOOLS.CODE_GRAPH.CIRCULAR_DEPENDENCIES.name,
-          MCP_TOOLS.CODE_GRAPH.MODULE_BOUNDARY_HEALTH.name,
-          MCP_TOOLS.CODE_GRAPH.SHORTEST_PATH.name
-        ]
+      ? MCP_TOOLS.CODE_GRAPH._ALL_NAMES
       : []),
     // Semantic search (workspace flag AND per-chat toggle)
     ...(semanticSearchEnabled && workspaceId && isLocalMcpEnabled('semantic-search', localActive)

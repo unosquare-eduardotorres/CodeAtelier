@@ -497,17 +497,16 @@ if (loaded) {
   // ── buildStreamTimeout ──────────────────────────────────────────────
 
   describe('AgentSessionService — buildStreamTimeout', () => {
-    test('returns_timer_and_timeoutMs', () => {
+    test('returns_budget_and_control_handles', () => {
       const adapter = createMockAdapter()
       const session = new AgentSessionService(adapter as any)
       const build = (session as any).buildStreamTimeout.bind(session)
 
-      const result = build('conv-1', new AbortController(), false)
-      assert.ok('timeoutMs' in result, 'should have timeoutMs')
-      assert.ok('timer' in result, 'should have timer')
+      const result = build(undefined, new AbortController(), 'conv-1')
       assert.ok(typeof result.timeoutMs === 'number')
-      // Clean up timer
-      if (result.timer) clearTimeout(result.timer)
+      assert.equal(typeof result.notifyActivity, 'function')
+      assert.equal(typeof result.cancel, 'function')
+      result.cancel()
     })
 
     test('uses_extended_timeout_for_external_mcp', () => {
@@ -515,15 +514,51 @@ if (loaded) {
       const session = new AgentSessionService(adapter as any)
       const build = (session as any).buildStreamTimeout.bind(session)
 
-      const normal = build('conv-1', new AbortController(), false)
-      const external = build('conv-1', new AbortController(), true)
+      const normal = build(undefined, new AbortController(), 'conv-1')
+      const external = build({ maestro: {} }, new AbortController(), 'conv-1')
 
       // External MCP should use 30min (1800000ms), normal is 10min (600000ms)
       assert.ok(external.timeoutMs >= normal.timeoutMs, 'external MCP should have longer timeout')
 
-      // Clean up
-      if (normal.timer) clearTimeout(normal.timer)
-      if (external.timer) clearTimeout(external.timer)
+      normal.cancel()
+      external.cancel()
+    })
+
+    test('activity_resets_the_idle_budget_instead_of_aborting', async () => {
+      // Regression: the budget used to be a fixed wall-clock deadline, so a
+      // healthy long-running turn was aborted mid-flight. Activity must extend it.
+      const adapter = createMockAdapter({ interactionTimeoutMs: 120 })
+      const session = new AgentSessionService(adapter as any)
+      const build = (session as any).buildStreamTimeout.bind(session)
+
+      const ac = new AbortController()
+      const { notifyActivity, cancel } = build(undefined, ac, 'conv-1')
+
+      // Keep it busy for ~3x the budget with steady activity.
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 30))
+        notifyActivity()
+      }
+      assert.equal(ac.signal.aborted, false, 'active stream must not be aborted')
+
+      // Now go quiet — the budget should expire.
+      await new Promise((r) => setTimeout(r, 250))
+      assert.equal(ac.signal.aborted, true, 'idle stream must abort once silent')
+      cancel()
+    })
+
+    test('cancel_prevents_abort_and_makes_notifyActivity_inert', async () => {
+      const adapter = createMockAdapter({ interactionTimeoutMs: 60 })
+      const session = new AgentSessionService(adapter as any)
+      const build = (session as any).buildStreamTimeout.bind(session)
+
+      const ac = new AbortController()
+      const { notifyActivity, cancel } = build(undefined, ac, 'conv-1')
+      cancel()
+      notifyActivity()
+
+      await new Promise((r) => setTimeout(r, 150))
+      assert.equal(ac.signal.aborted, false, 'cancelled timer must never fire')
     })
   })
 

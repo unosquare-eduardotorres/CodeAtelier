@@ -16,9 +16,9 @@ import { WorkspaceSettings } from './pages/workspace-settings'
 /**
  * All settings tab IDs that are VISIBLE in the nav.
  *
- * `goals`, `plans`, `documents` and `events` are omitted: they are marked
- * `hidden: true` in SETTINGS_MENU, so no button renders for them (their routes
- * and pages still work).
+ * `goals`, `plans`, `documents`, `tokens` and `events` are omitted: they are
+ * marked `hidden: true` in SETTINGS_MENU, so no button renders for them (their
+ * routes and pages still work).
  */
 const ALL_TAB_IDS = [
   // Tools group
@@ -34,8 +34,7 @@ const ALL_TAB_IDS = [
   'code-intelligence',
   'integrations',
   'models',
-  'memory',
-  'tokens'
+  'memory'
 ]
 
 test.describe('Settings Navigation', () => {
@@ -174,7 +173,7 @@ test.describe('Settings Navigation', () => {
       return
     }
 
-    // 'documents' and 'events' are hidden from the nav — see ALL_TAB_IDS.
+    // 'documents', 'tokens' and 'events' are hidden from the nav — see ALL_TAB_IDS.
     const configTabs = [
       'specialist',
       'team',
@@ -182,8 +181,7 @@ test.describe('Settings Navigation', () => {
       'code-intelligence',
       'integrations',
       'models',
-      'memory',
-      'tokens'
+      'memory'
     ]
     let visibleCount = 0
 
