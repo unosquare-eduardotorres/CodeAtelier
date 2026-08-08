@@ -17,6 +17,16 @@ import type { ConversationMode } from '../../shared/types'
  *
  * ExitPlanMode and AskUserQuestion are blocked in both modes — we surface
  * equivalents via the control-actions MCP (emit_plan, ask_user).
+ *
+ * local_bash is the CLI's own background-shell task subsystem (LocalShellTask
+ * + its own registry, stall watchdog and notifications). It duplicates our
+ * process-manager MCP server, and the duplicate is invisible to the app:
+ * background-task-watcher and BackgroundTasksPopover only track OUR registry,
+ * so a local_bash task can't be seen, stopped or resumed from the UI. Its
+ * killShellTasksForAgent also reaps tasks when the agent exits, which would
+ * silently kill a user's build across the respawn that the spawn-signature
+ * guard now performs. run_background is detached and disk-tracked precisely so
+ * it survives turns and sessions.
  */
 export interface ModePermissions {
   /** Plan-mode base allow-list (caller appends MCP tool names). undefined in build mode. */
@@ -34,6 +44,7 @@ export function buildModePermissions(mode: ConversationMode): ModePermissions {
           'Agent',
           'Task',
           'local_agent',
+          'local_bash',
           'ToolSearch',
           'ExitPlanMode',
           'AskUserQuestion'
@@ -46,6 +57,7 @@ export function buildModePermissions(mode: ConversationMode): ModePermissions {
           'Agent',
           'Task',
           'local_agent',
+          'local_bash',
           'ToolSearch',
           'ExitPlanMode',
           'AskUserQuestion'
@@ -63,6 +75,7 @@ export function buildModePermissions(mode: ConversationMode): ModePermissions {
           'Agent',
           'Task',
           'local_agent',
+          'local_bash',
           'ExitPlanMode',
           'AskUserQuestion',
           'ToolSearch'

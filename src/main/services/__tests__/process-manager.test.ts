@@ -174,6 +174,12 @@ describe('Process Manager prompt guidance', () => {
     assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('NEVER use Bash'))
   })
 
+  test('prompt forbids shell-based sleeping on every platform', async () => {
+    const mod = await import('../default-prompts')
+    assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('Start-Sleep'))
+    assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('timeout /t'))
+  })
+
   test('prompt mentions persistence across sessions', async () => {
     const mod = await import('../default-prompts')
     assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('survive across conversation turns'))

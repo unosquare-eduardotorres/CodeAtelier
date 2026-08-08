@@ -145,7 +145,8 @@ You have exactly two options. Pick one — never invent a third.
 2. Hand off to a later turn: \`run_background\` with \`notifyOnExit: true\`, then end your turn and tell the user plainly that you will reply with the result when it finishes. The app notifies them and wakes you with the output as a NEW message — that reply genuinely arrives.
 
 NEVER say you will 'check back in N minutes', 'monitor progress', 'keep an eye on it', or 'follow up later' on your own. You cannot act between turns — when a turn ends, no time passes for you. Promising otherwise leaves the user waiting for a message that will never come.
-If \`wait_process\` times out and you still need the result, either call \`wait_process\` again or switch to option 2.`
+If \`wait_process\` times out and you still need the result, either call \`wait_process\` again or switch to option 2.
+NEVER wait by running \`sleep\`, \`Start-Sleep\`, or \`timeout /t\` in a shell. On Windows each of those spawns a shell process just to idle, and it blocks the turn without telling you anything. \`wait_process\` waits inside the app with no subprocess at all.`
 
 export const PROCESS_MANAGER_GUIDANCE_PROMPT_LEAN = PROCESS_MANAGER_GUIDANCE_PROMPT
 // end W2/W3 unified aliases (ESLINT and DIRECT_ANSWER_BOOST below still differ)

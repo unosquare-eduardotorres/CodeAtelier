@@ -357,13 +357,6 @@ export class AgentStreamProcessor {
       contextTier: ctx.contextTier
     })
 
-    if (cbResult.additionalContext) {
-      this.s.emit('chunk', {
-        type: 'text',
-        content: `\n\n> ⚠️ ${cbResult.additionalContext}\n\n`
-      } as StreamChunk)
-    }
-
     if (cbResult.broken) {
       return this.applyCircuitBreakerResult(cbResult, conversationId, streamState)
     }

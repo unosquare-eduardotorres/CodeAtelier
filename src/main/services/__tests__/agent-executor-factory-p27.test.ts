@@ -8,7 +8,6 @@
  *   - resolveWorkspaceMcpFlags()
  *   - resolveExternalMcpFlags()
  *   - resolveBudgetCap()
- *   - resolveHookPaths()
  *   - invalidateMcpConfigCache()
  *   - getCachedMcpConfigPath()
  *   - buildCLIExecuteOptions() (partial — fast path only)
@@ -246,18 +245,6 @@ describe('AgentExecutorFactory — resolveBudgetCap', () => {
     const factory = new AgentExecutorFactory(host)
     const cap = factory.resolveBudgetCap(false, true)
     assert.equal(cap, undefined)
-  })
-})
-
-describe('AgentExecutorFactory — resolveHookPaths', () => {
-  test('returns object with optional pre/post fields', () => {
-    const host = createMockHost()
-    const factory = new AgentExecutorFactory(host)
-    const hooks = factory.resolveHookPaths()
-    assert.equal(typeof hooks, 'object')
-    // In test env, hooks may or may not exist
-    assert.ok(hooks.pre === undefined || typeof hooks.pre === 'string')
-    assert.ok(hooks.post === undefined || typeof hooks.post === 'string')
   })
 })
 

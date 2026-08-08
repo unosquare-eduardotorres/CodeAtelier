@@ -1033,6 +1033,23 @@ export function supportsContext1M(model: string): boolean {
   )
 }
 
+/**
+ * Models whose 1M window requires the legacy `context-1m-2025-08-07` beta
+ * header, which the CLI accepts for API-key logins only. Current-generation
+ * models (Opus 5, Sonnet 5, Fable 5) have native 1M and must NOT be gated —
+ * gating them silently downgrades the session to 200K on a Max/OAuth login.
+ */
+export const CONTEXT_1M_REQUIRES_BETA = [
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250514',
+  'claude-sonnet-4-20250514'
+] as const
+
+/** Whether a model's 1M window is gated behind the API-key-only beta header. */
+export function requiresContext1MBeta(model: string): boolean {
+  return (CONTEXT_1M_REQUIRES_BETA as readonly string[]).includes(model)
+}
+
 /** Human-readable metadata for each model action — used in the Models config UI */
 export const MODEL_ACTIONS_META: Record<
   import('./types').ModelAction,

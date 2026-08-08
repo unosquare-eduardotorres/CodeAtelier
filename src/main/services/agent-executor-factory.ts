@@ -24,6 +24,7 @@ import {
   EXTERNAL_MCP_INTEGRATIONS,
   MCP_TOOLS,
   RECOMMENDED_LOCAL_MODELS,
+  requiresContext1MBeta,
   resolveModelAction,
   supportsContext1M
 } from '../../shared/constants'
@@ -37,9 +38,6 @@ import {
   resolveSdkContextWindowSize
 } from './compaction-policy'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
-import { join } from 'node:path'
-import { app } from 'electron'
-import { existsSync } from 'node:fs'
 
 export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
@@ -177,28 +175,6 @@ export class AgentExecutorFactory {
     return flags
   }
 
-  // ── resolveHookPaths ──────────────────────────────────────────────────
-
-  resolveHookPaths(): { pre?: string; post?: string } {
-    const hooksDir = app.isPackaged
-      ? join(process.resourcesPath, 'hooks')
-      : join(__dirname, '..', '..', 'src', 'main', 'hooks')
-
-    const pre = join(hooksDir, 'pre-tool-use-hook.sh')
-    const post = join(hooksDir, 'post-tool-use-hook.sh')
-
-    const result: { pre?: string; post?: string } = {}
-    if (existsSync(pre)) result.pre = pre
-    if (existsSync(post)) result.post = post
-
-    if (result.pre || result.post) {
-      this.s.log.info(
-        `[resolveHookPaths] pre=${result.pre ?? 'none'} post=${result.post ?? 'none'}`
-      )
-    }
-    return result
-  }
-
   // ── resolveBudgetCap ──────────────────────────────────────────────────
 
   resolveBudgetCap(isLocal: boolean, isBuildMode: boolean): number | undefined {
@@ -297,19 +273,22 @@ export class AgentExecutorFactory {
     )
 
     // `supportsContext1M` is a statement about the MODEL, never about the login.
-    // The 1M window is only actually granted when the `context-1m` beta header is
-    // accepted, which is API-key-only. Claiming it on an OAuth login silently
-    // sizes CLAUDE_CODE_AUTO_COMPACT_WINDOW to 1M against a real 200K ceiling —
-    // auto-compact can then never fire and the turn overflows with no output.
+    // For LEGACY models the 1M window is only granted when the `context-1m` beta
+    // header is accepted, which is API-key-only — claiming it on an OAuth login
+    // sizes CLAUDE_CODE_AUTO_COMPACT_WINDOW to 1M against a real 200K ceiling and
+    // auto-compact can then never fire. Native-1M models carry no such gate.
     const modelSupports1M = supportsContext1M(resolvedModel)
-    // Fable 5 has native 1M — no beta header, so no entitlement needed.
-    const needsBeta = modelSupports1M && !resolvedModel.includes('fable')
+    // Only the legacy Sonnet 4.x ids need the API-key-only beta header. Current
+    // models (Opus 5, Sonnet 5, Fable 5) have native 1M — gating them here is
+    // what silently dropped Max/OAuth sessions to 200K.
+    const needsBeta = modelSupports1M && requiresContext1MBeta(resolvedModel)
     const entitled = !needsBeta || canUseContext1MBeta()
     const supports1M = modelSupports1M && entitled
     if (modelSupports1M && !entitled) {
       this.s.log.warn(
-        `[compaction:1m-not-entitled] model=${resolvedModel} supports 1M but --betas is ` +
-          `API-key-only on this login — falling back to ${CLAUDE_DEFAULT_CONTEXT_WINDOW} ` +
+        `[compaction:1m-not-entitled] model=${resolvedModel} needs the legacy context-1m ` +
+          `beta, which is API-key-only on this login — falling back to ` +
+          `${CLAUDE_DEFAULT_CONTEXT_WINDOW} ` +
           `(set ANTHROPIC_API_KEY or CODE_ATELIER_CONTEXT_1M=1 to force)`
       )
     }
@@ -446,8 +425,8 @@ export class AgentExecutorFactory {
       abortController,
       agentId: this.s.adapter.agentId,
       effort: desiredEffort,
-      // Fable 5 has native 1M context — no beta header needed. Sonnet/Opus use the
-      // beta, but only when this login may actually request it (see `entitled`).
+      // Only legacy Sonnet 4.x needs the beta header, and only when this login
+      // may actually request it (see `entitled`). Native-1M models send nothing.
       betas: needsBeta && entitled ? [AgentExecutorFactory.CONTEXT_1M_BETA] : undefined,
       // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
       // Fable → Opus fallback (refusal/availability per Anthropic docs).

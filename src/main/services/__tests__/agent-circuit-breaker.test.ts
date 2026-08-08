@@ -131,11 +131,11 @@ describe('AgentCircuitBreaker', () => {
     assert.equal(result.broken, false)
   })
 
-  test('breaks_circuit_at_plan_mode_limit_100_with_continuable_break', () => {
+  test('breaks_circuit_at_plan_mode_limit_250_with_continuable_break', () => {
     const { breaker } = createCircuitBreaker()
-    pumpToolCalls(breaker, 99, { isBuildMode: false })
+    pumpToolCalls(breaker, 249, { isBuildMode: false })
     assert.equal(breaker.isBroken, false)
-    // 100th call triggers the break
+    // 250th call triggers the break
     const result = breaker.onToolUse({
       isBuildMode: false,
       accumulatedTextLength: 0,
@@ -147,11 +147,11 @@ describe('AgentCircuitBreaker', () => {
     assert.equal(breaker.isBroken, true)
   })
 
-  test('breaks_circuit_at_build_mode_limit_150_with_continuable_break', () => {
+  test('breaks_circuit_at_build_mode_limit_400_with_continuable_break', () => {
     const { breaker } = createCircuitBreaker()
-    pumpToolCalls(breaker, 149, { isBuildMode: true })
+    pumpToolCalls(breaker, 399, { isBuildMode: true })
     assert.equal(breaker.isBroken, false)
-    // 150th call triggers the break
+    // 400th call triggers the break
     const result = breaker.onToolUse({
       isBuildMode: true,
       accumulatedTextLength: 0,
@@ -166,7 +166,7 @@ describe('AgentCircuitBreaker', () => {
   test('all_circuit_breaks_are_continuable_no_error_chunks', () => {
     // Plan mode break
     const { breaker: planBreaker } = createCircuitBreaker()
-    pumpToolCalls(planBreaker, 99, { isBuildMode: false })
+    pumpToolCalls(planBreaker, 249, { isBuildMode: false })
     const planResult = planBreaker.onToolUse({
       isBuildMode: false,
       accumulatedTextLength: 0,
@@ -176,7 +176,7 @@ describe('AgentCircuitBreaker', () => {
 
     // Build mode break
     const { breaker: buildBreaker } = createCircuitBreaker()
-    pumpToolCalls(buildBreaker, 149, { isBuildMode: true })
+    pumpToolCalls(buildBreaker, 399, { isBuildMode: true })
     const buildResult = buildBreaker.onToolUse({
       isBuildMode: true,
       accumulatedTextLength: 0,
@@ -187,25 +187,52 @@ describe('AgentCircuitBreaker', () => {
 
   test('reset_clears_count_and_broken_state', () => {
     const { breaker } = createCircuitBreaker()
-    pumpToolCalls(breaker, 100, { isBuildMode: false })
+    pumpToolCalls(breaker, 250, { isBuildMode: false })
     assert.equal(breaker.isBroken, true)
-    assert.equal(breaker.count, 100)
+    assert.equal(breaker.count, 250)
     breaker.reset()
     assert.equal(breaker.count, 0)
     assert.equal(breaker.isBroken, false)
   })
 
   test('does_not_break_at_limit_minus_one', () => {
-    // Plan mode: 99 calls should NOT break
+    // Plan mode: 249 calls should NOT break
     const { breaker: planBreaker } = createCircuitBreaker()
-    pumpToolCalls(planBreaker, 99, { isBuildMode: false })
+    pumpToolCalls(planBreaker, 249, { isBuildMode: false })
     assert.equal(planBreaker.isBroken, false)
-    assert.equal(planBreaker.count, 99)
+    assert.equal(planBreaker.count, 249)
 
-    // Build mode: 149 calls should NOT break
+    // Build mode: 399 calls should NOT break
     const { breaker: buildBreaker } = createCircuitBreaker()
-    pumpToolCalls(buildBreaker, 149, { isBuildMode: true })
+    pumpToolCalls(buildBreaker, 399, { isBuildMode: true })
     assert.equal(buildBreaker.isBroken, false)
-    assert.equal(buildBreaker.count, 149)
+    assert.equal(buildBreaker.count, 399)
+  })
+
+  // Regression: the 80% "early warning" used to return an `additionalContext`
+  // string addressed to the model. Its only consumer rendered it to the HUMAN as
+  // a blockquote — it never entered the model's context. It is now log-only, and
+  // no result may carry that field again without a real injection path.
+  test('no_result_ever_carries_additionalContext', () => {
+    for (const isBuildMode of [true, false]) {
+      for (const isLocalProvider of [true, false]) {
+        const { breaker } = createCircuitBreaker()
+        for (let i = 0; i < 420; i++) {
+          const result = breaker.onToolUse({
+            isBuildMode,
+            accumulatedTextLength: 0,
+            conversationId: 'c-budget',
+            isLocalProvider,
+            contextTier: isLocalProvider ? 'large' : undefined
+          })
+          assert.equal(
+            (result as unknown as Record<string, unknown>).additionalContext,
+            undefined,
+            `call ${i + 1} (build=${isBuildMode} local=${isLocalProvider}) must not carry additionalContext`
+          )
+          if (result.broken) break
+        }
+      }
+    }
   })
 })

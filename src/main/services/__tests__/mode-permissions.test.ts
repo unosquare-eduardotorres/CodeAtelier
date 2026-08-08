@@ -14,6 +14,7 @@ describe('buildModePermissions', () => {
       'Agent',
       'Task',
       'local_agent',
+      'local_bash',
       'ToolSearch',
       'ExitPlanMode',
       'AskUserQuestion'
@@ -35,6 +36,9 @@ describe('buildModePermissions', () => {
     // Write/Edit must be blocked in plan mode.
     assert.ok(p.disallowed.includes('Write'))
     assert.ok(p.disallowed.includes('Edit'))
+    // local_bash duplicates the process-manager MCP server and is invisible
+    // to our background-task registry — blocked in every mode.
+    assert.ok(p.disallowed.includes('local_bash'))
   })
 
   test('unknown mode falls through to plan defaults', () => {

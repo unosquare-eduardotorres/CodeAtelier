@@ -9,11 +9,6 @@ files:
   - out/**
   - resources/**
   - package.json
-extraResources:
-  - from: src/main/hooks
-    to: hooks
-    filter:
-      - '*.sh'
 afterPack: build/afterPack.js
 # ASAR disabled — app loads from loose files in Resources/app/.
 # Required because node_modules are copied via afterPack (not through

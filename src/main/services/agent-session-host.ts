@@ -156,8 +156,8 @@ export const SESSION_CONSTANTS = {
    * `--max-turns` for every spawned CLI process, regardless of mode.
    *
    * This is a runaway guard, not a mode policy. Mode-aware limiting already
-   * exists one layer up and is finer-grained (MAX_PLAN_TOOL_CALLS = 100 /
-   * MAX_BUILD_TOOL_CALLS = 150 in agent-circuit-breaker, plus
+   * exists one layer up and is finer-grained (MAX_PLAN_TOOL_CALLS = 250 /
+   * MAX_BUILD_TOOL_CALLS = 400 in agent-circuit-breaker, plus
    * MAX_TURN_CONTINUATIONS). A second, coarser mode-coupled ceiling in argv
    * bought nothing and made the process non-reusable across a plan⇄build
    * toggle — the flag is spawn-time only, so a mode-dependent value forces a

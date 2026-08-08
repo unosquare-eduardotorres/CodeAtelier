@@ -106,7 +106,7 @@ export const SAFE_BASH_PREFIXES = [
 
 /**
  * Dangerous patterns — commands containing these substrings should NEVER be
- * auto-approved, even in build mode. Mirrors the pre-tool-use-hook.sh list.
+ * auto-approved, even in build mode.
  */
 const DANGEROUS_PATTERNS = [
   'rm -rf /',

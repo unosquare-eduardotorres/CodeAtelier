@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync, createSpy } from './test-harness'
 import { AgentStreamProcessor } from '../agent-stream-processor'
+import { AgentCircuitBreaker } from '../agent-circuit-breaker'
 import { MCP_TOOLS } from '../../../shared/constants'
 
 interface MockHost {
@@ -503,6 +504,57 @@ describe('AgentStreamProcessor.processContentChunk — tool_use text measurement
       streamState: {} as never
     })
     assert.deepEqual(seen, [600])
+  })
+})
+
+// ── The 80% tool budget is a log breadcrumb, not a chat message ──
+//
+// Regression: the breaker used to return an `additionalContext` nudge at 80%,
+// and this processor rendered it into the transcript as `> ⚠️ You've used
+// 120/150 tool calls…`. It was addressed to the model but only ever reached the
+// human. The budget crossing must now be completely silent to the renderer.
+describe('AgentStreamProcessor.processContentChunk — 80% tool budget is silent', () => {
+  test('crossing the 80% budget emits no chunk', () => {
+    const host = makeHost()
+    ;(host as any).activeStreams = new Map([
+      ['c-budget', { accumulatedText: '', accumulatedTextBaseline: 0, abortController: null }]
+    ])
+    ;(host as any).toolActivityAccumulator = { record: (): void => {} }
+    const breaker = new AgentCircuitBreaker()
+    // Real 80%/limit logic, minus the event-log DB write per tool call.
+    breaker.logToolCall = (): void => {}
+    ;(host as any).circuitBreaker = breaker
+
+    const proc = new AgentStreamProcessor(host)
+    // Build limit is 400, so the breadcrumb fires on call 320 — well short of a break.
+    for (let i = 0; i < 320; i++) {
+      const r = proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+        conversationId: 'c-budget',
+        isBuildMode: true,
+        streamState: {} as never
+      })
+      assert.equal(r, 'next', `call ${i + 1} should not break`)
+    }
+
+    assert.equal(breaker.count, 320)
+    assert.equal(breaker.isBroken, false)
+
+    // Every tool_use chunk is forwarded verbatim; the regression is the SYNTHETIC
+    // text chunk the processor used to inject on top of one of them.
+    const emitted = host.emit.calls
+      .filter((c) => c[0] === 'chunk')
+      .map((c) => c[1] as { type?: string; content?: string })
+    assert.equal(emitted.length, 320, 'each tool_use is still forwarded once')
+    assert.equal(
+      emitted.filter((c) => c.type === 'text').length,
+      0,
+      'the 80% budget crossing must not inject a text chunk into the transcript'
+    )
+    assert.equal(
+      emitted.filter((c) => c.content?.includes("You've used")).length,
+      0,
+      'the tool-budget nudge must not surface in the transcript'
+    )
   })
 })
 

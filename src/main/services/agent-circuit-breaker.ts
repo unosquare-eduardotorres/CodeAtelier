@@ -15,8 +15,8 @@ import { eventLoggerService } from './event-logger.service'
  * (AgentExecutorFactory.checkPreFlightBudget → BudgetExceededError)
  * is the real spend ceiling.
  */
-const MAX_PLAN_TOOL_CALLS = 100
-const MAX_BUILD_TOOL_CALLS = 150
+const MAX_PLAN_TOOL_CALLS = 250
+const MAX_BUILD_TOOL_CALLS = 400
 
 /**
  * S1: Tier-aware limits for local LLMs.
@@ -26,12 +26,12 @@ const MAX_BUILD_TOOL_CALLS = 150
 const LOCAL_PLAN_LIMITS: Record<ContextWindowTier, number> = {
   small: 50, // was 30
   medium: 75, // was 38
-  large: 100 // was 50, now matches Claude MAX_PLAN_TOOL_CALLS
+  large: 100 // was 50 — local caps track context-window degradation, not Claude policy
 }
 const LOCAL_BUILD_LIMITS: Record<ContextWindowTier, number> = {
   small: 60, // was 30
   medium: 100, // was 50
-  large: 150 // was 80, now matches Claude MAX_BUILD_TOOL_CALLS
+  large: 150 // was 80 — local caps track context-window degradation, not Claude policy
 }
 
 /**
@@ -43,8 +43,6 @@ export interface CircuitBreakerResult {
   broken: boolean
   /** Whether the stream should terminate after current tool completes (soft stop) */
   shouldTerminate: boolean
-  /** S1: Optional additional context to inject into the conversation (e.g. early warnings) */
-  additionalContext?: string
   /**
    * When true, the breaker fired as a continuable condition.
    * The recovery manager should treat this as a max_turns event
@@ -61,7 +59,7 @@ export interface CircuitBreakerResult {
  * Responsibilities:
  * - Track tool call count per interaction
  * - Detect gratuitous tool use (first tool after 500+ chars of text)
- * - S1: Tier-aware limits for local LLMs with 60% early warning
+ * - S1: Tier-aware limits for local LLMs
  * - Soft warning at 5/8 tool calls in build mode
  * - Hard circuit break at MAX_PLAN/BUILD_TOOL_CALLS
  * - Generate error messages for circuit break
@@ -70,15 +68,14 @@ export class AgentCircuitBreaker {
   private readonly log = chatAgentLogger
   private _toolCallCount = 0
   private _circuitBroken = false
-  private _earlyWarningEmitted = false
+  private _budgetLogged = false
 
   /**
    * Evaluate a tool use event against the circuit breaker policy.
    * Returns whether the circuit was broken and any error chunk to emit.
    *
    * S1: When `isLocalProvider` and `contextTier` are provided, uses tier-aware
-   * limits instead of the flat MAX_PLAN/BUILD_TOOL_CALLS. Emits a 60% early
-   * warning nudge to steer the model toward writing its plan/summary.
+   * limits instead of the flat MAX_PLAN/BUILD_TOOL_CALLS.
    */
   onToolUse(opts: {
     isBuildMode: boolean
@@ -137,35 +134,16 @@ export class AgentCircuitBreaker {
       opts.contextTier
     )
 
-    // S1: 60% early warning for local LLMs — nudge the model to start writing
-    // C4: 80% early warning for Claude build mode — prevent hard circuit break
-    if (!this._earlyWarningEmitted) {
-      const isLocal = !!opts.isLocalProvider
-      const earlyWarningPct = isLocal ? 0.6 : 0.8
-      const shouldNudge = isLocal || (!isLocal && opts.isBuildMode)
-
-      if (shouldNudge) {
-        const earlyWarningThreshold = Math.floor(toolCallLimit * earlyWarningPct)
-        if (this._toolCallCount >= earlyWarningThreshold) {
-          this._earlyWarningEmitted = true
-          this.log.info(
-            `[PIPELINE:early-warning] conversationId=${opts.conversationId} ` +
-              `provider=${isLocal ? 'local' : 'claude'} ` +
-              `count=${this._toolCallCount}/${toolCallLimit} (${Math.round(earlyWarningPct * 100)}% threshold=${earlyWarningThreshold})`
-          )
-          return {
-            broken: false,
-            shouldTerminate: false,
-            additionalContext: isLocal
-              ? `You've used ${this._toolCallCount}/${toolCallLimit} tool calls. ` +
-                `Start writing your plan/summary now. ` +
-                `Use remaining calls only if absolutely essential.`
-              : `You've used ${this._toolCallCount}/${toolCallLimit} tool calls. ` +
-                `Start wrapping up your current task. ` +
-                `Complete what you're doing and summarize any remaining work.`
-          }
-        }
-      }
+    // Budget breadcrumb at 80% of the limit. This used to emit an
+    // `additionalContext` nudge addressed to the model — but that string was only
+    // ever rendered to the human as a blockquote and never entered the model's
+    // context. Log-only keeps the diagnostic without the fake nudge.
+    if (!this._budgetLogged && this._toolCallCount >= Math.floor(toolCallLimit * 0.8)) {
+      this._budgetLogged = true
+      this.log.info(
+        `[PIPELINE:tool-budget-80pct] conversationId=${opts.conversationId} ` +
+          `count=${this._toolCallCount}/${toolCallLimit} — continuable break at limit`
+      )
     }
 
     if (this._toolCallCount >= toolCallLimit) {
@@ -232,6 +210,6 @@ export class AgentCircuitBreaker {
   reset(): void {
     this._toolCallCount = 0
     this._circuitBroken = false
-    this._earlyWarningEmitted = false
+    this._budgetLogged = false
   }
 }

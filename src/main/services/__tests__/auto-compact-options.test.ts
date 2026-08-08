@@ -5,8 +5,9 @@
  * sessions, on BOTH the new-spawn path and the continueSession fast path:
  *   - autoCompactEnabled: true
  *   - contextWindowSize: full window for 1M models, 80% (160000) for 200K models
- *   - betas includes the 1M beta only for 1M models that are ALSO entitled to it
- *     (the beta header is API-key-only; see canUseContext1MBeta)
+ *   - betas includes the 1M beta only for LEGACY 1M models (see
+ *     requiresContext1MBeta) that are ALSO entitled to it (the beta header is
+ *     API-key-only; see canUseContext1MBeta). Native-1M models send no betas.
  *   - envOverrides wire CLAUDE_CODE_AUTO_COMPACT_WINDOW (+ PCT override for 200K)
  *
  * modelConfigService.getModel is stubbed synchronously WITHIN each test body
@@ -130,12 +131,12 @@ function buildWith(
 }
 
 describe('buildCLIExecuteOptions — new-spawn path', () => {
-  test('1M model: auto-compact, full window, 1M beta, env window=1000000, pct override=75', () => {
+  test('native-1M model: auto-compact, full window, NO beta, env window=1000000, pct override=75', () => {
     const opts = buildWith('claude-opus-4-8', makeHost({ alive: false }), baseParams())
     assert.equal(opts.autoCompactEnabled, true)
     assert.equal(opts.continueSession, false)
     assert.equal(opts.contextWindowSize, 1_000_000)
-    assert.ok(opts.betas?.includes(CONTEXT_1M_BETA), '1M beta should be present')
+    assert.equal(opts.betas, undefined, 'native-1M models must not request the legacy beta')
     assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
     assert.equal(opts.envOverrides?.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
@@ -154,8 +155,10 @@ describe('buildCLIExecuteOptions — 1M beta entitlement', () => {
   // Regression: supportsContext1M is a MODEL capability, not a login entitlement.
   // On a subscription login the CLI drops --betas, so a 1M-sized auto-compact
   // window can never fire against the real 200K ceiling and the turn overflows
-  // with no output at all.
-  test('sonnet without an API key: no betas, window sized to 200K', () => {
+  // with no output at all. This applies ONLY to legacy Sonnet 4.x ids — the
+  // mirror-image bug (gating native-1M models and silently halving their window)
+  // is covered by the native-1M cases below.
+  test('legacy sonnet without an API key: no betas, window sized to 200K', () => {
     const opts = buildWith(
       'claude-sonnet-4-6',
       makeHost({ alive: false }),
@@ -167,7 +170,7 @@ describe('buildCLIExecuteOptions — 1M beta entitlement', () => {
     assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000')
   })
 
-  test('sonnet with entitlement: betas present, window sized to 1M', () => {
+  test('legacy sonnet with entitlement: betas present, window sized to 1M', () => {
     const opts = buildWith(
       'claude-sonnet-4-6',
       makeHost({ alive: false }),
@@ -179,7 +182,19 @@ describe('buildCLIExecuteOptions — 1M beta entitlement', () => {
     assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
   })
 
-  test('unentitled sonnet on the continueSession fast path also gets the 200K window', () => {
+  // The Change-B regression: a Max/OAuth login (no API key) must still get the
+  // full 1M window on native-1M models. Gating these behind the beta is what
+  // silently downgraded Opus 5 / Sonnet 5 sessions to 200K.
+  for (const model of ['claude-opus-5', 'claude-sonnet-5', 'claude-fable-5']) {
+    test(`${model} without an API key: no betas, still sized to 1M`, () => {
+      const opts = buildWith(model, makeHost({ alive: false }), baseParams(), 'not-entitled')
+      assert.equal(opts.betas, undefined, 'native-1M models must not request the legacy beta')
+      assert.equal(opts.contextWindowSize, 1_000_000)
+      assert.equal(opts.envOverrides?.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
+    })
+  }
+
+  test('unentitled legacy sonnet on the continueSession fast path also gets the 200K window', () => {
     const opts = buildWith(
       'claude-sonnet-4-6',
       makeHost({ alive: true, model: 'claude-sonnet-4-6' }),
