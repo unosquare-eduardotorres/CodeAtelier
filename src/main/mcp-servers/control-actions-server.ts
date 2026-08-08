@@ -28,6 +28,7 @@ import { createConnection, type Socket } from 'node:net'
 import { createAskUserRegistry } from './ask-user-registry'
 import { parseIpcAddress } from '../../shared/ipc-address'
 import { shouldAutoApprove } from './tool-auto-approve'
+import { buildPermissionResult } from './permission-result'
 
 // ── Environment ──
 const IPC_SOCKET_PATH = process.env.IPC_SOCKET_PATH
@@ -73,17 +74,15 @@ function connectIpc(): void {
       // The bridge is gone — no response can ever arrive. Resolve any blocked
       // ask_user promises so the turn unwinds cleanly instead of hanging forever.
       askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
-      permissionRegistry.resolveAll(
-        JSON.stringify({ behavior: 'deny', message: SOCKET_CLOSED_MESSAGE })
-      )
+      permissionRegistry.resolveAll(buildPermissionResult(false, undefined, SOCKET_CLOSED_MESSAGE))
+      pendingPermissionInputs.clear()
     })
     ipcSocket.on('close', () => {
       ipcSocket = null
       // Same teardown on a clean close (e.g. Stop killed the CLI + this child).
       askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
-      permissionRegistry.resolveAll(
-        JSON.stringify({ behavior: 'deny', message: SOCKET_CLOSED_MESSAGE })
-      )
+      permissionRegistry.resolveAll(buildPermissionResult(false, undefined, SOCKET_CLOSED_MESSAGE))
+      pendingPermissionInputs.clear()
     })
   } catch (err) {
     console.error(`[control-actions-server] Failed to connect to IPC: ${(err as Error).message}`)
@@ -112,12 +111,25 @@ const askUserRegistry = createAskUserRegistry()
 
 /**
  * Registry of in-flight permission_prompt requests awaiting user approval/denial.
- * Same pattern as askUserRegistry — timeout-deny after 120s, socket-close resolves all.
+ * Same pattern as askUserRegistry — no auto-deny timeout, socket-close resolves
+ * all.
+ *
+ * The previous 15-minute auto-deny was dead code: the executor's own 10-minute
+ * read timeout always won the race and killed the turn first. Once that clock
+ * was made suspendable the auto-deny became reachable, and a wall clock that
+ * silently denies on the user's behalf is the wrong default — stopping the turn
+ * is the escape hatch.
  */
 const permissionRegistry = createAskUserRegistry()
 
-/** Timeout for permission prompts — denies automatically if user doesn't respond. */
-const PERMISSION_TIMEOUT_MS = 900_000 // 15 minutes — matches user multitasking workflow
+/**
+ * requestId → the tool input captured when the prompt was raised.
+ *
+ * The authoritative copy: the CLI requires `updatedInput` on an allow, and the
+ * main process does not reliably echo the input back on the response. Cleared
+ * on resolve, timeout and socket teardown so it cannot leak across a session.
+ */
+const pendingPermissionInputs = new Map<string, Record<string, unknown>>()
 
 const SOCKET_CLOSED_MESSAGE =
   'Connection to the app closed before you answered — ask again or proceed.'
@@ -154,13 +166,14 @@ function setupResponseListener(): void {
         }
         if (event.type === 'permissionResponse' && event.requestId) {
           const approved = (event.payload as Record<string, unknown>)?.approved === true
-          const result = approved
-            ? JSON.stringify({
-                behavior: 'allow',
-                updatedInput: (event.payload as Record<string, unknown>)?.input
-              })
-            : JSON.stringify({ behavior: 'deny', message: 'User denied the permission request.' })
-          permissionRegistry.resolve(event.requestId, result)
+          const originalInput = pendingPermissionInputs.get(event.requestId)
+          pendingPermissionInputs.delete(event.requestId)
+          const echoed = (event.payload as Record<string, unknown>)?.input as
+            Record<string, unknown> | undefined
+          permissionRegistry.resolve(
+            event.requestId,
+            buildPermissionResult(approved, echoed ?? originalInput)
+          )
         }
       } catch {
         console.error(`[control-actions-server] Malformed response: ${line.slice(0, 120)}`)
@@ -381,8 +394,10 @@ server.tool(
 
 // permission_prompt tool — implements the Claude CLI --permission-prompt-tool contract.
 // When Claude needs permission for a tool call, it invokes this tool instead of
-// auto-denying. We surface the request in the Electron UI toast and block until
-// the user approves/denies (or a 15min timeout fires).
+// auto-denying. We surface the request in the Electron UI and block until the
+// user approves or denies. There is no auto-deny timeout — see askUserAndWait
+// ForResponse: the turn waits as long as the user needs, and a socket teardown
+// (Stop, app quit, CLI death) unwinds it.
 server.tool(
   'permission_prompt',
   'Request user permission before executing a tool. ' +
@@ -418,9 +433,12 @@ server.tool(
       })
       .join(', ')
 
-    // Send permission request to Electron UI via IPC bridge
-    const responsePromise = new Promise<string>((resolve) => {
+    // Send permission request to Electron UI via IPC bridge and wait. Resolves
+    // ONLY on a real permissionResponse or on socket teardown (resolveAll) —
+    // exactly like ask_user. A wall clock here would decide for the user.
+    const resultJson = await new Promise<string>((resolve) => {
       permissionRegistry.register(requestId, resolve)
+      pendingPermissionInputs.set(requestId, input)
 
       emitEvent(
         'permission',
@@ -434,26 +452,6 @@ server.tool(
         requestId
       )
     })
-
-    // Race against timeout — auto-deny if user doesn't respond in time
-    const timeoutPromise = new Promise<string>((resolve) => {
-      setTimeout(() => {
-        // If the promise is still pending, resolve it via the registry
-        const resolved = permissionRegistry.resolve(
-          requestId,
-          JSON.stringify({ behavior: 'deny', message: 'No user response — denied by timeout.' })
-        )
-        if (!resolved) {
-          // Already resolved by user response — this is a no-op
-          return
-        }
-        resolve(
-          JSON.stringify({ behavior: 'deny', message: 'No user response — denied by timeout.' })
-        )
-      }, PERMISSION_TIMEOUT_MS)
-    })
-
-    const resultJson = await Promise.race([responsePromise, timeoutPromise])
 
     return {
       content: [{ type: 'text' as const, text: resultJson }]

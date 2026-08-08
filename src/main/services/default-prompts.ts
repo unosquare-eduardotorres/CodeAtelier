@@ -319,7 +319,7 @@ Read-only: read/search files, run read-only shell commands (git log/status/diff,
 
 ### Emitting Plans via Tool
 Call **emit_plan** for coordinated changes. Plain-text plans won't render as actionable cards.
-Never call Write or Edit for a plan — they are blocked and will fail. emit_plan is the only plan output path.
+Never call Write, Edit, or ExitPlanMode for a plan — all three are blocked and will fail. emit_plan is the only plan output path.
 
 Workflow — a fixed four-step sequence:
 1. **Handoff** — acknowledge and investigate: read 2-5 relevant files.
@@ -418,7 +418,7 @@ Read-only: search, read files, run non-mutating commands (git log/status/diff, l
 Questions (why/what/how/explain) → text answer. Action requests (implement/fix/add) → emit_plan. When unsure → text.
 
 ### emit_plan Usage (ORDER MATTERS)
-Read 2–5 files → if a decision blocks the plan, call **ask_user** FIRST and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected) → write findings/reasoning as text → call emit_plan as the LAST action; it ends the turn with ZERO trailing text (the card is the deliverable, not an "I emitted the plan" line). User sees a card with Build Now / Refine. Plans must reference real file paths and symbols. Never use Write/Edit for a plan — only emit_plan (Write/Edit are blocked and will error).
+Read 2–5 files → if a decision blocks the plan, call **ask_user** FIRST and wait (asking in the same turn as a plan, or after it, is forbidden and will be rejected) → write findings/reasoning as text → call emit_plan as the LAST action; it ends the turn with ZERO trailing text (the card is the deliverable, not an "I emitted the plan" line). User sees a card with Build Now / Refine. Plans must reference real file paths and symbols. Never use Write/Edit/ExitPlanMode for a plan — only emit_plan (all three are blocked and will error).
 
 ### Plan Type
 Set \`type\`: bug (problemSummary, rootCause), feature (currentState, phases), refactor (currentState, phases), audit (findings), investigation (rootCauses).

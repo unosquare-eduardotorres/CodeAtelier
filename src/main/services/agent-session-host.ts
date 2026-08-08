@@ -53,11 +53,13 @@ export interface StreamLoopState {
   lastTerminalReason?: string
   sessionRecoveryNeeded: boolean
   /**
-   * Set when, in Plan mode, the model attempted a blocked Write/Edit and the SDK
-   * returned "No such tool available". Triggers a deterministic emit_plan recovery
-   * in finalizeStream so the user still gets a plan card.
+   * Set when, in Plan mode, the model attempted a blocked tool (Write/Edit/MultiEdit/
+   * ExitPlanMode) and the SDK returned "No such tool available". Triggers a deterministic
+   * emit_plan recovery in finalizeStream so the user still gets a plan card.
    */
   planModeToolBlock?: boolean
+  /** Which tool was blocked — so the recovery prompt can name it accurately. */
+  planModeBlockedTool?: string
   /** Set when api_retry chunks indicate server overload (529/503/overloaded) */
   overloadDetected?: boolean
 }
@@ -150,6 +152,18 @@ export interface AgentSessionHost {
 // ── Static constants (replicated from AgentSessionService) ──
 export const SESSION_CONSTANTS = {
   MAX_TURN_CONTINUATIONS: 5,
+  /**
+   * `--max-turns` for every spawned CLI process, regardless of mode.
+   *
+   * This is a runaway guard, not a mode policy. Mode-aware limiting already
+   * exists one layer up and is finer-grained (MAX_PLAN_TOOL_CALLS = 100 /
+   * MAX_BUILD_TOOL_CALLS = 150 in agent-circuit-breaker, plus
+   * MAX_TURN_CONTINUATIONS). A second, coarser mode-coupled ceiling in argv
+   * bought nothing and made the process non-reusable across a plan⇄build
+   * toggle — the flag is spawn-time only, so a mode-dependent value forces a
+   * respawn (and a full MCP reconnection) on the first message after a toggle.
+   */
+  CLI_MAX_TURNS: 200,
   MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000,
   EXTERNAL_MCP_INTERACTION_TIMEOUT_MS: 30 * 60_000
 } as const
@@ -157,6 +171,14 @@ export const SESSION_CONSTANTS = {
 /** Per-conversation streaming state — isolates accumulatedText + abortController per conversation. */
 export interface ActiveStreamContext {
   accumulatedText: string
+  /**
+   * Length of `accumulatedText` at the start of the current TURN.
+   * `accumulatedText` is per-message (cleared only in resetForNewMessage), but the
+   * circuit breaker's gratuitous-tool heuristic is per-turn (it keys off
+   * `_toolCallCount === 1`). Subtracting this baseline gives the text written
+   * *this* turn. Reset to the current length by continueTurnLimit.
+   */
+  accumulatedTextBaseline?: number
   abortController: AbortController | null
 }
 

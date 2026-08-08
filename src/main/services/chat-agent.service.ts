@@ -40,6 +40,7 @@ const FORWARDED_EVENTS = [
   'plan',
   'askQuestion',
   'permissionRequest',
+  'permissionResolved',
   'promptSuggestion',
   'compactNeeded',
   'elicitation',
@@ -469,8 +470,25 @@ export class ChatAgentService extends EventEmitter {
   /**
    * Route respondToPermission to a specific workspace (for cross-workspace permission flow).
    */
-  respondToPermissionForWorkspace(workspaceId: string, requestId: string, approved: boolean): void {
-    this.sessions.get(workspaceId)?.session.respondToPermission(requestId, approved)
+  respondToPermissionForWorkspace(
+    workspaceId: string,
+    requestId: string,
+    approved: boolean,
+    input?: unknown
+  ): void {
+    this.sessions.get(workspaceId)?.session.respondToPermission(requestId, approved, input)
+  }
+
+  /**
+   * Whether any session is waiting on a human permission decision.
+   * Used by the stream watchdogs to distinguish "waiting on a person" from
+   * "zombie stream" — the two are indistinguishable from chunk activity alone.
+   */
+  hasPendingHumanDecision(): boolean {
+    for (const entry of this.sessions.values()) {
+      if (entry.session.hasHumanDecisionPending()) return true
+    }
+    return false
   }
 
   getWorkspacePath(): string | null {

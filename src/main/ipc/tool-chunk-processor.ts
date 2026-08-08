@@ -37,11 +37,14 @@ export interface ToolChunkOptions {
 }
 
 // ── Expected plan-mode permission blocks ──
-// In Plan mode, Write/Edit are intentionally not on the allow-list, so the SDK
-// returns "No such tool available: Write/Edit". This is expected behavior, not a
-// bug — we must not auto-report it to the bug tracker (it pollutes the tracker
-// with false positives every time a model reaches for Write to author a plan).
-const PLAN_BLOCKED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
+// Plan mode ships an explicit allow-list, so anything outside it comes back as
+// "No such tool available". Two families land here, neither of them a bug:
+//   - Write/Edit/MultiEdit — the model reaching for a file to author a plan.
+//   - ExitPlanMode — the CLI's OWN native plan-mode prompt instructs the model
+//     to finish by calling it, while mode-permissions.ts disallows it and
+//     substitutes emit_plan. That collision is structural, not a model mistake.
+// Used for BOTH bug-tracker suppression and as the emit_plan recovery trigger.
+const PLAN_BLOCKED_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'ExitPlanMode'])
 
 // ── Conditionally-loaded MCP tools ──
 // These tools belong to MCP servers that may not be running (e.g., memory server
@@ -110,7 +113,7 @@ export function isExpectedToolUnavailable(
 
 /**
  * True when a tool_use_error is the expected "blocked in Plan mode" outcome of a
- * Write/Edit attempt — i.e. a permission gate, not a real failure to report.
+ * Write/Edit/ExitPlanMode attempt — i.e. a permission gate, not a real failure to report.
  */
 export function isExpectedPlanModeBlock(
   toolName: string | undefined,

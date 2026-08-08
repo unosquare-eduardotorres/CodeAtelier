@@ -34,7 +34,7 @@ function PhaseStep({
         isCurrent
           ? 'bg-teal/15 text-teal border border-teal/30'
           : complete
-            ? 'bg-green-500/10 text-green-400'
+            ? 'bg-success-muted text-success'
             : 'text-text-muted'
       }`}
       title={info?.description}
@@ -48,7 +48,7 @@ function PhaseStep({
       )}
       <span>{info?.label ?? phase}</span>
       {stats && stats.total > 0 && (
-        <span className="font-mono text-[10px] opacity-70">
+        <span className="font-mono text-[11px] opacity-70">
           {stats.done}/{stats.total}
         </span>
       )}
@@ -59,7 +59,7 @@ function PhaseStep({
 function Metric({ label, value }: { label: string; value: string }): React.JSX.Element {
   return (
     <div className="flex flex-col">
-      <span className="text-[10px] uppercase tracking-wider text-text-muted">{label}</span>
+      <span className="text-[11px] uppercase tracking-wider text-text-muted">{label}</span>
       <span className="text-sm font-medium text-text-primary tabular-nums">{value}</span>
     </div>
   )
@@ -80,11 +80,11 @@ export default function RunProgressPanel({
   const isDone = progress.jobStatus === 'done'
 
   const barColor = isError
-    ? 'bg-red-500'
+    ? 'bg-danger'
     : isDone
-      ? 'bg-green-500'
+      ? 'bg-success'
       : isPaused
-        ? 'bg-purple-400'
+        ? 'bg-warning'
         : 'bg-teal'
 
   const memoriesPerItem =
@@ -106,8 +106,8 @@ export default function RunProgressPanel({
       <div className="space-y-1">
         <div className="flex items-center justify-between text-xs gap-3">
           <span className="text-text-secondary truncate flex items-center gap-1.5 min-w-0">
-            {isPaused && <PauseCircle className="w-3.5 h-3.5 text-purple-400 shrink-0" />}
-            {isError && <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
+            {isPaused && <PauseCircle className="w-3.5 h-3.5 text-warning shrink-0" />}
+            {isError && <AlertTriangle className="w-3.5 h-3.5 text-danger shrink-0" />}
             <span className="truncate">{label ?? progress.message}</span>
           </span>
           <span className="text-text-muted font-mono shrink-0 tabular-nums">
@@ -143,7 +143,7 @@ export default function RunProgressPanel({
         <div className="flex gap-3 text-[11px] text-text-muted">
           {progress.itemsSkipped > 0 && <span>{progress.itemsSkipped} unchanged/skipped</span>}
           {progress.itemsFailed > 0 && (
-            <span className="text-red-400">{progress.itemsFailed} failed</span>
+            <span className="text-danger">{progress.itemsFailed} failed</span>
           )}
         </div>
       )}

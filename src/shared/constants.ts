@@ -68,6 +68,8 @@ export const IPC_CHANNELS = {
   PERMISSION_REQUEST: 'permission:request',
   /** Renderer → Main: user responded to a permission request */
   PERMISSION_RESPONSE: 'permission:response',
+  /** Main → Renderer: a permission request reached a terminal state (approved/denied/timedout/cancelled) */
+  PERMISSION_RESOLVED: 'permission:resolved',
   /** Main → Renderer: important completion or failure from a background workspace */
   COMPLETION_NOTIFICATION: 'workspace:completion',
   /** Main → Renderer: navigate to workspace + page after OS notification click */

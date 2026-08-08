@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Check, X, RefreshCw, Sparkles } from 'lucide-react'
 
 import { SettingsCard } from '@renderer/components/common'
+import { Button } from '@renderer/components/common/ui'
 import type { MemoryFact } from '../../../../../shared/types'
 
 interface Proposal {
@@ -99,23 +100,25 @@ export default function ReflectionReview({
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <button
+          <Button
+            variant="ghost"
+            iconOnly
             onClick={() => void load()}
             disabled={loading}
             title="Refresh"
-            className="p-1.5 text-text-muted hover:text-text-primary disabled:opacity-50"
+            aria-label="Refresh proposals"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button
+            variant="primary"
             onClick={() => void handleRun()}
             disabled={!enabled || running}
             title={enabled ? 'Run reflection now' : 'Enable reflection first'}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20 disabled:opacity-50"
           >
-            <Sparkles className={`w-4 h-4 ${running ? 'animate-pulse' : ''}`} />
+            <Sparkles className={`w-3.5 h-3.5 ${running ? 'animate-pulse' : ''}`} />
             {running ? 'Running…' : 'Run now'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -147,20 +150,24 @@ export default function ReflectionReview({
                 </div>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                <button
+                <Button
+                  variant="success"
+                  iconOnly
                   onClick={() => void handleApprove(parent.id)}
                   title="Approve — activates this fact and demotes its sources one tier"
-                  className="p-1.5 text-success hover:bg-success/10 rounded"
+                  aria-label="Approve proposal"
                 >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
+                  <Check className="w-3.5 h-3.5" />
+                </Button>
+                <Button
+                  variant="danger"
+                  iconOnly
                   onClick={() => void handleReject(parent.id)}
                   title="Reject — leaves it archived and removes its links"
-                  className="p-1.5 text-danger hover:bg-danger/10 rounded"
+                  aria-label="Reject proposal"
                 >
-                  <X className="w-4 h-4" />
-                </button>
+                  <X className="w-3.5 h-3.5" />
+                </Button>
               </div>
             </div>
 

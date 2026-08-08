@@ -1896,6 +1896,7 @@ interface Api {
       toolName?: string
       toolInput?: Record<string, unknown>
       conversationTitle?: string
+      conversationId?: string
       mode?: string
     }) => void
   ) => () => void
@@ -1904,7 +1905,18 @@ interface Api {
     workspaceId: string
     type: string
     response: unknown
+    /** Original request payload — carries requestId back to the control-actions server. */
+    payload?: unknown
   }) => Promise<void>
+  onPermissionResolved: (
+    cb: (data: {
+      permissionId: string
+      requestId: string
+      workspaceId: string
+      conversationId?: string
+      outcome: 'approved' | 'denied' | 'timedout' | 'cancelled'
+    }) => void
+  ) => () => void
   onCompletionNotification: (
     cb: (data: {
       workspaceId: string

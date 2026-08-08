@@ -2695,6 +2695,7 @@ const api = {
       toolName?: string
       toolInput?: Record<string, unknown>
       conversationTitle?: string
+      conversationId?: string
       mode?: string
     }) => void
   ): (() => void) => {
@@ -2712,6 +2713,7 @@ const api = {
         toolName?: string
         toolInput?: Record<string, unknown>
         conversationTitle?: string
+        conversationId?: string
         mode?: string
       }
     ): void => cb(data)
@@ -2725,7 +2727,36 @@ const api = {
     workspaceId: string
     type: string
     response: unknown
+    /** Original request payload — carries requestId back to the control-actions server. */
+    payload?: unknown
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RESPONSE, args),
+
+  /**
+   * Listen for permission requests reaching a terminal state — including ones
+   * this window never answered (turn torn down, CLI died, auto-deny).
+   */
+  onPermissionResolved: (
+    cb: (data: {
+      permissionId: string
+      requestId: string
+      workspaceId: string
+      conversationId?: string
+      outcome: 'approved' | 'denied' | 'timedout' | 'cancelled'
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        permissionId: string
+        requestId: string
+        workspaceId: string
+        conversationId?: string
+        outcome: 'approved' | 'denied' | 'timedout' | 'cancelled'
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.PERMISSION_RESOLVED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PERMISSION_RESOLVED, handler)
+  },
 
   /** Probe macOS notification support (detects unsigned build issues). */
   probeNotificationSupport: (): Promise<'granted' | 'denied' | 'unsupported'> =>

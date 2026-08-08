@@ -767,6 +767,97 @@ if (loaded) {
       })
     })
 
+    // ── AgentRecoveryManager — recovery nudge pending-tool gate ─────────
+
+    describe('AgentRecoveryManager — recovery nudge pending-tool gate', () => {
+      const { modelConfigService } = require('../model-config.service')
+
+      function createNudgeHost(pendingTools: string[]): {
+        host: any
+        attempts: number[]
+        warnings: string[]
+      } {
+        const attempts: number[] = []
+        const warnings: string[] = []
+        const host = new EventEmitter()
+        Object.assign(host, {
+          log: {
+            info: () => {},
+            warn: (msg: string) => warnings.push(String(msg)),
+            error: () => {}
+          },
+          adapter: { role: 'specialist', supportsEmitPlanRecovery: false },
+          llmProvider: 'claude',
+          currentMode: 'build',
+          controlToolState: { plan: false, askUser: false },
+          circuitBreaker: { count: 2 },
+          workspacePath: '/ws',
+          workspaceId: 'ws-1',
+          sessionMap: new Map<string, string>([['conv-1', 'sess-1']]),
+          activeStreams: new Map(),
+          accumulatedText: '',
+          tokenUsage: 0,
+          getCliMcpConfigPath: () => undefined,
+          getOrCreateCliExecutor: () => ({ getPendingToolNames: () => pendingTools }),
+          recoveryNudge: {
+            attemptRecovery: async () => {
+              attempts.push(1)
+              return { recovered: true, text: 'summary' }
+            },
+            attemptPlanToolRecovery: async () => ({ attempted: false })
+          }
+        })
+        return { host, attempts, warnings }
+      }
+
+      const streamState = {
+        hasTextAfterLastTool: false,
+        planModeToolBlock: false,
+        lastTerminalReason: undefined
+      }
+
+      async function runRecovery(host: any): Promise<void> {
+        const orig = modelConfigService.getModel
+        modelConfigService.getModel = () => 'claude-sonnet-4-6'
+        try {
+          const rm = new AgentRecoveryManager(host)
+          await (rm as any).attemptStreamRecovery({
+            streamState: { ...streamState },
+            conversationId: 'conv-1',
+            systemPrompt: 'sys',
+            isBuildMode: true,
+            timedOut: false
+          })
+        } finally {
+          modelConfigService.getModel = orig
+        }
+      }
+
+      // Regression: the nudge calls execute() without continueSession, which
+      // SIGTERMs the running process. Firing it while a tool is in flight kills
+      // the very work it is supposed to be recovering from.
+      test('pending_tool_skips_the_nudge_and_logs_why', async () => {
+        const { host, attempts, warnings } = createNudgeHost(['mcp__mulldev__test'])
+        await runRecovery(host)
+        assert.equal(attempts.length, 0, 'attemptRecovery must not be called with tools in flight')
+        assert.ok(
+          warnings.some((w) => w.includes('recovery-nudge-skipped-pending')),
+          'skip reason should be logged'
+        )
+        assert.ok(
+          warnings.some((w) => w.includes('mcp__mulldev__test')),
+          'the pending tool should be named'
+        )
+      })
+
+      test('idle_executor_still_fires_the_nudge', async () => {
+        const { host, attempts, warnings } = createNudgeHost([])
+        await runRecovery(host)
+        assert.equal(attempts.length, 1, 'nudge must still fire when nothing is pending')
+        assert.ok(!warnings.some((w) => w.includes('recovery-nudge-skipped-pending')))
+      })
+    })
+
     // ── AgentRecoveryManager — handleStreamError matrix ─────────────────
 
     describe('AgentRecoveryManager — handleStreamError dispatch', () => {
@@ -1202,6 +1293,109 @@ if (loaded) {
         })
         assert.equal(result, 'continue')
       })
+
+      // ── Defect C: auto-continuation must see progress ──────────────────
+      //
+      // Regression: the gate was `lastTerminalReason === 'max_turns'` and
+      // nothing else, so five consecutive continuations that resolved no tool
+      // and wrote no text all fired anyway — each one guaranteed to repeat the
+      // last. Progress is measured with signals continueTurnLimit already
+      // maintains: the circuit-breaker tool count and accumulatedTextBaseline.
+
+      /** Host with a per-conversation stream context, so text delta is measurable. */
+      function createHostForStall(opts: {
+        continuations: number
+        toolCalls: number
+        text: string
+        baseline: number
+      }): any {
+        const warns: string[] = []
+        return createHostForOverload({
+          maxTurnsContinuations: opts.continuations,
+          circuitBreaker: { count: opts.toolCalls, reset: () => {} },
+          activeStreams: new Map([
+            ['conv-1', { accumulatedText: opts.text, accumulatedTextBaseline: opts.baseline }]
+          ]),
+          log: {
+            info: () => {},
+            warn: (m: string) => warns.push(String(m)),
+            error: () => {}
+          },
+          _warns: warns
+        })
+      }
+
+      /** Run the gate with continueTurnLimit stubbed out, reporting whether it fired. */
+      async function runGate(host: any): Promise<{ result: string; continued: boolean }> {
+        const rm = new AgentRecoveryManager(host)
+        let continued = false
+        ;(rm as any).continueTurnLimit = async () => {
+          continued = true
+        }
+        const result = await (rm as any).handleOverloadOrMaxTurns({
+          streamState: { overloadDetected: false, lastTerminalReason: 'max_turns' },
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        return { result, continued }
+      }
+
+      test('first continuation fires even with no prior progress', async () => {
+        const host = createHostForStall({
+          continuations: 0,
+          toolCalls: 0,
+          text: '',
+          baseline: 0
+        })
+        const { result, continued } = await runGate(host)
+        assert.equal(continued, true, 'the first continuation is always allowed')
+        assert.equal(result, 'handled')
+      })
+
+      test('stalled continuation stops and still offers the Continue button', async () => {
+        const host = createHostForStall({
+          continuations: 2,
+          toolCalls: 0,
+          text: 'wrap-up text from before the break',
+          baseline: 'wrap-up text from before the break'.length
+        })
+        const { result, continued } = await runGate(host)
+        assert.equal(continued, false, 'zero tools + zero new text must not continue')
+        assert.equal(result, 'continue')
+        const chunk = host._chunks.find((c: any) => c.type === 'turn_limit')
+        assert.ok(chunk, 'the user still gets a turn_limit chunk')
+        assert.equal(chunk.turnLimit.continuable, true)
+        assert.ok(
+          host._warns.some((w: string) => w.includes('[PIPELINE:continuation-stalled]')),
+          'the stall must be named in the log'
+        )
+      })
+
+      test('a continuation that ran tools is not treated as stalled', async () => {
+        const host = createHostForStall({
+          continuations: 2,
+          toolCalls: 3,
+          text: 'same text',
+          baseline: 'same text'.length
+        })
+        const { continued } = await runGate(host)
+        assert.equal(continued, true)
+      })
+
+      test('a continuation that wrote text past the baseline is not treated as stalled', async () => {
+        const host = createHostForStall({
+          continuations: 2,
+          toolCalls: 0,
+          text: 'old text plus something new',
+          baseline: 'old text'.length
+        })
+        const { continued } = await runGate(host)
+        assert.equal(continued, true)
+      })
     })
 
     // ── AgentRecoveryManager — continueTurnLimit prompt building ─────────
@@ -1247,6 +1441,32 @@ if (loaded) {
           recoveryDepth: 0
         })
         assert.equal(host.maxTurnsContinuations, 1)
+      })
+
+      // Regression: the gratuitous-tool heuristic is per-TURN, so continueTurnLimit must
+      // rebase the text baseline alongside circuitBreaker.reset(). Otherwise the
+      // continuation's first tool call is measured against the pre-break turn's text
+      // and the stream is cut before the continuation does any work.
+      test('rebases_accumulated_text_baseline_to_current_length', async () => {
+        const streamCtx = {
+          accumulatedText: 'x'.repeat(1699),
+          accumulatedTextBaseline: 0,
+          abortController: null
+        }
+        const host = createHostForContinue({
+          activeStreams: new Map([['conv-1', streamCtx]])
+        })
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: true,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(streamCtx.accumulatedTextBaseline, 1699)
+        assert.equal(streamCtx.accumulatedText.length, 1699, 'text itself must be preserved')
       })
 
       test('resets_circuit_breaker', async () => {

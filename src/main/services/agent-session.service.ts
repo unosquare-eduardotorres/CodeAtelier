@@ -26,7 +26,8 @@ import type {
   GrillQuestion,
   ImageAttachment,
   LLMProvider,
-  ExecutorBackend
+  ExecutorBackend,
+  PermissionOutcome
 } from '../../shared/types'
 import type { AgentPromptInput } from './executor-types'
 import { EXTERNAL_MCP_INTEGRATIONS, resolveModelAction } from '../../shared/constants'
@@ -215,6 +216,13 @@ export class AgentSessionService extends AgentBaseService {
     let executor = this.cliExecutors.get(conversationId)
     if (!executor) {
       executor = new CLIExecutor()
+      // A permission the executor abandons (turn finalized, child died, Stop)
+      // can never be answered — tell the UI so its prompt does not freeze.
+      executor.onHumanDecisionsCleared = (requestIds, reason) => {
+        for (const requestId of requestIds) {
+          this.emitPermissionResolved(requestId, 'cancelled', conversationId, reason)
+        }
+      }
       this.cliExecutors.set(conversationId, executor)
     }
     return executor
@@ -490,13 +498,67 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   /**
+   * Suspend / resume the CLI read wall clock around a human permission decision.
+   *
+   * Broadcast to every executor in this session: the IPC bridge is per-session
+   * and a `permission` event carries no conversationId, so the owning executor
+   * cannot be identified. Broadcasting is safe — an executor that is not parked
+   * on a read is unaffected, and every read still races its exit signal, so a
+   * suspended clock can never park a turn whose CLI child has died.
+   */
+  /**
+   * Whether any executor in this session is waiting on a permission decision.
+   * Read by the stream watchdogs so a turn is not force-aborted under a user
+   * who is still looking at the prompt.
+   */
+  hasHumanDecisionPending(): boolean {
+    for (const executor of this.cliExecutors.values()) {
+      if (executor.hasHumanDecisionPending()) return true
+    }
+    return false
+  }
+
+  private markHumanDecision(phase: 'begin' | 'end', requestId: string): void {
+    for (const executor of this.cliExecutors.values()) {
+      if (phase === 'begin') executor.beginHumanDecision(requestId)
+      else executor.endHumanDecision(requestId)
+    }
+  }
+
+  /**
+   * Announce that a permission request reached a terminal state. Forwarded to
+   * the renderer so the modal, toast and inline card all clear deterministically
+   * instead of waiting on a click that can no longer arrive.
+   */
+  private emitPermissionResolved(
+    requestId: string,
+    outcome: PermissionOutcome,
+    conversationId?: string,
+    reason?: string
+  ): void {
+    this.log.info(
+      `[permission-resolved] requestId=${requestId} outcome=${outcome}` +
+        `${reason ? ` reason=${reason}` : ''}`
+    )
+    this.emit('permissionResolved', {
+      requestId,
+      outcome,
+      conversationId: conversationId ?? this.currentConversationId ?? undefined
+    })
+  }
+
+  /**
    * Send a user's response to a pending permission_prompt request.
    * Called by the IPC handler when the renderer approves/denies a tool permission.
    * Routes through the IPC bridge to the control-actions MCP server.
    */
-  respondToPermission(requestId: string, approved: boolean): void {
+  respondToPermission(requestId: string, approved: boolean, input?: unknown): void {
+    // The human is done deciding — resume the executors' read wall clock before
+    // the response goes out, so the resumed budget covers the tool's own run.
+    this.markHumanDecision('end', requestId)
+    this.emitPermissionResolved(requestId, approved ? 'approved' : 'denied')
     if (this.ipcBridge) {
-      this.ipcBridge.sendPermissionResponse(requestId, approved)
+      this.ipcBridge.sendPermissionResponse(requestId, approved, input)
     } else {
       this.log.warn(`[respondToPermission] No IPC bridge available for requestId=${requestId}`)
     }
@@ -1290,6 +1352,7 @@ export class AgentSessionService extends AgentBaseService {
     // Create per-conversation stream context
     this.activeStreams.set(conversationId, {
       accumulatedText: '',
+      accumulatedTextBaseline: 0,
       abortController: null
     })
     // SES-03: Only reset circuit breaker and tool accumulator when switching TO
@@ -1683,7 +1746,14 @@ export class AgentSessionService extends AgentBaseService {
         // Any chunk — text, tool_use, tool_result, api_retry — proves the executor
         // is alive, so the idle budget restarts from here.
         notifyStreamActivity()
-        if (this.circuitBreaker.isBroken) break
+        if (this.circuitBreaker.isBroken) {
+          this.log.warn(
+            `[PIPELINE:circuit-break-stream-cut] conversationId=${conversationId} ` +
+              `toolCalls=${this.circuitBreaker.count} — cutting stream before _meta; ` +
+              `lastTerminalReason stays '${streamState.lastTerminalReason ?? 'unset'}'`
+          )
+          break
+        }
 
         if ('_meta' in chunk && chunk._meta) {
           await this.processMetaChunk(chunk._meta as ExecutorResult, {
@@ -2359,6 +2429,12 @@ export class AgentSessionService extends AgentBaseService {
     // permission_prompt bridge listener — surfaces tool permission requests in the UI
     bridge.on('permission', (payload: unknown, requestId?: string) => {
       this.emit('permissionRequest', { ...(payload as Record<string, unknown>), requestId })
+      // Suspend the executor read timeout while the user decides. Without this
+      // the gated tool (Bash/Edit/Write) is the only thing ToolTracker sees, so
+      // the read sits on the 10-min tool-result budget and the turn is torn
+      // down mid-deliberation — the prompt itself is invisible to the executor
+      // because it travels out of band on this bridge, not on the NDJSON stream.
+      if (requestId) this.markHumanDecision('begin', requestId)
       this.log.info(
         `[ipc-bridge] permission event received for ${this.currentConversationId} requestId=${requestId}`
       )

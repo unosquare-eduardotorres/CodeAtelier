@@ -32,6 +32,13 @@ interface BackfillProgress {
 interface MemoryState {
   // Fact state
   facts: MemoryFact[]
+  /**
+   * True while a facts fetch is in flight. Starts `true` so the list never
+   * renders "no memories match" during the first round-trip — serialising a
+   * few thousand facts over IPC is not instant, and the empty state read as
+   * "your brain was wiped".
+   */
+  factsLoading: boolean
   contradictions: MemoryContradiction[]
   contradictionsPage: number
   contradictionsTotal: number
@@ -156,6 +163,7 @@ interface MemoryState {
 
 export const useMemoryStore = create<MemoryState>((set) => ({
   facts: [],
+  factsLoading: true,
   contradictions: [],
   contradictionsPage: 0,
   contradictionsTotal: 0,
@@ -185,20 +193,26 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   // ── Fact actions ──
 
   loadFacts: async (workspaceId) => {
+    set({ factsLoading: true })
     try {
       const facts = await window.api.memoryFactsList({ workspaceId })
       set({ facts })
     } catch (error) {
       rendererLog.error('Failed to load facts:', error)
+    } finally {
+      set({ factsLoading: false })
     }
   },
 
   searchFacts: async (workspaceId, query, category) => {
+    set({ factsLoading: true })
     try {
       const facts = await window.api.memoryFactsSearch({ workspaceId, query, category })
       set({ facts, searchQuery: query })
     } catch (error) {
       rendererLog.error('Failed to search facts:', error)
+    } finally {
+      set({ factsLoading: false })
     }
   },
 
@@ -283,10 +297,18 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   resolveContradiction: async (id, resolution, keepFactId, archiveFactId) => {
     try {
       await window.api.memoryContradictionsResolve({ id, resolution, keepFactId, archiveFactId })
-      set((state) => ({
-        contradictions: state.contradictions.filter((c) => c.id !== id),
-        contradictionsTotal: Math.max(0, state.contradictionsTotal - 1)
-      }))
+      set((state) => {
+        // `pendingCount` is only ever written by loadContradictions, so without
+        // this the "N pending" readout stayed at N after triaging all N.
+        const wasPending = state.contradictions.find((c) => c.id === id)?.status === 'pending'
+        return {
+          contradictions: state.contradictions.filter((c) => c.id !== id),
+          contradictionsTotal: Math.max(0, state.contradictionsTotal - 1),
+          contradictionsPendingCount: wasPending
+            ? Math.max(0, state.contradictionsPendingCount - 1)
+            : state.contradictionsPendingCount
+        }
+      })
     } catch (error) {
       rendererLog.error('Failed to resolve contradiction:', error)
     }

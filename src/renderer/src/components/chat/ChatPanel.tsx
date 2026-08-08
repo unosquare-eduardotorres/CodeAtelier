@@ -16,6 +16,7 @@ import {
 import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import SessionRecoveryBanner from './SessionRecoveryBanner'
 import BlockedByBanner from './BlockedByBanner'
+import PermissionRetryBanner from './PermissionRetryBanner'
 import BudgetCapBanner from './BudgetCapBanner'
 import TurnLimitBanner from './TurnLimitBanner'
 import NewChatPage from './NewChatPage'
@@ -161,6 +162,9 @@ function ChatPanelBanners({
   switchToBlockingChat,
   stopBlockingChat,
   dismissBlockedBy,
+  permissionRetry,
+  retryAfterPermission,
+  dismissPermissionRetry,
   turnLimitReached,
   continuePastTurnLimit,
   dismissTurnLimit,
@@ -184,6 +188,9 @@ function ChatPanelBanners({
   switchToBlockingChat: () => void
   stopBlockingChat: () => void
   dismissBlockedBy: () => void
+  permissionRetry: { conversationId: string } | null
+  retryAfterPermission: () => void
+  dismissPermissionRetry: () => void
   turnLimitReached: {
     continuable: boolean
     continuationsUsed: number
@@ -236,6 +243,9 @@ function ChatPanelBanners({
           onStopAndRetry={stopBlockingChat}
           onDismiss={dismissBlockedBy}
         />
+      )}
+      {activeTab === 'chat' && permissionRetry && (
+        <PermissionRetryBanner onRetry={retryAfterPermission} onDismiss={dismissPermissionRetry} />
       )}
       {activeTab === 'chat' && turnLimitReached && (
         <TurnLimitBanner
@@ -521,6 +531,11 @@ export default function ChatPanel({
   const stopBlockingChat = useChatStore((s) => s.stopBlockingChat)
   const dismissBlockedBy = useChatStore((s) => s.dismissBlockedBy)
 
+  // Retry offer after a permission request died with its turn
+  const permissionRetry = useChatStore((s) => s.permissionRetry)
+  const retryAfterPermission = useChatStore((s) => s.retryAfterPermission)
+  const dismissPermissionRetry = useChatStore((s) => s.dismissPermissionRetry)
+
   // Turn limit banner state
   const turnLimitReached = useChatStore((s) => s.turnLimitReached)
   const continuePastTurnLimit = useChatStore((s) => s.continuePastTurnLimit)
@@ -667,6 +682,9 @@ export default function ChatPanel({
         switchToBlockingChat={switchToBlockingChat}
         stopBlockingChat={stopBlockingChat}
         dismissBlockedBy={dismissBlockedBy}
+        permissionRetry={permissionRetry}
+        retryAfterPermission={retryAfterPermission}
+        dismissPermissionRetry={dismissPermissionRetry}
         turnLimitReached={turnLimitReached}
         continuePastTurnLimit={continuePastTurnLimit}
         dismissTurnLimit={dismissTurnLimit}

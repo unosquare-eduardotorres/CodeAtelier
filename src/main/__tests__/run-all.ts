@@ -177,6 +177,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/one-shot-claude.test',
   // ─── Run 26: Plan-mode UX — ask_user registry (no-timeout) + before-plan guard ───
   '../mcp-servers/__tests__/ask-user-registry.test',
+  '../mcp-servers/__tests__/permission-result.test',
   '../services/__tests__/ask-user-guard.test',
   // ─── Run 27: Executor family + audit/parsing pipeline ───
   '../services/__tests__/tool-tracker.test',
@@ -633,9 +634,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
+  '../../renderer/src/lib/__tests__/permission-routing.test',
   '../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
   '../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
+  '../../renderer/src/components/workspace/memory/facts/__tests__/facts-model.test',
+  '../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
   '../services/__tests__/repo-service-utils.test',

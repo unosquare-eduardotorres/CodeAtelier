@@ -15,8 +15,13 @@ import type {
   AgentIntent,
   GrillQuestion,
   ImageAttachment,
+  PermissionOutcome,
   PlanDetectedEvent
 } from '../../shared/types'
+import {
+  PERMISSION_CANCELLED_MESSAGE,
+  PERMISSION_TIMEOUT_MESSAGE
+} from '../../shared/permission-messages'
 import { memoryExtractionService } from './memory-extraction.service'
 import { memoryRetrievalService } from './memory-retrieval.service'
 import { eventLoggerService } from './event-logger.service'
@@ -416,9 +421,10 @@ export class ChatStreamService {
     chatAgentService.on('askQuestion:ws', onAskQuestionWs)
     this.eventCleanups.push(() => chatAgentService.off('askQuestion:ws', onAskQuestionWs))
 
-    // Tool permission requests — route to toast UI for all workspaces.
-    // Unlike askQuestion (inline for active workspace), tool permissions always
-    // use the toast flow because they need explicit approve/deny, not free-text.
+    // Tool permission requests — the renderer routes on conversationId: the
+    // active conversation gets an inline card in the transcript, everything else
+    // toasts. A toast that auto-dismisses leaves no evidence when an approval
+    // fails to resume the turn, which is why the conversation is carried here.
     const onPermissionRequestWs = (
       workspaceId: string,
       data: {
@@ -454,6 +460,7 @@ export class ChatStreamService {
           toolName,
           toolInput: data.input,
           conversationTitle,
+          conversationId: conversationId ?? undefined,
           mode,
           summary: `Agent wants to use ${toolName}${data.inputSummary ? `: ${data.inputSummary}` : ''}`,
           isSimple: true,
@@ -467,6 +474,47 @@ export class ChatStreamService {
     chatAgentService.on('permissionRequest:ws', onPermissionRequestWs)
     this.eventCleanups.push(() =>
       chatAgentService.off('permissionRequest:ws', onPermissionRequestWs)
+    )
+
+    // Terminal state for a permission request. Until this existed the renderer
+    // only ever learned an outcome from its own click, so a request that died
+    // with its turn left the modal/toast/card frozen on "waiting for the agent".
+    const onPermissionResolvedWs = (
+      workspaceId: string,
+      data: { requestId?: string; outcome?: PermissionOutcome; conversationId?: string }
+    ): void => {
+      const requestId = data.requestId
+      const outcome = data.outcome
+      if (!requestId || !outcome) return
+      try {
+        getSessionEventRouter().sendPermissionResolved({
+          // Must match the id minted in onPermissionRequestWs.
+          permissionId: `perm-${requestId}`,
+          requestId,
+          workspaceId,
+          conversationId: data.conversationId,
+          outcome
+        })
+      } catch {
+        // SessionEventRouter not yet initialized
+      }
+      // A request that was never answered leaves no other trace in the
+      // transcript — the tool simply never ran. Persist why.
+      if ((outcome === 'timedout' || outcome === 'cancelled') && data.conversationId) {
+        try {
+          messageRepository.create(
+            data.conversationId,
+            'specialist',
+            outcome === 'timedout' ? PERMISSION_TIMEOUT_MESSAGE : PERMISSION_CANCELLED_MESSAGE
+          )
+        } catch (err) {
+          log.warn('[permission-resolved] Failed to persist the outcome message:', err)
+        }
+      }
+    }
+    chatAgentService.on('permissionResolved:ws', onPermissionResolvedWs)
+    this.eventCleanups.push(() =>
+      chatAgentService.off('permissionResolved:ws', onPermissionResolvedWs)
     )
   }
 
@@ -833,8 +881,25 @@ export class ChatStreamService {
     // maxStreamLifetimeMin preference (default 30, clamped 10–120).
     const lifetimeMin = appPreferenceRepository.getAppPreferences().maxStreamLifetimeMin
     const MAX_STREAM_LIFETIME_MS = lifetimeMin * 60 * 1000
-    const lifetimeTimer = setTimeout(() => {
-      if (!safetyCleared && this.isConversationBusy(conversationId)) {
+    /** Re-check interval while the cap is deferred for a human decision. */
+    const LIFETIME_DEFER_MS = 60_000
+    let lifetimeTimer: ReturnType<typeof setTimeout>
+    const armLifetimeTimer = (delayMs: number): void => {
+      lifetimeTimer = setTimeout(() => {
+        if (safetyCleared || !this.isConversationBusy(conversationId)) return
+        // A stream parked on a permission prompt is not a zombie — it is waiting
+        // on a person. Killing it here reintroduces the same failure the
+        // executor's suspendable wall clock exists to prevent, just 30 minutes
+        // later. Defer while the prompt is open; the cap re-arms the moment the
+        // user answers (or the prompt is torn down), so the guard still holds.
+        if (chatAgentService.hasPendingHumanDecision()) {
+          log.info(
+            `[STREAM:max-lifetime] Deferred — awaiting a human permission decision. ` +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          armLifetimeTimer(LIFETIME_DEFER_MS)
+          return
+        }
         log.warn(
           `[STREAM:max-lifetime] Stream exceeded ${lifetimeMin}-minute hard cap — force-aborting. ` +
             `conversationId=${conversationId} requestId=${requestId}`
@@ -843,8 +908,9 @@ export class ChatStreamService {
         rejectDone(
           new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`)
         )
-      }
-    }, MAX_STREAM_LIFETIME_MS)
+      }, delayMs)
+    }
+    armLifetimeTimer(MAX_STREAM_LIFETIME_MS)
 
     lifecycle.onDispose(() => {
       safetyCleared = true

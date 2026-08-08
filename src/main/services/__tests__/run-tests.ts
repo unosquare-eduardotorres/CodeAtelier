@@ -143,6 +143,7 @@ const TEST_FILES: string[] = [
   './one-shot-claude.test',
   // ─── Run 26: Plan-mode UX — ask_user registry (no-timeout) + before-plan guard ───
   '../../mcp-servers/__tests__/ask-user-registry.test',
+  '../../mcp-servers/__tests__/permission-result.test',
   './ask-user-guard.test',
   // ─── Run 27: Executor family + audit/parsing pipeline ───
   './tool-tracker.test',
@@ -397,6 +398,8 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
+  '../../../renderer/src/components/workspace/memory/facts/__tests__/facts-model.test',
+  '../../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -610,7 +613,9 @@ const TEST_FILES: string[] = [
   './prompt-builder-local.test',
   './workspace-mcp-config-builder.test',
   // ─── Plan section icon ids ───
-  '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test'
+  '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
+  // ─── Inline vs toast routing for permission requests ───
+  '../../../renderer/src/lib/__tests__/permission-routing.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

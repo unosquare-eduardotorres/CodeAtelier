@@ -63,7 +63,7 @@ function createMockHost(overrides: Record<string, any> = {}): any {
     effectiveContextWindow: 200_000,
     accumulatedText: '',
     instanceId: 'inst-1',
-    cliExecutor: { isAlive: () => false },
+    cliExecutor: { isAlive: () => false, getSpawnSignature: () => null },
     mcpConfigWriter: { writeConfig: createSpy(() => '/tmp/mcp.json') },
     ipcBridge: null,
     adapter: {

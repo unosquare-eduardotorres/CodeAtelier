@@ -25,6 +25,18 @@ const TURN_LIMIT_EXHAUSTED_MSG =
   'The session is preserved and you can send another message to continue where I left off.\n\n' +
   '_Send "continue" or describe what you\'d like me to do next._'
 
+/**
+ * Shown when auto-continuation is stopped early because the previous
+ * continuation produced nothing. Same chunk shape and `turnLimit` payload as
+ * the exhausted case — the user still gets the Continue button — only the
+ * reason differs.
+ */
+const TURN_LIMIT_STALLED_MSG =
+  '\n\n---\n\n' +
+  '⏱️ **Turn limit reached** — the last auto-continuation ran no tools and produced ' +
+  'no output, so I stopped rather than repeat it. The session is preserved.\n\n' +
+  '_Send "continue", or add detail about what you\'d like me to do next._'
+
 export class AgentRecoveryManager {
   private readonly s: AgentSessionHost
 
@@ -52,6 +64,14 @@ export class AgentRecoveryManager {
 
     this.s.maxTurnsContinuations++
     this.s.circuitBreaker.reset()
+    // The gratuitous-tool heuristic is per-TURN (it keys off _toolCallCount === 1),
+    // so its text measure must be per-turn too. Without this baseline the
+    // continuation's first tool call sees the pre-break wrap-up text, trips
+    // gratuitous-tool-soft-stop, and the stream is cut at session.service:1686
+    // before the continuation does any work.
+    const continuationCtx = this.s.activeStreams?.get(conversationId)
+    if (continuationCtx)
+      continuationCtx.accumulatedTextBaseline = continuationCtx.accumulatedText.length
     this.s.log.info(
       `[PIPELINE:max-turns-continue] continuation=${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
         `conversationId=${conversationId}`
@@ -233,9 +253,22 @@ export class AgentRecoveryManager {
       return 'handled'
     }
 
+    // A continuation that resolved no tool and wrote no text did not advance the
+    // task. Firing another is guaranteed to repeat it — which is exactly what
+    // produced five identical zero-output continuations in a row. Both signals
+    // come for free: continueTurnLimit resets the circuit breaker and sets
+    // accumulatedTextBaseline on every continuation.
+    const ctx = this.s.activeStreams?.get(conversationId)
+    const textDelta = (ctx?.accumulatedText.length ?? 0) - (ctx?.accumulatedTextBaseline ?? 0)
+    const madeProgress = this.s.circuitBreaker.count > 0 || textDelta > 0
+    // The first continuation is always allowed — only subsequent ones must show
+    // evidence that the previous one did something.
+    const stalled = this.s.maxTurnsContinuations > 0 && !madeProgress
+
     if (
       streamState.lastTerminalReason === 'max_turns' &&
-      this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
+      this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS &&
+      !stalled
     ) {
       await this.continueTurnLimit({
         conversationId,
@@ -248,20 +281,26 @@ export class AgentRecoveryManager {
       return 'handled'
     }
 
-    // All auto-continuations exhausted — emit a structured turn_limit chunk
-    // so the renderer can show a one-click Continue button.
-    if (
-      streamState.lastTerminalReason === 'max_turns' &&
-      this.s.maxTurnsContinuations >= SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
-    ) {
-      this.s.log.info(
-        `[PIPELINE:max-turns-exhausted] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
-          `continuations used — emitting turn_limit chunk for conversationId=${conversationId}`
-      )
+    // We hit max_turns but are NOT continuing — either the budget is spent or the
+    // last continuation made no progress. Either way the user still gets the
+    // one-click Continue button, so the stalled path is not a dead end.
+    if (streamState.lastTerminalReason === 'max_turns') {
+      if (stalled) {
+        this.s.log.warn(
+          `[PIPELINE:continuation-stalled] continuation ${this.s.maxTurnsContinuations}/` +
+            `${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} resolved 0 tool calls and wrote 0 ` +
+            `characters — stopping instead of repeating it for conversationId=${conversationId}`
+        )
+      } else {
+        this.s.log.info(
+          `[PIPELINE:max-turns-exhausted] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
+            `continuations used — emitting turn_limit chunk for conversationId=${conversationId}`
+        )
+      }
       // Emit structured chunk for the renderer's Continue button
       this.s.emit('chunk', {
         type: 'turn_limit',
-        content: TURN_LIMIT_EXHAUSTED_MSG,
+        content: stalled ? TURN_LIMIT_STALLED_MSG : TURN_LIMIT_EXHAUSTED_MSG,
         turnLimit: {
           continuable: true,
           continuationsUsed: this.s.maxTurnsContinuations,
@@ -318,7 +357,8 @@ export class AgentRecoveryManager {
           onChunk: (chunk) => this.s.emit('chunk', chunk),
           onTokens: (tokens) => {
             this.s.tokenUsage += tokens
-          }
+          },
+          blockedTool: streamState.planModeBlockedTool
         })
         planRecoveryAttempted = result.attempted
       } catch (err) {
@@ -342,18 +382,31 @@ export class AgentRecoveryManager {
     const shouldSkipNudge =
       (streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)) ||
       planRecoveryAttempted
-    if (
+    const nudgeWanted =
       this.s.circuitBreaker.count > 0 &&
       !streamState.hasTextAfterLastTool &&
       !shouldSkipNudge &&
       !timedOut
-    ) {
+    // The nudge calls execute() WITHOUT continueSession, which spawns a fresh
+    // process and therefore SIGTERMs the current one. That executor is the same
+    // per-conversation instance, so nudging while a tool is in flight kills the
+    // very work the nudge is supposed to be recovering from.
+    const nudgeExecutor = nudgeWanted ? this.s.getOrCreateCliExecutor(conversationId) : null
+    const pendingTools = nudgeExecutor?.getPendingToolNames() ?? []
+    if (pendingTools.length) {
+      this.s.log.warn(
+        `[PIPELINE:recovery-nudge-skipped-pending] conversationId=${conversationId} ` +
+          `— ${pendingTools.length} tool(s) still in flight [${pendingTools.join(', ')}]; ` +
+          `killing the session would orphan real work`
+      )
+    }
+    if (nudgeWanted && !pendingTools.length) {
       this.s.log.warn(
         `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
           `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
       )
       const recoveryResult = await this.s.recoveryNudge.attemptRecovery({
-        cliExecutor: this.s.getOrCreateCliExecutor(conversationId),
+        cliExecutor: nudgeExecutor!,
         systemPrompt,
         workspacePath: this.s.workspacePath!,
         model: resolveModelFromSnapshot(

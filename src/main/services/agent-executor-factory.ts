@@ -10,6 +10,8 @@
  */
 
 import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
+import { SESSION_CONSTANTS } from './agent-session-host'
+import { spawnSignatureSatisfies, type SpawnSignature } from './cli-executor'
 import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import { deriveSkipServers } from './mcp-skip-servers'
@@ -29,7 +31,11 @@ import {
 import { modelConfigService } from './model-config.service'
 import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { contextWindowResolver } from './context-window-resolver'
-import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
+import {
+  canUseContext1MBeta,
+  resolveClaudeCompactionEnv,
+  resolveSdkContextWindowSize
+} from './compaction-policy'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
 import { join } from 'node:path'
 import { app } from 'electron'
@@ -276,7 +282,7 @@ export class AgentExecutorFactory {
       /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
       goalMode?: 'advisory' | 'enforce'
     },
-    resolvedExecutor?: { isAlive(): boolean }
+    resolvedExecutor?: { isAlive(): boolean; getSpawnSignature(): SpawnSignature | null }
   ): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
@@ -290,7 +296,23 @@ export class AgentExecutorFactory {
       isBuildMode
     )
 
-    const supports1M = supportsContext1M(resolvedModel)
+    // `supportsContext1M` is a statement about the MODEL, never about the login.
+    // The 1M window is only actually granted when the `context-1m` beta header is
+    // accepted, which is API-key-only. Claiming it on an OAuth login silently
+    // sizes CLAUDE_CODE_AUTO_COMPACT_WINDOW to 1M against a real 200K ceiling —
+    // auto-compact can then never fire and the turn overflows with no output.
+    const modelSupports1M = supportsContext1M(resolvedModel)
+    // Fable 5 has native 1M — no beta header, so no entitlement needed.
+    const needsBeta = modelSupports1M && !resolvedModel.includes('fable')
+    const entitled = !needsBeta || canUseContext1MBeta()
+    const supports1M = modelSupports1M && entitled
+    if (modelSupports1M && !entitled) {
+      this.s.log.warn(
+        `[compaction:1m-not-entitled] model=${resolvedModel} supports 1M but --betas is ` +
+          `API-key-only on this login — falling back to ${CLAUDE_DEFAULT_CONTEXT_WINDOW} ` +
+          `(set ANTHROPIC_API_KEY or CODE_ATELIER_CONTEXT_1M=1 to force)`
+      )
+    }
     const effectiveContextWindow = supports1M
       ? CLAUDE_1M_CONTEXT_WINDOW
       : CLAUDE_DEFAULT_CONTEXT_WINDOW
@@ -304,7 +326,28 @@ export class AgentExecutorFactory {
 
     // WRONG-EXECUTOR-03: Use the resolved per-conversation executor when provided,
     // not the cliExecutor getter which goes through _lastActiveConversationId.
-    const canContinue = (resolvedExecutor ?? this.s.cliExecutor).isAlive() && !!sessionId
+    const executor = resolvedExecutor ?? this.s.cliExecutor
+    const desiredEffort = this.resolveEffort(resolvedModel)
+    const alive = executor.isAlive() && !!sessionId
+    // --max-turns/--effort/--model are argv, fixed at spawn. Reusing a process
+    // whose budget doesn't fit this turn is what let a maxTurns:1 recovery
+    // spawn cap the whole session at one turn for 14 minutes. When the budget
+    // doesn't fit we fall through to the full path, which passes `resume` plus
+    // the complete tool/MCP policy — the conversation survives the respawn.
+    const liveSignature = alive ? executor.getSpawnSignature() : null
+    const budgetFits = spawnSignatureSatisfies(liveSignature, {
+      model: resolvedModel,
+      maxTurns: SESSION_CONSTANTS.CLI_MAX_TURNS,
+      effort: desiredEffort
+    })
+    const canContinue = alive && budgetFits
+    if (alive && !budgetFits) {
+      this.s.log.warn(
+        `[CLI:respawn-signature-mismatch] live=${JSON.stringify(liveSignature)} ` +
+          `desired={model:${resolvedModel},maxTurns:${SESSION_CONSTANTS.CLI_MAX_TURNS},effort:${desiredEffort}} ` +
+          '— respawning with --resume so this turn gets its own budget'
+      )
+    }
 
     // C2: Log tool availability on EVERY turn (not just first spawn)
     this.s.log.info(
@@ -330,7 +373,11 @@ export class AgentExecutorFactory {
         cwd: this.s.workspacePath!,
         abortController,
         agentId: this.s.adapter.agentId,
-        effort: this.resolveEffort(resolvedModel),
+        effort: desiredEffort,
+        // Inert for a stdin write (argv is fixed at spawn), but it keeps the
+        // declared shape honest so the executor's reuse breadcrumb has
+        // something to compare against.
+        maxTurns: SESSION_CONSTANTS.CLI_MAX_TURNS,
         continueSession: true,
         // Reuse cached MCP config — process already has MCP servers connected
         mcpConfigPath: this.cachedMcpConfigPath,
@@ -379,6 +426,7 @@ export class AgentExecutorFactory {
     // Instrumentation: one-line snapshot of the resolved compaction config on spawn.
     this.s.log.info(
       `[compaction:config] model=${resolvedModel} supports1M=${supports1M} ` +
+        `entitled=${entitled} ` +
         `contextWindowSize=${sdkContextWindowSize} autoCompactEnabled=true ` +
         `autoCompactWindow=${compactionEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW} ` +
         `pctOverride=${compactionEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ?? 'none'}`
@@ -392,17 +440,15 @@ export class AgentExecutorFactory {
       permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
       allowedTools,
       disallowedTools,
-      maxTurns: isBuildMode ? 200 : 50,
+      maxTurns: SESSION_CONSTANTS.CLI_MAX_TURNS,
       resume: sessionId,
       resumeSessionAt: resumeAt,
       abortController,
       agentId: this.s.adapter.agentId,
-      effort: this.resolveEffort(resolvedModel),
-      // Fable 5 has native 1M context — no beta header needed. Sonnet/Opus use the beta.
-      betas:
-        supports1M && !resolvedModel.includes('fable')
-          ? [AgentExecutorFactory.CONTEXT_1M_BETA]
-          : undefined,
+      effort: desiredEffort,
+      // Fable 5 has native 1M context — no beta header needed. Sonnet/Opus use the
+      // beta, but only when this login may actually request it (see `entitled`).
+      betas: needsBeta && entitled ? [AgentExecutorFactory.CONTEXT_1M_BETA] : undefined,
       // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
       // Fable → Opus fallback (refusal/availability per Anthropic docs).
       // Opus → Sonnet fallback (appropriate cost reduction).

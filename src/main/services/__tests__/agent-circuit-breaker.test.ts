@@ -64,6 +64,59 @@ describe('AgentCircuitBreaker', () => {
     assert.equal(breaker.isBroken, true, 'circuit should be marked broken internally')
   })
 
+  // Regression: on an auto-continuation the caller rebases its text measure to the
+  // start of the new turn, so the first tool call sees 0 and must NOT be soft-stopped.
+  // Without this, a continuation whose pre-break turn wrote 500+ chars was killed by
+  // the stream-cut in agent-session.service before doing any work.
+  test('does_not_soft_stop_first_tool_call_when_turn_scoped_length_is_zero', () => {
+    const { breaker } = createCircuitBreaker()
+    const result = breaker.onToolUse({
+      isBuildMode: false,
+      accumulatedTextLength: 0,
+      conversationId: 'c-continuation'
+    })
+    assert.equal(result.shouldTerminate, false)
+    assert.equal(result.broken, false)
+    assert.equal(breaker.isBroken, false, 'continuation must not be cut on its first tool call')
+  })
+
+  test('still_soft_stops_first_tool_call_when_turn_wrote_1699_chars', () => {
+    const { breaker } = createCircuitBreaker()
+    const result = breaker.onToolUse({
+      isBuildMode: false,
+      accumulatedTextLength: 1699,
+      conversationId: 'c-uncontinued'
+    })
+    assert.equal(result.shouldTerminate, true)
+    assert.equal(breaker.isBroken, true)
+  })
+
+  // Regression: in build mode "write a paragraph, then act" is the normal rhythm.
+  // The heuristic read a 1219-char status recap as a finished answer and cut the
+  // stream on the very next tool call, orphaning a test run that had already started.
+  test('does_not_soft_stop_in_build_mode_after_a_long_recap', () => {
+    const { breaker } = createCircuitBreaker()
+    const result = breaker.onToolUse({
+      isBuildMode: true,
+      accumulatedTextLength: 1699,
+      conversationId: 'c-build'
+    })
+    assert.equal(result.shouldTerminate, false)
+    assert.equal(result.broken, false)
+    assert.equal(breaker.isBroken, false, 'build mode must not be cut on its first tool call')
+  })
+
+  test('still_soft_stops_in_plan_mode_with_the_same_inputs', () => {
+    const { breaker } = createCircuitBreaker()
+    const result = breaker.onToolUse({
+      isBuildMode: false,
+      accumulatedTextLength: 1699,
+      conversationId: 'c-plan'
+    })
+    assert.equal(result.shouldTerminate, true)
+    assert.equal(breaker.isBroken, true)
+  })
+
   test('does_not_trigger_gratuitous_on_second_tool_call', () => {
     const { breaker } = createCircuitBreaker()
     // First tool call with low text

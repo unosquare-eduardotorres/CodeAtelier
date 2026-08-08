@@ -219,6 +219,61 @@ describe('AgentStreamProcessor.processContentChunk — plan-mode tool block dete
     )
     assert.equal(streamState.planModeToolBlock, undefined)
   })
+
+  // Regression: the CLI's native plan-mode prompt tells the model to finish with
+  // ExitPlanMode, which mode-permissions disallows. The old /\b(Write|Edit|MultiEdit)\b/
+  // regex could never match it, so recovery never fired and the user got no plan card.
+  test('tool_result with ExitPlanMode block in plan mode sets planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean; planModeBlockedTool?: string }
+    const r = proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'ExitPlanMode',
+        content: '<tool_use_error>No such tool available: ExitPlanMode</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(r, 'next')
+    assert.equal(streamState.planModeToolBlock, true)
+    assert.equal(streamState.planModeBlockedTool, 'ExitPlanMode')
+  })
+
+  test('ExitPlanMode block without <tool_use_error> wrapper still sets planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean; planModeBlockedTool?: string }
+    proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'ExitPlanMode',
+        content: 'No such tool available: ExitPlanMode'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.planModeToolBlock, true)
+    assert.equal(streamState.planModeBlockedTool, 'ExitPlanMode')
+  })
+
+  test('ExitPlanMode block in build mode does NOT set planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'build'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean; planModeBlockedTool?: string }
+    proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'ExitPlanMode',
+        content: '<tool_use_error>No such tool available: ExitPlanMode</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.planModeToolBlock, undefined)
+    assert.equal(streamState.planModeBlockedTool, undefined)
+  })
 })
 
 describe('AgentStreamProcessor.checkCompaction — decision.level undefined', () => {
@@ -382,6 +437,72 @@ describe('AgentStreamProcessor.processContentChunk — api_retry', () => {
       { ...ctx, streamState: streamState as never }
     )
     assert.equal(streamState.overloadDetected, false)
+  })
+})
+
+// ── Turn-scoped text measurement for the gratuitous-tool heuristic ──
+//
+// Regression: accumulatedText is per-MESSAGE and survives auto-continuations,
+// but the circuit breaker's gratuitous heuristic is per-TURN (_toolCallCount === 1).
+// continueTurnLimit rebases accumulatedTextBaseline so the continuation's first
+// tool call isn't judged against the pre-break turn's wrap-up text.
+describe('AgentStreamProcessor.processContentChunk — tool_use text measurement', () => {
+  function makeToolUseHost(streamCtx: {
+    accumulatedText: string
+    accumulatedTextBaseline?: number
+  }): { host: MockHost; seen: number[] } {
+    const seen: number[] = []
+    const host = makeHost()
+    ;(host as any).activeStreams = new Map([['c-tool', { ...streamCtx, abortController: null }]])
+    ;(host as any).toolActivityAccumulator = { record: (): void => {} }
+    ;(host as any).circuitBreaker = {
+      count: 1,
+      onToolUse: (o: { accumulatedTextLength: number }) => {
+        seen.push(o.accumulatedTextLength)
+        return { broken: false, shouldTerminate: false }
+      },
+      logToolCall: (): void => {}
+    }
+    return { host, seen }
+  }
+
+  const ctx = { conversationId: 'c-tool', isBuildMode: true, streamState: {} as never }
+
+  test('baseline equal to text length reports 0 to the breaker (continuation)', () => {
+    const { host, seen } = makeToolUseHost({
+      accumulatedText: 'x'.repeat(1699),
+      accumulatedTextBaseline: 1699
+    })
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.equal(r, 'next')
+    assert.deepEqual(seen, [0])
+  })
+
+  test('baseline 0 reports the full length (normal turn — unchanged)', () => {
+    const { host, seen } = makeToolUseHost({
+      accumulatedText: 'x'.repeat(1699),
+      accumulatedTextBaseline: 0
+    })
+    const proc = new AgentStreamProcessor(host)
+    proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.deepEqual(seen, [1699])
+  })
+
+  test('missing baseline falls back to the full length', () => {
+    const { host, seen } = makeToolUseHost({ accumulatedText: 'x'.repeat(600) })
+    const proc = new AgentStreamProcessor(host)
+    proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.deepEqual(seen, [600])
   })
 })
 

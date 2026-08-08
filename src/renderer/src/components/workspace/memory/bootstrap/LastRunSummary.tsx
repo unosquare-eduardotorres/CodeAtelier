@@ -7,6 +7,7 @@
  */
 
 import { Brain, PlayCircle, AlertTriangle } from 'lucide-react'
+import { Button } from '@renderer/components/common/ui'
 import type { BootstrapRunSummary } from '../../../../../../shared/types'
 import { formatRelative } from './phase-meta'
 
@@ -23,11 +24,14 @@ export default function LastRunSummary({
   run,
   resumableRunId,
   onResume,
+  onInspectFailures,
   busy
 }: {
   run: BootstrapRunSummary
   resumableRunId: string | null
   onResume: (runId: string) => void
+  /** Opens the per-item list filtered to failures. */
+  onInspectFailures?: () => void
   busy: boolean
 }): React.JSX.Element {
   const settled = run.itemsDone + run.itemsSkipped + run.itemsFailed
@@ -44,13 +48,27 @@ export default function LastRunSummary({
             {' · '}
             {settled}/{run.itemsTotal} items · {run.factsCreated} memories
           </span>
-          {run.itemsFailed > 0 && <span className="text-red-400"> · {run.itemsFailed} failed</span>}
+          {run.itemsFailed > 0 &&
+            (onInspectFailures ? (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  onClick={onInspectFailures}
+                  className="text-danger underline underline-offset-2 hover:text-danger/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-focus rounded"
+                >
+                  {run.itemsFailed} failed
+                </button>
+              </>
+            ) : (
+              <span className="text-danger"> · {run.itemsFailed} failed</span>
+            ))}
         </div>
-        <div className="text-[10px] text-text-muted mt-0.5">
+        <div className="text-[11px] text-text-muted mt-0.5">
           {STATUS_LABEL[run.status] ?? run.status} ·{' '}
           {run.mode === 'deep-scan' ? 'Deep Scan' : 'Feed Brain'} · scope: {run.scope}
           {run.error && (
-            <span className="text-red-400/80">
+            <span className="text-danger/80">
               {' '}
               <AlertTriangle className="w-3 h-3 inline" /> {run.error}
             </span>
@@ -59,14 +77,15 @@ export default function LastRunSummary({
       </div>
 
       {canResume && (
-        <button
+        <Button
+          variant="primary"
           onClick={() => onResume(resumableRunId)}
-          className="flex items-center gap-1 px-2.5 py-1 text-xs bg-teal/10 text-teal-text rounded hover:bg-teal/20 shrink-0"
+          className="shrink-0"
           title="Continue from where the last run stopped — nothing already extracted is redone"
         >
           <PlayCircle className="w-3.5 h-3.5" />
           Resume
-        </button>
+        </Button>
       )}
     </div>
   )

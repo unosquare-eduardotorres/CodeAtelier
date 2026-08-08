@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summary } from './test-harness'
 import {
+  canUseContext1MBeta,
   classifyCompaction,
   resolveCompactionThresholds,
   resolveAppliedThresholds,
@@ -235,6 +236,33 @@ describe('resolveSdkContextWindowSize — SDK option', () => {
 
   test('non-1M with 100K window', () => {
     assert.equal(resolveSdkContextWindowSize(false, 100_000), 80_000)
+  })
+})
+
+// ── canUseContext1MBeta ──
+
+describe('canUseContext1MBeta — API-only beta entitlement', () => {
+  test('empty env (OAuth/subscription login) → false', () => {
+    assert.equal(canUseContext1MBeta({}), false)
+  })
+
+  test('ANTHROPIC_API_KEY set → true', () => {
+    assert.equal(canUseContext1MBeta({ ANTHROPIC_API_KEY: 'sk-ant-test' }), true)
+  })
+
+  test('blank ANTHROPIC_API_KEY does not count as a key', () => {
+    assert.equal(canUseContext1MBeta({ ANTHROPIC_API_KEY: '   ' }), false)
+  })
+
+  test('CODE_ATELIER_CONTEXT_1M=1 forces on with no key', () => {
+    assert.equal(canUseContext1MBeta({ CODE_ATELIER_CONTEXT_1M: '1' }), true)
+  })
+
+  test('CODE_ATELIER_CONTEXT_1M=0 forces off even with a key', () => {
+    assert.equal(
+      canUseContext1MBeta({ CODE_ATELIER_CONTEXT_1M: '0', ANTHROPIC_API_KEY: 'sk-ant-test' }),
+      false
+    )
   })
 })
 

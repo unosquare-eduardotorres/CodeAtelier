@@ -134,6 +134,17 @@ const DANGEROUS_PATTERNS = [
   'npx publish'
 ]
 
+/**
+ * Tools that execute a shell command via a `command` input.
+ *
+ * The dangerous-command veto used to be gated on the literal `toolName ===
+ * 'Bash'`, so every sibling shell tool the CLI ships (`local_bash`,
+ * `PowerShell`) skipped DANGEROUS_PATTERNS entirely — `rm -rf /` through
+ * `local_bash` was auto-approved in build mode. Membership here is what makes
+ * a tool subject to command inspection, so new shell siblings must be added.
+ */
+const SHELL_TOOLS = new Set(['Bash', 'local_bash', 'PowerShell'])
+
 function isDangerousCommand(command: string): boolean {
   const lower = command.toLowerCase()
   return DANGEROUS_PATTERNS.some((p) => lower.includes(p.toLowerCase()))
@@ -181,8 +192,8 @@ export function shouldAutoApprove(
     return true
   }
 
-  // 4. Bash commands
-  if (toolName === 'Bash' && typeof input.command === 'string') {
+  // 4. Shell commands (Bash and its siblings — see SHELL_TOOLS)
+  if (SHELL_TOOLS.has(toolName) && typeof input.command === 'string') {
     const rawCmd = input.command.trim()
 
     // Never auto-approve dangerous commands

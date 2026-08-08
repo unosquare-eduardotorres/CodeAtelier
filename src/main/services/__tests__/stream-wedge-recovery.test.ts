@@ -8,6 +8,14 @@
  *   was outstanding the loop parked on `iterator.next()` indefinitely — silent,
  *   holding the conversation lock. Every read now races an exit signal.
  *
+ * Bug C — the wall clock running while a human decides.
+ *   A permission prompt reaches the CLI out of band (--permission-prompt-tool
+ *   over the IPC bridge), never as a tool_use on the NDJSON stream, so the only
+ *   thing the executor can see pending is the *gated* tool. The read therefore
+ *   sat on the 10-minute tool-result budget and tore the turn down while the
+ *   user was still deciding. The budget is now a ticking countdown that only
+ *   decrements while no human decision is outstanding.
+ *
  * Bug B — conversation busy state outliving its stream.
  *   "Busy" is three separate pieces of state (lock, state machine, lifecycle).
  *   acquireStreamLock rejected on their union while both stall watchdogs tested
@@ -36,6 +44,11 @@ interface ExecutorInternal {
     timeoutMs: number | null,
     timeoutMessage: string
   ): Promise<IteratorResult<Record<string, unknown>>>
+  beginHumanDecision(requestId: string): void
+  endHumanDecision(requestId: string): void
+  clearHumanDecisions(reason: string): void
+  hasHumanDecisionPending(): boolean
+  onHumanDecisionsCleared: ((requestIds: string[], reason: string) => void) | null
 }
 
 function internals(): ExecutorInternal {
@@ -145,6 +158,149 @@ describe('CLIExecutor exit signal', () => {
     exec.disarmExitSignal('exited with nobody listening')
     await new Promise((resolve) => setImmediate(resolve))
     assert.ok(true, 'no unhandled rejection surfaced')
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Bug C — the wall clock must not run while a human is deciding
+// ══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A permission prompt is invoked out of band (--permission-prompt-tool over the
+ * IPC bridge), never as a tool_use on the NDJSON stream. ToolTracker therefore
+ * sees only the *gated* tool (Bash/Edit/Write) and the read sits on the 10-min
+ * tool-result budget — which expired mid-deliberation and killed the turn.
+ *
+ * These tests use millisecond budgets: raceRead clamps its tick to the budget,
+ * so a 30ms budget ticks every 30ms and a 300ms wait is ten expiries' worth.
+ */
+async function stillPendingAfter(p: Promise<unknown>, ms: number): Promise<boolean> {
+  return Promise.race([
+    p.then(
+      () => false,
+      () => false
+    ),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(true), ms))
+  ])
+}
+
+describe('CLIExecutor human-decision suspension', () => {
+  test('budget does not burn while a permission decision is outstanding', async () => {
+    const exec = internals()
+    exec.armExitSignal()
+    exec.beginHumanDecision('req-1')
+
+    const read = exec.raceRead(neverSettles(), 30, 'tool timeout')
+    assert.equal(
+      await stillPendingAfter(read, 300),
+      true,
+      'a 30ms budget must survive 300ms while the user is deciding'
+    )
+
+    exec.disarmExitSignal('cleanup')
+    await read.catch(() => {})
+  })
+
+  test('budget resumes once the decision is answered', async () => {
+    const exec = internals()
+    exec.armExitSignal()
+    exec.beginHumanDecision('req-1')
+
+    const read = exec.raceRead(neverSettles(), 20, 'tool timeout')
+    assert.equal(await stillPendingAfter(read, 120), true, 'precondition: suspended')
+
+    exec.endHumanDecision('req-1')
+    await assert.rejects(read, /tool timeout/, 'the budget must resume, not be cancelled')
+    exec.disarmExitSignal('cleanup')
+  })
+
+  test('a dead process still unwinds a suspended read', async () => {
+    // The whole point of suspending rather than disabling: this must not
+    // recreate the lost-tool-result deadlock the exit signal was added for.
+    const exec = internals()
+    exec.armExitSignal()
+    exec.beginHumanDecision('req-1')
+
+    const read = exec.raceRead(neverSettles(), 600_000, 'tool timeout')
+    exec.disarmExitSignal('CLI process exited (code=null signal=SIGTERM) while awaiting output')
+    await assert.rejects(read, /CLI process exited/)
+  })
+
+  test('clearHumanDecisions leaves no residue for the next turn', async () => {
+    const exec = internals()
+    exec.armExitSignal()
+    exec.beginHumanDecision('req-1')
+    exec.clearHumanDecisions('turn finalized')
+    assert.equal(exec.hasHumanDecisionPending(), false)
+
+    // A stale entry would have suspended this unrelated read forever.
+    await assert.rejects(exec.raceRead(neverSettles(), 20, 'tool timeout'), /tool timeout/)
+    exec.disarmExitSignal('cleanup')
+  })
+
+  test('begin is idempotent and end ignores unknown ids', async () => {
+    const exec = internals()
+    exec.beginHumanDecision('req-1')
+    exec.beginHumanDecision('req-1')
+    exec.endHumanDecision('req-unknown')
+    assert.equal(exec.hasHumanDecisionPending(), true)
+
+    // One end for one begin — a duplicated begin must not need two ends.
+    exec.endHumanDecision('req-1')
+    assert.equal(exec.hasHumanDecisionPending(), false)
+  })
+
+  test('abandoned decisions are announced so the UI can stop waiting', () => {
+    // The renderer only ever learns an outcome from its own click, so a prompt
+    // dropped at teardown must be reported or the card freezes on "waiting".
+    const exec = internals()
+    const seen: Array<{ ids: string[]; reason: string }> = []
+    exec.onHumanDecisionsCleared = (ids, reason) => seen.push({ ids, reason })
+
+    exec.beginHumanDecision('req-1')
+    exec.beginHumanDecision('req-2')
+    exec.clearHumanDecisions('turn finalized')
+
+    assert.equal(seen.length, 1)
+    assert.deepEqual(seen[0].ids.sort(), ['req-1', 'req-2'])
+    assert.equal(seen[0].reason, 'turn finalized')
+  })
+
+  test('an answered decision is not announced as abandoned', () => {
+    const exec = internals()
+    const seen: string[][] = []
+    exec.onHumanDecisionsCleared = (ids) => seen.push(ids)
+
+    exec.beginHumanDecision('req-1')
+    exec.endHumanDecision('req-1')
+    exec.clearHumanDecisions('turn finalized')
+
+    assert.equal(seen.length, 0, 'nothing outstanding — no notification')
+  })
+
+  test('a throwing listener cannot break teardown', () => {
+    const exec = internals()
+    exec.onHumanDecisionsCleared = () => {
+      throw new Error('renderer gone')
+    }
+    exec.beginHumanDecision('req-1')
+    exec.clearHumanDecisions('CLI process killed')
+    assert.equal(exec.hasHumanDecisionPending(), false)
+  })
+
+  test('two concurrent prompts: the clock resumes only after the last one', async () => {
+    const exec = internals()
+    exec.armExitSignal()
+    exec.beginHumanDecision('req-1')
+    exec.beginHumanDecision('req-2')
+
+    const read = exec.raceRead(neverSettles(), 20, 'tool timeout')
+    exec.endHumanDecision('req-1')
+    assert.equal(await stillPendingAfter(read, 120), true, 'req-2 still holds the clock')
+
+    exec.endHumanDecision('req-2')
+    await assert.rejects(read, /tool timeout/)
+    exec.disarmExitSignal('cleanup')
   })
 })
 

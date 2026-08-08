@@ -392,6 +392,7 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
       isReady: localEmbeddingProvider.isReady,
       pendingCount: counts.pendingEmbedding,
       totalCount: counts.active + counts.superseded + counts.archived,
+      activeCount: counts.active,
       modelName: localEmbeddingProvider.isReady ? localEmbeddingProvider.activeModelName : null
     }
   })

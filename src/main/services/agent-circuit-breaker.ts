@@ -94,7 +94,22 @@ export class AgentCircuitBreaker {
     // Gratuitous tool detection — if model already wrote a substantial answer
     // (500+ chars) and is now making its FIRST tool call, it's a post-answer
     // verification pattern. Soft-stop via circuit breaker to prevent further turns.
-    if (this._toolCallCount === 1 && opts.accumulatedTextLength >= 500) {
+    //
+    // NOTE on the actual mechanism: the returned `shouldTerminate` is not consumed
+    // anywhere in production (handleToolUseChunk branches only on `broken`). What
+    // really stops the stream is `_circuitBroken = true` here, which the executor
+    // loop checks (`if (this.circuitBreaker.isBroken) break` in agent-session.service)
+    // on the NEXT chunk — so it stops *before* this tool's result is processed, not
+    // "after this tool". Callers must pass a TURN-scoped length: on an auto-continuation
+    // the per-message accumulator still holds the pre-break turn's text, which would
+    // trip this on the continuation's very first tool call and kill it immediately.
+    //
+    // PLAN MODE ONLY. The premise — "the model already answered, so this first tool
+    // call is redundant post-answer verification" — only holds when answering IS the
+    // deliverable. In build mode "write a paragraph, then act" is the normal rhythm,
+    // and the heuristic reads a status recap as a finished answer, cutting the stream
+    // mid-tool and orphaning real work.
+    if (!opts.isBuildMode && this._toolCallCount === 1 && opts.accumulatedTextLength >= 500) {
       this.log.warn(
         `[PIPELINE:gratuitous-tool-soft-stop] conversationId=${opts.conversationId} textLen=${opts.accumulatedTextLength} — already answered, stopping after this tool`
       )

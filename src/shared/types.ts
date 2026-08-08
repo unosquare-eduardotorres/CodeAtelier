@@ -242,8 +242,36 @@ export interface PendingPermission {
   toolInput?: Record<string, unknown>
   /** Conversation title for context (e.g., "Implement auth system") */
   conversationTitle?: string
+  /** Conversation that raised the request — routes the inline card to the right transcript. */
+  conversationId?: string
   /** Conversation mode for context badge */
   mode?: ConversationMode
+}
+
+/**
+ * How a permission request ended.
+ *
+ * `cancelled` covers every path where the request can never be answered: the
+ * turn finalized, the CLI child died, the user hit Stop, or the app tore the
+ * session down. `timedout` is reserved for an auto-deny backstop.
+ */
+export type PermissionOutcome = 'approved' | 'denied' | 'timedout' | 'cancelled'
+
+/**
+ * Main → Renderer: a permission request reached a terminal state.
+ *
+ * Without this the renderer only ever learns an outcome from its own click, so
+ * a request that dies with its turn leaves the modal/toast/card frozen on
+ * "waiting for the agent to continue…" forever.
+ */
+export interface PermissionResolved {
+  /** Matches PendingPermission.id (`perm-<requestId>`). */
+  permissionId: string
+  /** Raw control-actions requestId, for correlation in logs. */
+  requestId: string
+  workspaceId: string
+  conversationId?: string
+  outcome: PermissionOutcome
 }
 
 export interface PermissionResponse {
@@ -1340,7 +1368,10 @@ export interface MemoryRetrievalResult {
 export interface MemoryEmbeddingStatus {
   isReady: boolean
   pendingCount: number
+  /** Every fact regardless of status — the denominator for embedding coverage. */
   totalCount: number
+  /** Active facts only — what the Memories list actually shows. */
+  activeCount: number
   modelName: string | null
 }
 

@@ -31,6 +31,7 @@ import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { featureForAgentRole } from './usage-tracker.service'
 import { supportsContext1M } from '../../shared/constants'
 import { conversationRepository, turnUsageRepository } from '../db/repositories'
+import { isExpectedPlanModeBlock } from '../ipc/tool-chunk-processor'
 
 export class AgentStreamProcessor {
   private readonly s: AgentSessionHost
@@ -225,22 +226,21 @@ export class AgentStreamProcessor {
       streamState.hasTextAfterLastTool = true
     }
 
-    // Detect a blocked Write/Edit attempt in Plan mode. Write/Edit aren't on the
-    // plan-mode allow-list, so the SDK returns "No such tool available". This is
-    // expected (not a bug — see tool-chunk-processor.isExpectedPlanModeBlock), but
-    // it means the model tried to author a plan as a file. Flag it so finalizeStream
-    // can fire a deterministic emit_plan recovery and the user still gets a plan card.
+    // Detect a blocked tool attempt in Plan mode. Write/Edit/MultiEdit/ExitPlanMode
+    // aren't on the plan-mode allow-list, so the SDK returns "No such tool available".
+    // This is expected (not a bug — see tool-chunk-processor.isExpectedPlanModeBlock),
+    // but it means the model tried to deliver a plan by a path that cannot work. Flag
+    // it so finalizeStream can fire a deterministic emit_plan recovery and the user
+    // still gets a plan card. Same predicate as the bug-tracker suppression — one list.
     if (
       chunk.type === 'tool_result' &&
-      this.s.currentMode === 'plan' &&
-      typeof chunk.content === 'string' &&
-      chunk.content.includes('<tool_use_error>') &&
-      chunk.content.includes('No such tool available') &&
-      /\b(Write|Edit|MultiEdit)\b/.test(`${chunk.toolName ?? ''} ${chunk.content}`)
+      isExpectedPlanModeBlock(chunk.toolName, chunk.content, this.s.currentMode)
     ) {
       streamState.planModeToolBlock = true
+      streamState.planModeBlockedTool = chunk.toolName
       this.s.log.warn(
-        `[PIPELINE:plan-mode-tool-block] Blocked Write/Edit in plan mode for conversationId=${conversationId} — will attempt emit_plan recovery`
+        `[PIPELINE:plan-mode-tool-block] Blocked ${chunk.toolName} in plan mode ` +
+          `for conversationId=${conversationId} — will attempt emit_plan recovery`
       )
     }
 
@@ -351,11 +351,7 @@ export class AgentStreamProcessor {
     streamState.hasTextAfterLastTool = false
     const cbResult = this.s.circuitBreaker.onToolUse({
       isBuildMode,
-      accumulatedTextLength: (
-        this.s.activeStreams?.get(conversationId)?.accumulatedText ??
-        this.s.accumulatedText ??
-        ''
-      ).length,
+      accumulatedTextLength: this.turnScopedTextLength(conversationId),
       conversationId,
       isLocalProvider: this.s.llmProvider === 'local-llm',
       contextTier: ctx.contextTier
@@ -374,6 +370,20 @@ export class AgentStreamProcessor {
 
     this.s.circuitBreaker.logToolCall(conversationId, chunk.toolName ?? 'unknown')
     return 'next'
+  }
+
+  /**
+   * Characters of assistant text written during the CURRENT turn.
+   *
+   * `accumulatedText` is per-message and survives auto-continuations, but the
+   * circuit breaker's gratuitous-tool heuristic is per-turn (`_toolCallCount === 1`).
+   * `continueTurnLimit` rebases `accumulatedTextBaseline` so a continuation's first
+   * tool call isn't judged against the pre-break turn's wrap-up text.
+   */
+  private turnScopedTextLength(conversationId: string): number {
+    const streamCtx = this.s.activeStreams?.get(conversationId)
+    const totalLen = (streamCtx?.accumulatedText ?? this.s.accumulatedText ?? '').length
+    return Math.max(0, totalLen - (streamCtx?.accumulatedTextBaseline ?? 0))
   }
 
   private applyCircuitBreakerResult(
@@ -405,11 +415,7 @@ export class AgentStreamProcessor {
     for (let i = 0; i < 10; i++) {
       const cbResult = this.s.circuitBreaker.onToolUse({
         isBuildMode,
-        accumulatedTextLength: (
-          this.s.activeStreams?.get(conversationId)?.accumulatedText ??
-          this.s.accumulatedText ??
-          ''
-        ).length,
+        accumulatedTextLength: this.turnScopedTextLength(conversationId),
         conversationId,
         isLocalProvider: this.s.llmProvider === 'local-llm',
         contextTier: ctx.contextTier

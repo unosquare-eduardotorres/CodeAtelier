@@ -93,10 +93,16 @@ export function registerPermissionIpc(): void {
           const approved = response === 'approve'
           // Extract requestId from the payload (stashed when the toast was created)
           const payload = (args as Record<string, unknown>).payload as
-            { requestId?: string } | undefined
+            | { requestId?: string; input?: unknown }
+            | undefined
           const requestId = payload?.requestId
           if (requestId) {
-            chatAgentService.respondToPermissionForWorkspace(workspaceId, requestId, approved)
+            chatAgentService.respondToPermissionForWorkspace(
+              workspaceId,
+              requestId,
+              approved,
+              payload?.input
+            )
           } else {
             permLog.warn(`[permission] toolPermission response missing requestId`)
           }

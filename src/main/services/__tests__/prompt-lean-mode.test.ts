@@ -80,10 +80,10 @@ describe('Lean Mode Blocks', () => {
     )
   })
 
-  test('full plan forbids Write/Edit for authoring a plan', () => {
+  test('full plan forbids Write/Edit/ExitPlanMode for authoring a plan', () => {
     assert.ok(
-      /never\s+call\s+write\s+or\s+edit/i.test(PLAN_MODE_SECTION),
-      'Full plan should forbid Write/Edit for authoring a plan'
+      /never\s+call\s+write,\s+edit,\s+or\s+exitplanmode/i.test(PLAN_MODE_SECTION),
+      'Full plan should forbid Write/Edit/ExitPlanMode for authoring a plan'
     )
     assert.ok(
       PLAN_MODE_SECTION.includes('emit_plan'),
@@ -91,10 +91,10 @@ describe('Lean Mode Blocks', () => {
     )
   })
 
-  test('lean plan forbids Write/Edit for a plan', () => {
+  test('lean plan forbids Write/Edit/ExitPlanMode for a plan', () => {
     assert.ok(
-      /write\/edit/i.test(PLAN_MODE_SECTION_LEAN),
-      'Lean plan should mention Write/Edit are blocked for plans'
+      /write\/edit\/exitplanmode/i.test(PLAN_MODE_SECTION_LEAN),
+      'Lean plan should mention Write/Edit/ExitPlanMode are blocked for plans'
     )
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('emit_plan'), 'Lean plan should point to emit_plan')
   })

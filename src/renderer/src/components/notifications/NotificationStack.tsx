@@ -87,8 +87,12 @@ export default function NotificationStack({
     return unsub
   }, [activeWorkspaceId])
 
-  // Show toasts for NON-active workspaces, plus toolPermission for the active workspace
-  // (askQuestion/elicitation have inline chat handlers; toolPermission does not)
+  // Show toasts for NON-active workspaces, plus toolPermission for the active
+  // workspace. The toolPermission exception is NOT a double surface: a request
+  // for the conversation on screen never reaches this store at all —
+  // useBackgroundSessionListeners routes it to the inline transcript card. What
+  // the exception still catches is the active workspace's OTHER conversations,
+  // which have no transcript on screen to render a card into.
   const visiblePermissions = permissions.filter(
     (p) => (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') && !p.badgeFallback
   )

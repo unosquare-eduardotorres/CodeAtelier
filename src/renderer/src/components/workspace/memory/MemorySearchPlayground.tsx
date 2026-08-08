@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Search, Loader2, SearchX } from 'lucide-react'
 
-import FactCard from './FactCard'
+import { Button } from '@renderer/components/common/ui'
+import FactRow from './facts/FactRow'
 import type { MemoryFact } from '../../../../../shared/types'
 
 // ── Helpers ──
@@ -21,17 +22,23 @@ function matchTypeDisplay(raw: string): { label: string; styled: boolean } {
 
 // ── Component ──
 
-interface SearchPlaygroundProps {
+interface MemorySearchPlaygroundProps {
   workspaceId: string
 }
 
-export default function SearchPlayground({
+/**
+ * Named for its domain: `code-intelligence/SearchPlayground` searches the code
+ * graph, this one searches memories. Two files exporting `SearchPlayground`
+ * made every import site ambiguous at a glance.
+ */
+export default function MemorySearchPlayground({
   workspaceId
-}: SearchPlaygroundProps): React.JSX.Element {
+}: MemorySearchPlaygroundProps): React.JSX.Element {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<(MemoryFact & { _matchType?: string })[]>([])
   const [searching, setSearching] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
 
   const handleSearch = async (): Promise<void> => {
     if (!query.trim()) return
@@ -58,12 +65,13 @@ export default function SearchPlayground({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          className="flex-1 px-3 py-2 bg-input-bg border border-border-default rounded-md text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-input-focus"
+          className="flex-1 h-8 px-3 bg-input-bg border border-border-default rounded-md text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-1 focus:ring-input-focus"
         />
-        <button
+        <Button
+          variant="primary"
+          size="md"
           onClick={handleSearch}
           disabled={searching || !query.trim()}
-          className="flex items-center gap-1.5 px-3 py-2 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20 disabled:opacity-50"
         >
           {searching ? (
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -71,7 +79,7 @@ export default function SearchPlayground({
             <Search className="w-4 h-4" />
           )}
           {searching ? 'Searching…' : 'Search'}
-        </button>
+        </Button>
       </div>
 
       {/* Results */}
@@ -81,13 +89,13 @@ export default function SearchPlayground({
             {results.length} result{results.length !== 1 ? 's' : ''}
           </p>
           {results.map((fact) => (
-            <div key={fact.id} className="relative">
+            <div key={fact.id} className="flex items-start gap-2">
               {fact._matchType &&
                 (() => {
                   const { label, styled } = matchTypeDisplay(fact._matchType)
                   return (
                     <span
-                      className={`absolute top-2 right-2 px-1.5 py-0.5 text-[10px] rounded z-10 ${
+                      className={`shrink-0 mt-2 px-1.5 py-0.5 text-[11px] rounded ${
                         styled ? 'bg-info-muted text-info' : 'bg-surface-overlay text-text-muted'
                       }`}
                     >
@@ -95,7 +103,20 @@ export default function SearchPlayground({
                     </span>
                   )
                 })()}
-              <FactCard fact={fact} />
+              <div className="flex-1 min-w-0">
+                <FactRow
+                  fact={fact}
+                  expanded={expandedIds.has(fact.id)}
+                  onToggleExpand={() =>
+                    setExpandedIds((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(fact.id)) next.delete(fact.id)
+                      else next.add(fact.id)
+                      return next
+                    })
+                  }
+                />
+              </div>
             </div>
           ))}
         </div>

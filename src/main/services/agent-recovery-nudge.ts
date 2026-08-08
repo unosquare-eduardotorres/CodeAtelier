@@ -74,6 +74,8 @@ export interface PlanToolRecoveryOptions {
   onChunk: (chunk: StreamChunk) => void
   /** Callback to track token usage from recovery response */
   onTokens: (tokens: number) => void
+  /** Name of the plan-mode-blocked tool that triggered recovery, for an accurate prompt. */
+  blockedTool?: string
 }
 
 export interface PlanToolRecoveryResult {
@@ -261,7 +263,7 @@ export class RecoveryNudgeService {
   }
 
   /**
-   * Plan-mode recovery: the model tried a blocked Write/Edit to author a plan.
+   * Plan-mode recovery: the model tried a blocked tool (Write/Edit/ExitPlanMode) to deliver a plan.
    * Fire a short follow-up turn that allows ONLY the control-actions tools
    * (emit_plan) and instruct the model to re-deliver its plan via emit_plan.
    *
@@ -276,15 +278,18 @@ export class RecoveryNudgeService {
       return { attempted: false }
     }
 
+    const blocked = opts.blockedTool ?? 'Write/Edit'
+
     this.log.warn(
-      `[PIPELINE:plan-tool-recovery] conversationId=${opts.conversationId} — re-issuing plan via emit_plan after a blocked Write/Edit`
+      `[PIPELINE:plan-tool-recovery] conversationId=${opts.conversationId} — re-issuing plan via emit_plan after a blocked ${blocked}`
     )
 
     const prompt =
-      '[System: Your last action tried to Write/Edit a file, which is blocked in Plan mode ' +
+      `[System: Your last action called ${blocked}, which is not available in Plan mode ` +
       '("No such tool available"). Re-deliver that plan NOW by calling the emit_plan tool with ' +
       'type, title, and phases (referencing the real file paths you already identified). ' +
-      'Do NOT use Write or Edit — emit_plan is the only way to deliver a plan. Do not write any other text.]'
+      'emit_plan is the only way to deliver a plan — do not use any other tool, and do not ' +
+      'write any other text.]'
 
     // Defence-in-depth: 2-minute per-chunk watchdog prevents an unbounded
     // recovery turn from wedging the session.

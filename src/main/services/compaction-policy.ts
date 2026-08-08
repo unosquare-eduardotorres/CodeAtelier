@@ -198,6 +198,21 @@ export function resolveClaudeCompactionEnv(effectiveContextWindow: number): Reco
 }
 
 /**
+ * Whether this install may request API-only beta headers.
+ *
+ * `--betas` is rejected for subscription/OAuth logins ("Custom betas are only
+ * available for API key users"), and Code Atelier ships against Claude Max by
+ * default (CLAUDE.md). Requesting it anyway is not merely a no-op: the caller
+ * also sizes CLAUDE_CODE_AUTO_COMPACT_WINDOW to 1M, so auto-compact never fires
+ * against the real 200K ceiling and the turn overflows silently.
+ */
+export function canUseContext1MBeta(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.CODE_ATELIER_CONTEXT_1M === '0') return false
+  if (env.CODE_ATELIER_CONTEXT_1M === '1') return true
+  return !!env.ANTHROPIC_API_KEY?.trim()
+}
+
+/**
  * Resolve the `contextWindowSize` option for the executor. 1M models pass the
  * full window; ≤200K models pass 80% of the window. (Kept for option-shape
  * compatibility — the CLI itself reads the env vars above, not this value.)

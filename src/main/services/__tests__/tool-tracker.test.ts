@@ -46,6 +46,25 @@ describe('ToolTracker', () => {
     assert.equal(t.resolveInput(undefined), undefined)
   })
 
+  // ── pendingToolEntries ──
+
+  test('pendingToolEntries exposes id→name pairs for orphan reporting', () => {
+    const t = new ToolTracker()
+    t.register('tid-a', 'Bash')
+    t.register('tid-b', 'mcp__mulldev__test')
+    assert.deepEqual(t.pendingToolEntries, [
+      ['tid-a', 'Bash'],
+      ['tid-b', 'mcp__mulldev__test']
+    ])
+  })
+
+  test('pendingToolEntries is empty once every call is consumed', () => {
+    const t = new ToolTracker()
+    t.register('tid-a', 'Bash')
+    t.consume('tid-a')
+    assert.deepEqual(t.pendingToolEntries, [])
+  })
+
   // ── consume ──
 
   test('consume removes both name and input mappings', () => {

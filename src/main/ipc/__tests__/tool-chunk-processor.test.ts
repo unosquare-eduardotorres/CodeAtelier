@@ -429,6 +429,30 @@ describe('isExpectedPlanModeBlock', () => {
     assert.equal(isExpectedPlanModeBlock('Write', blocked, 'build'), false)
   })
 
+  // The CLI's native plan-mode prompt instructs the model to finish with ExitPlanMode,
+  // while mode-permissions disallows it — a structural collision, not a bug to file.
+  test('true for ExitPlanMode block in plan mode', () => {
+    assert.equal(
+      isExpectedPlanModeBlock(
+        'ExitPlanMode',
+        '<tool_use_error>No such tool available: ExitPlanMode</tool_use_error>',
+        'plan'
+      ),
+      true
+    )
+  })
+
+  test('false for ExitPlanMode block in build mode', () => {
+    assert.equal(
+      isExpectedPlanModeBlock(
+        'ExitPlanMode',
+        '<tool_use_error>No such tool available: ExitPlanMode</tool_use_error>',
+        'build'
+      ),
+      false
+    )
+  })
+
   test('false when mode is undefined', () => {
     assert.equal(isExpectedPlanModeBlock('Write', blocked, undefined), false)
   })

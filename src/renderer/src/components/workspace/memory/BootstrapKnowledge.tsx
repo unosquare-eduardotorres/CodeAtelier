@@ -51,6 +51,9 @@ export default function BootstrapKnowledge(): React.JSX.Element {
   const [forceAnimation, setForceAnimation] = useState(
     () => localStorage.getItem(ANIMATION_KEY) === 'true'
   )
+  // Opened from the "N failed" count on the last-run summary, which was
+  // previously red text with no way to see what actually failed.
+  const [inspectingFailures, setInspectingFailures] = useState(false)
 
   useEffect(() => {
     localStorage.setItem(ANIMATION_KEY, String(forceAnimation))
@@ -122,8 +125,27 @@ export default function BootstrapKnowledge(): React.JSX.Element {
           run={bootstrapLatestRun}
           resumableRunId={bootstrapResumableRunId}
           onResume={handleResume}
+          onInspectFailures={
+            bootstrapLatestRun.itemsFailed > 0
+              ? () => {
+                  setBootstrapItemFilter('failed')
+                  setInspectingFailures(true)
+                }
+              : undefined
+          }
           busy={isActive}
         />
+      )}
+
+      {inspectingFailures && !showProgress && (
+        <div className="rounded-lg border border-border-default bg-surface-float p-3">
+          <ItemList
+            items={bootstrapItems}
+            total={bootstrapItemsTotal}
+            filter={bootstrapItemFilter}
+            onFilterChange={setBootstrapItemFilter}
+          />
+        </div>
       )}
 
       {showProgress && bootstrap && (
@@ -139,7 +161,7 @@ export default function BootstrapKnowledge(): React.JSX.Element {
                   className="h-[180px]"
                 />
                 <label
-                  className="flex items-center gap-1.5 text-[10px] text-text-muted cursor-pointer select-none"
+                  className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer select-none"
                   title="Draw the scene even when your system asks for reduced motion."
                 >
                   <input

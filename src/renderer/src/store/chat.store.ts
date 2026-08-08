@@ -11,7 +11,8 @@ import {
   streamingInternals as internals,
   appendStreamChunkAction,
   finalizeStreamAction,
-  finalizeTurnBubbleAction
+  finalizeTurnBubbleAction,
+  flushStreamingIntoMessage
 } from './chat-streaming.actions'
 import {
   buildStreamingResetState,
@@ -37,9 +38,28 @@ import type {
   LLMProvider,
   Message,
   ModelRoleMap,
+  PendingPermission,
+  PermissionOutcome,
   ThinkingEffort,
   ToolActivity
 } from '../../../shared/types'
+import {
+  PERMISSION_CANCELLED_MESSAGE,
+  PERMISSION_TIMEOUT_MESSAGE
+} from '../../../shared/permission-messages'
+
+/**
+ * An inline tool-permission prompt and what the user did with it.
+ *
+ * The card deliberately survives its own resolution: it flips to "waiting" and
+ * is only cleared when the stream actually moves again (finalizeStream). A
+ * broken approval therefore reads as a card stuck on "waiting" rather than as
+ * an empty chat.
+ */
+export interface PendingToolPermission {
+  permission: PendingPermission
+  decision: 'pending' | 'approved' | 'denied'
+}
 
 // ChatStreamingInternals + internals singleton are in ./chat-streaming.actions.ts
 
@@ -111,6 +131,12 @@ export interface ChatState {
   /** Request ID from IPC bridge ask_user — presence indicates CLI/bridge backend */
   pendingQuestionRequestId: string | null
 
+  /** Inline tool-permission prompt for the active conversation (null = none). */
+  pendingToolPermission: PendingToolPermission | null
+
+  /** Retry offer after a permission died with its turn (null = none). */
+  permissionRetry: { conversationId: string; retryText: string } | null
+
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (
     workspaceId: string,
@@ -180,6 +206,28 @@ export interface ChatState {
   setPendingQuestions: (questions: GrillQuestion[], action?: string, requestId?: string) => void
   submitQuestionAnswers: (answers: GrillAnswerPayload[]) => void
   skipAllQuestions: () => void
+
+  // Inline tool permission actions
+  setPendingToolPermission: (permission: PendingPermission) => void
+  resolveToolPermission: (approved: boolean) => void
+  /**
+   * A permission reached a terminal state elsewhere (turn torn down, CLI died,
+   * auto-deny). Clears the inline card, which otherwise sits on "waiting for
+   * the agent to continue…" for a turn that no longer exists.
+   */
+  resolvePermissionExternally: (data: {
+    permissionId: string
+    conversationId?: string
+    outcome: PermissionOutcome
+  }) => void
+
+  /**
+   * Re-send the last user message after a permission died with its turn. Retry
+   * cannot mean "re-approve": the CLI child that owed the tool result is gone
+   * and the requestId is meaningless, so this is a NEW turn.
+   */
+  retryAfterPermission: () => Promise<void>
+  dismissPermissionRetry: () => void
 
   // Auto mode switch pill (e.g., build → plan on investigation prompts)
   autoModeSwitchPill: { from: ConversationMode; to: ConversationMode } | null
@@ -293,6 +341,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
   pendingQuestionAction: previousChatState?.pendingQuestionAction ?? null,
   pendingQuestionRequestId: previousChatState?.pendingQuestionRequestId ?? null,
+  pendingToolPermission: previousChatState?.pendingToolPermission ?? null,
+  permissionRetry: null,
   autoModeSwitchPill: null,
   sessionRecovery: null,
   budgetCapBanner: null,
@@ -551,7 +601,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       budgetCapBanner: null,
       blockedByBanner: null,
       turnLimitReached: null,
+      permissionRetry: null,
       streamStalledConversationId: null,
+      // The inline permission card belongs to one conversation — keep it only
+      // when that conversation is the one being shown.
+      pendingToolPermission:
+        state.pendingToolPermission?.permission.conversationId === id
+          ? state.pendingToolPermission
+          : null,
       pendingQuestions: isConversationStillStreaming
         ? (restored.pendingQuestions ?? (isReselection ? state.pendingQuestions : null))
         : null,
@@ -1318,61 +1375,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Flush any accumulated streaming content into a committed message
     // BEFORE showing the question card. This preserves chronological ordering:
     // the agent's pre-question text appears before the user's answer.
-    // FLUSH-ORDER-01: Flush the active conversation's accumulator BEFORE reading state.
-    const activeConversation = get().activeConversation
-    internals.flushAccumulator(activeConversation?.id)
-
-    // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
-    const buffer = activeConversation
-      ? get().conversationStreams.get(activeConversation.id)
-      : undefined
-    const streamingContent = buffer?.streamingContent ?? get().streamingContent
-    const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
-    const streamingRole = buffer?.streamingRole ?? get().streamingRole
-    const streamingSpecialist = buffer?.streamingSpecialist ?? get().streamingSpecialist
-    const toolActivities = buffer?.toolActivities ?? get().toolActivities
-
-    if (
-      activeConversation &&
-      (streamingContent || streamingSegments.length > 0 || toolActivities.length > 0)
-    ) {
-      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .join('\n\n')
-
-      const mergedTools = [
-        ...streamingSegments.flatMap((s) => s.toolActivities),
-        ...toolActivities
-      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
-
-      if (mergedContent || mergedTools.length > 0) {
-        const message: Message = {
-          id: `pre-question-${Date.now()}`,
-          conversationId: activeConversation.id,
-          role: streamingRole,
-          ...(streamingRole === 'specialist' && streamingSpecialist
-            ? { agentId: streamingSpecialist }
-            : {}),
-          contentMd: mergedContent,
-          attachmentsJson: '[]',
-          createdAt:
-            streamingSegments.length > 0
-              ? new Date(streamingSegments[0].timestamp).toISOString()
-              : new Date().toISOString(),
-          toolActivities: mergedTools.length > 0 ? mergedTools : undefined
-        }
-
-        set((state) => ({
-          messages: [...state.messages, message],
-          streamingContent: '',
-          streamingSegments: [],
-          toolActivities: []
-        }))
-      }
-
-      internals.resetAccumulator(activeConversation?.id)
-    }
+    flushStreamingIntoMessage(get, set, 'pre-question')
 
     set({
       pendingQuestions: questions,
@@ -1429,10 +1432,83 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  setPendingToolPermission: (permission) => {
+    // Same ordering rule as the question card — commit the agent's pre-permission
+    // text so the card renders below it, not above it.
+    flushStreamingIntoMessage(get, set, 'pre-permission')
+    set({ pendingToolPermission: { permission, decision: 'pending' } })
+  },
+
+  resolvePermissionExternally: ({ permissionId, conversationId, outcome }) => {
+    const pending = get().pendingToolPermission
+    const matchesCard = pending?.permission.id === permissionId
+    if (matchesCard) set({ pendingToolPermission: null })
+
+    if (outcome === 'approved' || outcome === 'denied') return
+
+    // Unanswered: say so in the transcript and offer a retry. Scoped to the
+    // conversation that raised it so a background workspace cannot write into
+    // the chat currently on screen.
+    const activeId = get().activeConversation?.id
+    if (!activeId) return
+    if (conversationId && conversationId !== activeId && !matchesCard) return
+
+    get().appendLocalMessage(
+      outcome === 'timedout' ? PERMISSION_TIMEOUT_MESSAGE : PERMISSION_CANCELLED_MESSAGE
+    )
+
+    const lastUserText = [...get().messages].reverse().find((m) => m.role === 'user')?.contentMd
+    if (lastUserText) {
+      set({ permissionRetry: { conversationId: activeId, retryText: lastUserText } })
+    }
+  },
+
+  retryAfterPermission: async () => {
+    const retry = get().permissionRetry
+    if (!retry) return
+    set({ permissionRetry: null })
+    // Guard against a conversation switch between click and send.
+    if (get().activeConversation?.id !== retry.conversationId) return
+    await get().sendMessage(retry.retryText)
+  },
+
+  dismissPermissionRetry: () => set({ permissionRetry: null }),
+
+  resolveToolPermission: (approved) => {
+    const pending = get().pendingToolPermission
+    if (!pending || pending.decision !== 'pending') return
+
+    // The card stays on screen, flipped to a resolved state. If the approval
+    // never reaches the CLI the user sees a card stuck on "waiting" instead of
+    // an empty chat — finalizeStream is what clears it once the turn moves.
+    set({
+      pendingToolPermission: { ...pending, decision: approved ? 'approved' : 'denied' }
+    })
+
+    window.api
+      .respondToPermission({
+        permissionId: pending.permission.id,
+        workspaceId: pending.permission.workspaceId,
+        type: 'toolPermission',
+        response: approved ? 'approve' : 'deny',
+        // Carries requestId + input back to the control-actions server.
+        payload: pending.permission.payload
+      })
+      .catch((err) => {
+        rendererLog.error('[resolveToolPermission] Failed to send permission response:', err)
+      })
+  },
+
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
 
   clearDisplay: () => {
-    set({ messages: [], streamingContent: '', streamingSegments: [], toolActivities: [] })
+    set({
+      messages: [],
+      streamingContent: '',
+      streamingSegments: [],
+      toolActivities: [],
+      pendingToolPermission: null
+    })
   },
 
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => {
@@ -1550,6 +1626,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingQuestions: null,
       pendingQuestionAction: null,
       pendingQuestionRequestId: null,
+      pendingToolPermission: null,
       budgetCapBanner: null,
       blockedByBanner: null,
       turnLimitReached: null,
@@ -1595,6 +1672,7 @@ export const useChatActions = (): Pick<
   | 'setPendingQuestions'
   | 'submitQuestionAnswers'
   | 'skipAllQuestions'
+  | 'resolveToolPermission'
   | 'setDraftText'
   | 'clearDraftText'
   | 'loadContextUsage'
@@ -1629,6 +1707,7 @@ export const useChatActions = (): Pick<
       setPendingQuestions: s.setPendingQuestions,
       submitQuestionAnswers: s.submitQuestionAnswers,
       skipAllQuestions: s.skipAllQuestions,
+      resolveToolPermission: s.resolveToolPermission,
       setDraftText: s.setDraftText,
       clearDraftText: s.clearDraftText,
       loadContextUsage: s.loadContextUsage,

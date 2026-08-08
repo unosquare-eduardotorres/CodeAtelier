@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useChatStore, useChatActions } from '@renderer/store'
-import { GrillQuestionCard, MessageBubble } from '@renderer/components/chat'
+import { GrillQuestionCard, MessageBubble, ToolPermissionCard } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { CompactContextModal } from '@renderer/components/common'
 import { ThinkingIndicator } from '@renderer/components/streaming'
@@ -34,6 +34,7 @@ export default function MessageListFooter({
   const contextUsages = useChatStore((s) => s.contextUsages)
   const pendingQuestions = useChatStore((s) => s.pendingQuestions)
   const hasPendingQuestions = (pendingQuestions?.length ?? 0) > 0
+  const pendingToolPermission = useChatStore((s) => s.pendingToolPermission)
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
   const activeConversationWorkspaceId = useChatStore(
     (s) => s.activeConversation?.workspaceId ?? null
@@ -44,6 +45,7 @@ export default function MessageListFooter({
     sendMessage,
     submitQuestionAnswers,
     skipAllQuestions,
+    resolveToolPermission,
     appendLocalMessage,
     createConversation
   } = useChatActions()
@@ -176,6 +178,16 @@ export default function MessageListFooter({
               onSubmit={submitQuestionAnswers}
               onSkipAll={skipAllQuestions}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Inline tool permission card — deliberately does NOT suppress the live
+          narration below it: the agent really is mid-turn and blocked. */}
+      {pendingToolPermission && (
+        <div className="flex justify-start px-4">
+          <div className="max-w-[85%]">
+            <ToolPermissionCard pending={pendingToolPermission} onResolve={resolveToolPermission} />
           </div>
         </div>
       )}

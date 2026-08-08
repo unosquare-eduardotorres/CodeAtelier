@@ -67,7 +67,9 @@ if (loaded) {
       'getSessionId',
       'compact',
       'sendSlashCommand',
-      'executeAndCollect'
+      'executeAndCollect',
+      'getPendingToolNames',
+      'getSpawnSignature'
     ]
     for (const m of methods) {
       test(`has ${m}`, () => {
@@ -86,6 +88,72 @@ if (loaded) {
       const exec = new CLIExecutor()
       const sid = exec.getSessionId()
       assert.ok(sid === null || sid === undefined)
+    })
+  })
+
+  describe('CLIExecutor — pending tool visibility', () => {
+    test('idle executor reports no pending tools', () => {
+      const exec = new CLIExecutor()
+      assert.deepEqual(exec.getPendingToolNames(), [])
+    })
+
+    test('pending tools are visible to lifecycle callers mid-turn', () => {
+      const exec = new CLIExecutor()
+      const { ToolTracker } = require('../executor-utils/tool-tracker')
+      const tracker = new ToolTracker()
+      tracker.register('tid-1', 'mcp__mulldev__test')
+      ;(exec as any).activeTools = tracker
+      assert.deepEqual(exec.getPendingToolNames(), ['mcp__mulldev__test'])
+    })
+
+    // Regression: an orphaned tool_use stays at status 'running', which the
+    // finalize path renders as done. killProcess must queue a failed result.
+    test('killProcess records unresolved calls as orphans', async () => {
+      const exec = new CLIExecutor()
+      const { ToolTracker } = require('../executor-utils/tool-tracker')
+      const tracker = new ToolTracker()
+      tracker.register('tid-1', 'mcp__mulldev__test')
+      ;(exec as any).activeTools = tracker
+      ;(exec as any).cliProcess = { kill: () => {}, once: (_e: string, cb: () => void) => cb() }
+      await exec.killProcess()
+      assert.deepEqual((exec as any).orphanedToolCalls, [
+        { id: 'tid-1', name: 'mcp__mulldev__test' }
+      ])
+      assert.deepEqual(exec.getPendingToolNames(), [], 'tracker is cleared after harvesting')
+
+      const drained = [...(exec as any).drainOrphanedToolCalls()]
+      assert.equal(drained.length, 1)
+      assert.equal(drained[0].type, 'tool_result')
+      assert.equal(drained[0].toolId, 'tid-1')
+      assert.equal(drained[0].isError, true)
+      assert.deepEqual([...(exec as any).drainOrphanedToolCalls()], [], 'drain is one-shot')
+    })
+  })
+
+  describe('CLIExecutor — spawn signature', () => {
+    test('fresh executor reports no signature', () => {
+      const exec = new CLIExecutor()
+      assert.equal(exec.getSpawnSignature(), null)
+    })
+
+    // The signature must not outlive the process it describes: a stale one would
+    // let the factory reuse a budget that no longer exists.
+    test('killProcess clears the signature', async () => {
+      const exec = new CLIExecutor()
+      ;(exec as any).spawnSignature = { model: 'claude-sonnet-4-6', maxTurns: 200, effort: 'high' }
+      ;(exec as any).cliProcess = { kill: () => {}, once: (_e: string, cb: () => void) => cb() }
+      await exec.killProcess()
+      assert.equal((exec as any).spawnSignature, null)
+      assert.equal(exec.getSpawnSignature(), null)
+    })
+
+    // isAlive() is the source of truth — a signature left behind by a dead
+    // process must never be reported as live.
+    test('signature is not reported while the process is dead', () => {
+      const exec = new CLIExecutor()
+      ;(exec as any).spawnSignature = { model: 'claude-sonnet-4-6', maxTurns: 200, effort: 'high' }
+      assert.equal(exec.isAlive(), false)
+      assert.equal(exec.getSpawnSignature(), null)
     })
   })
 

@@ -25,31 +25,31 @@ function StatusPill({ status }: { status: BootstrapItemStatus }): React.JSX.Elem
   switch (status) {
     case 'running':
       return (
-        <span className="flex items-center gap-1 text-teal text-[10px]">
+        <span className="flex items-center gap-1 text-teal text-[11px]">
           <Loader2 className="w-3 h-3 animate-spin" /> running
         </span>
       )
     case 'done':
       return (
-        <span className="flex items-center gap-1 text-green-400 text-[10px]">
+        <span className="flex items-center gap-1 text-success text-[11px]">
           <CheckCircle className="w-3 h-3" /> done
         </span>
       )
     case 'skipped':
       return (
-        <span className="flex items-center gap-1 text-text-muted text-[10px]">
+        <span className="flex items-center gap-1 text-text-muted text-[11px]">
           <MinusCircle className="w-3 h-3" /> unchanged
         </span>
       )
     case 'failed':
       return (
-        <span className="flex items-center gap-1 text-red-400 text-[10px]">
+        <span className="flex items-center gap-1 text-danger text-[11px]">
           <XCircle className="w-3 h-3" /> failed
         </span>
       )
     default:
       return (
-        <span className="flex items-center gap-1 text-text-muted text-[10px]">
+        <span className="flex items-center gap-1 text-text-muted text-[11px]">
           <Clock className="w-3 h-3" /> queued
         </span>
       )
@@ -97,7 +97,7 @@ export default function ItemList({
             ) : null}
           </button>
         ))}
-        <span className="ml-auto text-[10px] text-text-muted font-mono">
+        <span className="ml-auto text-[11px] text-text-muted font-mono">
           {items.length} of {total}
         </span>
       </div>
@@ -121,13 +121,13 @@ export default function ItemList({
               </span>
 
               {item.chunkTotal > 1 && (
-                <span className="font-mono text-[10px] text-text-muted shrink-0">
+                <span className="font-mono text-[11px] text-text-muted shrink-0">
                   {item.chunkDone}/{item.chunkTotal}
                 </span>
               )}
 
               {item.factsCreated > 0 && (
-                <span className="font-mono text-[10px] text-teal shrink-0">
+                <span className="font-mono text-[11px] text-teal shrink-0">
                   +{item.factsCreated}
                 </span>
               )}
@@ -141,7 +141,7 @@ export default function ItemList({
       </div>
 
       {items.some((i) => i.error) && (
-        <div className="text-[10px] text-red-400/80 space-y-0.5">
+        <div className="text-[11px] text-danger/80 space-y-0.5">
           {items
             .filter((i) => i.error)
             .slice(0, 5)

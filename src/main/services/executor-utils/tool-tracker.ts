@@ -67,6 +67,15 @@ export class ToolTracker {
   }
 
   /**
+   * `[id, name]` for every still-pending tool. Needed when a caller must emit a
+   * synthetic tool_result for work that was orphaned — the id is what downstream
+   * consumers merge on, so names alone are not enough.
+   */
+  get pendingToolEntries(): Array<[string, string]> {
+    return [...this.toolIdToName.entries()]
+  }
+
+  /**
    * The single pending tool id, when exactly one is outstanding. Used to
    * recover a tool_result that arrived without a tool_use_id — with one tool
    * in flight the correlation is unambiguous.

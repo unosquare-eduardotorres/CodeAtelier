@@ -18,7 +18,7 @@ import {
 import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { PerConversationStreamState } from './chat-action-utils'
-import type { ChatState } from './chat.store'
+import type { ChatState, PendingToolPermission } from './chat.store'
 import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE } from '@renderer/components/chat/plan-detection'
 import { usePlanExecutionStore } from './plan-execution.store'
 
@@ -42,6 +42,8 @@ export interface ChatStreamingState {
   /** STALL-DETECT-01: Conversation ID whose stream has stalled (no real content for 3 minutes).
    *  null when no stall detected. Used to show a warning banner — does NOT kill the stream. */
   streamStalledConversationId: string | null
+  /** Inline tool-permission prompt — cleared when its turn finalizes. */
+  pendingToolPermission: PendingToolPermission | null
   /** MULTI-CHAT-06: Per-conversation streaming state snapshots. */
   conversationStreams: Map<string, PerConversationStreamState>
   messages: Message[]
@@ -498,6 +500,75 @@ export function appendStreamChunkAction(
   streamingInternals.getOrCreateAccumulatorFor(conversationId).appendText(chunk)
 }
 
+// ── Interrupt flush ──────────────────────────────────────────────────────
+
+/**
+ * Commit whatever the agent has streamed so far as a message, so an interrupt
+ * card (question / tool permission) lands BELOW the text that led to it rather
+ * than above it. Shared by setPendingQuestions and setPendingToolPermission.
+ *
+ * `idPrefix` only distinguishes the synthetic message ids in the transcript.
+ */
+export function flushStreamingIntoMessage(get: GetFn, set: SetFn, idPrefix: string): void {
+  // FLUSH-ORDER-01: Flush the active conversation's accumulator BEFORE reading state.
+  const activeConversation = get().activeConversation
+  streamingInternals.flushAccumulator(activeConversation?.id)
+
+  // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
+  const buffer = activeConversation
+    ? get().conversationStreams.get(activeConversation.id)
+    : undefined
+  const streamingContent = buffer?.streamingContent ?? get().streamingContent
+  const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
+  const streamingRole = buffer?.streamingRole ?? get().streamingRole
+  const streamingSpecialist = buffer?.streamingSpecialist ?? get().streamingSpecialist
+  const toolActivities = buffer?.toolActivities ?? get().toolActivities
+
+  if (
+    !activeConversation ||
+    (!streamingContent && streamingSegments.length === 0 && toolActivities.length === 0)
+  ) {
+    return
+  }
+
+  const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  const mergedTools = [
+    ...streamingSegments.flatMap((s) => s.toolActivities),
+    ...toolActivities
+  ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
+  if (mergedContent || mergedTools.length > 0) {
+    const message: Message = {
+      id: `${idPrefix}-${Date.now()}`,
+      conversationId: activeConversation.id,
+      role: streamingRole,
+      ...(streamingRole === 'specialist' && streamingSpecialist
+        ? { agentId: streamingSpecialist }
+        : {}),
+      contentMd: mergedContent,
+      attachmentsJson: '[]',
+      createdAt:
+        streamingSegments.length > 0
+          ? new Date(streamingSegments[0].timestamp).toISOString()
+          : new Date().toISOString(),
+      toolActivities: mergedTools.length > 0 ? mergedTools : undefined
+    }
+
+    set((state) => ({
+      messages: [...state.messages, message],
+      streamingContent: '',
+      streamingSegments: [],
+      toolActivities: []
+    }))
+  }
+
+  streamingInternals.resetAccumulator(activeConversation.id)
+}
+
 // ── finalizeStream helpers ───────────────────────────────────────────────
 
 function mergeStreamedContent(
@@ -722,6 +793,14 @@ export function finalizeStreamAction(
   }
 
   streamingInternals.resetAccumulator(conversationId)
+
+  // PERM-INLINE-01: A tool-permission card must not outlive its turn. The
+  // server denies on its own 15-min timeout and never tells the renderer, so
+  // the end of the stream is the only signal that the card is dead. Per-task
+  // finalizes (taskId) are mid-turn and must not clear it.
+  if (!taskId && get().pendingToolPermission?.permission.conversationId === conversationId) {
+    set({ pendingToolPermission: null })
+  }
 
   // PLAN-RACE-FIX-E1: After finalize, schedule a deferred check for late plan blocks.
   // The backend's late injection (PLAN-RACE-FIX-01) sends the plan chunk after the

@@ -49,6 +49,14 @@ test.describe('Feed Brain Ingestion', () => {
     await ingestionTab.click()
     await page.waitForTimeout(500)
 
+    // Select the Bootstrap pane explicitly — relying on it being the default
+    // section made this suite silently dependent on SECTIONS ordering.
+    const bootstrapSection = page.locator('[data-testid="ingestion-section-bootstrap"]')
+    if (await bootstrapSection.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await bootstrapSection.click()
+      await page.waitForTimeout(300)
+    }
+
     return page
       .locator('[data-testid="bootstrap-start"]')
       .isVisible({ timeout: 5_000 })
