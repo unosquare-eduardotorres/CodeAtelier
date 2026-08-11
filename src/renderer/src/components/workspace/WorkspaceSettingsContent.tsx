@@ -10,6 +10,7 @@ import MemorySettingsPage from './MemorySettingsPage'
 import DocumentsPage from './DocumentsPage'
 import ModelConfigTab from './ModelConfigTab'
 import RepositorySettingsTab from './RepositorySettingsTab'
+import TracksSettingsTab from './TracksSettingsTab'
 import CodeIntelligencePage from './CodeIntelligencePage'
 import IntegrationsPage from './IntegrationsPage'
 import SpecialistPage from './SpecialistPage'
@@ -160,6 +161,7 @@ export default function WorkspaceSettingsContent({
       )}
       {tab === 'models' && <ModelConfigTab />}
       {tab === 'repository' && <RepositorySettingsTab />}
+      {tab === 'tracks' && <TracksSettingsTab onNavigateToChat={onNavigateToChat} />}
       {tab === 'code-intelligence' && (
         <CodeIntelligencePage
           onNavigateToModels={() => {

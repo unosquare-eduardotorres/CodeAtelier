@@ -182,57 +182,65 @@ describe('buildTempDirName', () => {
 // ── mountExternalIntegrations ──
 
 describe('mountExternalIntegrations', () => {
+  const BASE = '/opt/app/out/main/mcp-servers'
+
   test('inactive integration → not added to servers', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers, { maestro: false }, {}, '/home/test')
+    mountExternalIntegrations(servers, { maestro: false }, { maestro: {} }, '/home/test', BASE)
     assert.equal(servers['maestro'], undefined)
   })
 
   test('missing integration ID in externalActive → skipped', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers, {}, {}, '/home/test')
+    mountExternalIntegrations(servers, {}, {}, '/home/test', BASE)
     assert.equal(Object.keys(servers).length, 0)
+  })
+
+  test('active but absent from envByIntegration → skipped (incomplete credentials)', () => {
+    const servers: Record<string, CliMcpServerEntry> = {}
+    mountExternalIntegrations(servers, { maestro: true }, {}, '/nonexistent', BASE)
+    assert.equal(servers['maestro'], undefined, 'must not mount without a resolved env')
   })
 
   test('active integration → server entry created with default command', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
     // With a non-existent home path, commandPaths won't resolve → default command used
-    mountExternalIntegrations(servers, { maestro: true }, {}, '/nonexistent/home')
+    mountExternalIntegrations(
+      servers,
+      { maestro: true },
+      { maestro: {} },
+      '/nonexistent/home',
+      BASE
+    )
     assert.ok(servers['maestro'], 'maestro server should be present')
     assert.equal(servers['maestro'].command, 'maestro')
     assert.deepEqual(servers['maestro'].args, ['mcp'])
   })
 
-  test('active integration with envKeys → copies present env vars only', () => {
+  test('pre-resolved env is passed through verbatim', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
-    const processEnv = {
-      JAVA_HOME: '/usr/lib/jvm/java-17',
-      // MAESTRO_CLOUD_API_KEY intentionally missing
-      UNRELATED_VAR: 'ignore-me'
-    }
-    mountExternalIntegrations(servers, { maestro: true }, processEnv, '/nonexistent')
-    const env = servers['maestro'].env!
-    assert.equal(env['JAVA_HOME'], '/usr/lib/jvm/java-17')
-    assert.equal(env['MAESTRO_CLOUD_API_KEY'], undefined, 'missing var should not be in env')
-    assert.equal(env['UNRELATED_VAR'], undefined, 'non-declared var should not be copied')
+    const env = { JAVA_HOME: '/usr/lib/jvm/java-17', MAESTRO_WAIT_TIMEOUT: '0' }
+    mountExternalIntegrations(servers, { maestro: true }, { maestro: env }, '/nonexistent', BASE)
+    assert.deepEqual(servers['maestro'].env, env)
   })
 
-  test('active integration → performanceEnv merged into env', () => {
+  test('empty resolved env → env property omitted', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers, { maestro: true }, {}, '/nonexistent')
-    const env = servers['maestro'].env!
-    assert.equal(env['MAESTRO_WAIT_TIMEOUT'], '0', 'performanceEnv should be included')
+    mountExternalIntegrations(servers, { maestro: true }, { maestro: {} }, '/nonexistent', BASE)
+    assert.equal(servers['maestro'].env, undefined)
   })
 
-  test('active integration with no env → env property omitted', () => {
-    // Create a fake integration scenario — all EXTERNAL_MCP_INTEGRATIONS have envKeys/performanceEnv,
-    // so if performanceEnv is included, env won't be empty. This test verifies env IS present when
-    // performanceEnv exists (complement of the empty-env path tested implicitly).
+  test('bundledServerEntry → mounted as node <basePath>/<entry>.js', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers, { maestro: true }, {}, '/nonexistent')
-    // Maestro always has performanceEnv, so env should be present
-    assert.ok(servers['maestro'].env, 'env should be present due to performanceEnv')
-    assert.ok(Object.keys(servers['maestro'].env!).length > 0)
+    mountExternalIntegrations(
+      servers,
+      { jira: true },
+      { jira: { JIRA_BASE_URL: 'https://x.atlassian.net' } },
+      '/nonexistent',
+      BASE
+    )
+    assert.equal(servers['jira'].command, 'node')
+    assert.deepEqual(servers['jira'].args, [`${BASE}/jira-server.js`])
   })
 
   test('commandPaths resolution → uses first existing path', () => {
@@ -244,17 +252,17 @@ describe('mountExternalIntegrations', () => {
     writeFileSync(maestroPath, '#!/bin/bash', { mode: 0o755 })
 
     const servers: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers, { maestro: true }, {}, tempHome)
+    mountExternalIntegrations(servers, { maestro: true }, { maestro: {} }, tempHome, BASE)
     assert.equal(servers['maestro'].command, maestroPath, 'should resolve to found path')
   })
 
   test('args are spread-copied (not shared reference)', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers, { maestro: true }, {}, '/nonexistent')
+    mountExternalIntegrations(servers, { maestro: true }, { maestro: {} }, '/nonexistent', BASE)
     // Mutating the result should not affect the source
     servers['maestro'].args.push('extra')
     const servers2: Record<string, CliMcpServerEntry> = {}
-    mountExternalIntegrations(servers2, { maestro: true }, {}, '/nonexistent')
+    mountExternalIntegrations(servers2, { maestro: true }, { maestro: {} }, '/nonexistent', BASE)
     assert.deepEqual(servers2['maestro'].args, ['mcp'], 'args should be a fresh copy')
   })
 })

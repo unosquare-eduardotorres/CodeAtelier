@@ -143,7 +143,7 @@ export class ChatAgentService extends EventEmitter {
     // dead-session ghost entries that block future startForWorkspace calls.
     this.wireSessionForwarders(workspaceId, entry)
     try {
-      await session.start(workspacePath, mode, resumeSessionId)
+      await session.start(workspacePath, mode, { resumeSessionId })
     } catch (err) {
       // Cleanup on failure — don't leave partial forwarders
       this.teardownSessionForwarders(entry)
@@ -501,6 +501,11 @@ export class ChatAgentService extends EventEmitter {
 
   getStreamedContent(conversationId?: string): string {
     return this.getActiveSession()?.getStreamedContent(conversationId) ?? ''
+  }
+
+  /** In-flight stream text only — empty once the turn has finished. */
+  getLiveStreamedContent(conversationId?: string): string {
+    return this.getActiveSession()?.getLiveStreamedContent(conversationId) ?? ''
   }
 
   getMode(): ConversationMode {

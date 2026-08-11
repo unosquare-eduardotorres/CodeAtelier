@@ -8,7 +8,7 @@
 
 import { useEffect, useRef } from 'react'
 import { useBackgroundSessionStore, useChatStore } from '@renderer/store'
-import { routePermission } from '@renderer/lib/permission-routing'
+import { shouldRecordInline } from '@renderer/lib/permission-routing'
 import type { AgentStatus, PendingPermission } from '../../../shared/types'
 
 export function useBackgroundSessionListeners(): void {
@@ -30,17 +30,18 @@ export function useBackgroundSessionListeners(): void {
     return unsub
   }, [updateStatus])
 
-  // Listen for permission requests from background workspaces.
-  // A tool permission for the conversation on screen goes inline into the
-  // transcript instead — read via getState() so the subscription is stable.
+  // Listen for permission requests from every workspace. The modal is the only
+  // decision surface, so every request goes to the notification store; a request
+  // for the conversation on screen ALSO leaves a read-only receipt in the
+  // transcript — read via getState() so the subscription is stable.
   useEffect(() => {
     const unsub = window.api.onPermissionRequest((data) => {
       const activeConvId = useChatStore.getState().activeConversation?.id ?? null
-      if (routePermission(data, activeConvId) === 'inline') {
-        useChatStore.getState().setPendingToolPermission(data as unknown as PendingPermission)
-        return
+      const permission = data as unknown as PendingPermission
+      addPermission(permission)
+      if (shouldRecordInline(permission, activeConvId)) {
+        useChatStore.getState().setPendingToolPermission(permission)
       }
-      addPermission(data as unknown as PendingPermission)
     })
     return unsub
   }, [addPermission])

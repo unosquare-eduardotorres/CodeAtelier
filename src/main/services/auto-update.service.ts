@@ -1,5 +1,5 @@
 import { autoUpdater } from 'electron-updater'
-import { app, powerMonitor, type BrowserWindow } from 'electron'
+import { app, powerMonitor, autoUpdater as squirrelUpdater, type BrowserWindow } from 'electron'
 import log from 'electron-log/main'
 import { existsSync } from 'node:fs'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -31,6 +31,13 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000
  * feed gets hit twice within a second.
  */
 const MIN_CHECK_GAP_MS = 15 * 60 * 1000
+/**
+ * How long to wait for Squirrel to stage a macOS update before offering the
+ * install anyway. Observed staging takes 17-28s; this is headroom, not a target.
+ * The fallback is degraded (quitAndInstall may no-op) but never leaves the modal
+ * stuck on Preparing with no way out.
+ */
+const STAGING_TIMEOUT_MS = 120_000
 
 class AutoUpdateService {
   private mainWindow: BrowserWindow | null = null
@@ -61,6 +68,23 @@ class AutoUpdateService {
   private updateDownloaded = false
   /** Kept so dispose() can detach it — powerMonitor outlives this service. */
   private onResume: (() => void) | null = null
+  /**
+   * macOS only: native Squirrel has fetched + staged the zip, so quitAndInstall()
+   * will actually act. MacUpdater fires 'update-downloaded' when its proxy server
+   * binds — 17-28s BEFORE this — and quitAndInstall() is a silent no-op until then.
+   */
+  private squirrelStaged = false
+  /**
+   * An install is committed. Guards the duplicate quitAndInstall() calls that
+   * spawned competing ShipIt processes and produced the App Still Running Error.
+   */
+  private installRequested = false
+  /** UPDATE_DOWNLOADED has reached the renderer — it must be sent at most once. */
+  private readyAnnounced = false
+  /** Version from the last 'update-downloaded', for the deferred announcement. */
+  private downloadedVersion: string | null = null
+  /** Staging watchdog handle, non-null while waiting on Squirrel. */
+  private stagingTimer: ReturnType<typeof setTimeout> | null = null
 
   init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
@@ -116,10 +140,25 @@ class AutoUpdateService {
     autoUpdater.on('update-downloaded', (info) => {
       this.downloadInFlight = false
       this.updateDownloaded = true
+      this.downloadedVersion = String(info.version)
       updateLogger.info('Update downloaded:', info.version)
-      this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_DOWNLOADED, {
+
+      if (process.platform !== 'darwin') {
+        this.readyAnnounced = true
+        this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_DOWNLOADED, {
+          version: info.version
+        })
+        return
+      }
+
+      // MacUpdater emits this the moment its proxy server binds, before Squirrel
+      // has fetched anything. Announcing readiness here is what let the user press
+      // Restart into a dead window where quitAndInstall() does nothing at all.
+      updateLogger.info('Waiting for Squirrel to stage the update...')
+      this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_STAGING, {
         version: info.version
       })
+      this.armStagingTimeout()
     })
 
     autoUpdater.on('error', (err) => {
@@ -139,6 +178,67 @@ class AutoUpdateService {
         describeUpdateError(msg, this.feedDescription)
       )
     })
+
+    if (process.platform === 'darwin') {
+      // The native updater's own event is the only honest signal that the update
+      // is installable. electron.autoUpdater throws on Linux, hence the guard.
+      squirrelUpdater.on('update-downloaded', () => {
+        updateLogger.info('Squirrel finished staging the update')
+        this.announceReady()
+      })
+      squirrelUpdater.on('error', (err) => {
+        updateLogger.warn('Native Squirrel staging failed:', err)
+        // Re-arm first so announceReady() does not dispatch an install into a
+        // staging attempt that just failed — the user gets the button back instead.
+        this.installRequested = false
+        this.announceReady()
+      })
+    }
+  }
+
+  /** Never leave the modal on Preparing forever if Squirrel goes quiet. */
+  private armStagingTimeout(): void {
+    this.clearStagingTimer()
+    this.stagingTimer = setTimeout(() => {
+      this.stagingTimer = null
+      updateLogger.warn(
+        `Squirrel did not finish staging within ${STAGING_TIMEOUT_MS / 1000}s — offering the install anyway`
+      )
+      this.announceReady()
+    }, STAGING_TIMEOUT_MS)
+    this.stagingTimer.unref?.()
+  }
+
+  private clearStagingTimer(): void {
+    if (this.stagingTimer) {
+      clearTimeout(this.stagingTimer)
+      this.stagingTimer = null
+    }
+  }
+
+  /**
+   * The update is installable — Squirrel finished staging, or staging failed and
+   * firing quitAndInstall() blind is the best option left. Idempotent: the
+   * renderer hears UPDATE_DOWNLOADED once, and a deferred install runs once.
+   */
+  private announceReady(): void {
+    this.clearStagingTimer()
+    this.squirrelStaged = true
+    if (this.updateDownloaded && !this.readyAnnounced) {
+      this.readyAnnounced = true
+      updateLogger.info('Update ready to install:', this.downloadedVersion)
+      this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_DOWNLOADED, {
+        version: this.downloadedVersion ?? ''
+      })
+    }
+    // A click that landed during staging was deferred, not dropped.
+    if (this.installRequested) this.doInstall()
+  }
+
+  /** Whether quitAndInstall() would do anything right now. */
+  private isStaged(): boolean {
+    // Windows/Linux have no staging step — the artifact is on disk already.
+    return process.platform !== 'darwin' || this.squirrelStaged
   }
 
   /** Read update config from app_preferences */
@@ -315,6 +415,7 @@ class AutoUpdateService {
   /** Stop background polling and close the loopback feed server (called on app quit) */
   async dispose(): Promise<void> {
     this.stopPeriodicChecks()
+    this.clearStagingTimer()
     await this.stopFeedServer()
   }
 
@@ -406,8 +507,24 @@ class AutoUpdateService {
    * silent skips the Windows NSIS installer UI (the build is oneClick, so there
    * is nothing to configure), force-run-after relaunches us afterwards. macOS
    * Squirrel ignores both and always relaunches — same felt behaviour.
+   *
+   * On macOS before Squirrel has staged, quitAndInstall() is a documented no-op,
+   * so the request is remembered and dispatched by announceReady() instead.
    */
   installUpdate(): void {
+    if (this.installRequested) {
+      updateLogger.info('Install already requested — ignoring duplicate')
+      return
+    }
+    this.installRequested = true
+    if (!this.isStaged()) {
+      updateLogger.info('Install deferred — waiting for Squirrel to finish staging')
+      return
+    }
+    this.doInstall()
+  }
+
+  private doInstall(): void {
     updateLogger.info('Installing update and restarting...')
     autoUpdater.quitAndInstall(true, true)
   }

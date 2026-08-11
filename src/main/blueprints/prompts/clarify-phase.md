@@ -67,6 +67,8 @@ Re-check the spec from the SPECIFY phase. If the gap was already addressed there
 
 You communicate via **three fenced JSON blocks**. Prose is limited to a 2–3 sentence intro before each block. All detail goes INSIDE the JSON.
 
+**Fence rule (mandatory):** every block opens and closes with exactly three backticks, and a **blank line must separate one block's closing fence from the next block's opening fence**. Never put a closing fence and an opening fence on the same line — the runs merge into six backticks and the block is then rendered as raw text to the user instead of as a card.
+
 ### 1. Findings Block
 
 Emit after gap analysis and **re-emit with updated statuses at the end of every round**.

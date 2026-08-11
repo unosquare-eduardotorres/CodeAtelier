@@ -12,6 +12,7 @@ import { stripBlueprintBlocks } from './blueprint-clarify-parsers'
 import type {
   ClarifyFindingsBlock,
   ClarifyQuestion,
+  ClarifyQuestionsBlock,
   QuestionAnswerState
 } from './blueprint-clarify-parsers'
 import { parseBlueprintPlan, parseBlueprintTasks } from './blueprint-artifact-parsers'
@@ -176,8 +177,19 @@ export function journalEventsToChatMessages(events: JournalEvent[]): HydratedCha
       }
 
       case 'qa': {
-        const questions = p.questions as ClarifyQuestion[] | undefined
-        if (questions) {
+        // The journal stores the ClarifyQuestionsBlock under `questions`
+        // (blueprint.ipc.ts forwards blueprint-spec.service.ts verbatim), so this
+        // key is an object with its own `.questions`, not the bare array the old
+        // cast claimed. Accept both — rows of both shapes exist on disk.
+        const rawQuestions = p.questions
+        const questions: ClarifyQuestion[] | null = Array.isArray(rawQuestions)
+          ? (rawQuestions as ClarifyQuestion[])
+          : Array.isArray((rawQuestions as ClarifyQuestionsBlock | undefined)?.questions)
+            ? (rawQuestions as ClarifyQuestionsBlock).questions
+            : null
+        // An empty array is not a Q&A round — rendering it produces a blank
+        // "Answers submitted" card. Fall through to the gateReady/skip branch.
+        if (questions && questions.length > 0) {
           // Try to pair with user answers
           const pairedAnswers = userAnswersByQaSeq.get(event.seq)
           const answersRecord: Record<string, QuestionAnswerState> = {}

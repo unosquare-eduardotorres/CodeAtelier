@@ -1,6 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
 import type {
+  IntegrationConnectionResult,
+  IntegrationCredentialStatus
+} from '../shared/integration-credentials.types'
+import type {
   Workspace,
   Conversation,
   ConversationMode,
@@ -208,6 +212,32 @@ const api = {
 
   checkExternalMcp: (args: { command: string }): Promise<{ available: boolean; path?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, args),
+
+  saveIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+    values: Record<string, string>
+  }): Promise<IntegrationCredentialStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_SAVE_CREDENTIALS, args),
+
+  getIntegrationCredentialStatus: (args: {
+    workspaceId: string
+    integrationId: string
+  }): Promise<IntegrationCredentialStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_GET_CREDENTIAL_STATUS, args),
+
+  testIntegrationConnection: (args: {
+    workspaceId: string
+    integrationId: string
+    values?: Record<string, string>
+  }): Promise<IntegrationConnectionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_TEST_CONNECTION, args),
+
+  clearIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+  }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_CLEAR_CREDENTIALS, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
@@ -1124,6 +1154,15 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
+    }
+  },
+
+  onUpdateStaging: (callback: (info: { version: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string }): void =>
+      callback(info)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_STAGING, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_STAGING, handler)
     }
   },
 
@@ -2795,6 +2834,44 @@ const api = {
     const handler = (): void => cb()
     ipcRenderer.on(IPC_CHANNELS.PROCESS_CHANGED, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.PROCESS_CHANGED, handler)
+  },
+
+  // ── Work Tracks ──
+
+  /** List a workspace's tracks with dirty/disk facts and the disk budget. */
+  trackList: (args: {
+    workspaceId: string
+  }): Promise<import('../shared/track-types').TrackListResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_LIST, args),
+
+  /** Destroy a track and everything uncommitted in it. Explicit user action only. */
+  trackDiscard: (args: { trackId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_DISCARD, args),
+
+  /** Open a track's worktree in Finder/Explorer. */
+  trackReveal: (args: { trackId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_REVEAL, args),
+
+  /** Hand retained work to a new chat. Resolves to the new conversation id. */
+  trackAdopt: (args: { trackId: string }): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_ADOPT, args),
+
+  /** Land a track's work — PR, or merge into the workspace's integration branch. */
+  trackLand: (args: {
+    trackId: string
+    commitMessage: string
+    description?: string
+  }): Promise<import('../shared/track-types').LandingResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_LAND, args),
+
+  /**
+   * Listen for track list changes (created, retained, removed, adopted, reaped).
+   * `workspaceId` is null when the change crossed workspaces — refresh anyway.
+   */
+  onTrackChanged: (cb: (data: { workspaceId: string | null }) => void): (() => void) => {
+    const handler = (_: unknown, data: { workspaceId: string | null }): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.TRACK_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TRACK_CHANGED, handler)
   },
 
   /** Listen for tray context-menu navigate events. */

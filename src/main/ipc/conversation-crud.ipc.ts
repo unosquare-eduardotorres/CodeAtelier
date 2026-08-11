@@ -23,6 +23,7 @@ import type {
   ConversationModelSnapshot
 } from '../../shared/types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
+import { trackService } from '../services/track.service'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { completeStreamMetrics } from './chunk-router'
@@ -149,11 +150,20 @@ async function handleCreateConversation(args: {
           log.warn('Source branch capture failed (non-fatal):', e)
         }
 
-        // Branch-per-conversation: create/checkout branch if explicitly requested, auto-branch selected, or gitAutoBranch enabled
+        // Branch-per-conversation is the DEFAULT, not an opt-in.
+        //
+        // Isolation only engages for conversations that own a branch (see
+        // WorktreeService.ensure). While `gitAutoBranch` defaulted to off, the
+        // common case was branchName = null → every chat executed in the shared
+        // primary tree, which is exactly the cross-contamination worktrees
+        // exist to prevent. So `undefined` now means yes; only an explicit
+        // `false` — the user picking "work on the current branch", or the
+        // workspace setting turned off deliberately — opts out.
+        const workspaceOptedOut = settings.gitAutoBranch === false
         if (
           explicitBranchName ||
           autoBranch === true ||
-          (autoBranch !== false && settings.gitAutoBranch)
+          (autoBranch !== false && !workspaceOptedOut)
         ) {
           try {
             let branchName: string
@@ -171,14 +181,25 @@ async function handleCreateConversation(args: {
               branchName = `chat/${slug}-${conversation.id.slice(0, 8)}`
             }
 
-            // Smart checkout: check if branch exists, then checkout vs create
+            // Create the ref, never check it out.
+            //
+            // `git.checkout`/`checkoutLocalBranch` used to run here against the
+            // workspace root. That moved a HEAD shared by every conversation:
+            // creating a chat while another chat was mid-turn redirected the
+            // running agent's writes onto the new branch. It also defeated
+            // isolation outright — with the primary tree sitting on the new
+            // branch, `ensure()` took its "primary already holds this branch"
+            // path and returned isolated: false, so the chats most likely to
+            // need a worktree were the ones that never got one.
+            //
+            // The branch is checked out later, in this conversation's own
+            // worktree, by `git worktree add`.
             const localBranches = await git.branchLocal()
             if (localBranches.all.includes(branchName)) {
-              await git.checkout(branchName)
-              log.info(`Checked out existing branch: ${branchName}`)
+              log.info(`Reusing existing branch: ${branchName}`)
             } else {
-              await git.checkoutLocalBranch(branchName)
-              log.info(`Created and checked out new branch: ${branchName}`)
+              await git.raw(['branch', branchName])
+              log.info(`Created branch (not checked out): ${branchName}`)
             }
 
             conversationRepository.updateBranchName(conversation.id, branchName)
@@ -196,6 +217,23 @@ async function handleCreateConversation(args: {
   return conversation
 }
 
+/**
+ * Report which branch a conversation works on. Deliberately does not touch git.
+ *
+ * This used to WIP-commit the working tree and `git checkout` the chat's
+ * branch. Both behaviours were unsafe once more than one conversation could
+ * stream at a time:
+ *
+ *  - The checkout moved a HEAD shared by every running agent. Selecting chat B
+ *    while chat A was mid-turn redirected A's remaining writes onto B's branch.
+ *  - The WIP commit ran `git add` over `status.not_added`, i.e. untracked
+ *    files. Anything not covered by .gitignore — .env files, dumps, keys — was
+ *    committed without the user asking, and `/complete` would then push it.
+ *
+ * Isolation now comes from a per-conversation worktree created at turn start,
+ * so the branch a chat owns is already checked out in its own directory and
+ * selecting a chat is a pure UI action.
+ */
 async function handleSwitchBranch(
   conversationId: string
 ): Promise<{ switched: boolean; branch: string | null }> {
@@ -205,42 +243,9 @@ async function handleSwitchBranch(
   const workspace = workspaceRepository.findById(conversation.workspaceId)
   if (!workspace) throw new Error('Workspace not found')
 
-  const git = simpleGit(workspace.repoPath)
-  const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD'])
-
-  // Already on the right branch
-  if (currentBranch === conversation.branchName) {
-    return { switched: false, branch: conversation.branchName }
-  }
-
-  // Auto-WIP-commit uncommitted changes on current branch
-  const status = await git.status()
-  const dirtyFiles = [
-    ...status.modified,
-    ...status.created,
-    ...status.not_added,
-    ...status.deleted,
-    ...status.renamed.map((r) => r.to)
-  ]
-  if (dirtyFiles.length > 0) {
-    try {
-      await git.add(dirtyFiles)
-      await git.commit('WIP: auto-save from conversation switch')
-      log.info(`WIP commit on ${currentBranch} (${dirtyFiles.length} files)`)
-    } catch (e) {
-      log.warn('WIP auto-commit failed (proceeding with checkout):', e)
-    }
-  }
-
-  // Switch to conversation's branch
-  try {
-    await git.checkout(conversation.branchName)
-    log.info(`Switched to branch: ${conversation.branchName}`)
-    return { switched: true, branch: conversation.branchName }
-  } catch (e) {
-    log.warn(`Failed to switch to branch ${conversation.branchName}:`, e)
-    throw new Error(`Failed to switch to branch: ${conversation.branchName}`)
-  }
+  // `switched` stays false: nothing on disk moved. The branch is reported so
+  // the status bar can show where this chat's work goes.
+  return { switched: false, branch: conversation.branchName }
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -321,6 +326,25 @@ export function registerConversationCrudIpc(): void {
     // N1-FIX: Clear per-conversation memory dedupe state so facts can be
     // re-injected in future conversations about the same topics.
     chatStreamService.clearConversationMemoryState(conversationId)
+
+    // Released before the row disappears, so the outcome is known while the
+    // chat still exists: a `retained` result has to suppress the branch cleanup
+    // below, and there is nothing left to ask once the conversation is gone.
+    //
+    // Deleting a chat does not authorise deleting its uncommitted work. A dirty
+    // tree comes back `retained` — kept on disk and detached from this row, so
+    // it outlives the chat rather than disappearing with it.
+    try {
+      const outcome = await trackService.release(conversationId)
+      if (outcome === 'retained') {
+        log.info(
+          `[chat:delete] conversation ${conversationId} had uncommitted changes — ` +
+            `its working tree was retained rather than deleted`
+        )
+      }
+    } catch (e) {
+      log.warn('Worktree release during delete failed (non-fatal):', e)
+    }
 
     conversationRepository.delete(conversationId)
 

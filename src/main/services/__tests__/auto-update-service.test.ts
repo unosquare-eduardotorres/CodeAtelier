@@ -10,12 +10,23 @@
  *      on macOS quitAndInstall() would relaunch the app the user just quit.
  *   3. Windows showed the NSIS installer UI because quitAndInstall() was called
  *      with no arguments instead of (silent, forceRunAfter).
+ *   4. On macOS "Restart now" did nothing for the first ~20s: MacUpdater emits
+ *      'update-downloaded' when its proxy binds, long before Squirrel has staged
+ *      anything, and quitAndInstall() is a no-op until it has. Every wasted click
+ *      also left another listener behind, so the queued quitAndInstall() calls
+ *      later raced into competing ShipIt processes (App Still Running Error).
  *
  * Run: tsx src/main/services/__tests__/auto-update-service.test.ts
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { setupFullMock, mockService, mockMainWindow, evictFromCache } from './setup-full-mock'
+import {
+  setupFullMock,
+  mockService,
+  mockMainWindow,
+  evictFromCache,
+  sentEvents
+} from './setup-full-mock'
 
 setupFullMock()
 
@@ -91,6 +102,10 @@ const internals = autoUpdateService as unknown as {
   lastCheckAt: number
   updateDownloaded: boolean
   downloadInFlight: boolean
+  squirrelStaged: boolean
+  installRequested: boolean
+  readyAnnounced: boolean
+  downloadedVersion: string | null
   maybeCheck: () => void
   checkForUpdates: (userInitiated?: boolean) => void
 }
@@ -120,6 +135,47 @@ function withCheckSpy(fn: (getCount: () => number) => void): void {
   } finally {
     autoUpdateService.checkForUpdates = original
   }
+}
+
+/**
+ * Re-run init() as if the app had launched on `platform`, with a fresh
+ * install cycle. The service is a singleton and its staging state is sticky by
+ * design (an install happens once per run), so each case starts from zero.
+ */
+function initAs(platform: NodeJS.Platform): void {
+  electronMock.__autoUpdaterMock.reset()
+  autoUpdaterMock.reset()
+  sentEvents.length = 0
+  internals.squirrelStaged = false
+  internals.installRequested = false
+  internals.readyAnnounced = false
+  internals.updateDownloaded = false
+  internals.downloadedVersion = null
+  withPlatform(platform, () => autoUpdateService.init(mockMainWindow))
+}
+
+/** Channels sent to the renderer since the last initAs(). */
+function channelsSent(): string[] {
+  return sentEvents.map((e) => e.channel)
+}
+
+/**
+ * Run `fn` with setTimeout stubbed, returning a trigger for the scheduled
+ * callback — the staging watchdog is 120s, which no test can wait for.
+ */
+function captureTimeout(fn: () => void): () => void {
+  const original = globalThis.setTimeout
+  let captured: (() => void) | null = null
+  ;(globalThis as unknown as { setTimeout: unknown }).setTimeout = (cb: () => void): unknown => {
+    captured = cb
+    return { unref: (): void => {} }
+  }
+  try {
+    fn()
+  } finally {
+    globalThis.setTimeout = original
+  }
+  return () => captured?.()
 }
 
 autoUpdateService.init(mockMainWindow)
@@ -204,8 +260,8 @@ describe('auto-update.service — background polling', () => {
 
 describe('auto-update.service — install', () => {
   test('installUpdate_asks_for_a_silent_install_and_a_relaunch', () => {
-    autoUpdaterMock.reset()
-    autoUpdateService.installUpdate()
+    initAs('win32')
+    withPlatform('win32', () => autoUpdateService.installUpdate())
 
     const calls = autoUpdaterMock.callsTo('quitAndInstall')
     assert.equal(calls.length, 1)
@@ -222,10 +278,12 @@ describe('auto-update.service — install', () => {
   })
 
   test('a_downloaded_update_installs_on_quit_without_relaunching', () => {
-    autoUpdaterMock.reset()
-    autoUpdaterMock.emit('update-downloaded', { version: '1.0.66' })
+    initAs('win32')
 
-    withPlatform('win32', () => autoUpdateService.installOnQuitIfReady())
+    withPlatform('win32', () => {
+      autoUpdaterMock.emit('update-downloaded', { version: '1.0.66' })
+      autoUpdateService.installOnQuitIfReady()
+    })
     const calls = autoUpdaterMock.callsTo('quitAndInstall')
     assert.equal(calls.length, 1)
     // The user asked to quit, not to restart — no force-run-after.
@@ -250,6 +308,101 @@ describe('auto-update.service — install', () => {
 
     assert.doesNotThrow(() => withPlatform('win32', () => autoUpdateService.installOnQuitIfReady()))
     autoUpdaterMock.reset()
+  })
+})
+
+describe('auto-update.service — macOS staging gate', () => {
+  test('darwin_does_not_send_UPDATE_DOWNLOADED_until_staged', () => {
+    initAs('darwin')
+    withPlatform('darwin', () => autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' }))
+
+    // MacUpdater is only telling us its proxy bound — the modal must say
+    // "Preparing", not "Ready to Install".
+    assert.deepEqual(channelsSent(), ['update:staging'])
+
+    withPlatform('darwin', () => electronMock.__autoUpdaterMock.emit('update-downloaded'))
+    assert.deepEqual(channelsSent(), ['update:staging', 'update:downloaded'])
+    assert.deepEqual(sentEvents[1].data, { version: '1.0.72' })
+  })
+
+  test('non_darwin_sends_UPDATE_DOWNLOADED_immediately', () => {
+    initAs('win32')
+    withPlatform('win32', () => autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' }))
+
+    // Windows has no staging step — delaying the announcement here would be a
+    // regression, not a fix.
+    assert.deepEqual(channelsSent(), ['update:downloaded'])
+  })
+
+  test('darwin_install_before_staging_does_not_call_quitAndInstall', () => {
+    initAs('darwin')
+    withPlatform('darwin', () => {
+      autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' })
+      autoUpdateService.installUpdate()
+    })
+
+    // The bug: quitAndInstall() here is a documented no-op, and the listener it
+    // leaves behind is what later collided with itself.
+    assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 0)
+  })
+
+  test('darwin_staging_completion_dispatches_the_deferred_install', () => {
+    initAs('darwin')
+    withPlatform('darwin', () => {
+      autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' })
+      autoUpdateService.installUpdate()
+      electronMock.__autoUpdaterMock.emit('update-downloaded')
+    })
+
+    const calls = autoUpdaterMock.callsTo('quitAndInstall')
+    assert.equal(calls.length, 1, 'the deferred click must fire exactly once')
+    assert.deepEqual(calls[0].args, [true, true])
+  })
+
+  test('duplicate_installUpdate_calls_produce_one_quitAndInstall', () => {
+    initAs('darwin')
+    withPlatform('darwin', () => {
+      autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' })
+      // Five impatient clicks — the exact shape that spawned competing ShipIt
+      // processes and ended in "App Still Running Error".
+      for (let i = 0; i < 5; i++) autoUpdateService.installUpdate()
+      electronMock.__autoUpdaterMock.emit('update-downloaded')
+      autoUpdateService.installUpdate()
+    })
+
+    assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 1)
+  })
+
+  test('squirrel_error_re_arms_and_announces_ready', () => {
+    initAs('darwin')
+    withPlatform('darwin', () => {
+      autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' })
+      autoUpdateService.installUpdate()
+      electronMock.__autoUpdaterMock.emit('error', new Error('staging refused'))
+    })
+
+    // Staging failed, so the deferred click is dropped rather than dispatched
+    // into a broken install — but the user must get a working button back.
+    assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 0)
+    assert.deepEqual(channelsSent(), ['update:staging', 'update:downloaded'])
+
+    withPlatform('darwin', () => autoUpdateService.installUpdate())
+    assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 1)
+  })
+
+  test('staging_timeout_announces_ready', () => {
+    initAs('darwin')
+    const fireWatchdog = captureTimeout(() =>
+      withPlatform('darwin', () => autoUpdaterMock.emit('update-downloaded', { version: '1.0.72' }))
+    )
+    assert.deepEqual(channelsSent(), ['update:staging'])
+
+    withPlatform('darwin', () => fireWatchdog())
+    // Never leave the modal stuck on "Preparing" — degraded beats unusable.
+    assert.deepEqual(channelsSent(), ['update:staging', 'update:downloaded'])
+
+    withPlatform('darwin', () => autoUpdateService.installUpdate())
+    assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 1)
   })
 })
 

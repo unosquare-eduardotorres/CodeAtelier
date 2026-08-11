@@ -24,11 +24,16 @@ const icon = process.platform === 'win32' ? iconWin : iconDefault
 import { getDatabase, closeDatabase } from './db'
 import {
   agentSessionRepository,
+  appPreferenceRepository,
   grillSessionRepository,
   usageLogRepository,
   turnUsageRepository,
   workspaceRepository
 } from './db/repositories'
+// Direct module import — bugRepository is not re-exported from the barrel.
+// Was a lazy require('./db/repositories/bug.repository'), which resolved to a
+// non-existent path in packaged builds, so main-process bugs were never recorded.
+import { bugRepository } from './db/repositories/bug.repository'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
 import { memoryExtractionService } from './services/memory-extraction.service'
@@ -36,6 +41,8 @@ import { memoryEngineService } from './services/memory-engine.service'
 import { memoryBootstrapService } from './services/memory-bootstrap.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
+import { trackService } from './services/track.service'
+import { landingService } from './services/landing.service'
 import { grillAgentService } from './services/grill-agent.service'
 import { grillPersistenceController } from './services/grill-persistence.controller'
 import { auditAgentService } from './services/audit-agent.service'
@@ -138,10 +145,6 @@ process.on('unhandledRejection', (reason) => {
 /** Report a main-process error to the bug tracker DB + notify renderer */
 function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
   try {
-    // Lazy import to avoid circular deps during early bootstrap
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { bugRepository } = require('./db/repositories/bug.repository')
-
     // Parse source file/line from stack trace
     let sourceFile: string | undefined
     let sourceLine: number | undefined
@@ -177,9 +180,16 @@ function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
         }
       }
     }
-  } catch {
-    // Bug tracker itself failed — don't crash the crash handler
-    log.error('[BugTracker] Failed to report main process error to bug tracker')
+  } catch (reportError) {
+    // Bug tracker itself failed — don't crash the crash handler.
+    // Log the underlying cause: a bare message here made a MODULE_NOT_FOUND
+    // from the old lazy require() indistinguishable from a real DB failure.
+    log.error(
+      '[BugTracker] Failed to report main process error to bug tracker:',
+      reportError,
+      '| original error:',
+      error.message
+    )
   }
 }
 
@@ -386,6 +396,46 @@ function createWindow(): void {
     log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
   }
 
+  // Reclaim worktrees left behind by a crash.
+  //
+  // Teardown is two-step (mark 'removing' → git worktree remove → delete row),
+  // so a hard quit in the middle leaves either a tombstone row or a row whose
+  // directory is already gone. Both pin a branch that no chat can then claim,
+  // so this runs before any conversation gets a chance to ask for one.
+  void trackService
+    .pruneOrphans()
+    .then((reclaimed) => {
+      if (reclaimed > 0) {
+        log.info(`[Startup] Reclaimed ${reclaimed} orphaned worktree(s) from previous run`)
+      }
+      // Then the idle policy. Ordered after pruning because a missing directory
+      // is the reaper's skip case and the pruner's job, so running it first
+      // means the reaper only ever looks at trees that really exist.
+      return trackService.reapIdle()
+    })
+    .then((reaped) => {
+      if (reaped > 0) {
+        log.info(`[Startup] Reclaimed ${reaped} idle clean worktree(s) — no uncommitted work lost`)
+      }
+    })
+    .catch((error) => {
+      log.warn('[Startup] Worktree pruning failed (non-critical):', error)
+    })
+
+  // Boot is not the only moment worktrees go idle. Without a timer the retention
+  // policy silently becomes "whenever you restart the app", so a long-lived
+  // session accumulates trees indefinitely no matter how untouched they are.
+  trackService.startIdleReaper()
+
+  // Landed branches accumulate the same way idle worktrees do — branch-per-chat
+  // plus branch-per-blueprint leaves hundreds of merged `chat/*` and
+  // `blueprint/*` refs behind over a few months. Only tracks whose work has
+  // already reached the mainline AND whose tree is clean are collected.
+  void landingService
+    .gcAllWorkspaces()
+    .catch((error) => log.warn('[Startup] Branch GC failed (non-critical):', error))
+  landingService.startBranchGc()
+
   // Prune old events to prevent unbounded DB growth
   try {
     eventLoggerService.prune(30)
@@ -404,12 +454,12 @@ function createWindow(): void {
   // Initialize notification service with main window + load preference
   notificationService.setMainWindow(mainWindow)
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids circular dep
-    const { appPreferenceRepository } = require('./db/repositories')
     const prefs = appPreferenceRepository.getAppPreferences()
     notificationService.setEnabled(prefs.notificationsEnabled)
-  } catch {
-    /* non-fatal — default to enabled */
+  } catch (error) {
+    // Non-fatal — default to enabled. Logged because a silent failure here is
+    // exactly what made "notifications off" silently revert on every launch.
+    log.warn('[Notifications] Failed to load saved preference, defaulting to enabled:', error)
   }
 
   // Register IPC handlers
@@ -688,8 +738,6 @@ app.whenReady().then(() => {
     const reResolved = resolveOpencodePath()
     if (!reResolved) {
       // Resolution failed - log to bug tracker
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
-      const { bugRepository } = require('./db/repositories/bug.repository')
       bugRepository.upsertBug({
         process: 'main' as const,
         severity: 'error',
@@ -708,8 +756,6 @@ app.whenReady().then(() => {
   } catch (error) {
     // Log resolution failure to bug tracker
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
-      const { bugRepository } = require('./db/repositories/bug.repository')
       bugRepository.upsertBug({
         process: 'main' as const,
         severity: 'error',
@@ -721,8 +767,9 @@ app.whenReady().then(() => {
         appVersion: app.getVersion(),
         osInfo: `${process.platform} ${os.release()}`
       })
-    } catch {
-      // Silent fail - don't crash the crash handler
+    } catch (reportError) {
+      // Don't crash the crash handler — but never fail silently.
+      log.error('[BugTracker] Failed to record OpenCode CLI resolution failure:', reportError)
     }
   }
 
@@ -872,6 +919,14 @@ app.on('before-quit', async (event) => {
       localEmbeddingProvider.dispose()
     } catch (e) {
       log.debug('oMLX embedding dispose error (expected during quit):', e)
+    }
+
+    // Stop the periodic worktree reaper before anything else touches the DB
+    try {
+      trackService.stopIdleReaper()
+      landingService.stopBranchGc()
+    } catch (e) {
+      log.debug('Track maintenance stop error (expected during quit):', e)
     }
 
     // Stop polling background processes (the processes themselves are detached

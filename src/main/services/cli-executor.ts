@@ -20,7 +20,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { writeFileSync, mkdirSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -221,10 +221,18 @@ const STDERR_ERROR_PATTERN = /error|fatal|panic|ENOENT|EACCES|permission denied|
 export class CLIExecutor {
   private cliProcess: ChildProcess | null = null
   private sessionId: string | undefined = undefined
-  /** Temp file path for the current system prompt (cleaned up on process kill) */
-  private systemPromptFile: string | null = null
-  /** Hash of last written system prompt — avoids rewriting identical content to disk. */
-  private lastSystemPromptHash: string | null = null
+  /**
+   * System prompt file written by buildCLIArgs for the spawn currently being
+   * set up. Ownership transfers to the spawned process as soon as spawn()
+   * returns, after which only that process's own exit/error handler may delete
+   * it — see spawnCLIProcess().
+   *
+   * This used to be a single shared `systemPromptFile` with hash-based reuse,
+   * which meant a dying process's async exit handler could unlink a path that a
+   * newer spawn had already baked into its argv, producing
+   * "System prompt file not found: …" and a cascade of empty-exit turns.
+   */
+  private pendingSystemPromptFile: string | null = null
   /** Persisted NDJSON iterator — survives across turns so multi-turn stdin/stdout works */
   private ndjsonIterator: AsyncGenerator<Record<string, unknown>> | null = null
   /**
@@ -533,11 +541,13 @@ export class CLIExecutor {
         // conversation. The respawn decision belongs to the executor factory,
         // which can build full options. This just makes it visible when some
         // caller bypasses that check and inherits a mismatched budget.
-        if (!spawnSignatureSatisfies(this.spawnSignature, {
-          model: options.model,
-          maxTurns: options.maxTurns,
-          effort: options.effort
-        })) {
+        if (
+          !spawnSignatureSatisfies(this.spawnSignature, {
+            model: options.model,
+            maxTurns: options.maxTurns,
+            effort: options.effort
+          })
+        ) {
           executorLog.error(
             `[CLI:reuse-signature-mismatch] live=${JSON.stringify(this.spawnSignature)} ` +
               `requested={model:${options.model},maxTurns:${options.maxTurns},effort:${options.effort}} ` +
@@ -948,19 +958,22 @@ export class CLIExecutor {
 
     // Step 3: Wait for process exit with 5s SIGKILL escalation.
     return new Promise<void>((resolve) => {
+      // No prompt-file cleanup here: the file belongs to `proc`, and proc's own
+      // 'exit' handler (wired in spawnCLIProcess) deletes it. Doing it from
+      // killProcess is what allowed a terminated process to unlink the file a
+      // newer spawn had already baked into its argv. Files orphaned by a
+      // process that never emits 'exit' are swept by cleanupStalePromptFiles().
       const forceKillTimer = setTimeout(() => {
         try {
           proc.kill('SIGKILL')
         } catch {
           // Already dead
         }
-        this.cleanupSystemPromptFile()
         resolve()
       }, 5000)
 
       proc.once('exit', () => {
         clearTimeout(forceKillTimer)
-        this.cleanupSystemPromptFile()
         resolve()
       })
 
@@ -1001,11 +1014,15 @@ export class CLIExecutor {
    * Extracted from execute() — cohesive process lifecycle setup concern.
    */
   private async spawnCLIProcess(options: CLIExecuteOptions): Promise<void> {
-    // Kill any existing process BEFORE building args — killProcess() calls
-    // cleanupSystemPromptFile() which deletes this.systemPromptFile.
-    // If buildCLIArgs runs first, it writes a new prompt file that
-    // killProcess then immediately deletes (race condition).
+    // Kill any existing process BEFORE building args. Prompt files are now
+    // owned per-spawn, so a dying process can only delete its own file — but
+    // killing first still keeps the old process off the new one's stdin.
     await this.killProcess()
+
+    // Owned by THIS spawn only. buildCLIArgs writes the file and parks it on
+    // this.pendingSystemPromptFile; ownership moves here once spawn() succeeds,
+    // and the exit/error handlers below close over this binding.
+    let ownedSystemPromptFile: string | null = null
 
     const args = this.buildCLIArgs(options)
     const env = this.buildProcessEnv(options)
@@ -1037,6 +1054,10 @@ export class CLIExecutor {
       // Arm before any handler can fire, so an immediate spawn failure still
       // has a signal to reject.
       this.armExitSignal()
+      // Transfer prompt-file ownership to this process. From here only this
+      // process's exit/error handler may unlink it.
+      ownedSystemPromptFile = this.pendingSystemPromptFile
+      this.pendingSystemPromptFile = null
       // Record what this process was actually spawned with. buildCLIArgs bakes
       // these into argv, so every later turn served off stdin inherits them.
       this.spawnSignature = {
@@ -1047,6 +1068,10 @@ export class CLIExecutor {
     } catch (err) {
       this.cliProcess = null
       this.spawnSignature = null
+      // spawn() threw before ownership transferred — nobody will ever read this
+      // file, so drop it here rather than leaving it for the 24h stale sweeper.
+      this.deleteSystemPromptFile(this.pendingSystemPromptFile)
+      this.pendingSystemPromptFile = null
       const code = (err as NodeJS.ErrnoException).code
       const message = (err as Error).message
       this.lastStderrError = `Failed to spawn claude CLI: ${message}`
@@ -1097,8 +1122,12 @@ export class CLIExecutor {
     this.cliProcess.on('exit', (code, signal) => {
       executorLog.info(`[CLI:exit] code=${code} signal=${signal}`)
       this.lastExitCode = code
-      // EXEC-03: Clean up temp system prompt file on natural exit/crash
-      this.cleanupSystemPromptFile()
+      // EXEC-03: Clean up this process's own temp system prompt file on
+      // natural exit/crash. Scoped to the owned path so a later spawn's file
+      // survives — deleting shared state here is what caused the
+      // "System prompt file not found" cascade.
+      this.deleteSystemPromptFile(ownedSystemPromptFile)
+      ownedSystemPromptFile = null
       const exited = this.cliProcess
       this.cliProcess = null
       this.spawnSignature = null
@@ -1119,8 +1148,9 @@ export class CLIExecutor {
 
     this.cliProcess.on('error', (err) => {
       executorLog.error('[CLI:error]', err)
-      // EXEC-03: Clean up temp system prompt file on spawn error
-      this.cleanupSystemPromptFile()
+      // EXEC-03: Clean up this process's own temp system prompt file
+      this.deleteSystemPromptFile(ownedSystemPromptFile)
+      ownedSystemPromptFile = null
       this.cliProcess = null
       this.spawnSignature = null
       this.disarmExitSignal(`CLI process error while awaiting output: ${err.message}`)
@@ -1312,48 +1342,36 @@ export class CLIExecutor {
   }
 
   /**
-   * Write a system prompt to a temp file. Uses content hashing to avoid
-   * rewriting identical prompts (common on cache-hit turns via Strategy ζ).
-   * Returns the absolute path to the file. The file is cleaned up when
-   * the CLI process exits (via killProcess) or on the next call.
+   * Write a system prompt to a temp file owned by the spawn being set up.
+   * Returns the absolute path. The file lives until the process that was
+   * spawned with it exits — no other process may delete it.
+   *
+   * There is deliberately no hash-based reuse across spawns: sharing one file
+   * between processes is exactly what let a terminated process delete a live
+   * one's prompt. buildCLIArgs runs once per spawn, so this is one ~20K write
+   * per process launch — negligible next to the spawn itself.
    */
   private writeSystemPromptFile(prompt: string): string {
-    // Hash-based dedup: skip write if content hasn't changed and file still exists
-    const hash = createHash('md5').update(prompt).digest('hex').slice(0, 12)
-    if (
-      hash === this.lastSystemPromptHash &&
-      this.systemPromptFile &&
-      existsSync(this.systemPromptFile)
-    ) {
-      return this.systemPromptFile
-    }
-
-    // Clean up previous file if content changed
-    this.cleanupSystemPromptFile()
-
     const dir = join(tmpdir(), 'code-atelier-prompts')
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
     const filePath = join(dir, `system-prompt-${Date.now()}-${randomUUID().slice(0, 8)}.md`)
     writeFileSync(filePath, prompt, 'utf-8')
-    this.systemPromptFile = filePath
-    this.lastSystemPromptHash = hash
+    this.pendingSystemPromptFile = filePath
     return filePath
   }
 
   /**
-   * Remove the current system prompt temp file.
+   * Remove one specific system prompt temp file.
+   * Callers must pass the path they own — never shared mutable state.
    */
-  private cleanupSystemPromptFile(): void {
-    if (this.systemPromptFile) {
-      try {
-        unlinkSync(this.systemPromptFile)
-      } catch {
-        // Non-fatal — file may already be gone
-      }
-      this.systemPromptFile = null
-      this.lastSystemPromptHash = null
+  private deleteSystemPromptFile(filePath: string | null): void {
+    if (!filePath) return
+    try {
+      unlinkSync(filePath)
+    } catch {
+      // Non-fatal — file may already be gone
     }
   }
 

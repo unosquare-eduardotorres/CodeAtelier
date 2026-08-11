@@ -6,6 +6,7 @@ import { githubService } from '../services/github.service'
 import { workspaceRepository, conversationRepository, messageRepository } from '../db/repositories'
 import { runOneShotClaude } from '../services/one-shot-claude'
 import { modelConfigService } from '../services/model-config.service'
+import { trackService } from '../services/track.service'
 import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, requireStringArray, optionalString } from './validate-args'
@@ -48,7 +49,17 @@ async function maybeEnqueueCommitExtraction(
   })
 }
 
-/** Resolve workspace repoPath from conversationId */
+/**
+ * Resolve the working tree to read a conversation's changes from.
+ *
+ * Every handler in this file funnels through here, which is why it is the right
+ * place to make the code-changes panel worktree-aware: an isolated conversation
+ * edits files in its own checkout, so reading `workspace.repoPath` would show
+ * the user an empty diff while their agent's work sat in another directory.
+ *
+ * `workspaceId` stays the workspace's own id — it keys settings and GitHub
+ * config, which are per project, not per worktree.
+ */
 function resolveRepoPath(conversationId: string): { repoPath: string; workspaceId: string } {
   const conversation = conversationRepository.findById(conversationId)
   if (!conversation) throw new Error('Conversation not found')
@@ -56,7 +67,8 @@ function resolveRepoPath(conversationId: string): { repoPath: string; workspaceI
   const workspace = workspaceRepository.findById(conversation.workspaceId)
   if (!workspace) throw new Error('Workspace not found')
 
-  return { repoPath: workspace.repoPath, workspaceId: workspace.id }
+  const target = trackService.resolve(conversationId, workspace.repoPath)
+  return { repoPath: target.path, workspaceId: workspace.id }
 }
 
 export function registerCodeChangesIpc(): void {

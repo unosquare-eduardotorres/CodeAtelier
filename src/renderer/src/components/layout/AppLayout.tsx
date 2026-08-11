@@ -201,11 +201,33 @@ export default function AppLayout(): React.JSX.Element {
 
   const handleNotificationNavigate = useCallback(
     (sidebar: 'chat' | 'settings', tab?: string) => {
-      guardedSetSidebarView(sidebar)
-      if (tab) guardedSetTab(tab as SettingsTab)
+      // One guarded action for the whole navigation. Routing sidebarView and
+      // tab through two separate guard calls meant the sidebar applied
+      // immediately while the tab deferred behind the unsaved-changes prompt,
+      // leaving a split-brain sidebar.
+      //
+      // `view` must be reset too: renderMainContent early-returns for
+      // 'bugs' | 'help' | 'app-settings' before it ever consults sidebarView,
+      // so from those pages a notification click was a silent no-op.
+      guardNavigation(() => {
+        setView('chat')
+        setSidebarView(sidebar)
+        if (tab) setWorkspaceSettingsTab(tab as SettingsTab)
+      })
     },
-    [guardedSetSidebarView, guardedSetTab]
+    [guardNavigation]
   )
+
+  /**
+   * Escape hatch when the main content throws deterministically — "Try Again"
+   * alone just re-renders the same broken view. Navigate back to chat first so
+   * the retry has somewhere safe to land. Bypasses guardNavigation on purpose:
+   * the user is already stuck on a crashed screen.
+   */
+  const handleErrorBoundaryReset = useCallback(() => {
+    setView('chat')
+    setSidebarView('chat')
+  }, [])
 
   const handleUnsavedSave = useCallback(async () => {
     const guard = useSettingsStore.getState().unsavedGuard
@@ -518,7 +540,7 @@ export default function AppLayout(): React.JSX.Element {
           </Sidebar>
         )}
 
-        <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
+        <ErrorBoundary onReset={handleErrorBoundaryReset}>{renderMainContent()}</ErrorBoundary>
       </div>
 
       <ToastContainer onNavigate={(target) => guardedSetView(target as typeof view)} />

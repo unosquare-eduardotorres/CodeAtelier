@@ -68,9 +68,18 @@ sequenceDiagram
         end
 
         GitHub-->>Main: Download complete
-        Main-)Renderer: IPC update:downloaded {version}
-        Renderer->>Renderer: setDownloaded(version)
-        Note over Renderer: autoInstall is set — 3s countdown starts
+        alt Windows / Linux
+            Main-)Renderer: IPC update:downloaded {version}
+            Renderer->>Renderer: setDownloaded(version)
+            Note over Renderer: autoInstall is set — 3s countdown starts
+        else macOS — staging gate
+            Main-)Renderer: IPC update:staging {version}
+            Renderer->>Renderer: setStaging(version)
+            Note over Renderer: "Preparing update…" — no restart button.<br/>MacUpdater emits update-downloaded when its<br/>proxy binds; Squirrel has staged nothing yet<br/>and quitAndInstall() is a no-op for ~17-28s.
+            Main->>Main: electron.autoUpdater 'update-downloaded'<br/>(native Squirrel finished staging)
+            Main-)Renderer: IPC update:downloaded {version}
+            Renderer->>Renderer: setDownloaded(version) — 3s countdown starts
+        end
     end
 
     rect rgb(60, 40, 40)
@@ -78,7 +87,7 @@ sequenceDiagram
         Renderer->>Preload: window.api.installUpdate()
         Preload->>Main: ipcRenderer.invoke(update:install)
         Main->>Main: autoUpdater.quitAndInstall(true, true)
-        Note over Main: Silent install (no NSIS UI),<br/>app relaunches on the new version
+        Note over Main: Silent install (no NSIS UI),<br/>app relaunches on the new version.<br/>Duplicate requests are ignored: two<br/>quitAndInstall() calls raced into competing<br/>ShipIt processes ("App Still Running Error").
     end
 
     rect rgb(40, 50, 60)
@@ -126,8 +135,11 @@ stateDiagram-v2
     available --> available : closeModal()<br/>snooze this version for 4h
     available --> idle : dismiss()<br/>also snoozes for 4h
 
-    downloading --> ready : update:downloaded
+    downloading --> ready : update:downloaded<br/>(Windows / Linux)
+    downloading --> staging : update:staging<br/>(macOS — Squirrel not done yet)
     downloading --> error : update:error
+
+    staging --> ready : update:downloaded<br/>(Squirrel staged, or watchdog/error fallback)
 
     ready --> installing : autoInstall<br/>3s countdown
     installing --> [*] : installUpdate()<br/>silent install + relaunch
@@ -154,6 +166,14 @@ stateDiagram-v2
     note right of downloading
         Circular progress ring: percentage,
         MB transferred, MB/s.
+    end note
+
+    note right of staging
+        "Preparing update…" with a spinner.
+        Only "Later" — deliberately no restart
+        button, because quitAndInstall() cannot
+        act until Squirrel has staged the zip.
+        120s watchdog falls through to ready.
     end note
 
     note right of ready
@@ -254,12 +274,12 @@ flowchart LR
 
 | Layer    | File                                                          | Role                                                                                |
 | -------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Shared   | `src/shared/constants.ts`                                     | 8 `UPDATE_*` IPC channel constants                                                  |
-| Main     | `src/main/services/auto-update.service.ts`                    | Wraps `electron-updater`, 60m poll, install-on-quit (Win/Linux), forwards events    |
+| Shared   | `src/shared/constants.ts`                                     | 11 `UPDATE_*` IPC channel constants                                                 |
+| Main     | `src/main/services/auto-update.service.ts`                    | Wraps `electron-updater`, 60m poll, macOS staging gate, install-on-quit (Win/Linux) |
 | Main     | `src/main/ipc/update.ipc.ts`                                  | IPC handlers: check, download, install                                              |
 | Main     | `src/main/index.ts`                                           | Init + 5s startup check + `startPeriodicChecks()` + `installOnQuitIfReady()`        |
-| Preload  | `src/preload/index.ts`                                        | Exposes `checkForUpdate`, `downloadUpdate`, `installUpdate` + 5 event listeners     |
-| Renderer | `src/renderer/src/store/update.store.ts`                      | Zustand store: status, progress, snooze, auto-install countdown                     |
+| Preload  | `src/preload/index.ts`                                        | Exposes `checkForUpdate`, `downloadUpdate`, `installUpdate` + 6 event listeners     |
+| Renderer | `src/renderer/src/store/update.store.ts`                      | Zustand store: status (incl. `staging`), progress, snooze, auto-install countdown   |
 | Renderer | `src/renderer/src/store/update-store-utils.ts`                | Pure snooze rule (`nextSnooze` / `isSnoozed` / `isBannerMuted`) + mute scopes       |
 | Renderer | `src/renderer/src/components/common/UpdateAvailableModal.tsx` | Confirmation modal: aurora hero, progress ring, countdown                           |
 | Renderer | `src/renderer/src/components/common/UpdateBanner.tsx`         | Top-of-window banner (suppressed while the modal is open or the version is snoozed) |

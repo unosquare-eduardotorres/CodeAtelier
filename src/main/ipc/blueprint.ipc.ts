@@ -1416,6 +1416,26 @@ function wireOnceEventForwarding(): void {
 
   // OS notification: Blueprint phase completed or failed
   // Fires for all phases — summary is phase-aware.
+
+  /**
+   * Prefix a phase summary with the blueprint's title.
+   *
+   * The notification title is a generic "Blueprint — ✓ Complete" and the body
+   * was a phase string with no identity, so a user with several blueprints had
+   * no way to tell which one had finished. entityId already carries the id —
+   * this surfaces something human-readable.
+   */
+  function withBlueprintTitle(blueprintId: string | undefined, summary: string): string {
+    if (!blueprintId) return summary
+    try {
+      const title = blueprintRepository.findById(blueprintId)?.title?.trim()
+      return title ? `${title} — ${summary}` : summary
+    } catch (err) {
+      bpLog.warn(`[notify] Failed to resolve blueprint title for ${blueprintId}:`, err)
+      return summary
+    }
+  }
+
   function buildBlueprintPhaseSummary(
     phase: string,
     status: string,
@@ -1461,17 +1481,21 @@ function wireOnceEventForwarding(): void {
         if (payload.status === 'skipped') return
         const phase = payload.phase as string
         const status = payload.status as string
+        const blueprintId = payload.blueprintId as string | undefined
         notificationService.dispatch({
           workspaceId: wsId,
           workspaceName: resolveWorkspaceName(wsId),
           service: 'blueprint',
           status: status === 'complete' ? 'completed' : 'failed',
-          summary: buildBlueprintPhaseSummary(phase, status, payload),
+          summary: withBlueprintTitle(
+            blueprintId,
+            buildBlueprintPhaseSummary(phase, status, payload)
+          ),
           targetPage: 'blueprints',
-          entityId: payload.blueprintId as string | undefined
+          entityId: blueprintId
         })
-      } catch {
-        /* non-fatal */
+      } catch (err) {
+        bpLog.warn('[notify] Failed to dispatch blueprint phase notification:', err)
       }
     })
   }

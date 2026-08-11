@@ -94,6 +94,62 @@ describe('reconcileStopState', () => {
     assert.deepEqual([...original], ['conv-1'], 'zustand state must never be mutated in place')
   })
 
+  test('releases a wedged conversation while a DIFFERENT conversation streams', async () => {
+    // The top-level `isStreaming` from main is the deprecated global flag — it is
+    // true whenever ANY conversation streams. Trusting it kept a wedged chat's
+    // composer locked because an unrelated background chat was busy.
+    const patch = await reconcileStopState(
+      async () => ({
+        isStreaming: true,
+        streams: [{ conversationId: 'conv-2', requestId: 'req-2' }]
+      }),
+      () => new Set(['conv-1']),
+      'conv-1'
+    )
+
+    assert.ok(patch, 'conv-1 has no stream of its own — it must be released')
+    assert.deepEqual([...(patch?.sendingConversationIds ?? [])], [])
+  })
+
+  test('still declines while THIS conversation has a live stream', async () => {
+    const patch = await reconcileStopState(
+      async () => ({
+        isStreaming: true,
+        streams: [
+          { conversationId: 'conv-1', requestId: 'req-1' },
+          { conversationId: 'conv-2', requestId: 'req-2' }
+        ]
+      }),
+      () => new Set(['conv-1']),
+      'conv-1'
+    )
+
+    assert.equal(patch, null, 'a genuinely busy conversation must stay locked')
+  })
+
+  test('an empty streams list releases even when the global flag is set', async () => {
+    const patch = await reconcileStopState(
+      async () => ({ isStreaming: true, streams: [] }),
+      () => new Set(['conv-1']),
+      'conv-1'
+    )
+
+    assert.ok(patch, 'no live streams at all — nothing can justify keeping the input locked')
+    assert.deepEqual([...(patch?.sendingConversationIds ?? [])], [])
+  })
+
+  test('falls back to the legacy global flag when main sends no streams list', async () => {
+    // Version skew only: renderer and main ship together, but the fallback must
+    // preserve the old behaviour rather than crash.
+    const patch = await reconcileStopState(
+      async () => ({ isStreaming: true }),
+      () => new Set(['conv-1']),
+      'conv-1'
+    )
+
+    assert.equal(patch, null)
+  })
+
   test('handles a null active conversation without clearing anyone else', async () => {
     const patch = await reconcileStopState(
       async () => ({ isStreaming: false }),

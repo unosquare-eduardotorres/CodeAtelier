@@ -537,7 +537,13 @@ export class BlueprintService extends EventEmitter {
     // Check clarify session (lazy import to avoid circular deps)
     if (state?.blueprintId) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        // KNOWN BROKEN IN PACKAGED BUILDS — this relative require() is kept
+        // verbatim by electron-vite and throws MODULE_NOT_FOUND at runtime, so
+        // the clarify-session check below always falls through to the catch and
+        // the stranded-pipeline warning can fire spuriously. Genuine cycle
+        // (blueprint-spec.service imports blueprint.service), so the fix is the
+        // M9 setter-injection pattern, not a static import. Tracked separately.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
         const { blueprintSpecService } = require('./blueprint-spec.service') as {
           blueprintSpecService: {
             hasClarifySession: (bpId: string) => boolean

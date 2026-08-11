@@ -12,7 +12,11 @@ setupFullMock()
 // ── Load the service under test ──
 // An earlier file in the shared run may already have cached this service bound
 // to the real repositories; drop it so it re-binds to the mocks below.
-evictFromCache('blueprint-build.service')
+// `blueprint.service` must go too: blueprint-build.service imports the
+// blueprintService singleton, and a cached copy carries real repositories in
+// with it — startBuildPhase then dies on the real singleton before it ever
+// reaches the mocked phase repo.
+evictFromCache('blueprint-build.service', 'blueprint.service')
 const mod = require('../blueprint-build.service')
 const { BlueprintBuildService, EVIDENCE_ONLY_RX, abortAwareSleep, blueprintBuildService } = mod
 

@@ -351,10 +351,20 @@ export class ChatStreamingInternals {
             // conv is the active one. A background conv timing out shouldn't clear
             // the active conv's phase label or request tracking.
             const isActiveConv = activeId === convId
+            // WEDGE-FIX: release the send flag too. `sendingConversationIds`
+            // drives the composer lock and the Stop button independently of
+            // `isStreaming`; if the stream dies silently after the 30s reconcile
+            // declined, clearing only the streaming state removes the thinking
+            // indicator but leaves the composer permanently disabled.
+            const currentSending =
+              this.storeGet?.().sendingConversationIds ?? new Set<string>()
+            const newSending = new Set(currentSending)
+            newSending.delete(convId)
             this.storeSet?.({
               isStreaming: activeId ? newIds.has(activeId) : false,
               ...(isActiveConv ? { activeRequestId: null } : {}),
               streamingConversationIds: newIds,
+              sendingConversationIds: newSending,
               conversationStreams: newStreams,
               ...(isActiveConv
                 ? {

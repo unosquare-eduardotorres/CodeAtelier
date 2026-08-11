@@ -6,6 +6,7 @@ import { agentIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 
 const log = agentIpcLogger
 
@@ -81,16 +82,9 @@ export function registerAgentIpc(mainWindow: BrowserWindow): void {
       (status.status === 'completed' || status.status === 'failed') &&
       prevStatus !== status.status
     ) {
-      // Resolve workspace name
-      let workspaceName = workspaceId.slice(0, 8)
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids db/repositories circular dependency
-        const { workspaceRepository } = require('../db/repositories')
-        const ws = workspaceRepository.findById(workspaceId)
-        if (ws) workspaceName = ws.name
-      } catch {
-        /* non-fatal */
-      }
+      // Resolve workspace name (shared helper — was a duplicated lazy require
+      // that resolved to a non-existent path in packaged builds)
+      const workspaceName = resolveWorkspaceName(workspaceId)
 
       notificationService.dispatch({
         workspaceId,

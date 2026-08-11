@@ -27,6 +27,7 @@ import { parsePlanArtifact, parseVerifyReport, hasFailingCriteria } from './mpa-
 import { mpaRunRepository } from '../db/repositories/mpa-run.repository'
 import { mpaArtifactRepository } from '../db/repositories/mpa-artifact.repository'
 import { hookEngine } from './hook-engine.service'
+import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import type {
   MpaOrchestrateParams,
   MpaPhaseType,
@@ -535,19 +536,41 @@ export class MpaOrchestrationService extends EventEmitter {
 
     const iteration = verifierFeedback ? 2 : 1
 
-    const { phase } = await this.setupAndExecutePhase({
-      run,
-      adapter,
-      phaseType: 'execute',
-      iteration,
-      goalCondition: buildBuilderGoalCondition(plan),
-      workspacePath: params.workspacePath
-    })
+    // Execute is the only MPA phase that runs in a writing mode ('build'); plan
+    // and verify are readers. It writes into `params.workspacePath`, the shared
+    // primary tree, so it takes the same claim chats and blueprints take.
+    //
+    // Claimed per execute phase rather than per run: a run interleaves execute
+    // with long read-only plan/verify phases, and holding the user's checkout
+    // hostage through those would block every branchless chat for no benefit.
+    const primaryTreeOwnerId = `mpa:${run.id}`
+    if (
+      !primaryTreeLock.acquire(params.workspaceId, {
+        ownerKind: 'campaign',
+        ownerId: primaryTreeOwnerId,
+        reason: 'An MPA execute phase'
+      })
+    ) {
+      throw primaryTreeBusyError(primaryTreeLock.holder(params.workspaceId))
+    }
 
-    mpaRunRepository.updatePhase(phase.id, {
-      status: 'completed',
-      completedAt: new Date().toISOString()
-    })
+    try {
+      const { phase } = await this.setupAndExecutePhase({
+        run,
+        adapter,
+        phaseType: 'execute',
+        iteration,
+        goalCondition: buildBuilderGoalCondition(plan),
+        workspacePath: params.workspacePath
+      })
+
+      mpaRunRepository.updatePhase(phase.id, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      })
+    } finally {
+      primaryTreeLock.release(params.workspaceId, primaryTreeOwnerId)
+    }
   }
 
   private async runVerifyPhase(

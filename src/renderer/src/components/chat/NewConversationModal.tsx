@@ -172,9 +172,11 @@ export default function NewConversationModal({
   const [mode, setMode] = useState<ConversationMode>('plan')
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
-  const [branchMode, setBranchMode] = useState<BranchMode>('none')
+  // Auto-branch is the default: a chat without a branch runs in the shared
+  // primary tree alongside every other chat. 'none' is an explicit opt-out.
+  const [branchMode, setBranchMode] = useState<BranchMode>('auto')
   const [customBranchName, setCustomBranchName] = useState('')
-  const [gitAutoBranch, setGitAutoBranch] = useState(false)
+  const [gitAutoBranch, setGitAutoBranch] = useState(true)
   const [routingOverrides, setRoutingOverrides] = useState<Partial<ModelRoleMap>>({})
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -222,13 +224,14 @@ export default function NewConversationModal({
         window.api
           .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
           .then((s) => {
-            const autoBranch = !!s.gitAutoBranch
+            // Unset means yes — only a deliberate `false` opts out.
+            const autoBranch = s.gitAutoBranch !== false
             setGitAutoBranch(autoBranch)
             setBranchMode(autoBranch ? 'auto' : 'none')
           })
           .catch(() => {
-            setGitAutoBranch(false)
-            setBranchMode('none')
+            setGitAutoBranch(true)
+            setBranchMode('auto')
           })
       } else {
         setBranchMode('none')

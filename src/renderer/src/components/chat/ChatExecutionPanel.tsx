@@ -42,7 +42,7 @@ import { PHASE_STATUS_ICON, statusDotColor } from './plan-status-icons'
 import { remarkStripStrayBackticks } from './remark-plugins'
 import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE, BUILD_SUMMARY_RE } from './plan-detection'
 import type { SectionKey } from './task-plan/TaskPlanSections'
-import { BuildActionBar, usePlanMemos, buildSectionMap } from './task-plan'
+import { BuildActionBar, usePlanMemos, buildSectionMap, isPlanLocked } from './task-plan'
 import type { StructuredPlan, MemoryFact } from '../../../../shared/types'
 import {
   derivePlanTasks,
@@ -338,11 +338,19 @@ function PlanTabContent({
 }): JSX.Element {
   const { sendMessage, updateMode, appendLocalMessage } = useChatActions()
 
-  // BUG-1-FIX: Guard BuildActionBar rendering on conversation mode + streaming state.
-  // During build, the model may emit a revised plan which resets latestPlanMsg,
-  // causing userClicked to flip false — re-showing "Build Now" mid-build.
   const activeMode = useChatStore((s) => s.activeConversation?.mode)
   const isCurrentlyStreaming = useChatStore((s) => s.isStreaming)
+
+  // Whether execution has actually started for this conversation. This is the
+  // precise signal the BuildActionBar needs — mode was only ever a proxy for it,
+  // and gating on `activeMode === 'plan'` also hid the bar in build mode, where
+  // the Plan tab itself stays visible.
+  const execution = usePlanExecutionStore(
+    useCallback(
+      (s: { executions: Record<string, PlanExecution> }) => s.executions[conversationId],
+      [conversationId]
+    )
+  )
 
   // BUG-HINT-BAR-FIX: Debounce the retry hint bar by 2 seconds.
   // Between build phases, isStreaming is briefly false (50-200ms) while the
@@ -396,7 +404,11 @@ function PlanTabContent({
   }, [messages])
 
   const planActionTaken = latestPlanMsg?.planAction
-  const [userClicked, setUserClicked] = useState(!!planActionTaken)
+
+  // Hide the action bar / lock the goal card when this specific plan has been
+  // actioned, or a build is actively running. See build-bar-visibility.ts for
+  // why neither `activeMode` nor `!!execution` is the right signal.
+  const planLocked = isPlanLocked({ planAction: planActionTaken, execution })
 
   // Goal state: user edit → plan's goal → derived fallback
   const [editedGoal, setEditedGoal] = useState<string | null>(null)
@@ -414,14 +426,13 @@ function PlanTabContent({
     [structuredPlan]
   )
 
-  // Reset button visibility and edited goal when a new plan message is detected
-  // (new plans have no planAction → shows BuildActionBar again)
-  // Depend on latestPlanMsg?.id so the effect fires on plan identity change,
-  // not just planAction value transitions.
+  // Reset the edited goal when a new plan message is detected. Button
+  // visibility is no longer reset here — it is derived from the execution
+  // record, which is what stopped a mid-build `emit_plan` from re-showing
+  // "Build Now".
   useEffect(() => {
-    setUserClicked(!!planActionTaken)
     setEditedGoal(null)
-  }, [latestPlanMsg?.id, planActionTaken])
+  }, [latestPlanMsg?.id])
 
   const handleBuildNow = useCallback((): void => {
     if (latestPlanMsg && !latestPlanMsg.planAction) {
@@ -438,31 +449,34 @@ function PlanTabContent({
     // Initialize plan execution tracking. derivePlanTasks/derivePhaseFiles are the
     // SAME helpers used to render the task manifest sent to the model below —
     // this is what makes agent-reported taskIds actually match what the UI tracks.
-    if (structuredPlan?.phases?.length) {
-      const { startExecution } = usePlanExecutionStore.getState()
-      startExecution(conversationId, {
-        planId: null,
-        title: structuredPlan.title,
-        planGoal: effectiveGoal || undefined,
-        phases: derivePlanTasks(structuredPlan),
-        phaseFiles: derivePhaseFiles(structuredPlan)
+    // Always create an execution record — including phase-less plans. The record
+    // is the single "execution has started" signal the action bar gates on, so
+    // skipping it for a simple plan would leave "Build Now" visible for the
+    // whole build. A zero-phase record is safe: TaskSummaryBadge guards on
+    // totalPhases > 0, and updatePhase raises totalPhases if the agent later
+    // reports real phases via emit_phase_progress.
+    const { startExecution } = usePlanExecutionStore.getState()
+    startExecution(conversationId, {
+      planId: null,
+      title: structuredPlan?.title ?? 'Plan',
+      planGoal: effectiveGoal || undefined,
+      phases: structuredPlan?.phases?.length ? derivePlanTasks(structuredPlan) : [],
+      phaseFiles: structuredPlan?.phases?.length ? derivePhaseFiles(structuredPlan) : undefined
+    })
+    // Backfill the DB-persisted plan ID (the plan row was written when
+    // emit_plan fired, before this button existed) — fire-and-forget so
+    // Build Now isn't blocked on an IPC round-trip. Without this, exec.planId
+    // stays null for the whole live session and memory extraction on
+    // completion can't tell this execution is DB-backed.
+    window.api
+      .getPhaseProgress({ conversationId })
+      .then((phaseData) => {
+        if (phaseData?.planId) {
+          usePlanExecutionStore.getState().setPlanId(conversationId, phaseData.planId)
+        }
       })
-      // Backfill the DB-persisted plan ID (the plan row was written when
-      // emit_plan fired, before this button existed) — fire-and-forget so
-      // Build Now isn't blocked on an IPC round-trip. Without this, exec.planId
-      // stays null for the whole live session and memory extraction on
-      // completion can't tell this execution is DB-backed.
-      window.api
-        .getPhaseProgress({ conversationId })
-        .then((phaseData) => {
-          if (phaseData?.planId) {
-            usePlanExecutionStore.getState().setPlanId(conversationId, phaseData.planId)
-          }
-        })
-        .catch(() => {})
-    }
+      .catch(() => {})
 
-    setUserClicked(true)
     void updateMode('build')
 
     // Build the kickoff message with an explicit task manifest so the model
@@ -514,7 +528,6 @@ function PlanTabContent({
         .chatSetPlanAction({ messageId: latestPlanMsg.id, action: 'refine' })
         .catch(console.error)
     }
-    setUserClicked(true)
     appendLocalMessage("Refine this plan — tell me what to change and I'll update it.")
   }, [latestPlanMsg, appendLocalMessage])
 
@@ -529,7 +542,6 @@ function PlanTabContent({
         .chatSetPlanAction({ messageId: latestPlanMsg.id, action: 'save_as_idea' })
         .catch(console.error)
     }
-    setUserClicked(true)
     const title = structuredPlan?.title ?? 'Implementation Plan'
     const description = planContent ?? ''
     const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
@@ -576,7 +588,6 @@ function PlanTabContent({
         .catch(console.error)
     }
 
-    setUserClicked(true)
     void sendMessage(
       `I've updated the goal to:\n\n${effectiveGoal}\n\n` +
         'Regenerate the plan to achieve this updated goal. ' +
@@ -599,7 +610,6 @@ function PlanTabContent({
         .chatSetPlanAction({ messageId: latestPlanMsg.id, action: 'council' })
         .catch(console.error)
     }
-    setUserClicked(true)
     const workspaceId = useWorkspaceStore.getState().activeWorkspace?.id
     if (!workspaceId) return
     const councilStore = useCouncilStore.getState()
@@ -647,11 +657,11 @@ function PlanTabContent({
       {structuredPlan && effectiveGoal && (
         <GoalCard
           goal={effectiveGoal}
-          onChange={userClicked ? undefined : setEditedGoal}
-          readOnly={userClicked}
+          onChange={planLocked ? undefined : setEditedGoal}
+          readOnly={planLocked}
           originalGoal={originalGoal}
-          onRegenerate={userClicked ? undefined : handleRegeneratePlan}
-          onReset={userClicked ? undefined : handleResetGoal}
+          onRegenerate={planLocked ? undefined : handleRegeneratePlan}
+          onReset={planLocked ? undefined : handleResetGoal}
         />
       )}
 
@@ -670,18 +680,19 @@ function PlanTabContent({
         </div>
       )}
 
-      {/* Action bar — after content so sticky bottom-0 works correctly */}
-      {/* BUG-1-FIX: Guard on mode + streaming. During build mode the model may
-         emit a new plan (emit_plan), which resets latestPlanMsg and causes
-         userClicked to become false — re-showing Build Now mid-build.
-         Only show when explicitly in plan mode AND not actively streaming. */}
-      {!userClicked && activeMode === 'plan' && !isCurrentlyStreaming && (
+      {/* Action bar — after content so sticky bottom-0 works correctly.
+         Gated on whether this plan was actioned / a build is running rather than
+         on conversation mode: the bar stays available in build mode (where the
+         Plan tab is already visible) and disappears the moment execution starts.
+         `buildRunning` is what keeps it hidden across the 50-200ms gaps where
+         isStreaming drops between phases, including after a mid-build emit_plan
+         replaces latestPlanMsg. */}
+      {!planLocked && !isCurrentlyStreaming && (
         <BuildActionBar
           onBuildNow={handleBuildNow}
           onRefine={handleRefine}
           onSaveAsIdea={handleSaveAsIdea}
           onCouncilReview={handleCouncilReview}
-          onUserClicked={() => setUserClicked(true)}
           savedToPlans
         />
       )}

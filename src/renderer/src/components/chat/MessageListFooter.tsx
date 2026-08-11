@@ -45,7 +45,6 @@ export default function MessageListFooter({
     sendMessage,
     submitQuestionAnswers,
     skipAllQuestions,
-    resolveToolPermission,
     appendLocalMessage,
     createConversation
   } = useChatActions()
@@ -187,7 +186,7 @@ export default function MessageListFooter({
       {pendingToolPermission && (
         <div className="flex justify-start px-4">
           <div className="max-w-[85%]">
-            <ToolPermissionCard pending={pendingToolPermission} onResolve={resolveToolPermission} />
+            <ToolPermissionCard pending={pendingToolPermission} />
           </div>
         </div>
       )}

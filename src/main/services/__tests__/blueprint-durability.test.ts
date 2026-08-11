@@ -120,6 +120,42 @@ describe('journalEventsToChatMessages', () => {
     assert.deepEqual(qa.answers, {})
   })
 
+  test('qa event with block-shaped questions payload is unwrapped to an array', () => {
+    // Real on-disk shape: blueprint.ipc.ts stores the ClarifyQuestionsBlock
+    // under `questions`, so the value is { questions: [...] }, not the array.
+    const questionsBlock = { questions: [{ id: 'q1', text: 'What is the scope?' }] }
+    const events: JournalEvent[] = [
+      makeEvent({ seq: 1, type: 'qa', payload: { questions: questionsBlock } }),
+      makeEvent({ seq: 2, type: 'user', payload: { message: 'The scope is X' } })
+    ]
+    const msgs = journalEventsToChatMessages(events)
+    assert.equal(msgs.length, 1)
+    assert.equal(msgs[0].type, 'qa')
+    const qa = msgs[0] as {
+      questions: unknown
+      answers: Record<string, { otherText: string }>
+    }
+    assert.ok(Array.isArray(qa.questions), 'questions must be an array for .map() in the view')
+    assert.equal((qa.questions as unknown[]).length, 1)
+    assert.equal(qa.answers['q1'].otherText, 'The scope is X')
+  })
+
+  test('qa event with a non-array, non-block questions payload is skipped', () => {
+    const events: JournalEvent[] = [
+      makeEvent({ seq: 1, type: 'qa', payload: { questions: { bogus: true } } })
+    ]
+    const msgs = journalEventsToChatMessages(events)
+    // Neither a valid array nor a block, and not gateReady -> no message emitted
+    assert.equal(msgs.length, 0)
+  })
+
+  test('qa event with an empty questions array emits no message', () => {
+    const events: JournalEvent[] = [makeEvent({ seq: 1, type: 'qa', payload: { questions: [] } })]
+    const msgs = journalEventsToChatMessages(events)
+    // An empty round would otherwise render a blank "Answers submitted" card
+    assert.equal(msgs.length, 0)
+  })
+
   test('gateReady qa event becomes system message', () => {
     const events: JournalEvent[] = [
       makeEvent({ seq: 1, type: 'qa', payload: { event: 'gateReady' } })

@@ -30,6 +30,7 @@ import {
   buildLocalMcpServersFromRegistry
 } from './opencode-config-writer/opencode-config-data'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
+import { resolveActiveIntegrationEnvs } from './integration-credentials'
 
 const configLog = log.scope('OpenCodeConfigWriter')
 
@@ -725,10 +726,9 @@ export class OpenCodeConfigWriter {
     return servers
   }
 
-  /** Local MCP servers bundled with the app — built from declarative registry. */
-  private buildLocalMcpServers(opts: OpenCodeConfigWriterOptions): OpenCodeConfig['mcp'] {
-    // Resolve server script base path
-    const serverBasePath = app.isPackaged
+  /** Resolve the directory holding the bundled MCP server scripts (packaged vs dev). */
+  private resolveMcpServerBasePath(): string {
+    return app.isPackaged
       ? join(
           app.getAppPath().replace('app.asar', 'app.asar.unpacked'),
           'out',
@@ -736,6 +736,11 @@ export class OpenCodeConfigWriter {
           'mcp-servers'
         )
       : join(__dirname, 'mcp-servers')
+  }
+
+  /** Local MCP servers bundled with the app — built from declarative registry. */
+  private buildLocalMcpServers(opts: OpenCodeConfigWriterOptions): OpenCodeConfig['mcp'] {
+    const serverBasePath = this.resolveMcpServerBasePath()
 
     // DB-backed servers (code-graph, semantic-search, code-analysis) run as plain `node`
     // and can't call app.getPath() — pass the userData dir as DB_PATH so they locate the DB.
@@ -764,20 +769,22 @@ export class OpenCodeConfigWriter {
     servers: OpenCodeConfig['mcp']
   ): void {
     const externalActive = opts.featureFlags.externalMcpActive ?? {}
-    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
-      if (externalActive[integration.id]) {
-        // Build env from the integration's envKeys
-        const env: Record<string, string> = {}
-        for (const key of integration.envKeys ?? []) {
-          if (process.env[key]) {
-            env[key] = process.env[key]!
-          }
-        }
-        // Add any performance env overrides
-        if (integration.performanceEnv) {
-          Object.assign(env, integration.performanceEnv)
-        }
+    // Credentials + shell fallback + performanceEnv, resolved once. Integrations
+    // with incomplete credentials are absent from the map and stay unmounted.
+    const envByIntegration = resolveActiveIntegrationEnvs(externalActive, opts.workspaceId)
 
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      if (!externalActive[integration.id]) continue
+      const env = envByIntegration[integration.id]
+      if (!env) continue
+
+      let command: string[]
+      if (integration.bundledServerEntry) {
+        command = [
+          'node',
+          join(this.resolveMcpServerBasePath(), `${integration.bundledServerEntry}.js`)
+        ]
+      } else {
         // Resolve the command — try commandPaths first, then bare command
         let resolvedCommand = integration.command
         if (integration.commandPaths) {
@@ -789,14 +796,15 @@ export class OpenCodeConfigWriter {
             }
           }
         }
-
-        servers[integration.id] = {
-          type: 'local',
-          command: [resolvedCommand, ...integration.args],
-          environment: Object.keys(env).length > 0 ? env : undefined
-        }
-        configLog.info(`[opencode-config] Mounted external MCP: ${integration.id}`)
+        command = [resolvedCommand, ...integration.args]
       }
+
+      servers[integration.id] = {
+        type: 'local',
+        command,
+        environment: Object.keys(env).length > 0 ? env : undefined
+      }
+      configLog.info(`[opencode-config] Mounted external MCP: ${integration.id}`)
     }
   }
 

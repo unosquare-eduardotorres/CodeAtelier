@@ -43,6 +43,7 @@ import {
   parseClarifyQuestions,
   parseClarifyCompletion,
   deduplicateClarifyQuestions,
+  clarifyQuestionKey,
   grillQuestionsToClarifyBlock
 } from '../../shared/blueprint-clarify-parsers'
 import type {
@@ -130,8 +131,17 @@ export class BlueprintSpecService extends EventEmitter {
       awaitingInput: boolean
     }
   >()
-  /** Track all previously asked questions per blueprint for dedupe. */
+  /** Track all previously asked questions per blueprint (bookkeeping / diagnostics). */
   private previouslyAskedQuestions = new Map<string, ClarifyQuestion[]>()
+  /**
+   * RE-SURFACE-FIX: questions the user has actually ANSWERED, per blueprint.
+   * Dedupe runs against this rather than `previouslyAskedQuestions` because the
+   * clarify prompt tells the model to re-emit still-unanswered questions on
+   * resume ("Session Resume" section). Deduping those away dropped every
+   * question, degraded the turn to the free-text fallback, and left the user
+   * with no route back to the option cards.
+   */
+  private answeredQuestions = new Map<string, ClarifyQuestion[]>()
   /** M4: Track whether a corrective nudge has been attempted for the current turn. */
   private correctionAttempted = new Map<string, boolean>()
 
@@ -155,6 +165,33 @@ export class BlueprintSpecService extends EventEmitter {
     const findings = this.latestFindingsByBlueprint.get(blueprintId) ?? null
     const questions = uiState?.questions ?? null
     blueprintService.setClarifyState(workspaceId, { findings, questions })
+  }
+
+  /**
+   * Append questions to the per-blueprint "asked" ledger without duplicating
+   * entries — a re-surfaced question is asked twice but recorded once.
+   */
+  private mergeAsked(blueprintId: string, incoming: ClarifyQuestion[]): ClarifyQuestion[] {
+    const prev = this.previouslyAskedQuestions.get(blueprintId) ?? []
+    const seen = new Set(prev.map(clarifyQuestionKey))
+    return [...prev, ...incoming.filter((q) => !seen.has(clarifyQuestionKey(q)))]
+  }
+
+  /**
+   * RE-SURFACE-FIX: record the questions currently on screen as answered.
+   * Called when the user submits an answer — from that point on, a verbatim
+   * re-emission of those questions is a genuine duplicate and gets dropped,
+   * while anything still outstanding stays eligible to re-surface.
+   */
+  private markPendingAnswered(blueprintId: string): void {
+    const pending = this.clarifyUiState.get(blueprintId)?.questions?.questions ?? []
+    if (pending.length === 0) return
+    const answered = this.answeredQuestions.get(blueprintId) ?? []
+    const seen = new Set(answered.map(clarifyQuestionKey))
+    this.answeredQuestions.set(blueprintId, [
+      ...answered,
+      ...pending.filter((q) => !seen.has(clarifyQuestionKey(q)))
+    ])
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -688,11 +725,12 @@ export class BlueprintSpecService extends EventEmitter {
         // Convert GrillQuestion[] → ClarifyQuestionsBlock
         const clarifyBlock = grillQuestionsToClarifyBlock(data.questions)
 
-        // Dedupe against previously asked
-        const prev = this.previouslyAskedQuestions.get(blueprintId) ?? []
-        const newQuestions = deduplicateClarifyQuestions(clarifyBlock.questions, prev)
+        // RE-SURFACE-FIX: dedupe against ANSWERED questions only, so re-asking
+        // something still outstanding re-opens the card instead of being dropped.
+        const answered = this.answeredQuestions.get(blueprintId) ?? []
+        const newQuestions = deduplicateClarifyQuestions(clarifyBlock.questions, answered)
         if (newQuestions.length === 0) {
-          // All questions already asked — auto-respond to unblock the turn
+          // Everything here was already answered — auto-respond to unblock the turn
           state.session.respondToAskUser(
             data.requestId,
             'All questions were already answered in previous turns. Proceed with the information you have.'
@@ -708,7 +746,10 @@ export class BlueprintSpecService extends EventEmitter {
 
         // Drive the same UI flow as the fenced-block path
         const questionsBlock: ClarifyQuestionsBlock = { questions: newQuestions }
-        this.previouslyAskedQuestions.set(blueprintId, [...prev, ...newQuestions])
+        this.previouslyAskedQuestions.set(
+          blueprintId,
+          this.mergeAsked(blueprintId, newQuestions)
+        )
         this.clarifyUiState.set(blueprintId, { questions: questionsBlock, awaitingInput: false })
         this.pushClarifyState(blueprintId, workspaceId)
         this.safeEmit('clarifyQuestions', { blueprintId, workspaceId, questions: questionsBlock })
@@ -804,6 +845,10 @@ export class BlueprintSpecService extends EventEmitter {
     }
 
     bpLog.info(`[sendClarifyAnswer] Blueprint ${blueprintId} — sending user answer`)
+
+    // RE-SURFACE-FIX: whatever was on screen has now been answered. Recorded
+    // before both the ask_user and session.send paths so either route counts.
+    this.markPendingAnswered(blueprintId)
 
     // Drive state machine: awaiting-clarify-questions/input → phase-running
     const machine = blueprintService.getMachine(workspaceId)
@@ -924,25 +969,29 @@ export class BlueprintSpecService extends EventEmitter {
       this.safeEmit('clarifyFindings', { blueprintId, workspaceId, findings })
     }
 
-    // 2. Parse questions (with dedupe against previously asked)
+    // 2. Parse questions (dedupe against questions the user has ALREADY ANSWERED).
+    //    RE-SURFACE-FIX: previously this deduped against every question ever
+    //    displayed, so the re-emission the prompt asks for on resume ("re-emit
+    //    ... any unanswered questions block") was dropped wholesale and the turn
+    //    silently degraded to the free-text panel.
     let questions = parseClarifyQuestions(text)
     if (questions && questions.questions.length > 0) {
-      const prevAsked = this.previouslyAskedQuestions.get(blueprintId) ?? []
-      const deduped = deduplicateClarifyQuestions(questions.questions, prevAsked)
+      const answered = this.answeredQuestions.get(blueprintId) ?? []
+      const deduped = deduplicateClarifyQuestions(questions.questions, answered)
       if (deduped.length < questions.questions.length) {
         bpLog.warn(
-          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — dropped ${questions.questions.length - deduped.length} duplicate question(s)`
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — dropped ${questions.questions.length - deduped.length} already-answered question(s)`
         )
       }
       if (deduped.length === 0) {
         bpLog.warn(
-          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — all questions were duplicates; treating as awaitingInput`
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — every question was already answered; treating as no new questions`
         )
         questions = null
       } else {
         questions = { questions: deduped }
-        // Track the new questions as "asked"
-        this.previouslyAskedQuestions.set(blueprintId, [...prevAsked, ...deduped])
+        // Track for diagnostics; re-surfaced questions are recorded once.
+        this.previouslyAskedQuestions.set(blueprintId, this.mergeAsked(blueprintId, deduped))
       }
     }
 
@@ -953,14 +1002,20 @@ export class BlueprintSpecService extends EventEmitter {
         (completionRaw as unknown as BlueprintPhaseCompletion))
       : null
 
-    // M5 (nudge restructure): Hoist zero-block check ABOVE the emit cascade.
+    // M5 (nudge restructure): Hoist the no-next-action check ABOVE the emit cascade.
     // Nudge while still in 'phase-running' — no state transition needed.
     // Only emit awaitingInput after the 1-retry cap is exhausted.
-    if (!findings && !questions && !completion) {
+    //
+    // NUDGE-FINDINGS-FIX: a findings block alone is NOT a valid way to end a
+    // clarify turn — the contract is findings PLUS either questions or the
+    // completion block. Keying this check on findings meant a findings-only turn
+    // skipped the nudge entirely and fell through to the free-text fallback,
+    // which is the very degradation the nudge exists to prevent.
+    if (!questions && !completion) {
       const alreadyAttempted = this.correctionAttempted.get(blueprintId) ?? false
       if (!alreadyAttempted) {
         bpLog.warn(
-          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — zero parsed blocks, sending corrective nudge`
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — no questions or completion block, sending corrective nudge`
         )
         this.correctionAttempted.set(blueprintId, true)
 
@@ -982,7 +1037,7 @@ export class BlueprintSpecService extends EventEmitter {
         }
       } else {
         bpLog.warn(
-          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — zero parsed blocks after correction; falling back to awaitingInput`
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — still no questions or completion after correction; falling back to awaitingInput`
         )
       }
       // Reset correction flag for next turn
@@ -1057,6 +1112,7 @@ export class BlueprintSpecService extends EventEmitter {
     // M9: Clean up all map lifecycle entries on gate proceed
     this.correctionAttempted.delete(blueprintId)
     this.previouslyAskedQuestions.delete(blueprintId)
+    this.answeredQuestions.delete(blueprintId)
 
     await this.finalizeClarifyPhase(blueprintId, gate.workspaceId, gate.text, gate.completion)
   }
@@ -1299,6 +1355,8 @@ export class BlueprintSpecService extends EventEmitter {
     this.latestFindingsByBlueprint.delete(blueprintId)
     this.clarifyUiState.delete(blueprintId)
     this.correctionAttempted.delete(blueprintId)
+    this.previouslyAskedQuestions.delete(blueprintId)
+    this.answeredQuestions.delete(blueprintId)
 
     const sessionState = this.clarifySessions.get(blueprintId)
     if (sessionState) {
@@ -1333,6 +1391,8 @@ export class BlueprintSpecService extends EventEmitter {
     this.latestFindingsByBlueprint.clear()
     this.clarifyUiState.clear()
     this.correctionAttempted.clear()
+    this.previouslyAskedQuestions.clear()
+    this.answeredQuestions.clear()
   }
 }
 

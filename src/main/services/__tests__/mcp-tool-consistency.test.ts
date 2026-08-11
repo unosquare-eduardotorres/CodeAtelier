@@ -188,6 +188,15 @@ describe('MCP tool consistency — prompt guidance text references real tools', 
 const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../mcp-servers')
 
 /**
+ * Matches a tool registration: `server.tool('name', …)` or a bare `tool('name', …)`.
+ *
+ * code-graph-server registers through a local `tool()` wrapper that appends the
+ * shared-index caveat to every description; requiring the `server.` prefix made
+ * this parser report all 15 of its tools as ghosts.
+ */
+const TOOL_CALL_PREFIX = String.raw`(?:server\.)?tool\(`
+
+/**
  * Extracts `server.tool('name', '<description>' + '<more>', …)` pairs from source.
  * Handles both single- and double-quoted description literals (a description
  * containing an apostrophe, e.g. run_background, must use double quotes).
@@ -195,7 +204,10 @@ const serverDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../mcp-se
 function readToolDescriptions(file: string): { name: string; description: string }[] {
   const src = readFileSync(resolve(serverDir, file), 'utf8')
   const strLit = /(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")/.source
-  const call = new RegExp(`server\\.tool\\(\\s*'([a-z_]+)',\\s*((?:${strLit}\\s*\\+?\\s*)+),`, 'g')
+  const call = new RegExp(
+    `${TOOL_CALL_PREFIX}\\s*'([a-z_]+)',\\s*((?:${strLit}\\s*\\+?\\s*)+),`,
+    'g'
+  )
   const part = new RegExp(`'((?:[^'\\\\]|\\\\.)*)'|"((?:[^"\\\\]|\\\\.)*)"`, 'g')
   const out: { name: string; description: string }[] = []
   for (const m of src.matchAll(call)) {
@@ -227,11 +239,12 @@ describe('MCP tool consistency — registry matches the actual servers', () => {
     test(`${file} — every registered tool was parsed with a description`, () => {
       const parsed = readToolDescriptions(file)
       const registered =
-        readFileSync(resolve(serverDir, file), 'utf8').match(/server\.tool\(/g) ?? []
+        readFileSync(resolve(serverDir, file), 'utf8').match(new RegExp(TOOL_CALL_PREFIX, 'g')) ??
+        []
       assert.equal(
         parsed.length,
         registered.length,
-        `parsed ${parsed.length} descriptions but found ${registered.length} server.tool() calls — ` +
+        `parsed ${parsed.length} descriptions but found ${registered.length} tool() calls — ` +
           'a tool is registered without a string description, or the parser needs updating'
       )
     })
@@ -255,7 +268,9 @@ describe('MCP tool consistency — registry matches the actual servers', () => {
 
     test(`${file} — no handler returns a "delegating to in-process service" placeholder`, () => {
       assert.ok(
-        !readFileSync(resolve(serverDir, file), 'utf8').includes('delegating to in-process service'),
+        !readFileSync(resolve(serverDir, file), 'utf8').includes(
+          'delegating to in-process service'
+        ),
         `${file} contains a placeholder handler — mount only tools that actually do the work`
       )
     })

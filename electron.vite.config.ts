@@ -29,7 +29,8 @@ export default defineConfig({
           'mcp-servers/recall-server': resolve('src/main/mcp-servers/recall-server.ts'),
           'mcp-servers/process-manager-server': resolve(
             'src/main/mcp-servers/process-manager-server.ts'
-          )
+          ),
+          'mcp-servers/jira-server': resolve('src/main/mcp-servers/jira-server.ts')
         }
       }
     },

@@ -19,7 +19,14 @@ function readSource(relPath: string): string {
   return readFileSync(join(projectRoot, relPath), 'utf-8')
 }
 
-/** Extract all `server.tool(` registrations from MCP server files */
+/**
+ * Extract all tool registrations from MCP server files.
+ *
+ * Matches `server.tool(` and a bare `tool(` — code-graph-server registers
+ * through a local `tool()` wrapper that appends the shared-index caveat to
+ * every description, and requiring the `server.` prefix dropped all 15 of its
+ * tools from this contract check.
+ */
 function extractMcpToolNames(): string[] {
   const projectRoot = join(__dirname, '..', '..', '..', '..')
   const mcpDir = join(projectRoot, 'src', 'main', 'mcp-servers')
@@ -28,7 +35,7 @@ function extractMcpToolNames(): string[] {
   )
 
   const toolNames: string[] = []
-  const toolCallRegex = /server\.tool\(/g
+  const toolCallRegex = /(?:^|[^.\w])(?:server\.)?tool\(/g
 
   for (const file of files) {
     const source = readFileSync(join(mcpDir, file), 'utf-8')

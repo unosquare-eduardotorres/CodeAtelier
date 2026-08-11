@@ -1,17 +1,15 @@
 /**
- * Where a permission request should surface.
+ * Whether a permission should ALSO be recorded inline in the transcript.
  *
- * A tool permission for the conversation the user is looking at belongs in the
- * transcript — a toast that vanishes leaves no evidence when an approval fails
- * to resume the turn. Everything else is a cross-workspace interrupt: toast.
+ * The modal owns every decision — it queues, has no accidental-dismiss path and
+ * cannot be scrolled past. The card is a receipt: an approval that fails to
+ * resume the turn must leave a trace instead of looking like the agent went quiet.
  */
-export function routePermission(
+export function shouldRecordInline(
   p: { type: string; conversationId?: string },
   activeConversationId: string | null
-): 'inline' | 'toast' {
-  if (p.type !== 'toolPermission') return 'toast'
-  // No conversation to anchor the card to — fall back to the toast rather than
-  // dropping the prompt on the floor.
-  if (!p.conversationId || p.conversationId !== activeConversationId) return 'toast'
-  return 'inline'
+): boolean {
+  return (
+    p.type === 'toolPermission' && !!p.conversationId && p.conversationId === activeConversationId
+  )
 }

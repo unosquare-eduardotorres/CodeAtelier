@@ -11,13 +11,25 @@
 // Lazy Electron import — this module gets bundled into a shared chunk that
 // MCP server child processes load transitively. `safeStorage` is only called
 // from the Electron main process, never from standalone servers.
+import { listSecretSettingsKeys } from '../../shared/integration-credentials.types'
+
 function getSafeStorage(): typeof import('electron').safeStorage {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
   return require('electron').safeStorage
 }
 
-/** All settings keys that contain API secrets and must be encrypted at rest. */
-const ENCRYPTED_SETTINGS_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey'] as const
+/** Settings keys that contain API secrets and must be encrypted at rest. */
+const STATIC_ENCRYPTED_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey']
+
+/**
+ * Static keys plus every `secret: true` credential field declared by an external
+ * MCP integration (e.g. `jira.apiToken`), so new integrations are encrypted
+ * automatically. `listSecretSettingsKeys` is pure registry data — no Electron.
+ */
+const ENCRYPTED_SETTINGS_KEYS: readonly string[] = [
+  ...STATIC_ENCRYPTED_KEYS,
+  ...listSecretSettingsKeys()
+]
 
 /**
  * Encrypt any plaintext API key fields in a settings object before DB storage.

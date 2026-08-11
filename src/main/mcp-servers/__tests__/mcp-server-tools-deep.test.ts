@@ -122,6 +122,68 @@ describe('MCP integrations — structure', () => {
       )
     }
   })
+
+  test('credential_fields_declare_unique_keys_and_env_vars', () => {
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      const fields = integration.credentialFields ?? []
+      const keys = fields.map((f) => f.key)
+      const envVars = fields.map((f) => f.envVar)
+      assert.equal(new Set(keys).size, keys.length, `${integration.id}: duplicate field keys`)
+      assert.equal(new Set(envVars).size, envVars.length, `${integration.id}: duplicate env vars`)
+    }
+  })
+
+  test('credential_env_vars_are_declared_in_envKeys', () => {
+    // A field whose env var is missing from envKeys would never reach the child
+    // process on the shell-fallback path.
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      for (const field of integration.credentialFields ?? []) {
+        assert.ok(
+          integration.envKeys?.includes(field.envVar),
+          `${integration.id}.${field.key} → ${field.envVar} missing from envKeys`
+        )
+      }
+    }
+  })
+
+  test('showWhen_conditions_reference_real_sibling_fields', () => {
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      const fields = integration.credentialFields ?? []
+      const keys = new Set(fields.map((f) => f.key))
+      for (const field of fields) {
+        for (const dependency of Object.keys(field.showWhen ?? {})) {
+          assert.ok(
+            keys.has(dependency),
+            `${integration.id}.${field.key} showWhen references unknown field '${dependency}'`
+          )
+        }
+      }
+    }
+  })
+
+  test('jira_is_registered_as_a_bundled_read_only_integration', () => {
+    const jira = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'jira')
+    assert.ok(jira, 'jira should be registered')
+    assert.equal(jira!.bundledServerEntry, 'jira-server')
+    assert.equal(jira!.supportsConnectionTest, true)
+    assert.equal(jira!.toolNames.length, jira!.toolCount)
+    assert.deepEqual(
+      jira!.planModeToolNames,
+      jira!.toolNames,
+      'both jira tools are read-only and must be available in plan mode'
+    )
+  })
+
+  test('plan_mode_tools_are_a_subset_of_all_tools', () => {
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      for (const tool of integration.planModeToolNames) {
+        assert.ok(
+          integration.toolNames.includes(tool),
+          `${integration.id}: ${tool} in planModeToolNames but not toolNames`
+        )
+      }
+    }
+  })
 })
 
 // ── §4: truncateToolOutput deeper coverage ──────────────────────────────

@@ -28,14 +28,19 @@ import { createConnection, type Socket } from 'node:net'
 import { createAskUserRegistry } from './ask-user-registry'
 import { parseIpcAddress } from '../../shared/ipc-address'
 import { shouldAutoApprove } from './tool-auto-approve'
+import { classifyIdleWait } from './idle-wait-guard'
 import { buildPermissionResult } from './permission-result'
+import { resolveBroadcastMode } from './mode-broadcast'
 
 // ── Environment ──
 const IPC_SOCKET_PATH = process.env.IPC_SOCKET_PATH
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
-// CONVERSATION_ID reserved for future per-conversation routing
-void process.env.CONVERSATION_ID
-const CONVERSATION_MODE = process.env.CONVERSATION_MODE ?? 'plan'
+// Identifies which conversation this server belongs to — one IPC bridge serves
+// every conversation in a workspace, so mode broadcasts must be filtered by it.
+const CONVERSATION_ID = process.env.CONVERSATION_ID
+/** Mutable: the CLI child owning this server outlives a mode switch, so the
+ *  spawn-time env goes stale the moment the user flips Plan → Build. */
+let conversationMode = process.env.CONVERSATION_MODE ?? 'plan'
 
 // ── IPC Bridge ──
 let ipcSocket: Socket | null = null
@@ -174,6 +179,13 @@ function setupResponseListener(): void {
             event.requestId,
             buildPermissionResult(approved, echoed ?? originalInput)
           )
+        }
+        if (event.type === 'modeChange') {
+          const next = resolveBroadcastMode(event, CONVERSATION_ID, conversationMode)
+          if (next !== conversationMode) {
+            console.error(`[control-actions-server] Mode changed ${conversationMode} → ${next}`)
+            conversationMode = next
+          }
         }
       } catch {
         console.error(`[control-actions-server] Malformed response: ${line.slice(0, 120)}`)
@@ -410,8 +422,21 @@ server.tool(
   async (args) => {
     const { tool_name, input, tool_use_id } = args
 
+    // Refuse pure idle waits BEFORE auto-approve: build mode auto-approves any
+    // non-dangerous shell command, so `sleep 999` would otherwise run silently
+    // and spawn an unhideable console window on Windows. The deny message is fed
+    // back to the model, which then self-corrects to wait_process.
+    const idleWait = classifyIdleWait(tool_name, input)
+    if (idleWait) {
+      return {
+        content: [
+          { type: 'text' as const, text: buildPermissionResult(false, undefined, idleWait) }
+        ]
+      }
+    }
+
     // Auto-approve safe tools without UI roundtrip
-    if (shouldAutoApprove(tool_name, input, CONVERSATION_MODE)) {
+    if (shouldAutoApprove(tool_name, input, conversationMode)) {
       return {
         content: [
           {
@@ -447,7 +472,10 @@ server.tool(
           toolName: tool_name,
           toolUseId: tool_use_id,
           inputSummary,
-          input
+          input,
+          // Lets the main process detect drift between the live session mode and
+          // the mode this server is actually enforcing.
+          serverMode: conversationMode
         },
         requestId
       )
@@ -471,7 +499,7 @@ async function main(): Promise<void> {
   await server.connect(transport)
 
   console.error(
-    `[control-actions-server] Started (workspace=${WORKSPACE_PATH}, mode=${CONVERSATION_MODE}, ipc=${IPC_SOCKET_PATH ? 'connected' : 'NONE'})`
+    `[control-actions-server] Started (workspace=${WORKSPACE_PATH}, mode=${conversationMode}, ipc=${IPC_SOCKET_PATH ? 'connected' : 'NONE'})`
   )
 }
 

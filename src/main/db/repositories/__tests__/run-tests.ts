@@ -57,6 +57,9 @@ import './zero-coverage-repos-phase24.test'
 // ─── Feed Brain: durable ingestion queue (migration 133) ───
 import './memory-bootstrap.repository.test'
 
+// ─── Per-conversation git worktrees (migration 139) ───
+import './track.repository.test'
+
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

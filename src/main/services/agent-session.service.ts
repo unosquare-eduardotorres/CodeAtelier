@@ -61,6 +61,7 @@ import { parsePlanPayload } from './agent-session-handlers'
 import { AgentStreamProcessor } from './agent-stream-processor'
 import { AgentRecoveryManager } from './agent-recovery-manager'
 import { AgentExecutorFactory } from './agent-executor-factory'
+import { isTurnPoisoned } from './turn-poison'
 import { openCodeExecutor } from './opencode-executor'
 import type { OpenCodeExecuteResult } from './opencode-executor'
 import { openCodeConfigWriter } from './opencode-config-writer'
@@ -74,6 +75,8 @@ import {
   resolveOpencodePath
 } from '../../shared/opencode-cli-path'
 import { resolveOpenCodeProviderFromSnapshot } from './snapshot-model-resolver'
+import { trackService } from './track.service'
+import type { TrackOwnerKind } from '../../shared/track-types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
   AgentRoleAdapter,
@@ -88,6 +91,23 @@ import type {
  */
 export type SendOutcome =
   'ok' | 'overload' | 'turn_limit_exhausted' | 'context_overflow' | 'error' | 'aborted'
+
+/** Everything `start()` needs beyond the workspace root and the mode. */
+export interface AgentSessionStartOptions {
+  /** Resume a prior CLI session id rather than starting fresh. */
+  resumeSessionId?: string
+  /**
+   * Run this session in a non-chat owner's track.
+   *
+   * Blueprint and campaign runs own a branch but are not conversations, so the
+   * per-turn `resolve(conversationId, …)` lookup never matched them and they
+   * fell through to the workspace's primary tree — writing into the user's
+   * checkout with no isolation and no error. Passing the owner here routes
+   * execution through the same worktree machinery chats use, while
+   * `workspacePath` stays the repo root so workspace identity is unaffected.
+   */
+  trackOwner?: { ownerKind: TrackOwnerKind; ownerId: string }
+}
 
 /** Internal loop-state book-keeping for executeStream. */
 interface StreamLoopState {
@@ -164,13 +184,31 @@ export class AgentSessionService extends AgentBaseService {
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
   /** Idle budget — max silence from the executor before the turn is aborted. Not a wall-clock cap. */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
-  /** Extended idle budget when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each. */
+  /**
+   * Extended idle budget for external MCPs whose tools are genuinely long-running
+   * (`longRunningTools`, e.g. Maestro device flows). Fast REST-backed servers keep
+   * the normal budget — stretching it there just delays a hung call by 20 minutes.
+   */
   private static readonly EXTERNAL_MCP_INTERACTION_TIMEOUT_MS = 30 * 60_000 // 30 minutes
   /** Minimum gap between idle-timer restarts, so per-token chunks don't churn timers. */
   private static readonly IDLE_TIMER_RESET_THROTTLE_MS = 5_000
 
   private workspacePath: string | null = null
   private workspaceId: string | null = null
+  /**
+   * Session-level track owner, when this session is not a chat.
+   *
+   * `workspacePath` does two jobs — it is the cwd AND the key every
+   * workspace-scoped lookup resolves by (`workspaces.find(w => w.repoPath ===
+   * workspacePath)`). Pointing it at a worktree to move the cwd therefore
+   * silently drops workspaceId, and with it the cost preference, the LLM
+   * provider, the compaction thresholds and four MCP servers — all without an
+   * error. This field separates the two: workspacePath stays the repo root,
+   * and the execution path is resolved from the owner recorded here.
+   *
+   * Null for chats, which resolve by conversation id per turn.
+   */
+  private trackOwner: { ownerKind: TrackOwnerKind; ownerId: string } | null = null
   /** Most-recently-started conversation — for backward-compat queries (logging, UI, bridge). */
   private _lastActiveConversationId: string | null = null
   /** Per-conversation stream contexts (text accumulator + abort controller). */
@@ -178,6 +216,18 @@ export class AgentSessionService extends AgentBaseService {
     string,
     import('./agent-session-host').ActiveStreamContext
   >()
+  /**
+   * Final accumulated text of the most recent *completed* turn, per conversation.
+   *
+   * MEMLEAK-01 deletes the `activeStreams` entry as soon as `_doSend` resolves,
+   * which is *before* any caller awaiting `send()` can read the text back. Every
+   * `await send(...)` → `getStreamedContent(...)` site (blueprint phases, council,
+   * grill, audit, MPA) therefore read `''`. This buffer keeps just the text — the
+   * heavy `ActiveStreamContext` (abort controller, execution path) is still
+   * dropped — and is cleared the moment the next turn for that conversation
+   * starts, so at most one turn's text per live conversation is retained.
+   */
+  private readonly lastTurnText = new Map<string, string>()
   /** Fallback accumulator for direct field access when no activeStreams context exists (test compat). */
   private _directAccumulatedText = ''
   /** HEAD sha captured at session start — for memory extraction git delta. */
@@ -192,6 +242,13 @@ export class AgentSessionService extends AgentBaseService {
 
   /** Maps conversationId → SDK session_id for resume. */
   private readonly sessionMap = new Map<string, string>()
+  /**
+   * Conversations whose CLI session was left with an unanswered user turn (the
+   * turn was aborted or yielded zero chunks). Consumed — and cleared — by the
+   * next resolveSession() call, which starts a fresh session instead of
+   * resuming. See recordTurnBoundary().
+   */
+  private readonly poisonedSessions = new Set<string>()
 
   /** Whether the last executeStream was terminated by the interaction timeout. */
   private _lastTimedOut = false
@@ -368,7 +425,42 @@ export class AgentSessionService extends AgentBaseService {
   /** Get accumulated text for a specific conversation (or lastActive if omitted). */
   getAccumulatedTextForConversation(conversationId?: string): string {
     const convId = conversationId ?? this._lastActiveConversationId
-    return convId ? (this.activeStreams.get(convId)?.accumulatedText ?? '') : ''
+    if (!convId) return ''
+    return this.activeStreams.get(convId)?.accumulatedText ?? this.lastTurnText.get(convId) ?? ''
+  }
+
+  /**
+   * Absolute cwd for a conversation's CLI process.
+   *
+   * The stream context is authoritative: it is stamped once, before the turn
+   * starts, so the path cannot shift underneath a running process even if the
+   * user switches chats or another conversation's worktree is torn down
+   * mid-turn. Falls back to the workspace root for conversations with no
+   * isolation (no branch, or the branch is the one the primary tree holds).
+   */
+  resolveExecutionPath(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    const fromStream = convId ? this.activeStreams.get(convId)?.executionPath : undefined
+    return fromStream ?? this.workspacePath ?? ''
+  }
+
+  /**
+   * Where this turn should run, resolved once at turn start.
+   *
+   * A session with a `trackOwner` resolves by that owner; everything else
+   * resolves by conversation id, as chats always have. The distinction matters
+   * because Blueprint and MPA pass synthetic ids like
+   * `blueprint-build-<id>-<task>-<ts>` as their "conversation" — those are not
+   * rows in `work_tracks`, so the chat lookup silently missed and handed back
+   * the primary tree.
+   */
+  private resolveTrackPath(conversationId: string): string {
+    const primary = this.workspacePath as string
+    if (this.trackOwner) {
+      return trackService.resolveTrack(this.trackOwner.ownerKind, this.trackOwner.ownerId, primary)
+        .path
+    }
+    return trackService.resolve(conversationId, primary).path
   }
 
   // ── Accessors ─────────────────────────────────────────────────────
@@ -401,7 +493,22 @@ export class AgentSessionService extends AgentBaseService {
     return this.currentMode
   }
 
+  /**
+   * Text produced by the current turn, or by the last completed one if the
+   * stream has already been torn down. Callers that `await send()` and then read
+   * the response rely on the second half — see `lastTurnText`.
+   */
   getStreamedContent(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    if (!convId) return ''
+    return this.activeStreams.get(convId)?.accumulatedText ?? this.lastTurnText.get(convId) ?? ''
+  }
+
+  /**
+   * Text of an *in-flight* stream only — empty once the turn has finished.
+   * Used by the Stop path, which must not resurrect an already-saved turn.
+   */
+  getLiveStreamedContent(conversationId?: string): string {
     const convId = conversationId ?? this._lastActiveConversationId
     return convId ? (this.activeStreams.get(convId)?.accumulatedText ?? '') : ''
   }
@@ -430,6 +537,9 @@ export class AgentSessionService extends AgentBaseService {
 
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
+    // The session is gone, so there is nothing stale left to guard against —
+    // drop the flag rather than let it suppress a legitimate resume later.
+    this.poisonedSessions.delete(conversationId)
     // TURN-COUNT-01: Reset turn count so the next session starts at turn 1,
     // ensuring adapters apply first-turn setup (specialist roster, MCP guidance, etc.)
     this.turnCounts.delete(conversationId)
@@ -440,6 +550,7 @@ export class AgentSessionService extends AgentBaseService {
     this.sendLocks.delete(conversationId)
     // Phase-2: Clean up per-conversation stream context and CLI executor
     this.activeStreams.delete(conversationId)
+    this.lastTurnText.delete(conversationId)
     const executor = this.cliExecutors.get(conversationId)
     if (executor) {
       executor.killProcess().catch(() => {})
@@ -569,8 +680,10 @@ export class AgentSessionService extends AgentBaseService {
   async start(
     workspacePath: string,
     mode?: ConversationMode,
-    resumeSessionId?: string
+    opts?: AgentSessionStartOptions
   ): Promise<void> {
+    const resumeSessionId = opts?.resumeSessionId
+    this.trackOwner = opts?.trackOwner ?? null
     // Don't abort an active stream if we're re-starting for the same workspace.
     // This prevents HMR, React strict mode, or auto-open from killing in-flight queries.
     // Check if ANY stream is active in this workspace
@@ -621,6 +734,7 @@ export class AgentSessionService extends AgentBaseService {
     this.lastContextTokens = undefined
     this._lastActiveConversationId = null
     this.activeStreams.clear()
+    this.lastTurnText.clear()
     // GHOST-PROC-01: Kill and clear CLI executors on workspace switch.
     // Without this, orphaned CLI processes from the previous workspace
     // continue running in the background.
@@ -940,6 +1054,10 @@ export class AgentSessionService extends AgentBaseService {
     // (both success and error paths — error path lands in handleStreamError which already
     // nulls the abortController). Without this, entries accumulate unboundedly, each
     // holding the full accumulatedText (can be 50KB+ per conversation).
+    // The text itself is stashed first: callers awaiting send() read it back via
+    // getStreamedContent(), and this delete would otherwise hand them ''.
+    const finishedCtx = this.activeStreams.get(conversationId)
+    if (finishedCtx) this.lastTurnText.set(conversationId, finishedCtx.accumulatedText)
     this.activeStreams.delete(conversationId)
   }
 
@@ -1066,6 +1184,7 @@ export class AgentSessionService extends AgentBaseService {
     this.currentStatus = 'idle'
     this._lastActiveConversationId = null
     this.activeStreams.clear()
+    this.lastTurnText.clear()
     this._directAccumulatedText = ''
     this._directAbortController = null
     // Dispose all per-conversation CLI executors
@@ -1169,6 +1288,12 @@ export class AgentSessionService extends AgentBaseService {
         this.log.warn('[PIPELINE:mode-switch] OpenCode config update failed:', err)
       }
     }
+
+    // set_permission_mode reaches the CLI, and invalidateMcpConfigCache() reaches
+    // the next spawn — neither reaches the control-actions server already running
+    // under the old CONVERSATION_MODE. Without this, a Plan → Build switch left the
+    // auto-approver on Plan for the life of the conversation.
+    this.ipcBridge?.sendModeChange(mode, this.currentConversationId ?? undefined)
   }
 
   async compact(): Promise<void> {
@@ -1349,11 +1474,20 @@ export class AgentSessionService extends AgentBaseService {
     this.messageStartedAt = Date.now()
     this._lastActiveConversationId = conversationId
     this.updateDbSessionConversation(conversationId)
+    // A new turn invalidates the previous one's stashed text — this is what keeps
+    // the lastTurnText buffer to one entry per *live* conversation.
+    this.lastTurnText.delete(conversationId)
     // Create per-conversation stream context
     this.activeStreams.set(conversationId, {
       accumulatedText: '',
       accumulatedTextBaseline: 0,
-      abortController: null
+      abortController: null,
+      // Resolved once, here, and then frozen for the whole turn. The turn guard
+      // (chat-stream Stage 2.5) has already created the worktree, so this is a
+      // cheap DB read. Freezing matters: if the user switches chats or another
+      // conversation releases its tree mid-turn, this process must keep writing
+      // where it started rather than following a path that moved.
+      executionPath: this.workspacePath ? this.resolveTrackPath(conversationId) : undefined
     })
     // SES-03: Only reset circuit breaker and tool accumulator when switching TO
     // this conversation. The send lock (SES-01) prevents concurrent sends within
@@ -1380,6 +1514,27 @@ export class AgentSessionService extends AgentBaseService {
   private static readonly SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
   private resolveSession(conversationId: string): string | undefined {
+    // A previous turn was aborted or produced nothing, leaving an unanswered
+    // user turn inside the CLI session. Resuming it makes the model answer that
+    // stale turn instead of the new one. Start fresh — one-shot flag, cleared
+    // here so only the turn immediately after the poisoned one is affected.
+    // recordTurnBoundary() already cleared sessionMap + the persisted id; this
+    // is the backstop that also covers a failed DB write, and it keeps the
+    // "why did this start fresh" reason visible in the log.
+    if (this.poisonedSessions.delete(conversationId)) {
+      this.sessionMap.delete(conversationId)
+      try {
+        conversationRepository.updateSessionId(conversationId, '')
+      } catch {
+        /* non-fatal */
+      }
+      this.log.info(
+        `[resolveSession] Session for ${conversationId} was poisoned by an aborted/empty turn ` +
+          `— starting a fresh session instead of resuming`
+      )
+      return undefined
+    }
+
     let sessionId = this.sessionMap.get(conversationId)
     const fromMemory = !!sessionId
     if (!sessionId) {
@@ -1591,10 +1746,12 @@ export class AgentSessionService extends AgentBaseService {
     const baseTimeoutMs =
       this.adapter.interactionTimeoutMs ?? AgentSessionService.MAX_INTERACTION_TIMEOUT_MS
 
-    const hasExternalMcps =
+    const hasLongRunningMcps =
       mcpServers &&
-      Object.keys(mcpServers).some((id) => EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id))
-    const timeoutMs = hasExternalMcps
+      Object.keys(mcpServers).some((id) =>
+        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id && i.longRunningTools)
+      )
+    const timeoutMs = hasLongRunningMcps
       ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
       : baseTimeoutMs
 
@@ -1680,6 +1837,24 @@ export class AgentSessionService extends AgentBaseService {
       cancel: cancelInteractionTimer
     } = this.buildStreamTimeout(mcpResult.mcpServers, abortController, conversationId)
 
+    this.log.info(
+      `[turn:start] conversation=${conversationId} turn=${turnCount} ` +
+        `recoveryDepth=${recoveryDepth} session=${sessionId ?? 'fresh'} ` +
+        `resume=${sessionId ? 'yes' : 'no'} resumeAt=${resumeAt ?? 'none'}`
+    )
+
+    // Counts every chunk the executor yielded this turn. A turn that yields
+    // nothing is "poisoned": the CLI session advanced past a user turn without
+    // answering it, so resuming would make the model answer the stale turn.
+    let chunkCount = 0
+    // Guards against a second [turn:end] line when a post-boundary step
+    // (handleSessionRecovery / finalizeStream) throws into the catch below.
+    let boundaryRecorded = false
+
+    // Resolved before the try so both recordTurnBoundary() call sites can see
+    // it — session poisoning is `--resume` semantics and applies to CLI only.
+    const effectiveBackend = this.resolveExecutorBackend(llmProvider)
+
     try {
       const streamState: StreamLoopState = {
         messageStopReceived: false,
@@ -1691,8 +1866,6 @@ export class AgentSessionService extends AgentBaseService {
 
       // ── Select executor backend ──
       const cliPromptInput = await this.extractPromptContent(sdkPrompt)
-
-      const effectiveBackend = this.resolveExecutorBackend(llmProvider)
 
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
@@ -1745,6 +1918,7 @@ export class AgentSessionService extends AgentBaseService {
       for await (const chunk of executorStream) {
         // Any chunk — text, tool_use, tool_result, api_retry — proves the executor
         // is alive, so the idle budget restarts from here.
+        chunkCount++
         notifyStreamActivity()
         if (this.circuitBreaker.isBroken) {
           this.log.warn(
@@ -1774,6 +1948,16 @@ export class AgentSessionService extends AgentBaseService {
       }
 
       cancelInteractionTimer()
+      this.recordTurnBoundary({
+        conversationId,
+        turnCount,
+        chunkCount,
+        backend: effectiveBackend,
+        aborted: abortController.signal.aborted,
+        messageStopReceived: streamState.messageStopReceived,
+        terminalReason: streamState.lastTerminalReason
+      })
+      boundaryRecorded = true
       // Clear per-conversation abort controller
       const postCtx = this.activeStreams.get(conversationId)
       if (postCtx) postCtx.abortController = null
@@ -1826,9 +2010,111 @@ export class AgentSessionService extends AgentBaseService {
       } catch (memErr) {
         this.log.debug('[executeStream] Memory extraction enqueue failed (non-fatal):', memErr)
       }
+
+      // Record which files this turn touched, so a second track editing the
+      // same file is a warning now rather than a merge conflict later.
+      // Fire-and-forget and fully swallowed: this is advisory data, and a
+      // conflict *prediction* failing is never a reason to fail a turn.
+      void this.recordFileClaims(conversationId)
     } catch (error) {
       cancelInteractionTimer()
+      // Only record when the failure happened before the boundary. A throw from
+      // handleSessionRecovery()/finalizeStream() must not emit a second
+      // [turn:end] line mislabelled `terminalReason=stream-error`.
+      if (!boundaryRecorded) {
+        this.recordTurnBoundary({
+          conversationId,
+          turnCount,
+          chunkCount,
+          backend: effectiveBackend,
+          aborted: abortController.signal.aborted,
+          messageStopReceived: false,
+          terminalReason: 'stream-error'
+        })
+        boundaryRecorded = true
+      }
       await this.handleStreamError(error as Error, this._lastTimedOut, recoveryDepth, timeoutMs)
+    }
+  }
+
+  /**
+   * Tell the conflict predictor what this turn touched.
+   *
+   * Resolved by track owner, not by conversation id, for the same reason the
+   * execution path is: a blueprint run's "conversation" is a synthetic id that
+   * matches no track row.
+   */
+  private async recordFileClaims(conversationId: string): Promise<void> {
+    try {
+      const { trackClaimsService } = await import('./track-claims.service')
+      if (this.trackOwner) {
+        await trackClaimsService.recordForOwner(this.trackOwner.ownerKind, this.trackOwner.ownerId)
+      } else {
+        await trackClaimsService.recordForOwner('chat', conversationId)
+      }
+    } catch (err) {
+      this.log.debug('[executeStream] File-claim recording failed (non-fatal):', err)
+    }
+  }
+
+  /**
+   * Log the end of a turn and decide whether the CLI session is still safe to
+   * resume.
+   *
+   * A turn that was aborted, or that produced zero chunks, leaves a user turn
+   * sitting unanswered inside the CLI session. `--resume` then replays that
+   * session and the model answers the OLDEST unanswered turn — which is how
+   * replies started landing on the previous message. Marking the session
+   * poisoned makes the next send start a fresh session id instead.
+   *
+   * The tradeoff is deliberate: we drop CLI-side conversation context rather
+   * than keep answering the wrong question. Context reconstruction on the next
+   * send still supplies continuity from stored messages.
+   */
+  private recordTurnBoundary(info: {
+    conversationId: string
+    turnCount: number
+    chunkCount: number
+    backend: ExecutorBackend
+    aborted: boolean
+    messageStopReceived: boolean
+    terminalReason: string | undefined
+  }): void {
+    const sessionId = this.sessionMap.get(info.conversationId)
+    const poisoned = isTurnPoisoned(info)
+
+    this.log.info(
+      `[turn:end] conversation=${info.conversationId} turn=${info.turnCount} ` +
+        `session=${sessionId ?? 'none'} chunks=${info.chunkCount} ` +
+        `backend=${info.backend} ` +
+        `aborted=${info.aborted} messageStop=${info.messageStopReceived} ` +
+        `terminalReason=${info.terminalReason ?? 'unset'} poisoned=${poisoned}`
+    )
+
+    // Only the CLI backend resumes via `--resume`. OpenCode keeps its own
+    // session map inside opencode-executor and merely mirrors the id here, so
+    // dropping it would degrade OpenCode recovery for no benefit.
+    if (poisoned && sessionId && info.backend === 'cli') {
+      this.poisonedSessions.add(info.conversationId)
+      // Drop the session id EAGERLY rather than waiting for the next
+      // resolveSession(). The max_turns auto-continue and recovery-nudge paths
+      // in agent-recovery-manager read `sessionMap` directly instead of going
+      // through resolveSession(), so a deferred clear would let a continuation
+      // resume the poisoned session before the guard ever ran — reproducing the
+      // exact "answers the previous message" symptom this guard exists to stop.
+      this.sessionMap.delete(info.conversationId)
+      try {
+        conversationRepository.updateSessionId(info.conversationId, '')
+      } catch (err) {
+        // Non-fatal — the poisonedSessions flag below still forces a fresh
+        // session on the next send even if the DB write fails.
+        this.log.warn(`[turn:poisoned] Failed to clear persisted session id:`, err)
+      }
+      this.log.warn(
+        `[turn:poisoned] conversation=${info.conversationId} session=${sessionId} ` +
+          `(${info.aborted ? 'aborted' : 'zero-chunk'}) — session dropped; the next turn will ` +
+          `start fresh so the model does not answer a stale turn`
+      )
     }
   }
 

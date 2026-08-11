@@ -456,6 +456,7 @@ export function useAppIpcListeners(): void {
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setAvailable = useUpdateStore((s) => s.setAvailable)
   const setNotAvailable = useUpdateStore((s) => s.setNotAvailable)
+  const setStaging = useUpdateStore((s) => s.setStaging)
   const setDownloaded = useUpdateStore((s) => s.setDownloaded)
   const setProgress = useUpdateStore((s) => s.setProgress)
   const setError = useUpdateStore((s) => s.setError)
@@ -520,6 +521,7 @@ export function useAppIpcListeners(): void {
     const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable((info) =>
       setNotAvailable(info.currentVersion)
     )
+    const unsubUpdateStaging = window.api.onUpdateStaging((info) => setStaging(info.version))
     const unsubUpdateDownloaded = window.api.onUpdateDownloaded((info) =>
       setDownloaded(info.version)
     )
@@ -551,6 +553,7 @@ export function useAppIpcListeners(): void {
       unsubAgent()
       unsubUpdateAvailable()
       unsubUpdateNotAvailable()
+      unsubUpdateStaging()
       unsubUpdateDownloaded()
       unsubUpdateProgress()
       unsubUpdateError()
@@ -568,6 +571,7 @@ export function useAppIpcListeners(): void {
     setAgentReady,
     setAvailable,
     setNotAvailable,
+    setStaging,
     setDownloaded,
     setProgress,
     setError,

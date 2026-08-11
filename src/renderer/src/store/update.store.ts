@@ -3,7 +3,15 @@ import type { UpdateConfig, UpdateSourceProvider } from '../../../shared/types'
 import { useToastStore } from './toast.store'
 import { nextSnooze, isSnoozed, LATER_MUTES, DISMISS_MUTES } from './update-store-utils'
 
-type UpdateStatus = 'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
+type UpdateStatus =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  /** Downloaded, but the platform is still preparing it — not installable yet. */
+  | 'staging'
+  | 'ready'
+  | 'error'
 
 interface UpdateState {
   status: UpdateStatus
@@ -54,6 +62,7 @@ interface UpdateState {
   // Internal setters (called from App.tsx listener wiring)
   setAvailable: (version: string, releaseNotes?: string, releaseDate?: string) => void
   setNotAvailable: (currentVersion?: string) => void
+  setStaging: (version: string) => void
   setDownloaded: (version: string) => void
   setProgress: (
     percent: number,
@@ -233,6 +242,24 @@ export const useUpdateStore = create<UpdateState>((set) => ({
       message: currentVersion
         ? `You're on the latest version (v${currentVersion})`
         : "You're on the latest version"
+    })
+  },
+
+  /**
+   * The download finished but the update cannot be installed yet — macOS Squirrel
+   * still has to stage it. No countdown and no restart button here: main only
+   * sends UPDATE_DOWNLOADED once quitAndInstall() will actually do something.
+   */
+  setStaging: (version) => {
+    clearWatchdog()
+    clearInstallTimer()
+    // showModal is left alone: the modal is already open from the download, and a
+    // user who closed it should not have it reappear before there is a decision.
+    set({
+      status: 'staging',
+      availableVersion: version,
+      downloadProgress: 100,
+      installCountdown: null
     })
   },
 

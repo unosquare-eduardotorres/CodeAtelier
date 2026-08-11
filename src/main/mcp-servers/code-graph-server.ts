@@ -16,7 +16,12 @@
  *
  * Environment variables:
  *   WORKSPACE_ID   — Workspace UUID for DB queries
- *   WORKSPACE_PATH — Absolute path to the workspace root
+ *   WORKSPACE_PATH — Absolute path to the workspace root (the INDEXED tree)
+ *   EXECUTION_PATH — Optional: the tree the agent is actually working in. When
+ *                    it differs from WORKSPACE_PATH the agent is in a worktree
+ *                    and this index does not include its edits; every tool
+ *                    description says so rather than letting the model assume
+ *                    the graph describes the files in front of it.
  *   CONTEXT_TIER   — Optional: 'small' | 'medium' | 'large' for tool gating
  *   DB_PATH        — Optional: path to the SQLite database file
  *
@@ -201,9 +206,35 @@ const server = new McpServer(
   { capabilities: { tools: {} } }
 )
 
+/**
+ * One index per repository, shared by every worktree of it.
+ *
+ * That is a deliberate cost trade — re-indexing a full copy per track would be
+ * far more expensive than the staleness is worth — but it is only safe if the
+ * model is told. An agent in a worktree otherwise reads "find_references says
+ * nothing calls this" as a fact about its own edits. Stated once per tool
+ * description, and only when the two trees actually differ, so an agent in the
+ * primary tree pays nothing for it.
+ */
+const EXECUTION_PATH = process.env.EXECUTION_PATH ?? ''
+const TREE_NOTE =
+  EXECUTION_PATH && EXECUTION_PATH !== WORKSPACE_PATH
+    ? ` NOTE: this index is built from ${WORKSPACE_PATH}, not your working directory ` +
+      `(${EXECUTION_PATH}) — it will not reflect changes made in this session. ` +
+      `Read the files themselves when currency matters.`
+    : ''
+
+/** `server.tool` with the shared-index caveat appended to every description. */
+const tool: typeof server.tool = ((name: string, description: string, ...rest: unknown[]) =>
+  (server.tool as (...a: unknown[]) => unknown)(
+    name,
+    `${description}${TREE_NOTE}`,
+    ...rest
+  )) as unknown as typeof server.tool
+
 function registerToolSchemas(): void {
   // ── graph_map ──
-  server.tool(
+  tool(
     'graph_map',
     'Ranked repository map (PageRank) plus subsystems and god nodes. Use for orientation in an ' +
       'unfamiliar repo — not to answer a specific question.',
@@ -263,7 +294,7 @@ function registerToolSchemas(): void {
   )
 
   // ── search_identifiers ──
-  server.tool(
+  tool(
     'search_identifiers',
     'Find a symbol by name (case-insensitive substring) — fastest first step when you know or ' +
       'can guess the identifier. Prefer over Grep for symbols; Grep wins for string literals.',
@@ -297,7 +328,7 @@ function registerToolSchemas(): void {
   )
 
   // ── find_dead_code ──
-  server.tool(
+  tool(
     'find_dead_code',
     'Find potentially unused code definitions with no cross-file references.',
     {
@@ -347,7 +378,7 @@ function registerToolSchemas(): void {
   )
 
   // ── file_outline ──
-  server.tool(
+  tool(
     'file_outline',
     'List every definition in a file with line numbers. Call before Read on files over ~300 ' +
       'lines — a fraction of the tokens.',
@@ -373,7 +404,7 @@ function registerToolSchemas(): void {
   )
 
   // ── find_callers ──
-  server.tool(
+  tool(
     'find_callers',
     'Who calls this symbol — use before changing or deleting it. Results ordered most-trustworthy ' +
       'first; resolution=inferred/ambiguous are name-matches with several candidates, so treat ' +
@@ -446,7 +477,7 @@ function registerToolSchemas(): void {
   )
 
   // ── find_callees ──
-  server.tool(
+  tool(
     'find_callees',
     'Find callees of a symbol.',
     {
@@ -499,7 +530,7 @@ function registerToolSchemas(): void {
   )
 
   // ── find_references ──
-  server.tool(
+  tool(
     'find_references',
     'Find cross-file references to a symbol.',
     {
@@ -556,7 +587,7 @@ function registerToolSchemas(): void {
   )
 
   // ── file_dependencies ──
-  server.tool(
+  tool(
     'file_dependencies',
     'Find files a file depends on.',
     {
@@ -588,7 +619,7 @@ function registerToolSchemas(): void {
   )
 
   // ── file_dependents ──
-  server.tool(
+  tool(
     'file_dependents',
     'Find files that depend on a given file (blast radius).',
     {
@@ -627,7 +658,7 @@ function registerToolSchemas(): void {
   )
 
   // ── symbol_hotspots ──
-  server.tool(
+  tool(
     'symbol_hotspots',
     'Find most-referenced symbols.',
     {
@@ -652,7 +683,7 @@ function registerToolSchemas(): void {
   )
 
   // ── coupling_analysis ──
-  server.tool(
+  tool(
     'coupling_analysis',
     'Find tightly coupled file pairs ranked by cross-references.',
     {
@@ -679,7 +710,7 @@ function registerToolSchemas(): void {
   )
 
   // ── circular_dependencies ──
-  server.tool(
+  tool(
     'circular_dependencies',
     'Detect circular file-level dependencies in the codebase.',
     {
@@ -700,7 +731,7 @@ function registerToolSchemas(): void {
   )
 
   // ── module_boundary_health ──
-  server.tool(
+  tool(
     'module_boundary_health',
     'Measure module boundary health (intra vs cross-module edges).',
     {
@@ -731,7 +762,7 @@ function registerToolSchemas(): void {
   )
 
   // ── shortest_path ──
-  server.tool(
+  tool(
     'shortest_path',
     'Dependency path from file A to file B. The tool for "how does A reach B" / "is X used by Y" — ' +
       'one call instead of walking file_dependencies repeatedly.',
@@ -802,7 +833,7 @@ function registerToolSchemas(): void {
   )
 
   // ── wiring_check ──
-  server.tool(
+  tool(
     'wiring_check',
     'Check wiring for multiple files: verifies exports have importers and new symbols are referenced. Use instead of calling file_dependents + find_references separately per file.',
     {

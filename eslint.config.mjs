@@ -67,5 +67,30 @@ export default defineConfig(
       '@typescript-eslint/no-explicit-any': 'off'
     }
   },
+  {
+    // Main-process source is bundled by electron-vite into a flat `out/main`.
+    // A require() with a RELATIVE specifier is kept verbatim by the bundler and
+    // then resolves against the bundle layout, not the source tree — so it
+    // throws MODULE_NOT_FOUND at runtime in packaged builds while working fine
+    // in dev. Several of these shipped inside silent try/catch blocks and
+    // disabled notifications, workspace names, and the bug tracker for months.
+    //
+    // require() of BARE specifiers (native modules, optional deps) stays allowed —
+    // those are externalised by the bundler and resolve correctly.
+    // This is deliberately a separate rule from @typescript-eslint/no-require-imports
+    // so the existing `eslint-disable` comments for that rule cannot suppress it.
+    files: ['src/main/**/*.ts'],
+    ignores: ['src/main/**/__tests__/**', 'src/main/**/*.test.ts', 'src/main/db/test-helpers.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='require'][arguments.0.value=/^[.]/]",
+          message:
+            'Relative require() does not survive electron-vite bundling and throws MODULE_NOT_FOUND in packaged builds. Use a static ESM import instead (or setter injection if there is a genuine cycle).'
+        }
+      ]
+    }
+  },
   eslintConfigPrettier
 )

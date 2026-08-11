@@ -77,3 +77,8 @@ export { E2ETestResultRepository, e2eTestResultRepository } from './e2e-test-res
 export type { E2ETestResultRecord } from './e2e-test-result.repository'
 
 export { HandoffRepository, handoffRepository } from './handoff.repository'
+
+export { TrackRepository, trackRepository } from './track.repository'
+export type { CreateTrackInput } from './track.repository'
+export { TrackFileClaimRepository, trackFileClaimRepository } from './track-file-claim.repository'
+export type { TrackFileClaim, TrackFileOverlap } from './track-file-claim.repository'

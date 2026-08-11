@@ -1807,6 +1807,13 @@ export interface WorkspaceSettings {
   memoryEnabled?: boolean
   localMcpActive?: boolean
   gitAutoBranch?: boolean
+  /**
+   * How a track's work gets back to the mainline. Default `independent` — one
+   * PR per track, which is what `/complete` always did. `integration` merges
+   * every track into one cumulative branch instead. Per-track overrides live on
+   * `work_tracks.landing_mode`.
+   */
+  landingMode?: 'independent' | 'integration'
   /** Show Ollama provider option in Settings (default false) */
   showOllamaProvider?: boolean
 

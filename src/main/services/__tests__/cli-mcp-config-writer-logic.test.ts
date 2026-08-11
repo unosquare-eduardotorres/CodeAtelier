@@ -43,6 +43,20 @@ try {
   // skip
 }
 
+// Load the db module first.
+//
+// `db/index` and the repositories form an import cycle: entering it through a
+// repository hits BaseRepository in its temporal dead zone and the whole writer
+// import fails, which this file catches and turns into a silent skip. Under the
+// shared runner an earlier test happens to load db/index and it works; run
+// alone, every test below quietly asserted nothing. Entering through db/index
+// is the order that resolves.
+try {
+  require('../../db/index')
+} catch {
+  /* no native module here — the writer import below reports it */
+}
+
 // Now dynamically import
 let CliMcpConfigWriter: typeof import('../cli-mcp-config-writer').CliMcpConfigWriter | null = null
 let importError: Error | null = null
@@ -66,6 +80,7 @@ function tryBuildConfig(
     const buildFn = (writer as unknown as { buildConfig: (opts: unknown) => unknown }).buildConfig
     return buildFn.call(writer, {
       workspacePath: '/test/workspace',
+      executionPath: '/test/workspace',
       workspaceId: 'ws-1',
       conversationId: null,
       mode: 'plan',
@@ -226,6 +241,50 @@ describe('CliMcpConfigWriter.buildConfig', () => {
     assert.equal(cg.env?.WORKSPACE_ID, 'ws-1')
     assert.equal(cg.env?.DB_PATH, '/tmp/electron-test/userData')
   })
+
+  // ── executionPath vs workspacePath ──────────────────────────────────
+  //
+  // An agent in a worktree used to get lint results, changed-file lists and
+  // process state from the PRIMARY tree and present them as its own. These pin
+  // which servers follow the agent and which deliberately do not.
+
+  describe('per-tree vs shared servers', () => {
+    const WORKTREE = '/test/worktrees/feat-a'
+    const inWorktree = (): ReturnType<typeof buildConfig> =>
+      buildConfig({ executionPath: WORKTREE })
+
+    test('git-context follows the execution tree', () => {
+      assert.equal(inWorktree().mcpServers['git-context'].env?.WORKSPACE_PATH, WORKTREE)
+    })
+
+    test('code-analysis follows the execution tree', () => {
+      const ca = inWorktree().mcpServers['code-analysis']
+      assert.equal(ca.env?.WORKSPACE_PATH, WORKTREE)
+      // Workspace identity is unchanged — only the directory moved.
+      assert.equal(ca.env?.WORKSPACE_ID, 'ws-1')
+    })
+
+    test('process-manager follows the execution tree', () => {
+      assert.equal(inWorktree().mcpServers['process-manager'].env?.WORKSPACE_PATH, WORKTREE)
+    })
+
+    test('control-actions follows the execution tree', () => {
+      assert.equal(inWorktree().mcpServers['control-actions'].env?.WORKSPACE_PATH, WORKTREE)
+    })
+
+    test('code-graph stays on the primary tree — one index per repo', () => {
+      const cg = inWorktree().mcpServers['code-graph']
+      assert.equal(cg.env?.WORKSPACE_PATH, '/test/workspace')
+      // ...and says so, so the model discounts a stale answer instead of
+      // reading it as a fact about the files in front of it.
+      assert.equal(cg.env?.EXECUTION_PATH, WORKTREE)
+    })
+
+    test('no staleness note when the agent is in the primary tree', () => {
+      const cg = buildConfig().mcpServers['code-graph']
+      assert.equal(cg.env?.EXECUTION_PATH, undefined)
+    })
+  })
 })
 
 // ── Dispose ──
@@ -241,6 +300,68 @@ describe('CliMcpConfigWriter.dispose', () => {
     // Should not throw
     writer.dispose('/non/existent/path')
     assert.ok(true)
+  })
+})
+
+// ── Config file isolation ──────────────────────────────────────────
+//
+// The trap in threading executionPath through: the temp directory was hashed
+// from workspacePath alone, so two trees of one workspace resolved to the same
+// file and the whole change would have silently no-opped.
+
+describe('CliMcpConfigWriter.writeConfig — per-tree isolation', () => {
+  if (!CliMcpConfigWriter) {
+    test('skipped_cannot_import', () => assert.ok(true))
+    return
+  }
+  const Writer = CliMcpConfigWriter
+
+  const baseOpts = {
+    workspacePath: '/test/workspace',
+    workspaceId: 'ws-1',
+    conversationId: null,
+    mode: 'plan' as const,
+    featureFlags: {
+      repomapEnabled: true,
+      semanticSearchEnabled: true,
+      githubConfigured: false,
+      localMcpActive: {}
+    },
+    instanceId: 'inst-1'
+  }
+
+  const write = (writer: InstanceType<typeof Writer>, executionPath: string): string | null => {
+    try {
+      return writer.writeConfig({ ...baseOpts, executionPath })
+    } catch {
+      return null
+    }
+  }
+
+  test('two trees on one instance get two config files', () => {
+    const writer = new Writer()
+    const a = write(writer, '/test/workspace')
+    const b = write(writer, '/test/worktrees/feat-a')
+    if (!a || !b) {
+      assert.ok(true, 'Electron app not stubbed in suite mode — skipped')
+      return
+    }
+    assert.notEqual(a, b, 'a worktree must not share the primary tree’s config file')
+  })
+
+  test('dispose removes every config the session wrote, not just the last', () => {
+    const { existsSync } = require('node:fs') as typeof import('node:fs')
+    const writer = new Writer()
+    const a = write(writer, '/test/workspace')
+    const b = write(writer, '/test/worktrees/feat-b')
+    if (!a || !b) {
+      assert.ok(true, 'Electron app not stubbed in suite mode — skipped')
+      return
+    }
+
+    writer.dispose(baseOpts.workspacePath, baseOpts.instanceId)
+    assert.equal(existsSync(a), false, 'first tree’s config leaked')
+    assert.equal(existsSync(b), false, 'second tree’s config leaked')
   })
 })
 

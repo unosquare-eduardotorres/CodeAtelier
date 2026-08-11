@@ -553,6 +553,57 @@ if (!env) {
         db.close()
       }
     })
+
+    test('v141_moves_every_chat_worktree_row_into_work_tracks', () => {
+      const migration = migrations.find((m) => m.version === 141)
+      assert.ok(migration)
+
+      const db = createSchemaDb()
+      try {
+        // Stop one short of 141 so chat_worktrees still exists and can be seeded.
+        runBatch(db, 1, 140)
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 't', '/tmp')`
+        ).run()
+        db.prepare(
+          `INSERT INTO conversations (id, workspace_id, title, mode) VALUES ('c-1', 'ws-1', 'Live', 'plan')`
+        ).run()
+        db.prepare(
+          `INSERT INTO chat_worktrees (id, workspace_id, conversation_id, branch_name, path, base_branch, status)
+           VALUES ('w-1', 'ws-1', 'c-1', 'feat/live', '/tmp/wt/live', 'main', 'active')`
+        ).run()
+        // A retained tree: its chat is already gone, and this is exactly the row
+        // an unguarded rebuild would silently drop.
+        db.prepare(
+          `INSERT INTO chat_worktrees (id, workspace_id, conversation_id, branch_name, path, base_branch, status)
+           VALUES ('w-2', 'ws-1', NULL, 'feat/parked', '/tmp/wt/parked', 'main', 'retained')`
+        ).run()
+
+        db.transaction(() => migration.up(db))()
+
+        const tables = getTableNames(db)
+        assert.ok(tables.includes('work_tracks'))
+        assert.equal(tables.includes('chat_worktrees'), false, 'old table is dropped')
+
+        const rows = db.prepare('SELECT * FROM work_tracks ORDER BY branch_name').all() as Array<
+          Record<string, unknown>
+        >
+        assert.equal(rows.length, 2, 'no row may be lost in the rename')
+
+        assert.equal(rows[0].branch_name, 'feat/live')
+        assert.equal(rows[0].owner_kind, 'chat', 'every pre-existing tree was a chat tree')
+        assert.equal(rows[0].owner_id, 'c-1')
+        assert.equal(rows[0].path, '/tmp/wt/live')
+        assert.equal(rows[0].landing_mode, null)
+
+        assert.equal(rows[1].branch_name, 'feat/parked')
+        assert.equal(rows[1].owner_id, null, 'retained work stays ownerless')
+        assert.equal(rows[1].status, 'retained')
+      } finally {
+        db.close()
+      }
+    })
   })
 
   describe('Migration Replay — data round-trip verification', () => {

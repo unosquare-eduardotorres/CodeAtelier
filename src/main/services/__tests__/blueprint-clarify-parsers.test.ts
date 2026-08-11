@@ -12,7 +12,8 @@ import {
   stripBlueprintBlocks,
   clarifyQuestionToGrillQuestion,
   formatClarifyAnswerMessage,
-  deduplicateClarifyQuestions
+  deduplicateClarifyQuestions,
+  normalizeFenceRuns
 } from '../../../shared/blueprint-clarify-parsers'
 import type {
   ClarifyQuestion,
@@ -462,6 +463,147 @@ Done.`
     test('returns all when no previous', () => {
       const result = deduplicateClarifyQuestions([q1, q2], [])
       assert.equal(result.length, 2)
+    })
+  })
+
+  // ── Merged fences (MERGED-FENCE-FIX) ──
+
+  describe('back-to-back blocks with merged fences', () => {
+    const round1 = '{"findings":[{"id":"f1","title":"ROUND1"}],"summary":"round one"}'
+    const round2 = '{"findings":[{"id":"f9","title":"ROUND2"}],"summary":"round two"}'
+    const questions =
+      '{"questions":[{"id":"q1","header":"H","question":"Q?","multiSelect":false,"options":[{"label":"A","recommended":true}]}]}'
+
+    // Observed in production: the clarify agent re-emits findings each round and
+    // put the closing fence of block 1 on the same line as the opening fence of
+    // block 2, so the two runs merged into six backticks.
+    const merged =
+      'Intro prose.\n\n```blueprint-clarify-findings\n' +
+      round1 +
+      '\n``````blueprint-clarify-findings\n' +
+      round2 +
+      '\n```\n'
+
+    test('REGRESSION: the second block is stripped instead of leaking as chat text', () => {
+      const stripped = stripBlueprintBlocks(merged)
+      assert.equal(stripped, 'Intro prose.')
+      assert.ok(!stripped.includes('blueprint-clarify-findings'), 'no bare label may survive')
+      assert.ok(!stripped.includes('"findings"'), 'no raw JSON may survive')
+    })
+
+    test('REGRESSION: no dangling fence is left to render as an empty code block', () => {
+      assert.ok(!stripBlueprintBlocks(merged).includes('```'))
+    })
+
+    test('the newest round still wins when fences are merged', () => {
+      assert.equal(parseClarifyFindings(merged)?.summary, 'round two')
+    })
+
+    test('a findings block merged into a questions block parses and strips', () => {
+      const mixed =
+        'Prose.\n\n```blueprint-clarify-findings\n' +
+        round1 +
+        '\n``````blueprint-clarify-questions\n' +
+        questions +
+        '\n```\n'
+      assert.equal(stripBlueprintBlocks(mixed), 'Prose.')
+      assert.equal(parseClarifyQuestions(mixed)?.questions.length, 1)
+      assert.equal(parseClarifyFindings(mixed)?.summary, 'round one')
+    })
+
+    test('a legitimate 4-backtick fence is left alone', () => {
+      const wide = 'Hi.\n\n````blueprint-clarify-findings\n' + round1 + '\n````\n\nBye.'
+      assert.equal(stripBlueprintBlocks(wide), 'Hi.\n\nBye.')
+      assert.equal(parseClarifyFindings(wide)?.summary, 'round one')
+    })
+
+    test('normalizeFenceRuns only splits runs glued to a block label', () => {
+      const prose = 'Six backticks `````` alone in prose stay put.'
+      assert.equal(normalizeFenceRuns(prose), prose)
+    })
+  })
+
+  // ── One bad block must not discard the good ones (LAST-MATCH-FIX) ──
+
+  describe('a single malformed block is not fatal', () => {
+    const goodFindings =
+      '{"findings":[{"id":"f1","category":"security_gaps","severity":"high","status":"outstanding","title":"GOOD","description":"","specRefs":[],"recommendation":""}],"summary":"good round"}'
+    const goodQuestions =
+      '{"questions":[{"id":"q1","header":"Auth","question":"Which auth?","multiSelect":false,"options":[{"label":"OAuth2","recommended":true}]}]}'
+
+    test('findings: a truncated newest emission falls back to the previous one', () => {
+      const text =
+        '```blueprint-clarify-findings\n' +
+        goodFindings +
+        '\n```\n\n```blueprint-clarify-findings\n{"findings": [{ truncated\n```\n'
+      const result = parseClarifyFindings(text)
+      assert.ok(result, 'a malformed tail must not discard the earlier valid block')
+      assert.equal(result.summary, 'good round')
+      assert.equal(result.findings[0].title, 'GOOD')
+    })
+
+    test('questions: a truncated newest emission falls back to the previous one', () => {
+      const text =
+        '```blueprint-clarify-questions\n' +
+        goodQuestions +
+        '\n```\n\n```blueprint-clarify-questions\n{"questions": [{ truncated\n```\n'
+      const result = parseClarifyQuestions(text)
+      assert.ok(result, 'a malformed tail must not discard the earlier valid block')
+      assert.equal(result.questions.length, 1)
+      assert.equal(result.questions[0].id, 'q1')
+    })
+
+    // A finding whose prose embeds a ``` fence terminates the lazy capture early,
+    // so that emission can never parse. Observed as a plausible production trigger:
+    // it is independent of the fence merge and survives normalizeFenceRuns.
+    test('findings: an emission truncated by an embedded code fence is skipped', () => {
+      const text =
+        '```blueprint-clarify-findings\n' +
+        goodFindings +
+        '\n```\n\n```blueprint-clarify-findings\n' +
+        '{"findings":[{"id":"f2","recommendation":"wrap it in ``` fenced code ```"}],"summary":"newest"}' +
+        '\n```\n'
+      assert.equal(parseClarifyFindings(text)?.summary, 'good round')
+    })
+
+    test('the newest VALID emission still wins over older valid ones', () => {
+      const text =
+        '```blueprint-clarify-findings\n{"findings":[],"summary":"oldest"}\n```\n\n' +
+        '```blueprint-clarify-findings\n{"findings":[],"summary":"newest"}\n```\n\n' +
+        '```blueprint-clarify-findings\n{ broken\n```\n'
+      assert.equal(parseClarifyFindings(text)?.summary, 'newest')
+    })
+
+    test('all blocks malformed still returns null', () => {
+      const text =
+        '```blueprint-clarify-findings\n{ broken one\n```\n\n' +
+        '```blueprint-clarify-findings\n{ broken two\n```\n'
+      assert.equal(parseClarifyFindings(text), null)
+      assert.equal(parseClarifyQuestions('```blueprint-clarify-questions\n{ nope\n```'), null)
+      assert.equal(parseClarifyCompletion('```blueprint-phase-complete\n{ nope\n```'), null)
+    })
+
+    // Production shape (blueprint 3c66405c): findings re-emitted each round with a
+    // merged 6-backtick fence, a well-formed questions block, and a damaged tail.
+    // Pre-fix this logged "zero parsed blocks" and fell back to the free-text panel.
+    test('REGRESSION: merged fences + damaged tail still yield findings AND questions', () => {
+      const text =
+        'Here is my analysis.\n\n```blueprint-clarify-findings\n' +
+        goodFindings +
+        '\n``````blueprint-clarify-questions\n' +
+        goodQuestions +
+        '\n```\n\n```blueprint-clarify-questions\n{"questions": [{ truncated\n```\n'
+
+      const findings = parseClarifyFindings(text)
+      const questions = parseClarifyQuestions(text)
+
+      assert.ok(findings, 'findings must survive the merged fence')
+      assert.equal(findings.summary, 'good round')
+      assert.ok(questions, 'questions must survive the damaged tail')
+      assert.equal(questions.questions[0].header, 'Auth')
+      // With questions recovered, handleClarifyTurnEnd takes neither the nudge (C)
+      // nor the awaitingInput (D) branch.
+      assert.ok(questions.questions.length > 0)
     })
   })
 })

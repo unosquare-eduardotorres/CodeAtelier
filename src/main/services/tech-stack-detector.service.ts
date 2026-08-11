@@ -399,7 +399,12 @@ export function detectFromCodeGraph(workspaceId: string): Map<string, number> {
     // Lazy require: a static `../db/index` import would drag better-sqlite3 and
     // the `?raw` schema import into every consumer of this module (7 callers,
     // several of which run outside an Electron/DB context).
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
+    // electron-vite bundling, so detectFromCodeGraph always returns an empty
+    // map at runtime. The laziness above is a deliberate tradeoff (7 callers
+    // run outside an Electron/DB context), so the fix needs an injected
+    // accessor rather than a plain static import. Tracked separately.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
     const { getDatabase } = require('../db/index') as typeof import('../db/index')
     // DISTINCT collapses the many tags-per-file down to a file list, which is
     // what the ≥N-files threshold is actually about.

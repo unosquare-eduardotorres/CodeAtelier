@@ -209,11 +209,11 @@ export interface ChatState {
 
   // Inline tool permission actions
   setPendingToolPermission: (permission: PendingPermission) => void
-  resolveToolPermission: (approved: boolean) => void
   /**
-   * A permission reached a terminal state elsewhere (turn torn down, CLI died,
-   * auto-deny). Clears the inline card, which otherwise sits on "waiting for
-   * the agent to continue…" for a turn that no longer exists.
+   * A permission reached a terminal state elsewhere (the modal was clicked, the
+   * turn was torn down, the CLI died). Marks the inline receipt on a decision
+   * and clears it otherwise, so it never sits on "waiting for the agent to
+   * continue…" for a turn that no longer exists.
    */
   resolvePermissionExternally: (data: {
     permissionId: string
@@ -857,6 +857,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
       (error) => rendererLog.warn('[stopGeneration] Streaming-state reconcile failed:', error)
     )
     if (reconciled) set(reconciled)
+
+    // WEDGE-FIX: Stop is the user's escape hatch and must never be conditional
+    // on main agreeing. The reconcile above declines whenever main still reports
+    // this conversation busy (or the query failed) — exactly the wedged case the
+    // user is trying to escape. CHAT_FORCE_RELEASE above already force-releases
+    // main's lock, so the renderer flag follows unconditionally.
+    if (activeConvId) {
+      const stillSending = get().sendingConversationIds
+      if (stillSending.has(activeConvId)) {
+        const released = new Set(stillSending)
+        released.delete(activeConvId)
+        set({ sendingConversationIds: released })
+      }
+    }
   },
 
   sendMessage: async (
@@ -1442,9 +1456,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   resolvePermissionExternally: ({ permissionId, conversationId, outcome }) => {
     const pending = get().pendingToolPermission
     const matchesCard = pending?.permission.id === permissionId
-    if (matchesCard) set({ pendingToolPermission: null })
 
-    if (outcome === 'approved' || outcome === 'denied') return
+    if (outcome === 'approved' || outcome === 'denied') {
+      // The modal decided; the card becomes the receipt. PERM-INLINE-01 in
+      // finalizeStream clears it once the turn actually moves.
+      if (matchesCard && pending) set({ pendingToolPermission: { ...pending, decision: outcome } })
+      return
+    }
+
+    if (matchesCard) set({ pendingToolPermission: null })
 
     // Unanswered: say so in the transcript and offer a retry. Scoped to the
     // conversation that raised it so a background workspace cannot write into
@@ -1473,31 +1493,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   dismissPermissionRetry: () => set({ permissionRetry: null }),
-
-  resolveToolPermission: (approved) => {
-    const pending = get().pendingToolPermission
-    if (!pending || pending.decision !== 'pending') return
-
-    // The card stays on screen, flipped to a resolved state. If the approval
-    // never reaches the CLI the user sees a card stuck on "waiting" instead of
-    // an empty chat — finalizeStream is what clears it once the turn moves.
-    set({
-      pendingToolPermission: { ...pending, decision: approved ? 'approved' : 'denied' }
-    })
-
-    window.api
-      .respondToPermission({
-        permissionId: pending.permission.id,
-        workspaceId: pending.permission.workspaceId,
-        type: 'toolPermission',
-        response: approved ? 'approve' : 'deny',
-        // Carries requestId + input back to the control-actions server.
-        payload: pending.permission.payload
-      })
-      .catch((err) => {
-        rendererLog.error('[resolveToolPermission] Failed to send permission response:', err)
-      })
-  },
 
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
 
@@ -1672,7 +1667,6 @@ export const useChatActions = (): Pick<
   | 'setPendingQuestions'
   | 'submitQuestionAnswers'
   | 'skipAllQuestions'
-  | 'resolveToolPermission'
   | 'setDraftText'
   | 'clearDraftText'
   | 'loadContextUsage'
@@ -1707,7 +1701,6 @@ export const useChatActions = (): Pick<
       setPendingQuestions: s.setPendingQuestions,
       submitQuestionAnswers: s.submitQuestionAnswers,
       skipAllQuestions: s.skipAllQuestions,
-      resolveToolPermission: s.resolveToolPermission,
       setDraftText: s.setDraftText,
       clearDraftText: s.clearDraftText,
       loadContextUsage: s.loadContextUsage,

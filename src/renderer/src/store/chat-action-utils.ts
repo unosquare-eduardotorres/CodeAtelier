@@ -261,11 +261,15 @@ export function parseBlockedByError(
  * is actually running, and one Stop click must be enough to recover.
  *
  * Returns the state patch to apply, or `null` when nothing should change:
- * either main is still streaming, or the query failed (in which case the local
- * state is the only state we have and must not be clobbered).
+ * either THIS conversation is still streaming in main, or the query failed (in
+ * which case the local state is the only state we have and must not be
+ * clobbered).
  */
 export async function reconcileStopState(
-  fetchStreamingState: () => Promise<{ isStreaming: boolean }>,
+  fetchStreamingState: () => Promise<{
+    isStreaming: boolean
+    streams?: Array<{ conversationId: string; requestId: string }>
+  }>,
   /** Read lazily — a send may have started during the IPC round-trip. */
   readSendingConversationIds: () => Set<string>,
   activeConversationId: string | null | undefined,
@@ -273,7 +277,15 @@ export async function reconcileStopState(
 ): Promise<{ isStreaming: false; sendingConversationIds: Set<string> } | null> {
   try {
     const backendState = await fetchStreamingState()
-    if (backendState.isStreaming) return null
+    // WEDGE-FIX: only THIS conversation's stream may block the release. The
+    // top-level `isStreaming` is the deprecated global flag ("any conversation
+    // is streaming"), so a background chat used to keep a wedged foreground
+    // chat locked forever. Fall back to it only when main is too old to send
+    // the per-conversation `streams` list.
+    const thisConvBusy = backendState.streams
+      ? backendState.streams.some((s) => s.conversationId === activeConversationId)
+      : backendState.isStreaming
+    if (thisConvBusy) return null
     const remaining = new Set(readSendingConversationIds())
     if (activeConversationId) remaining.delete(activeConversationId)
     return { isStreaming: false, sendingConversationIds: remaining }

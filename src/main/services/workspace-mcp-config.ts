@@ -7,6 +7,7 @@ import { MCP_TOOLS, EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
 import type { ConversationMode } from '../../shared/types'
 import type { ControlActionCallbacks } from './control-actions.tool'
 import { buildModePermissions } from './mode-permissions'
+import { missingCredentials, resolveIntegrationEnv } from './integration-credentials'
 import type { ContextWindowTier } from './context-management'
 import { TIER_LIMITS } from './context-management'
 import { chatAgentLogger } from '../logger'
@@ -169,26 +170,31 @@ function resolveJavaHome(): string | undefined {
 }
 
 /**
- * Build the environment for an external MCP stdio process.
+ * Resolve the directory holding the bundled MCP server scripts (packaged vs dev).
+ */
+function resolveMcpServerBasePath(): string {
+  return app.isPackaged
+    ? join(app.getAppPath().replace('app.asar', 'app.asar.unpacked'), 'out', 'main', 'mcp-servers')
+    : join(__dirname, 'mcp-servers')
+}
+
+/**
+ * Enrich a resolved integration environment for an external MCP stdio process.
  *
- * In packaged macOS apps, the GUI process inherits only a minimal PATH
- * (/usr/bin:/bin:/usr/sbin:/sbin). This helper:
- * 1. Forwards any explicitly-set env vars from process.env
- * 2. Auto-resolves JAVA_HOME from Homebrew / macOS java_home
- * 3. Injects Homebrew bin directories and JAVA_HOME/bin into PATH
+ * `baseEnv` already carries the credential/shell values from
+ * {@link resolveIntegrationEnv}. In packaged macOS apps the GUI process inherits
+ * only a minimal PATH (/usr/bin:/bin:/usr/sbin:/sbin), so this helper also:
+ * 1. Auto-resolves JAVA_HOME from Homebrew / macOS java_home
+ * 2. Injects Homebrew bin directories and JAVA_HOME/bin into PATH
  *    so child processes can find `java`, `npx`, `node`, etc.
  */
-function buildStdioEnv(envKeys: readonly string[] | undefined): Record<string, string> | undefined {
-  if (!envKeys?.length && !app.isPackaged) return undefined
+function buildStdioEnv(
+  envKeys: readonly string[] | undefined,
+  baseEnv: Record<string, string>
+): Record<string, string> | undefined {
+  if (!envKeys?.length && !app.isPackaged && Object.keys(baseEnv).length === 0) return undefined
 
-  const env: Record<string, string> = {}
-
-  // Forward explicitly-set env vars
-  if (envKeys) {
-    for (const k of envKeys) {
-      if (process.env[k]) env[k] = process.env[k]!
-    }
-  }
+  const env: Record<string, string> = { ...baseEnv }
 
   // Auto-resolve JAVA_HOME if requested but not set
   if (envKeys?.includes('JAVA_HOME') && !env.JAVA_HOME) {
@@ -236,26 +242,39 @@ function mountExternalMcps(
   servers: Record<string, McpServerConfig>,
   allowedTools: string[] | undefined,
   mode: ConversationMode,
-  externalMcpActive: Record<string, boolean>
+  externalMcpActive: Record<string, boolean>,
+  workspaceId: string | null
 ): void {
   chatAgentLogger.info(
     `[mcp:mount-external] Active flags: ${JSON.stringify(externalMcpActive)} mode=${mode}`
   )
   for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
     if (externalMcpActive[integration.id]) {
-      const env = buildStdioEnv(integration.envKeys)
-
-      // Merge performance env vars (always injected, not user-supplied)
-      const mergedEnv = {
-        ...(env ?? {}),
-        ...(integration.performanceEnv ?? {})
+      // An unconfigured server fails the MCP handshake and stalls session start.
+      const missing = missingCredentials(integration, workspaceId)
+      if (missing.length > 0) {
+        chatAgentLogger.warn(
+          `[mcp:mount-external] ✗ Skipped ${integration.id} (credentials incomplete: ${missing.join(', ')})`
+        )
+        continue
       }
-      const finalEnv = Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined
+
+      const finalEnv = buildStdioEnv(
+        integration.envKeys,
+        resolveIntegrationEnv(integration, workspaceId)
+      )
 
       const stdioConfig: McpServerConfig = {
         type: 'stdio',
-        command: resolveStdioCommand(integration.command, integration.commandPaths),
-        args: [...integration.args],
+        ...(integration.bundledServerEntry
+          ? {
+              command: 'node',
+              args: [join(resolveMcpServerBasePath(), `${integration.bundledServerEntry}.js`)]
+            }
+          : {
+              command: resolveStdioCommand(integration.command, integration.commandPaths),
+              args: [...integration.args]
+            }),
         alwaysLoad: true,
         ...(finalEnv ? { env: finalEnv } : {})
       }
@@ -268,7 +287,7 @@ function mountExternalMcps(
       }
 
       chatAgentLogger.info(
-        `[mcp:mount-external] ✓ Mounted ${integration.id}: command=${stdioConfig.command} args=${integration.args.join(' ')} tools=${(mode === 'plan' ? integration.planModeToolNames : integration.toolNames).length}`
+        `[mcp:mount-external] ✓ Mounted ${integration.id}: command=${stdioConfig.command} args=${stdioConfig.args.join(' ')} tools=${(mode === 'plan' ? integration.planModeToolNames : integration.toolNames).length}`
       )
     } else {
       chatAgentLogger.info(`[mcp:mount-external] ✗ Skipped ${integration.id} (not active)`)
@@ -352,7 +371,7 @@ function buildLocalProviderMcpConfig(opts: {
 
   // ── External MCP Servers (stdio) — also available for local LLMs ──
   const externalActive = featureFlags.externalMcpActive ?? {}
-  mountExternalMcps(servers, localAllowed, mode, externalActive)
+  mountExternalMcps(servers, localAllowed, mode, externalActive, workspaceId)
 
   chatAgentLogger.info(
     `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${localAllowed?.length ?? 'all'} disallowedCount=${disallowed.length} provider=local tier=${tier}`
@@ -474,7 +493,7 @@ function buildClaudeProviderMcpConfig(opts: {
   // Conditionally mounted based on per-message flags from the conversation MCP overrides.
   const servers: Record<string, McpServerConfig> = {}
   const externalActive = featureFlags.externalMcpActive ?? {}
-  mountExternalMcps(servers, allowedTools, mode, externalActive)
+  mountExternalMcps(servers, allowedTools, mode, externalActive, workspaceId)
 
   chatAgentLogger.info(
     `[mcp:config-result] servers=[${Object.keys(servers).join(',')}] allowedToolCount=${allowedTools?.length ?? 'all'} disallowedCount=${disallowed.length} provider=claude`

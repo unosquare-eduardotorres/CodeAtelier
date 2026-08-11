@@ -16,7 +16,10 @@ export default function AutomationSection({
   hasRemote,
   onToggle
 }: AutomationSectionProps): React.JSX.Element {
-  const activeCount = [settings.gitAutoBranch, settings.gitAutoPR, settings.gitAutoCleanup].filter(
+  // Unset means on for gitAutoBranch — branch-per-chat is the default because
+  // isolation only engages for conversations that own a branch.
+  const autoBranchOn = settings.gitAutoBranch !== false
+  const activeCount = [autoBranchOn, settings.gitAutoPR, settings.gitAutoCleanup].filter(
     Boolean
   ).length
 
@@ -40,7 +43,7 @@ export default function AutomationSection({
           <ToggleRow
             label="Auto-create branches"
             description="Create a git branch for each conversation automatically"
-            checked={!!settings.gitAutoBranch}
+            checked={autoBranchOn}
             onChange={(v) => onToggle('gitAutoBranch', v)}
           />
         </div>

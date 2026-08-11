@@ -10,6 +10,14 @@ const capturedOnHandlers = new Map()
 const sentEvents = []
 /** powerMonitor listeners, so tests can fire 'resume'/'suspend' synthetically. */
 const powerMonitorListeners = new Map()
+/**
+ * Native (Squirrel) autoUpdater listeners. Array-backed, unlike the
+ * electron-updater double in auto-update-service.test.ts: the staging fix
+ * registers more than one listener and dropping any of them would hide bugs.
+ */
+const autoUpdaterListeners = new Map()
+/** Paths passed to shell.showItemInFolder, so tests can assert what was revealed. */
+const shellRevealed = []
 
 const noop = function () {
   /* no-op mock method */
@@ -139,6 +147,9 @@ module.exports = {
     },
     openPath: async function () {
       return { error: '' }
+    },
+    showItemInFolder: function (fullPath) {
+      shellRevealed.push(fullPath)
     }
   },
   nativeTheme: {
@@ -186,6 +197,35 @@ module.exports = {
       return this
     }
   },
+  autoUpdater: {
+    on: function (event, fn) {
+      if (!autoUpdaterListeners.has(event)) autoUpdaterListeners.set(event, [])
+      autoUpdaterListeners.get(event).push(fn)
+      return this
+    },
+    removeListener: function (event, fn) {
+      const list = autoUpdaterListeners.get(event)
+      if (list) {
+        const i = list.indexOf(fn)
+        if (i >= 0) list.splice(i, 1)
+      }
+      return this
+    },
+    setFeedURL: noop,
+    checkForUpdates: noop,
+    quitAndInstall: noop
+  },
+  __autoUpdaterMock: {
+    emit: function (event, payload) {
+      for (const fn of (autoUpdaterListeners.get(event) || []).slice()) fn(payload)
+    },
+    listenerCount: function (event) {
+      return (autoUpdaterListeners.get(event) || []).length
+    },
+    reset: function () {
+      autoUpdaterListeners.clear()
+    }
+  },
   __powerMonitorMock: {
     emit: function (event) {
       for (const fn of powerMonitorListeners.get(event) || []) fn()
@@ -199,6 +239,7 @@ module.exports = {
   },
   Notification: MockNotification,
   // Internal access for test assertions
+  __shellRevealed: shellRevealed,
   __capturedHandlers: capturedHandlers,
   __capturedOnHandlers: capturedOnHandlers,
   __sentEvents: sentEvents,

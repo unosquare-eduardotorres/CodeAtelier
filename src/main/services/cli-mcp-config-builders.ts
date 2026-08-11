@@ -110,30 +110,34 @@ export function buildCoreServers(
 // ── External MCP Integrations ──
 
 /**
- * Mount any enabled external MCP integrations (Maestro, etc.).
+ * Mount any enabled external MCP integrations (Maestro, Jira, etc.).
  * Mutates the `servers` record in place.
+ *
+ * Environments are pre-resolved by `resolveActiveIntegrationEnvs` (credentials +
+ * shell fallback + performanceEnv) so this function stays pure. An integration
+ * absent from `envByIntegration` is not mounted — that is how incomplete
+ * credentials are filtered out.
  */
 export function mountExternalIntegrations(
   servers: Record<string, CliMcpServerEntry>,
   externalActive: Record<string, boolean>,
-  processEnv: Record<string, string | undefined>,
-  homePath: string
+  envByIntegration: Record<string, Record<string, string>>,
+  homePath: string,
+  serverBasePath: string
 ): void {
   for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
     if (!externalActive[integration.id]) continue
 
-    const env: Record<string, string> = {}
+    const env = envByIntegration[integration.id]
+    if (!env) continue
 
-    if (integration.envKeys) {
-      for (const key of integration.envKeys) {
-        if (processEnv[key]) {
-          env[key] = processEnv[key]!
-        }
+    if (integration.bundledServerEntry) {
+      servers[integration.id] = {
+        command: 'node',
+        args: [[serverBasePath, `${integration.bundledServerEntry}.js`].join('/')],
+        ...(Object.keys(env).length > 0 ? { env } : {})
       }
-    }
-
-    if (integration.performanceEnv) {
-      Object.assign(env, integration.performanceEnv)
+      continue
     }
 
     let resolvedCommand = integration.command

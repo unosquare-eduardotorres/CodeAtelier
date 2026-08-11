@@ -48,6 +48,7 @@ export interface IpcBridgeEvent {
     | 'memoryResponse'
     | 'phaseProgress'
     | 'heartbeat'
+    | 'modeChange'
   payload: unknown
   /** For request-response patterns: correlates response to request. */
   requestId?: string
@@ -218,6 +219,23 @@ export class IpcBridge extends EventEmitter {
     bridgeLog.info(
       `[ipc-bridge] Sent permissionResponse for requestId=${requestId} approved=${approved}`
     )
+  }
+
+  /**
+   * Push a mode change to the externalized MCP servers.
+   *
+   * Their CONVERSATION_MODE is frozen at spawn, so a Plan → Build switch would
+   * otherwise leave the control-actions auto-approver on the old policy for the
+   * life of the CLI child. `conversationId` scopes the broadcast — one bridge
+   * serves every conversation in the workspace.
+   */
+  sendModeChange(mode: string, conversationId?: string): void {
+    this.sendToClients({
+      type: 'modeChange',
+      payload: { mode, conversationId },
+      timestamp: Date.now()
+    })
+    bridgeLog.info(`[ipc-bridge] Sent modeChange mode=${mode} conv=${conversationId ?? 'none'}`)
   }
 
   /**

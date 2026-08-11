@@ -6,6 +6,7 @@ import {
   Users,
   FileText,
   GitBranch,
+  GitFork,
   Cpu,
   ChevronLeft,
   ChevronRight,
@@ -34,6 +35,7 @@ export type SettingsTab =
   | 'blueprints'
   | 'models'
   | 'repository'
+  | 'tracks'
   | 'code-intelligence'
   | 'integrations'
   | 'team'
@@ -101,6 +103,13 @@ export const SETTINGS_MENU: {
     id: 'repository',
     label: 'Repository',
     icon: GitBranch,
+    iconColor: 'text-accent',
+    group: 'configuration'
+  },
+  {
+    id: 'tracks',
+    label: 'Tracks',
+    icon: GitFork,
     iconColor: 'text-accent',
     group: 'configuration'
   },

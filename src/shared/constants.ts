@@ -1,3 +1,4 @@
+import type { CredentialFieldDef } from './integration-credentials.types'
 import type {
   GrillTrackId,
   GrillTrack,
@@ -86,6 +87,24 @@ export const IPC_CHANNELS = {
   PROCESS_CANCEL_WATCH: 'process:cancelWatch',
   /** Main → Renderer: background process list changed (started/exited/stopped) */
   PROCESS_CHANGED: 'process:changed',
+
+  // Work tracks (branch + worktree + owner)
+  /** Renderer → Main: list a workspace's tracks with filesystem facts + disk budget */
+  TRACK_LIST: 'track:list',
+  /** Renderer → Main: destroy a track and everything uncommitted in it */
+  TRACK_DISCARD: 'track:discard',
+  /** Renderer → Main: open a track's worktree in Finder/Explorer */
+  TRACK_REVEAL: 'track:reveal',
+  /** Renderer → Main: hand retained work to a new chat */
+  TRACK_ADOPT: 'track:adopt',
+  /** Renderer → Main: land a track's work — PR, or merge into the integration branch */
+  TRACK_LAND: 'track:land',
+  /**
+   * Main → Renderer: a workspace's track list changed (created, retained,
+   * removed, adopted, reaped). `workspaceId` is null when the change spanned
+   * workspaces (the reaper), meaning "refresh regardless".
+   */
+  TRACK_CHANGED: 'track:changed',
   /** Main → Renderer: navigate to workspace/page after tray menu click */
   TRAY_NAVIGATE: 'tray:navigate',
 
@@ -268,6 +287,7 @@ export const IPC_CHANNELS = {
   UPDATE_CHECK: 'update:check',
   UPDATE_AVAILABLE: 'update:available',
   UPDATE_NOT_AVAILABLE: 'update:notAvailable',
+  UPDATE_STAGING: 'update:staging',
   UPDATE_DOWNLOADED: 'update:downloaded',
   UPDATE_ERROR: 'update:error',
   UPDATE_PROGRESS: 'update:progress',
@@ -545,6 +565,10 @@ export const IPC_CHANNELS = {
 
   // External MCP Integrations
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
+  INTEGRATION_SAVE_CREDENTIALS: 'integration:saveCredentials',
+  INTEGRATION_GET_CREDENTIAL_STATUS: 'integration:getCredentialStatus',
+  INTEGRATION_TEST_CONNECTION: 'integration:testConnection',
+  INTEGRATION_CLEAR_CREDENTIALS: 'integration:clearCredentials',
   CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
   CHAT_UPDATE_TONE: 'chat:updateTone',
   CHAT_UPDATE_ROUTING: 'chat:updateRouting',
@@ -1964,6 +1988,10 @@ export const MCP_TOOLS = {
     STOP_PROCESS: mcpTool('process-manager', 'stop_process', 'Process · stop_process'),
     LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes'),
     WAIT_PROCESS: mcpTool('process-manager', 'wait_process', 'Process · wait_process')
+  }),
+  JIRA: mcpServer('jira', {
+    GET_ISSUE: mcpTool('jira', 'get_issue', 'Jira · get_issue'),
+    SEARCH_ISSUES: mcpTool('jira', 'search_issues', 'Jira · search_issues')
   })
 } as const
 
@@ -2334,6 +2362,22 @@ export interface ExternalMcpDefinition {
   commandPaths?: string[]
   /** Env vars always injected when this MCP is mounted (perf tuning, not user-supplied) */
   performanceEnv?: Record<string, string>
+  /**
+   * Bundled first-party server: mounted as `node <serverBasePath>/<entry>.js`.
+   * When set, `command`/`commandPaths` are ignored and the PATH availability
+   * check is skipped — the server ships with the app.
+   */
+  bundledServerEntry?: string
+  /** Declarative credential form rendered on the Integrations page */
+  credentialFields?: CredentialFieldDef[]
+  /** Enables the "Test Connection" button */
+  supportsConnectionTest?: boolean
+  /**
+   * This server's tools can legitimately run for many minutes (device farms,
+   * build pipelines). Only such servers extend the executor's idle timeout —
+   * a fast REST-backed server that goes quiet is hung, not working.
+   */
+  longRunningTools?: boolean
   /** Category for UI grouping */
   category: 'testing' | 'deployment' | 'monitoring' | 'other'
 
@@ -2361,6 +2405,8 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     icon: 'Smartphone',
     command: 'maestro',
     args: ['mcp'],
+    // Cloud runs and device-farm flows routinely exceed 5 minutes of silence.
+    longRunningTools: true,
     commandPaths: ['~/.maestro/bin/maestro'],
     envKeys: ['JAVA_HOME', 'MAESTRO_CLOUD_API_KEY'],
     performanceEnv: {
@@ -2461,6 +2507,167 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
         step: 'Agent drives',
         description:
           'The agent inspects the screen, writes YAML flows, runs them, and reports results — all autonomously.'
+      }
+    ]
+  },
+  {
+    id: 'jira',
+    displayName: 'Jira',
+    description:
+      'Read tickets, search with JQL, and pull acceptance criteria straight from your Jira board.',
+    icon: 'SquareKanban',
+    // Bundled first-party server — `command`/`args` are replaced at mount time
+    // with `node <serverBasePath>/jira-server.js`. Never resolved from PATH.
+    command: 'node',
+    args: [],
+    bundledServerEntry: 'jira-server',
+    envKeys: [
+      'JIRA_BASE_URL',
+      'JIRA_AUTH_MODE',
+      'JIRA_EMAIL',
+      'JIRA_USERNAME',
+      'JIRA_API_TOKEN',
+      // Forwarded from the parent process when set — corporate VPN / internal CA
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
+      'NO_PROXY',
+      'NODE_EXTRA_CA_CERTS'
+    ],
+    performanceEnv: {
+      // Node ≥24 reads HTTPS_PROXY/HTTP_PROXY/NO_PROXY for global fetch when this
+      // is set. Harmless no-op on older runtimes.
+      NODE_USE_ENV_PROXY: '1'
+    },
+    supportsConnectionTest: true,
+    tokenImpact: 'low',
+    toolCount: 2,
+    prerequisite: 'Jira site URL + API token (or a PAT for Server / Data Center)',
+    docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/',
+    category: 'other',
+    toolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
+    // Both tools are read-only — available in plan mode too.
+    planModeToolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
+
+    credentialFields: [
+      {
+        key: 'authMode',
+        label: 'Authentication',
+        type: 'select',
+        envVar: 'JIRA_AUTH_MODE',
+        required: true,
+        options: [
+          {
+            value: 'cloud-token',
+            label: 'Jira Cloud — email + API token',
+            description:
+              'Create at id.atlassian.com → Security → API tokens. No admin rights needed.'
+          },
+          {
+            value: 'pat',
+            label: 'Server / Data Center — Personal Access Token',
+            description:
+              'Jira profile → Personal Access Tokens. Typical for VPN-hosted client Jira.'
+          },
+          {
+            value: 'basic',
+            label: 'Server / Data Center — username + password'
+          }
+        ]
+      },
+      {
+        key: 'baseUrl',
+        label: 'Jira URL',
+        type: 'url',
+        envVar: 'JIRA_BASE_URL',
+        required: true,
+        placeholder: 'https://client.atlassian.net',
+        help: 'For on-prem behind a VPN, use the same host you open in the browser.'
+      },
+      {
+        key: 'email',
+        label: 'Atlassian account email',
+        type: 'text',
+        envVar: 'JIRA_EMAIL',
+        required: true,
+        placeholder: 'you@company.com',
+        showWhen: { authMode: ['cloud-token'] }
+      },
+      {
+        key: 'username',
+        label: 'Username',
+        type: 'text',
+        envVar: 'JIRA_USERNAME',
+        required: true,
+        showWhen: { authMode: ['basic'] }
+      },
+      {
+        key: 'apiToken',
+        label: 'API token / PAT / password',
+        type: 'password',
+        envVar: 'JIRA_API_TOKEN',
+        secret: true,
+        required: true,
+        help: 'Stored encrypted in your OS keychain. Never leaves this machine except to your Jira host.'
+      }
+    ],
+
+    longDescription:
+      'Connect your Jira board so the agent can read the ticket it is working on. Instead of pasting acceptance criteria into chat, point the agent at an issue key — it pulls the summary, description, status, assignee and recent comments, and can run JQL searches to find related work. Read-only: nothing in Jira is ever modified.',
+
+    useCases: [
+      {
+        title: 'Implement Straight From a Ticket',
+        description:
+          'Say "implement PROJ-412" — the agent reads the description and acceptance criteria, then plans the work against your actual codebase.',
+        icon: 'FileCode'
+      },
+      {
+        title: 'Sprint Triage',
+        description:
+          'Ask for everything assigned to you in the current sprint. The agent runs the JQL and summarises what is blocked, in review, or untouched.',
+        icon: 'Layers'
+      },
+      {
+        title: 'Bug Reproduction Context',
+        description:
+          "Pull the bug report plus its comment thread so the agent has the reporter's steps and any follow-up findings before it starts debugging.",
+        icon: 'Bug'
+      },
+      {
+        title: 'PR Descriptions With Real Context',
+        description:
+          'The agent quotes the ticket summary and acceptance criteria when writing a PR description, so reviewers see the intent, not just the diff.',
+        icon: 'Eye'
+      }
+    ],
+
+    toolDescriptions: {
+      mcp__jira__get_issue:
+        'Fetches one issue by key (e.g. PROJ-123) — summary, status, assignee, reporter, priority, labels, description and the most recent comments. This is the "read the ticket" action.',
+      mcp__jira__search_issues:
+        'Runs a JQL query and returns compact rows (key, summary, status, assignee). Use it to find related tickets, sprint contents, or everything matching a label.'
+    },
+
+    workflowSteps: [
+      {
+        step: 'Pick auth mode',
+        description:
+          'Jira Cloud uses email + API token. Server / Data Center behind a VPN usually uses a Personal Access Token.'
+      },
+      {
+        step: 'Enter URL + token',
+        description:
+          'Credentials are encrypted with your OS keychain and stored per workspace — never in plain text.'
+      },
+      {
+        step: 'Test Connection',
+        description:
+          'Verifies the host is reachable and the token is valid before you enable the integration.'
+      },
+      {
+        step: 'Enable + use',
+        description:
+          'Toggle Jira ON, activate the pill in a chat, then reference issue keys naturally: "summarise PROJ-123".'
       }
     ]
   }

@@ -143,7 +143,7 @@ const DANGEROUS_PATTERNS = [
  * `local_bash` was auto-approved in build mode. Membership here is what makes
  * a tool subject to command inspection, so new shell siblings must be added.
  */
-const SHELL_TOOLS = new Set(['Bash', 'local_bash', 'PowerShell'])
+export const SHELL_TOOLS = new Set(['Bash', 'local_bash', 'PowerShell'])
 
 function isDangerousCommand(command: string): boolean {
   const lower = command.toLowerCase()

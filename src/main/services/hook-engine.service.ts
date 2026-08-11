@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import log from 'electron-log/main'
+import { detachedHiddenSpawnOptions } from '../../shared/spawn-options'
 
 const hookLog = log.scope('HookEngine')
 
@@ -188,10 +189,15 @@ class HookEngine extends EventEmitter {
       } else {
         // Fire-and-forget
         try {
-          const child = spawn('sh', ['-c', cmd], {
+          // `shell: true` picks the platform shell — `sh` does not exist on
+          // stock Windows. detachedHiddenSpawnOptions drops `detached` on
+          // Windows because DETACHED_PROCESS suppresses CREATE_NO_WINDOW and
+          // pops a console (nodejs/node#21825).
+          const child = spawn(cmd, {
             cwd: this.workspacePath ?? undefined,
             stdio: 'ignore',
-            detached: true
+            shell: true,
+            ...detachedHiddenSpawnOptions
           })
           child.unref()
           hookLog.info(`Hook "${hook.name}" fired (non-blocking)`)

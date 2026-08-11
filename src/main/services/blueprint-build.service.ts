@@ -52,6 +52,8 @@ import {
 } from '../db/repositories/blueprint.repository'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { runPreflightChecks, buildPreflightDiscoveries } from './blueprint-preflight.service'
+import { primaryTreeLock, primaryTreeBusyError } from './track.service'
+import { ensureBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
 
 const bpLog = log.scope('blueprint-build')
 
@@ -183,6 +185,24 @@ export class BlueprintBuildService extends EventEmitter {
     let waveMap: ReturnType<typeof blueprintService.getTasksByWave> = new Map()
     let totalTasks = 0
 
+    // BUILD gets its own working tree (see blueprint-track.ts). When it does,
+    // nothing below touches the user's checkout and no lock is needed — the run
+    // is fully parallel with chats and with other blueprints.
+    //
+    // When it does NOT — the workspace opted out of auto-branching, or the
+    // branch is held elsewhere — BUILD falls back to writing in the primary
+    // tree, which is where it always used to run. That tree has one HEAD and up
+    // to `parallelBuildAgents` agents writing at once, and the wave scheduler
+    // has no idea chats or MPA runs exist, so in that case the run claims it.
+    //
+    // One claim per run, not per task: the tasks ARE the run, and a per-task
+    // claim would just serialise the wave scheduler against itself. The id is
+    // shared with VERIFY so the BUILD→VERIFY handoff is one continuous claim
+    // rather than a gap another writer can slip into.
+    const primaryTreeOwnerId = `blueprint:${blueprintId}`
+    let holdsPrimaryTree = false
+    let executionPath = workspacePath
+
     try {
       // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
       // finally's markPipelineStopped() is guaranteed to run.
@@ -190,6 +210,22 @@ export class BlueprintBuildService extends EventEmitter {
       // 1. Pipeline + DB state
       blueprintService.markPipelineRunning(workspaceId, blueprintId, 'build')
       this.activeBlueprintIds.set(workspaceId, blueprintId)
+
+      const track = await ensureBlueprintTrack({ blueprintId, workspaceId, workspacePath })
+      executionPath = track.path
+
+      if (!track.isolated) {
+        if (
+          !primaryTreeLock.acquire(workspaceId, {
+            ownerKind: 'blueprint',
+            ownerId: primaryTreeOwnerId,
+            reason: 'A blueprint BUILD phase'
+          })
+        ) {
+          throw primaryTreeBusyError(primaryTreeLock.holder(workspaceId))
+        }
+        holdsPrimaryTree = true
+      }
 
       buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
       if (buildPhase) {
@@ -236,7 +272,9 @@ export class BlueprintBuildService extends EventEmitter {
       try {
         const pfTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
         const pfTaskDescriptions = pfTasks.map((t) => t.description)
-        const preflightResult = await runPreflightChecks(workspacePath, pfTaskDescriptions)
+        // Preflight probes the tree the agents will actually work in — a
+        // missing tool or absent .env is only interesting where the build runs.
+        const preflightResult = await runPreflightChecks(executionPath, pfTaskDescriptions)
 
         if (preflightResult.hasBlockers || preflightResult.hasWarnings) {
           const currentBp = blueprintRepository.findById(blueprintId)
@@ -388,6 +426,7 @@ export class BlueprintBuildService extends EventEmitter {
           blueprintId,
           workspaceId,
           workspacePath,
+          executionPath,
           phaseContext,
           result
         })
@@ -555,8 +594,14 @@ export class BlueprintBuildService extends EventEmitter {
       // Only mark pipeline stopped if verify was NOT auto-triggered.
       // When verify is triggered, its own finally block owns markPipelineStopped()
       // to avoid destroying the AbortController that the verify phase needs.
+      //
+      // The primary-tree claim is handed over on exactly the same condition:
+      // finalizeSuccess() starts VERIFY synchronously (it re-acquires under the
+      // same owner id), so releasing here would free the tree out from under a
+      // phase that is already running in it. VERIFY's own finally releases.
       if (!verifyTriggered) {
         blueprintService.markPipelineStopped(workspaceId)
+        if (holdsPrimaryTree) primaryTreeLock.release(workspaceId, primaryTreeOwnerId)
       }
     }
   }
@@ -580,12 +625,30 @@ export class BlueprintBuildService extends EventEmitter {
     waveTasks: BlueprintTask[]
     blueprintId: string
     workspaceId: string
+    /** Workspace identity — the primary tree. Never a cwd. */
     workspacePath: string
+    /**
+     * Where the agents write. The run's own worktree, or the primary tree when
+     * isolation was unavailable.
+     *
+     * All tasks in a wave share it, and that is correct: they are one feature
+     * on one branch, and `filesOverlap()` already serialises the risky pairs
+     * within the wave.
+     */
+    executionPath: string
     phaseContext: import('../../shared/blueprint-types').PhaseContext
     result: BuildResult
   }): Promise<void> {
-    const { waveNum, waveTasks, blueprintId, workspaceId, workspacePath, phaseContext, result } =
-      params
+    const {
+      waveNum,
+      waveTasks,
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      executionPath,
+      phaseContext,
+      result
+    } = params
 
     // Read cap per-wave from user preferences (clamped 1–6, default 3).
     // FIX-4: Made mutable — halved on overload to reduce API pressure.
@@ -715,6 +778,7 @@ export class BlueprintBuildService extends EventEmitter {
                 blueprintId,
                 workspaceId,
                 workspacePath,
+                executionPath,
                 phaseContext,
                 result,
                 waveNum,
@@ -748,6 +812,7 @@ export class BlueprintBuildService extends EventEmitter {
             blueprintId,
             workspaceId,
             workspacePath,
+            executionPath,
             phaseContext,
             result,
             waveNum,
@@ -778,6 +843,7 @@ export class BlueprintBuildService extends EventEmitter {
             blueprintId,
             workspaceId,
             workspacePath,
+            executionPath,
             phaseContext,
             result,
             waveNum,
@@ -860,6 +926,7 @@ export class BlueprintBuildService extends EventEmitter {
                 blueprintId,
                 workspaceId,
                 workspacePath,
+                executionPath,
                 phaseContext,
                 priorDiscoveries: discoverySnapshot,
                 tDispatch: Date.now(), // Fresh tDispatch for mtime-freshness check
@@ -1019,6 +1086,7 @@ export class BlueprintBuildService extends EventEmitter {
     blueprintId: string
     workspaceId: string
     workspacePath: string
+    executionPath: string
     phaseContext: import('../../shared/blueprint-types').PhaseContext
     result: BuildResult
     waveNum: number
@@ -1030,6 +1098,7 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintId,
       workspaceId,
       workspacePath,
+      executionPath,
       phaseContext,
       result,
       waveNum,
@@ -1059,6 +1128,7 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintId,
       workspaceId,
       workspacePath,
+      executionPath,
       phaseContext,
       priorDiscoveries: discoverySnapshot,
       tDispatch,
@@ -1296,13 +1366,23 @@ export class BlueprintBuildService extends EventEmitter {
     blueprintId: string
     workspaceId: string
     workspacePath: string
+    /** The run's worktree — where this task's files land and are verified. */
+    executionPath: string
     phaseContext: import('../../shared/blueprint-types').PhaseContext
     priorDiscoveries: string[]
     tDispatch: number
     waveNum: number
   }): Promise<TaskResult> {
-    const { task, blueprintId, workspaceId, workspacePath, phaseContext, tDispatch, waveNum } =
-      params
+    const {
+      task,
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      executionPath,
+      phaseContext,
+      tDispatch,
+      waveNum
+    } = params
 
     // Phase 0: Timing instrumentation
     let tSessionReady = 0
@@ -1374,7 +1454,7 @@ export class BlueprintBuildService extends EventEmitter {
         blueprintId,
         workspaceId,
         phase: 'build',
-        workspacePath,
+        workspacePath: executionPath,
         mode: 'build',
         taskId: task.taskId
       })
@@ -1413,7 +1493,14 @@ export class BlueprintBuildService extends EventEmitter {
       // When blueprintAutoMode is enabled, use 'danger' to bypass permission prompts —
       // the user already approved execution when starting the blueprint.
       const autoMode = appPreferenceRepository.getAppPreferences().blueprintAutoMode
-      await session.start(workspacePath, autoMode ? 'danger' : 'build')
+      // `workspacePath` stays the repo root so the session still resolves its
+      // workspace id — and with it the cost preference, provider, compaction
+      // thresholds and the four workspace-scoped MCP servers. The cwd comes
+      // from the track owner instead. Passing the worktree here would move the
+      // cwd and silently drop all of that.
+      await session.start(workspacePath, autoMode ? 'danger' : 'build', {
+        trackOwner: blueprintTrackOwner(blueprintId)
+      })
       tSessionReady = Date.now()
 
       // Race: send vs timeout vs abort
@@ -1497,8 +1584,10 @@ export class BlueprintBuildService extends EventEmitter {
         // BP-VERIFY-TASK-FILES-01: Deterministic disk verification — never trust unverified claims.
         // Check that files the LLM claimed to create/modify actually exist on disk.
         // FIX-3: Pass tDispatch as taskStartedAt for mtime freshness checking.
+        // Claimed paths are resolved against this root and anything escaping it
+        // is rejected, so the wrong root fails every claim in the task.
         const verification = verifyTaskFileClaims(
-          workspacePath,
+          executionPath,
           completion,
           task.filePathsJson,
           tDispatch

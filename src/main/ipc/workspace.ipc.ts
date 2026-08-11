@@ -333,7 +333,10 @@ export function registerWorkspaceIpc(): void {
       throw new Error(`${ch}: invalid command name`)
     }
     try {
-      execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000, windowsHide: true })
+      // `which` does not exist on Windows — without this the check always
+      // reported "not found" there, regardless of what was installed.
+      const lookup = process.platform === 'win32' ? 'where' : 'which'
+      execSync(`${lookup} ${command}`, { stdio: 'pipe', timeout: 3000, windowsHide: true })
       // IPC-03: Don't expose filesystem path to renderer
       return { available: true }
     } catch {

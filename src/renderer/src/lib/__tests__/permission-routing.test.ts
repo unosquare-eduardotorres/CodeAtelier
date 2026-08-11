@@ -1,67 +1,53 @@
 /**
- * Where a permission request surfaces.
+ * Whether a permission ALSO leaves a receipt in the transcript.
  *
- * The load-bearing property is the last group: a request must never be routed
- * nowhere. Dropping one leaves the agent blocked on a prompt the user is never
- * shown, which is exactly the silent-stall symptom this card exists to fix.
+ * The modal decides every permission, so this predicate can only ever add a
+ * second, read-only surface — never remove one. The load-bearing property is
+ * that it stays false for anything the transcript on screen cannot anchor: a
+ * card written into the wrong conversation would attribute one chat's prompt to
+ * another.
  *
  * Run: tsx src/renderer/src/lib/__tests__/permission-routing.test.ts
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../../../main/services/__tests__/test-harness'
-import { routePermission } from '../permission-routing'
+import { shouldRecordInline } from '../permission-routing'
 
 const ACTIVE = 'conv-active'
 
-describe('routePermission — tool permissions', () => {
-  test('matching conversation goes inline', () => {
+describe('shouldRecordInline — tool permissions', () => {
+  test('matching conversation is recorded inline', () => {
     assert.equal(
-      routePermission({ type: 'toolPermission', conversationId: ACTIVE }, ACTIVE),
-      'inline'
+      shouldRecordInline({ type: 'toolPermission', conversationId: ACTIVE }, ACTIVE),
+      true
     )
   })
 
-  test('a different conversation toasts', () => {
+  test('a different conversation is not recorded', () => {
     assert.equal(
-      routePermission({ type: 'toolPermission', conversationId: 'conv-other' }, ACTIVE),
-      'toast'
+      shouldRecordInline({ type: 'toolPermission', conversationId: 'conv-other' }, ACTIVE),
+      false
     )
   })
 
-  test('missing conversationId toasts rather than being dropped', () => {
-    assert.equal(routePermission({ type: 'toolPermission' }, ACTIVE), 'toast')
+  test('missing conversationId is not recorded — no transcript to anchor to', () => {
+    assert.equal(shouldRecordInline({ type: 'toolPermission' }, ACTIVE), false)
   })
 
-  test('no active conversation toasts', () => {
-    assert.equal(routePermission({ type: 'toolPermission', conversationId: ACTIVE }, null), 'toast')
+  test('no active conversation is not recorded', () => {
+    assert.equal(
+      shouldRecordInline({ type: 'toolPermission', conversationId: ACTIVE }, null),
+      false
+    )
   })
 })
 
-describe('routePermission — every other permission type toasts', () => {
+describe('shouldRecordInline — every other permission type stays modal-only', () => {
   for (const type of ['elicitation', 'askQuestion', 'mpaApproval']) {
-    test(`${type} toasts even when the conversation matches`, () => {
-      assert.equal(routePermission({ type, conversationId: ACTIVE }, ACTIVE), 'toast')
+    test(`${type} is not recorded even when the conversation matches`, () => {
+      assert.equal(shouldRecordInline({ type, conversationId: ACTIVE }, ACTIVE), false)
     })
   }
-})
-
-describe('routePermission — nothing is ever routed nowhere', () => {
-  test('every combination returns inline or toast', () => {
-    const types = ['toolPermission', 'elicitation', 'askQuestion', 'mpaApproval', 'unknown']
-    const convIds = [ACTIVE, 'conv-other', undefined]
-    const actives = [ACTIVE, null]
-    for (const type of types) {
-      for (const conversationId of convIds) {
-        for (const active of actives) {
-          const route = routePermission({ type, conversationId }, active)
-          assert.ok(
-            route === 'inline' || route === 'toast',
-            `${type}/${conversationId}/${active} produced ${route}`
-          )
-        }
-      }
-    }
-  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

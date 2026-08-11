@@ -135,6 +135,16 @@ export interface AgentSessionHost {
   /** Get accumulated text for a specific conversation (or lastActive if omitted). */
   getAccumulatedTextForConversation(conversationId?: string): string
 
+  /**
+   * Absolute cwd to spawn this conversation's CLI in.
+   *
+   * Returns the conversation's worktree when it has one, otherwise the
+   * workspace root. Always prefer passing `conversationId` explicitly — the
+   * omitted form resolves through `lastActiveConversationId`, which is exactly
+   * the ambiguity that concurrent streams break.
+   */
+  resolveExecutionPath(conversationId?: string): string
+
   // ── Methods ──
   emit(event: string | symbol, ...args: unknown[]): boolean
   resolveLocalContextWindow(): number
@@ -164,8 +174,13 @@ export const SESSION_CONSTANTS = {
    * respawn (and a full MCP reconnection) on the first message after a toggle.
    */
   CLI_MAX_TURNS: 200,
-  MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000,
-  EXTERNAL_MCP_INTERACTION_TIMEOUT_MS: 30 * 60_000
+  /**
+   * Base idle budget. The extended external-MCP budget is NOT mirrored here:
+   * it lives only as `AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS`,
+   * which `buildStreamTimeout` applies to `longRunningTools` integrations only.
+   * A copy here had no readers and drifted out of step with that rule.
+   */
+  MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000
 } as const
 
 /** Per-conversation streaming state — isolates accumulatedText + abortController per conversation. */
@@ -180,6 +195,17 @@ export interface ActiveStreamContext {
    */
   accumulatedTextBaseline?: number
   abortController: AbortController | null
+  /**
+   * Absolute cwd for this conversation's CLI process.
+   *
+   * Per-conversation rather than per-session because a session serves many
+   * conversations and each one may own a different git worktree. Reading the
+   * session-wide `workspacePath` instead is what allowed three concurrent
+   * streams to write into one working tree on whichever branch happened to be
+   * checked out. Undefined means "no isolation resolved yet" and callers fall
+   * back to `workspacePath`.
+   */
+  executionPath?: string
 }
 
 export type { StreamChunk, ExecutorResult, CLIExecuteOptions }

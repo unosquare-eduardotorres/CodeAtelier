@@ -1,4 +1,8 @@
 import type {
+  IntegrationConnectionResult,
+  IntegrationCredentialStatus
+} from '../shared/integration-credentials.types'
+import type {
   Workspace,
   Conversation,
   ConversationMode,
@@ -105,6 +109,7 @@ import type {
   ArtifactRef,
   CodeAnchor
 } from '../shared/handoff-types'
+import type { TrackListResult, LandingResult } from '../shared/track-types'
 
 interface Api {
   // Workspace
@@ -193,6 +198,24 @@ interface Api {
     routingOverrides?: Partial<ModelRoleMap>
   }) => Promise<Conversation>
   checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
+  saveIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+    values: Record<string, string>
+  }) => Promise<IntegrationCredentialStatus>
+  getIntegrationCredentialStatus: (args: {
+    workspaceId: string
+    integrationId: string
+  }) => Promise<IntegrationCredentialStatus>
+  testIntegrationConnection: (args: {
+    workspaceId: string
+    integrationId: string
+    values?: Record<string, string>
+  }) => Promise<IntegrationConnectionResult>
+  clearIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+  }) => Promise<{ success: boolean }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   getTodos: (args: { conversationId: string }) => Promise<
     Array<{
@@ -675,6 +698,7 @@ interface Api {
     callback: (info: { version: string; releaseDate?: string; releaseNotes?: string }) => void
   ) => () => void
   onUpdateNotAvailable: (callback: (info: { currentVersion?: string }) => void) => () => void
+  onUpdateStaging: (callback: (info: { version: string }) => void) => () => void
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
   onUpdateProgress: (
     callback: (progress: {
@@ -1938,6 +1962,19 @@ interface Api {
   processStop: (args: { pid: number }) => Promise<ProcessStopResult>
   processCancelWatch: (args: { pid: number }) => Promise<ProcessCancelWatchResult>
   onProcessChanged: (cb: () => void) => () => void
+
+  // Work Tracks
+  trackList: (args: { workspaceId: string }) => Promise<TrackListResult>
+  trackDiscard: (args: { trackId: string }) => Promise<boolean>
+  trackReveal: (args: { trackId: string }) => Promise<boolean>
+  trackAdopt: (args: { trackId: string }) => Promise<string | null>
+  trackLand: (args: {
+    trackId: string
+    commitMessage: string
+    description?: string
+  }) => Promise<LandingResult>
+  onTrackChanged: (cb: (data: { workspaceId: string | null }) => void) => () => void
+
   onTrayNavigate: (cb: (data: { view: string; workspaceId?: string }) => void) => () => void
 
   // E2E Testing

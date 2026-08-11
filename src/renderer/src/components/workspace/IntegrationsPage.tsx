@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useWorkspaceStore } from '@renderer/store'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../../../shared/constants'
+import type { IntegrationCredentialStatus } from '../../../../shared/integration-credentials.types'
 import { McpExplainerBanner, IntegrationCard } from './integrations'
 
 /**
@@ -15,19 +16,29 @@ export default function IntegrationsPage(): React.JSX.Element {
     Record<string, { checked: boolean; found: boolean; path?: string }>
   >({})
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [credentialStatuses, setCredentialStatuses] = useState<
+    Record<string, IntegrationCredentialStatus>
+  >({})
+
+  const workspaceId = activeWorkspace?.id ?? null
 
   // Load workspace settings
-  useEffect(() => {
-    if (!activeWorkspace) return
+  const reloadSettings = useCallback(() => {
+    if (!workspaceId) return
     window.api
-      .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
+      .getWorkspaceSettings({ workspaceId })
       .then(setSettings)
       .catch((err) => console.warn('[IntegrationsPage] Non-fatal: settings load failed:', err))
-  }, [activeWorkspace])
+  }, [workspaceId])
 
-  // Check CLI availability for all integrations
+  useEffect(() => {
+    reloadSettings()
+  }, [reloadSettings])
+
+  // Check CLI availability — bundled servers ship with the app, nothing to look up
   useEffect(() => {
     for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      if (integration.bundledServerEntry) continue
       window.api
         .checkExternalMcp({ command: integration.command })
         .then((result) => {
@@ -45,6 +56,30 @@ export default function IntegrationsPage(): React.JSX.Element {
         })
     }
   }, [])
+
+  // Load stored credential state — drives the "configured" badge and toggle gate
+  useEffect(() => {
+    if (!activeWorkspace) return
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      if (!integration.credentialFields?.length) continue
+      window.api
+        .getIntegrationCredentialStatus({
+          workspaceId: activeWorkspace.id,
+          integrationId: integration.id
+        })
+        .then((status) => setCredentialStatuses((prev) => ({ ...prev, [integration.id]: status })))
+        .catch((err) =>
+          console.warn('[IntegrationsPage] Non-fatal: credential status failed:', err)
+        )
+    }
+  }, [activeWorkspace])
+
+  const handleCredentialStatusChange = useCallback(
+    (integrationId: string, status: IntegrationCredentialStatus) => {
+      setCredentialStatuses((prev) => ({ ...prev, [integrationId]: status }))
+    },
+    []
+  )
 
   // Toggle handler — persists to workspace settings
   const handleToggle = useCallback(
@@ -99,6 +134,10 @@ export default function IntegrationsPage(): React.JSX.Element {
                   cliStatus={cliStatuses[integration.id] ?? { checked: false, found: false }}
                   onToggle={handleToggle}
                   savingId={savingId}
+                  workspaceId={workspaceId}
+                  credentialStatus={credentialStatuses[integration.id]}
+                  onCredentialStatusChange={handleCredentialStatusChange}
+                  onCredentialsCleared={reloadSettings}
                 />
               ))}
             </div>

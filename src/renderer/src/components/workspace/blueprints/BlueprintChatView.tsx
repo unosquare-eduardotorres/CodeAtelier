@@ -91,7 +91,8 @@ function BlueprintQARecord({
         <h3 className="text-xs font-semibold text-text-primary">Answers submitted</h3>
       </div>
       <div className="px-4 py-3 space-y-2">
-        {questions.map((q) => {
+        {/* Defensive: a malformed journal row must not take down the whole page. */}
+        {(Array.isArray(questions) ? questions : []).map((q) => {
           const state = answers[q.id]
           const isSkipped = !state || state.skipped
           const parts: string[] = state ? [...state.selectedOptions] : []

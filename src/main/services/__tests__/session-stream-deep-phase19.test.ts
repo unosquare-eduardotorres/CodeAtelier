@@ -1594,6 +1594,56 @@ if (loaded) {
     })
   })
 
+  // The constants above only say what the numbers are; these say which one a
+  // given mcpServers map actually gets. The extension is keyed on the registry's
+  // `longRunningTools` flag, so a REST-backed server (jira) must keep the base
+  // budget — stretching it there just delays a hung call by 20 minutes.
+  describe('AgentSessionService — buildStreamTimeout', () => {
+    const adapter = {
+      role: 'specialist' as const,
+      agentId: 'test-specialist',
+      buildSystemPrompt: () => '',
+      getGoalCondition: () => null,
+      getGoalMode: () => null,
+      buildMcpConfig: () => ({}),
+      getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
+      detectIntents: () => []
+    }
+
+    /** Build the timeout handle, immediately cancel its timer, return the budget. */
+    function budgetFor(mcpServers: Record<string, unknown> | undefined): number {
+      const session = new AgentSessionService(adapter as any)
+      const handle = (session as any).buildStreamTimeout(
+        mcpServers,
+        new AbortController(),
+        'conv-timeout'
+      )
+      handle.cancel()
+      return handle.timeoutMs
+    }
+
+    test('no_mcp_servers_uses_base_budget', () => {
+      assert.equal(budgetFor(undefined), 10 * 60000)
+      assert.equal(budgetFor({}), 10 * 60000)
+    })
+
+    test('jira_only_keeps_base_budget', () => {
+      assert.equal(budgetFor({ jira: {} }), 10 * 60000)
+    })
+
+    test('maestro_extends_to_30_minutes', () => {
+      assert.equal(budgetFor({ maestro: {} }), 30 * 60000)
+    })
+
+    test('mixed_servers_extend_when_any_is_long_running', () => {
+      assert.equal(budgetFor({ jira: {}, maestro: {} }), 30 * 60000)
+    })
+
+    test('unknown_server_ids_do_not_extend', () => {
+      assert.equal(budgetFor({ 'some-other-mcp': {} }), 10 * 60000)
+    })
+  })
+
   describe('AgentSessionService — getStatus shape', () => {
     test('getStatus_returns_complete_shape', () => {
       const adapter = {

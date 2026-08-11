@@ -22,6 +22,7 @@ function formatMB(bytes: number): string {
 const HERO: Record<string, { gradient: string; accent: string }> = {
   available: { gradient: 'from-primary/30 via-info/25 to-primary/30', accent: 'text-primary' },
   downloading: { gradient: 'from-info/30 via-primary/25 to-info/30', accent: 'text-info' },
+  staging: { gradient: 'from-info/30 via-primary/25 to-info/30', accent: 'text-info' },
   ready: { gradient: 'from-success/30 via-info/25 to-success/30', accent: 'text-success' },
   error: { gradient: 'from-danger/25 via-danger/15 to-danger/25', accent: 'text-danger' }
 }
@@ -74,11 +75,13 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
   const title =
     status === 'downloading'
       ? 'Downloading Update'
-      : status === 'ready'
-        ? 'Ready to Install'
-        : status === 'error'
-          ? 'Update Error'
-          : 'Update Available'
+      : status === 'staging'
+        ? 'Preparing Update'
+        : status === 'ready'
+          ? 'Ready to Install'
+          : status === 'error'
+            ? 'Update Error'
+            : 'Update Available'
 
   return (
     <div
@@ -101,7 +104,7 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
           <div
             className={`update-icon-pulse relative z-10 w-14 h-14 rounded-2xl bg-surface-float/80 border border-border-subtle flex items-center justify-center ${hero.accent}`}
           >
-            {status === 'downloading' ? (
+            {status === 'downloading' || status === 'staging' ? (
               <RefreshCw size={26} className="animate-spin" />
             ) : status === 'ready' ? (
               /* Stroke-drawn checkmark — reads as "finished", not just "green". */
@@ -216,6 +219,29 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
             </div>
           )}
 
+          {/* Preparing — downloaded, but the OS is still staging it.
+              Deliberately no restart button: quitAndInstall() is a no-op until
+              staging completes, so offering it here is offering a dead click. */}
+          {status === 'staging' && (
+            <div data-testid="update-staging" className="flex flex-col items-center gap-3">
+              <p className="text-sm text-text-primary text-center">
+                <span className="font-semibold">v{availableVersion}</span> is downloaded — preparing
+                it for install…
+              </p>
+              <p className="text-[11px] text-text-muted text-center">
+                This takes a few seconds. The restart option appears as soon as it is ready.
+              </p>
+              <div className="w-full flex items-center justify-end">
+                <button
+                  onClick={closeModal}
+                  className="px-4 py-2 text-xs font-medium rounded-lg text-text-secondary hover:bg-surface-overlay transition-colors"
+                >
+                  Later
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Ready to install */}
           {status === 'ready' && (
             <>
@@ -226,12 +252,7 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
                 </p>
                 {isCountingDown ? (
                   <p className="text-xs text-text-secondary tabular-nums">
-                    {/* At zero the install is dispatched but the platform may still be
-                        staging (macOS/Squirrel fetches the zip after announcing the
-                        download) — promising an instant restart would be a lie. */}
-                    {installCountdown === 0
-                      ? 'Finishing up — the app will restart on its own.'
-                      : `Restarting in ${installCountdown}…`}
+                    {`Restarting in ${installCountdown}…`}
                   </p>
                 ) : (
                   <p className="text-xs text-text-secondary">

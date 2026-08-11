@@ -32,6 +32,8 @@ interface MockHost {
   effectiveContextWindow: number
   adapter: { role: string; agentId: string }
   cliExecutor: { isAlive: () => boolean; getSpawnSignature: () => SpawnSignature | null }
+  /** Per-conversation cwd. The factory spawns here instead of `workspacePath`. */
+  resolveExecutionPath: (conversationId?: string) => string
   log: {
     info: (...a: unknown[]) => void
     warn: (...a: unknown[]) => void
@@ -71,6 +73,9 @@ function makeHost(opts: {
       isAlive: () => opts.alive,
       getSpawnSignature: () => signature
     },
+    // No worktree in these tests, so the workspace root is the execution path —
+    // matching what AgentSessionService returns for an unisolated conversation.
+    resolveExecutionPath: () => '/test/ws',
     log: { info: () => {}, warn: () => {}, error: () => {} }
   }
 }

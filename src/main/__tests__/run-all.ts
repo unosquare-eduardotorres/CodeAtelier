@@ -229,6 +229,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-verify-adapter.test',
   '../services/__tests__/repo-service-pure.test',
   '../services/__tests__/repo-service-git.test',
+  '../services/__tests__/track.service.test',
+  '../services/__tests__/worktree-isolation-default.test',
   '../../renderer/src/store/__tests__/code-changes-errors.test',
   '../services/__tests__/file-diff-state.test',
   '../services/__tests__/file-change-list-state.test',
@@ -343,6 +345,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/ipc-bridge-tcp.test',
   // ─── Blueprint clarify ask_user bridge ───
   '../services/__tests__/blueprint-clarify-askuser.test',
+  // ─── Blueprint clarify question re-surfacing + findings-only nudge ───
+  '../services/__tests__/blueprint-clarify-resurface.test',
   // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
   '../services/__tests__/memory-extraction-content.test',
   '../services/__tests__/blueprint-memory-hooks.test',
@@ -376,6 +380,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/mcp-servers-deep.test',
   // ─── Phase 20A: Coverage Mega-Push VI — giant services deep ───
   '../services/__tests__/agent-session-body-deep.test',
+  // Read-after-send contract: response text must survive MEMLEAK-01 teardown
+  '../services/__tests__/session-last-turn-text.test',
   '../services/__tests__/chat-stream-body-deep.test',
   '../services/__tests__/code-analysis-handlers.test',
   '../services/__tests__/blueprint-spec-deep.test',
@@ -390,6 +396,11 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/ipc-workspace-agent-handlers.test',
   '../services/__tests__/ipc-grill-audit-council-handlers.test',
   '../services/__tests__/ipc-remaining-handlers.test',
+  '../services/__tests__/ipc-track-handlers.test',
+  '../services/__tests__/mcp-config-worktree.test',
+  '../services/__tests__/blueprint-track.test',
+  '../services/__tests__/landing.service.test',
+  '../services/__tests__/track-claims.test',
   // ─── Blueprint Environment Preflight ───
   '../services/__tests__/blueprint-preflight.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
@@ -454,6 +465,7 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Phase 25: Wave 1 — Giant Services Deep Body Coverage ───
   '../services/__tests__/blueprint-build-deep-phase25.test',
   '../services/__tests__/agent-session-deep-phase25.test',
+  '../services/__tests__/turn-poison.test',
   '../services/__tests__/chat-stream-deep-phase25.test',
   '../services/__tests__/opencode-executor-deep-phase25.test',
   '../services/__tests__/vector-search-deep-phase25.test',
@@ -606,7 +618,6 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/event-logger-sequence.test',
   '../services/__tests__/event-logger.service.test',
   '../services/__tests__/file-service-utils.test',
-  '../services/__tests__/git-sandbox.test',
   '../services/__tests__/github-service-checks.test',
   '../services/__tests__/grill-prompt-blocks.test',
   '../services/__tests__/grill-prompt-builders.test',
@@ -631,6 +642,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/recall-server.test',
   '../services/__tests__/background-task-watcher.test',
   '../ipc/__tests__/process-ipc.test',
+  // ─── Jira MCP integration (credentials, connection test, bundled server) ───
+  '../services/__tests__/integration-credentials.test',
+  '../services/__tests__/jira-connection-test.test',
+  '../services/__tests__/external-mcp-mount.test',
+  '../services/__tests__/ipc-integrations-handlers.test',
+  '../mcp-servers/__tests__/jira-server.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
@@ -640,6 +657,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
   '../../renderer/src/components/workspace/memory/facts/__tests__/facts-model.test',
   '../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
+  '../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
   '../services/__tests__/repo-service-utils.test',
@@ -717,7 +735,8 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/core-agent-prompt.repository.test',
   '../db/repositories/__tests__/mpa-artifact.repository.test',
   '../db/repositories/__tests__/turn-usage.repository.test',
-  '../db/repositories/__tests__/user-profile.repository.test'
+  '../db/repositories/__tests__/user-profile.repository.test',
+  '../db/repositories/__tests__/track.repository.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

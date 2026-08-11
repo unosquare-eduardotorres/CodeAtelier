@@ -349,7 +349,9 @@ export class AgentExecutorFactory {
         systemPrompt,
         permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
         model: resolvedModel,
-        cwd: this.s.workspacePath!,
+        // Per-conversation, not the session-wide workspace: two conversations
+        // on different branches must spawn in different directories.
+        cwd: this.s.resolveExecutionPath(this.s.currentConversationId ?? undefined),
         abortController,
         agentId: this.s.adapter.agentId,
         effort: desiredEffort,
@@ -415,7 +417,7 @@ export class AgentExecutorFactory {
       prompt,
       systemPrompt,
       model: resolvedModel,
-      cwd: this.s.workspacePath!,
+      cwd: this.s.resolveExecutionPath(this.s.currentConversationId ?? undefined),
       permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
       allowedTools,
       disallowedTools,
@@ -494,6 +496,10 @@ export class AgentExecutorFactory {
 
       const configPath = this.s.mcpConfigWriter.writeConfig({
         workspacePath: this.s.workspacePath!,
+        // The same path the CLI is spawned with (see `cwd` above). MCP servers
+        // are separate processes and do not inherit it, so the per-tree ones
+        // have to be told explicitly or they answer about the primary tree.
+        executionPath: this.s.resolveExecutionPath(this.s.currentConversationId ?? undefined),
         workspaceId: this.s.workspaceId,
         conversationId: this.s.currentConversationId,
         mode: this.s.currentMode,

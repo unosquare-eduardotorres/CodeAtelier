@@ -194,6 +194,8 @@ const TEST_FILES: string[] = [
   './blueprint-verify-adapter.test',
   './repo-service-pure.test',
   './repo-service-git.test',
+  './track.service.test',
+  './worktree-isolation-default.test',
   '../../../renderer/src/store/__tests__/code-changes-errors.test',
   './file-diff-state.test',
   './file-change-list-state.test',
@@ -312,6 +314,8 @@ const TEST_FILES: string[] = [
   './ipc-bridge-tcp.test',
   // ─── Blueprint clarify ask_user bridge (B1–B4 fixes) ───
   './blueprint-clarify-askuser.test',
+  // ─── Blueprint clarify question re-surfacing + findings-only nudge ───
+  './blueprint-clarify-resurface.test',
   // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
   './memory-extraction-content.test',
   './blueprint-memory-hooks.test',
@@ -353,6 +357,8 @@ const TEST_FILES: string[] = [
   './notification.service.test',
   // ─── Phase 20A: Coverage Mega-Push VI — giant services deep ───
   './agent-session-body-deep.test',
+  // Read-after-send contract: response text must survive MEMLEAK-01 teardown
+  './session-last-turn-text.test',
   './chat-stream-body-deep.test',
   './code-analysis-handlers.test',
   './blueprint-spec-deep.test',
@@ -367,6 +373,11 @@ const TEST_FILES: string[] = [
   './ipc-workspace-agent-handlers.test',
   './ipc-grill-audit-council-handlers.test',
   './ipc-remaining-handlers.test',
+  './ipc-track-handlers.test',
+  './mcp-config-worktree.test',
+  './blueprint-track.test',
+  './landing.service.test',
+  './track-claims.test',
   // ─── MCP tool error handling + native module smoke ───
   '../../mcp-servers/__tests__/mcp-tool-error-handling.test',
   '../../mcp-servers/__tests__/native-module-smoke.test',
@@ -454,6 +465,7 @@ const TEST_FILES: string[] = [
   // ─── Phase 25: Wave 1 — Giant Services Deep Body Coverage ───
   './blueprint-build-deep-phase25.test',
   './agent-session-deep-phase25.test',
+  './turn-poison.test',
   './chat-stream-deep-phase25.test',
   './opencode-executor-deep-phase25.test',
   './vector-search-deep-phase25.test',
@@ -574,7 +586,6 @@ const TEST_FILES: string[] = [
   './event-logger-formatters.test',
   './event-logger.service.test',
   './file-service-utils.test',
-  './git-sandbox.test',
   './github-service-checks.test',
   './grill-prompt-builders.test',
   './handoff-base-adapter-envelope.test',
@@ -612,10 +623,18 @@ const TEST_FILES: string[] = [
   './prompt-builder-extractors.test',
   './prompt-builder-local.test',
   './workspace-mcp-config-builder.test',
+  // ─── Jira MCP integration (credentials, connection test, bundled server) ───
+  './integration-credentials.test',
+  './jira-connection-test.test',
+  './external-mcp-mount.test',
+  './ipc-integrations-handlers.test',
+  '../../mcp-servers/__tests__/jira-server.test',
   // ─── Plan section icon ids ───
   '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   // ─── Inline vs toast routing for permission requests ───
-  '../../../renderer/src/lib/__tests__/permission-routing.test'
+  '../../../renderer/src/lib/__tests__/permission-routing.test',
+  // ─── BuildActionBar visibility (plan actioned / build running) ───
+  '../../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

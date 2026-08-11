@@ -80,6 +80,11 @@ export const capturedHandlers = {
 /** Events sent via BrowserWindow.webContents.send */
 export const sentEvents: Array<{ channel: string; data: unknown }> = []
 
+/** Paths passed to `shell.showItemInFolder`, newest last. */
+export function getRevealedPaths(): string[] {
+  return getMock().__shellRevealed
+}
+
 /** Mock event that passes validateSender */
 export const mockEvent = {
   senderFrame: { url: 'file:///app/index.html' }
@@ -111,6 +116,7 @@ export function resetStub(): void {
   getHandlers().clear()
   getMock().__capturedOnHandlers.clear()
   getMock().__sentEvents.length = 0
+  getMock().__shellRevealed.length = 0
   sentEvents.length = 0
 }
 

@@ -5,7 +5,6 @@ interface BuildActionBarProps {
   onSaveAsIdea?: () => void
   onRefine?: () => void
   onCouncilReview?: () => void
-  onUserClicked: () => void
   /** When true, shows a "Saved to Plans" indicator */
   savedToPlans?: boolean
 }
@@ -15,7 +14,6 @@ export default function BuildActionBar({
   onSaveAsIdea,
   onRefine,
   onCouncilReview,
-  onUserClicked,
   savedToPlans
 }: BuildActionBarProps): React.JSX.Element {
   return (
@@ -25,10 +23,7 @@ export default function BuildActionBar({
     >
       {onBuildNow && (
         <button
-          onClick={() => {
-            onUserClicked()
-            onBuildNow()
-          }}
+          onClick={onBuildNow}
           className="flex items-center justify-center gap-1.5 min-w-[110px] px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-mode-build/50 press-scale"
         >
           <Hammer size={14} />
@@ -37,10 +32,7 @@ export default function BuildActionBar({
       )}
       {onCouncilReview && (
         <button
-          onClick={() => {
-            onUserClicked()
-            onCouncilReview()
-          }}
+          onClick={onCouncilReview}
           className="flex items-center justify-center gap-1.5 min-w-[110px] px-4 py-1.5 bg-purple-600/80 hover:bg-purple-600 text-white rounded text-sm font-medium transition-colors press-scale"
         >
           <Landmark size={14} />
@@ -49,10 +41,7 @@ export default function BuildActionBar({
       )}
       {onSaveAsIdea && (
         <button
-          onClick={() => {
-            onUserClicked()
-            onSaveAsIdea()
-          }}
+          onClick={onSaveAsIdea}
           className="flex items-center justify-center gap-1.5 min-w-[110px] px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
         >
           <Lightbulb size={14} />
@@ -61,10 +50,7 @@ export default function BuildActionBar({
       )}
       {onRefine && (
         <button
-          onClick={() => {
-            onUserClicked()
-            onRefine()
-          }}
+          onClick={onRefine}
           className="flex items-center justify-center gap-1.5 min-w-[110px] px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
         >
           <RefreshCw size={14} />

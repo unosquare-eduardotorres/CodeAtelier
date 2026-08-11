@@ -1447,7 +1447,11 @@ class CodeGraphService extends EventEmitter {
       body: string
     }[]
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
+      // electron-vite bundling; this throws MODULE_NOT_FOUND at runtime.
+      // Convertible to a static import (the repositories barrel pulls in no
+      // services), but out of scope for the current fix. Tracked separately.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
       const { codeChunkRepository } = require('../db/repositories') as {
         codeChunkRepository: { db: () => import('better-sqlite3').Database }
       }
@@ -1554,7 +1558,10 @@ class CodeGraphService extends EventEmitter {
 
     // 4. Shrink SQLite page cache after the heavy write burst
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy to avoid a load-time circular import
+      // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
+      // electron-vite bundling, so this best-effort shrink never runs.
+      // Tracked separately.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
       const { getDatabase } = require('../db')
       getDatabase().pragma('shrink_memory')
     } catch {

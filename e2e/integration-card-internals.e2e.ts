@@ -135,6 +135,9 @@ test.describe('Integration Card Internals', () => {
       const hasToggle = await toggle.isVisible({ timeout: 1_000 }).catch(() => false)
 
       if (!hasToggle) continue
+      // A card whose credentials are unset renders a disabled toggle; clicking it
+      // would block until the action timeout rather than fail fast.
+      if (!(await toggle.isEnabled().catch(() => false))) continue
 
       // Check if disabled (no bg-accent class)
       const classes = await toggle.getAttribute('class')

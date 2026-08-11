@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 138
+export const CURRENT_SCHEMA_VERSION = 142
 
 export interface Migration {
   version: number
@@ -4054,6 +4054,210 @@ export const migrations: Migration[] = [
       `)
 
       dbLogger.info('[migration-138] ✓ Narrowed memory_facts_fts_au to title/content/tags changes')
+    }
+  },
+
+  // ── Migration 139: Per-conversation git worktrees ──
+  {
+    version: 139,
+    name: 'chat-worktrees',
+    up: (db) => {
+      // `conversations.branch_name` has recorded a branch per chat since v6, but
+      // nothing enforced it: every conversation's CLI ran with cwd = workspace
+      // root, and MAX_CONCURRENT_STREAMS allows three of them at once. Three
+      // writers, one HEAD — work begun on one branch could be committed to
+      // another with no error anywhere. This table binds a conversation to a
+      // real directory so the branch it claims is the branch it writes to.
+      //
+      // Note this is NOT a revival of `agent_worktrees` (v9, dropped in v66).
+      // That table was keyed per *specialist* for a pool of parallel agents
+      // sharing one chat. This is keyed per *conversation*, which is the unit
+      // that actually owns a branch.
+      //
+      // Two uniqueness rules, both load-bearing:
+      //   conversation_id            — one tree per conversation.
+      //   (workspace_id, branch_name) — git itself refuses to check the same
+      //                                 branch out in two worktrees, so the DB
+      //                                 rejects it first with a clear error
+      //                                 instead of surfacing a raw git failure.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chat_worktrees (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+          branch_name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_worktrees_branch
+          ON chat_worktrees(workspace_id, branch_name);
+        CREATE INDEX IF NOT EXISTS idx_chat_worktrees_status
+          ON chat_worktrees(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-139] ✓ Created chat_worktrees')
+    }
+  },
+
+  // ── Migration 140: Retained worktrees survive their conversation ──
+  {
+    version: 140,
+    name: 'chat-worktrees-retained',
+    disableForeignKeys: true,
+    up: (db) => {
+      // v139 declared `conversation_id NOT NULL ... ON DELETE CASCADE`, which
+      // made "never lose uncommitted work" impossible to honour. Teardown on
+      // chat close/delete now parks a dirty tree as `retained` instead of
+      // running `worktree remove --force` over it — but the conversation row is
+      // deleted moments later, and CASCADE took the only record of the
+      // directory with it. The tree survived on disk with nothing pointing at
+      // it: not reapable, not listable, not findable by branch, so the next
+      // chat wanting that branch got a raw git error instead of a clear
+      // "already checked out" message.
+      //
+      // SET NULL keeps the row. A retained tree is parked work, not a chat's
+      // execution target, so losing the conversation link is the correct
+      // semantics rather than a workaround. UNIQUE still holds: SQLite permits
+      // multiple NULLs in a unique index, so any number of trees can be parked.
+      //
+      // SQLite cannot alter a foreign key in place — the table must be rebuilt.
+      db.exec(`
+        CREATE TABLE chat_worktrees_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          conversation_id TEXT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
+          branch_name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+
+        INSERT INTO chat_worktrees_new
+          (id, workspace_id, conversation_id, branch_name, path,
+           base_branch, status, created_at, last_used_at)
+        SELECT id, workspace_id, conversation_id, branch_name, path,
+               base_branch, status, created_at, last_used_at
+          FROM chat_worktrees;
+
+        DROP TABLE chat_worktrees;
+        ALTER TABLE chat_worktrees_new RENAME TO chat_worktrees;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_worktrees_branch
+          ON chat_worktrees(workspace_id, branch_name);
+        CREATE INDEX IF NOT EXISTS idx_chat_worktrees_status
+          ON chat_worktrees(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-140] ✓ chat_worktrees.conversation_id is nullable (SET NULL)')
+    }
+  },
+
+  // ── Migration 141: chat_worktrees → work_tracks (owner-keyed) ──
+  {
+    version: 141,
+    name: 'work-tracks',
+    up: (db) => {
+      // `conversation_id REFERENCES conversations(id)` was the wrong key.
+      //
+      // It is why v140 needed a SET NULL escape hatch: retained work outlives
+      // the chat that produced it, so the owning row has to be able to have no
+      // owner. And it locks the table to chats. A blueprint run is not a
+      // conversation and a synthetic id like `blueprint-build-<id>-<task>` is
+      // not a row, so the FK rejects every non-chat writer outright — which is
+      // precisely the set of writers (Blueprint BUILD/VERIFY, MPA execute) that
+      // most needs its own tree, because they write to the user's own checkout.
+      //
+      // A *track* is one unit of parallel work: one branch, one worktree, one
+      // owner. The owner is identified structurally (`owner_kind`) rather than
+      // relationally, and there is deliberately NO foreign key: an owner may be
+      // a row in another table, a synthetic run id, or nothing at all once the
+      // work is retained.
+      //
+      // UNIQUE(owner_kind, owner_id) replaces UNIQUE(conversation_id). SQLite
+      // permits multiple NULLs in a unique index, so any number of retained
+      // tracks can sit ownerless side by side.
+      //
+      // landing_mode / landed_at / landed_into are the columns the landing
+      // phase needs. They are added now, unused, because a second rebuild of
+      // this table later is a migration nobody should have to write twice.
+      db.exec(`
+        CREATE TABLE work_tracks (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          owner_kind TEXT NOT NULL,
+          owner_id TEXT,
+          branch_name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          landing_mode TEXT,
+          landed_at TEXT,
+          landed_into TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+
+        INSERT INTO work_tracks
+          (id, workspace_id, owner_kind, owner_id, branch_name, path,
+           base_branch, status, created_at, last_used_at)
+        SELECT id, workspace_id, 'chat', conversation_id, branch_name, path,
+               base_branch, status, created_at, last_used_at
+          FROM chat_worktrees;
+
+        DROP TABLE chat_worktrees;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_tracks_owner
+          ON work_tracks(owner_kind, owner_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_tracks_branch
+          ON work_tracks(workspace_id, branch_name);
+        CREATE INDEX IF NOT EXISTS idx_work_tracks_status
+          ON work_tracks(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-141] ✓ chat_worktrees → work_tracks (owner_kind/owner_id)')
+    }
+  },
+
+  // ── Migration 142: which files each track has touched ──
+  {
+    version: 142,
+    name: 'track-file-claims',
+    up: (db) => {
+      // Blueprint's wave scheduler already refuses to run two tasks that touch
+      // the same file, and that guard is the reason parallel BUILD is safe. It
+      // is also scoped to a single wave: it has no idea chats, other blueprints
+      // or campaigns exist, so two *tracks* editing the same file is invisible
+      // until one of them tries to land and gets a merge conflict — hours later,
+      // with both sets of work already written.
+      //
+      // This table is the cheap generalisation: record what each track has
+      // touched, and the same overlap check that guards a wave can warn across
+      // the whole workspace. Prediction only — nothing is blocked on it.
+      //
+      // (track_id, file_path) is the primary key so re-recording a turn is an
+      // upsert rather than unbounded growth, and first_seen_at survives it:
+      // "who touched this first" is the question a user asks when two tracks
+      // collide. Rows die with their track via ON DELETE CASCADE.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS track_file_claims (
+          track_id TEXT NOT NULL REFERENCES work_tracks(id) ON DELETE CASCADE,
+          file_path TEXT NOT NULL,
+          first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (track_id, file_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_track_file_claims_path
+          ON track_file_claims(file_path);
+      `)
+
+      dbLogger.info('[migration-142] ✓ Created track_file_claims')
     }
   }
 ]

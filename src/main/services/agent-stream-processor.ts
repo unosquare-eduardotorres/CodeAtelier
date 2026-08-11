@@ -65,7 +65,12 @@ export class AgentStreamProcessor {
       }
 
       this.s.sessionMap.set(conversationId, meta.sessionId)
-      this.s.log.info('Session captured for conversation:', conversationId)
+      // Log the id itself — without it, turn-boundary problems can only be
+      // inferred rather than observed.
+      this.s.log.info(
+        `[turn:session-captured] conversation=${conversationId} session=${meta.sessionId} ` +
+          `turn=${turnCount}`
+      )
       try {
         conversationRepository.updateSessionId(conversationId, meta.sessionId)
       } catch (err) {
