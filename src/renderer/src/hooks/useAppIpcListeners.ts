@@ -473,6 +473,7 @@ export function useAppIpcListeners(): void {
   const setDownloaded = useUpdateStore((s) => s.setDownloaded)
   const setProgress = useUpdateStore((s) => s.setProgress)
   const setError = useUpdateStore((s) => s.setError)
+  const setInstallFailed = useUpdateStore((s) => s.setInstallFailed)
   const onMemoryFeedProgress = useMemoryStore((s) => s.onFeedProgress)
   const loadProfile = useProfileStore((s) => s.loadProfile)
   const { loadPreferences } = useAppPreferenceActions()
@@ -546,6 +547,9 @@ export function useAppIpcListeners(): void {
       setProgress(progress.percent, progress.bytesPerSecond, progress.transferred, progress.total)
     )
     const unsubUpdateError = window.api.onUpdateError((message) => setError(message))
+    const unsubUpdateInstallFailed = window.api.onUpdateInstallFailed((message) =>
+      setInstallFailed(message)
+    )
     const unsubMemoryFeed = window.api.onMemoryFeedProgress((progress) =>
       onMemoryFeedProgress(progress)
     )
@@ -574,6 +578,7 @@ export function useAppIpcListeners(): void {
       unsubUpdateDownloaded()
       unsubUpdateProgress()
       unsubUpdateError()
+      unsubUpdateInstallFailed()
       unsubMemoryFeed()
       unsubLspDiagnostics()
       unsubHookLifecycle()
@@ -592,6 +597,7 @@ export function useAppIpcListeners(): void {
     setDownloaded,
     setProgress,
     setError,
+    setInstallFailed,
     onMemoryFeedProgress
   ])
 }

@@ -38,6 +38,12 @@ const MIN_CHECK_GAP_MS = 15 * 60 * 1000
  * stuck on Preparing with no way out.
  */
 const STAGING_TIMEOUT_MS = 120_000
+/**
+ * How long doInstall() gets to end this process before we assume the install
+ * never started. A successful install kills us long before this fires — the
+ * quit path itself is bounded by the 5s failsafe in index.ts.
+ */
+const INSTALL_WATCHDOG_MS = 10_000
 
 class AutoUpdateService {
   private mainWindow: BrowserWindow | null = null
@@ -85,6 +91,8 @@ class AutoUpdateService {
   private downloadedVersion: string | null = null
   /** Staging watchdog handle, non-null while waiting on Squirrel. */
   private stagingTimer: ReturnType<typeof setTimeout> | null = null
+  /** Install watchdog handle, non-null between a dispatched install and its deadline. */
+  private installTimer: ReturnType<typeof setTimeout> | null = null
 
   init(mainWindow: BrowserWindow): void {
     this.mainWindow = mainWindow
@@ -416,6 +424,7 @@ class AutoUpdateService {
   async dispose(): Promise<void> {
     this.stopPeriodicChecks()
     this.clearStagingTimer()
+    this.clearInstallTimer()
     await this.stopFeedServer()
   }
 
@@ -505,8 +514,9 @@ class AutoUpdateService {
   /**
    * Install now and come back on the new version. `(isSilent, isForceRunAfter)`:
    * silent skips the Windows NSIS installer UI (the build is oneClick, so there
-   * is nothing to configure), force-run-after relaunches us afterwards. macOS
-   * Squirrel ignores both and always relaunches — same felt behaviour.
+   * is nothing to configure), force-run-after relaunches us afterwards. MacUpdater
+   * takes no arguments at all — there the call only arms Squirrel's relaunch, and
+   * doInstall() has to end the process itself.
    *
    * On macOS before Squirrel has staged, quitAndInstall() is a documented no-op,
    * so the request is remembered and dispatched by announceReady() instead.
@@ -526,7 +536,54 @@ class AutoUpdateService {
 
   private doInstall(): void {
     updateLogger.info('Installing update and restarting...')
+    this.armInstallWatchdog()
     autoUpdater.quitAndInstall(true, true)
+
+    // Windows/Linux: BaseUpdater spawned the installer and quits by itself.
+    // Quitting again here would race that spawn.
+    if (process.platform !== 'darwin') return
+
+    // macOS: quitAndInstall() routes to MacUpdater.handleUpdateDownloaded(), which
+    // closes the proxy server and delegates to the native updater — then returns,
+    // leaving us running. (Observed: the click logged 'Closing proxy server' 15ms
+    // later and nothing else — no before-quit markers at all.) ShipIt is already
+    // armed and watching this PID, so ending the process is what applies the swap.
+    // app.quit() and not app.exit(0): before-quit is where sessions are stopped and
+    // the DB WAL is checkpointed, and it ends in app.exit(0) anyway.
+    app.quit()
+  }
+
+  /**
+   * installRequested is a latch with no owner but process death. A click that
+   * failed to terminate us left it set for the rest of the session, so every
+   * later press of Restart bounced off it silently. Release it if we survive.
+   */
+  private armInstallWatchdog(): void {
+    this.clearInstallTimer()
+    this.installTimer = setTimeout(() => this.onInstallStalled(), INSTALL_WATCHDOG_MS)
+    this.installTimer.unref?.()
+  }
+
+  private clearInstallTimer(): void {
+    if (this.installTimer) {
+      clearTimeout(this.installTimer)
+      this.installTimer = null
+    }
+  }
+
+  private onInstallStalled(): void {
+    this.installTimer = null
+    updateLogger.error(
+      `Install did not start within ${INSTALL_WATCHDOG_MS / 1000}s — the app is still running`
+    )
+    this.installRequested = false
+    // Not UPDATE_ERROR: that flips the modal to 'error' and removes the very button
+    // the user needs. This failure is retryable, and quitting installs it regardless.
+    const version = this.downloadedVersion ? ` v${this.downloadedVersion}` : ''
+    this.mainWindow?.webContents.send(
+      IPC_CHANNELS.UPDATE_INSTALL_FAILED,
+      `The update could not start. Quit and reopen Code Atelier to finish installing${version}.`
+    )
   }
 
   /**
@@ -540,9 +597,9 @@ class AutoUpdateService {
     if (!this.updateDownloaded) return
     // macOS needs nothing here: autoInstallOnAppQuit already had MacUpdater stage
     // the update with Squirrel, and ShipIt applies it when the process dies —
-    // app.exit(0) does not bypass that. Calling quitAndInstall() would instead
-    // take MacUpdater's autoRunAppAfterInstall path and RELAUNCH the app the user
-    // just quit (MacUpdater extends AppUpdater, so it ignores our arguments).
+    // app.exit(0) at index.ts:1000 satisfies that. Calling quitAndInstall() would
+    // instead route to handleUpdateDownloaded(), close the proxy server and arm
+    // autoRunAppAfterInstall — reopening the app the user just quit.
     if (process.platform === 'darwin') return
     updateLogger.info('Installing downloaded update on quit')
     try {

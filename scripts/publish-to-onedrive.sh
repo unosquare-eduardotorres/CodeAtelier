@@ -12,13 +12,17 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 # ── Resolve OneDrive path
-ONEDRIVE_DIR=""
-for candidate in "$HOME/Library/CloudStorage/OneDrive"*/Code\ Atelier; do
-  if [ -d "$candidate" ]; then
-    ONEDRIVE_DIR="$candidate"
-    break
-  fi
-done
+# Honour a pre-set ONEDRIVE_DIR so the script works against a differently-named
+# tenant folder (and so a dry run can point it at a scratch directory).
+ONEDRIVE_DIR="${ONEDRIVE_DIR:-}"
+if [ -z "$ONEDRIVE_DIR" ]; then
+  for candidate in "$HOME/Library/CloudStorage/OneDrive"*/Code\ Atelier; do
+    if [ -d "$candidate" ]; then
+      ONEDRIVE_DIR="$candidate"
+      break
+    fi
+  done
+fi
 
 if [ -z "$ONEDRIVE_DIR" ]; then
   echo "⚠ OneDrive 'Code Atelier' folder not found — skipping publish"
@@ -134,4 +138,50 @@ if [ $COPIED -eq 0 ]; then
 else
   echo "  ✅ Published $COPIED artifact(s) to OneDrive (v${VERSION})"
   echo "  📁 $ONEDRIVE_DIR/$VERSION/{mac,win}/"
+fi
+
+# ── Report what each channel now advertises
+# Each channel manifest is a single-version pointer, not a version history, and it
+# only moves when that platform's artifacts are actually built. So a mac-only
+# release leaves latest.yml describing the previous version, and Windows clients
+# keep being offered that older build — indefinitely, and silently. The per-file
+# "⊘ skipped" line above says so, but it scrolls past in the middle of a long
+# build log, so restate the outcome as the last thing this script prints.
+STALE_COUNT=0
+STALE_HINTS=""
+
+report_channel() {
+  local channel="$1" platform="$2" build_cmd="$3"
+  local live="$ONEDRIVE_DIR/${channel}"
+  local found
+
+  if [ ! -f "$live" ]; then
+    echo "    ⚠ ${platform}: no ${channel} in the feed"
+    STALE_COUNT=$((STALE_COUNT + 1))
+    STALE_HINTS="${STALE_HINTS}    → ${platform} has no feed entry at all — run ${build_cmd}
+"
+    return 0
+  fi
+
+  found="$(yml_version "$live")"
+  if [ "$found" = "$VERSION" ]; then
+    echo "    ✓ ${platform}: v${found} (current)"
+  else
+    echo "    ⚠ ${platform}: v${found:-unknown} — stale, this build is v${VERSION}"
+    STALE_COUNT=$((STALE_COUNT + 1))
+    STALE_HINTS="${STALE_HINTS}    → ${platform} clients stay on v${found:-unknown} — run ${build_cmd}
+"
+  fi
+}
+
+echo ""
+echo "  ▸ Feed channel status (what each platform will be offered)"
+report_channel "latest-mac.yml" "macOS"   "npm run build:mac"
+report_channel "latest.yml"     "Windows" "npm run build:win"
+
+if [ "$STALE_COUNT" -gt 0 ]; then
+  echo ""
+  echo "  ⚠ Not every channel is on v${VERSION}."
+  printf '%s' "$STALE_HINTS"
+  echo "    Release both platforms in one command: npm run build:release"
 fi

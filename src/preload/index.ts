@@ -1173,6 +1173,14 @@ const api = {
     }
   },
 
+  onUpdateInstallFailed: (callback: (message: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: string): void => callback(message)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_INSTALL_FAILED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_INSTALL_FAILED, handler)
+    }
+  },
+
   onUpdateDownloaded: (callback: (info: { version: string }) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, info: { version: string }): void =>
       callback(info)

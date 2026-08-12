@@ -710,6 +710,7 @@ interface Api {
   ) => () => void
   onUpdateNotAvailable: (callback: (info: { currentVersion?: string }) => void) => () => void
   onUpdateStaging: (callback: (info: { version: string }) => void) => () => void
+  onUpdateInstallFailed: (callback: (message: string) => void) => () => void
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
   onUpdateProgress: (
     callback: (progress: {

@@ -15,6 +15,10 @@
  *      anything, and quitAndInstall() is a no-op until it has. Every wasted click
  *      also left another listener behind, so the queued quitAndInstall() calls
  *      later raced into competing ShipIt processes (App Still Running Error).
+ *   5. On macOS "Restart now" armed the install and then did nothing forever:
+ *      MacUpdater.quitAndInstall() closes its proxy, delegates to the native
+ *      updater and returns — the app kept running, and because installRequested
+ *      is a latch, every later click was swallowed as a duplicate.
  *
  * Run: tsx src/main/services/__tests__/auto-update-service.test.ts
  */
@@ -106,8 +110,10 @@ const internals = autoUpdateService as unknown as {
   installRequested: boolean
   readyAnnounced: boolean
   downloadedVersion: string | null
+  installTimer: unknown
   maybeCheck: () => void
   checkForUpdates: (userInitiated?: boolean) => void
+  onInstallStalled: () => void
 }
 
 const MINUTE = 60_000
@@ -135,6 +141,31 @@ function withCheckSpy(fn: (getCount: () => number) => void): void {
   } finally {
     autoUpdateService.checkForUpdates = original
   }
+}
+
+/** Count app.quit() calls for the duration of one assertion. */
+function withQuitSpy(fn: (getCount: () => number) => void): void {
+  const original = electronMock.app.quit
+  let count = 0
+  electronMock.app.quit = (): void => {
+    count += 1
+  }
+  try {
+    fn(() => count)
+  } finally {
+    electronMock.app.quit = original
+  }
+}
+
+/** Bring a darwin install cycle to the point where quitAndInstall() would act. */
+function stageDarwinUpdate(): void {
+  initAs('darwin')
+  withPlatform('darwin', () => {
+    autoUpdaterMock.emit('update-downloaded', { version: '1.0.75' })
+    electronMock.__autoUpdaterMock.emit('update-downloaded')
+  })
+  autoUpdaterMock.reset()
+  sentEvents.length = 0
 }
 
 /**
@@ -403,6 +434,68 @@ describe('auto-update.service — macOS staging gate', () => {
 
     withPlatform('darwin', () => autoUpdateService.installUpdate())
     assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 1)
+  })
+})
+
+describe('auto-update.service — the install must actually end the process', () => {
+  test('darwin_install_quits_the_app', () => {
+    stageDarwinUpdate()
+
+    withQuitSpy((getQuits) => {
+      withPlatform('darwin', () => autoUpdateService.installUpdate())
+      // MacUpdater returns to a still-running app: ShipIt only swaps the bundle
+      // once this PID dies, so quitting is the install.
+      assert.equal(getQuits(), 1, 'expected exactly one app.quit()')
+    })
+  })
+
+  test('darwin_install_still_arms_the_relaunch', () => {
+    stageDarwinUpdate()
+
+    withQuitSpy(() => withPlatform('darwin', () => autoUpdateService.installUpdate()))
+    const calls = autoUpdaterMock.callsTo('quitAndInstall')
+    // The native call is the only thing that sets launchAfterInstallation —
+    // dropping it would guarantee the app never comes back.
+    assert.equal(calls.length, 1)
+    assert.deepEqual(calls[0].args, [true, true])
+  })
+
+  test('win32_install_leaves_termination_to_the_updater', () => {
+    initAs('win32')
+
+    withQuitSpy((getQuits) => {
+      withPlatform('win32', () => autoUpdateService.installUpdate())
+      // BaseUpdater spawns the installer and quits itself — a second quit here
+      // would race that spawn.
+      assert.equal(getQuits(), 0)
+    })
+  })
+
+  test('a_stalled_install_releases_the_latch_and_tells_the_renderer', () => {
+    stageDarwinUpdate()
+    withQuitSpy(() => withPlatform('darwin', () => autoUpdateService.installUpdate()))
+    assert.equal(internals.installRequested, true)
+
+    internals.onInstallStalled()
+
+    assert.equal(internals.installRequested, false, 'the latch must not outlive the attempt')
+    assert.deepEqual(channelsSent(), ['update:installFailed'])
+    // Not update:error — that flips the modal to 'error' and removes the button.
+    assert.match(String(sentEvents[0].data), /Quit and reopen/)
+  })
+
+  test('restart_works_again_after_a_stalled_install', () => {
+    stageDarwinUpdate()
+
+    withQuitSpy(() => {
+      withPlatform('darwin', () => autoUpdateService.installUpdate())
+      internals.onInstallStalled()
+      withPlatform('darwin', () => autoUpdateService.installUpdate())
+    })
+
+    // The bug: one dead click disabled Restart for the rest of the session,
+    // because installRequested was a latch nothing but process death could clear.
+    assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 2)
   })
 })
 

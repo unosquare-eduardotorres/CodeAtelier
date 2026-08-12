@@ -102,6 +102,50 @@ describe('isPlanLocked', () => {
   test('an empty-string planAction does not lock', () => {
     assert.equal(isPlanLocked({ planAction: '', execution: undefined }), false)
   })
+
+  test('REGRESSION: a stale in-flight phase does not lock once the chat is idle', () => {
+    // The bug: models routinely never emit the final emit_phase_progress, so a
+    // phase stays 'in_progress' and completeExecution never runs. Every plan
+    // after the first Build Now in the conversation stayed locked.
+    assert.equal(
+      isPlanLocked({ planAction: undefined, execution: exec(['in_progress']), buildIdle: true }),
+      false
+    )
+  })
+
+  test('a mid-build emit_plan still locks while the stream is live', () => {
+    // Preserves the fix isBuildRunning was added for: buildIdle is false while
+    // the agent is working, so the replacement plan message stays locked.
+    assert.equal(
+      isPlanLocked({ planAction: undefined, execution: exec(['in_progress']), buildIdle: false }),
+      true
+    )
+  })
+
+  test('planAction outranks buildIdle — the same plan never re-arms', () => {
+    assert.equal(
+      isPlanLocked({ planAction: 'build', execution: exec(['in_progress']), buildIdle: true }),
+      true
+    )
+  })
+
+  test('REGRESSION: a hydrated interrupted build is unlocked once idle', () => {
+    // chat.store rehydrates persisted phase statuses verbatim, so a build killed
+    // by a restart comes back as 'in_progress' with no completedAt.
+    assert.equal(
+      isPlanLocked({
+        planAction: undefined,
+        execution: exec(['completed', 'in_progress'], { completedAt: undefined }),
+        buildIdle: true
+      }),
+      false
+    )
+  })
+
+  test('omitting buildIdle preserves the previous behaviour', () => {
+    assert.equal(isPlanLocked({ planAction: undefined, execution: exec(['started']) }), true)
+    assert.equal(isPlanLocked({ planAction: undefined, execution: exec(['completed']) }), false)
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

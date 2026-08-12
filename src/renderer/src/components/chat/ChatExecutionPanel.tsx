@@ -399,6 +399,19 @@ function PlanTabContent({
     return undefined
   }, [activeMode, isCurrentlyStreaming])
 
+  // A build that left a phase 'in_progress' must not lock the NEXT plan forever.
+  // 2s of genuine idle distinguishes "build finished/interrupted" from the
+  // 50-200ms inter-phase gaps where isStreaming drops.
+  const [buildIdleStable, setBuildIdleStable] = useState(false)
+  useEffect(() => {
+    if (!isCurrentlyStreaming) {
+      const timer = setTimeout(() => setBuildIdleStable(true), 2000)
+      return () => clearTimeout(timer)
+    }
+    setBuildIdleStable(false)
+    return undefined
+  }, [isCurrentlyStreaming])
+
   // Parse structured plan
   const structuredPlan = useMemo<StructuredPlan | null>(() => {
     if (!planContent) return null
@@ -441,7 +454,11 @@ function PlanTabContent({
   // Hide the action bar / lock the goal card when this specific plan has been
   // actioned, or a build is actively running. See build-bar-visibility.ts for
   // why neither `activeMode` nor `!!execution` is the right signal.
-  const planLocked = isPlanLocked({ planAction: planActionTaken, execution })
+  const planLocked = isPlanLocked({
+    planAction: planActionTaken,
+    execution,
+    buildIdle: buildIdleStable
+  })
 
   // Goal state: user edit → plan's goal → derived fallback
   const [editedGoal, setEditedGoal] = useState<string | null>(null)

@@ -48,10 +48,20 @@ export function isBuildRunning(execution: ExecutionLike | undefined | null): boo
  * reload and is scoped to the specific plan on screen. `isBuildRunning` covers
  * the live build, including the 50-200ms gaps where `isStreaming` drops between
  * phases and a mid-build `emit_plan` has replaced the latest plan message.
+ *
+ * `buildIdle` is what stops `isBuildRunning` from locking forever: models often
+ * never emit the final `emit_phase_progress`, so a phase stays 'in_progress' and
+ * `completedAt` is never set — without this the bar was hidden for every plan
+ * after the first build in a conversation.
  */
 export function isPlanLocked(input: {
   planAction: string | undefined | null
   execution: ExecutionLike | undefined | null
+  /** True once the conversation has been idle long enough that an in-flight
+   *  phase status can only be stale — a build that ended without closing it. */
+  buildIdle?: boolean
 }): boolean {
-  return !!input.planAction || isBuildRunning(input.execution)
+  if (input.planAction) return true
+  if (input.buildIdle) return false
+  return isBuildRunning(input.execution)
 }

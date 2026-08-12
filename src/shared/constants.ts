@@ -297,6 +297,8 @@ export const IPC_CHANNELS = {
   UPDATE_STAGING: 'update:staging',
   UPDATE_DOWNLOADED: 'update:downloaded',
   UPDATE_ERROR: 'update:error',
+  /** The install was dispatched but the app is still running — retryable, unlike UPDATE_ERROR. */
+  UPDATE_INSTALL_FAILED: 'update:installFailed',
   UPDATE_PROGRESS: 'update:progress',
   UPDATE_INSTALL: 'update:install',
   UPDATE_DOWNLOAD: 'update:download',

@@ -112,6 +112,7 @@ npm run dev:restart   # Kill existing processes and restart dev
 npm run build         # Typecheck + production build
 npm run build:mac     # Package for macOS
 npm run build:win     # Package for Windows
+npm run build:release # Package + publish BOTH platforms (build:mac then build:win)
 npm run build:linux   # Package for Linux
 npm run typecheck     # TypeScript type checking
 npm run lint          # ESLint

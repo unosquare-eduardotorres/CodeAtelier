@@ -556,7 +556,16 @@ export const TOOL_PRIORITY_DIRECTIVE = `
 | Files by path pattern | Glob | — |
 
 Skip all of the above when the answer is already in context, the user named the file, or the task is a trivial edit.
-If a code-graph tool errors or returns empty, fall back immediately — do not retry it.`
+If a code-graph tool errors or returns empty, fall back immediately — do not retry it.
+
+### Inspection vs. execution
+Bash is for commands that change or produce state: builds, tests, linters, installs, git,
+and running scripts. Reading and searching the repo is not that — use Read, Grep and Glob,
+even when you have several things to check. Separate calls are cheap and come back
+structured; a \`grep … && echo === && ls …\` pipeline collapses them into one blob of text
+that the app cannot render, cite or resume from.
+Use the shell when there is genuinely no tool for the job — \`wc -l\`, \`git log\`, a script —
+not to answer several questions in one call.`
 
 /** Builder-specific variant — includes write-mode context (file_outline, find_references before changes) */
 export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
@@ -564,6 +573,15 @@ export const TOOL_PRIORITY_DIRECTIVE_BUILDER = `
 Prefer code graph tools (mcp__code-graph__file_outline, mcp__code-graph__find_references, mcp__code-graph__find_callers, mcp__code-graph__shortest_path) to understand structure before writing code.
 mcp__code-graph__file_outline before Read on large files. mcp__code-graph__find_references before changing signatures.
 Grep for exact strings, config values, or when code-graph returns nothing. Glob for finding files by pattern.
+
+### Inspection vs. execution
+Bash is for commands that change or produce state: builds, tests, linters, installs, git,
+and running scripts. Reading and searching the repo is not that — use Read, Grep and Glob,
+even when you have several things to check. Separate calls are cheap and come back
+structured; a \`grep … && echo === && ls …\` pipeline collapses them into one blob of text
+that the app cannot render, cite or resume from.
+Use the shell when there is genuinely no tool for the job — \`wc -l\`, \`git log\`, a script —
+not to answer several questions in one call.
 
 ## Finalization Checklist
 Before considering your work complete:

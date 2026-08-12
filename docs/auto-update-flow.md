@@ -87,7 +87,13 @@ sequenceDiagram
         Renderer->>Preload: window.api.installUpdate()
         Preload->>Main: ipcRenderer.invoke(update:install)
         Main->>Main: autoUpdater.quitAndInstall(true, true)
-        Note over Main: Silent install (no NSIS UI),<br/>app relaunches on the new version.<br/>Duplicate requests are ignored: two<br/>quitAndInstall() calls raced into competing<br/>ShipIt processes ("App Still Running Error").
+        Note over Main: Silent install (no NSIS UI). Windows/Linux:<br/>BaseUpdater spawns the installer and quits itself.<br/>Duplicate requests are ignored: two quitAndInstall()<br/>calls raced into competing ShipIt processes.
+        alt macOS
+            Main->>Main: app.quit() → before-quit → app.exit(0)
+            Note over Main: MacUpdater.quitAndInstall() closes its proxy,<br/>delegates to the native updater and RETURNS —<br/>the app kept running. ShipIt swaps the bundle<br/>only once this PID dies, so we end it ourselves.
+        end
+        Main->>Main: 10s install watchdog
+        Note over Main: If we are still alive, the install never started:<br/>the installRequested latch is cleared and<br/>update:installFailed keeps the Restart button<br/>usable instead of flipping the modal to 'error'.
     end
 
     rect rgb(40, 50, 60)
@@ -248,25 +254,59 @@ flowchart TB
 
 ## 4. Publishing Workflow
 
-How you release a new version for your buddy to receive:
+Releases are distributed through a shared OneDrive folder, not GitHub.
+`scripts/publish-to-onedrive.sh` runs automatically at the end of each platform
+build: it copies artifacts into `<version>/<platform>/` and rewrites that
+platform's channel manifest to point at them.
 
 ```mermaid
 flowchart LR
-    A["Bump version<br/>in package.json"] --> B["Build app<br/>npm run build:mac"]
-    B --> C["Publish to GitHub<br/>--publish always"]
-    C --> D["GitHub Release created<br/>v1.1.0"]
-    D --> E["Buddy's app checks<br/>latest-mac.yml"]
-    E --> F["Banner appears:<br/>Update available!"]
-    F --> G["Download + Install"]
+    A["npm run build:release"] --> B["build:mac<br/>bumps version, packages zip + dmg"]
+    B --> C["publish → 1.0.75/mac/<br/>rewrites latest-mac.yml"]
+    C --> D["build:win<br/>reuses version, packages setup.exe"]
+    D --> E["publish → 1.0.75/win/<br/>rewrites latest.yml"]
+    E --> F["Client reads its own channel<br/>via the loopback feed server"]
+    F --> G["Banner: Update available"]
 
     classDef step fill:#1e3a5f,stroke:#4a90d9,color:#ffffff
-    classDef github fill:#3d2d1a,stroke:#f59e0b,color:#ffffff
+    classDef feed fill:#2d1e4f,stroke:#8b5cf6,color:#ffffff
     classDef user fill:#1a3c34,stroke:#10b981,color:#ffffff
 
-    class A,B,C step
-    class D,E github
-    class F,G user
+    class A,B,D step
+    class C,E,F feed
+    class G user
 ```
+
+### Each channel is a single-version pointer
+
+`latest-mac.yml` and `latest.yml` are independent, and each holds **one version,
+not a history**. A client on 1.0.73 therefore jumps straight to whatever its own
+channel names — intermediate versions are skipped entirely, and no differential
+download is attempted (`disableDifferentialDownload` is set for the drive
+source).
+
+The corollary is the trap: a channel only advances when that platform's
+artifacts are actually built. Release 1.0.75 with `build:mac` alone and
+`latest.yml` still describes 1.0.74, so **every Windows client keeps being
+offered 1.0.74** — indefinitely. `publish-to-onedrive.sh` will not republish a
+manifest whose `version:` disagrees with the build (that would mint URLs into a
+`1.0.75/win/` folder holding no installer), and it ends every run with a
+per-channel summary so a half-finished release cannot pass unnoticed:
+
+```
+  ▸ Feed channel status (what each platform will be offered)
+    ✓ macOS: v1.0.75 (current)
+    ⚠ Windows: v1.0.74 — stale, this build is v1.0.75
+
+  ⚠ Not every channel is on v1.0.75.
+    → Windows clients stay on v1.0.74 — run npm run build:win
+    Release both platforms in one command: npm run build:release
+```
+
+Use `npm run build:release` to advance both channels in one command — `build:mac`
+first, because it owns the version bump, then `build:win`, which reuses it. The
+warning is advisory, never fatal: shipping one platform is a legitimate choice,
+it just must be a deliberate one.
 
 ---
 

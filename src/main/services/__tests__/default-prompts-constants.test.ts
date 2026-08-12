@@ -51,6 +51,7 @@ import {
   MODE_CONTEXT_SECTIONS_COMPACT,
   MODE_CONTEXT_SECTIONS_LEAN_COMPACT,
   TOOL_PRIORITY_DIRECTIVE,
+  TOOL_PRIORITY_DIRECTIVE_BUILDER,
   REPOMAP_UNINDEXED_NOTE,
   SEMANTIC_SEARCH_UNINDEXED_NOTE
 } from '../default-prompts'
@@ -290,6 +291,56 @@ describe('default-prompts — tool routing', () => {
       'missing skip clause'
     )
     assert.ok(TOOL_PRIORITY_DIRECTIVE.includes('do not retry it'), 'missing no-retry clause')
+  })
+
+  const toolPriorityVariants = [
+    ['TOOL_PRIORITY_DIRECTIVE', TOOL_PRIORITY_DIRECTIVE],
+    ['TOOL_PRIORITY_DIRECTIVE_BUILDER', TOOL_PRIORITY_DIRECTIVE_BUILDER]
+  ] as const
+
+  for (const [name, directive] of toolPriorityVariants) {
+    test(`${name} separates inspection from execution`, () => {
+      // Multi-part turns collapse into a single `grep … && echo === && ls …`
+      // Bash pipeline unless the prompt says reading the repo is not a shell job.
+      assert.ok(directive.includes('### Inspection vs. execution'), 'missing inspection section')
+      assert.ok(
+        directive.includes('Bash is for commands that change or produce state'),
+        'missing execution definition'
+      )
+      assert.ok(
+        directive.includes('use Read, Grep and Glob'),
+        'must route repo reading/searching to Read, Grep and Glob'
+      )
+      assert.ok(
+        directive.includes('even when you have several things to check'),
+        'must address multi-question turns, which are the regression case'
+      )
+    })
+
+    test(`${name} keeps an escape hatch for legitimate shell use`, () => {
+      // Rule + rationale + escape hatch, never a bare prohibition: an agent that
+      // skips `npm test` because it read "don't use Bash" is worse than the status quo.
+      assert.ok(
+        directive.includes('Use the shell when there is genuinely no tool for the job'),
+        'missing shell escape hatch'
+      )
+      assert.ok(
+        directive.includes('not to answer several questions in one call'),
+        'escape hatch must be bounded by the actual failure mode'
+      )
+      assert.ok(!/\bNever\b/.test(directive), 'must not read as a hard mandate')
+    })
+  }
+
+  test('TOOL_PRIORITY_DIRECTIVE_BUILDER still sanctions Bash for the finalization checklist', () => {
+    assert.ok(
+      TOOL_PRIORITY_DIRECTIVE_BUILDER.includes('## Finalization Checklist'),
+      'builder variant must retain the checklist'
+    )
+    assert.ok(
+      TOOL_PRIORITY_DIRECTIVE_BUILDER.includes('npm run typecheck'),
+      'typecheck/lint/test commands are exactly the Bash usage the rule must preserve'
+    )
   })
 
   test('SEMANTIC_SEARCH_GUIDANCE_PROMPT states what it is weak at and the follow-up chain', () => {

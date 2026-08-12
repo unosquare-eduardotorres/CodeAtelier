@@ -71,6 +71,7 @@ interface UpdateState {
     total?: number
   ) => void
   setError: (message: string) => void
+  setInstallFailed: (message: string) => void
 }
 
 const DEFAULT_CONFIG: UpdateConfig = {
@@ -297,5 +298,16 @@ export const useUpdateStore = create<UpdateState>((set) => ({
     clearWatchdog()
     set({ status: 'error', errorMessage: message })
     useToastStore.getState().addToast({ type: 'error', message: `Update check failed: ${message}` })
+  },
+
+  /**
+   * The install was dispatched but the app is still running. Status stays 'ready'
+   * on purpose: 'error' would remove the Restart button, and this failure is
+   * retryable — main has already released the latch that made the first click stick.
+   */
+  setInstallFailed: (message) => {
+    clearInstallTimer()
+    set({ status: 'ready', installCountdown: null })
+    useToastStore.getState().addToast({ type: 'error', message })
   }
 }))
