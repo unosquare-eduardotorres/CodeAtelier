@@ -84,6 +84,25 @@ export function captureStreamState(state: {
   }
 }
 
+/**
+ * BACKGROUND-CHAT-01: split the per-conversation buffers on a workspace switch.
+ * A conversation still streaming keeps its buffer — the backend goes on sending
+ * chunks for it after the switch (same as a running blueprint), so dropping the
+ * buffer would lose the transcript when the user switches back. Finished
+ * conversations are dropped so their accumulator and safety timer can go too.
+ */
+export function partitionStreamsForWorkspaceSwitch(
+  streams: Map<string, PerConversationStreamState>
+): { kept: Map<string, PerConversationStreamState>; dropped: string[] } {
+  const kept = new Map<string, PerConversationStreamState>()
+  const dropped: string[] = []
+  for (const [conversationId, stream] of streams) {
+    if (stream.isStreaming) kept.set(conversationId, stream)
+    else dropped.push(conversationId)
+  }
+  return { kept, dropped }
+}
+
 // ── Streaming state reset ────────────────────────────────────────────────
 
 /** Fields common to every "stop streaming" state transition. */

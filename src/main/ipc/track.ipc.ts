@@ -16,9 +16,33 @@ import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 import { trackService, DISK_BUDGET_BYTES } from '../services/track.service'
 import { landingService } from '../services/landing.service'
-import type { TrackListResult, LandingResult } from '../../shared/track-types'
+import type {
+  TrackListResult,
+  LandingResult,
+  LandingPreview,
+  TrackLandingMode
+} from '../../shared/track-types'
 
 const trackLog = log.scope('track-ipc')
+
+/**
+ * Read a landing mode off a renderer payload.
+ *
+ * Anything that is not one of the two known modes is dropped rather than
+ * passed on, which leaves the track's own setting in force. `landNow` branches
+ * on `mode === 'integration'`, so an unrecognised string would silently mean
+ * "independent" — a typo would quietly open a PR for a workspace that had
+ * chosen to merge locally.
+ */
+function optionalLandingMode(
+  args: Record<string, unknown>,
+  channel: string
+): TrackLandingMode | undefined {
+  const raw = optionalString(args, 'mode', channel)
+  if (raw === undefined) return undefined
+  if (raw === 'independent' || raw === 'integration') return raw
+  throw new Error(`${channel}: mode must be 'independent' or 'integration'`)
+}
 
 export function registerTrackIpc(): void {
   ipcMain.handle(
@@ -80,13 +104,35 @@ export function registerTrackIpc(): void {
       const trackId = requireString(args, 'trackId', IPC_CHANNELS.TRACK_LAND)
       const commitMessage = requireString(args, 'commitMessage', IPC_CHANNELS.TRACK_LAND)
       const description = optionalString(args, 'description', IPC_CHANNELS.TRACK_LAND)
+      const baseBranch = optionalString(args, 'baseBranch', IPC_CHANNELS.TRACK_LAND)
+      const mode = optionalLandingMode(args, IPC_CHANNELS.TRACK_LAND)
 
       // The route home for work that is not a chat. A blueprint run owns a branch
       // and a worktree exactly like a chat does, but `/complete` only ever knew
       // about conversations — so before this, blueprint output had nowhere to go.
-      const result = await landingService.land(trackId, { commitMessage, description })
+      const result = await landingService.land(trackId, {
+        commitMessage,
+        description,
+        baseBranch,
+        mode
+      })
       trackLog.info(`[land] track=${trackId} outcome=${result.outcome} into=${result.landedInto}`)
       return result
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TRACK_LAND_PREVIEW,
+    async (event, rawArgs: unknown): Promise<LandingPreview> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.TRACK_LAND_PREVIEW
+      const args = requireObject(rawArgs, ch)
+      const trackId = requireString(args, 'trackId', ch)
+      const baseBranch = optionalString(args, 'baseBranch', ch)
+      const mode = optionalLandingMode(args, ch)
+
+      // Read-only, so unlike `land` it is not queued and takes no lock.
+      return landingService.previewLanding(trackId, { baseBranch, mode })
     }
   )
 }

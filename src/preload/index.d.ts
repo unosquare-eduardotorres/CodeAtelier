@@ -109,7 +109,13 @@ import type {
   ArtifactRef,
   CodeAnchor
 } from '../shared/handoff-types'
-import type { TrackListResult, LandingResult } from '../shared/track-types'
+import type {
+  TrackListResult,
+  LandingResult,
+  LandingPreview,
+  TrackLandingMode
+} from '../shared/track-types'
+import type { BlueprintBranchOptions } from '../shared/blueprint-types'
 
 interface Api {
   // Workspace
@@ -645,6 +651,8 @@ interface Api {
       messageId: string
       taskId?: string
       requestId?: string
+      /** Workspace that owns the conversation — set even when it is not the active one. */
+      workspaceId?: string
     }) => void
   ) => () => void
   onAskQuestion: (
@@ -1507,6 +1515,7 @@ interface Api {
     priority?: string
     settingsJson?: Record<string, unknown>
   }) => Promise<unknown>
+  blueprintBranchOptions: (args: { workspaceId: string }) => Promise<BlueprintBranchOptions>
   blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }) => Promise<unknown>
   blueprintStartSpecify: (args: {
     blueprintId: string
@@ -1570,6 +1579,11 @@ interface Api {
     blueprintId: string
     workspaceId: string
   }) => Promise<{ retrying: boolean; phase: string }>
+  blueprintSkipTask: (args: {
+    blueprintId: string
+    taskId: string
+    skipped?: boolean
+  }) => Promise<{ skipped: boolean; skippedAt: string | null }>
   blueprintAcknowledgeReview: (args: { blueprintId: string }) => Promise<{ acknowledged: boolean }>
   blueprintGetTranscript: (args: { blueprintId: string; afterSeq?: number }) => Promise<
     Array<{
@@ -1972,7 +1986,14 @@ interface Api {
     trackId: string
     commitMessage: string
     description?: string
+    baseBranch?: string
+    mode?: TrackLandingMode
   }) => Promise<LandingResult>
+  trackLandPreview: (args: {
+    trackId: string
+    baseBranch?: string
+    mode?: TrackLandingMode
+  }) => Promise<LandingPreview>
   onTrackChanged: (cb: (data: { workspaceId: string | null }) => void) => () => void
 
   onTrayNavigate: (cb: (data: { view: string; workspaceId?: string }) => void) => () => void

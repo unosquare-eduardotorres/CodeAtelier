@@ -22,7 +22,8 @@ import {
   createErrorMessage,
   parseBlockedByError,
   emptyStreamState,
-  reconcileStopState
+  reconcileStopState,
+  partitionStreamsForWorkspaceSwitch
 } from './chat-action-utils'
 import type { PerConversationStreamState } from './chat-action-utils'
 import type {
@@ -309,6 +310,13 @@ export interface ChatState {
   // Conversation reordering
   reorderConversations: (orderedIds: string[]) => Promise<void>
 
+  /**
+   * Workspace switch — clear the previous workspace's view state WITHOUT
+   * dropping conversations that are still streaming in the background.
+   * Mirrors blueprint.store's resetForWorkspaceSwitch.
+   */
+  resetForWorkspaceSwitch: () => void
+
   reset: () => void
 }
 
@@ -377,8 +385,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // conversation (or creates one).
       const { activeConversation } = get()
       if (activeConversation && activeConversation.workspaceId !== workspaceId) {
-        get().reset()
-        // reset() already calls internals.resetAccumulator() and internals.clearSafetyTimer()
+        // BACKGROUND-CHAT-01: view-state-only reset — a conversation still
+        // streaming in the previous workspace keeps its buffer and indicators.
+        get().resetForWorkspaceSwitch()
       }
 
       const conversations = await window.api.getConversations({ workspaceId })
@@ -394,10 +403,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       set((state) => ({
         conversations,
-        effortLevels: { ...state.effortLevels, ...hydratedEfforts },
-        // MULTI-CHAT-06: Clear stashed streaming state from previous workspace.
-        // Stale entries with different conversation IDs are harmless but waste memory.
-        conversationStreams: new Map()
+        effortLevels: { ...state.effortLevels, ...hydratedEfforts }
+        // BACKGROUND-CHAT-01: conversationStreams is NOT cleared here — background
+        // streams from another workspace must keep accumulating. Finished entries
+        // are dropped by resetForWorkspaceSwitch().
       }))
     } catch (error) {
       rendererLog.error('Failed to load conversations:', error)
@@ -1596,6 +1605,61 @@ export const useChatStore = create<ChatState>((set, get) => ({
     } catch (error) {
       rendererLog.error('Failed to reorder conversations:', error)
     }
+  },
+
+  resetForWorkspaceSwitch: () => {
+    // Flush the outgoing conversation's accumulator so its buffer holds the
+    // latest chunks before we stop projecting it to the globals.
+    const activeId = get().activeConversation?.id
+    if (activeId) internals.flushAccumulator(activeId)
+
+    const state = get()
+    const { kept: keptStreams, dropped } = partitionStreamsForWorkspaceSwitch(
+      state.conversationStreams
+    )
+    // Only finished conversations lose their accumulator + safety timer.
+    for (const conversationId of dropped) {
+      internals.resetAccumulator(conversationId)
+      internals.clearSafetyTimer(conversationId)
+    }
+
+    set({
+      conversations: [],
+      activeConversation: null,
+      messages: [],
+      streamingContent: '',
+      streamingSegments: [],
+      streamingRole: 'specialist' as const,
+      streamingSpecialist: null,
+      streamingTaskId: null,
+      isStreaming: false,
+      sendingConversationIds: new Set(
+        [...state.sendingConversationIds].filter((id) => keptStreams.has(id))
+      ),
+      streamingConversationIds: new Set(
+        [...state.streamingConversationIds].filter((id) => keptStreams.has(id))
+      ),
+      conversationStreams: keptStreams,
+      activeRequestId: null,
+      streamingPhase: null,
+      toolActivities: [],
+      compactSuggestion: null,
+      pendingQuestions: null,
+      pendingQuestionAction: null,
+      pendingQuestionRequestId: null,
+      pendingToolPermission: null,
+      permissionRetry: null,
+      budgetCapBanner: null,
+      blockedByBanner: null,
+      turnLimitReached: null,
+      sessionRecovery: null,
+      autoModeSwitchPill: null,
+      draftTexts: {},
+      contextUsages: {},
+      effortLevels: {},
+      streamStalledConversationId: null,
+      conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
+    })
   },
 
   reset: () => {

@@ -225,6 +225,45 @@ if (!dbReady) {
       assert.equal(r.ok, false)
       assert.match((r as { error: Error }).error.message, /not found/i)
     })
+
+    test('rejects a mode that is neither of the two real ones', async () => {
+      // `landNow` branches on `mode === 'integration'`, so anything it does not
+      // recognise silently means `independent` — a typo would open a PR for a
+      // workspace that had chosen to merge locally.
+      const row = makeTrack()
+      const r = await tryInvokeHandler('track:land', {
+        trackId: row.id,
+        commitMessage: 'ship it',
+        mode: 'intergration'
+      })
+      assert.equal(r.ok, false)
+      assert.match((r as { error: Error }).error.message, /mode must be/i)
+    })
+  })
+
+  // ── track:landPreview ──────────────────────────────────────
+
+  describe('track:landPreview', () => {
+    test('rejects a missing trackId', async () => {
+      const r = await tryInvokeHandler('track:landPreview', {})
+      assert.equal(r.ok, false)
+    })
+
+    test('fails loudly for an unknown track', async () => {
+      const r = await tryInvokeHandler('track:landPreview', { trackId: 'no-such-track' })
+      assert.equal(r.ok, false)
+      assert.match((r as { error: Error }).error.message, /not found/i)
+    })
+
+    test('rejects an unrecognised mode, exactly as landing does', async () => {
+      const row = makeTrack()
+      const r = await tryInvokeHandler('track:landPreview', {
+        trackId: row.id,
+        mode: 'whatever'
+      })
+      assert.equal(r.ok, false)
+      assert.match((r as { error: Error }).error.message, /mode must be/i)
+    })
   })
 
   // ── track:discard ──────────────────────────────────────────────────────

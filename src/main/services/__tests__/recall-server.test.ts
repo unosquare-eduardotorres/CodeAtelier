@@ -134,6 +134,16 @@ describe('extractPlanBlock', () => {
   test('returns_null_without_plan_block', () => {
     assert.equal(extractPlanBlock('just a normal reply'), null)
   })
+
+  // A structured plan may carry a fenced code sample inside a JSON string
+  // value. The old lazy regex stopped there and handed recall a truncated,
+  // unparseable body.
+  test('nested_fence_inside_json_does_not_truncate', () => {
+    const json = JSON.stringify({ title: 'Audit', note: 'Use:\n```csharp\nvar x = 1;\n```' })
+    const body = extractPlanBlock(`prose\n\n\`\`\`plan\n${json}\n\`\`\`\n\ntail`)
+    assert.equal(body, json)
+    assert.equal(JSON.parse(body!).title, 'Audit')
+  })
 })
 
 describe('deriveTitle / deriveSummary', () => {

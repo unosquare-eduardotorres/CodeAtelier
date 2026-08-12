@@ -5,7 +5,7 @@ import type {
   BuildSummary,
   StructuredPlan
 } from '../../../../shared/types'
-import { PLAN_BLOCK_CAPTURE_RE } from './plan-detection'
+import { findFencedBlock } from '../../../../shared/fenced-block'
 
 export interface MessageContentData {
   imageAttachments: string[]
@@ -21,7 +21,7 @@ export interface MessageContentData {
   grillProposedTasks: GrillProposedTask[]
   beforeGrill: string | null
   afterGrill: string | null
-  grillQuestionMatch: RegExpMatchArray | null
+  hasGrillQuestionBlock: boolean
   grillQuestions: GrillQuestion[]
   beforeGrillQuestion: string | null
   afterGrillQuestion: string | null
@@ -45,17 +45,22 @@ interface ExtractedBlock<T> {
   rawContent: string | null
   before: string | null
   after: string | null
-  match: RegExpMatchArray | null
+  /** Truthy when a block was found — kept for call sites that only need presence. */
+  found: boolean
 }
 
 /**
- * Generic regex-match → JSON.parse → transform pattern.
+ * Generic locate → JSON.parse → transform pattern.
  * Replaces the repeated block-parsing logic for plan, grill-summary,
  * grill-question, grill-evaluation, and build-summary blocks.
+ *
+ * Block location goes through findFencedBlock so a fenced code sample inside a
+ * JSON string value can't truncate the block — which used to leave the card
+ * unparseable and leak the JSON tail into the chat bubble.
  */
 function extractStructuredBlock<T>(
   content: string,
-  pattern: RegExp,
+  lang: string,
   transform: (parsed: unknown) => T | null,
   opts?: { skipForUser?: boolean; isUser?: boolean }
 ): ExtractedBlock<T> {
@@ -64,28 +69,27 @@ function extractStructuredBlock<T>(
     rawContent: null,
     before: null,
     after: null,
-    match: null
+    found: false
   }
 
   if (opts?.skipForUser && opts.isUser) return empty
 
-  const match = content.match(pattern)
-  if (!match) return empty
+  const block = findFencedBlock(content, lang)
+  if (!block) return empty
 
-  const rawContent = match[1]
   let data: T | null = null
   try {
-    data = transform(JSON.parse(rawContent.trim()))
+    data = transform(JSON.parse(block.content.trim()))
   } catch {
     /* noop — raw content or malformed JSON */
   }
 
   return {
     data,
-    rawContent,
-    before: content.substring(0, match.index!),
-    after: content.substring(match.index! + match[0].length),
-    match
+    rawContent: block.content,
+    before: content.substring(0, block.start),
+    after: content.substring(block.end),
+    found: true
   }
 }
 
@@ -205,31 +209,23 @@ export function useMessageContent(
       isUser
     )
 
-    const plan = extractStructuredBlock(contentMd, PLAN_BLOCK_CAPTURE_RE, toStructuredPlan)
-    const grill = extractStructuredBlock(
-      contentMd,
-      /```grill-summary\n([\s\S]*?)```/,
-      toGrillSummary,
-      { skipForUser: true, isUser }
-    )
-    const grillQ = extractStructuredBlock(
-      contentMd,
-      /```grill-question\n([\s\S]*?)```/,
-      toGrillQuestions,
-      { skipForUser: true, isUser }
-    )
-    const grillE = extractStructuredBlock(
-      contentMd,
-      /```grill-evaluation\n([\s\S]*?)```/,
-      toGrillEval,
-      { skipForUser: true, isUser }
-    )
-    const buildS = extractStructuredBlock(
-      contentMd,
-      /```build-summary\n([\s\S]*?)```/,
-      toBuildSummary,
-      { skipForUser: true, isUser }
-    )
+    const plan = extractStructuredBlock(contentMd, 'plan', toStructuredPlan)
+    const grill = extractStructuredBlock(contentMd, 'grill-summary', toGrillSummary, {
+      skipForUser: true,
+      isUser
+    })
+    const grillQ = extractStructuredBlock(contentMd, 'grill-question', toGrillQuestions, {
+      skipForUser: true,
+      isUser
+    })
+    const grillE = extractStructuredBlock(contentMd, 'grill-evaluation', toGrillEval, {
+      skipForUser: true,
+      isUser
+    })
+    const buildS = extractStructuredBlock(contentMd, 'build-summary', toBuildSummary, {
+      skipForUser: true,
+      isUser
+    })
 
     return {
       imageAttachments,
@@ -245,7 +241,7 @@ export function useMessageContent(
       grillProposedTasks: grill.data?.proposedTasks ?? [],
       beforeGrill: grill.before,
       afterGrill: grill.after,
-      grillQuestionMatch: grillQ.match,
+      hasGrillQuestionBlock: grillQ.found,
       grillQuestions: grillQ.data ?? [],
       beforeGrillQuestion: grillQ.before,
       afterGrillQuestion: grillQ.after,

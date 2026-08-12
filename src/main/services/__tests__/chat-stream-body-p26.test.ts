@@ -171,7 +171,7 @@ describe('ChatStreamService — deep body (P26)', () => {
     const svc = new ChatStreamService(fakeWindow(), fakeCallbacks())
     assert.equal(svc['isDisposed'], false)
 
-    svc.forceResetIfStuck('ws-stuck')
+    svc.forceResetIfStuck()
     svc.clearConversationMemoryState(nextConvId())
     svc.dispose()
 

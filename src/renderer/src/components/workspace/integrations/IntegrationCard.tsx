@@ -9,20 +9,30 @@ import {
   ChevronDown,
   ChevronRight,
   Shield,
-  Zap
+  Zap,
+  Lightbulb,
+  Loader2
 } from 'lucide-react'
+import { Button, StatPill, Switch } from '@renderer/components/common/ui'
 import type { ExternalMcpDefinition } from '../../../../../shared/constants'
 import type { IntegrationCredentialStatus } from '../../../../../shared/integration-credentials.types'
 import TokenImpactBadge from './TokenImpactBadge'
 import UseCaseGrid from './UseCaseGrid'
-import WorkflowStepper from './WorkflowStepper'
 import ToolsList from './ToolsList'
 import IntegrationCredentialsForm from './IntegrationCredentialsForm'
+import { deriveReadiness, isToggleBlocked, READINESS_META } from './integration-readiness'
 
 /** Registry `icon` name → component. Falls back to a generic plug-in icon. */
 const ICON_MAP: Record<string, typeof Smartphone> = {
   Smartphone,
   SquareKanban
+}
+
+const READINESS_ICON = {
+  ready: <Check size={11} />,
+  'setup-required': <AlertTriangle size={11} />,
+  'cli-missing': <AlertTriangle size={11} />,
+  checking: <Loader2 size={11} className="animate-spin" />
 }
 
 export default function IntegrationCard({
@@ -47,17 +57,33 @@ export default function IntegrationCard({
   /** Clearing credentials also disables the integration — the page must re-read settings. */
   onCredentialsCleared?: () => void
 }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
   const [showEnvVars, setShowEnvVars] = useState(false)
   const isSaving = savingId === integration.id
   const Icon = ICON_MAP[integration.icon] ?? Puzzle
   const needsCredentials = !!integration.credentialFields?.length
-  // Without a workspace there is nowhere to store credentials and no form to fill,
-  // so an integration that needs them can never be configured — block it outright.
-  // Otherwise only block once we know the credential state — never on first paint.
-  const blockedByCredentials =
-    needsCredentials &&
-    !available &&
-    (!workspaceId || (credentialStatus !== undefined && !credentialStatus.configured))
+
+  const readiness = deriveReadiness({ integration, cliStatus, workspaceId, credentialStatus })
+  const blockedByCredentials = isToggleBlocked({
+    integration,
+    workspaceId,
+    credentialStatus,
+    available
+  })
+  const meta = READINESS_META[readiness]
+
+  const readinessTitle =
+    readiness === 'cli-missing'
+      ? `CLI not found — install ${integration.command}`
+      : readiness === 'ready' && !integration.bundledServerEntry && cliStatus.path
+        ? `CLI detected: ${cliStatus.path}`
+        : readiness === 'ready' && integration.bundledServerEntry
+          ? 'Bundled — no install needed'
+          : readiness === 'setup-required'
+            ? workspaceId
+              ? 'Credentials required — open Setup'
+              : `Open a workspace to configure ${integration.displayName}`
+            : 'Checking availability…'
 
   // Stable identity: this is fed into the form's load effect via `onStatusChange`.
   const handleStatusChange = useCallback(
@@ -74,198 +100,222 @@ export default function IntegrationCard({
     <div data-testid={`integration-card-${integration.id}`}>
       <div
         data-testid="integration-card"
-        className="bg-surface-overlay rounded-lg border border-border-subtle p-4 space-y-4"
+        className="bg-surface-overlay rounded-lg border border-border-subtle"
       >
-        {/* Header: icon + name + toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+        {/* ── Collapsed row: everything the user needs to decide, and nothing else ── */}
+        <div className="flex items-center gap-3 p-3">
+          <button
+            type="button"
+            data-testid={`integration-expand-${integration.id}`}
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="flex items-center gap-3 flex-1 min-w-0 text-left group"
+          >
+            {expanded ? (
+              <ChevronDown size={14} className="text-text-muted shrink-0" />
+            ) : (
+              <ChevronRight size={14} className="text-text-muted shrink-0" />
+            )}
             <div
-              className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+              className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
                 available ? 'bg-accent/15 text-accent' : 'bg-surface-base text-text-muted'
               }`}
             >
-              <Icon size={18} />
+              <Icon size={16} />
             </div>
-            <div>
-              <h4 className="text-sm font-semibold text-text-primary">{integration.displayName}</h4>
-              <p className="text-xs text-text-secondary">{integration.description}</p>
+            <div className="min-w-0">
+              <h4 className="text-sm font-semibold text-text-primary group-hover:text-accent transition-colors">
+                {integration.displayName}
+              </h4>
+              <p className="text-[11px] text-text-secondary truncate">{integration.description}</p>
             </div>
-          </div>
-          <button
-            onClick={() => onToggle(integration.id, !available)}
-            disabled={isSaving || blockedByCredentials}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-              available ? 'bg-accent' : 'bg-surface-base border border-border-default'
-            } ${isSaving || blockedByCredentials ? 'opacity-50' : 'cursor-pointer'}`}
-            title={
-              blockedByCredentials
-                ? 'Add and save credentials first'
-                : available
-                  ? 'Disable for this workspace'
-                  : 'Make available for this workspace'
-            }
-          >
-            <span
-              className={`inline-block h-4 w-4 rounded-full bg-white transition-transform shadow-sm ${
-                available ? 'translate-x-5.5' : 'translate-x-0.5'
-              }`}
-            />
           </button>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {/* One readiness value, one pill. `setup-required` expands straight to
+                Setup so first-run discovery survives the collapse. */}
+            <StatPill
+              icon={READINESS_ICON[readiness]}
+              label={meta.label}
+              tone={meta.tone}
+              title={readinessTitle}
+              onClick={readiness === 'ready' ? undefined : () => setExpanded(true)}
+            />
+            <TokenImpactBadge impact={integration.tokenImpact} toolCount={integration.toolCount} />
+            <Switch
+              hideLabel
+              checked={available}
+              onChange={(next) => onToggle(integration.id, next)}
+              disabled={isSaving || blockedByCredentials}
+              label={`Enable ${integration.displayName} for this workspace`}
+              title={
+                blockedByCredentials
+                  ? 'Add and save credentials first'
+                  : available
+                    ? 'Disable for this workspace'
+                    : 'Make available for this workspace'
+              }
+            />
+          </div>
         </div>
 
-        {/* Why use this? — longDescription */}
-        {integration.longDescription && (
-          <div className="space-y-1.5">
-            <h5 className="text-xs font-semibold text-text-primary">
-              Why use {integration.displayName}?
-            </h5>
-            <p className="text-xs text-text-secondary leading-relaxed">
-              {integration.longDescription}
-            </p>
-          </div>
-        )}
-
-        {/* Use case cards */}
-        {integration.useCases && integration.useCases.length > 0 && (
-          <UseCaseGrid useCases={integration.useCases} />
-        )}
-
-        {/* Workflow stepper */}
-        {integration.workflowSteps && integration.workflowSteps.length > 0 && (
-          <WorkflowStepper steps={integration.workflowSteps} />
-        )}
-
-        {/* Status row: CLI check + token impact.
-          Bundled servers ship with the app — there is nothing to look up on PATH. */}
-        <div className="flex items-center gap-3 flex-wrap">
-          {!integration.bundledServerEntry && cliStatus.checked && (
-            <span
-              className={`inline-flex items-center gap-1 text-xs font-medium ${
-                cliStatus.found ? 'text-success' : 'text-warning'
-              }`}
-            >
-              {cliStatus.found ? <Check size={10} /> : <AlertTriangle size={10} />}
-              {cliStatus.found
-                ? `CLI detected: ${cliStatus.path}`
-                : `CLI not found — install ${integration.command}`}
-            </span>
-          )}
-          {!integration.bundledServerEntry && !cliStatus.checked && (
-            <span className="text-xs text-text-muted">Checking CLI availability…</span>
-          )}
-          {integration.bundledServerEntry && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium text-success">
-              <Check size={10} /> Bundled — no install needed
-            </span>
-          )}
-
-          <TokenImpactBadge impact={integration.tokenImpact} toolCount={integration.toolCount} />
-        </div>
-
-        {/* Warning banner for high-impact */}
-        {integration.tokenImpact === 'high' && available && (
-          <div className="flex items-start gap-2 bg-warning-muted border border-warning/20 rounded-md p-2.5 text-xs text-text-secondary">
-            <Shield size={12} className="text-warning mt-0.5 flex-shrink-0" />
-            <span>
-              <strong className="text-warning">High token impact:</strong> This integration injects{' '}
-              {integration.toolCount} tool definitions into the context window. Toggle it OFF
-              per-chat when not needed to save tokens.
-            </span>
-          </div>
-        )}
-
-        {/* Per-chat control info */}
-        {available && (
-          <div className="bg-info-muted border border-info/20 rounded-md p-2.5 text-xs text-text-secondary">
-            <strong className="text-info">💡 Per-chat control:</strong> A{' '}
-            <span className="font-semibold">{integration.displayName}</span> pill will appear next
-            to the Plan/Build mode toggle in every chat. Toggle it ON/OFF per message — tools are
-            only injected when active.
-          </div>
-        )}
-
-        {/* Expo/RN performance tip — shown when Maestro is enabled */}
-        {available && integration.id === 'maestro' && (
-          <div className="flex items-start gap-2 bg-surface-base border border-border-subtle rounded-md p-2.5 text-xs text-text-secondary">
-            <Zap size={12} className="text-accent mt-0.5 flex-shrink-0" />
-            <div>
-              <strong className="text-text-primary">⚡ Speed tip for Expo / React Native:</strong>{' '}
-              Use a <strong>release or preview build</strong> (not Expo Go) for dramatically faster
-              test execution. Dev mode&apos;s hot-reload polling, error overlays, and LogBox create
-              constant UI churn that slows down Maestro&apos;s element detection. Run{' '}
-              <code className="text-[10px] bg-surface-overlay px-1 rounded">
-                npx expo run:ios --configuration Release
-              </code>{' '}
-              or{' '}
-              <code className="text-[10px] bg-surface-overlay px-1 rounded">
-                eas build --profile preview --platform ios
-              </code>{' '}
-              for best results.
-            </div>
-          </div>
-        )}
-
-        {/* Credentials form — registry-driven, replaces the env-var block */}
-        {needsCredentials && workspaceId && (
-          <IntegrationCredentialsForm
-            integration={integration}
-            workspaceId={workspaceId}
-            onStatusChange={handleStatusChange}
-            onCleared={onCredentialsCleared}
-          />
-        )}
-        {blockedByCredentials && (
-          <p className="text-[11px] text-warning">
-            {workspaceId
-              ? `Save the required credentials above before enabling ${integration.displayName}.`
-              : `Open a workspace to configure ${integration.displayName} credentials.`}
-          </p>
-        )}
-
-        {/* Enriched tools list (collapsible) */}
-        <ToolsList integration={integration} />
-
-        {/* Env vars (collapsible) — only for integrations without a credential form */}
-        {!needsCredentials && integration.envKeys && integration.envKeys.length > 0 && (
-          <>
-            <button
-              onClick={() => setShowEnvVars(!showEnvVars)}
-              className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
-            >
-              {showEnvVars ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
-              <span>Environment variables ({integration.envKeys.length})</span>
-            </button>
-            {showEnvVars && (
-              <div className="bg-surface-base rounded-md p-2 space-y-1">
-                {integration.envKeys.map((key) => (
-                  <div key={key} className="flex items-center gap-2 text-xs text-text-secondary">
-                    <code className="text-text-primary font-mono text-[11px]">{key}</code>
-                    <span className="text-text-muted">— set in your shell environment</span>
-                  </div>
-                ))}
-                <p className="text-[10px] text-text-muted mt-1">
-                  These are read from your environment at runtime. Set them in ~/.zshrc or
-                  ~/.bash_profile.
-                </p>
+        {/* ── Expanded body: action-first — Setup → Capabilities → Tools → Docs ── */}
+        {expanded && (
+          <div className="border-t border-border-subtle p-3 space-y-4">
+            {/* State-driven callouts, only meaningful once enabled */}
+            {integration.tokenImpact === 'high' && available && (
+              <div
+                data-testid="integration-warning-high-impact"
+                className="flex items-start gap-2 bg-warning-muted border border-warning/20 rounded-md p-2.5 text-xs text-text-secondary"
+              >
+                <Shield size={12} className="text-warning mt-0.5 flex-shrink-0" />
+                <span>
+                  <strong className="text-warning">High token impact:</strong> This integration
+                  injects {integration.toolCount} tool definitions into the context window. Toggle
+                  it OFF per-chat when not needed to save tokens.
+                </span>
               </div>
             )}
-          </>
-        )}
 
-        {/* Docs link */}
-        <a
-          href={integration.docsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-accent hover:text-accent/80 transition-colors"
-          onClick={(e) => {
-            e.preventDefault()
-            window.open(integration.docsUrl, '_blank')
-          }}
-        >
-          <ExternalLink size={10} />
-          {integration.displayName} Documentation
-        </a>
+            {available && (
+              <div
+                data-testid="integration-info-per-chat"
+                className="flex items-start gap-2 bg-info-muted border border-info/20 rounded-md p-2.5 text-xs text-text-secondary"
+              >
+                <Lightbulb size={12} className="text-info mt-0.5 flex-shrink-0" />
+                <span>
+                  <strong className="text-info">Per-chat control:</strong> A{' '}
+                  <span className="font-semibold">{integration.displayName}</span> pill will appear
+                  next to the Plan/Build mode toggle in every chat. Toggle it ON/OFF per message —
+                  tools are only injected when active.
+                </span>
+              </div>
+            )}
+
+            {available && integration.id === 'maestro' && (
+              <div className="flex items-start gap-2 bg-surface-base border border-border-subtle rounded-md p-2.5 text-xs text-text-secondary">
+                <Zap size={12} className="text-accent mt-0.5 flex-shrink-0" />
+                <div>
+                  <strong className="text-text-primary">Speed tip for Expo / React Native:</strong>{' '}
+                  Use a <strong>release or preview build</strong> (not Expo Go) for dramatically
+                  faster test execution. Dev mode&apos;s hot-reload polling, error overlays, and
+                  LogBox create constant UI churn that slows down Maestro&apos;s element detection.
+                  Run{' '}
+                  <code className="text-[11px] bg-surface-overlay px-1 rounded">
+                    npx expo run:ios --configuration Release
+                  </code>{' '}
+                  or{' '}
+                  <code className="text-[11px] bg-surface-overlay px-1 rounded">
+                    eas build --profile preview --platform ios
+                  </code>{' '}
+                  for best results.
+                </div>
+              </div>
+            )}
+
+            {/* ── Setup ── */}
+            <section className="space-y-2">
+              <h5 className="text-xs font-semibold text-text-primary">Setup</h5>
+
+              {/* The registry's workflow steps read as setup instructions, so they
+                  belong immediately above the form they describe. */}
+              {integration.workflowSteps && integration.workflowSteps.length > 0 && (
+                <ol data-testid="workflow-stepper" className="space-y-1.5">
+                  {integration.workflowSteps.map((ws, i) => (
+                    <li key={ws.step} className="flex gap-2 text-[11px] leading-relaxed">
+                      <span className="font-mono tabular-nums text-accent shrink-0">{i + 1}.</span>
+                      <span>
+                        <span className="font-semibold text-text-primary">{ws.step}</span>
+                        <span className="text-text-muted"> — {ws.description}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+
+              {needsCredentials && workspaceId && (
+                <IntegrationCredentialsForm
+                  integration={integration}
+                  workspaceId={workspaceId}
+                  onStatusChange={handleStatusChange}
+                  onCleared={onCredentialsCleared}
+                />
+              )}
+              {blockedByCredentials && (
+                <p className="text-[11px] text-warning">
+                  {workspaceId
+                    ? `Save the required credentials above before enabling ${integration.displayName}.`
+                    : `Open a workspace to configure ${integration.displayName} credentials.`}
+                </p>
+              )}
+
+              {/* Env vars (collapsible) — only for integrations without a credential form */}
+              {!needsCredentials && integration.envKeys && integration.envKeys.length > 0 && (
+                <>
+                  <button
+                    data-testid={`integration-env-toggle-${integration.id}`}
+                    onClick={() => setShowEnvVars(!showEnvVars)}
+                    className="flex items-center gap-1.5 text-[11px] text-text-secondary hover:text-text-primary transition-colors"
+                  >
+                    {showEnvVars ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    <span>Environment variables ({integration.envKeys.length})</span>
+                  </button>
+                  {showEnvVars && (
+                    <div
+                      data-testid="integration-env-list"
+                      className="bg-surface-base rounded-md p-2 space-y-1"
+                    >
+                      {integration.envKeys.map((key) => (
+                        <div
+                          key={key}
+                          className="flex items-center gap-2 text-[11px] text-text-secondary"
+                        >
+                          <code className="text-text-primary font-mono">{key}</code>
+                          <span className="text-text-muted">— set in your shell environment</span>
+                        </div>
+                      ))}
+                      <p className="text-[11px] text-text-muted mt-1">
+                        These are read from your environment at runtime. Set them in ~/.zshrc or
+                        ~/.bash_profile.
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+
+            {/* ── Capabilities ── */}
+            {(integration.longDescription ||
+              (integration.useCases && integration.useCases.length > 0)) && (
+              <section className="space-y-2">
+                <h5 className="text-xs font-semibold text-text-primary">
+                  Why use {integration.displayName}?
+                </h5>
+                {integration.longDescription && (
+                  <p className="text-[11px] text-text-secondary leading-relaxed">
+                    {integration.longDescription}
+                  </p>
+                )}
+                {integration.useCases && integration.useCases.length > 0 && (
+                  <UseCaseGrid useCases={integration.useCases} />
+                )}
+              </section>
+            )}
+
+            {/* ── Tools ── */}
+            <ToolsList integration={integration} />
+
+            {/* ── Docs ── */}
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={() => window.open(integration.docsUrl, '_blank', 'noopener,noreferrer')}
+            >
+              <ExternalLink size={11} />
+              {integration.displayName} Documentation
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   )

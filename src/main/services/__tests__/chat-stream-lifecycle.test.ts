@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync, beforeEach, createSpy, runExclusive } from './test-harness'
 import { conversationStateMachine } from '../conversation-state-machine'
-import { lifecycleRegistry, type ConversationLifecycle } from '../conversation-lifecycle'
+import { lifecycleRegistry, ConversationLifecycle } from '../conversation-lifecycle'
 import { chatAgentService } from '../chat-agent.service'
 import type { ConversationPhase } from '../../../shared/types'
 
@@ -24,6 +24,7 @@ interface StreamContext {
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
   readonly workspacePath: string | undefined
+  readonly workspaceId?: string | null
   streamedContent: string
   planInjected: boolean
 }
@@ -72,6 +73,7 @@ interface ChatStreamServiceInternal {
   isConversationBusy(conversationId: string): boolean
   releaseConversation(conversationId: string, reason: string, requestId?: string): boolean
   sweepOrphanedConversations(): string[]
+  resolveConversationWorkspaceId(conversationId: string): string | undefined
 }
 
 // ── Test doubles ──
@@ -123,7 +125,9 @@ function createTestService(overrides?: {
     isConversationBusy: undefined as unknown as ChatStreamServiceInternal['isConversationBusy'],
     releaseConversation: undefined as unknown as ChatStreamServiceInternal['releaseConversation'],
     sweepOrphanedConversations:
-      undefined as unknown as ChatStreamServiceInternal['sweepOrphanedConversations']
+      undefined as unknown as ChatStreamServiceInternal['sweepOrphanedConversations'],
+    resolveConversationWorkspaceId:
+      undefined as unknown as ChatStreamServiceInternal['resolveConversationWorkspaceId']
   }
 
   // Bind the real private methods from the class prototype onto our test double.
@@ -145,6 +149,7 @@ function createTestService(overrides?: {
   svc.isConversationBusy = proto.isConversationBusy.bind(svc)
   svc.releaseConversation = proto.releaseConversation.bind(svc)
   svc.sweepOrphanedConversations = proto.sweepOrphanedConversations.bind(svc)
+  svc.resolveConversationWorkspaceId = proto.resolveConversationWorkspaceId.bind(svc)
 
   return svc
 }
@@ -516,6 +521,7 @@ describe('finalizeStreamMessage', () => {
         specialistMeta: undefined,
         adapterAgentId: 'specialist',
         workspacePath: undefined,
+        workspaceId: 'ws-owner',
         streamedContent: 'Hello world',
         planInjected: false
       }
@@ -533,6 +539,15 @@ describe('finalizeStreamMessage', () => {
       // Assert: CHAT_MESSAGE_COMPLETE sent (channel is 'chat:messageComplete')
       const completeMsg = mainWindow.sentMessages.find((m) => m.channel === 'chat:messageComplete')
       assert.ok(completeMsg, 'CHAT_MESSAGE_COMPLETE should be sent')
+
+      // BACKGROUND-CHAT-02: the completion must name the workspace that owns the
+      // stream. The renderer uses it to attribute plan-execution memory, and a
+      // background stream can complete after the user switched workspaces.
+      assert.equal(
+        (completeMsg!.data as { workspaceId?: string }).workspaceId,
+        'ws-owner',
+        'completion should carry ctx.workspaceId'
+      )
 
       // Assert: state machine transitioned to idle
       assert.equal(
@@ -683,18 +698,19 @@ describe('finalizeStreamMessage', () => {
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
-// E. forceResetIfStuck (guards against B1 regression) — now registry-aware
+// E. forceResetIfStuck (guards against B1 regression) — orphan-only
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('forceResetIfStuck', () => {
-  test('aborts all lifecycles when streams are active', () =>
+  test('BACKGROUND-CHAT-01: live streams survive a workspace switch', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
 
-      // Simulate two streams in progress
+      // Simulate two healthy streams in progress
       svc.streamingLocks.add('conv-A')
       svc.streamingLocks.add('conv-B')
+      svc.activeRequestIds.set('conv-A', 'req-A')
       conversationStateMachine.transition('sendMessage', 'conv-A')
       conversationStateMachine.transition('sendMessage', 'conv-B')
       const lcA = lifecycleRegistry.begin('conv-A')
@@ -706,9 +722,30 @@ describe('forceResetIfStuck', () => {
 
       svc.forceResetIfStuck()
 
-      assert.equal(svc.streamingLocks.size, 0, 'all streaming locks should be released')
-      assert.equal(conversationStateMachine.isIdle(), true, 'state machine should be idle')
-      assert.equal(lifecycleRegistry.active().length, 0, 'no active lifecycles')
+      assert.equal(svc.streamingLocks.size, 2, 'live streams keep their locks')
+      assert.equal(svc.activeRequestIds.get('conv-A'), 'req-A', 'requestId is preserved')
+      assert.equal(lifecycleRegistry.active().length, 2, 'both lifecycles still active')
+      assert.equal(
+        conversationStateMachine.getState('conv-A'),
+        'chat-agent-streaming',
+        'conv-A stays streaming'
+      )
+      assert.equal(conversationStateMachine.getState('conv-B'), 'chat-agent-streaming')
+    }))
+
+  test('releases a lock with no lifecycle behind it', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // conv-orphan: lock + SM entry but no lifecycle — nothing will ever finish it
+      svc.streamingLocks.add('conv-orphan')
+      conversationStateMachine.transition('sendMessage', 'conv-orphan')
+
+      svc.forceResetIfStuck()
+
+      assert.equal(svc.streamingLocks.has('conv-orphan'), false, 'orphaned lock released')
+      assert.equal(conversationStateMachine.getState('conv-orphan'), 'idle')
     }))
 
   test('no-op when nothing is stuck', () =>
@@ -937,7 +974,7 @@ describe('forceResetIfStuck — A9 SM stuck with empty registry', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('forceResetIfStuck — F2 mixed SM/registry state', () => {
-  test('clears SM entries that have no matching registry lifecycle', () =>
+  test('clears SM entries with no lifecycle while leaving the live one alone', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
@@ -961,27 +998,24 @@ describe('forceResetIfStuck — F2 mixed SM/registry state', () => {
 
       svc.forceResetIfStuck()
 
-      // F2 guarantees: both SM entries cleared, registry empty
+      // Only the wedged conversation is released; the live one keeps streaming.
       assert.equal(
-        conversationStateMachine.isIdle(),
-        true,
-        'SM should be globally idle after F2 reset'
+        conversationStateMachine.getState('conv-A'),
+        'chat-agent-streaming',
+        'conv-A is live — untouched'
       )
-      assert.equal(conversationStateMachine.getState('conv-A'), 'idle', 'conv-A SM idle')
       assert.equal(conversationStateMachine.getState('conv-B'), 'idle', 'conv-B SM idle')
-      assert.equal(lifecycleRegistry.active().length, 0, 'registry should be empty')
-      assert.equal(svc.streamingLocks.size, 0, 'all locks cleared')
+      assert.equal(lifecycleRegistry.active().length, 1, 'conv-A lifecycle still active')
+      assert.equal(svc.streamingLocks.has('conv-A'), true, 'conv-A keeps its lock')
     }))
 
-  test('unconditional re-check fires global forceReset when SM stuck after abortAll', () =>
+  test('releases an SM-only entry with no registry lifecycle at all', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
 
-      // Only an SM entry — no registry entry at all.
-      // The old narrow condition (smStuck && activeStreams.length === 0) would
-      // only reset if there were ZERO active streams. The F2 fix re-checks
-      // unconditionally after abortAll.
+      // Only an SM entry — no registry entry at all. Nothing is going to
+      // produce another chunk, so the sweep must release it.
       conversationStateMachine.transition('sendMessage', 'conv-orphan')
       assert.equal(conversationStateMachine.isIdle(), false)
       assert.equal(lifecycleRegistry.active().length, 0)
@@ -1238,6 +1272,109 @@ describe('onChunk → safetyTimerResets integration', () => {
       assert.ok(svc.safetyTimerResets.has('conv-B'), 'B entry unaffected')
 
       lifecycleRegistry.abort('conv-B', 'test-cleanup')
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// P. setupStreamTimers — stale-lifecycle guards (ghost safety-timer regression)
+//
+// A turn aborted while stage 2/2.5 was still awaiting used to arm its timers
+// anyway. Five minutes later the safety timer fired and released whatever
+// lifecycle the conversation had by then — killing a healthy, unrelated stream.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('setupStreamTimers — stale lifecycle guards', () => {
+  test('arming on an already-aborted lifecycle registers nothing', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = lifecycleRegistry.begin('conv-ghost')
+      const requestId = lifecycle.requestId!
+
+      // Abort lands while stage 2 (`ensureStarted`) is still awaiting.
+      lifecycleRegistry.abort('conv-ghost', 'userStop')
+
+      const rejectDone = createSpy<[Error], void>()
+      svc.setupStreamTimers('conv-ghost', requestId, lifecycle, rejectDone)
+
+      assert.equal(svc.keepaliveTimers.has('conv-ghost'), false, 'no keepalive for a dead request')
+      assert.equal(
+        svc.safetyTimerResets.has('conv-ghost'),
+        false,
+        'no safety-timer reset for a dead request'
+      )
+      assert.equal(rejectDone.callCount, 0)
+    }))
+
+  test("a superseded stream's disposer leaves the newer stream's timers intact", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // Two overlapping streams on the same conversation. Registry supersede is
+      // ordered, so build them directly to reproduce the interleaving where #1's
+      // disposer runs *after* #2 has already claimed the map entries.
+      const lc1 = new ConversationLifecycle()
+      lc1.begin('conv-own')
+      const lc2 = new ConversationLifecycle()
+      lc2.begin('conv-own')
+
+      svc.setupStreamTimers('conv-own', lc1.requestId!, lc1, createSpy<[Error], void>())
+      const keepalive1 = svc.keepaliveTimers.get('conv-own')
+      svc.setupStreamTimers('conv-own', lc2.requestId!, lc2, createSpy<[Error], void>())
+      const keepalive2 = svc.keepaliveTimers.get('conv-own')
+      const reset2 = svc.safetyTimerResets.get('conv-own')
+      assert.notEqual(keepalive1, keepalive2, 'stream #2 owns the map entries')
+
+      lc1.abort('superseded')
+
+      assert.equal(
+        svc.keepaliveTimers.get('conv-own'),
+        keepalive2,
+        "#1's disposer must not evict #2's keepalive"
+      )
+      assert.equal(
+        svc.safetyTimerResets.get('conv-own'),
+        reset2,
+        "#1's disposer must not evict #2's safety reset"
+      )
+
+      lc2.complete()
+      assert.equal(svc.keepaliveTimers.has('conv-own'), false, 'owner cleans up its own entries')
+      assert.equal(svc.safetyTimerResets.has('conv-own'), false)
+    }))
+
+  test('a reset function captured from a finished stream does not re-arm a timer', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = lifecycleRegistry.begin('conv-stale-reset')
+
+      svc.setupStreamTimers(
+        'conv-stale-reset',
+        lifecycle.requestId!,
+        lifecycle,
+        createSpy<[Error], void>()
+      )
+      const staleReset = svc.safetyTimerResets.get('conv-stale-reset')!
+
+      lifecycleRegistry.abort('conv-stale-reset', 'userStop')
+
+      // A keepalive tick or a chunk from the *new* stream must not restart the
+      // old stream's 5-minute watchdog.
+      const origSetTimeout = globalThis.setTimeout
+      let armed = 0
+      globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        armed++
+        return origSetTimeout(fn, ms, ...(rest as []))
+      }) as typeof globalThis.setTimeout
+      try {
+        staleReset()
+      } finally {
+        globalThis.setTimeout = origSetTimeout
+      }
+
+      assert.equal(armed, 0, 'stale reset must be a no-op')
     }))
 })
 

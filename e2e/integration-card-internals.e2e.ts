@@ -2,10 +2,14 @@
  * Integration Card Internals E2E Tests
  *
  * Covers IntegrationCard sub-components:
- *   - EnvironmentVarsSection expand/collapse
+ *   - Environment variables section expand/collapse
  *   - High-impact warning banner renders when enabled
  *   - Per-chat control info banner renders when enabled
  *   - TokenImpactBadge shows correct impact and tool count
+ *
+ * The card is a collapsed row by default: the token badge and the availability
+ * switch live in the header, everything else is only mounted on expand. Body
+ * assertions must expand the row first.
  *
  * Uses CDP fixture (Electron 41+ compatible).
  *
@@ -52,54 +56,53 @@ test.describe('Integration Card Internals', () => {
     await page.waitForTimeout(500)
   }
 
-  // ── EnvironmentVarsSection ──
+  /** Expand every integration card so body-level sections are mounted. */
+  async function expandAllCards(page: import('@playwright/test').Page): Promise<number> {
+    const expanders = page.locator('[data-testid^="integration-expand-"]')
+    const count = await expanders.count()
+    for (let i = 0; i < count; i++) {
+      const expander = expanders.nth(i)
+      if ((await expander.getAttribute('aria-expanded')) !== 'true') {
+        await expander.click()
+        await page.waitForTimeout(300)
+      }
+    }
+    return count
+  }
 
-  test('EnvironmentVarsSection expand/collapse', async ({ electronPage: page }) => {
+  // ── Environment variables section ──
+
+  test('environment variables section expand/collapse', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const integrationCards = page.locator('[data-testid^="integration-card-"]')
-    const count = await integrationCards.count()
-
-    if (count === 0) {
+    if ((await expandAllCards(page)) === 0) {
       test.skip()
       return
     }
 
-    // Find a card with environment variables toggle
+    // Only integrations without a credential form render an env-var section.
     const envToggle = page.locator('[data-testid^="integration-env-toggle-"]').first()
     const hasEnvToggle = await envToggle.isVisible({ timeout: 5_000 }).catch(() => false)
-
     if (!hasEnvToggle) {
-      // No integration has environment variables
       test.skip()
       return
     }
 
-    // Initially the env list should not be visible
     const envList = page.locator('[data-testid="integration-env-list"]')
-    const initiallyVisible = await envList.isVisible({ timeout: 1_000 }).catch(() => false)
+    await expect(envList).toHaveCount(0)
 
-    // Click toggle to expand
+    // Expand
     await envToggle.click()
-    await page.waitForTimeout(500)
+    await page.waitForTimeout(400)
+    await expect(envList).toBeVisible({ timeout: 3_000 })
 
-    if (!initiallyVisible) {
-      // After clicking, env list should appear
-      await expect(envList).toBeVisible({ timeout: 3_000 })
+    // Keys are rendered as code elements
+    expect(await envList.locator('code').count()).toBeGreaterThan(0)
 
-      // Verify env var keys are displayed as code elements
-      const codeElements = envList.locator('code')
-      const codeCount = await codeElements.count()
-      expect(codeCount).toBeGreaterThan(0)
-    }
-
-    // Click toggle again to collapse
+    // Collapse
     await envToggle.click()
-    await page.waitForTimeout(500)
-
-    // List should be hidden after collapsing
-    const finallyVisible = await envList.isVisible({ timeout: 1_000 }).catch(() => false)
-    expect(finallyVisible).toBe(initiallyVisible)
+    await page.waitForTimeout(400)
+    await expect(envList).toHaveCount(0)
   })
 
   // ── High-impact warning banner ──
@@ -107,67 +110,59 @@ test.describe('Integration Card Internals', () => {
   test('high-impact warning banner renders when enabled', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const integrationCards = page.locator('[data-testid^="integration-card-"]')
-    const count = await integrationCards.count()
-
-    if (count === 0) {
+    const cardCount = await expandAllCards(page)
+    if (cardCount === 0) {
       test.skip()
       return
     }
 
-    // Check if a high-impact warning banner is already visible
     const warningBanner = page.locator('[data-testid="integration-warning-high-impact"]')
-    const hasWarning = await warningBanner.isVisible({ timeout: 3_000 }).catch(() => false)
-
-    if (hasWarning) {
-      // Banner is visible — verify its content
-      const bannerText = await warningBanner.textContent()
+    if (
+      await warningBanner
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
+    ) {
+      const bannerText = await warningBanner.first().textContent()
       expect(bannerText).toMatch(/high token impact/i)
       expect(bannerText).toMatch(/toggle it off/i)
       return
     }
 
-    // No high-impact warning visible — try enabling a high-impact integration
-    // Look for any integration card with a toggle that's currently disabled
-    for (let i = 0; i < count; i++) {
-      const card = integrationCards.nth(i)
-      const toggle = card.locator('button[class*="rounded-full"]')
-      const hasToggle = await toggle.isVisible({ timeout: 1_000 }).catch(() => false)
+    // Nothing enabled yet — turn integrations on until a high-impact one appears.
+    const switches = page.locator('[data-testid="integration-card"] [role="switch"]')
+    const switchCount = await switches.count()
 
-      if (!hasToggle) continue
-      // A card whose credentials are unset renders a disabled toggle; clicking it
+    for (let i = 0; i < switchCount; i++) {
+      const toggle = switches.nth(i)
+      // A card whose credentials are unset renders a disabled switch; clicking it
       // would block until the action timeout rather than fail fast.
       if (!(await toggle.isEnabled().catch(() => false))) continue
+      if ((await toggle.getAttribute('aria-checked')) === 'true') continue
 
-      // Check if disabled (no bg-accent class)
-      const classes = await toggle.getAttribute('class')
-      const isDisabled = !classes?.includes('bg-accent')
+      await toggle.click()
+      await page.waitForTimeout(1_500)
 
-      if (isDisabled) {
-        // Enable it and check for high-impact warning
-        await toggle.click()
-        await page.waitForTimeout(1_500)
-
-        const newWarning = await warningBanner.isVisible({ timeout: 3_000 }).catch(() => false)
-
-        if (newWarning) {
-          const bannerText = await warningBanner.textContent()
-          expect(bannerText).toMatch(/high token impact/i)
-
-          // Disable it back to restore state
-          await toggle.click()
-          await page.waitForTimeout(500)
-          return
-        }
-
-        // Not high-impact — disable and try next
+      if (
+        await warningBanner
+          .first()
+          .isVisible({ timeout: 3_000 })
+          .catch(() => false)
+      ) {
+        expect(await warningBanner.first().textContent()).toMatch(/high token impact/i)
+        // Restore state
         await toggle.click()
         await page.waitForTimeout(500)
+        return
       }
+
+      // Not high-impact — restore and try the next one.
+      await toggle.click()
+      await page.waitForTimeout(500)
     }
 
-    // No high-impact integrations found — that's OK
-    expect(true).toBeTruthy()
+    // No high-impact integration is currently togglable — acceptable.
+    expect(switchCount).toBeGreaterThanOrEqual(0)
   })
 
   // ── Per-chat control info banner ──
@@ -175,62 +170,53 @@ test.describe('Integration Card Internals', () => {
   test('per-chat control info banner renders when enabled', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const integrationCards = page.locator('[data-testid^="integration-card-"]')
-    const count = await integrationCards.count()
-
-    if (count === 0) {
+    if ((await expandAllCards(page)) === 0) {
       test.skip()
       return
     }
 
-    // Check if per-chat info banner is already visible
     const infoBanner = page.locator('[data-testid="integration-info-per-chat"]')
-    const hasBanner = await infoBanner.isVisible({ timeout: 3_000 }).catch(() => false)
-
-    if (hasBanner) {
-      // Banner is visible — verify content
-      const bannerText = await infoBanner.textContent()
+    if (
+      await infoBanner
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
+    ) {
+      const bannerText = await infoBanner.first().textContent()
       expect(bannerText).toMatch(/per-chat control/i)
       expect(bannerText).toMatch(/pill/i)
       return
     }
 
-    // No per-chat banner visible — enable an integration
-    const firstCard = integrationCards.first()
-    const toggle = firstCard.locator('button[class*="rounded-full"]')
-    const hasToggle = await toggle.isVisible({ timeout: 3_000 }).catch(() => false)
+    // Find the first togglable switch and enable it.
+    const switches = page.locator('[data-testid="integration-card"] [role="switch"]')
+    const switchCount = await switches.count()
+    let toggled: ReturnType<typeof switches.nth> | null = null
 
-    if (!hasToggle) {
+    for (let i = 0; i < switchCount; i++) {
+      const toggle = switches.nth(i)
+      if (!(await toggle.isEnabled().catch(() => false))) continue
+      if ((await toggle.getAttribute('aria-checked')) === 'true') continue
+      toggled = toggle
+      break
+    }
+
+    if (!toggled) {
       test.skip()
       return
     }
 
-    // Check if currently disabled
-    const classes = await toggle.getAttribute('class')
-    const isDisabled = !classes?.includes('bg-accent')
+    await toggled.click()
+    await page.waitForTimeout(1_500)
 
-    if (isDisabled) {
-      // Enable it
-      await toggle.click()
-      await page.waitForTimeout(1_500)
+    // Enabling is exactly what makes the per-chat pill appear, so the banner
+    // explaining it must show up with it.
+    await expect(infoBanner.first()).toBeVisible({ timeout: 3_000 })
+    expect(await infoBanner.first().textContent()).toMatch(/per-chat control/i)
 
-      // Per-chat banner should now appear
-      const newBanner = await infoBanner.isVisible({ timeout: 3_000 }).catch(() => false)
-
-      if (newBanner) {
-        const bannerText = await infoBanner.textContent()
-        expect(bannerText).toMatch(/per-chat control/i)
-      }
-
-      // Restore state
-      await toggle.click()
-      await page.waitForTimeout(500)
-    } else {
-      // Already enabled — banner should be visible
-      // Re-check with longer timeout
-      const lateBanner = await infoBanner.isVisible({ timeout: 5_000 }).catch(() => false)
-      expect(lateBanner).toBeTruthy()
-    }
+    // Restore state
+    await toggled.click()
+    await page.waitForTimeout(500)
   })
 
   // ── TokenImpactBadge ──
@@ -238,33 +224,21 @@ test.describe('Integration Card Internals', () => {
   test('TokenImpactBadge shows correct impact and tool count', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const integrationCards = page.locator('[data-testid^="integration-card-"]')
-    const count = await integrationCards.count()
-
-    if (count === 0) {
+    const cards = page.locator('[data-testid="integration-card"]')
+    const cardCount = await cards.count()
+    if (cardCount === 0) {
       test.skip()
       return
     }
 
-    // Wait for CLI checks to complete (badges render after status row)
-    await page.waitForTimeout(3_000)
-
-    // Find all token impact badges
+    // The badge sits in the collapsed header — no expansion needed. Every card
+    // must carry one: it is half of the enable/skip decision.
     const badges = page.locator('[data-testid="token-impact-badge"]')
-    const badgeCount = await badges.count()
+    await expect(badges).toHaveCount(cardCount)
 
-    // Each integration card should have a token impact badge
-    expect(badgeCount).toBeGreaterThan(0)
-
-    // Verify badge text structure for each badge
-    for (let i = 0; i < Math.min(badgeCount, 3); i++) {
-      const badge = badges.nth(i)
-      const text = await badge.textContent()
-
-      // Badge should contain impact level
+    for (let i = 0; i < cardCount; i++) {
+      const text = await badges.nth(i).textContent()
       expect(text).toMatch(/low|medium|high/i)
-
-      // Badge should contain tool count
       expect(text).toMatch(/\d+\s*tools?/i)
     }
   })

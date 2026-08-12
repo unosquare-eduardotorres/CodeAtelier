@@ -666,9 +666,29 @@ export class BlueprintBuildService extends EventEmitter {
     // ── 1. Resume-skip already-completed tasks ──
     const pending: BlueprintTask[] = []
     let skippedCount = 0
+    let userSkippedCount = 0
     for (const task of waveTasks) {
       const dbTask = blueprintTaskRepository.findById(task.id)
       const effectiveStatus = dbTask?.status ?? task.status
+      // BP-TASK-USER-SKIP-01: a user-skipped task is settled. It is never
+      // dispatched and never enters `pending`, so it cannot fail the wave and
+      // cannot trigger the downstream skip cascade. It counts toward completion
+      // the way a complete task does — the wave is done with it either way.
+      if (dbTask?.skippedByUserAt) {
+        result.tasksCompleted++
+        userSkippedCount++
+        bpLog.info(
+          `[executeWave] Task ${task.taskId} skipped by user at ${dbTask.skippedByUserAt} — not dispatched`
+        )
+        this.safeEmit('waveTaskComplete', {
+          blueprintId,
+          workspaceId,
+          wave: waveNum,
+          taskId: task.taskId,
+          status: 'skipped'
+        } satisfies BlueprintWaveTaskCompletePayload)
+        continue
+      }
       if (effectiveStatus === 'complete') {
         result.tasksCompleted++
         result.tasksResumed++
@@ -691,6 +711,15 @@ export class BlueprintBuildService extends EventEmitter {
         workspaceId,
         phase: 'build',
         text: `Skipping ${skippedCount} already-completed task${skippedCount > 1 ? 's' : ''} in Wave ${waveNum}`,
+        kind: 'system'
+      })
+    }
+    if (userSkippedCount > 0) {
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text: `Skipping ${userSkippedCount} user-skipped task${userSkippedCount > 1 ? 's' : ''} in Wave ${waveNum}`,
         kind: 'system'
       })
     }

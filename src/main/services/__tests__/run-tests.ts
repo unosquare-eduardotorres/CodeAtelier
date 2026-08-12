@@ -378,6 +378,8 @@ const TEST_FILES: string[] = [
   './blueprint-track.test',
   './landing.service.test',
   './track-claims.test',
+  './lent-branch.test',
+  './branch-options.test',
   // ─── MCP tool error handling + native module smoke ───
   '../../mcp-servers/__tests__/mcp-tool-error-handling.test',
   '../../mcp-servers/__tests__/native-module-smoke.test',
@@ -386,6 +388,7 @@ const TEST_FILES: string[] = [
   './blueprint-gate-launch.test',
   // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
   './blueprint-task-verification.test',
+  './blueprint-task-user-skip.test',
   // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───
   './blueprint-send-outcome.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
@@ -405,12 +408,14 @@ const TEST_FILES: string[] = [
   './background-task-watcher.test',
   '../../ipc/__tests__/process-ipc.test',
   '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
+  '../../../renderer/src/store/__tests__/workspace-switch-streams.test',
   '../../../renderer/src/store/__tests__/update-snooze.test',
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
   '../../../renderer/src/components/workspace/memory/facts/__tests__/facts-model.test',
   '../../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
+  '../../../renderer/src/components/workspace/integrations/__tests__/integration-readiness.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   './validate-args-pure.test',
   './stream-helper-deep.test',
@@ -565,6 +570,8 @@ const TEST_FILES: string[] = [
   '../executor-utils/__tests__/tool-tracker-leak.test',
   '../../ipc/__tests__/tool-chunk-progress.test',
   '../../../shared/__tests__/db-time.test',
+  // ─── Truncated plan block: nested fence inside a JSON string value ───
+  '../../../shared/__tests__/fenced-block.test',
   // ─── Registry drift repair ───
   // These existed on disk and were registered in run-all.ts (so they counted
   // toward coverage) but had never been added here, so `npm run test:unit`
@@ -634,7 +641,9 @@ const TEST_FILES: string[] = [
   // ─── Inline vs toast routing for permission requests ───
   '../../../renderer/src/lib/__tests__/permission-routing.test',
   // ─── BuildActionBar visibility (plan actioned / build running) ───
-  '../../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test'
+  '../../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
+  // ─── Chat header naming (project specialist, raw agent ids) ───
+  '../../../renderer/src/components/chat/__tests__/message-identity.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

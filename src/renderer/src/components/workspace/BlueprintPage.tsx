@@ -881,6 +881,7 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
         {/* ── Input View ── */}
         {effectiveView === 'input' && (
           <BlueprintInputView
+            workspaceId={workspaceId}
             onStart={handleStart}
             onBack={() => setViewState('landing')}
             initialTitle={prefillTitle}

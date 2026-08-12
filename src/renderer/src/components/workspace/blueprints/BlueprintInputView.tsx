@@ -18,7 +18,11 @@
 import { useState, useCallback, useRef, useEffect, type JSX } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Paperclip, Link2, Upload, Maximize2, X, Check } from 'lucide-react'
-import type { ReferenceDocument } from '../../../../../shared/blueprint-types'
+import type {
+  ReferenceDocument,
+  BlueprintBranchChoice
+} from '../../../../../shared/blueprint-types'
+import BlueprintBranchPicker from './BlueprintBranchPicker'
 import { useClipboardImagePaste, MAX_IMAGE_ATTACHMENTS, IMAGE_REGEX } from '@renderer/hooks'
 import { extractUrls, mergeUrlRefs } from './url-detector'
 import ReferenceDocList from './ReferenceDocList'
@@ -81,6 +85,7 @@ const SUPPORTED_FORMAT_CHIPS = [
 // ── Props ──
 
 interface BlueprintInputViewProps {
+  workspaceId: string
   onStart: (params: {
     title: string
     description?: string
@@ -96,6 +101,7 @@ interface BlueprintInputViewProps {
 // ── Component ──
 
 export function BlueprintInputView({
+  workspaceId,
   onStart,
   onBack,
   initialTitle = '',
@@ -103,6 +109,7 @@ export function BlueprintInputView({
 }: BlueprintInputViewProps): JSX.Element {
   const [title, setTitle] = useState(initialTitle)
   const [description, setDescription] = useState(initialDescription)
+  const [branchChoice, setBranchChoice] = useState<BlueprintBranchChoice>({ mode: 'auto' })
   const [referenceDocs, setReferenceDocs] = useState<ReferenceDocument[]>([])
   const [imageAttachments, setImageAttachments] = useState<string[]>([])
   const [showExpandModal, setShowExpandModal] = useState(false)
@@ -227,12 +234,19 @@ export function BlueprintInputView({
       })
     }
 
+    const settings: Record<string, unknown> = {}
+    if (allDocs.length > 0) settings.referenceDocuments = allDocs
+    // `auto` is what the resolver already assumes when nothing is stored, so
+    // only a deliberate choice is persisted — settings_json stays empty for the
+    // common case, and old blueprints keep reading the same way.
+    if (branchChoice.mode !== 'auto') settings.branchChoice = branchChoice
+
     onStart({
       title: title.trim(),
       description: description.trim() || undefined,
-      settingsJson: allDocs.length > 0 ? { referenceDocuments: allDocs } : undefined
+      settingsJson: Object.keys(settings).length > 0 ? settings : undefined
     })
-  }, [title, description, referenceDocs, imageAttachments, onStart])
+  }, [title, description, referenceDocs, imageAttachments, branchChoice, onStart])
 
   // ── Keyboard shortcut ──
   const handleKeyDown = useCallback(
@@ -251,6 +265,7 @@ export function BlueprintInputView({
     <>
       <div
         {...getRootProps()}
+        data-testid="blueprint-input-view"
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         className={`bg-surface-raised rounded-xl border overflow-hidden transition-colors flex flex-col flex-1 min-h-0 ${
@@ -359,6 +374,13 @@ export function BlueprintInputView({
                   </p>
                 </div>
               </div>
+
+              {/* Branch selection */}
+              <BlueprintBranchPicker
+                workspaceId={workspaceId}
+                value={branchChoice}
+                onChange={setBranchChoice}
+              />
 
               {/* Supported format chips */}
               <div className="flex flex-wrap gap-1">

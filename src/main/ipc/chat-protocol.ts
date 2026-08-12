@@ -63,6 +63,12 @@ export interface CompleteMessage {
   messageId: string
   taskId?: string
   phase?: ConversationPhase
+  /**
+   * Workspace that owns the conversation. Background streams can complete long
+   * after the user switched workspaces, so the renderer must not infer the
+   * workspace from its own active-workspace state.
+   */
+  workspaceId?: string
 }
 
 // ── Builder Functions ──
@@ -167,12 +173,14 @@ export function createCompleteMessage(opts: {
   messageId: string
   phase?: ConversationPhase
   taskId?: string
+  workspaceId?: string | null
 }): CompleteMessage {
   return {
     conversationId: opts.conversationId,
     messageId: opts.messageId,
     ...(opts.requestId ? { requestId: opts.requestId } : {}),
     ...(opts.phase ? { phase: opts.phase } : {}),
-    ...(opts.taskId ? { taskId: opts.taskId } : {})
+    ...(opts.taskId ? { taskId: opts.taskId } : {}),
+    ...(opts.workspaceId ? { workspaceId: opts.workspaceId } : {})
   }
 }

@@ -517,6 +517,156 @@ describe('verifyTaskFileClaims — lenient path with taskStartedAt requires fres
   })
 })
 
+// ══════════════════════════════════════════════════════════════════════
+// BP-VERIFY-UNVERIFIABLE-01 (R007): re-rooting + "cannot check" ≠ "missing"
+// ══════════════════════════════════════════════════════════════════════
+
+describe('verifyTaskFileClaims — planned path in the main checkout re-roots onto the worktree', () => {
+  test('absolute main-checkout path is confirmed against the execution root', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      // BUILD wrote the file in its worktree; the plan named it in the main checkout.
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const result = verifyTaskFileClaims(worktree, null, [join(main, 'src/a.ts')], undefined, main)
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.missingPlanned, [])
+      assert.deepEqual(result.unverifiablePlanned, [])
+      assert.equal(result.unverifiable, false)
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('claimed main-checkout path re-roots too — no false missingClaimed', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const result = verifyTaskFileClaims(
+        worktree,
+        { filesCreated: [join(main, 'src/a.ts')] },
+        [],
+        undefined,
+        main
+      )
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.missingClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('verifyTaskFileClaims — path under neither root is unverifiable, never missing', () => {
+  test('out-of-root planned path lands in unverifiablePlanned and not missingPlanned', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = verifyTaskFileClaims(worktree, null, ['src/a.ts', stray], undefined, main)
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.unverifiablePlanned, [stray])
+      assert.equal(result.missingPlanned.includes(stray), false)
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('traversal path is still refused (not silently re-rooted)', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      const result = verifyTaskFileClaims(
+        worktree,
+        { filesCreated: ['../../etc/passwd'] },
+        [],
+        undefined,
+        main
+      )
+      assert.equal(result.ok, false)
+      assert.deepEqual(result.missingClaimed, ['../../etc/passwd'])
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('verifyTaskFileClaims — R007 regression: all planned paths unverifiable + no completion', () => {
+  test('returns ok: true, unverifiable: true instead of hard-failing forever', () => {
+    const worktree = makeTmpWorkspace()
+    try {
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = verifyTaskFileClaims(worktree, null, [stray], Date.now())
+      assert.equal(result.ok, true)
+      assert.equal(result.unverifiable, true)
+      assert.deepEqual(result.unverifiablePlanned, [stray])
+      assert.deepEqual(result.missingPlanned, [])
+    } finally {
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('one checkable path that is genuinely absent still hard-fails (R029 detector intact)', () => {
+    const worktree = makeTmpWorkspace()
+    try {
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = verifyTaskFileClaims(worktree, null, [stray, 'src/absent.ts'], Date.now())
+      assert.equal(result.ok, false)
+      assert.equal(result.unverifiable, false)
+      assert.deepEqual(result.missingPlanned, ['src/absent.ts'])
+      assert.deepEqual(result.unverifiablePlanned, [stray])
+    } finally {
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('scanCompletedTaskFiles — re-rooting and unverifiable paths', () => {
+  test('re-rootable planned path is not reported as missingClaimed (legacy branch)', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const result = scanCompletedTaskFiles(
+        worktree,
+        [{ taskId: 'T001', status: 'complete', filePathsJson: [join(main, 'src/a.ts')] }],
+        main
+      )
+      assert.equal(result.size, 0)
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('out-of-root planned path is skipped rather than downgrading the task', () => {
+    const worktree = makeTmpWorkspace()
+    try {
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = scanCompletedTaskFiles(worktree, [
+        { taskId: 'T001', status: 'complete', filePathsJson: [stray] }
+      ])
+      assert.equal(result.size, 0)
+    } finally {
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
 // ═══════════════════════════════════════════════════════════════════════
 // BP-EVIDENCE-ONLY-SOFTPASS: Evidence-only task soft-pass regex tests
 // ═══════════════════════════════════════════════════════════════════════

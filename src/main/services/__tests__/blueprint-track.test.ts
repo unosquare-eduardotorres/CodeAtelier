@@ -52,23 +52,34 @@ if (!gitAvailable || !dbContext) {
   // reads workspace settings, so a mocked workspaceRepository silently reports
   // "not opted out" and the degradation tests below assert the wrong thing.
   // Repositories first so the services bind to the real ones.
-  const [, , , trackMod, blueprintTrackMod] = reloadWithRealDeps([
+  const [trackRepoMod, , , trackMod, blueprintTrackMod] = reloadWithRealDeps([
     require.resolve('../../db/repositories/track.repository'),
     require.resolve('../../db/repositories/workspace.repository'),
     require.resolve('../../db/repositories/blueprint.repository'),
     require.resolve('../track.service'),
     require.resolve('../blueprint-track')
   ]) as [
-    unknown,
+    typeof import('../../db/repositories/track.repository'),
     unknown,
     unknown,
     typeof import('../track.service'),
     typeof import('../blueprint-track')
   ]
-  const { trackService } = trackMod
+  const { trackRepository } = trackRepoMod
+  const { trackService, registerTrackBusyProbe } = trackMod
   const { ensureBlueprintTrack, resolveBlueprintTrack, blueprintTrackBranch, blueprintTrackOwner } =
     blueprintTrackMod
   const { verifyTaskFileClaims } = require('../blueprint-task-verification')
+
+  /**
+   * Which chat owners count as mid-turn, keyed by owner id.
+   *
+   * A single mutable flag would be a race — this harness runs tests
+   * concurrently — so busyness is keyed on the owner id, which is unique per
+   * test and is exactly what the probe is handed.
+   */
+  const busyChats = new Map<string, string>()
+  registerTrackBusyProbe('chat', (ownerId) => busyChats.get(ownerId) ?? null)
 
   let seq = 0
 
@@ -111,11 +122,216 @@ if (!gitAvailable || !dbContext) {
     }
   }
 
+  /** Persist a branch choice the way the create modal does. */
+  function setBranchChoice(bpId: string, choice: Record<string, unknown>): void {
+    db()
+      .prepare('UPDATE blueprints SET settings_json = ? WHERE id = ?')
+      .run(JSON.stringify({ branchChoice: choice }), bpId)
+  }
+
   const headOf = async (dir: string): Promise<string> =>
     (await simpleGit(dir).revparse(['--abbrev-ref', 'HEAD'])).trim()
 
   const statusOf = async (dir: string): Promise<string> =>
     (await simpleGit(dir).raw(['status', '--porcelain'])).trim()
+
+  // ── Branch selection ──────────────────────────────────────────
+
+  describe('blueprint branch selection', () => {
+    test('fork branches from a chat’s branch while the chat is still holding it', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        // A chat with its own tree, one commit ahead of main.
+        const chatOwner = `chat-fork-${wsId}`
+        const chat = await trackService.ensureTrack({
+          ownerKind: 'chat',
+          ownerId: chatOwner,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/chat-work',
+          baseBranch: 'main'
+        })
+        await writeFile(join(chat.path, 'from-chat.txt'), 'chat wrote this\n')
+        const chatGit = simpleGit(chat.path)
+        await chatGit.add('.')
+        await chatGit.commit('chat work')
+
+        setBranchChoice(bpId, { mode: 'fork', branch: 'feat/chat-work' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        // Both run in parallel: git happily forks a branch that is checked out
+        // elsewhere. A regression here would be silent, hence the assertion.
+        assert.equal(target.isolated, true)
+        assert.equal(target.reason, null)
+        assert.notEqual(target.path, chat.path, 'the fork gets its own tree')
+        assert.ok(
+          existsSync(join(target.path, 'from-chat.txt')),
+          'the fork starts from the base it was told to, not from main'
+        )
+        assert.ok(existsSync(chat.path), 'the chat keeps its tree')
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+        await trackService.releaseTrack('chat', chatOwner, { discard: true })
+      })
+    })
+
+    test('takeover moves the chat’s tree across, uncommitted work included', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const chatOwner = `chat-take-${wsId}`
+        const chat = await trackService.ensureTrack({
+          ownerKind: 'chat',
+          ownerId: chatOwner,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/handover',
+          baseBranch: 'main'
+        })
+        // Deliberately NOT committed: the promise of a handoff is that the new
+        // owner sees what the previous one left, not a clean checkout.
+        await writeFile(join(chat.path, 'half-done.txt'), 'mid-thought\n')
+
+        setBranchChoice(bpId, { mode: 'takeover', branch: 'feat/handover' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(target.isolated, true)
+        assert.equal(target.reason, null)
+        assert.equal(target.path, chat.path, 'the SAME directory changes hands')
+        assert.equal(target.branchName, 'feat/handover')
+        assert.ok(existsSync(join(target.path, 'half-done.txt')), 'uncommitted work came with it')
+
+        // One track, now owned by the blueprint — not a second row.
+        assert.equal(trackRepository.findByOwner('chat', chatOwner), undefined)
+        const owned = trackRepository.findByOwner('blueprint', bpId)
+        assert.ok(owned)
+        assert.equal(owned.path, chat.path)
+
+        // ...and it can be handed back the same way.
+        const back = trackService.transferOwner(owned.id, {
+          ownerKind: 'chat',
+          ownerId: chatOwner
+        })
+        assert.equal(back.ok, true)
+        assert.equal(trackRepository.findByOwner('chat', chatOwner)?.path, chat.path)
+
+        await trackService.releaseTrack('chat', chatOwner, { discard: true })
+      })
+    })
+
+    test('takeover is refused while the holder is mid-turn, and says who', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const chatOwner = `chat-busy-${wsId}`
+        await trackService.ensureTrack({
+          ownerKind: 'chat',
+          ownerId: chatOwner,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/busy',
+          baseBranch: 'main'
+        })
+        busyChats.set(chatOwner, 'it is streaming a reply right now')
+
+        setBranchChoice(bpId, { mode: 'takeover', branch: 'feat/busy' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        // Degraded, never thrown — BUILD must not die because a branch was busy.
+        assert.equal(target.isolated, false)
+        assert.equal(target.path, dir)
+        assert.match(target.reason ?? '', /feat\/busy/)
+        assert.match(target.reason ?? '', /streaming a reply/)
+
+        // The chat still owns its tree; nothing was taken.
+        assert.ok(trackRepository.findByOwner('chat', chatOwner))
+        assert.equal(trackRepository.findByOwner('blueprint', bpId), undefined)
+
+        busyChats.delete(chatOwner)
+        await trackService.releaseTrack('chat', chatOwner, { discard: true })
+      })
+    })
+
+    test('taking over the branch the checkout is on runs in the primary tree, and says so', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        // The primary tree is on `main`, and git allows a branch in one worktree.
+        setBranchChoice(bpId, { mode: 'takeover', branch: 'main' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(target.isolated, false)
+        assert.equal(target.path, dir)
+        assert.match(
+          target.reason ?? '',
+          /already on main/,
+          'the user asked for a branch and is getting the shared tree — that must be stated'
+        )
+      })
+    })
+
+    test('primary mode runs in the workspace checkout without creating anything', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        setBranchChoice(bpId, { mode: 'primary' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(target.isolated, false)
+        assert.equal(target.path, dir)
+        assert.match(target.reason ?? '', /workspace checkout/)
+        assert.equal(trackRepository.findByOwner('blueprint', bpId), undefined)
+      })
+    })
+
+    test('a repository with no commits degrades to the primary tree rather than throwing', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'bp-empty-'))
+      const wsId = `bp-empty-ws-${seq++}`
+      try {
+        // init only — an unborn HEAD, which is what a brand-new project is.
+        await simpleGit(dir).init(['--initial-branch=main'])
+        db()
+          .prepare('INSERT INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+          .run(wsId, `Empty workspace ${wsId}`, dir)
+        const bp = db()
+          .prepare(
+            `INSERT INTO blueprints (workspace_id, title, description)
+             VALUES (?, ?, ?) RETURNING id`
+          )
+          .get(wsId, 'Scaffold a new project', 'desc') as { id: string }
+
+        // `auto` — the default. Nothing was picked, and it must still not throw.
+        const target = await ensureBlueprintTrack({
+          blueprintId: bp.id,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(target.isolated, false)
+        assert.equal(target.path, dir)
+        assert.match(target.reason ?? '', /no commits yet/)
+        assert.equal(trackRepository.findByOwner('blueprint', bp.id), undefined)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+  })
 
   // ── Branch naming ──────────────────────────────────────────────────
 

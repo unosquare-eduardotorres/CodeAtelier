@@ -25,7 +25,11 @@ import { blueprintTasksService } from '../services/blueprint-tasks.service'
 import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
-import { workspaceRepository } from '../db/repositories'
+import { workspaceRepository, conversationRepository } from '../db/repositories'
+import { trackRepository } from '../db/repositories/track.repository'
+import { repoService } from '../services/repo.service'
+import { repoHasCommits } from '../services/blueprint-track'
+import { buildBranchOptions, NO_COMMITS_BRANCH_OPTIONS } from '../services/branch-options'
 import {
   blueprintRepository,
   blueprintPhaseRepository,
@@ -191,6 +195,32 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     return blueprintService.createFromIdea(ideaId, workspaceId)
   })
 
+  // ── blueprint:branchOptions — what the branch picker may offer ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_BRANCH_OPTIONS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_BRANCH_OPTIONS
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    // An unborn HEAD has no branches and nothing to fork from, and git rejects
+    // `worktree add` outright — there is no list to build.
+    if (!(await repoHasCommits(workspace.repoPath))) return NO_COMMITS_BRANCH_OPTIONS
+
+    const { local, current } = await repoService.listBranches(workspace.repoPath)
+
+    return buildBranchOptions({
+      repoHasCommits: true,
+      local,
+      current,
+      tracks: trackRepository.findByWorkspace(workspaceId),
+      chatTitle: (id) => conversationRepository.findById(id)?.title ?? null
+    })
+  })
+
   // ── blueprint:get — Get a blueprint with phases ──
 
   ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET, (event, rawArgs: unknown) => {
@@ -295,6 +325,20 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
     blueprintService.skipPhase(blueprintId, phase)
     return { skipped: true }
+  })
+
+  // ── blueprint:skipTask — User-skip a single build task (reversible) ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_SKIP_TASK, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_SKIP_TASK
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+    const taskId = requireString(args, 'taskId', ch)
+    // Default true so a bare { blueprintId, taskId } skips; pass false to clear.
+    const skipped = args.skipped === undefined ? true : args.skipped === true
+    const task = blueprintService.setTaskUserSkipped(blueprintId, taskId, skipped)
+    return { skipped: task.skippedByUserAt != null, skippedAt: task.skippedByUserAt }
   })
 
   // ── blueprint:rewindPhase — Rewind to a previous phase ──

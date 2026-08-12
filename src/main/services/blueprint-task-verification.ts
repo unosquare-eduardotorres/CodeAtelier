@@ -18,42 +18,68 @@ export interface TaskVerificationResult {
   ok: boolean
   /** Claimed filesCreated/filesModified entries absent from disk → HARD FAIL. */
   missingClaimed: string[]
-  /** Planned filePathsJson entries absent → warning only (plans drift). */
+  /** Planned filePathsJson entries we looked for and did not find → warning only (plans drift). */
   missingPlanned: string[]
+  /**
+   * BP-VERIFY-UNVERIFIABLE-01: Planned entries that resolve outside every known
+   * root, so they could never be checked at all. NOT a claim about existence —
+   * absence of evidence is not evidence of absence, so these never hard-fail.
+   */
+  unverifiablePlanned: string[]
   /** Claimed files present but stale (mtime < taskStartedAt) → HARD FAIL when taskStartedAt is provided. */
   staleClaimed: string[]
-  /** No claims AND no planned files — nothing to check (integration/wiring tasks). */
+  /** Nothing checkable — no claims and no planned path we could inspect. */
   unverifiable: boolean
 }
+
+/**
+ * Outcome of resolving one path against the roots we are allowed to read.
+ * `outside` means "could not be checked", which is deliberately distinct from
+ * "checked and absent" — conflating the two is what made an unverifiable task
+ * fail forever (R007).
+ */
+type Resolution = { kind: 'inside'; path: string } | { kind: 'outside' }
 
 /**
  * Verify that files claimed by the LLM completion block actually exist on disk.
  *
  * Rules:
- * - Resolve each path against `workspacePath`; a claimed path resolving **outside**
- *   the workspace (traversal) counts as missing.
+ * - Resolve each path against `workspacePath`. An absolute path under
+ *   `mainRepoPath` is re-rooted onto `workspacePath` first — BUILD runs in a
+ *   worktree of the same repo, so the same repo-relative file in the execution
+ *   root is the file the plan meant. A path under neither root is refused.
+ * - A refused **planned** path lands in `unverifiablePlanned`, never in
+ *   `missingPlanned` — we cannot report a file absent from a tree we are not
+ *   allowed to look at.
  * - `ok = false` when:
  *   - Any claimed `filesCreated`/`filesModified` entry is missing on disk, **or**
- *   - No completion block was parsed AND `plannedFiles` is non-empty AND **none**
- *     of them exist (the R029 signature: zero output, zero files).
+ *   - No completion block was parsed AND at least one planned path was actually
+ *     checkable AND **none** of the checkable ones exist (the R029 signature:
+ *     zero output, zero files).
  * - No completion block but planned files DO exist → `ok = true` (agent worked,
  *   forgot the block — current lenient behavior preserved).
- * - No claims + no planned files → `unverifiable: true, ok: true` (integration/
- *   wiring tasks — the verify-phase net still covers them).
+ * - No claims + nothing checkable → `unverifiable: true, ok: true` (integration/
+ *   wiring tasks, and tasks whose planned paths all lie outside our roots — the
+ *   verify-phase net still covers those).
  *
  * @param taskStartedAt  Optional epoch ms. When provided, claimed files must also
  *   have `mtimeMs >= taskStartedAt - 60_000` (clock-skew allowance). Stale files
  *   → `staleClaimed` → `ok = false`. Omit for verify-phase scans where legitimately-
  *   unmodified files are common.
+ * @param mainRepoPath  Optional. The workspace's primary checkout, when execution
+ *   happens in a worktree of it. Absolute paths under it are re-rooted onto
+ *   `workspacePath` before the guard.
  */
 export function verifyTaskFileClaims(
   workspacePath: string,
   completion: Record<string, unknown> | null,
   plannedFiles: string[],
-  taskStartedAt?: number
+  taskStartedAt?: number,
+  mainRepoPath?: string
 ): TaskVerificationResult {
   const missingClaimed: string[] = []
   const missingPlanned: string[] = []
+  const unverifiablePlanned: string[] = []
   const staleClaimed: string[] = []
 
   // FIX-3: Freshness threshold — files must have been written during this task execution.
@@ -68,13 +94,15 @@ export function verifyTaskFileClaims(
   // ── Case 1: Completion block exists with file claims → verify each one ──
   if (allClaimed.length > 0) {
     for (const filePath of allClaimed) {
-      const resolved = resolveAndGuard(workspacePath, filePath)
-      if (!resolved || !existsSync(resolved)) {
+      // A claim about a path outside our roots stays a hard failure: the agent
+      // asserted it wrote that file, and we cannot confirm the assertion.
+      const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+      if (res.kind === 'outside' || !existsSync(res.path)) {
         missingClaimed.push(filePath)
       } else if (freshnessThreshold != null) {
         // FIX-3: Check mtime freshness — stale files from a prior run must not pass
         try {
-          const mtime = statSync(resolved).mtimeMs
+          const mtime = statSync(res.path).mtimeMs
           if (mtime < freshnessThreshold) {
             staleClaimed.push(filePath)
           }
@@ -87,8 +115,11 @@ export function verifyTaskFileClaims(
 
     // Also check planned files for drift warnings (non-fatal)
     for (const filePath of plannedFiles) {
-      const resolved = resolveAndGuard(workspacePath, filePath)
-      if (resolved && !existsSync(resolved) && !allClaimed.includes(filePath)) {
+      if (allClaimed.includes(filePath)) continue
+      const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+      if (res.kind === 'outside') {
+        unverifiablePlanned.push(filePath)
+      } else if (!existsSync(res.path)) {
         missingPlanned.push(filePath)
       }
     }
@@ -97,6 +128,7 @@ export function verifyTaskFileClaims(
       ok: missingClaimed.length === 0 && staleClaimed.length === 0,
       missingClaimed,
       missingPlanned,
+      unverifiablePlanned,
       staleClaimed,
       unverifiable: false
     }
@@ -109,6 +141,7 @@ export function verifyTaskFileClaims(
       ok: true,
       missingClaimed: [],
       missingPlanned: [],
+      unverifiablePlanned: [],
       staleClaimed: [],
       unverifiable: true
     }
@@ -117,18 +150,45 @@ export function verifyTaskFileClaims(
   // Check if ANY planned files exist on disk
   let anyPlannedExists = false
   for (const filePath of plannedFiles) {
-    const resolved = resolveAndGuard(workspacePath, filePath)
-    if (resolved && existsSync(resolved)) {
+    const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+    if (res.kind === 'outside') {
+      unverifiablePlanned.push(filePath)
+    } else if (existsSync(res.path)) {
       anyPlannedExists = true
     } else {
       missingPlanned.push(filePath)
     }
   }
 
+  // BP-VERIFY-UNVERIFIABLE-01: Hard-fail only when something was actually
+  // checkable. When every planned path lies outside our roots we know nothing
+  // about this task — reporting "the agent produced nothing" would be a claim
+  // we never tested, and it fails identically on every retry (R007).
+  const anyCheckable = plannedFiles.length > unverifiablePlanned.length
+
+  if (!completion && !anyPlannedExists && anyCheckable) {
+    // R029 signature: no completion block AND none of the checkable planned
+    // files exist → the agent produced nothing
+    return {
+      ok: false,
+      missingClaimed: [],
+      missingPlanned,
+      unverifiablePlanned,
+      staleClaimed: [],
+      unverifiable: false
+    }
+  }
+
   if (!completion && !anyPlannedExists) {
-    // R029 signature: no completion block AND none of the planned files exist
-    // → the agent produced nothing
-    return { ok: false, missingClaimed: [], missingPlanned, staleClaimed: [], unverifiable: false }
+    // Nothing was checkable — pass, but flag it so the caller can surface it.
+    return {
+      ok: true,
+      missingClaimed: [],
+      missingPlanned,
+      unverifiablePlanned,
+      staleClaimed: [],
+      unverifiable: true
+    }
   }
 
   // FIX-3: Lenient path with freshness — if taskStartedAt is provided and
@@ -137,10 +197,10 @@ export function verifyTaskFileClaims(
   if (freshnessThreshold != null && !completion) {
     let anyFresh = false
     for (const filePath of plannedFiles) {
-      const resolved = resolveAndGuard(workspacePath, filePath)
-      if (resolved && existsSync(resolved)) {
+      const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+      if (res.kind === 'inside' && existsSync(res.path)) {
         try {
-          if (statSync(resolved).mtimeMs >= freshnessThreshold) {
+          if (statSync(res.path).mtimeMs >= freshnessThreshold) {
             anyFresh = true
             break
           }
@@ -149,11 +209,14 @@ export function verifyTaskFileClaims(
         }
       }
     }
-    if (!anyFresh) {
+    // BP-VERIFY-UNVERIFIABLE-01: same rule as above — staleness is only a
+    // verdict on paths we could actually stat.
+    if (!anyFresh && anyCheckable) {
       return {
         ok: false,
         missingClaimed: [],
         missingPlanned,
+        unverifiablePlanned,
         staleClaimed: [],
         unverifiable: false
       }
@@ -162,7 +225,14 @@ export function verifyTaskFileClaims(
 
   // Some planned files exist (and are fresh if taskStartedAt was given)
   // → agent worked, just forgot the completion block
-  return { ok: true, missingClaimed: [], missingPlanned, staleClaimed: [], unverifiable: false }
+  return {
+    ok: true,
+    missingClaimed: [],
+    missingPlanned,
+    unverifiablePlanned,
+    staleClaimed: [],
+    unverifiable: false
+  }
 }
 
 /**
@@ -174,7 +244,14 @@ export function verifyTaskFileClaims(
  * Tasks without `completionJson` (pre-migration or unparsed) fall back to checking
  * all planned files as `missingClaimed` for backward compatibility.
  *
+ * BP-VERIFY-UNVERIFIABLE-01: planned paths that resolve outside every root are
+ * skipped entirely — neither `missingClaimed` nor `driftFiles`. VERIFY must not
+ * downgrade a task over a file it was never able to look at.
+ *
  * Returns a Map of taskId → { missingClaimed, driftFiles }.
+ *
+ * @param mainRepoPath  Optional primary checkout; absolute paths under it are
+ *   re-rooted onto `workspacePath` (same rule as verifyTaskFileClaims).
  */
 export function scanCompletedTaskFiles(
   workspacePath: string,
@@ -183,7 +260,8 @@ export function scanCompletedTaskFiles(
     status: string
     filePathsJson: string[]
     completionJson?: { filesCreated: string[]; filesModified: string[] } | null
-  }>
+  }>,
+  mainRepoPath?: string
 ): Map<string, { missingClaimed: string[]; driftFiles: string[] }> {
   const resultMap = new Map<string, { missingClaimed: string[]; driftFiles: string[] }>()
 
@@ -201,8 +279,8 @@ export function scanCompletedTaskFiles(
         ...(task.completionJson.filesModified ?? [])
       ]
       for (const filePath of claimed) {
-        const resolved = resolveAndGuard(workspacePath, filePath)
-        if (!resolved || !existsSync(resolved)) {
+        const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+        if (res.kind === 'outside' || !existsSync(res.path)) {
           missingClaimed.push(filePath)
         }
       }
@@ -212,8 +290,9 @@ export function scanCompletedTaskFiles(
         const claimedSet = new Set(claimed.map((p) => p.toLowerCase()))
         for (const filePath of task.filePathsJson) {
           if (claimedSet.has(filePath.toLowerCase())) continue
-          const resolved = resolveAndGuard(workspacePath, filePath)
-          if (!resolved || !existsSync(resolved)) {
+          const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+          if (res.kind === 'outside') continue // unverifiable — not drift
+          if (!existsSync(res.path)) {
             driftFiles.push(filePath)
           }
         }
@@ -223,8 +302,9 @@ export function scanCompletedTaskFiles(
       // Treat as missingClaimed for backward compatibility
       if (!task.filePathsJson?.length) continue
       for (const filePath of task.filePathsJson) {
-        const resolved = resolveAndGuard(workspacePath, filePath)
-        if (!resolved || !existsSync(resolved)) {
+        const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+        if (res.kind === 'outside') continue // unverifiable — never a hard failure
+        if (!existsSync(res.path)) {
           missingClaimed.push(filePath)
         }
       }
@@ -320,15 +400,39 @@ function injectClaimedFindings(
 }
 
 /**
- * Resolve a file path against the workspace root, returning null if the
- * resolved path escapes the workspace (path traversal protection).
+ * Resolve a file path against the execution root.
+ *
+ * When `mainRepoPath` is given and the path is an absolute location inside the
+ * primary checkout, it is re-rooted onto `workspacePath`: BUILD executes in a
+ * worktree of the same repo, so the same repo-relative file under the execution
+ * root is the file the plan named. A path under neither root is refused
+ * (`outside`) — refusal means "not checkable here", never "missing".
  */
-function resolveAndGuard(workspacePath: string, filePath: string): string | null {
-  // Handle absolute paths: check if they're within the workspace
-  const resolved = isAbsolute(filePath) ? filePath : resolve(workspacePath, filePath)
-  const rel = relative(workspacePath, resolved)
+function resolveAndGuard(
+  workspacePath: string,
+  filePath: string,
+  mainRepoPath?: string
+): Resolution {
+  const direct = containedIn(workspacePath, filePath)
+  if (direct) return { kind: 'inside', path: direct }
 
-  // If the relative path starts with '..' it escapes the workspace
+  if (mainRepoPath && isAbsolute(filePath)) {
+    const rel = relative(mainRepoPath, filePath)
+    if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+      return { kind: 'inside', path: resolve(workspacePath, rel) }
+    }
+  }
+
+  return { kind: 'outside' }
+}
+
+/**
+ * Resolve `filePath` against `root`, returning it only when it stays inside
+ * (path traversal protection). Returns null otherwise.
+ */
+function containedIn(root: string, filePath: string): string | null {
+  const resolved = isAbsolute(filePath) ? filePath : resolve(root, filePath)
+  const rel = relative(root, resolved)
   if (rel.startsWith('..') || isAbsolute(rel)) {
     return null
   }

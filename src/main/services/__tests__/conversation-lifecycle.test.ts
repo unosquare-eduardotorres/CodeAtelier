@@ -135,6 +135,55 @@ describe('ConversationLifecycle — disposer contract', () => {
     lc.complete() // second complete must not re-run disposers
     assert.equal(calls, 1)
   })
+
+  // LIFECYCLE-LATE-DISPOSE-01: a stage that was still awaiting when the abort
+  // landed registers its cleanup afterwards. Pushing it onto a dead disposers
+  // array leaked timers, worktree locks and CLI sessions from a request that
+  // no longer existed.
+  test('onDispose after abort() runs the disposer immediately, exactly once', () => {
+    const lc = freshLifecycle()
+    let calls = 0
+    lc.begin('conv-1')
+    lc.abort('userStop')
+
+    lc.onDispose(() => calls++)
+    assert.equal(calls, 1, 'late disposer runs at registration time')
+
+    lc.complete() // must not re-run it
+    assert.equal(calls, 1)
+  })
+
+  test('onDispose after complete() runs the disposer immediately', () => {
+    const lc = freshLifecycle()
+    let calls = 0
+    lc.begin('conv-1')
+    lc.complete()
+    lc.onDispose(() => calls++)
+    assert.equal(calls, 1)
+  })
+
+  test('a throwing late disposer is swallowed', () => {
+    const lc = freshLifecycle()
+    lc.begin('conv-1')
+    lc.abort('userStop')
+    assert.doesNotThrow(() =>
+      lc.onDispose(() => {
+        throw new Error('late disposer failure')
+      })
+    )
+  })
+
+  test('a disposer registered *during* disposal still drains, not runs twice', () => {
+    const lc = freshLifecycle()
+    const order: string[] = []
+    lc.begin('conv-1')
+    lc.onDispose(() => {
+      order.push('outer')
+      lc.onDispose(() => order.push('inner'))
+    })
+    lc.abort('userStop')
+    assert.deepEqual(order, ['outer', 'inner'])
+  })
 })
 
 // ══════════════════════════════════════════════════════════════════════════════

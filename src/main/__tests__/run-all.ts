@@ -401,6 +401,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-track.test',
   '../services/__tests__/landing.service.test',
   '../services/__tests__/track-claims.test',
+  '../services/__tests__/lent-branch.test',
+  '../services/__tests__/branch-options.test',
   // ─── Blueprint Environment Preflight ───
   '../services/__tests__/blueprint-preflight.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
@@ -604,6 +606,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/base-adapter.test',
   '../services/__tests__/blueprint-prompt-loader.test',
   '../services/__tests__/blueprint-task-verification.test',
+  '../services/__tests__/blueprint-task-user-skip.test',
   '../services/__tests__/btw.test',
   '../services/__tests__/budget-exceeded-error.test',
   '../services/__tests__/budget-preflight.test',
@@ -649,6 +652,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/ipc-integrations-handlers.test',
   '../mcp-servers/__tests__/jira-server.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
+  '../../renderer/src/store/__tests__/workspace-switch-streams.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   '../../renderer/src/lib/__tests__/permission-routing.test',
@@ -657,7 +661,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
   '../../renderer/src/components/workspace/memory/facts/__tests__/facts-model.test',
   '../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
+  '../../renderer/src/components/workspace/integrations/__tests__/integration-readiness.test',
   '../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
+  '../../renderer/src/components/chat/__tests__/message-identity.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
   '../services/__tests__/repo-service-utils.test',
@@ -673,7 +679,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/executor-utils/__tests__/tool-progress-heartbeat.test',
   '../services/executor-utils/__tests__/tool-tracker-leak.test',
   '../ipc/__tests__/tool-chunk-progress.test',
-  '../../shared/__tests__/db-time.test'
+  '../../shared/__tests__/db-time.test',
+  // ─── Truncated plan block: nested fence inside a JSON string value ───
+  '../../shared/__tests__/fenced-block.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

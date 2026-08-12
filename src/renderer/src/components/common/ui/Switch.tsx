@@ -8,6 +8,14 @@ interface SwitchProps {
   /** Trailing marker next to the label, e.g. a cost badge. */
   badge?: React.ReactNode
   disabled?: boolean
+  /**
+   * Render the toggle alone, with `label` exposed only to assistive tech.
+   * For rows that already name the control themselves — e.g. an integration
+   * header where the name doubles as the expand affordance.
+   */
+  hideLabel?: boolean
+  /** Native tooltip, used to explain why the control is disabled. */
+  title?: string
 }
 
 /**
@@ -24,10 +32,39 @@ export default function Switch({
   label,
   description,
   badge,
-  disabled = false
+  disabled = false,
+  hideLabel = false,
+  title
 }: SwitchProps): React.JSX.Element {
   const labelId = useId()
   const descId = useId()
+
+  const control = (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={hideLabel ? label : undefined}
+      aria-labelledby={hideLabel ? undefined : labelId}
+      aria-describedby={!hideLabel && description ? descId : undefined}
+      disabled={disabled}
+      title={title}
+      onClick={() => onChange(!checked)}
+      className={`relative shrink-0 w-9 h-5 rounded-full transition-colors
+        focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-focus
+        disabled:opacity-50 disabled:cursor-not-allowed ${hideLabel ? '' : 'mt-0.5'} ${
+          checked ? 'bg-teal' : 'bg-surface-float border border-border-default'
+        }`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+          checked ? 'translate-x-4' : ''
+        }`}
+      />
+    </button>
+  )
+
+  if (hideLabel) return control
 
   return (
     <div className="flex items-start justify-between gap-3">
@@ -42,26 +79,7 @@ export default function Switch({
           </div>
         )}
       </div>
-      <button
-        type="button"
-        role="switch"
-        aria-checked={checked}
-        aria-labelledby={labelId}
-        aria-describedby={description ? descId : undefined}
-        disabled={disabled}
-        onClick={() => onChange(!checked)}
-        className={`relative shrink-0 w-9 h-5 mt-0.5 rounded-full transition-colors
-          focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-input-focus
-          disabled:opacity-50 disabled:cursor-not-allowed ${
-            checked ? 'bg-teal' : 'bg-surface-float border border-border-default'
-          }`}
-      >
-        <span
-          className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-            checked ? 'translate-x-4' : ''
-          }`}
-        />
-      </button>
+      {control}
     </div>
   )
 }

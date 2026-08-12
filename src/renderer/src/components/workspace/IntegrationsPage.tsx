@@ -4,6 +4,16 @@ import { EXTERNAL_MCP_INTEGRATIONS } from '../../../../shared/constants'
 import type { IntegrationCredentialStatus } from '../../../../shared/integration-credentials.types'
 import { McpExplainerBanner, IntegrationCard } from './integrations'
 
+const CATEGORIES = [
+  { key: 'testing' as const, label: 'Testing' },
+  { key: 'deployment' as const, label: 'Deployment' },
+  { key: 'monitoring' as const, label: 'Monitoring' },
+  { key: 'other' as const, label: 'Other' }
+]
+
+/** Below this many integrations, category headers are pure overhead. */
+const CATEGORY_HEADER_THRESHOLD = 5
+
 /**
  * Integrations page — workspace settings tab for managing external MCP servers.
  * Each integration can be enabled/disabled per workspace. When enabled, a toggle
@@ -103,57 +113,53 @@ export default function IntegrationsPage(): React.JSX.Element {
     [activeWorkspace, settings]
   )
 
-  // Group integrations by category
-  const categories = [
-    { key: 'testing' as const, label: 'Testing' },
-    { key: 'deployment' as const, label: 'Deployment' },
-    { key: 'monitoring' as const, label: 'Monitoring' },
-    { key: 'other' as const, label: 'Other' }
-  ]
+  const renderCard = (
+    integration: (typeof EXTERNAL_MCP_INTEGRATIONS)[number]
+  ): React.JSX.Element => (
+    <IntegrationCard
+      key={integration.id}
+      integration={integration}
+      available={!!settings[`${integration.id}Available`]}
+      cliStatus={cliStatuses[integration.id] ?? { checked: false, found: false }}
+      onToggle={handleToggle}
+      savingId={savingId}
+      workspaceId={workspaceId}
+      credentialStatus={credentialStatuses[integration.id]}
+      onCredentialStatusChange={handleCredentialStatusChange}
+      onCredentialsCleared={reloadSettings}
+    />
+  )
+
+  // Category headers cost a row each and say nothing while every category holds
+  // a single item — two headers over two integrations, one of them "OTHER".
+  // They earn their place once the list is long enough to need scanning.
+  const showCategories = EXTERNAL_MCP_INTEGRATIONS.length >= CATEGORY_HEADER_THRESHOLD
 
   return (
-    <div data-testid="integrations-page" className="p-6 space-y-6 max-w-2xl">
-      {/* MCP Explainer Banner */}
+    <div data-testid="integrations-page" className="p-6 space-y-4 max-w-4xl">
       <McpExplainerBanner />
 
-      {/* Integration cards by category */}
-      {categories.map((cat) => {
-        const integrations = EXTERNAL_MCP_INTEGRATIONS.filter((i) => i.category === cat.key)
-        if (integrations.length === 0) return null
-        return (
-          <div key={cat.key}>
-            <h4 className="text-xs text-text-secondary uppercase tracking-wider font-medium mb-3">
-              {cat.label}
-            </h4>
-            <div className="space-y-3">
-              {integrations.map((integration) => (
-                <IntegrationCard
-                  key={integration.id}
-                  integration={integration}
-                  available={!!settings[`${integration.id}Available`]}
-                  cliStatus={cliStatuses[integration.id] ?? { checked: false, found: false }}
-                  onToggle={handleToggle}
-                  savingId={savingId}
-                  workspaceId={workspaceId}
-                  credentialStatus={credentialStatuses[integration.id]}
-                  onCredentialStatusChange={handleCredentialStatusChange}
-                  onCredentialsCleared={reloadSettings}
-                />
-              ))}
+      {showCategories ? (
+        CATEGORIES.map((cat) => {
+          const integrations = EXTERNAL_MCP_INTEGRATIONS.filter((i) => i.category === cat.key)
+          if (integrations.length === 0) return null
+          return (
+            <div key={cat.key}>
+              <h4 className="text-[11px] text-text-muted uppercase tracking-wider font-medium mb-2">
+                {cat.label}
+              </h4>
+              <div className="space-y-2">{integrations.map(renderCard)}</div>
             </div>
-          </div>
-        )
-      })}
+          )
+        })
+      ) : (
+        <div className="space-y-2">{EXTERNAL_MCP_INTEGRATIONS.map(renderCard)}</div>
+      )}
 
-      {/* Future integrations teaser */}
-      <div className="border border-dashed border-border-subtle rounded-lg p-4 text-center">
-        <p className="text-xs text-text-muted">
-          More integrations coming soon — Playwright MCP, Docker MCP, Supabase MCP, Sentry MCP…
-        </p>
-        <p className="text-[10px] text-text-muted mt-1">
-          Each auto-renders here and as a pill in the chat bar.
-        </p>
-      </div>
+      <p className="text-[11px] text-text-muted border border-dashed border-border-subtle rounded-lg px-3 py-2">
+        More coming soon — Playwright, Docker, Supabase, Sentry. Each auto-renders here and as a
+        pill in the chat bar.
+      </p>
     </div>
   )
 }

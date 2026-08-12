@@ -11,14 +11,7 @@
  */
 
 import type { PlanRecord, StructuredPlan } from '../../shared/types'
-
-/**
- * Matches ``` (or ````) plan blocks with a capture group.
- * Mirrors PLAN_BLOCK_CAPTURE_RE in
- * src/renderer/src/components/chat/plan-detection.ts — duplicated rather than
- * imported because the main process must not import renderer modules.
- */
-export const PLAN_BLOCK_RE = /`{3,4}plan\n([\s\S]*?)`{3,4}/
+import { extractFencedContent } from '../../shared/fenced-block'
 
 // ── Types ──
 
@@ -89,8 +82,8 @@ export function parseTs(value: string | null | undefined): number {
 
 /** Extract the plan block body from a message, or null when there is none. */
 export function extractPlanBlock(contentMd: string): string | null {
-  const match = PLAN_BLOCK_RE.exec(contentMd ?? '')
-  return match ? match[1].trim() : null
+  const content = extractFencedContent(contentMd ?? '', 'plan')
+  return content === null ? null : content.trim()
 }
 
 function firstLine(body: string): string {

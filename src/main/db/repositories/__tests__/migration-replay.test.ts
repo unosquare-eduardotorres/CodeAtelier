@@ -604,6 +604,57 @@ if (!env) {
         db.close()
       }
     })
+
+    test('v142_keys_track_file_claims_by_track_and_path_and_cascades', () => {
+      const migration = migrations.find((m) => m.version === 142)
+      assert.ok(migration)
+
+      const db = createSchemaDb()
+      try {
+        // 141 creates work_tracks, which 142's foreign key points at.
+        runBatch(db, 1, 141)
+        assert.equal(
+          getTableNames(db).includes('track_file_claims'),
+          false,
+          '142 is what creates the table'
+        )
+
+        db.transaction(() => migration.up(db))()
+        assert.ok(getTableNames(db).includes('track_file_claims'))
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 't', '/tmp')`
+        ).run()
+        db.prepare(
+          `INSERT INTO work_tracks (id, workspace_id, owner_kind, owner_id, branch_name, path, base_branch, status)
+           VALUES ('tr-1', 'ws-1', 'chat', 'c-1', 'feat/a', '/tmp/wt/a', 'main', 'active')`
+        ).run()
+
+        const claim = db.prepare(
+          `INSERT INTO track_file_claims (track_id, file_path) VALUES (?, ?)`
+        )
+        claim.run('tr-1', 'src/app.ts')
+
+        // The PK is composite. A plain re-insert has to collide, which is what
+        // makes re-recording a turn an upsert rather than unbounded growth —
+        // and is why first_seen_at can answer "who touched this first".
+        assert.throws(() => claim.run('tr-1', 'src/app.ts'), /UNIQUE constraint failed/)
+
+        // ...but a second file under the same track must NOT collide. A PK of
+        // track_id alone would pass every assertion above and lose this.
+        claim.run('tr-1', 'src/other.ts')
+        const count = (): number =>
+          (db.prepare('SELECT COUNT(*) AS n FROM track_file_claims').get() as { n: number }).n
+        assert.equal(count(), 2)
+
+        // Claims die with their track. Orphaned rows would keep predicting
+        // collisions against work that no longer exists.
+        db.prepare(`DELETE FROM work_tracks WHERE id = 'tr-1'`).run()
+        assert.equal(count(), 0, 'ON DELETE CASCADE fired')
+      } finally {
+        db.close()
+      }
+    })
   })
 
   describe('Migration Replay — data round-trip verification', () => {
@@ -718,6 +769,49 @@ if (!env) {
         >
         assert.equal(row.name, 'Test Preset')
         assert.equal(row.is_built_in, 0)
+      } finally {
+        db.close()
+      }
+    })
+  })
+
+  describe('Migration Replay — v143 blueprint task user skip', () => {
+    test('adds_skipped_by_user_at_leaving_existing_rows_null', () => {
+      const db = createSchemaDb()
+      try {
+        // Stop one migration short, seed a task, then apply v143 to it — the
+        // upgrade path a user with existing blueprints actually takes.
+        runBatch(db, 1, 142)
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 'test', '/tmp/test')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title) VALUES ('bp-1', 'ws-1', 'BP')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description)
+           VALUES ('t-1', 'bp-1', 'T001', 'pre-existing task')`
+        ).run()
+
+        runBatch(db, 143, 143)
+
+        const cols = getColumnNames(db, 'blueprint_tasks')
+        assert.ok(cols.includes('skipped_by_user_at'), 'column added')
+
+        const row = db.prepare(`SELECT * FROM blueprint_tasks WHERE id = 't-1'`).get() as Record<
+          string,
+          unknown
+        >
+        assert.equal(row.skipped_by_user_at, null, 'existing rows are not retroactively skipped')
+        assert.equal(row.status, 'pending', 'status untouched by the migration')
+
+        // Cascade still intact after the ALTER.
+        db.prepare(`DELETE FROM blueprints WHERE id = 'bp-1'`).run()
+        const remaining = db
+          .prepare(`SELECT COUNT(*) as n FROM blueprint_tasks WHERE blueprint_id = 'bp-1'`)
+          .get() as { n: number }
+        assert.equal(remaining.n, 0, 'blueprint delete still cascades to tasks')
       } finally {
         db.close()
       }

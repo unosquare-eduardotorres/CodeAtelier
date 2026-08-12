@@ -12,7 +12,12 @@ import {
 } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useChatStore } from '@renderer/store/chat.store'
-import type { TrackListResult, TrackSummary } from '../../../../shared/track-types'
+import type {
+  TrackLandingMode,
+  TrackListResult,
+  TrackSummary
+} from '../../../../shared/track-types'
+import { TrackLandingPanel } from './TrackLandingPanel'
 
 /**
  * Tracks — the working trees agents actually write in.
@@ -50,7 +55,8 @@ function formatWhen(iso: string | null): string {
 const STATE_STYLES: Record<string, string> = {
   active: 'bg-info/15 text-info',
   retained: 'bg-accent/15 text-accent',
-  removing: 'bg-surface-overlay text-text-secondary'
+  removing: 'bg-surface-overlay text-text-secondary',
+  conflicted: 'bg-danger/15 text-danger'
 }
 
 interface TrackRowProps {
@@ -199,6 +205,7 @@ export default function TracksSettingsTab({
   const [busyId, setBusyId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
+  const [landingId, setLandingId] = useState<string | null>(null)
 
   const workspaceId = activeWorkspace?.id
 
@@ -258,11 +265,12 @@ export default function TracksSettingsTab({
    * survive it, so the honest thing is to say which files collided and leave
    * the decision with the user.
    */
-  const land = async (track: TrackSummary): Promise<void> => {
-    const result = await window.api.trackLand({
-      trackId: track.id,
-      commitMessage: `Land ${track.branchName}`
-    })
+  const land = async (
+    track: TrackSummary,
+    opts: { commitMessage: string; description?: string; mode: TrackLandingMode }
+  ): Promise<void> => {
+    const result = await window.api.trackLand({ trackId: track.id, ...opts })
+    setLandingId(null)
     if (result.outcome === 'conflicted') {
       setError(
         `"${result.branch}" conflicts with the integration branch` +
@@ -361,9 +369,17 @@ export default function TracksSettingsTab({
                   void run(track.id, () => window.api.trackReveal({ trackId: track.id }))
                 }
                 onAdopt={() => void run(track.id, () => adopt(track.id))}
-                onLand={() => void run(track.id, () => land(track))}
+                onLand={() => setLandingId(landingId === track.id ? null : track.id)}
                 onDiscard={() => setConfirmDiscardId(track.id)}
               />
+              {landingId === track.id && (
+                <TrackLandingPanel
+                  track={track}
+                  busy={busyId === track.id}
+                  onCancel={() => setLandingId(null)}
+                  onLand={(opts) => run(track.id, () => land(track, opts))}
+                />
+              )}
               {confirmDiscardId === track.id && (
                 <div className="mt-1 ml-9 flex items-center gap-3 p-2.5 rounded-lg bg-danger/10 text-xs text-danger">
                   <span>

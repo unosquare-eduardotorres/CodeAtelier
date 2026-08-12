@@ -50,6 +50,8 @@ import { planRegistryService } from './plan-registry.service'
 import { promptOptimizerService } from './prompt-optimizer.service'
 import { backgroundCliSession } from './background-cli-session'
 import { trackService, primaryTreeLock, primaryTreeBusyError } from './track.service'
+import { trackRepository } from '../db/repositories/track.repository'
+import { resolveLentHolder, lentBranchRefusal, type LentBranchHolder } from './lent-branch'
 
 const log = chatIpcLogger
 
@@ -224,6 +226,22 @@ export class ChatStreamService {
       return workspace?.name ?? workspaceId.slice(0, 8)
     } catch {
       return workspaceId.slice(0, 8)
+    }
+  }
+
+  /**
+   * Resolve the workspace that owns a conversation.
+   *
+   * Used for the CHAT_MESSAGE_COMPLETE payload on the paths that have no
+   * StreamContext (release + stop). The renderer cannot fall back to its own
+   * active workspace: a background stream may complete after the user has
+   * already switched workspaces.
+   */
+  private resolveConversationWorkspaceId(conversationId: string): string | undefined {
+    try {
+      return conversationRepository.findById(conversationId)?.workspaceId
+    } catch {
+      return undefined
     }
   }
 
@@ -629,7 +647,8 @@ export class ChatStreamService {
       createCompleteMessage({
         conversationId,
         messageId: `released-${Date.now()}`,
-        requestId: effectiveRequestId
+        requestId: effectiveRequestId,
+        workspaceId: this.resolveConversationWorkspaceId(conversationId)
       })
     )
     return true
@@ -812,6 +831,23 @@ export class ChatStreamService {
   }
 
   /**
+   * Whether this turn was aborted while an earlier stage was awaiting.
+   * Logs once so the abandoned turn is visible in main.log.
+   */
+  private abandonIfAborted(
+    conversationId: string,
+    requestId: string,
+    lifecycle: ConversationLifecycle
+  ): boolean {
+    if (lifecycle.isActive && lifecycle.requestId === requestId) return false
+    log.warn(
+      `[PIPELINE:aborted-during-setup] conversationId=${conversationId} ` +
+        `requestId=${requestId} — abandoning turn`
+    )
+    return true
+  }
+
+  /**
    * Start keepalive and safety timers for a stream.
    * Registers dispose handlers on the lifecycle — no manual cleanup needed.
    */
@@ -821,6 +857,23 @@ export class ChatStreamService {
     lifecycle: ConversationLifecycle,
     rejectDone: (err: Error) => void
   ): void {
+    // STREAM-TIMERS-STALE-01: The lifecycle can already be dead by the time we
+    // get here — stages 2 and 2.5 of stream() await (session start, worktree
+    // acquisition) and a Stop/supersede/workspace-switch lands in that window.
+    // Arming timers for a corpse is how a dead request came to kill a live one:
+    // the safety timer fired 5 minutes later and released whatever lifecycle the
+    // conversation had by then.
+    if (!lifecycle.isActive || lifecycle.requestId !== requestId) {
+      log.warn(
+        `[STREAM:timers-skipped] Lifecycle no longer active — ` +
+          `conversationId=${conversationId} requestId=${requestId}`
+      )
+      return
+    }
+
+    /** True once this stream's lifecycle is gone or has been superseded. */
+    const isStale = (): boolean => !lifecycle.isActive || lifecycle.requestId !== requestId
+
     // Keepalive — prevents renderer's 2-min safety timer from firing.
     // Checks isDestroyed() to self-clear after window close — without this
     // the timer fires every 30s throwing unhandled exceptions.
@@ -833,9 +886,12 @@ export class ChatStreamService {
       // CHAT-KEEPALIVE-STALE-01: Validate the timer still references the current
       // lifecycle. If the lifecycle completed and a new stream started before this
       // interval fires, the captured conversationId/requestId are stale.
-      if (!lifecycle.isActive || lifecycle.requestId !== requestId) {
+      if (isStale()) {
         clearInterval(keepaliveTimer)
-        this.keepaliveTimers.delete(conversationId)
+        // Only drop the map entry if it is still ours — a newer stream may own it.
+        if (this.keepaliveTimers.get(conversationId) === keepaliveTimer) {
+          this.keepaliveTimers.delete(conversationId)
+        }
         return
       }
 
@@ -869,6 +925,15 @@ export class ChatStreamService {
         // Consolidated guard: testing only `streamingLocks` here meant a stream
         // that lost its lock but kept its state-machine entry was invisible to
         // this watchdog while still blocking every send.
+        // Identity check first: a busy conversation may be busy with a *newer*
+        // request. Only the request that armed this timer may fire it.
+        if (isStale()) {
+          log.info(
+            '[STREAM:safety-timeout-stale] Ignoring safety timeout from a finished request — ' +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          return
+        }
         if (!safetyCleared && this.isConversationBusy(conversationId)) {
           // SAFETY-LOG-LEVEL: Downgraded from error to warn. If the stream already
           // completed (resolveDone fired) the double-settle guard makes rejectDone
@@ -889,7 +954,8 @@ export class ChatStreamService {
     }
 
     const resetSafety = (): void => {
-      if (safetyCleared) return
+      // A live stream's chunks must never re-arm a dead stream's timer.
+      if (safetyCleared || isStale()) return
       clearTimeout(safetyTimer)
       startSafetyTimer()
     }
@@ -909,6 +975,13 @@ export class ChatStreamService {
     const armLifetimeTimer = (delayMs: number): void => {
       lifetimeTimer = setTimeout(() => {
         if (safetyCleared || !this.isConversationBusy(conversationId)) return
+        if (isStale()) {
+          log.info(
+            '[STREAM:max-lifetime-stale] Ignoring lifetime cap from a finished request — ' +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          return
+        }
         // A stream parked on a permission prompt is not a zombie — it is waiting
         // on a person. Killing it here reintroduces the same failure the
         // executor's suspendable wall clock exists to prevent, just 30 minutes
@@ -938,11 +1011,16 @@ export class ChatStreamService {
       safetyCleared = true
       clearTimeout(safetyTimer)
       clearTimeout(lifetimeTimer)
-      this.safetyTimerResets.delete(conversationId)
-      const kt = this.keepaliveTimers.get(conversationId)
-      if (kt) {
-        clearInterval(kt)
+      // Always stop OUR interval, but only drop map entries this stream still
+      // owns. A late disposer from stream #1 used to delete stream #2's reset
+      // function, leaving #2 with a safety timer nothing ever reset — a second
+      // false-kill path.
+      clearInterval(keepaliveTimer)
+      if (this.keepaliveTimers.get(conversationId) === keepaliveTimer) {
         this.keepaliveTimers.delete(conversationId)
+      }
+      if (this.safetyTimerResets.get(conversationId) === resetSafety) {
+        this.safetyTimerResets.delete(conversationId)
       }
     })
   }
@@ -1342,7 +1420,8 @@ export class ChatStreamService {
         createCompleteMessage({
           conversationId,
           messageId: savedMessage.id,
-          requestId
+          requestId,
+          workspaceId: ctx.workspaceId
         })
       )
       // Note: lifecycle.abort('streamError') already force-reset the state machine to idle
@@ -1537,7 +1616,8 @@ export class ChatStreamService {
         createCompleteMessage({
           conversationId: ctx.conversationId,
           messageId: savedMessage.id,
-          requestId: ctx.requestId
+          requestId: ctx.requestId,
+          workspaceId: ctx.workspaceId
         })
       )
     } catch (error) {
@@ -1556,7 +1636,8 @@ export class ChatStreamService {
         createCompleteMessage({
           conversationId: ctx.conversationId,
           messageId: `error-${Date.now()}`,
-          requestId: ctx.requestId
+          requestId: ctx.requestId,
+          workspaceId: ctx.workspaceId
         })
       )
     }
@@ -1762,6 +1843,28 @@ export class ChatStreamService {
     return { onChunk, onComplete, onIntent, onPlanEvent }
   }
 
+  /**
+   * Who is holding this chat's branch, when it is not the chat itself.
+   *
+   * The database read only; `resolveLentHolder` owns the rules and is unit
+   * tested directly. Best-effort — a bookkeeping read failure must not be what
+   * blocks a turn.
+   */
+  private lentBranchHolder(conv: {
+    id: string
+    workspaceId: string
+    branchName?: string | null
+  }): LentBranchHolder | null {
+    if (!conv.branchName) return null
+    try {
+      const held = trackRepository.findByBranch(conv.workspaceId, conv.branchName)
+      return resolveLentHolder(conv, held)
+    } catch (err) {
+      log.warn(`[lentBranchHolder] lookup failed: ${(err as Error).message}`)
+      return null
+    }
+  }
+
   // ── Stream Lifecycle ──
 
   /**
@@ -1788,6 +1891,15 @@ export class ChatStreamService {
       throw error
     }
 
+    // The await above can span seconds; a Stop or a supersede in that window
+    // leaves this turn dead. Keep walking the stages and it persists a message,
+    // arms timers and spawns a CLI — against whatever workspace is active by
+    // then, not the one it started in.
+    if (this.abandonIfAborted(conversationId, requestId, lifecycle)) {
+      resolveDone()
+      return { done, abort: () => lifecycleRegistry.abort(conversationId, 'external'), requestId }
+    }
+
     // Stage 2.5: Give this conversation its own working tree.
     //
     // This runs before the user message is persisted and before any CLI is
@@ -1801,11 +1913,26 @@ export class ChatStreamService {
     // proceeding anyway would reintroduce exactly the corruption being fixed.
     try {
       if (conv && ws?.repoPath) {
+        // Stage 2.4: has this chat's branch been lent to other work?
+        //
+        // A blueprint can take a chat's branch over (trackService.transferOwner),
+        // and the chat keeps its `branch_name` throughout — that is what makes
+        // handing it back possible. Without this check `ensureTrack` finds the
+        // branch held by another owner and refuses the turn with a generic
+        // "already checked out" message that names nobody and blocks planning
+        // too. Answering here lets us name the holder, and lets read-only turns
+        // carry on in the shared checkout while the branch is away.
+        const lent = this.lentBranchHolder(conv)
+        const refusal = lentBranchRefusal(lent, conv.mode)
+        if (refusal) throw new Error(refusal)
+
         const target = await trackService.ensure({
           conversationId,
           workspaceId: conv.workspaceId,
           repoPath: ws.repoPath,
-          branchName: conv.branchName ?? null
+          // A lent branch is in somebody else's worktree, so asking for it would
+          // throw. Planning happens in the shared checkout until it comes back.
+          branchName: lent ? null : (conv.branchName ?? null)
         })
 
         // Backstop for conversations that opted out of a branch. They have
@@ -1839,6 +1966,11 @@ export class ChatStreamService {
       log.error(`[PIPELINE:worktree-failed] ${(error as Error).message}`)
       lifecycleRegistry.abort(conversationId, 'streamError')
       throw error
+    }
+
+    if (this.abandonIfAborted(conversationId, requestId, lifecycle)) {
+      resolveDone()
+      return { done, abort: () => lifecycleRegistry.abort(conversationId, 'external'), requestId }
     }
 
     // Stage 3: Resolve identity
@@ -2127,7 +2259,8 @@ export class ChatStreamService {
             createCompleteMessage({
               conversationId,
               messageId: savedMessage.id,
-              requestId
+              requestId,
+              workspaceId: this.resolveConversationWorkspaceId(conversationId)
             })
           )
         } catch (error) {
@@ -2154,35 +2287,24 @@ export class ChatStreamService {
   }
 
   /**
-   * Force-reset streaming state if switching away from a workspace with a stuck stream.
-   * Called by the workspace switch IPC handler to prevent cross-workspace lock contamination.
+   * Release conversations that are busy with no live stream behind them.
+   * Called by the workspace-activation IPC handler so a wedged conversation
+   * from any workspace cannot block future sends (the P12 protection).
+   *
+   * Live streams are NOT touched: a chat streaming in workspace A must survive
+   * a switch to workspace B, the same way a running blueprint does. The old
+   * implementation called `lifecycleRegistry.abortAll()` plus a global state-
+   * machine reset, which killed every healthy stream on every workspace switch.
+   * Per-conversation release is exactly what `sweepOrphanedConversations()`
+   * already does — it skips conversations with an active lifecycle and cleans
+   * up locks, request ids, timers and emits CHAT_MESSAGE_COMPLETE for the rest.
    */
   forceResetIfStuck(): void {
-    const activeStreams = lifecycleRegistry.active()
-    const smStuck = !conversationStateMachine.isIdle()
-    if (activeStreams.length > 0 || this.streamingLocks.size > 0 || smStuck) {
+    const released = this.sweepOrphanedConversations()
+    if (released.length > 0) {
       log.warn(
-        `[STREAM:force-reset] activeStreams=${activeStreams.length} locks=${this.streamingLocks.size} ` +
-          `smStuck=${smStuck} — aborting all (fixes P12)`
+        `[STREAM:force-reset] Released ${released.length} orphaned conversation(s) on workspace activation: ${released.join(', ')}`
       )
-      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
-      for (const stream of activeStreams) {
-        completeStreamMetrics(stream.conversationId, 'aborted')
-      }
-      lifecycleRegistry.abortAll('workspace-switch')
-      // F2-FIX (replaces A9-FIX): After abortAll, re-check whether the SM
-      // is still stuck. The old condition (smStuck && activeStreams.length === 0)
-      // missed the mixed state: SM stuck for conv-B while the registry only
-      // held conv-A. abortAll clears conv-A's SM entry via forceReset(convId),
-      // but conv-B stays stuck. Unconditional re-check catches both cases.
-      if (!conversationStateMachine.isIdle()) {
-        log.warn('[STREAM:force-reset] SM still not idle after abortAll — forcing SM global reset')
-        conversationStateMachine.forceReset()
-      }
-      // Belt-and-suspenders: clear any orphaned locks
-      this.streamingLocks.clear()
-      this.lockAcquiredAt.clear()
-      this.activeRequestIds.clear()
     }
   }
 

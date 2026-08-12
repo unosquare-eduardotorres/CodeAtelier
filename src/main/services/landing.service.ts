@@ -42,7 +42,13 @@ import { trackService } from './track.service'
 import { trackClaimsService } from './track-claims.service'
 import { githubService } from './github.service'
 import { COMMIT_ATTRIBUTION } from '../../shared/constants'
-import type { LandingResult, TrackLandingMode, WorkTrack } from '../../shared/track-types'
+import type {
+  ConflictForecast,
+  LandingPreview,
+  LandingResult,
+  TrackLandingMode,
+  WorkTrack
+} from '../../shared/track-types'
 
 const landLog = log.scope('landing')
 
@@ -85,6 +91,41 @@ function integrationOwnerId(workspaceId: string): string {
   return `integration:${workspaceId}`
 }
 
+/**
+ * Read a conflict forecast out of `git merge-tree --write-tree --name-only`.
+ *
+ * The output is three sections and only the first two matter here:
+ *
+ *     <tree oid>
+ *     path/one          ← conflicted files, one per line
+ *     path/two
+ *                       ← blank line ends the section
+ *     Auto-merging …    ← human-readable messages
+ *
+ * The tree OID is printed whether or not the merge conflicted, which is what
+ * makes this parseable without trusting the exit code — merge-tree exits 1 for
+ * a conflict AND for a ref it cannot resolve, and those two must not be
+ * confused. A missing OID means git never got as far as merging, so the honest
+ * answer is `unknown` rather than a guess in either direction.
+ */
+export function parseMergeTreeOutput(stdout: string): {
+  forecast: ConflictForecast
+  files: string[]
+} {
+  const lines = stdout.split('\n')
+  // SHA-1 is 40 chars, SHA-256 repositories produce 64.
+  if (!/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(lines[0]?.trim() ?? '')) {
+    return { forecast: 'unknown', files: [] }
+  }
+
+  const files: string[] = []
+  for (const line of lines.slice(1)) {
+    if (!line.trim()) break
+    files.push(line.trim())
+  }
+  return files.length > 0 ? { forecast: 'conflicts', files } : { forecast: 'clean', files: [] }
+}
+
 class LandingService {
   /**
    * Per-workspace tail of the landing queue.
@@ -110,6 +151,62 @@ class LandingService {
       landLog.warn(`[resolveMode] settings read failed: ${(err as Error).message}`)
     }
     return DEFAULT_LANDING_MODE
+  }
+
+  /**
+   * What landing this track would do, without doing any of it.
+   *
+   * Nothing here writes: no commit, no push, no merge, no worktree created. The
+   * conflict forecast comes from `git merge-tree`, which computes the merge in
+   * the object store and hands back a tree nobody checks out — so asking "would
+   * this conflict?" no longer requires finding out the hard way.
+   *
+   * Deliberately NOT queued behind `land()`. A preview is read-only and a user
+   * opening the dialog while another track is landing should not stare at a
+   * spinner until that finishes.
+   */
+  async previewLanding(
+    trackId: string,
+    opts?: { mode?: TrackLandingMode; baseBranch?: string }
+  ): Promise<LandingPreview> {
+    const track = trackRepository.findById(trackId)
+    if (!track) throw new Error(`Track ${trackId} not found`)
+    if (!existsSync(track.path)) {
+      throw new Error(`Track ${track.id} has no working tree at ${track.path}`)
+    }
+
+    const git = simpleGit(track.path)
+    const mode = opts?.mode ?? this.resolveMode(track)
+    const base = opts?.baseBranch || track.baseBranch
+    const target = mode === 'integration' ? integrationBranchFor(base) : base
+
+    // The integration branch is created from the base on first landing, so
+    // before then there is no such ref to compare against — and the honest
+    // forecast is the one against what it will be created from. The user is
+    // still told the work is going to the integration branch, because it is.
+    const comparand = (await this.refExists(git, target)) ? target : base
+
+    const uncommittedFiles = await this.pendingPaths(git)
+    const commitCount = await this.countCommitsBeyond(git, comparand, track.branchName)
+    const { forecast, files } = await this.forecastConflicts(git, comparand, track.branchName)
+
+    return {
+      mode,
+      branch: track.branchName,
+      target,
+      commitCount,
+      uncommittedFiles,
+      // A dirty tree is something to land even with no commits ahead: landing
+      // commits it first. Reporting "nothing to land" here would talk the user
+      // out of saving work that only exists in the worktree.
+      nothingToLand: commitCount === 0 && uncommittedFiles.length === 0,
+      forecast,
+      conflictFiles: files,
+      hasRemote: await this.hasRemote(git),
+      // Integration mode merges locally and never opens a PR, however well
+      // GitHub is configured.
+      opensPullRequest: mode === 'independent' && githubService.isConfigured(track.workspaceId)
+    }
   }
 
   /**
@@ -175,14 +272,7 @@ class LandingService {
     track: WorkTrack,
     opts: LandOptions
   ): Promise<string | undefined> {
-    const status = await git.status()
-    const changed = [
-      ...status.modified,
-      ...status.created,
-      ...status.not_added,
-      ...status.deleted,
-      ...status.renamed.map((r) => r.to)
-    ]
+    const changed = await this.pendingPaths(git)
     if (changed.length === 0) return undefined
 
     await git.add(changed)
@@ -370,6 +460,24 @@ class LandingService {
     return target.path
   }
 
+  /**
+   * Paths the agent left uncommitted in a track's tree.
+   *
+   * Shared by `commitPending` and `previewLanding` on purpose: the preview
+   * promises "these files will be committed", and the only way that stays true
+   * is for both to ask the same question.
+   */
+  private async pendingPaths(git: SimpleGit): Promise<string[]> {
+    const status = await git.status()
+    return [
+      ...status.modified,
+      ...status.created,
+      ...status.not_added,
+      ...status.deleted,
+      ...status.renamed.map((r) => r.to)
+    ]
+  }
+
   /** Does `branch` hold anything `base` does not? */
   private async hasCommitsBeyond(git: SimpleGit, base: string, branch: string): Promise<boolean> {
     try {
@@ -383,6 +491,77 @@ class LandingService {
           `proceeding as if there is work to land`
       )
       return true
+    }
+  }
+
+  /**
+   * How many commits `branch` holds that `base` does not.
+   *
+   * Returns 0 when the comparison cannot be made, unlike `hasCommitsBeyond`,
+   * which assumes there is work. The asymmetry is deliberate: that one guards
+   * against silently discarding commits, while this one only labels a dialog,
+   * and "0 commits" beside a populated file list is less alarming than a
+   * fabricated number.
+   */
+  private async countCommitsBeyond(git: SimpleGit, base: string, branch: string): Promise<number> {
+    try {
+      const out = await git.raw(['rev-list', '--count', `${base}..${branch}`])
+      const n = Number.parseInt(out.trim(), 10)
+      return Number.isFinite(n) ? n : 0
+    } catch (err) {
+      landLog.warn(`[preview] could not count ${base}..${branch}: ${(err as Error).message}`)
+      return 0
+    }
+  }
+
+  /** Is `ref` resolvable in this repository? */
+  private async refExists(git: SimpleGit, ref: string): Promise<boolean> {
+    try {
+      await git.raw(['rev-parse', '--verify', `${ref}^{commit}`])
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** Is there anywhere to push? */
+  private async hasRemote(git: SimpleGit): Promise<boolean> {
+    try {
+      return (await git.getRemotes(true)).length > 0
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Would merging `branch` into `target` conflict? Asked without merging.
+   *
+   * `merge-tree` exits non-zero for a conflict AND for an unresolvable ref, so
+   * the exit code is useless on its own — but the two cases use different
+   * streams. A conflict writes the tree OID and the file list to STDOUT and
+   * nothing to stderr, which simple-git treats as success; a bad ref writes only
+   * to stderr, which it rejects on. (Same quirk `landIntegration` documents for
+   * `git merge`.) Both paths still parse whatever text they got, so a future
+   * simple-git that rejects on conflicts degrades to a correct answer rather
+   * than a wrong one.
+   */
+  private async forecastConflicts(
+    git: SimpleGit,
+    target: string,
+    branch: string
+  ): Promise<{ forecast: ConflictForecast; files: string[] }> {
+    try {
+      const out = await git.raw(['merge-tree', '--write-tree', '--name-only', target, branch])
+      return parseMergeTreeOutput(out)
+    } catch (err) {
+      const text = (err as { stdout?: string }).stdout ?? (err as Error).message ?? ''
+      const parsed = parseMergeTreeOutput(text)
+      if (parsed.forecast === 'unknown') {
+        landLog.warn(
+          `[preview] could not forecast ${branch} → ${target}: ${(err as Error).message}`
+        )
+      }
+      return parsed
     }
   }
 

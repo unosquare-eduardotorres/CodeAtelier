@@ -100,6 +100,11 @@ export const IPC_CHANNELS = {
   /** Renderer → Main: land a track's work — PR, or merge into the integration branch */
   TRACK_LAND: 'track:land',
   /**
+   * Renderer → Main: what landing this track WOULD do. Read-only — no commit,
+   * no push, no merge. Backs the landing dialog's conflict forecast.
+   */
+  TRACK_LAND_PREVIEW: 'track:landPreview',
+  /**
    * Main → Renderer: a workspace's track list changed (created, retained,
    * removed, adopted, reaped). `workspaceId` is null when the change spanned
    * workspaces (the reaper), meaning "refresh regardless".
@@ -621,6 +626,7 @@ export const IPC_CHANNELS = {
   // ── Blueprint Pipeline ──
 
   BLUEPRINT_CREATE: 'blueprint:create',
+  BLUEPRINT_BRANCH_OPTIONS: 'blueprint:branchOptions',
   BLUEPRINT_CREATE_FROM_IDEA: 'blueprint:createFromIdea',
   BLUEPRINT_GET: 'blueprint:get',
   BLUEPRINT_GET_DETAILS: 'blueprint:getDetails',
@@ -630,6 +636,8 @@ export const IPC_CHANNELS = {
 
   BLUEPRINT_ADVANCE_PHASE: 'blueprint:advancePhase',
   BLUEPRINT_SKIP_PHASE: 'blueprint:skipPhase',
+  /** Per-task user skip — survives retry (BP-TASK-USER-SKIP-01). */
+  BLUEPRINT_SKIP_TASK: 'blueprint:skipTask',
   BLUEPRINT_REWIND_PHASE: 'blueprint:rewindPhase',
   BLUEPRINT_BUILD_PROMPT: 'blueprint:buildPrompt',
   BLUEPRINT_SAVE_ARTIFACT: 'blueprint:saveArtifact',

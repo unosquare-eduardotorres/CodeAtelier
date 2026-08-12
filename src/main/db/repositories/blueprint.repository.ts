@@ -66,6 +66,7 @@ interface BlueprintTaskRow {
   started_at: string | null
   completed_at: string | null
   completion_json: string | null
+  skipped_by_user_at: string | null
 }
 
 // ── Row Mappers ──
@@ -121,7 +122,8 @@ function mapTaskRow(row: BlueprintTaskRow): BlueprintTask {
     completionJson: safeParseJSON<{ filesCreated: string[]; filesModified: string[] } | null>(
       row.completion_json,
       null
-    )
+    ),
+    skippedByUserAt: row.skipped_by_user_at ?? null
   }
 }
 
@@ -585,6 +587,22 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
     sql += ` WHERE id = ? RETURNING *`
 
     const row = this.db().prepare(sql).get(status, id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  /**
+   * Record (or clear) a deliberate user skip. Reversible by design — passing
+   * `false` clears the column, so a mistaken skip is not permanent.
+   * Leaves `status` alone: the skip decision and the execution state are
+   * separate facts.
+   */
+  setUserSkipped(id: string, skipped: boolean): BlueprintTask | undefined {
+    const row = this.db()
+      .prepare(
+        `UPDATE blueprint_tasks SET skipped_by_user_at = ${skipped ? "datetime('now')" : 'NULL'}
+         WHERE id = ? RETURNING *`
+      )
+      .get(id) as BlueprintTaskRow | undefined
     return row ? mapTaskRow(row) : undefined
   }
 

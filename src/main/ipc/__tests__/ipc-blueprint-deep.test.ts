@@ -126,6 +126,28 @@ if (blueprintLoaded) {
         assert.equal(r.ok, false)
       })
     }
+
+    // blueprint:skipTask (BP-TASK-USER-SKIP-01)
+    if (getHandlers().has('blueprint:skipTask')) {
+      test('blueprint:skipTask is registered', () => {
+        assert.ok(getHandlers().has('blueprint:skipTask'))
+      })
+
+      test('blueprint:skipTask rejects missing blueprintId', async () => {
+        const r = await tryInvokeHandler('blueprint:skipTask', { taskId: 'T001' })
+        assert.equal(r.ok, false)
+      })
+
+      test('blueprint:skipTask rejects missing taskId', async () => {
+        const r = await tryInvokeHandler('blueprint:skipTask', { blueprintId: 'bp-1' })
+        assert.equal(r.ok, false)
+      })
+
+      test('blueprint:skipTask rejects non-object args', async () => {
+        const r = await tryInvokeHandler('blueprint:skipTask', 'bad')
+        assert.equal(r.ok, false)
+      })
+    }
   })
 
   describe('blueprint.ipc — handler bodies (deep)', () => {

@@ -341,7 +341,10 @@ export class BlueprintVerifyService extends EventEmitter {
       const allTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
       // The tree BUILD actually wrote into — scanning the primary tree would
       // report every completed task's files as missing.
-      const missingByTask = scanCompletedTaskFiles(executionPath, allTasks)
+      // Primary checkout passed as the secondary root: absolute paths recorded
+      // against it are re-rooted onto the tree BUILD wrote in, and anything under
+      // neither root is skipped rather than reported missing (BP-VERIFY-UNVERIFIABLE-01).
+      const missingByTask = scanCompletedTaskFiles(executionPath, allTasks, workspacePath)
       if (missingByTask.size > 0) {
         const totalClaimed = [...missingByTask.values()].reduce(
           (sum, v) => sum + v.missingClaimed.length,

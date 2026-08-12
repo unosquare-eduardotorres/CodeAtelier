@@ -262,6 +262,54 @@ export function primaryTreeBusyError(holder: PrimaryTreeHolder | undefined): Err
   )
 }
 
+/**
+ * Why an owner cannot hand its track over right now — or null when it is idle.
+ *
+ * The string is one phrase, shown verbatim to whoever asked for the transfer.
+ */
+export type TrackBusyProbe = (ownerId: string) => string | null
+
+const busyProbes = new Map<TrackOwnerKind, TrackBusyProbe>()
+
+/**
+ * Teach `transferOwner` how to tell whether an owner of this kind is busy.
+ *
+ * Inverted rather than imported. The authorities on "is this chat streaming?"
+ * and "is this blueprint mid-pipeline?" are conversation-lifecycle and
+ * blueprint.service, and blueprint.service already reaches back into this
+ * module through blueprint-track — so importing it here would close an import
+ * cycle, in a codebase that is already paying for one.
+ *
+ * An owner kind with no probe registered is treated as idle. Getting that wrong
+ * costs an interrupted run whose work is still sitting on the branch; refusing
+ * every transfer because a probe was never wired would make handoff unusable.
+ */
+export function registerTrackBusyProbe(kind: TrackOwnerKind, probe: TrackBusyProbe): void {
+  busyProbes.set(kind, probe)
+}
+
+/** Who holds a track, in terms a user can act on. */
+export interface TrackHolder {
+  ownerKind: TrackOwnerKind
+  /** Null for retained work — nobody owns it. */
+  ownerId: string | null
+  /** Chat title where one can be resolved; otherwise the id, or null. */
+  label: string | null
+}
+
+/**
+ * Result of a handoff attempt.
+ *
+ * A named holder rather than a boolean: "could not take the branch" is not
+ * actionable, and the entire point of refusing is being able to say who to go
+ * and look at.
+ */
+export type TransferOutcome =
+  | { ok: true; track: WorkTrack }
+  | { ok: false; reason: 'absent' }
+  | { ok: false; reason: 'no-tree'; path: string }
+  | { ok: false; reason: 'busy'; holder: TrackHolder; because: string }
+
 /** Raised when a branch is already checked out by another track. */
 export class TrackConflictError extends Error {
   constructor(
@@ -677,6 +725,66 @@ export class TrackService {
     wtLog.info(`[adopt] ${row.path} (${row.branchName}) adopted by chat ${conversation.id}`)
     this.emitChanged(row.workspaceId)
     return conversation.id
+  }
+
+  /**
+   * Move a track from one owner to another, directory and all.
+   *
+   * This is the sequential half of "share a branch": the worktree is NOT
+   * recreated and nothing is copied, so the new owner sees exactly the files
+   * the previous one left, including uncommitted ones. Only the owner columns
+   * move.
+   *
+   * Refused while the current owner is busy, because a transfer mid-turn hands
+   * a directory to a second writer while the first is still writing into it —
+   * precisely the interleaving this subsystem exists to prevent.
+   *
+   * Idempotent: transferring to the current owner succeeds without touching
+   * anything, so a retried take-over is not an error.
+   *
+   * @param opts.force Skip the busy check, for an explicit "take it anyway"
+   *   once the user has been told who holds it. Never a default.
+   */
+  transferOwner(
+    trackId: string,
+    to: { ownerKind: TrackOwnerKind; ownerId: string },
+    opts?: { force?: boolean }
+  ): TransferOutcome {
+    const row = trackRepository.findById(trackId)
+    if (!row) return { ok: false, reason: 'absent' }
+
+    if (row.ownerKind === to.ownerKind && row.ownerId === to.ownerId) {
+      return { ok: true, track: row }
+    }
+
+    // The directory is the thing being handed over. Without it there is nothing
+    // to transfer, and creating one here would silently produce an EMPTY tree —
+    // the opposite of "you get what they left".
+    if (!existsSync(row.path)) return { ok: false, reason: 'no-tree', path: row.path }
+
+    // Retained tracks have no owner to be busy; that is what makes them adoptable.
+    if (!opts?.force && row.ownerId) {
+      const because = busyProbes.get(row.ownerKind)?.(row.ownerId) ?? null
+      if (because) {
+        return {
+          ok: false,
+          reason: 'busy',
+          holder: { ownerKind: row.ownerKind, ownerId: row.ownerId, label: this.ownerLabel(row) },
+          because
+        }
+      }
+    }
+
+    trackRepository.adoptOwner(row.id, to.ownerKind, to.ownerId)
+    trackRepository.touch(row.id)
+    wtLog.info(
+      `[transfer] ${row.branchName} moved from ${row.ownerKind}:${row.ownerId ?? '—'} ` +
+        `to ${to.ownerKind}:${to.ownerId} (same tree at ${row.path})`
+    )
+    this.emitChanged(row.workspaceId)
+
+    const updated = trackRepository.findById(row.id)
+    return updated ? { ok: true, track: updated } : { ok: false, reason: 'absent' }
   }
 
   /**

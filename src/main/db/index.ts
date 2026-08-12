@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 142
+export const CURRENT_SCHEMA_VERSION = 143
 
 export interface Migration {
   version: number
@@ -4258,6 +4258,25 @@ export const migrations: Migration[] = [
       `)
 
       dbLogger.info('[migration-142] ✓ Created track_file_claims')
+    }
+  },
+  {
+    version: 143,
+    name: 'blueprint-task-user-skip',
+    up: (db) => {
+      // A task can be genuinely unverifiable — its planned files live outside
+      // any tree BUILD is allowed to read — and no amount of retrying changes
+      // that. Until now the only way out was `status = 'skipped'`, which
+      // retryPhase resets to 'pending' on every attempt, so the run looped on
+      // the same task forever.
+      //
+      // User intent gets its own column rather than a sixth status value for
+      // two reasons: the failure cascade writes 'skipped' by itself (so status
+      // cannot distinguish "a human decided" from "collateral damage"), and a
+      // retry must be able to reset status without erasing the decision.
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN skipped_by_user_at TEXT`)
+
+      dbLogger.info('[migration-143] ✓ Added blueprint_tasks.skipped_by_user_at')
     }
   }
 ]

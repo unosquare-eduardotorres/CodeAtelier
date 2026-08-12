@@ -96,6 +96,53 @@ export interface LandingResult {
   conflictedFiles?: string[]
 }
 
+/**
+ * Whether a landing would merge cleanly, asked without merging anything.
+ *
+ * `unknown` is a real and distinct answer, not a synonym for clean: it means
+ * git could not be asked — a base that was never fetched, a branch deleted
+ * behind our back. Collapsing it into `clean` would promise something we did
+ * not check, and into `conflicts` would frighten the user off a landing that is
+ * probably fine.
+ */
+export type ConflictForecast = 'clean' | 'conflicts' | 'unknown'
+
+/**
+ * What landing this track would do, computed without touching a working tree.
+ *
+ * Landing used to be a button with a confirm on it: the user pressed Land and
+ * found out afterwards whether it opened a PR, merged into an integration
+ * branch, or hit conflicts. Everything here is answerable beforehand, and the
+ * conflict forecast in particular is the difference between an informed press
+ * and a coin flip.
+ */
+export interface LandingPreview {
+  /** The mode this landing WOULD use, already resolved through track → workspace → default. */
+  mode: TrackLandingMode
+  branch: string
+  /** The PR base, or the integration branch. Where the work would end up. */
+  target: string
+  /** Commits on the branch that the target does not already have. */
+  commitCount: number
+  /**
+   * Paths still uncommitted in the track's tree.
+   *
+   * Landing commits these first, so a track with zero commits ahead but a dirty
+   * tree still has something to land. Shown so the user knows what is about to
+   * be swept into the commit message they are writing.
+   */
+  uncommittedFiles: string[]
+  /** True when landing would do nothing at all: no commits ahead, nothing uncommitted. */
+  nothingToLand: boolean
+  forecast: ConflictForecast
+  /** Files predicted to conflict. Only populated when `forecast` is `conflicts`. */
+  conflictFiles: string[]
+  /** A remote exists, so the branch would be pushed. */
+  hasRemote: boolean
+  /** GitHub is configured for this workspace, so a PR would be opened. Independent mode only. */
+  opensPullRequest: boolean
+}
+
 /** One unit of parallel work: a branch, a worktree and an owner. */
 export interface WorkTrack {
   id: string

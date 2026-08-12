@@ -217,11 +217,11 @@ export default function IntegrationCredentialsForm({
             {/* Description of the selected option, then the field's own help text */}
             {field.type === 'select' &&
               field.options?.find((o) => o.value === values[field.key])?.description && (
-                <p className="text-[10px] text-text-muted">
+                <p className="text-[11px] text-text-muted">
                   {field.options.find((o) => o.value === values[field.key])!.description}
                 </p>
               )}
-            {field.help && <p className="text-[10px] text-text-muted">{field.help}</p>}
+            {field.help && <p className="text-[11px] text-text-muted">{field.help}</p>}
           </div>
         )
       })}
@@ -282,7 +282,7 @@ export default function IntegrationCredentialsForm({
         </div>
       )}
 
-      <p className="text-[10px] text-text-muted">
+      <p className="text-[11px] text-text-muted">
         Stored per workspace and encrypted with your OS keychain. Any of these values can also be
         set as environment variables ({integration.envKeys?.slice(0, 3).join(', ')}…) if you prefer.
       </p>

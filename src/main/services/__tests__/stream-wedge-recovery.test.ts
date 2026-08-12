@@ -320,6 +320,7 @@ interface StreamSvcInternal {
   isConversationBusy(conversationId: string): boolean
   releaseConversation(conversationId: string, reason: string, requestId?: string): boolean
   sweepOrphanedConversations(): string[]
+  resolveConversationWorkspaceId(conversationId: string): string | undefined
 }
 
 /**
@@ -347,6 +348,7 @@ function createSvc(): StreamSvcInternal {
   svc.isConversationBusy = proto.isConversationBusy.bind(svc)
   svc.releaseConversation = proto.releaseConversation.bind(svc)
   svc.sweepOrphanedConversations = proto.sweepOrphanedConversations.bind(svc)
+  svc.resolveConversationWorkspaceId = proto.resolveConversationWorkspaceId.bind(svc)
   return svc
 }
 

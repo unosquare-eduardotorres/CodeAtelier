@@ -74,6 +74,20 @@ export class ConversationLifecycle {
    * so one failing disposer doesn't prevent others from running.
    */
   onDispose(fn: () => void): void {
+    // LIFECYCLE-LATE-DISPOSE-01: A lifecycle can be aborted while a stage is
+    // still awaiting (session start, worktree acquisition). Anything registered
+    // after that point would never run — leaking timers, locks and tree claims
+    // from a request that is already gone. Run it now instead.
+    // (isDisposing is handled by the drain loop in runDisposers.)
+    if (!this.isActive && !this.isDisposing) {
+      log.warn('[ConversationLifecycle] Disposer registered after teardown — running immediately')
+      try {
+        fn()
+      } catch (e) {
+        log.warn('[ConversationLifecycle] Late disposer error:', e)
+      }
+      return
+    }
     this.disposers.push(fn)
   }
 

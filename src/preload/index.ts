@@ -95,6 +95,7 @@ import type {
   ArtifactRef,
   CodeAnchor
 } from '../shared/handoff-types'
+import type { BlueprintBranchOptions } from '../shared/blueprint-types'
 
 const api = {
   // ── Workspace ──
@@ -1001,6 +1002,7 @@ const api = {
       messageId: string
       taskId?: string
       requestId?: string
+      workspaceId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -1010,6 +1012,7 @@ const api = {
         messageId: string
         taskId?: string
         requestId?: string
+        workspaceId?: string
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
@@ -2861,8 +2864,20 @@ const api = {
     trackId: string
     commitMessage: string
     description?: string
+    /** Overrides the track's base as the PR target. Ignored in integration mode. */
+    baseBranch?: string
+    /** Forces a mode for this landing, ignoring track and workspace settings. */
+    mode?: import('../shared/track-types').TrackLandingMode
   }): Promise<import('../shared/track-types').LandingResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.TRACK_LAND, args),
+
+  /** What landing this track would do. Read-only: nothing is committed or merged. */
+  trackLandPreview: (args: {
+    trackId: string
+    baseBranch?: string
+    mode?: import('../shared/track-types').TrackLandingMode
+  }): Promise<import('../shared/track-types').LandingPreview> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_LAND_PREVIEW, args),
 
   /**
    * Listen for track list changes (created, retained, removed, adopted, reaped).
@@ -2918,6 +2933,9 @@ const api = {
     priority?: string
     settingsJson?: Record<string, unknown>
   }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE, args),
+
+  blueprintBranchOptions: (args: { workspaceId: string }): Promise<BlueprintBranchOptions> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_BRANCH_OPTIONS, args),
 
   blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
@@ -3019,6 +3037,14 @@ const api = {
     workspaceId: string
   }): Promise<{ retrying: boolean; phase: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RETRY_PHASE, args),
+
+  /** Skip (or un-skip) one build task. The mark survives retries. */
+  blueprintSkipTask: (args: {
+    blueprintId: string
+    taskId: string
+    skipped?: boolean
+  }): Promise<{ skipped: boolean; skippedAt: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_TASK, args),
 
   blueprintAcknowledgeReview: (args: { blueprintId: string }): Promise<{ acknowledged: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_ACKNOWLEDGE_REVIEW, args),

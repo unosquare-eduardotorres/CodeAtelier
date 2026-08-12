@@ -25,7 +25,8 @@ import {
   Loader2,
   GripVertical,
   X,
-  Target
+  Target,
+  AlertTriangle
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -40,7 +41,7 @@ import { useChatStore, useChatActions, useWorkspaceStore } from '@renderer/store
 import { useCouncilStore } from '@renderer/store/council.store'
 import { PHASE_STATUS_ICON, statusDotColor } from './plan-status-icons'
 import { remarkStripStrayBackticks } from './remark-plugins'
-import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE, BUILD_SUMMARY_RE } from './plan-detection'
+import { findPlanBlock, hasPlanBlock, hasBuildSummaryBlock } from './plan-detection'
 import type { SectionKey } from './task-plan/TaskPlanSections'
 import { BuildActionBar, usePlanMemos, buildSectionMap, isPlanLocked } from './task-plan'
 import type { StructuredPlan, MemoryFact } from '../../../../shared/types'
@@ -329,6 +330,38 @@ function GoalCard({
 
 // ── Plan Tab Content ───────────────────────────────────────────────────────
 
+/**
+ * Shown when the plan block is JSON that failed to parse — a truncated or
+ * malformed emit_plan payload. Previously this dumped the whole raw string
+ * through ReactMarkdown, filling the panel with unreadable JSON.
+ */
+function UnparseablePlanCard({ planContent }: { planContent: string }): JSX.Element {
+  const [showRaw, setShowRaw] = useState(false)
+  return (
+    <div className="rounded-md border border-border-subtle bg-surface-raised p-3 space-y-2">
+      <div className="flex items-start gap-2">
+        <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+        <div className="text-xs text-text-secondary">
+          <div className="text-text-primary font-medium">This plan could not be parsed</div>
+          The plan block was cut short or is malformed. Ask the agent to re-emit it.
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setShowRaw((v) => !v)}
+        className="text-xs text-text-tertiary hover:text-text-primary"
+      >
+        {showRaw ? 'Hide' : 'Show'} raw content ({planContent.length.toLocaleString()} chars)
+      </button>
+      {showRaw && (
+        <pre className="max-h-64 overflow-auto text-[10px] leading-tight text-text-tertiary whitespace-pre-wrap break-all">
+          {planContent}
+        </pre>
+      )}
+    </div>
+  )
+}
+
 function PlanTabContent({
   planContent,
   conversationId
@@ -394,8 +427,8 @@ function PlanTabContent({
       if (
         messages[i].role !== 'user' &&
         messages[i].contentMd &&
-        PLAN_BLOCK_RE.test(messages[i].contentMd) &&
-        !BUILD_SUMMARY_RE.test(messages[i].contentMd)
+        hasPlanBlock(messages[i].contentMd) &&
+        !hasBuildSummaryBlock(messages[i].contentMd)
       ) {
         return messages[i]
       }
@@ -665,13 +698,17 @@ function PlanTabContent({
         />
       )}
 
-      {/* Plan content */}
+      {/* Plan content. Markdown plans are legitimate (hand-written blocks), so
+          the fallback keys off shape: JSON that didn't parse is a defect, not
+          content — dumping 20K of raw JSON into the panel helps nobody. */}
       {structuredPlan ? (
         <div className="space-y-3">
           {SECTION_SEQUENCE.map((key) => (
             <React.Fragment key={key}>{sectionMap[key]}</React.Fragment>
           ))}
         </div>
+      ) : planContent.trimStart().startsWith('{') ? (
+        <UnparseablePlanCard planContent={planContent} />
       ) : (
         <div className="prose prose-sm prose-invert max-w-none">
           <ReactMarkdown remarkPlugins={[remarkGfm, remarkStripStrayBackticks]}>
@@ -799,15 +836,15 @@ function PlanHistoryTab({
         (m) =>
           m.role !== 'user' &&
           m.contentMd &&
-          PLAN_BLOCK_RE.test(m.contentMd) &&
-          !BUILD_SUMMARY_RE.test(m.contentMd)
+          hasPlanBlock(m.contentMd) &&
+          !hasBuildSummaryBlock(m.contentMd)
       )
       .map((m) => {
-        const match = PLAN_BLOCK_CAPTURE_RE.exec(m.contentMd)
+        const block = findPlanBlock(m.contentMd)
         let title = 'Plan'
-        if (match?.[1]) {
+        if (block?.content) {
           try {
-            const parsed = JSON.parse(match[1])
+            const parsed = JSON.parse(block.content)
             if (parsed.title) title = parsed.title
           } catch {
             /* use default */
@@ -1011,8 +1048,8 @@ export default function ChatExecutionPanel({
       (m) =>
         m.role !== 'user' &&
         m.contentMd &&
-        PLAN_BLOCK_RE.test(m.contentMd) &&
-        !BUILD_SUMMARY_RE.test(m.contentMd)
+        hasPlanBlock(m.contentMd) &&
+        !hasBuildSummaryBlock(m.contentMd)
     ).length
   }, [messages])
 

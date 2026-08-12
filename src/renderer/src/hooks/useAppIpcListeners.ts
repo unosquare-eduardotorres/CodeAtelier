@@ -269,6 +269,13 @@ function handleMessageChunk(data: MessageChunkPayload, actions: ChatActions): vo
     }
   }
 
+  // BACKGROUND-CHAT-02: contextUsages is keyed per conversation, so a background
+  // stream's usage must be recorded too — otherwise the context bar shows stale
+  // numbers when the user switches back to it.
+  if (data.contextUsageUpdate && data.conversationId) {
+    processContextUsageUpdate(data.conversationId, data.contextUsageUpdate)
+  }
+
   // Non-streaming payloads still require active-conv guard
   if (!isActive) return
 
@@ -298,13 +305,6 @@ function handleMessageChunk(data: MessageChunkPayload, actions: ChatActions): vo
 
   if (data.turnLimit) {
     useChatStore.setState({ turnLimitReached: data.turnLimit })
-  }
-
-  if (data.contextUsageUpdate) {
-    const convId = data.conversationId
-    if (convId) {
-      processContextUsageUpdate(convId, data.contextUsageUpdate)
-    }
   }
 }
 
@@ -351,7 +351,22 @@ function handleMessageComplete(
       // savePlan never ran for this turn (e.g. emit_plan fired without a
       // resolvable workspace/conversation), so its phase/task data has no
       // durable backing and would record unverifiable counts into memory.
-      const workspace = useWorkspaceStore.getState().activeWorkspace
+      // BACKGROUND-CHAT-02: A background stream can complete long after the user
+      // switched workspaces, so the active workspace is not a safe source of
+      // truth. Prefer the workspace the backend stamped on the completion; only
+      // fall back to the active one when this IS the active conversation.
+      const wsState = useWorkspaceStore.getState()
+      const workspace = data.workspaceId
+        ? wsState.workspaces.find((w) => w.id === data.workspaceId)
+        : isActive
+          ? (wsState.activeWorkspace ?? undefined)
+          : undefined
+      if (!workspace && !isActive) {
+        rendererLog.warn(
+          `[PlanMemory] Skipping extraction for background conversation ${data.conversationId} — ` +
+            `could not resolve owning workspace (workspaceId=${data.workspaceId ?? 'none'})`
+        )
+      }
       if (workspace?.id && workspace.repoPath && exec.planId) {
         const failedCount = exec.phases.filter((p) => p.status === 'failed').length
         const overallStatus: 'completed' | 'partial' | 'failed' =

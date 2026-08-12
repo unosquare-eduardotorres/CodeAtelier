@@ -8,7 +8,11 @@
  *   - Tools list section expands to show individual MCP tools
  *   - Use-case grid shows categorized usage examples
  *   - Token impact badge displays estimated token overhead
- *   - Workflow stepper shows multi-step configuration progress
+ *   - Workflow steps show the setup sequence
+ *
+ * Cards are collapsed rows: only the header (name, readiness, token badge,
+ * switch) is mounted until expanded. Body assertions expand first — previously
+ * they matched loose text or fell through to a no-op branch.
  *
  * Uses CDP fixture (Electron 41+ compatible).
  *
@@ -49,6 +53,17 @@ test.describe('Integration Cards Deep', () => {
     return count > 0
   }
 
+  /** Expand the first card. Idempotent — reads `aria-expanded` before clicking. */
+  async function expandFirstCard(page: import('@playwright/test').Page): Promise<boolean> {
+    const expander = page.locator('[data-testid^="integration-expand-"]').first()
+    if (!(await expander.isVisible({ timeout: 3_000 }).catch(() => false))) return false
+    if ((await expander.getAttribute('aria-expanded')) !== 'true') {
+      await expander.click()
+      await page.waitForTimeout(400)
+    }
+    return true
+  }
+
   test('integration card renders with integration name and icon', async ({
     electronPage: page
   }) => {
@@ -85,29 +100,26 @@ test.describe('Integration Cards Deep', () => {
 
     const card = page.locator('[data-testid="integration-card"]').first()
 
-    // Look for a toggle switch or enable/disable button
-    const toggle = card
-      .locator('button, [role="switch"]')
-      .filter({
-        hasText: /enable|disable|toggle/i
-      })
-      .first()
-    const hasToggle = await toggle.isVisible({ timeout: 3_000 }).catch(() => false)
+    // A real `role="switch"` with `aria-checked` — the raw div-toggle it replaced
+    // exposed no state to assistive tech or to this assertion.
+    const toggle = card.getByRole('switch').first()
+    await expect(toggle).toBeVisible({ timeout: 3_000 })
+    await expect(toggle).toHaveAttribute('aria-checked', /true|false/)
 
-    if (!hasToggle) {
-      // Try looking for a checkbox-style toggle
-      const switchEl = card.locator('[role="switch"], input[type="checkbox"]').first()
-      const hasSwitch = await switchEl.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (hasSwitch) {
-        await expect(switchEl).toBeVisible()
-      } else {
-        // Integration cards may not have toggles in this UI variant
-        test.skip()
-      }
+    if (!(await toggle.isEnabled().catch(() => false))) {
+      // Credentials unset — the switch is deliberately locked.
       return
     }
 
-    await expect(toggle).toBeVisible()
+    const before = await toggle.getAttribute('aria-checked')
+    await toggle.click()
+    await page.waitForTimeout(1_500)
+    await expect(toggle).toHaveAttribute('aria-checked', before === 'true' ? 'false' : 'true')
+
+    // Restore state
+    await toggle.click()
+    await page.waitForTimeout(500)
+    await expect(toggle).toHaveAttribute('aria-checked', before ?? 'false')
   })
 
   test('tools list section expands to show individual MCP tools', async ({
@@ -124,33 +136,24 @@ test.describe('Integration Cards Deep', () => {
       return
     }
 
+    if (!(await expandFirstCard(page))) {
+      test.skip()
+      return
+    }
+
     const card = page.locator('[data-testid="integration-card"]').first()
 
-    // Look for a tools list section or expandable area
-    const toolsLabel = card.getByText(/tools|capabilities/i).first()
-    const hasTools = await toolsLabel.isVisible({ timeout: 3_000 }).catch(() => false)
+    // The tools disclosure is labelled "<n> tools (<m> available in plan mode)".
+    const toolsToggle = card.getByRole('button', { name: /\d+ tools/i }).first()
+    await expect(toolsToggle).toBeVisible({ timeout: 3_000 })
+    await expect(toolsToggle).toHaveAttribute('aria-expanded', 'false')
 
-    if (hasTools) {
-      // Click to expand if collapsible
-      await toolsLabel.click()
-      await page.waitForTimeout(300)
+    await toolsToggle.click()
+    await page.waitForTimeout(400)
+    await expect(toolsToggle).toHaveAttribute('aria-expanded', 'true')
 
-      // Should show tool names
-      const cardContent = await card.textContent()
-      expect(cardContent?.trim().length).toBeGreaterThan(0)
-    } else {
-      // Click the card itself to see details
-      await card.click()
-      await page.waitForTimeout(500)
-
-      // Look for tool details in expanded view
-      const toolDetails = page.getByText(/tool|capability/i).first()
-      const hasDetails = await toolDetails.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!hasDetails) {
-        test.skip()
-        return
-      }
-    }
+    // Expanded list renders each tool name as a <code> element.
+    expect(await card.locator('code').count()).toBeGreaterThan(0)
   })
 
   test('use-case grid shows categorized usage examples', async ({ electronPage: page }) => {
@@ -165,20 +168,21 @@ test.describe('Integration Cards Deep', () => {
       return
     }
 
-    const card = page.locator('[data-testid="integration-card"]').first()
-
-    // Use-case information may be shown as tags, badges, or description text
-    const useCaseText = card.getByText(/use case|purpose|category/i).first()
-    const hasUseCase = await useCaseText.isVisible({ timeout: 3_000 }).catch(() => false)
-
-    if (!hasUseCase) {
-      // Use cases may be embedded in the card description
-      const description = card.locator('p, span').filter({ hasText: /\w+/ }).first()
-      const hasDesc = await description.isVisible({ timeout: 2_000 }).catch(() => false)
-      expect(hasDesc).toBeTruthy()
-    } else {
-      await expect(useCaseText).toBeVisible()
+    if (!(await expandFirstCard(page))) {
+      test.skip()
+      return
     }
+
+    const grid = page.locator('[data-testid="use-case-grid"]').first()
+    const hasGrid = await grid.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasGrid) {
+      // This integration declares no use cases.
+      test.skip()
+      return
+    }
+
+    await expect(grid.getByText(/what can your agent do/i)).toBeVisible({ timeout: 3_000 })
+    expect(await grid.locator('[class*="rounded-md"]').count()).toBeGreaterThan(0)
   })
 
   test('token impact badge displays estimated token overhead', async ({ electronPage: page }) => {
@@ -195,25 +199,17 @@ test.describe('Integration Cards Deep', () => {
 
     const card = page.locator('[data-testid="integration-card"]').first()
 
-    // Token impact may be shown as a badge with token count
-    const tokenBadge = card.getByText(/token|impact|cost/i).first()
-    const hasToken = await tokenBadge.isVisible({ timeout: 3_000 }).catch(() => false)
+    // Lives in the collapsed header — it is half of the enable/skip decision,
+    // so it must never be hidden behind expansion.
+    const tokenBadge = card.locator('[data-testid="token-impact-badge"]')
+    await expect(tokenBadge).toBeVisible({ timeout: 3_000 })
 
-    if (hasToken) {
-      await expect(tokenBadge).toBeVisible()
-    } else {
-      // Token badge may not be present in all card variants
-      // Verify the card has some metadata instead
-      const metadata = card.locator('span, div').filter({ hasText: /\d/ }).first()
-      const hasMeta = await metadata.isVisible({ timeout: 2_000 }).catch(() => false)
-      // Either token badge or some numeric metadata is expected
-      expect(hasMeta || true).toBeTruthy()
-    }
+    const text = await tokenBadge.textContent()
+    expect(text).toMatch(/low|medium|high/i)
+    expect(text).toMatch(/\d+\s*tools?/i)
   })
 
-  test('workflow stepper shows multi-step configuration progress', async ({
-    electronPage: page
-  }) => {
+  test('workflow steps show the setup sequence', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
     if (!ready) {
       test.skip()
@@ -225,20 +221,22 @@ test.describe('Integration Cards Deep', () => {
       return
     }
 
-    const card = page.locator('[data-testid="integration-card"]').first()
-
-    // Look for step indicators or setup progress
-    const stepIndicator = card.getByText(/step|setup|configure|connected/i).first()
-    const hasStep = await stepIndicator.isVisible({ timeout: 3_000 }).catch(() => false)
-
-    if (hasStep) {
-      await expect(stepIndicator).toBeVisible()
-    } else {
-      // Card may show a simple status instead of a stepper
-      const status = card.getByText(/available|active|configured/i).first()
-      const hasStatus = await status.isVisible({ timeout: 2_000 }).catch(() => false)
-      // Either stepper or status indicator is expected
-      expect(hasStatus || true).toBeTruthy()
+    if (!(await expandFirstCard(page))) {
+      test.skip()
+      return
     }
+
+    const stepper = page.locator('[data-testid="workflow-stepper"]').first()
+    const hasSteps = await stepper.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasSteps) {
+      // This integration declares no workflow steps.
+      test.skip()
+      return
+    }
+
+    // Steps sit under Setup, directly above the credentials form they describe.
+    const steps = stepper.locator('li')
+    expect(await steps.count()).toBeGreaterThan(0)
+    expect((await steps.first().textContent())?.trim().startsWith('1.')).toBeTruthy()
   })
 })

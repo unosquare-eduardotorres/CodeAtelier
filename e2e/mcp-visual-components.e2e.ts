@@ -1,14 +1,16 @@
 /**
  * MCP Visual Components E2E Tests — Tier C
  *
- * Verifies the visual sub-components within integration cards that
- * have zero direct coverage:
+ * Verifies the visual sub-components within integration cards:
  *   1. UseCaseGrid renders use-case cards with icons
- *   2. WorkflowStepper shows numbered steps in correct order
- *   3. McpExplainerBanner renders content and dismisses on click
+ *   2. The workflow step list renders numbered setup steps in order
+ *   3. McpExplainerBanner exposes its explanation through the help popover
+ *   4. Use-case cards survive interaction
+ *   5. A collapsed card body stays unmounted until expanded
  *
- * These components live inside IntegrationCard and are purely visual
- * but confirm the MCP metadata is flowing correctly from the server.
+ * Integration cards are collapsed by default — everything below the header row
+ * is only mounted on expand. Every body assertion here must expand first;
+ * before that these tests "passed" by skipping past absent selectors.
  *
  * Uses CDP fixture (Electron 41+ compatible).
  *
@@ -55,28 +57,40 @@ test.describe('MCP Visual Components', () => {
   }
 
   /**
-   * Helper: expand an integration card to reveal inner components.
-   * Cards may need to be clicked/expanded to show UseCaseGrid and WorkflowStepper.
+   * Expand the nth integration card. Idempotent — reads `aria-expanded` rather
+   * than blind-clicking, so calling it on an open card does not close it.
    */
-  async function expandFirstIntegrationCard(
-    page: import('@playwright/test').Page
+  async function expandIntegrationCard(
+    page: import('@playwright/test').Page,
+    index = 0
   ): Promise<boolean> {
-    const cards = page.locator('[data-testid^="integration-card-"]')
-    const count = await cards.count()
+    const expanders = page.locator('[data-testid^="integration-expand-"]')
+    if ((await expanders.count()) <= index) return false
 
-    if (count === 0) return false
-
-    // Click the first card to expand it (if collapsible)
-    const firstCard = cards.first()
-    const expandBtn = firstCard.locator('button').first()
-    const hasExpandBtn = await expandBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-
-    if (hasExpandBtn) {
-      await expandBtn.click()
-      await page.waitForTimeout(500)
+    const expander = expanders.nth(index)
+    if ((await expander.getAttribute('aria-expanded')) !== 'true') {
+      await expander.click()
+      await page.waitForTimeout(400)
     }
-
     return true
+  }
+
+  /** Expand cards in turn until `testid` shows up. Returns the card index, or -1. */
+  async function expandUntilVisible(
+    page: import('@playwright/test').Page,
+    testid: string
+  ): Promise<number> {
+    const total = await page.locator('[data-testid^="integration-expand-"]').count()
+    for (let i = 0; i < total; i++) {
+      if (!(await expandIntegrationCard(page, i))) break
+      const found = await page
+        .locator(`[data-testid="${testid}"]`)
+        .first()
+        .isVisible({ timeout: 2_000 })
+        .catch(() => false)
+      if (found) return i
+    }
+    return -1
   }
 
   // ── 1. UseCaseGrid renders use-case cards with icons ──────────────
@@ -84,253 +98,149 @@ test.describe('MCP Visual Components', () => {
   test('UseCaseGrid renders use-case cards with icons', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const hasCard = await expandFirstIntegrationCard(page)
-    if (!hasCard) {
+    const index = await expandUntilVisible(page, 'use-case-grid')
+    if (index === -1) {
       test.skip()
       return
     }
 
-    // Look for the UseCaseGrid component
-    const useCaseGrid = page.locator('[data-testid="use-case-grid"]')
-    const hasGrid = await useCaseGrid.isVisible({ timeout: 5_000 }).catch(() => false)
-
-    if (!hasGrid) {
-      // UseCaseGrid may only appear in expanded/detailed card view
-      // Try other cards
-      const cards = page.locator('[data-testid^="integration-card-"]')
-      const count = await cards.count()
-
-      for (let i = 1; i < Math.min(count, 5); i++) {
-        const card = cards.nth(i)
-        await card.click()
-        await page.waitForTimeout(500)
-
-        const gridFound = await useCaseGrid.isVisible({ timeout: 3_000 }).catch(() => false)
-        if (gridFound) break
-      }
-
-      const finalCheck = await useCaseGrid.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!finalCheck) {
-        // No integration has use cases defined
-        test.skip()
-        return
-      }
-    }
+    const useCaseGrid = page.locator('[data-testid="use-case-grid"]').first()
+    await expect(useCaseGrid).toBeVisible()
 
     // Verify the grid header
-    const heading = useCaseGrid.getByText(/what can your agent do/i)
-    await expect(heading).toBeVisible({ timeout: 3_000 })
+    await expect(useCaseGrid.getByText(/what can your agent do/i)).toBeVisible({ timeout: 3_000 })
 
-    // Grid should contain use-case cards
+    // Grid should contain use-case cards, each with an icon and a title
     const useCaseCards = useCaseGrid.locator('[class*="rounded-md"]')
     const cardCount = await useCaseCards.count()
     expect(cardCount).toBeGreaterThan(0)
 
-    // Each card should have a title and icon
     const firstUseCase = useCaseCards.first()
-    const hasIcon = await firstUseCase
-      .locator('svg')
-      .first()
-      .isVisible({ timeout: 2_000 })
-      .catch(() => false)
+    await expect(firstUseCase.locator('svg').first()).toBeVisible({ timeout: 2_000 })
     const useCaseText = await firstUseCase.textContent()
-
-    expect(hasIcon).toBeTruthy()
-    expect(useCaseText?.length).toBeGreaterThan(0)
+    expect(useCaseText?.trim().length).toBeGreaterThan(0)
   })
 
-  // ── 2. WorkflowStepper shows numbered steps in correct order ──────
+  // ── 2. Workflow steps render numbered, in registry order ──────────
 
-  test('WorkflowStepper shows numbered steps in correct order', async ({ electronPage: page }) => {
+  test('workflow steps render as a numbered setup list', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const hasCard = await expandFirstIntegrationCard(page)
-    if (!hasCard) {
+    const index = await expandUntilVisible(page, 'workflow-stepper')
+    if (index === -1) {
       test.skip()
       return
     }
 
-    // Look for the WorkflowStepper component
-    const stepper = page.locator('[data-testid="workflow-stepper"]')
-    const hasStepper = await stepper.isVisible({ timeout: 5_000 }).catch(() => false)
+    const stepper = page.locator('[data-testid="workflow-stepper"]').first()
+    await expect(stepper).toBeVisible()
 
-    if (!hasStepper) {
-      // Try other integration cards
-      const cards = page.locator('[data-testid^="integration-card-"]')
-      const count = await cards.count()
-
-      for (let i = 1; i < Math.min(count, 5); i++) {
-        const card = cards.nth(i)
-        await card.click()
-        await page.waitForTimeout(500)
-
-        const stepperFound = await stepper.isVisible({ timeout: 3_000 }).catch(() => false)
-        if (stepperFound) break
-      }
-
-      const finalCheck = await stepper.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!finalCheck) {
-        test.skip()
-        return
-      }
-    }
-
-    // Verify the stepper header
-    const heading = stepper.getByText(/how it works/i)
-    await expect(heading).toBeVisible({ timeout: 3_000 })
-
-    // Steps should be present with numbered indicators
-    const stepElements = stepper.locator('[class*="rounded-md"]')
-    const stepCount = await stepElements.count()
+    // The steps live under Setup now — the old standalone "How it works" block
+    // duplicated the page-level explainer and was removed.
+    const steps = stepper.locator('li')
+    const stepCount = await steps.count()
     expect(stepCount).toBeGreaterThan(0)
 
-    // Steps should contain numbered circle characters (①②③④⑤⑥)
-    const stepperText = await stepper.textContent()
-    expect(stepperText).toMatch(/[①②③④⑤⑥]|1\.|2\.|3\./)
-
-    // Steps should be in sequential order
-    if (stepCount >= 2) {
-      const firstStepText = await stepElements.nth(0).textContent()
-      const secondStepText = await stepElements.nth(1).textContent()
-
-      // Both steps should have content
-      expect(firstStepText?.length).toBeGreaterThan(0)
-      expect(secondStepText?.length).toBeGreaterThan(0)
-    }
-
-    // Arrow separators should exist between steps
-    const arrows = stepper.locator('svg')
-    const arrowCount = await arrows.count()
-    if (stepCount > 1) {
-      expect(arrowCount).toBeGreaterThan(0)
+    // Numbering must be sequential from 1 — the old flex-wrap stepper rendered
+    // a broken staircase with arrows pointing into empty space.
+    for (let i = 0; i < stepCount; i++) {
+      const text = await steps.nth(i).textContent()
+      expect(text?.trim().startsWith(`${i + 1}.`)).toBeTruthy()
+      expect(text?.trim().length).toBeGreaterThan(2)
     }
   })
 
-  // ── 3. McpExplainerBanner renders content ─────────────────────────
+  // ── 3. McpExplainerBanner exposes MCP explanation via popover ─────
 
   test('McpExplainerBanner renders MCP explanation content', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    // Look for the McpExplainerBanner
     const banner = page.locator('[data-testid="mcp-explainer-banner"]')
-    const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
+    await expect(banner).toBeVisible({ timeout: 5_000 })
 
-    if (!hasBanner) {
-      // Banner may have been dismissed previously
-      // Verify integrations page still renders without banner
-      const integrationsContent = page.getByText(/integrations|mcp/i).first()
-      const hasContent = await integrationsContent.isVisible({ timeout: 5_000 }).catch(() => false)
-      expect(hasContent).toBeTruthy()
-      return
-    }
+    // The collapsed header keeps only the title.
+    await expect(banner.getByText(/external mcp integrations/i)).toBeVisible({ timeout: 3_000 })
 
-    // Banner should display the MCP title
-    const title = banner.getByText(/external mcp integrations/i)
-    await expect(title).toBeVisible({ timeout: 3_000 })
+    // Everything else moved behind the help affordance — it is onboarding copy,
+    // read once, and used to cost a permanent ~320px banner.
+    await banner.getByRole('button', { name: /what is mcp/i }).click()
 
-    // "What is MCP?" section should be present
-    const whatIsMcp = banner.getByText(/what is mcp/i)
-    const hasWhatIs = await whatIsMcp.isVisible({ timeout: 3_000 }).catch(() => false)
-    expect(hasWhatIs).toBeTruthy()
+    const popover = page.locator('[data-testid="mcp-explainer-popover"]')
+    await expect(popover).toBeVisible({ timeout: 3_000 })
 
-    // Model Context Protocol description should be present
-    const mcpDescription = banner.getByText(/model context protocol/i)
-    await expect(mcpDescription).toBeVisible({ timeout: 3_000 })
+    await expect(popover.getByText(/what is mcp/i)).toBeVisible({ timeout: 3_000 })
+    await expect(popover.getByText(/model context protocol/i)).toBeVisible({ timeout: 3_000 })
+    await expect(popover.getByText(/how it works/i)).toBeVisible({ timeout: 3_000 })
 
-    // "How it works" stepper should be in the banner
-    const howItWorks = banner.getByText(/how it works/i)
-    const hasHowItWorks = await howItWorks.isVisible({ timeout: 3_000 }).catch(() => false)
-    expect(hasHowItWorks).toBeTruthy()
+    // Four numbered flow steps + the token-cost note.
+    const steps = popover.locator('li')
+    expect(await steps.count()).toBe(4)
+    await expect(popover.getByText(/token cost/i)).toBeVisible({ timeout: 3_000 })
 
-    // Numbered steps should be present (①②③④)
-    const bannerText = await banner.textContent()
-    expect(bannerText).toMatch(/[①②③④]/)
-
-    // Token safety callout
-    const tokenNote = banner.getByText(/token/i)
-    const hasTokenNote = await tokenNote
-      .first()
-      .isVisible({ timeout: 3_000 })
-      .catch(() => false)
-    expect(hasTokenNote).toBeTruthy()
+    // Escape dismisses it — it must not become a permanent row again.
+    await page.keyboard.press('Escape')
+    await expect(popover).toBeHidden({ timeout: 3_000 })
   })
 
-  // ── 4. UseCaseGrid card click navigates to relevant feature ──────
+  // ── 4. Use-case cards survive interaction ─────────────────────────
 
-  test('UseCaseGrid card click navigates to relevant feature', async ({ electronPage: page }) => {
+  test('use-case cards are inert and do not collapse the card', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const hasCard = await expandFirstIntegrationCard(page)
-    if (!hasCard) {
+    const index = await expandUntilVisible(page, 'use-case-grid')
+    if (index === -1) {
       test.skip()
       return
     }
 
-    const useCaseGrid = page.locator('[data-testid="use-case-grid"]')
-    const hasGrid = await useCaseGrid.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasGrid) {
-      test.skip()
-      return
-    }
-
-    // Click first use-case card
+    const useCaseGrid = page.locator('[data-testid="use-case-grid"]').first()
     const useCaseCards = useCaseGrid.locator('[class*="rounded-md"]')
-    const cardCount = await useCaseCards.count()
-    if (cardCount === 0) {
+    if ((await useCaseCards.count()) === 0) {
       test.skip()
       return
     }
 
-    const cardText = await useCaseCards.first().textContent()
     await useCaseCards.first().click()
-    await page.waitForTimeout(1_000)
+    await page.waitForTimeout(500)
 
-    // Card click may navigate, highlight, or show detail
-    // Verify card was interactable and page didn't crash
-    const pageContent = await page.content()
-    expect(pageContent.length).toBeGreaterThan(0)
-    expect(cardText).toBeTruthy()
+    // Use-case cards are descriptive, not navigational: clicking one must not
+    // collapse the card out from under the reader.
+    await expect(useCaseGrid).toBeVisible()
   })
 
-  // ── 5. WorkflowStepper active step highlighting ─────────────────
+  // ── 5. Collapsed cards keep their body unmounted ──────────────────
 
-  test('WorkflowStepper active step highlighting', async ({ electronPage: page }) => {
+  test('card body stays unmounted until the row is expanded', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 
-    const hasCard = await expandFirstIntegrationCard(page)
-    if (!hasCard) {
+    const expanders = page.locator('[data-testid^="integration-expand-"]')
+    if ((await expanders.count()) === 0) {
       test.skip()
       return
     }
 
-    const stepper = page.locator('[data-testid="workflow-stepper"]')
-    const hasStepper = await stepper.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStepper) {
-      test.skip()
-      return
+    const first = expanders.first()
+
+    // Collapse it if a previous run left it open.
+    if ((await first.getAttribute('aria-expanded')) === 'true') {
+      await first.click()
+      await page.waitForTimeout(300)
     }
 
-    // Check for active step visual treatment (highlighted step)
-    const stepElements = stepper.locator('[class*="rounded-md"]')
-    const stepCount = await stepElements.count()
+    await expect(first).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.locator('[data-testid="use-case-grid"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="workflow-stepper"]')).toHaveCount(0)
 
-    if (stepCount === 0) {
-      test.skip()
-      return
-    }
+    // The header still carries the decision-making signals.
+    await expect(page.locator('[data-testid="token-impact-badge"]').first()).toBeVisible({
+      timeout: 3_000
+    })
 
-    // At least one step should have distinct styling
-    let hasDistinctStep = false
-    for (let i = 0; i < Math.min(stepCount, 6); i++) {
-      const step = stepElements.nth(i)
-      const classes = await step.getAttribute('class')
-      // Active/completed steps often have different bg or text color
-      if (classes?.includes('bg-') || classes?.includes('text-')) {
-        hasDistinctStep = true
-        break
-      }
-    }
-
-    expect(hasDistinctStep || stepCount > 0).toBeTruthy()
+    await first.click()
+    await page.waitForTimeout(400)
+    await expect(first).toHaveAttribute('aria-expanded', 'true')
+    await expect(page.locator('[data-testid="workflow-stepper"]').first()).toBeVisible({
+      timeout: 3_000
+    })
   })
 })

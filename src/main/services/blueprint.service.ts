@@ -783,6 +783,37 @@ export class BlueprintService extends EventEmitter {
   }
 
   /**
+   * BP-TASK-USER-SKIP-01: Mark a single build task as deliberately skipped by
+   * the user (or clear that mark).
+   *
+   * Some tasks cannot be made to pass — their planned files live outside any
+   * tree BUILD may read, so no retry changes the outcome. `status = 'skipped'`
+   * is not an escape hatch: retryPhase resets it to 'pending' and the failure
+   * cascade writes it on its own. This records the human decision separately,
+   * where neither can touch it.
+   *
+   * Reversible — `skipped: false` clears it.
+   */
+  setTaskUserSkipped(blueprintId: string, taskId: string, skipped: boolean): BlueprintTask {
+    const task = blueprintTaskRepository
+      .findByBlueprint(blueprintId)
+      .find((t) => t.taskId === taskId)
+    if (!task) {
+      throw new Error(`Task ${taskId} not found for blueprint ${blueprintId}`)
+    }
+
+    const updated = blueprintTaskRepository.setUserSkipped(task.id, skipped)
+    if (!updated) {
+      throw new Error(`Failed to ${skipped ? 'skip' : 'unskip'} task ${taskId}`)
+    }
+
+    bpLog.info(
+      `[setTaskUserSkipped] Blueprint ${blueprintId} — task ${taskId} ${skipped ? 'skipped by user' : 'un-skipped'}`
+    )
+    return updated
+  }
+
+  /**
    * Rewind to a previous phase (e.g., go back to SPECIFY after PLAN reveals gaps).
    * Resets all phases from the target forward to 'pending'.
    */
@@ -976,6 +1007,11 @@ export class BlueprintService extends EventEmitter {
       let resetCount = 0
       for (const task of tasks) {
         if (task.status === 'failed' || task.status === 'skipped' || task.status === 'running') {
+          // BP-TASK-USER-SKIP-01: a human decided this task is not worth
+          // retrying — a retry does not overrule that. Read fresh: the decision
+          // may have been made after `tasks` was loaded.
+          const fresh = blueprintTaskRepository.findById(task.id)
+          if (fresh?.skippedByUserAt) continue
           blueprintTaskRepository.updateStatus(task.id, 'pending')
           resetCount++
         }

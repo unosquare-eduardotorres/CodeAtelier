@@ -41,7 +41,10 @@ import { memoryEngineService } from './services/memory-engine.service'
 import { memoryBootstrapService } from './services/memory-bootstrap.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
-import { trackService } from './services/track.service'
+import { trackService, registerTrackBusyProbe } from './services/track.service'
+import { lifecycleRegistry } from './services/conversation-lifecycle'
+import { blueprintService } from './services/blueprint.service'
+import { blueprintRepository } from './db/repositories/blueprint.repository'
 import { landingService } from './services/landing.service'
 import { grillAgentService } from './services/grill-agent.service'
 import { grillPersistenceController } from './services/grill-persistence.controller'
@@ -421,6 +424,27 @@ function createWindow(): void {
     .catch((error) => {
       log.warn('[Startup] Worktree pruning failed (non-critical):', error)
     })
+
+  // Handing a branch from a chat to a blueprint (or back) must be refused while
+  // the current owner is mid-turn — otherwise a second writer is pointed at a
+  // directory the first is still writing into. `transferOwner` cannot ask the
+  // services that know: blueprint.service already reaches back into
+  // track.service through blueprint-track, so importing it there would close an
+  // import cycle. The probes are registered here instead, at the root, where
+  // importing both is already free.
+  registerTrackBusyProbe('chat', (conversationId) =>
+    lifecycleRegistry.isStreaming(conversationId) ? 'it is streaming a reply right now' : null
+  )
+  registerTrackBusyProbe('blueprint', (blueprintId) => {
+    const workspaceId = blueprintRepository.findById(blueprintId)?.workspaceId
+    if (!workspaceId) return null
+    // Scoped to THIS blueprint rather than `isRunning(workspaceId)`: the latter
+    // is true whenever any blueprint in the workspace is running, which would
+    // refuse handoffs that have nothing to do with the running one.
+    return blueprintService.getActiveBlueprintId(workspaceId) === blueprintId
+      ? 'its pipeline is still running'
+      : null
+  })
 
   // Boot is not the only moment worktrees go idle. Without a timer the retention
   // policy silently becomes "whenever you restart the app", so a long-lived

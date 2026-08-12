@@ -19,7 +19,7 @@ import type { ConversationPhase, Message, ToolActivity } from '../../../shared/t
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { PerConversationStreamState } from './chat-action-utils'
 import type { ChatState, PendingToolPermission } from './chat.store'
-import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE } from '@renderer/components/chat/plan-detection'
+import { findPlanBlock } from '@renderer/components/chat/plan-detection'
 import { usePlanExecutionStore } from './plan-execution.store'
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -823,11 +823,9 @@ export function finalizeStreamAction(
     if (get().activeConversation?.id !== conversationId) return
     const currentMessages = get().messages
     const msg = currentMessages.find((m: Message) => m.id === messageId)
-    if (msg?.contentMd && PLAN_BLOCK_RE.test(msg.contentMd)) {
-      const match = PLAN_BLOCK_CAPTURE_RE.exec(msg.contentMd)
-      if (match?.[1]) {
-        usePlanExecutionStore.getState().setLatestPlanContent(conversationId, match[1])
-      }
+    const block = msg?.contentMd ? findPlanBlock(msg.contentMd) : null
+    if (block?.content) {
+      usePlanExecutionStore.getState().setLatestPlanContent(conversationId, block.content)
     }
   }, 500)
 }
