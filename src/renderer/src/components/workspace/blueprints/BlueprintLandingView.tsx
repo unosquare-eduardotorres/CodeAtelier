@@ -1,11 +1,7 @@
 // @ts-nocheck — TODO: fix after blueprint refactoring
 import type { JSX } from 'react'
 import { BookOpen, Plus, XCircle, RotateCcw, AlertTriangle, PlayCircle, X } from 'lucide-react'
-import {
-  BlueprintHistoryItem,
-  BlueprintFilterBar,
-  PHASE_CONFIG
-} from '.'
+import { BlueprintHistoryItem, BlueprintFilterBar, PHASE_CONFIG } from '.'
 import type { BlueprintFilter } from '.'
 import type { Blueprint } from '../../../../../shared/blueprint-types'
 
@@ -154,7 +150,8 @@ export default function BlueprintLandingView({
               <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
               <div className="flex flex-col gap-0.5 flex-1">
                 <span className="text-sm font-medium">
-                  &ldquo;{orphanedBlueprint.title}&rdquo; was interrupted during {orphanedBlueprint.currentPhase}
+                  &ldquo;{orphanedBlueprint.title}&rdquo; was interrupted during{' '}
+                  {orphanedBlueprint.currentPhase}
                 </span>
                 <span className="text-xs opacity-80">
                   {orphanedBlueprint.totalTasks > 0

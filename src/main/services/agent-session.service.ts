@@ -27,10 +27,11 @@ import type {
   ImageAttachment,
   LLMProvider,
   ExecutorBackend,
-  PlanDetectedEvent
+  PermissionOutcome
 } from '../../shared/types'
 import type { AgentPromptInput } from './executor-types'
 import { EXTERNAL_MCP_INTEGRATIONS, resolveModelAction } from '../../shared/constants'
+import { parseDbTimestamp } from '../../shared/db-time'
 import { chatAgentLogger } from '../logger'
 import { AgentBaseService } from './agent-base.service'
 import type { StreamChunk } from './agent-base.service'
@@ -56,9 +57,11 @@ import { ToolActivityAccumulator } from './tool-activity-accumulator'
 import { localPlanStateService } from './local-plan-state.service'
 import { localContextReconstructor } from './local-context-reconstructor'
 import { IpcBridge } from './ipc-bridge'
+import { parsePlanPayload } from './agent-session-handlers'
 import { AgentStreamProcessor } from './agent-stream-processor'
 import { AgentRecoveryManager } from './agent-recovery-manager'
 import { AgentExecutorFactory } from './agent-executor-factory'
+import { isTurnPoisoned } from './turn-poison'
 import { openCodeExecutor } from './opencode-executor'
 import type { OpenCodeExecuteResult } from './opencode-executor'
 import { openCodeConfigWriter } from './opencode-config-writer'
@@ -66,8 +69,14 @@ import { openCodeAgentWriter } from './opencode-agent-writer'
 import { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
-import { ensureOpencodePathInEnv, getOpencodePath, resolveOpencodePath } from '../../shared/opencode-cli-path'
+import {
+  ensureOpencodePathInEnv,
+  getOpencodePath,
+  resolveOpencodePath
+} from '../../shared/opencode-cli-path'
 import { resolveOpenCodeProviderFromSnapshot } from './snapshot-model-resolver'
+import { trackService } from './track.service'
+import type { TrackOwnerKind } from '../../shared/track-types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import type {
   AgentRoleAdapter,
@@ -80,7 +89,25 @@ import type {
  * 'ok' = normal completion; non-'ok' values record why the session ended abnormally.
  * Used by blueprint executeTask/startVerifyPhase to detect absorbed errors.
  */
-export type SendOutcome = 'ok' | 'overload' | 'turn_limit_exhausted' | 'context_overflow' | 'error' | 'aborted'
+export type SendOutcome =
+  'ok' | 'overload' | 'turn_limit_exhausted' | 'context_overflow' | 'error' | 'aborted'
+
+/** Everything `start()` needs beyond the workspace root and the mode. */
+export interface AgentSessionStartOptions {
+  /** Resume a prior CLI session id rather than starting fresh. */
+  resumeSessionId?: string
+  /**
+   * Run this session in a non-chat owner's track.
+   *
+   * Blueprint and campaign runs own a branch but are not conversations, so the
+   * per-turn `resolve(conversationId, …)` lookup never matched them and they
+   * fell through to the workspace's primary tree — writing into the user's
+   * checkout with no isolation and no error. Passing the owner here routes
+   * execution through the same worktree machinery chats use, while
+   * `workspacePath` stays the repo root so workspace identity is unaffected.
+   */
+  trackOwner?: { ownerKind: TrackOwnerKind; ownerId: string }
+}
 
 /** Internal loop-state book-keeping for executeStream. */
 interface StreamLoopState {
@@ -112,28 +139,6 @@ interface ExecuteStreamOptions {
   /** Explicit goal condition — takes priority over adapter duck-typing. */
   goal?: string
   goalMode?: 'advisory' | 'enforce'
-}
-
-/**
- * Parse a raw plan payload (from IPC bridge or control-actions) into a
- * validated PlanDetectedEvent. Handles both well-shaped objects and raw
- * JSON strings, falling back to null structuredPlan for malformed data.
- */
-function parsePlanPayload(payload: unknown, beforePlan: string): PlanDetectedEvent {
-  const raw = typeof payload === 'string' ? payload : JSON.stringify(payload)
-  const obj =
-    typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {}
-  return {
-    rawContent: raw,
-    structuredPlan:
-      (obj.structuredPlan as PlanDetectedEvent['structuredPlan']) ??
-      // Direct StructuredPlan object (from SDK onPlan callback)
-      (obj.type !== undefined && obj.phases !== undefined
-        ? (payload as PlanDetectedEvent['structuredPlan'])
-        : null),
-    beforePlan,
-    afterPlan: ''
-  }
 }
 
 // ── Helpers ──
@@ -177,14 +182,54 @@ export class AgentSessionService extends AgentBaseService {
   // common default since specialist plan mode uses Opus).
   private static readonly DEFAULT_COMPACT_SUGGEST_THRESHOLD = 120_000
   private static readonly DEFAULT_COMPACT_AUTO_THRESHOLD = 150_000
+  /** Idle budget — max silence from the executor before the turn is aborted. Not a wall-clock cap. */
   private static readonly MAX_INTERACTION_TIMEOUT_MS = 10 * 60_000 // 10 minutes
-  /** Extended timeout when external MCP tools (Maestro, etc.) are active — flows can run 5+ min each. */
+  /**
+   * Extended idle budget for external MCPs whose tools are genuinely long-running
+   * (`longRunningTools`, e.g. Maestro device flows). Fast REST-backed servers keep
+   * the normal budget — stretching it there just delays a hung call by 20 minutes.
+   */
   private static readonly EXTERNAL_MCP_INTERACTION_TIMEOUT_MS = 30 * 60_000 // 30 minutes
+  /** Minimum gap between idle-timer restarts, so per-token chunks don't churn timers. */
+  private static readonly IDLE_TIMER_RESET_THROTTLE_MS = 5_000
 
   private workspacePath: string | null = null
   private workspaceId: string | null = null
-  private currentConversationId: string | null = null
-  private accumulatedText = ''
+  /**
+   * Session-level track owner, when this session is not a chat.
+   *
+   * `workspacePath` does two jobs — it is the cwd AND the key every
+   * workspace-scoped lookup resolves by (`workspaces.find(w => w.repoPath ===
+   * workspacePath)`). Pointing it at a worktree to move the cwd therefore
+   * silently drops workspaceId, and with it the cost preference, the LLM
+   * provider, the compaction thresholds and four MCP servers — all without an
+   * error. This field separates the two: workspacePath stays the repo root,
+   * and the execution path is resolved from the owner recorded here.
+   *
+   * Null for chats, which resolve by conversation id per turn.
+   */
+  private trackOwner: { ownerKind: TrackOwnerKind; ownerId: string } | null = null
+  /** Most-recently-started conversation — for backward-compat queries (logging, UI, bridge). */
+  private _lastActiveConversationId: string | null = null
+  /** Per-conversation stream contexts (text accumulator + abort controller). */
+  private readonly activeStreams = new Map<
+    string,
+    import('./agent-session-host').ActiveStreamContext
+  >()
+  /**
+   * Final accumulated text of the most recent *completed* turn, per conversation.
+   *
+   * MEMLEAK-01 deletes the `activeStreams` entry as soon as `_doSend` resolves,
+   * which is *before* any caller awaiting `send()` can read the text back. Every
+   * `await send(...)` → `getStreamedContent(...)` site (blueprint phases, council,
+   * grill, audit, MPA) therefore read `''`. This buffer keeps just the text — the
+   * heavy `ActiveStreamContext` (abort controller, execution path) is still
+   * dropped — and is cleared the moment the next turn for that conversation
+   * starts, so at most one turn's text per live conversation is retained.
+   */
+  private readonly lastTurnText = new Map<string, string>()
+  /** Fallback accumulator for direct field access when no activeStreams context exists (test compat). */
+  private _directAccumulatedText = ''
   /** HEAD sha captured at session start — for memory extraction git delta. */
   private currentStartSha: string | undefined
   /** Per-session set of fact IDs already injected — prevents re-injection on subsequent turns. */
@@ -197,18 +242,48 @@ export class AgentSessionService extends AgentBaseService {
 
   /** Maps conversationId → SDK session_id for resume. */
   private readonly sessionMap = new Map<string, string>()
+  /**
+   * Conversations whose CLI session was left with an unanswered user turn (the
+   * turn was aborted or yielded zero chunks). Consumed — and cleared — by the
+   * next resolveSession() call, which starts a fresh session instead of
+   * resuming. See recordTurnBoundary().
+   */
+  private readonly poisonedSessions = new Set<string>()
 
   /** Whether the last executeStream was terminated by the interaction timeout. */
   private _lastTimedOut = false
 
-  /** AbortController for the current in-flight query. */
-  private sdkAbortController: AbortController | null = null
+  // sdkAbortController moved into per-conversation ActiveStreamContext (activeStreams map)
   /** OpenCode config path (written to temp dir). */
   private _openCodeConfigPath: string | undefined
   /** A-1: Pending priming context parts — consumed by the first execute() call. */
   private _pendingPrimingContext: Array<{ type: 'text'; text: string }> | undefined
-  /** CLI executor — interactive claude process, subscription billing. */
-  private readonly cliExecutor = new CLIExecutor()
+  /** Per-conversation CLI executors — each conversation gets its own interactive claude process. */
+  private readonly cliExecutors = new Map<string, CLIExecutor>()
+  /**
+   * Backward-compat accessor — returns the executor for lastActiveConversationId.
+   * Falls back to '__idle__' if no conversation has started yet (e.g. during init).
+   * The '__idle__' key is cleaned up on next start() via cliExecutors.clear().
+   */
+  get cliExecutor(): CLIExecutor {
+    return this.getOrCreateCliExecutor(this._lastActiveConversationId ?? '__idle__')
+  }
+
+  getOrCreateCliExecutor(conversationId: string): CLIExecutor {
+    let executor = this.cliExecutors.get(conversationId)
+    if (!executor) {
+      executor = new CLIExecutor()
+      // A permission the executor abandons (turn finalized, child died, Stop)
+      // can never be answered — tell the UI so its prompt does not freeze.
+      executor.onHumanDecisionsCleared = (requestIds, reason) => {
+        for (const requestId of requestIds) {
+          this.emitPermissionResolved(requestId, 'cancelled', conversationId, reason)
+        }
+      }
+      this.cliExecutors.set(conversationId, executor)
+    }
+    return executor
+  }
   /** CLI MCP config writer — generates --mcp-config JSON for Claude CLI sessions. */
   private readonly mcpConfigWriter = new CliMcpConfigWriter()
   /** IPC bridge — Unix domain socket for control-actions MCP server ↔ Electron main process. */
@@ -262,15 +337,130 @@ export class AgentSessionService extends AgentBaseService {
     askUser: false
   }
 
+  /**
+   * Read-only access to the current turn's control tool state.
+   * Used by chat-stream.service for late plan injection when the plan event
+   * arrives via IPC socket after the stream complete event via stdout.
+   */
+  getControlToolState(): ControlToolState {
+    return this.controlToolState
+  }
+
   /** G1: Per-session instance ID for MCP config file isolation (parallel build tasks). */
   readonly instanceId: string | undefined
 
-  constructor(private readonly adapter: AgentRoleAdapter, instanceId?: string) {
+  constructor(
+    private readonly adapter: AgentRoleAdapter,
+    instanceId?: string
+  ) {
     super()
     this.instanceId = instanceId
     this.streamProcessor = new AgentStreamProcessor(this)
     this.recoveryManager = new AgentRecoveryManager(this)
     this.executorFactory = new AgentExecutorFactory(this)
+  }
+
+  // ── Per-conversation state proxies ──────────────────────────────
+  // Getter/setters proxy through lastActiveConversationId so the 50+
+  // existing references in bridge listeners, logging, and error paths
+  // work unchanged.  Hot-path delegates (stream processor, recovery manager)
+  // use activeStreams.get(conversationId) directly for correctness.
+
+  /** Backward-compat alias — always points at the most-recently-started conversation. */
+  get lastActiveConversationId(): string | null {
+    return this._lastActiveConversationId
+  }
+  set lastActiveConversationId(v: string | null) {
+    this._lastActiveConversationId = v
+  }
+
+  get currentConversationId(): string | null {
+    return this._lastActiveConversationId
+  }
+  set currentConversationId(v: string | null) {
+    this._lastActiveConversationId = v
+  }
+
+  get accumulatedText(): string {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) return ctx.accumulatedText
+    }
+    return this._directAccumulatedText
+  }
+  set accumulatedText(value: string) {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) {
+        ctx.accumulatedText = value
+        return
+      }
+    }
+    this._directAccumulatedText = value
+  }
+
+  private _directAbortController: AbortController | null = null
+  get sdkAbortController(): AbortController | null {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) return ctx.abortController
+    }
+    return this._directAbortController
+  }
+  set sdkAbortController(value: AbortController | null) {
+    const convId = this._lastActiveConversationId
+    if (convId) {
+      const ctx = this.activeStreams.get(convId)
+      if (ctx) {
+        ctx.abortController = value
+        return
+      }
+    }
+    this._directAbortController = value
+  }
+
+  /** Get accumulated text for a specific conversation (or lastActive if omitted). */
+  getAccumulatedTextForConversation(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    if (!convId) return ''
+    return this.activeStreams.get(convId)?.accumulatedText ?? this.lastTurnText.get(convId) ?? ''
+  }
+
+  /**
+   * Absolute cwd for a conversation's CLI process.
+   *
+   * The stream context is authoritative: it is stamped once, before the turn
+   * starts, so the path cannot shift underneath a running process even if the
+   * user switches chats or another conversation's worktree is torn down
+   * mid-turn. Falls back to the workspace root for conversations with no
+   * isolation (no branch, or the branch is the one the primary tree holds).
+   */
+  resolveExecutionPath(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    const fromStream = convId ? this.activeStreams.get(convId)?.executionPath : undefined
+    return fromStream ?? this.workspacePath ?? ''
+  }
+
+  /**
+   * Where this turn should run, resolved once at turn start.
+   *
+   * A session with a `trackOwner` resolves by that owner; everything else
+   * resolves by conversation id, as chats always have. The distinction matters
+   * because Blueprint and MPA pass synthetic ids like
+   * `blueprint-build-<id>-<task>-<ts>` as their "conversation" — those are not
+   * rows in `work_tracks`, so the chat lookup silently missed and handed back
+   * the primary tree.
+   */
+  private resolveTrackPath(conversationId: string): string {
+    const primary = this.workspacePath as string
+    if (this.trackOwner) {
+      return trackService.resolveTrack(this.trackOwner.ownerKind, this.trackOwner.ownerId, primary)
+        .path
+    }
+    return trackService.resolve(conversationId, primary).path
   }
 
   // ── Accessors ─────────────────────────────────────────────────────
@@ -296,15 +486,31 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   getCurrentConversationId(): string | null {
-    return this.currentConversationId
+    return this._lastActiveConversationId
   }
 
   getMode(): ConversationMode {
     return this.currentMode
   }
 
-  getStreamedContent(): string {
-    return this.accumulatedText
+  /**
+   * Text produced by the current turn, or by the last completed one if the
+   * stream has already been torn down. Callers that `await send()` and then read
+   * the response rely on the second half — see `lastTurnText`.
+   */
+  getStreamedContent(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    if (!convId) return ''
+    return this.activeStreams.get(convId)?.accumulatedText ?? this.lastTurnText.get(convId) ?? ''
+  }
+
+  /**
+   * Text of an *in-flight* stream only — empty once the turn has finished.
+   * Used by the Stop path, which must not resurrect an already-saved turn.
+   */
+  getLiveStreamedContent(conversationId?: string): string {
+    const convId = conversationId ?? this._lastActiveConversationId
+    return convId ? (this.activeStreams.get(convId)?.accumulatedText ?? '') : ''
   }
 
   /** Return the outcome of the most recent send() call. */
@@ -331,6 +537,9 @@ export class AgentSessionService extends AgentBaseService {
 
   clearSession(conversationId: string): void {
     this.sessionMap.delete(conversationId)
+    // The session is gone, so there is nothing stale left to guard against —
+    // drop the flag rather than let it suppress a legitimate resume later.
+    this.poisonedSessions.delete(conversationId)
     // TURN-COUNT-01: Reset turn count so the next session starts at turn 1,
     // ensuring adapters apply first-turn setup (specialist roster, MCP guidance, etc.)
     this.turnCounts.delete(conversationId)
@@ -339,6 +548,14 @@ export class AgentSessionService extends AgentBaseService {
     // SENDLOCKS-LEAK-01: Clean up send lock — it's a synchronization artifact,
     // not resumable state. Once a conversation is cleared, its lock is dead weight.
     this.sendLocks.delete(conversationId)
+    // Phase-2: Clean up per-conversation stream context and CLI executor
+    this.activeStreams.delete(conversationId)
+    this.lastTurnText.delete(conversationId)
+    const executor = this.cliExecutors.get(conversationId)
+    if (executor) {
+      executor.killProcess().catch(() => {})
+      this.cliExecutors.delete(conversationId)
+    }
   }
 
   /**
@@ -392,13 +609,67 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   /**
+   * Suspend / resume the CLI read wall clock around a human permission decision.
+   *
+   * Broadcast to every executor in this session: the IPC bridge is per-session
+   * and a `permission` event carries no conversationId, so the owning executor
+   * cannot be identified. Broadcasting is safe — an executor that is not parked
+   * on a read is unaffected, and every read still races its exit signal, so a
+   * suspended clock can never park a turn whose CLI child has died.
+   */
+  /**
+   * Whether any executor in this session is waiting on a permission decision.
+   * Read by the stream watchdogs so a turn is not force-aborted under a user
+   * who is still looking at the prompt.
+   */
+  hasHumanDecisionPending(): boolean {
+    for (const executor of this.cliExecutors.values()) {
+      if (executor.hasHumanDecisionPending()) return true
+    }
+    return false
+  }
+
+  private markHumanDecision(phase: 'begin' | 'end', requestId: string): void {
+    for (const executor of this.cliExecutors.values()) {
+      if (phase === 'begin') executor.beginHumanDecision(requestId)
+      else executor.endHumanDecision(requestId)
+    }
+  }
+
+  /**
+   * Announce that a permission request reached a terminal state. Forwarded to
+   * the renderer so the modal, toast and inline card all clear deterministically
+   * instead of waiting on a click that can no longer arrive.
+   */
+  private emitPermissionResolved(
+    requestId: string,
+    outcome: PermissionOutcome,
+    conversationId?: string,
+    reason?: string
+  ): void {
+    this.log.info(
+      `[permission-resolved] requestId=${requestId} outcome=${outcome}` +
+        `${reason ? ` reason=${reason}` : ''}`
+    )
+    this.emit('permissionResolved', {
+      requestId,
+      outcome,
+      conversationId: conversationId ?? this.currentConversationId ?? undefined
+    })
+  }
+
+  /**
    * Send a user's response to a pending permission_prompt request.
    * Called by the IPC handler when the renderer approves/denies a tool permission.
    * Routes through the IPC bridge to the control-actions MCP server.
    */
-  respondToPermission(requestId: string, approved: boolean): void {
+  respondToPermission(requestId: string, approved: boolean, input?: unknown): void {
+    // The human is done deciding — resume the executors' read wall clock before
+    // the response goes out, so the resumed budget covers the tool's own run.
+    this.markHumanDecision('end', requestId)
+    this.emitPermissionResolved(requestId, approved ? 'approved' : 'denied')
     if (this.ipcBridge) {
-      this.ipcBridge.sendPermissionResponse(requestId, approved)
+      this.ipcBridge.sendPermissionResponse(requestId, approved, input)
     } else {
       this.log.warn(`[respondToPermission] No IPC bridge available for requestId=${requestId}`)
     }
@@ -409,12 +680,24 @@ export class AgentSessionService extends AgentBaseService {
   async start(
     workspacePath: string,
     mode?: ConversationMode,
-    resumeSessionId?: string
+    opts?: AgentSessionStartOptions
   ): Promise<void> {
+    const resumeSessionId = opts?.resumeSessionId
+    this.trackOwner = opts?.trackOwner ?? null
     // Don't abort an active stream if we're re-starting for the same workspace.
     // This prevents HMR, React strict mode, or auto-open from killing in-flight queries.
+    // Check if ANY stream is active in this workspace
+    // PERF-01: Use for...of with early exit instead of spread+some to avoid O(n)
+    // temporary array allocation when activeStreams has many completed entries.
+    let hasActiveStream = false
+    for (const ctx of this.activeStreams.values()) {
+      if (ctx.abortController !== null) {
+        hasActiveStream = true
+        break
+      }
+    }
     if (
-      this.sdkAbortController &&
+      hasActiveStream &&
       this.workspacePath === workspacePath &&
       this.currentStatus !== 'idle' &&
       this.currentStatus !== 'failed'
@@ -423,14 +706,18 @@ export class AgentSessionService extends AgentBaseService {
       return
     }
 
-    if (this.sdkAbortController) {
+    if (hasActiveStream) {
       this.log.warn(
-        `[start] Aborting active sdkAbortController — ` +
+        `[start] Aborting ${this.activeStreams.size} active stream(s) — ` +
           `currentWorkspace=${this.workspacePath} newWorkspace=${workspacePath} ` +
-          `status=${this.currentStatus} conversationId=${this.currentConversationId}`
+          `status=${this.currentStatus} conversationId=${this._lastActiveConversationId}`
       )
-      this.sdkAbortController.abort()
-      this.sdkAbortController = null
+      for (const [, ctx] of this.activeStreams) {
+        if (ctx.abortController) {
+          ctx.abortController.abort()
+          ctx.abortController = null
+        }
+      }
     }
 
     this.workspacePath = workspacePath
@@ -445,8 +732,18 @@ export class AgentSessionService extends AgentBaseService {
     this.cacheReadTokens = 0
     this.cacheCreationTokens = 0
     this.lastContextTokens = undefined
-    this.currentConversationId = null
-    this.accumulatedText = ''
+    this._lastActiveConversationId = null
+    this.activeStreams.clear()
+    this.lastTurnText.clear()
+    // GHOST-PROC-01: Kill and clear CLI executors on workspace switch.
+    // Without this, orphaned CLI processes from the previous workspace
+    // continue running in the background.
+    for (const executor of this.cliExecutors.values()) {
+      executor.killProcess().catch(() => {})
+    }
+    this.cliExecutors.clear()
+    this._directAccumulatedText = ''
+    this._directAbortController = null
     this.compactCount = 0
     this.compactSuggested = false
     this.turnsSinceCompactSuggestion = 0
@@ -455,11 +752,20 @@ export class AgentSessionService extends AgentBaseService {
     // Capture HEAD sha for memory extraction
     this.currentStartSha = undefined
     try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred: only needed on this rare path
       const { execSync } = require('node:child_process')
-      this.currentStartSha = (execSync('git rev-parse HEAD 2>/dev/null || true', {
-        cwd: workspacePath, encoding: 'utf-8', timeout: 2000
-      }) as string).trim() || undefined
-    } catch { /* no git — fine */ }
+      this.currentStartSha =
+        (
+          execSync('git rev-parse HEAD 2>/dev/null || true', {
+            cwd: workspacePath,
+            encoding: 'utf-8',
+            timeout: 2000,
+            windowsHide: true
+          }) as string
+        ).trim() || undefined
+    } catch {
+      /* no git — fine */
+    }
 
     // Resolve workspace id + cost preference + executor backend
     try {
@@ -476,7 +782,7 @@ export class AgentSessionService extends AgentBaseService {
       if (storedBackend && storedBackend !== this.executorBackend) {
         this.log.info(
           `[start] Ignoring stored executorBackend='${storedBackend}' — ` +
-          `derived from provider='${this.llmProvider}' → '${this.executorBackend}'`
+            `derived from provider='${this.llmProvider}' → '${this.executorBackend}'`
         )
       }
       this.log.info(
@@ -495,8 +801,8 @@ export class AgentSessionService extends AgentBaseService {
     })
 
     // Pre-populate session map for resume
-    if (resumeSessionId && this.currentConversationId) {
-      this.sessionMap.set(this.currentConversationId, resumeSessionId)
+    if (resumeSessionId && this._lastActiveConversationId) {
+      this.sessionMap.set(this._lastActiveConversationId, resumeSessionId)
     }
 
     // Load declarative hooks
@@ -516,7 +822,10 @@ export class AgentSessionService extends AgentBaseService {
     // for API calls is resolved via resolveModelFromSnapshot() once a conversation ID exists.
     eventLoggerService.logSessionStarted({
       agentId: this.adapter.agentId,
-      model: modelConfigService.getModel(workspacePath, resolveModelAction(this.adapter.role, false))
+      model: modelConfigService.getModel(
+        workspacePath,
+        resolveModelAction(this.adapter.role, false)
+      )
     })
 
     this.log.info(`${this.adapter.role} SDK session initialized for workspace:`, workspacePath)
@@ -639,11 +948,19 @@ export class AgentSessionService extends AgentBaseService {
     try {
       if (this.workspaceId) {
         const { memoryRetrievalService } = await import('./memory-retrieval.service')
+        const { resolveActivePaths } = await import('./active-paths')
+        // Facts scoped to a file this session is working on are on-topic even
+        // when the message never names it ("fix this bug").
+        const activePaths = resolveActivePaths(
+          this.workspacePath,
+          this.toolActivityAccumulator.getExploredFiles()
+        )
         const memoryContext = await memoryRetrievalService.getContextForTurn(
           this.workspaceId,
           enrichedMessage,
           contextTier ?? 'medium',
-          this.injectedFactIds
+          this.injectedFactIds,
+          activePaths
         )
         if (memoryContext) {
           enrichedMessage = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${enrichedMessage}`
@@ -658,7 +975,7 @@ export class AgentSessionService extends AgentBaseService {
     const controlCallbacks = this.adapter.buildControlCallbacks({
       conversationId,
       emit: (evt, payload) => this.emitAdapterEvent(evt, payload),
-      getAccumulatedText: () => this.accumulatedText
+      getAccumulatedText: () => this.activeStreams?.get(conversationId)?.accumulatedText ?? ''
     })
     this.wrapControlCallbacks(controlCallbacks)
 
@@ -666,7 +983,7 @@ export class AgentSessionService extends AgentBaseService {
       mode: this.currentMode,
       workspacePath: this.workspacePath!,
       workspaceId: this.workspaceId,
-      conversationId: this.currentConversationId,
+      conversationId,
       controlCallbacks,
       contextTier
     })
@@ -700,7 +1017,13 @@ export class AgentSessionService extends AgentBaseService {
     let chatGoal: string | undefined
     let chatGoalMode: 'advisory' | 'enforce' = 'advisory'
     if ('consumeGoalForConversation' in this.adapter) {
-      const consumed = (this.adapter as { consumeGoalForConversation(id: string): { goal: string; mode: 'advisory' | 'enforce' } | null }).consumeGoalForConversation(conversationId)
+      const consumed = (
+        this.adapter as {
+          consumeGoalForConversation(
+            id: string
+          ): { goal: string; mode: 'advisory' | 'enforce' } | null
+        }
+      ).consumeGoalForConversation(conversationId)
       if (consumed) {
         chatGoal = consumed.goal
         chatGoalMode = consumed.mode
@@ -726,29 +1049,67 @@ export class AgentSessionService extends AgentBaseService {
     // COMPACT-LOST-01: Confirm pending injections (compaction, context) were sent successfully.
     // If executeStream() threw, this line is skipped and the pending state is preserved for retry.
     this.adapter.onSendSuccess?.(conversationId)
+
+    // MEMLEAK-01: Delete the per-conversation activeStreams entry after the stream completes
+    // (both success and error paths — error path lands in handleStreamError which already
+    // nulls the abortController). Without this, entries accumulate unboundedly, each
+    // holding the full accumulatedText (can be 50KB+ per conversation).
+    // The text itself is stashed first: callers awaiting send() read it back via
+    // getStreamedContent(), and this delete would otherwise hand them ''.
+    const finishedCtx = this.activeStreams.get(conversationId)
+    if (finishedCtx) this.lastTurnText.set(conversationId, finishedCtx.accumulatedText)
+    this.activeStreams.delete(conversationId)
   }
 
-  /** Cancels the current in-flight query (SDK, CLI, or OpenCode). */
-  cancelCurrentQuery(): void {
-    if (this.sdkAbortController) {
-      this.sdkAbortController.abort()
-      this.sdkAbortController = null
-    }
-    // CLI backend: also kill the process to stop tool execution
-    if (this.executorBackend === 'cli' && this.cliExecutor.isAlive()) {
-      this.cliExecutor.killProcess().catch(() => {
-        /* non-fatal: CLI process may already be dead — kill is best-effort */
-      })
-    }
-    // #2: OpenCode backend — abort the active session via SDK client
-    if (this.executorBackend === 'opencode') {
-      const conversationId = this.currentConversationId ?? ''
-      const sessionId = openCodeExecutor.getSessionId(conversationId)
-      if (sessionId && openCodeExecutor.isRunning()) {
-        openCodeExecutor.abortSession(sessionId).catch((err) => {
-          this.log.warn('[opencode] Session abort failed:', err)
-        })
-        this.log.info(`[cancelCurrentQuery] OpenCode session ${sessionId} abort requested`)
+  /**
+   * Cancels an in-flight query (SDK, CLI, or OpenCode).
+   * @param conversationId — cancel only this conversation. If omitted, cancels ALL active streams.
+   */
+  cancelCurrentQuery(conversationId?: string): void {
+    if (conversationId) {
+      // Per-conversation cancel
+      const ctx = this.activeStreams.get(conversationId)
+      if (ctx?.abortController) {
+        ctx.abortController.abort()
+        ctx.abortController = null
+      }
+      if (this.executorBackend === 'cli') {
+        const executor = this.cliExecutors.get(conversationId)
+        if (executor?.isAlive()) {
+          executor.killProcess().catch(() => {
+            /* best-effort */
+          })
+        }
+      }
+      if (this.executorBackend === 'opencode') {
+        const sessionId = openCodeExecutor.getSessionId(conversationId)
+        if (sessionId && openCodeExecutor.isRunning()) {
+          openCodeExecutor.abortSession(sessionId).catch((err) => {
+            this.log.warn('[opencode] Session abort failed:', err)
+          })
+          this.log.info(
+            `[cancelCurrentQuery] OpenCode session ${sessionId} abort requested for ${conversationId}`
+          )
+        }
+      }
+    } else {
+      // Cancel ALL active streams (full reset / backward compat)
+      for (const [convId, ctx] of this.activeStreams) {
+        if (ctx.abortController) {
+          ctx.abortController.abort()
+          ctx.abortController = null
+        }
+        if (this.executorBackend === 'opencode') {
+          const sessionId = openCodeExecutor.getSessionId(convId)
+          if (sessionId && openCodeExecutor.isRunning()) {
+            openCodeExecutor.abortSession(sessionId).catch(() => {})
+          }
+        }
+      }
+      if (this.executorBackend === 'cli') {
+        for (const executor of this.cliExecutors.values()) {
+          if (executor.isAlive()) executor.killProcess().catch(() => {})
+        }
       }
     }
   }
@@ -758,13 +1119,23 @@ export class AgentSessionService extends AgentBaseService {
     // If any sub-step (killProcess, opencode stop, IPC teardown) wedges,
     // the pipeline still advances and markPipelineStopped() can fire.
     const stopBody = async (): Promise<void> => {
-      if (this.sdkAbortController) {
-        this.sdkAbortController.abort()
-        this.sdkAbortController = null
+      // Abort all per-conversation streams
+      for (const [, ctx] of this.activeStreams) {
+        if (ctx.abortController) {
+          ctx.abortController.abort()
+          ctx.abortController = null
+        }
       }
-      // Kill CLI process if active
+      // Fallback: abort _directAbortController if set (test compat + direct assignment)
+      if (this._directAbortController) {
+        this._directAbortController.abort()
+        this._directAbortController = null
+      }
+      // Kill ALL CLI executors
       if (this.executorBackend === 'cli') {
-        await this.cliExecutor.killProcess()
+        for (const executor of this.cliExecutors.values()) {
+          await executor.killProcess().catch(() => {})
+        }
       }
 
       // Clean up CLI MCP config
@@ -811,8 +1182,16 @@ export class AgentSessionService extends AgentBaseService {
     this.adapter.onSessionStop()
     this.completeDbSession('terminated')
     this.currentStatus = 'idle'
-    this.currentConversationId = null
-    this.accumulatedText = ''
+    this._lastActiveConversationId = null
+    this.activeStreams.clear()
+    this.lastTurnText.clear()
+    this._directAccumulatedText = ''
+    this._directAbortController = null
+    // Dispose all per-conversation CLI executors
+    for (const executor of this.cliExecutors.values()) {
+      executor.killProcess().catch(() => {})
+    }
+    this.cliExecutors.clear()
 
     // SENDLOCKS-LEAK-01: Clear all locks on session stop. New conversations
     // will create fresh locks on their first send().
@@ -842,7 +1221,10 @@ export class AgentSessionService extends AgentBaseService {
       () => this._doSwitchMode(mode),
       () => this._doSwitchMode(mode)
     )
-    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    this.sendLocks.set(
+      conversationId,
+      thisLock.catch(() => {})
+    )
     return thisLock
   }
 
@@ -866,7 +1248,11 @@ export class AgentSessionService extends AgentBaseService {
         danger: 'bypassPermissions'
       }
       const cliMode = cliPermMap[mode] ?? 'plan'
-      this.cliExecutor.setPermissionMode(cliMode as 'plan' | 'auto' | 'bypassPermissions')
+      // WRONG-EXECUTOR-01: Use getOrCreateCliExecutor with currentConversationId
+      // instead of the cliExecutor getter, which resolves via _lastActiveConversationId
+      // and can target the wrong process when multiple streams are active.
+      const executor = this.getOrCreateCliExecutor(this.currentConversationId ?? '__idle__')
+      executor.setPermissionMode(cliMode as 'plan' | 'auto' | 'bypassPermissions')
       // F6: Invalidate cached MCP config so the next continueSession turn
       // rebuilds it with the new mode's permission level.
       this.executorFactory.invalidateMcpConfigCache()
@@ -885,7 +1271,8 @@ export class AgentSessionService extends AgentBaseService {
           const providerConfig = this.resolveOpenCodeProviderConfig()
           const featureFlags = this.resolveWorkspaceMcpFlags()
           // Derive isLocal from the snapshot-resolved providerId
-          const isLocal = providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
+          const isLocal =
+            providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
           openCodeConfigWriter.writeConfig({
             workspacePath: this.workspacePath,
             workspaceId: this.workspaceId,
@@ -901,6 +1288,12 @@ export class AgentSessionService extends AgentBaseService {
         this.log.warn('[PIPELINE:mode-switch] OpenCode config update failed:', err)
       }
     }
+
+    // set_permission_mode reaches the CLI, and invalidateMcpConfigCache() reaches
+    // the next spawn — neither reaches the control-actions server already running
+    // under the old CONVERSATION_MODE. Without this, a Plan → Build switch left the
+    // auto-approver on Plan for the life of the conversation.
+    this.ipcBridge?.sendModeChange(mode, this.currentConversationId ?? undefined)
   }
 
   async compact(): Promise<void> {
@@ -939,7 +1332,10 @@ export class AgentSessionService extends AgentBaseService {
       () => this._doCompact(),
       () => this._doCompact()
     )
-    this.sendLocks.set(conversationId, thisLock.catch(() => {}))
+    this.sendLocks.set(
+      conversationId,
+      thisLock.catch(() => {})
+    )
     return thisLock
   }
 
@@ -974,11 +1370,14 @@ export class AgentSessionService extends AgentBaseService {
 
     // CLI backend: send /compact slash command to the interactive process
     if (this.executorBackend === 'cli') {
-      if (this.cliExecutor.isAlive()) {
+      // WRONG-EXECUTOR-02: Resolve the correct per-conversation executor
+      // instead of using the getter which goes through _lastActiveConversationId.
+      const executor = this.getOrCreateCliExecutor(this.currentConversationId ?? '__idle__')
+      if (executor.isAlive()) {
         this.log.info(`[compaction] CLI backend — sending /compact #${this.compactCount + 1}`)
         this.compactCount++
         this.compactSuggested = false
-        this.cliExecutor.compact()
+        executor.compact()
         return
       }
       this.log.warn('[compaction] CLI backend — no active process to compact')
@@ -1056,8 +1455,8 @@ export class AgentSessionService extends AgentBaseService {
   // ── Internal: per-message reset ───────────────────────────────────
 
   private resetForNewMessage(conversationId: string): void {
-    if (this.currentConversationId && this.currentConversationId !== conversationId) {
-      this.log.info(`Conversation switch: ${this.currentConversationId} → ${conversationId}`)
+    if (this._lastActiveConversationId && this._lastActiveConversationId !== conversationId) {
+      this.log.info(`Conversation switch: ${this._lastActiveConversationId} → ${conversationId}`)
 
       // F6: Abandon stale in-progress plans for this workspace when switching conversations.
       // Prevents getLatestForWorkspace() from returning plans from a prior conversation.
@@ -1073,9 +1472,23 @@ export class AgentSessionService extends AgentBaseService {
     this.currentStatus = 'thinking'
     this._lastTimedOut = false
     this.messageStartedAt = Date.now()
-    this.currentConversationId = conversationId
+    this._lastActiveConversationId = conversationId
     this.updateDbSessionConversation(conversationId)
-    this.accumulatedText = ''
+    // A new turn invalidates the previous one's stashed text — this is what keeps
+    // the lastTurnText buffer to one entry per *live* conversation.
+    this.lastTurnText.delete(conversationId)
+    // Create per-conversation stream context
+    this.activeStreams.set(conversationId, {
+      accumulatedText: '',
+      accumulatedTextBaseline: 0,
+      abortController: null,
+      // Resolved once, here, and then frozen for the whole turn. The turn guard
+      // (chat-stream Stage 2.5) has already created the worktree, so this is a
+      // cheap DB read. Freezing matters: if the user switches chats or another
+      // conversation releases its tree mid-turn, this process must keep writing
+      // where it started rather than following a path that moved.
+      executionPath: this.workspacePath ? this.resolveTrackPath(conversationId) : undefined
+    })
     // SES-03: Only reset circuit breaker and tool accumulator when switching TO
     // this conversation. The send lock (SES-01) prevents concurrent sends within
     // the same conversation, but a conversation switch mid-stream could wipe the
@@ -1101,6 +1514,27 @@ export class AgentSessionService extends AgentBaseService {
   private static readonly SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 
   private resolveSession(conversationId: string): string | undefined {
+    // A previous turn was aborted or produced nothing, leaving an unanswered
+    // user turn inside the CLI session. Resuming it makes the model answer that
+    // stale turn instead of the new one. Start fresh — one-shot flag, cleared
+    // here so only the turn immediately after the poisoned one is affected.
+    // recordTurnBoundary() already cleared sessionMap + the persisted id; this
+    // is the backstop that also covers a failed DB write, and it keeps the
+    // "why did this start fresh" reason visible in the log.
+    if (this.poisonedSessions.delete(conversationId)) {
+      this.sessionMap.delete(conversationId)
+      try {
+        conversationRepository.updateSessionId(conversationId, '')
+      } catch {
+        /* non-fatal */
+      }
+      this.log.info(
+        `[resolveSession] Session for ${conversationId} was poisoned by an aborted/empty turn ` +
+          `— starting a fresh session instead of resuming`
+      )
+      return undefined
+    }
+
     let sessionId = this.sessionMap.get(conversationId)
     const fromMemory = !!sessionId
     if (!sessionId) {
@@ -1126,7 +1560,9 @@ export class AgentSessionService extends AgentBaseService {
       this.sessionMap.delete(conversationId)
       try {
         conversationRepository.updateSessionId(conversationId, '')
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return undefined
     }
 
@@ -1139,11 +1575,13 @@ export class AgentSessionService extends AgentBaseService {
     if (sessionId && !fromMemory) {
       this.log.info(
         `[resolveSession] Session ${sessionId} for ${conversationId} loaded from DB — ` +
-        `previous CLI process is gone. Starting fresh to avoid orphaned background tasks.`
+          `previous CLI process is gone. Starting fresh to avoid orphaned background tasks.`
       )
       try {
         conversationRepository.updateSessionId(conversationId, '')
-      } catch { /* non-fatal */ }
+      } catch {
+        /* non-fatal */
+      }
       return undefined
     }
 
@@ -1154,7 +1592,10 @@ export class AgentSessionService extends AgentBaseService {
       try {
         const lastMsgTime = messageRepository.getLastMessageTimestamp(conversationId)
         if (lastMsgTime) {
-          const parsedTime = new Date(lastMsgTime).getTime()
+          // created_at is SQLite's naive-UTC "YYYY-MM-DD HH:MM:SS"; parsing it
+          // as local time skews the age by the machine's UTC offset — east of
+          // UTC that expires sessions hours early and drops --resume.
+          const parsedTime = parseDbTimestamp(lastMsgTime).getTime()
           if (Number.isNaN(parsedTime)) {
             this.log.warn(
               `[resolveSession] Malformed created_at for ${conversationId} — skipping staleness check: "${lastMsgTime.slice(0, 30)}"`
@@ -1172,7 +1613,9 @@ export class AgentSessionService extends AgentBaseService {
                 // files/APIs that no longer exist. Better to cold-start from
                 // recent messages than inject outdated context.
                 conversationRepository.updateSummary(conversationId, '')
-              } catch { /* non-fatal */ }
+              } catch {
+                /* non-fatal */
+              }
               return undefined
             }
           }
@@ -1247,7 +1690,10 @@ export class AgentSessionService extends AgentBaseService {
       // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
       // to prevent the first request's promise from deadlocking forever.
       if (this.controlToolState.askUser && requestId) {
-        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.respondToAskUser(
+          requestId,
+          'A question is already pending. Wait for the user to answer.'
+        )
         this.log.info(
           `[wrapControlCallbacks] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
         )
@@ -1280,41 +1726,78 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   /**
-   * Build the interaction timeout timer, extending for external MCP integrations.
-   * Returns the timeout duration and the timer handle for cleanup.
+   * Build the interaction *idle* timer, extending for external MCP integrations.
+   *
+   * IDLE-NOT-WALLCLOCK: this budget measures silence, not total runtime. It used
+   * to be a fixed wall-clock deadline, which aborted healthy long-running builds
+   * mid-tool-call once they crossed 10 minutes regardless of how much work they
+   * were producing. `notifyActivity()` restarts the countdown on every executor
+   * chunk, so the timer only fires when the executor has genuinely gone quiet.
+   * The absolute ceiling still exists one layer up — chat-stream.service's
+   * max-lifetime timer (maxStreamLifetimeMin preference, default 30 min).
+   *
+   * Returns the idle budget plus activity/cleanup handles.
    */
   private buildStreamTimeout(
     mcpServers: Record<string, unknown> | undefined,
     abortController: AbortController,
     conversationId: string
-  ): { timeoutMs: number; timer: NodeJS.Timeout } {
+  ): { timeoutMs: number; notifyActivity: () => void; cancel: () => void } {
     const baseTimeoutMs =
       this.adapter.interactionTimeoutMs ?? AgentSessionService.MAX_INTERACTION_TIMEOUT_MS
 
-    const hasExternalMcps =
+    const hasLongRunningMcps =
       mcpServers &&
       Object.keys(mcpServers).some((id) =>
-        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id)
+        EXTERNAL_MCP_INTEGRATIONS.some((i) => i.id === id && i.longRunningTools)
       )
-    const timeoutMs = hasExternalMcps
+    const timeoutMs = hasLongRunningMcps
       ? Math.max(baseTimeoutMs, AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS)
       : baseTimeoutMs
 
-    const timer = setTimeout(() => {
+    const startedAt = Date.now()
+    let cancelled = false
+
+    const fire = (): void => {
       this._lastTimedOut = true
       this.log.error(
-        `Interaction timeout after ${timeoutMs / 60_000} minutes — ${this.circuitBreaker.count} tool calls made`
+        `Interaction timeout — no executor activity for ${timeoutMs / 60_000} minutes ` +
+          `(${Math.round((Date.now() - startedAt) / 60_000)} min into the turn, ` +
+          `${this.circuitBreaker.count} tool calls made)`
       )
       eventLoggerService.logAgentTimeout({
         agentId: this.adapter.agentId,
         conversationId,
-        elapsedMs: timeoutMs,
+        elapsedMs: Date.now() - startedAt,
         toolCallCount: this.circuitBreaker.count
       })
       abortController.abort()
-    }, timeoutMs)
+    }
 
-    return { timeoutMs, timer }
+    let timer = setTimeout(fire, timeoutMs)
+
+    // Throttled so a token-by-token stream doesn't churn a timer per chunk.
+    // Capped at a tenth of the budget so short adapter budgets still reset.
+    const throttleMs = Math.min(
+      AgentSessionService.IDLE_TIMER_RESET_THROTTLE_MS,
+      Math.floor(timeoutMs / 10)
+    )
+    let lastReset = startedAt
+    const notifyActivity = (): void => {
+      if (cancelled) return
+      const now = Date.now()
+      if (now - lastReset < throttleMs) return
+      lastReset = now
+      clearTimeout(timer)
+      timer = setTimeout(fire, timeoutMs)
+    }
+
+    const cancel = (): void => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+
+    return { timeoutMs, notifyActivity, cancel }
   }
 
   // ── Stream orchestration ──────────────────────────────────────────
@@ -1333,7 +1816,7 @@ export class AgentSessionService extends AgentBaseService {
       mcpResult,
       llmProvider,
       localContextWindow,
-      contextTier: passedContextTier,
+      contextTier: passedContextTier
     } = opts
     const recoveryDepth = opts.recoveryDepth ?? 0
     const MAX_RECOVERY_DEPTH = 1
@@ -1342,15 +1825,35 @@ export class AgentSessionService extends AgentBaseService {
     const resumeAt = this.pendingResumeAt.get(conversationId)
     this.pendingResumeAt.delete(conversationId)
     const abortController = new AbortController()
-    this.sdkAbortController = abortController
+    // Set abort controller on per-conversation context (not global)
+    const streamCtx = this.activeStreams.get(conversationId)
+    if (streamCtx) streamCtx.abortController = abortController
 
     // Reset timeout flag before building timer (buildStreamTimeout sets _lastTimedOut on fire)
     this._lastTimedOut = false
-    const { timeoutMs, timer: interactionTimer } = this.buildStreamTimeout(
-      mcpResult.mcpServers,
-      abortController,
-      conversationId
+    const {
+      timeoutMs,
+      notifyActivity: notifyStreamActivity,
+      cancel: cancelInteractionTimer
+    } = this.buildStreamTimeout(mcpResult.mcpServers, abortController, conversationId)
+
+    this.log.info(
+      `[turn:start] conversation=${conversationId} turn=${turnCount} ` +
+        `recoveryDepth=${recoveryDepth} session=${sessionId ?? 'fresh'} ` +
+        `resume=${sessionId ? 'yes' : 'no'} resumeAt=${resumeAt ?? 'none'}`
     )
+
+    // Counts every chunk the executor yielded this turn. A turn that yields
+    // nothing is "poisoned": the CLI session advanced past a user turn without
+    // answering it, so resuming would make the model answer the stale turn.
+    let chunkCount = 0
+    // Guards against a second [turn:end] line when a post-boundary step
+    // (handleSessionRecovery / finalizeStream) throws into the catch below.
+    let boundaryRecorded = false
+
+    // Resolved before the try so both recordTurnBoundary() call sites can see
+    // it — session poisoning is `--resume` semantics and applies to CLI only.
+    const effectiveBackend = this.resolveExecutorBackend(llmProvider)
 
     try {
       const streamState: StreamLoopState = {
@@ -1364,12 +1867,12 @@ export class AgentSessionService extends AgentBaseService {
       // ── Select executor backend ──
       const cliPromptInput = await this.extractPromptContent(sdkPrompt)
 
-      const effectiveBackend = this.resolveExecutorBackend(llmProvider)
-
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
         case 'opencode': {
-          const { text: ocPrompt, images: ocImages } = splitContentBlocks(cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>)
+          const { text: ocPrompt, images: ocImages } = splitContentBlocks(
+            cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>
+          )
           executorStream = this.executeOpenCodeStream({
             prompt: ocPrompt,
             images: ocImages,
@@ -1384,16 +1887,16 @@ export class AgentSessionService extends AgentBaseService {
         default:
           {
             // Explicit goal from opts (chat path) takes priority over adapter duck-typing (blueprint/MPA path)
-            const adapterGoal = opts.goal ?? (
-              'getGoalCondition' in this.adapter
+            const adapterGoal =
+              opts.goal ??
+              ('getGoalCondition' in this.adapter
                 ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
-                : null
-            )
-            const adapterGoalMode = opts.goalMode ?? (
-              'getGoalMode' in this.adapter
+                : null)
+            const adapterGoalMode =
+              opts.goalMode ??
+              ('getGoalMode' in this.adapter
                 ? (this.adapter as { getGoalMode(): 'advisory' | 'enforce' }).getGoalMode()
-                : ('advisory' as const)
-            )
+                : ('advisory' as const))
             executorStream = this.executeCLIStream({
               prompt: cliPromptInput,
               systemPrompt,
@@ -1406,13 +1909,25 @@ export class AgentSessionService extends AgentBaseService {
               localContextWindow,
               goal: adapterGoal ?? undefined,
               goalMode: adapterGoalMode,
+              conversationId
             })
           }
           break
       }
 
       for await (const chunk of executorStream) {
-        if (this.circuitBreaker.isBroken) break
+        // Any chunk — text, tool_use, tool_result, api_retry — proves the executor
+        // is alive, so the idle budget restarts from here.
+        chunkCount++
+        notifyStreamActivity()
+        if (this.circuitBreaker.isBroken) {
+          this.log.warn(
+            `[PIPELINE:circuit-break-stream-cut] conversationId=${conversationId} ` +
+              `toolCalls=${this.circuitBreaker.count} — cutting stream before _meta; ` +
+              `lastTerminalReason stays '${streamState.lastTerminalReason ?? 'unset'}'`
+          )
+          break
+        }
 
         if ('_meta' in chunk && chunk._meta) {
           await this.processMetaChunk(chunk._meta as ExecutorResult, {
@@ -1432,8 +1947,20 @@ export class AgentSessionService extends AgentBaseService {
         }
       }
 
-      clearTimeout(interactionTimer)
-      this.sdkAbortController = null
+      cancelInteractionTimer()
+      this.recordTurnBoundary({
+        conversationId,
+        turnCount,
+        chunkCount,
+        backend: effectiveBackend,
+        aborted: abortController.signal.aborted,
+        messageStopReceived: streamState.messageStopReceived,
+        terminalReason: streamState.lastTerminalReason
+      })
+      boundaryRecorded = true
+      // Clear per-conversation abort controller
+      const postCtx = this.activeStreams.get(conversationId)
+      if (postCtx) postCtx.abortController = null
 
       const recovered = await this.handleSessionRecovery({
         sessionRecoveryNeeded: streamState.sessionRecoveryNeeded,
@@ -1462,15 +1989,19 @@ export class AgentSessionService extends AgentBaseService {
 
       // Enqueue memory extraction from session transcript + git delta
       try {
-        if (this.workspaceId && this.accumulatedText.length > 200) {
+        const convAccText = this.activeStreams.get(conversationId)?.accumulatedText ?? ''
+        if (this.workspaceId && convAccText.length > 200) {
           // Gate on sessionCapture setting
-          const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<string, unknown>
+          const wSettings = workspaceRepository.getSettings(this.workspaceId) as Record<
+            string,
+            unknown
+          >
           if (wSettings.memorySessionCapture !== false) {
             const { memoryExtractionService } = await import('./memory-extraction.service')
             memoryExtractionService.enqueueSessionExtraction({
               workspaceId: this.workspaceId,
               workspacePath: this.workspacePath,
-              transcript: this.accumulatedText,
+              transcript: convAccText,
               startSha: this.currentStartSha ?? null,
               conversationId
             })
@@ -1479,9 +2010,111 @@ export class AgentSessionService extends AgentBaseService {
       } catch (memErr) {
         this.log.debug('[executeStream] Memory extraction enqueue failed (non-fatal):', memErr)
       }
+
+      // Record which files this turn touched, so a second track editing the
+      // same file is a warning now rather than a merge conflict later.
+      // Fire-and-forget and fully swallowed: this is advisory data, and a
+      // conflict *prediction* failing is never a reason to fail a turn.
+      void this.recordFileClaims(conversationId)
     } catch (error) {
-      clearTimeout(interactionTimer)
+      cancelInteractionTimer()
+      // Only record when the failure happened before the boundary. A throw from
+      // handleSessionRecovery()/finalizeStream() must not emit a second
+      // [turn:end] line mislabelled `terminalReason=stream-error`.
+      if (!boundaryRecorded) {
+        this.recordTurnBoundary({
+          conversationId,
+          turnCount,
+          chunkCount,
+          backend: effectiveBackend,
+          aborted: abortController.signal.aborted,
+          messageStopReceived: false,
+          terminalReason: 'stream-error'
+        })
+        boundaryRecorded = true
+      }
       await this.handleStreamError(error as Error, this._lastTimedOut, recoveryDepth, timeoutMs)
+    }
+  }
+
+  /**
+   * Tell the conflict predictor what this turn touched.
+   *
+   * Resolved by track owner, not by conversation id, for the same reason the
+   * execution path is: a blueprint run's "conversation" is a synthetic id that
+   * matches no track row.
+   */
+  private async recordFileClaims(conversationId: string): Promise<void> {
+    try {
+      const { trackClaimsService } = await import('./track-claims.service')
+      if (this.trackOwner) {
+        await trackClaimsService.recordForOwner(this.trackOwner.ownerKind, this.trackOwner.ownerId)
+      } else {
+        await trackClaimsService.recordForOwner('chat', conversationId)
+      }
+    } catch (err) {
+      this.log.debug('[executeStream] File-claim recording failed (non-fatal):', err)
+    }
+  }
+
+  /**
+   * Log the end of a turn and decide whether the CLI session is still safe to
+   * resume.
+   *
+   * A turn that was aborted, or that produced zero chunks, leaves a user turn
+   * sitting unanswered inside the CLI session. `--resume` then replays that
+   * session and the model answers the OLDEST unanswered turn — which is how
+   * replies started landing on the previous message. Marking the session
+   * poisoned makes the next send start a fresh session id instead.
+   *
+   * The tradeoff is deliberate: we drop CLI-side conversation context rather
+   * than keep answering the wrong question. Context reconstruction on the next
+   * send still supplies continuity from stored messages.
+   */
+  private recordTurnBoundary(info: {
+    conversationId: string
+    turnCount: number
+    chunkCount: number
+    backend: ExecutorBackend
+    aborted: boolean
+    messageStopReceived: boolean
+    terminalReason: string | undefined
+  }): void {
+    const sessionId = this.sessionMap.get(info.conversationId)
+    const poisoned = isTurnPoisoned(info)
+
+    this.log.info(
+      `[turn:end] conversation=${info.conversationId} turn=${info.turnCount} ` +
+        `session=${sessionId ?? 'none'} chunks=${info.chunkCount} ` +
+        `backend=${info.backend} ` +
+        `aborted=${info.aborted} messageStop=${info.messageStopReceived} ` +
+        `terminalReason=${info.terminalReason ?? 'unset'} poisoned=${poisoned}`
+    )
+
+    // Only the CLI backend resumes via `--resume`. OpenCode keeps its own
+    // session map inside opencode-executor and merely mirrors the id here, so
+    // dropping it would degrade OpenCode recovery for no benefit.
+    if (poisoned && sessionId && info.backend === 'cli') {
+      this.poisonedSessions.add(info.conversationId)
+      // Drop the session id EAGERLY rather than waiting for the next
+      // resolveSession(). The max_turns auto-continue and recovery-nudge paths
+      // in agent-recovery-manager read `sessionMap` directly instead of going
+      // through resolveSession(), so a deferred clear would let a continuation
+      // resume the poisoned session before the guard ever ran — reproducing the
+      // exact "answers the previous message" symptom this guard exists to stop.
+      this.sessionMap.delete(info.conversationId)
+      try {
+        conversationRepository.updateSessionId(info.conversationId, '')
+      } catch (err) {
+        // Non-fatal — the poisonedSessions flag below still forces a fresh
+        // session on the next send even if the DB write fails.
+        this.log.warn(`[turn:poisoned] Failed to clear persisted session id:`, err)
+      }
+      this.log.warn(
+        `[turn:poisoned] conversation=${info.conversationId} session=${sessionId} ` +
+          `(${info.aborted ? 'aborted' : 'zero-chunk'}) — session dropped; the next turn will ` +
+          `start fresh so the model does not answer a stale turn`
+      )
     }
   }
 
@@ -1537,9 +2170,14 @@ export class AgentSessionService extends AgentBaseService {
     localContextWindow?: number
     goal?: string
     goalMode?: 'advisory' | 'enforce'
+    conversationId?: string
   }): AsyncGenerator<StreamChunk & { _meta?: CLIExecuteResult }> {
-    const cliOptions = this.buildCLIExecuteOptions(params)
-    return this.cliExecutor.execute(cliOptions)
+    const convId = params.conversationId ?? this._lastActiveConversationId ?? '__idle__'
+    const executor = this.getOrCreateCliExecutor(convId)
+    // WRONG-EXECUTOR-03: Pass the resolved executor to buildCLIExecuteOptions so
+    // the canContinue check uses THIS conversation's executor, not _lastActiveConversationId's.
+    const cliOptions = this.buildCLIExecuteOptions(params, executor)
+    return executor.execute(cliOptions)
   }
 
   /**
@@ -1678,7 +2316,6 @@ export class AgentSessionService extends AgentBaseService {
     }
   }
 
-
   /**
    * Extract prompt content from either a string or AsyncIterable<AgentPromptInput>.
    * For images, the iterable contains content blocks (image + text) that need
@@ -1782,7 +2419,8 @@ export class AgentSessionService extends AgentBaseService {
       const socketPath = this.ipcBridge?.getSocketPath() ?? undefined
 
       // Resolve context tier for tier-aware config (compaction, timeouts)
-      const isLocal = params.providerConfig.providerId === 'ollama' || params.providerConfig.providerId === 'omlx'
+      const isLocal =
+        params.providerConfig.providerId === 'ollama' || params.providerConfig.providerId === 'omlx'
       let contextTier: ContextWindowTier | undefined
       let contextWindowConfident = false
       if (isLocal) {
@@ -1843,20 +2481,23 @@ export class AgentSessionService extends AgentBaseService {
    * Build CLI execute options from session parameters.
    * Maps the same information that buildSdkExecuteOptions uses to CLI flags.
    */
-  private buildCLIExecuteOptions(params: {
-    prompt: string | Array<Record<string, unknown>>
-    systemPrompt: string
-    sessionId: string | undefined
-    isBuildMode: boolean
-    mode?: ConversationMode
-    resumeAt: string | undefined
-    abortController: AbortController
-    mcpResult: AdapterMcpResult
-    localContextWindow?: number
-    goal?: string
-    goalMode?: 'advisory' | 'enforce'
-  }): CLIExecuteOptions {
-    return this.executorFactory.buildCLIExecuteOptions(params)
+  private buildCLIExecuteOptions(
+    params: {
+      prompt: string | Array<Record<string, unknown>>
+      systemPrompt: string
+      sessionId: string | undefined
+      isBuildMode: boolean
+      mode?: ConversationMode
+      resumeAt: string | undefined
+      abortController: AbortController
+      mcpResult: AdapterMcpResult
+      localContextWindow?: number
+      goal?: string
+      goalMode?: 'advisory' | 'enforce'
+    },
+    executor?: CLIExecutor
+  ): CLIExecuteOptions {
+    return this.executorFactory.buildCLIExecuteOptions(params, executor)
   }
 
   /**
@@ -1896,7 +2537,10 @@ export class AgentSessionService extends AgentBaseService {
       const planEvent = parsePlanPayload(payload, this.accumulatedText)
       this.controlToolState.planIntent = { type: 'plan', plan: planEvent }
       this.emit('plan', planEvent)
-      this.log.info(`[ipc-bridge] Plan event received for ${this.currentConversationId}`)
+      this.log.info(
+        `[ipc-bridge] Plan event received — conversationId=${this.currentConversationId} ` +
+          `structuredPlan=${!!planEvent.structuredPlan} rawContentLen=${planEvent.rawContent.length}`
+      )
 
       // Persist the plan so phase/task progress has a DB row to attach to.
       // Without this, planRepository.findActiveByConversationId() (used by the
@@ -1940,7 +2584,10 @@ export class AgentSessionService extends AgentBaseService {
       // ASK-OVERWRITE-01: If a question is already pending, auto-resolve the new one
       // to prevent the first request's promise from deadlocking forever.
       if (this.controlToolState.askUser && requestId) {
-        this.respondToAskUser(requestId, 'A question is already pending. Wait for the user to answer.')
+        this.respondToAskUser(
+          requestId,
+          'A question is already pending. Wait for the user to answer.'
+        )
         this.log.info(
           `[ipc-bridge] askUser intercepted (question already pending) for ${this.currentConversationId} requestId=${requestId}`
         )
@@ -1980,11 +2627,11 @@ export class AgentSessionService extends AgentBaseService {
       // Resolve planId from the plan registry for this conversation
       let planId: string | null = null
       try {
-        const plan = planRepository.findActiveByConversationId(
-          this.currentConversationId ?? ''
-        )
+        const plan = planRepository.findActiveByConversationId(this.currentConversationId ?? '')
         if (plan) planId = plan.id
-      } catch { /* non-critical */ }
+      } catch {
+        /* non-critical */
+      }
 
       // Persist phase progress to DB (non-critical)
       if (planId) {
@@ -1993,40 +2640,53 @@ export class AgentSessionService extends AgentBaseService {
         let touchedFiles: string[] | undefined
         if (progress.status === 'completed') {
           try {
-            const plan = planRepository.findActiveByConversationId(
-              this.currentConversationId ?? ''
-            )
-            const phaseData = plan?.structuredPlan?.phases?.find(
-              (p) => p.id === progress.phaseId
-            )
+            const plan = planRepository.findActiveByConversationId(this.currentConversationId ?? '')
+            const phaseData = plan?.structuredPlan?.phases?.find((p) => p.id === progress.phaseId)
             if (phaseData?.files && phaseData.files.length > 0) {
               touchedFiles = phaseData.files.map((f) => f.file)
             }
-          } catch { /* non-critical */ }
+          } catch {
+            /* non-critical */
+          }
         }
 
         // Build optional task update for persistence
-        const taskUpdate = progress.taskId && progress.taskStatus
-          ? { taskId: progress.taskId, title: progress.taskTitle ?? progress.taskId, status: progress.taskStatus }
-          : undefined
+        const taskUpdate =
+          progress.taskId && progress.taskStatus
+            ? {
+                taskId: progress.taskId,
+                title: progress.taskTitle ?? progress.taskId,
+                status: progress.taskStatus
+              }
+            : undefined
 
         try {
           planRepository.updatePhaseProgress(
-            planId, progress.phaseId, progress.status, undefined, touchedFiles, taskUpdate
+            planId,
+            progress.phaseId,
+            progress.status,
+            undefined,
+            touchedFiles,
+            taskUpdate
           )
-        } catch { /* non-critical */ }
+        } catch {
+          /* non-critical */
+        }
 
         // Auto-detect plan completion: if all phases are done, mark plan completed
         if (progress.status === 'completed') {
           try {
             const allProgress = planRepository.getPhaseProgress(planId)
-            const allCompleted = allProgress.length >= progress.totalPhases &&
+            const allCompleted =
+              allProgress.length >= progress.totalPhases &&
               allProgress.every((p) => p.status === 'completed' || p.status === 'skipped')
             if (allCompleted) {
               planRepository.markCompleted(planId)
               this.log.info(`[ipc-bridge] Plan ${planId} auto-completed — all phases done`)
             }
-          } catch { /* non-critical */ }
+          } catch {
+            /* non-critical */
+          }
         }
       }
 
@@ -2055,6 +2715,12 @@ export class AgentSessionService extends AgentBaseService {
     // permission_prompt bridge listener — surfaces tool permission requests in the UI
     bridge.on('permission', (payload: unknown, requestId?: string) => {
       this.emit('permissionRequest', { ...(payload as Record<string, unknown>), requestId })
+      // Suspend the executor read timeout while the user decides. Without this
+      // the gated tool (Bash/Edit/Write) is the only thing ToolTracker sees, so
+      // the read sits on the 10-min tool-result budget and the turn is torn
+      // down mid-deliberation — the prompt itself is invisible to the executor
+      // because it travels out of band on this bridge, not on the NDJSON stream.
+      if (requestId) this.markHumanDecision('begin', requestId)
       this.log.info(
         `[ipc-bridge] permission event received for ${this.currentConversationId} requestId=${requestId}`
       )

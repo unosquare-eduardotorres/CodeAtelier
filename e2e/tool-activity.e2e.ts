@@ -21,9 +21,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Tool Activity', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -44,7 +42,10 @@ test.describe('Tool Activity', () => {
 
   test('tool activity block renders in streaming messages', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Look for existing tool activity blocks in messages
     const toolBlocks = page.locator('[data-testid="tool-activity-block"]')
@@ -52,21 +53,28 @@ test.describe('Tool Activity', () => {
 
     if (count === 0) {
       // Try triggering tool usage via a message
-      const inputReady = await chat.messageInput
-        .isVisible({ timeout: 15_000 })
-        .catch(() => false)
-      if (!inputReady) { test.skip(); return }
+      const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
+      if (!inputReady) {
+        test.skip()
+        return
+      }
 
       await page.waitForTimeout(5_000)
       const isEnabled = await chat.isInputEnabled()
-      if (!isEnabled) { test.skip(); return }
+      if (!isEnabled) {
+        test.skip()
+        return
+      }
 
       await chat.sendMessage('Read the package.json file')
       await chat.waitForStreamComplete(120_000)
     }
 
     const finalCount = await toolBlocks.count()
-    if (finalCount === 0) { test.skip(); return }
+    if (finalCount === 0) {
+      test.skip()
+      return
+    }
 
     const firstBlock = toolBlocks.first()
     await expect(firstBlock).toBeVisible()
@@ -74,12 +82,18 @@ test.describe('Tool Activity', () => {
 
   test('each tool activity row shows operation type icon', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const toolRows = page.locator('[data-testid="tool-activity-row"]')
     const count = await toolRows.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     const firstRow = toolRows.first()
     await expect(firstRow).toBeVisible()
@@ -95,12 +109,18 @@ test.describe('Tool Activity', () => {
 
   test('expandable tool rows show input/output on click', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const expandButtons = page.locator('[data-testid="tool-activity-expand"]')
     const count = await expandButtons.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Find an expandable row (has aria-expanded attribute)
     let expandable: import('@playwright/test').Locator | null = null
@@ -113,7 +133,10 @@ test.describe('Tool Activity', () => {
       }
     }
 
-    if (!expandable) { test.skip(); return }
+    if (!expandable) {
+      test.skip()
+      return
+    }
 
     // Click to expand
     await expandable.click()
@@ -122,7 +145,10 @@ test.describe('Tool Activity', () => {
     // Should show expanded content (input/output sections)
     const parent = expandable.locator('..')
     const expandedContent = parent.locator('pre, .font-mono')
-    const hasContent = await expandedContent.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasContent = await expandedContent
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     // The expanded section should exist somewhere nearby
     if (hasContent) {
@@ -132,13 +158,19 @@ test.describe('Tool Activity', () => {
 
   test('copy button copies tool output to clipboard', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // First expand a tool row to see the copy button
     const expandButtons = page.locator('[data-testid="tool-activity-expand"]')
     const count = await expandButtons.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Find and expand a completed (expandable) row
     let expanded = false
@@ -153,13 +185,19 @@ test.describe('Tool Activity', () => {
       }
     }
 
-    if (!expanded) { test.skip(); return }
+    if (!expanded) {
+      test.skip()
+      return
+    }
 
     // Look for copy button (title="Copy to clipboard")
     const copyBtn = page.locator('button[title="Copy to clipboard"]').first()
     const hasCopy = await copyBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCopy) { test.skip(); return }
+    if (!hasCopy) {
+      test.skip()
+      return
+    }
 
     await expect(copyBtn).toBeVisible()
     await copyBtn.click()
@@ -167,34 +205,46 @@ test.describe('Tool Activity', () => {
 
     // After clicking copy, the check icon should appear briefly
     const checkIcon = copyBtn.locator('.text-emerald-400')
-    const hasCheck = await checkIcon.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _hasCheck = await checkIcon.isVisible({ timeout: 2_000 }).catch(() => false)
     // Check icon is transient, so just verify the button was clickable
     expect(hasCopy).toBeTruthy()
   })
 
   test('running tools show purple pulsing icon', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Check for currently running tool activities (purple pulse)
     const toolRows = page.locator('[data-testid="tool-activity-row"]')
     const count = await toolRows.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Look for purple/pulsing icons indicating running state
-    const purpleIcons = page.locator('[data-testid="tool-activity-row"] .text-purple-400.animate-pulse')
+    const purpleIcons = page.locator(
+      '[data-testid="tool-activity-row"] .text-purple-400.animate-pulse'
+    )
     const runningCount = await purpleIcons.count()
 
     if (runningCount === 0) {
       // No tools currently running — try triggering a request
-      const inputReady = await chat.messageInput
-        .isVisible({ timeout: 5_000 })
-        .catch(() => false)
-      if (!inputReady) { test.skip(); return }
+      const inputReady = await chat.messageInput.isVisible({ timeout: 5_000 }).catch(() => false)
+      if (!inputReady) {
+        test.skip()
+        return
+      }
 
       const isEnabled = await chat.isInputEnabled()
-      if (!isEnabled) { test.skip(); return }
+      if (!isEnabled) {
+        test.skip()
+        return
+      }
 
       await chat.sendMessage('Search for files with the pattern "*.tsx"')
 
@@ -220,24 +270,35 @@ test.describe('Tool Activity', () => {
 
   test('completed tools show green checkmark icon', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const toolRows = page.locator('[data-testid="tool-activity-row"]')
     const count = await toolRows.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Look for completed tool icons (emerald-400 = green checkmark state)
     const greenIcons = page.locator('[data-testid="tool-activity-row"] .text-emerald-400')
     const completedCount = await greenIcons.count()
 
-    if (completedCount === 0) { test.skip(); return }
+    if (completedCount === 0) {
+      test.skip()
+      return
+    }
 
     // Completed tool row should have green icon
     await expect(greenIcons.first()).toBeVisible()
 
     // The row should also have tool name text
-    const parentRow = greenIcons.first().locator('xpath=ancestor::div[@data-testid="tool-activity-row"]')
+    const parentRow = greenIcons
+      .first()
+      .locator('xpath=ancestor::div[@data-testid="tool-activity-row"]')
     const text = await parentRow.textContent()
     expect(text?.length).toBeGreaterThan(0)
   })

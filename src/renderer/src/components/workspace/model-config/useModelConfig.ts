@@ -92,7 +92,11 @@ export interface ModelConfigActions {
   handleLoadOmlxModel: (modelId: string) => Promise<void>
   handleUnloadOmlxModel: (modelId: string) => Promise<void>
   // Connection test
-  testConnection: (host?: string, port?: number, silent?: boolean) => Promise<OmlxExtendedStatus | null>
+  testConnection: (
+    host?: string,
+    port?: number,
+    silent?: boolean
+  ) => Promise<OmlxExtendedStatus | null>
   scheduleAutoTest: () => void
   // Workspace setting actions
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
@@ -137,13 +141,18 @@ function connectionDraftsEqual(a: ConnectionDraft, b: ConnectionDraft): boolean 
 
 function useConnectionTest(opts: {
   defaultProvider: LLMProvider
+  localLlmBackend: LocalLLMBackend
   localHost: string
   localPort: number
   localApiKey: string
 }): {
   localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
-  testConnection: (host?: string, port?: number, silent?: boolean) => Promise<OmlxExtendedStatus | null>
+  testConnection: (
+    host?: string,
+    port?: number,
+    silent?: boolean
+  ) => Promise<OmlxExtendedStatus | null>
   scheduleAutoTest: () => void
 } {
   const addToast = useToastStore((s) => s.addToast)
@@ -186,10 +195,17 @@ function useConnectionTest(opts: {
 
         return status
       } catch {
-        const fallback = { installed: false, running: false, models: [] } as unknown as OmlxExtendedStatus
+        const fallback = {
+          installed: false,
+          running: false,
+          models: []
+        } as unknown as OmlxExtendedStatus
         setLocalStatus(fallback)
         if (!silent) {
-          addToast({ message: `Connection failed — oMLX is not reachable at ${h}:${p}`, type: 'error' })
+          addToast({
+            message: `Connection failed — oMLX is not reachable at ${h}:${p}`,
+            type: 'error'
+          })
         }
         return null
       } finally {
@@ -199,12 +215,13 @@ function useConnectionTest(opts: {
     [opts.localHost, opts.localPort, opts.localApiKey, addToast]
   )
 
-  // Auto-test on mount when local-llm is already the default provider
+  // Auto-test on mount when local-llm is the default provider OR Ollama backend is active
+  // (user may use Claude for chat but Ollama for embeddings — still need to populate model list)
   useEffect(() => {
     if (!autoTestDone) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional one-time auto-test on mount
       setAutoTestDone(true)
-      if (opts.defaultProvider === 'local-llm') {
+      if (opts.defaultProvider === 'local-llm' || opts.localLlmBackend === 'ollama') {
         setConnectionTesting(true)
         const baseUrl = `http://${opts.localHost}:${opts.localPort}`
         window.api
@@ -220,7 +237,14 @@ function useConnectionTest(opts: {
           .finally(() => setConnectionTesting(false))
       }
     }
-  }, [opts.defaultProvider, opts.localHost, opts.localPort, opts.localApiKey, autoTestDone])
+  }, [
+    opts.defaultProvider,
+    opts.localLlmBackend,
+    opts.localHost,
+    opts.localPort,
+    opts.localApiKey,
+    autoTestDone
+  ])
 
   // Debounced auto-test for blur-then-persist-then-test pattern
   const debouncedTestRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -291,7 +315,8 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
 
   // ── Connection draft (explicit save) ──
   const [connectionDraft, setConnectionDraft] = useState<ConnectionDraft>(defaultConnectionDraft)
-  const [connectionPersisted, setConnectionPersisted] = useState<ConnectionDraft>(defaultConnectionDraft)
+  const [connectionPersisted, setConnectionPersisted] =
+    useState<ConnectionDraft>(defaultConnectionDraft)
 
   // ── Instant-persist workspace settings ──
   const [defaultProvider, setDefaultProvider] = useState<LLMProvider>('claude')
@@ -305,7 +330,10 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   // ── Platform + Claude CLI ──
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
   const [claudeCliStatus, setClaudeCliStatus] = useState<ClaudeCliStatus | null>(null)
-  const [openCodeCliStatus, setOpenCodeCliStatus] = useState<{ available: boolean; version?: string } | null>(null)
+  const [openCodeCliStatus, setOpenCodeCliStatus] = useState<{
+    available: boolean
+    version?: string
+  } | null>(null)
   const [modelLoading, setModelLoading] = useState<string | null>(null)
 
   // Derived
@@ -318,6 +346,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   const wsSettings = useWorkspaceSettingActions(activeWorkspace)
   const { localStatus, connectionTesting, testConnection, scheduleAutoTest } = useConnectionTest({
     defaultProvider,
+    localLlmBackend,
     localHost: connectionDraft.localHost,
     localPort: connectionDraft.localPort,
     localApiKey: connectionDraft.localApiKey
@@ -355,8 +384,8 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         setDefaultProvider((settings.llmProvider as LLMProvider) ?? 'claude')
         setLocalModel(
           (settings.localModel as string) ??
-          (settings.ollamaModel as string) ??
-          'qwen3.6:35b-a3b-coding-nvfp4'
+            (settings.ollamaModel as string) ??
+            'qwen3.6:35b-a3b-coding-nvfp4'
         )
         setModelRoles((settings.modelRoles as ModelRoleMap) ?? {})
         setClaudeModelOverrides((settings.modelOverrides as Record<string, string>) ?? {})
@@ -371,8 +400,10 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
 
         const defaultPort = resolvedBackend === 'ollama' ? OLLAMA_DEFAULT_PORT : OMLX_DEFAULT_PORT
         const conn: ConnectionDraft = {
-          localHost: (settings.localHost as string) ?? (settings.ollamaHost as string) ?? OMLX_DEFAULT_HOST,
-          localPort: (settings.localPort as number) ?? (settings.ollamaPort as number) ?? defaultPort,
+          localHost:
+            (settings.localHost as string) ?? (settings.ollamaHost as string) ?? OMLX_DEFAULT_HOST,
+          localPort:
+            (settings.localPort as number) ?? (settings.ollamaPort as number) ?? defaultPort,
           localApiKey: (settings.localApiKey as string) ?? '',
           localContextWindow:
             typeof settings.localContextWindow === 'number'
@@ -381,25 +412,29 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         }
         setConnectionPersisted(conn)
         setConnectionDraft(conn)
+
+        // When settings resolve to Ollama backend, schedule a connection test
+        // so the model list populates (the initial auto-test may have fired
+        // before settings loaded, using the wrong port).
+        if (resolvedBackend === 'ollama') {
+          setTimeout(() => scheduleAutoTest(), 100)
+        }
       })
       .catch(console.error)
-  }, [activeWorkspace])
+  }, [activeWorkspace]) // eslint-disable-line react-hooks/exhaustive-deps -- scheduleAutoTest is stable ref
 
   // ── Backend tab switch ──
-  const setLocalLlmBackend = useCallback(
-    (backend: LocalLLMBackend) => {
-      setLocalLlmBackendState(backend)
-      // Switch default port when toggling tabs, but only if the current port
-      // matches the OTHER backend's default (avoid clobbering custom ports).
-      const otherDefault = backend === 'ollama' ? OMLX_DEFAULT_PORT : OLLAMA_DEFAULT_PORT
-      const thisDefault = backend === 'ollama' ? OLLAMA_DEFAULT_PORT : OMLX_DEFAULT_PORT
-      setConnectionDraft((prev) => ({
-        ...prev,
-        localPort: prev.localPort === otherDefault ? thisDefault : prev.localPort
-      }))
-    },
-    []
-  )
+  const setLocalLlmBackend = useCallback((backend: LocalLLMBackend) => {
+    setLocalLlmBackendState(backend)
+    // Switch default port when toggling tabs, but only if the current port
+    // matches the OTHER backend's default (avoid clobbering custom ports).
+    const otherDefault = backend === 'ollama' ? OMLX_DEFAULT_PORT : OLLAMA_DEFAULT_PORT
+    const thisDefault = backend === 'ollama' ? OLLAMA_DEFAULT_PORT : OMLX_DEFAULT_PORT
+    setConnectionDraft((prev) => ({
+      ...prev,
+      localPort: prev.localPort === otherDefault ? thisDefault : prev.localPort
+    }))
+  }, [])
 
   // ── Connection draft setters ──
   const setLocalHost = useCallback(
@@ -415,7 +450,8 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     []
   )
   const setLocalContextWindow = useCallback(
-    (value: number | undefined) => setConnectionDraft((prev) => ({ ...prev, localContextWindow: value })),
+    (value: number | undefined) =>
+      setConnectionDraft((prev) => ({ ...prev, localContextWindow: value })),
     []
   )
 

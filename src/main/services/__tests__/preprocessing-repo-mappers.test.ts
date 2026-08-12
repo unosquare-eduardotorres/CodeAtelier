@@ -20,7 +20,7 @@ void (async () => {
     buildScopeHeader,
     buildMetadata,
     preprocessChunk,
-    DEFAULT_PREPROCESSING_OPTIONS,
+    DEFAULT_PREPROCESSING_OPTIONS
   } = await import('../preprocessing.service')
   type RawChunk = import('../preprocessing.service').RawChunk
 
@@ -41,15 +41,17 @@ void (async () => {
       isStatic: false,
       isAbstract: false,
       language: 'typescript',
-      ...overrides,
+      ...overrides
     }
   }
 
-  function makeChunkWithImports(overrides: Partial<RawChunk & { imports: string[]; className?: string | null }> = {}) {
+  function makeChunkWithImports(
+    overrides: Partial<RawChunk & { imports: string[]; className?: string | null }> = {}
+  ) {
     return {
       ...makeChunk(overrides),
       imports: overrides.imports ?? ['EventEmitter', 'Logger'],
-      className: overrides.className ?? null,
+      className: overrides.className ?? null
     }
   }
 
@@ -154,8 +156,8 @@ void (async () => {
           signature: 'class UserService',
           body: 'class UserService {\n  validate() {}\n}',
           startLine: 1,
-          endLine: 10,
-        }),
+          endLine: 10
+        })
       ]
       const contexts = buildScopeContexts(tags)
       assert.equal(contexts.size, 1)
@@ -173,8 +175,8 @@ void (async () => {
           signature: 'interface IService',
           body: 'interface IService {}',
           startLine: 1,
-          endLine: 3,
-        }),
+          endLine: 3
+        })
       ]
       const contexts = buildScopeContexts(tags)
       const ctx = contexts.get('IService')!
@@ -189,8 +191,8 @@ void (async () => {
           signature: 'abstract class BaseService',
           body: 'abstract class BaseService {}',
           startLine: 1,
-          endLine: 3,
-        }),
+          endLine: 3
+        })
       ]
       const contexts = buildScopeContexts(tags)
       const ctx = contexts.get('BaseService')!
@@ -205,7 +207,7 @@ void (async () => {
           signature: 'class UserService',
           body: 'class UserService {\n  validate() {}\n  save() {}\n}',
           startLine: 1,
-          endLine: 20,
+          endLine: 20
         }),
         makeChunk({
           symbolName: 'validate',
@@ -213,7 +215,7 @@ void (async () => {
           signature: 'validate(): boolean',
           isPublic: true,
           startLine: 2,
-          endLine: 5,
+          endLine: 5
         }),
         makeChunk({
           symbolName: 'save',
@@ -221,8 +223,8 @@ void (async () => {
           signature: 'save(): void',
           isPublic: true,
           startLine: 6,
-          endLine: 10,
-        }),
+          endLine: 10
+        })
       ]
       const contexts = buildScopeContexts(tags)
       const ctx = contexts.get('UserService')!
@@ -239,10 +241,24 @@ void (async () => {
           signature: 'class Svc',
           body: 'class Svc {}',
           startLine: 1,
-          endLine: 20,
+          endLine: 20
         }),
-        makeChunk({ symbolName: 'pubMethod', symbolKind: 'method', isPublic: true, startLine: 2, endLine: 5, signature: 'pubMethod(): void' }),
-        makeChunk({ symbolName: 'privMethod', symbolKind: 'method', isPublic: false, startLine: 6, endLine: 10, signature: 'privMethod(): void' }),
+        makeChunk({
+          symbolName: 'pubMethod',
+          symbolKind: 'method',
+          isPublic: true,
+          startLine: 2,
+          endLine: 5,
+          signature: 'pubMethod(): void'
+        }),
+        makeChunk({
+          symbolName: 'privMethod',
+          symbolKind: 'method',
+          isPublic: false,
+          startLine: 6,
+          endLine: 10,
+          signature: 'privMethod(): void'
+        })
       ]
       const contexts = buildScopeContexts(tags)
       const ctx = contexts.get('Svc')!
@@ -261,7 +277,7 @@ void (async () => {
         classSignature: 'class MyService extends Base',
         classDecorators: [],
         parentClassImports: [],
-        siblingMethodSignatures: [],
+        siblingMethodSignatures: []
       }
       const header = buildScopeHeader(scope, false)
       assert.ok(header.includes('# Class: class MyService extends Base'))
@@ -274,7 +290,7 @@ void (async () => {
         classSignature: 'class MyCtrl',
         classDecorators: ['@Controller()', '@Injectable()'],
         parentClassImports: [],
-        siblingMethodSignatures: [],
+        siblingMethodSignatures: []
       }
       const header = buildScopeHeader(scope, false)
       assert.ok(header.includes('# Class decorators: @Controller(), @Injectable()'))
@@ -287,7 +303,7 @@ void (async () => {
         classSignature: 'class Svc',
         classDecorators: [],
         parentClassImports: [],
-        siblingMethodSignatures: ['validate(): boolean', 'save(): void'],
+        siblingMethodSignatures: ['validate(): boolean', 'save(): void']
       }
       const header = buildScopeHeader(scope, true)
       assert.ok(header.includes('# Other public methods: validate(), save()'))
@@ -300,7 +316,7 @@ void (async () => {
         classSignature: 'class Svc',
         classDecorators: [],
         parentClassImports: [],
-        siblingMethodSignatures: ['validate(): boolean'],
+        siblingMethodSignatures: ['validate(): boolean']
       }
       const header = buildScopeHeader(scope, false)
       assert.ok(!header.includes('Other public methods'))
@@ -329,7 +345,7 @@ void (async () => {
         classSignature: 'class MyService',
         classDecorators: [],
         parentClassImports: [],
-        siblingMethodSignatures: [],
+        siblingMethodSignatures: []
       }
       const meta = buildMetadata(chunk, scope, 'proj')
       assert.equal(meta.className, 'MyService')
@@ -374,8 +390,11 @@ void (async () => {
     test('returns processed chunks for a valid public function', () => {
       const chunk = makeChunk()
       const result = preprocessChunk(
-        chunk, 'import { Logger } from "electron-log"\n' + chunk.body,
-        null, 'proj', DEFAULT_PREPROCESSING_OPTIONS
+        chunk,
+        'import { Logger } from "electron-log"\n' + chunk.body,
+        null,
+        'proj',
+        DEFAULT_PREPROCESSING_OPTIONS
       )
       assert.ok(result)
       assert.ok(result.length >= 1)
@@ -401,7 +420,11 @@ void (async () => {
     test('prepends description when provided', () => {
       const chunk = makeChunk()
       const result = preprocessChunk(
-        chunk, chunk.body, null, 'proj', DEFAULT_PREPROCESSING_OPTIONS,
+        chunk,
+        chunk.body,
+        null,
+        'proj',
+        DEFAULT_PREPROCESSING_OPTIONS,
         'This function doubles its input.'
       )
       assert.ok(result)
@@ -410,9 +433,7 @@ void (async () => {
 
     test('does not include description text when not provided', () => {
       const chunk = makeChunk()
-      const result = preprocessChunk(
-        chunk, chunk.body, null, 'proj', DEFAULT_PREPROCESSING_OPTIONS
-      )
+      const result = preprocessChunk(chunk, chunk.body, null, 'proj', DEFAULT_PREPROCESSING_OPTIONS)
       assert.ok(result)
       assert.ok(!result[0].embedText.includes('This function doubles'))
     })
@@ -425,10 +446,14 @@ void (async () => {
         classSignature: 'class Svc extends Base',
         classDecorators: [],
         parentClassImports: [],
-        siblingMethodSignatures: ['other(): void'],
+        siblingMethodSignatures: ['other(): void']
       }
       const result = preprocessChunk(
-        chunk, chunk.body, scope, 'proj', DEFAULT_PREPROCESSING_OPTIONS
+        chunk,
+        chunk.body,
+        scope,
+        'proj',
+        DEFAULT_PREPROCESSING_OPTIONS
       )
       assert.ok(result)
       assert.ok(result[0].embedText.includes('# Class: class Svc extends Base'))
@@ -436,9 +461,7 @@ void (async () => {
 
     test('metadata has correct symbolKind', () => {
       const chunk = makeChunk({ symbolKind: 'class' })
-      const result = preprocessChunk(
-        chunk, chunk.body, null, 'proj', DEFAULT_PREPROCESSING_OPTIONS
-      )
+      const result = preprocessChunk(chunk, chunk.body, null, 'proj', DEFAULT_PREPROCESSING_OPTIONS)
       assert.ok(result)
       assert.equal(result[0].metadata.symbolKind, 'class')
     })

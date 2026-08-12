@@ -149,8 +149,8 @@ describe('Council — peer review framing', () => {
 
   test('peer_review_count_is_N_times_N_minus_1', () => {
     assert.equal(computePeerReviewCount(5), 20) // 5 * 4
-    assert.equal(computePeerReviewCount(3), 6)  // 3 * 2
-    assert.equal(computePeerReviewCount(1), 0)  // 1 * 0
+    assert.equal(computePeerReviewCount(3), 6) // 3 * 2
+    assert.equal(computePeerReviewCount(1), 0) // 1 * 0
   })
 })
 
@@ -213,19 +213,12 @@ describe('Council — status computation', () => {
 
 describe('Council — verdict aggregation', () => {
   test('computes_average_score_from_reviews', () => {
-    const score = computeAverageScore([
-      { score: 80 },
-      { score: 70 },
-      { score: 90 }
-    ])
+    const score = computeAverageScore([{ score: 80 }, { score: 70 }, { score: 90 }])
     assert.equal(score, 80)
   })
 
   test('rounds_to_nearest_integer', () => {
-    const score = computeAverageScore([
-      { score: 75 },
-      { score: 80 }
-    ])
+    const score = computeAverageScore([{ score: 75 }, { score: 80 }])
     assert.equal(score, 78) // 77.5 rounds to 78
   })
 
@@ -247,15 +240,11 @@ describe('Council — convergence extraction', () => {
     ]
     const convergence = extractConvergencePoints(reviews)
     assert.ok(convergence.includes('needs refactoring'))
-    assert.ok(!convergence.includes('good coverage'))  // only 2 mentions
+    assert.ok(!convergence.includes('good coverage')) // only 2 mentions
   })
 
   test('no_convergence_returns_empty', () => {
-    const reviews = [
-      { keyFindings: ['a'] },
-      { keyFindings: ['b'] },
-      { keyFindings: ['c'] }
-    ]
+    const reviews = [{ keyFindings: ['a'] }, { keyFindings: ['b'] }, { keyFindings: ['c'] }]
     assert.deepEqual(extractConvergencePoints(reviews), [])
   })
 

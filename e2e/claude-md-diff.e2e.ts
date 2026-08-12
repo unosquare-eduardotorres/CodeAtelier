@@ -19,9 +19,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('CLAUDE.md Diff Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,18 +33,14 @@ test.describe('CLAUDE.md Diff Modal', () => {
     return true
   }
 
-  async function navigateToDiffModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToDiffModal(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to Memory settings and try to trigger CLAUDE.md diff
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('memory')
     if (!navigated) return false
 
     // Look for the "Regenerate CLAUDE.md" or similar button
-    const regenerateBtn = page
-      .getByRole('button', { name: /regenerate|review.*claude/i })
-      .first()
+    const regenerateBtn = page.getByRole('button', { name: /regenerate|review.*claude/i }).first()
     const hasBtn = await regenerateBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (hasBtn) {
@@ -59,14 +53,18 @@ test.describe('CLAUDE.md Diff Modal', () => {
     return diffModal.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('diff modal shows "Review CLAUDE.md Changes" title', async ({
-    electronPage: page
-  }) => {
+  test('diff modal shows "Review CLAUDE.md Changes" title', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDiff = await navigateToDiffModal(page)
-    if (!hasDiff) { test.skip(); return }
+    if (!hasDiff) {
+      test.skip()
+      return
+    }
 
     const diffModal = page.locator('[data-testid="claude-md-diff"]')
 
@@ -79,10 +77,16 @@ test.describe('CLAUDE.md Diff Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDiff = await navigateToDiffModal(page)
-    if (!hasDiff) { test.skip(); return }
+    if (!hasDiff) {
+      test.skip()
+      return
+    }
 
     const diffModal = page.locator('[data-testid="claude-md-diff"]')
 
@@ -94,7 +98,10 @@ test.describe('CLAUDE.md Diff Modal', () => {
     const proposedLabel = diffModal.getByText('Proposed', { exact: true })
     const hasProposedLabel = await proposedLabel.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCurrentLabel && !hasProposedLabel) { test.skip(); return }
+    if (!hasCurrentLabel && !hasProposedLabel) {
+      test.skip()
+      return
+    }
 
     if (hasCurrentLabel) await expect(currentLabel).toBeVisible()
     if (hasProposedLabel) await expect(proposedLabel).toBeVisible()
@@ -104,10 +111,16 @@ test.describe('CLAUDE.md Diff Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDiff = await navigateToDiffModal(page)
-    if (!hasDiff) { test.skip(); return }
+    if (!hasDiff) {
+      test.skip()
+      return
+    }
 
     const diffModal = page.locator('[data-testid="claude-md-diff"]')
 
@@ -118,7 +131,10 @@ test.describe('CLAUDE.md Diff Modal', () => {
     const charsText = diffModal.getByText(/chars:/i)
     const hasChars = await charsText.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasLines && !hasChars) { test.skip(); return }
+    if (!hasLines && !hasChars) {
+      test.skip()
+      return
+    }
 
     // Delta should be color-coded (text-success for +, text-danger for -)
     const colorCoded = diffModal.locator('.text-success, .text-danger')
@@ -126,19 +142,26 @@ test.describe('CLAUDE.md Diff Modal', () => {
     expect(colorCount).toBeGreaterThanOrEqual(0) // May be zero if no changes
   })
 
-  test('"Approve & Write" button confirms the proposed changes', async ({
-    electronPage: page
-  }) => {
+  test('"Approve & Write" button confirms the proposed changes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDiff = await navigateToDiffModal(page)
-    if (!hasDiff) { test.skip(); return }
+    if (!hasDiff) {
+      test.skip()
+      return
+    }
 
     const approveBtn = page.locator('[data-testid="claude-md-approve"]')
     const hasApprove = await approveBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasApprove) { test.skip(); return }
+    if (!hasApprove) {
+      test.skip()
+      return
+    }
 
     // Button should show "Approve & Write" text
     const btnText = await approveBtn.textContent()
@@ -150,10 +173,16 @@ test.describe('CLAUDE.md Diff Modal', () => {
 
   test('"Cancel" button dismisses without writing', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasDiff = await navigateToDiffModal(page)
-    if (!hasDiff) { test.skip(); return }
+    if (!hasDiff) {
+      test.skip()
+      return
+    }
 
     const diffModal = page.locator('[data-testid="claude-md-diff"]')
 
@@ -161,7 +190,10 @@ test.describe('CLAUDE.md Diff Modal', () => {
     const cancelBtn = diffModal.getByRole('button', { name: /cancel/i })
     const hasCancel = await cancelBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCancel) { test.skip(); return }
+    if (!hasCancel) {
+      test.skip()
+      return
+    }
 
     await expect(cancelBtn).toBeEnabled()
 

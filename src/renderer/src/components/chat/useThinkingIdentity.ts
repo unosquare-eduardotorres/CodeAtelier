@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useChatStore, useSpecialistStore, useWorkspaceStore } from '@renderer/store'
-import { CORE_AGENT_DEFAULTS } from '@renderer/utils/agentIdentity'
+import { CORE_AGENT_DEFAULTS, humaniseAgentId } from '@renderer/utils/agentIdentity'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 import { getWorkspaceMannequin } from '@renderer/utils/workspaceMannequin'
 
@@ -23,9 +23,7 @@ export function useThinkingIdentity(): ThinkingIdentity {
     (s) => s.specialists.find((sp) => sp.agentId === 'specialist') ?? null
   )
   const defaultAlias =
-    defaultSpec?.alias ??
-    defaultSpec?.displayName ??
-    CORE_AGENT_DEFAULTS['specialist'].displayName
+    defaultSpec?.alias ?? defaultSpec?.displayName ?? CORE_AGENT_DEFAULTS['specialist'].displayName
   const thinkingAvatarKey = CORE_AGENT_DEFAULTS['specialist'].avatarKey
   const thinkingAccentColor = defaultSpec?.color ?? CORE_AGENT_DEFAULTS['specialist'].color
 
@@ -60,13 +58,24 @@ export function useThinkingIdentity(): ThinkingIdentity {
       }
     }
     if (streamingRole === 'specialist' && streamingSpecialist) {
+      // The workspace specialist is not in the specialists store, so its id lands
+      // here. Its row is the authoritative name; anything else is an internal id
+      // and must be humanised rather than shown as-is.
+      const isWorkspaceSpecialist =
+        !!activeConversationWorkspaceId &&
+        streamingSpecialist === `workspace-specialist-${activeConversationWorkspaceId}`
+      const name =
+        isWorkspaceSpecialist && projectSpecialist
+          ? projectSpecialist.displayName
+          : (humaniseAgentId(streamingSpecialist) ?? defaultAlias)
       return {
-        name: streamingSpecialist,
+        name,
         avatarKey: specialistMannequinKey,
         accentColor: '#F59E0B'
       }
     }
-    if (projectSpecialist?.buildStatus === 'ready') {
+    // Not gated on `ready`: the row is named from workspace creation onwards.
+    if (projectSpecialist) {
       return {
         name: projectSpecialist.displayName,
         avatarKey: specialistMannequinKey,
@@ -86,6 +95,7 @@ export function useThinkingIdentity(): ThinkingIdentity {
     defaultAlias,
     thinkingAvatarKey,
     thinkingAccentColor,
-    projectSpecialist
+    projectSpecialist,
+    activeConversationWorkspaceId
   ])
 }

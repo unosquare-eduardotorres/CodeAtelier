@@ -143,12 +143,16 @@ if (!env) {
         `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       ).run('test_key', 'test_value')
-      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('test_key') as any
+      const row = db
+        .prepare('SELECT value FROM app_preferences WHERE key = ?')
+        .get('test_key') as any
       assert.equal(row?.value, 'test_value')
     })
 
     test('get() returns null for unknown key', () => {
-      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('nonexistent_key') as any
+      const row = db
+        .prepare('SELECT value FROM app_preferences WHERE key = ?')
+        .get('nonexistent_key') as any
       assert.equal(row ?? null, null)
     })
 
@@ -161,12 +165,16 @@ if (!env) {
         `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       ).run('upsert_key', 'updated')
-      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('upsert_key') as any
+      const row = db
+        .prepare('SELECT value FROM app_preferences WHERE key = ?')
+        .get('upsert_key') as any
       assert.equal(row?.value, 'updated')
     })
 
     test('getBool() returns default for missing key', () => {
-      const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('missing_bool') as any
+      const row = db
+        .prepare('SELECT value FROM app_preferences WHERE key = ?')
+        .get('missing_bool') as any
       const val = row ? row.value === 'true' : false
       assert.equal(val, false)
     })
@@ -176,13 +184,17 @@ if (!env) {
         `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       ).run('bool_key', 'true')
-      const rowTrue = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('bool_key') as any
+      const rowTrue = db
+        .prepare('SELECT value FROM app_preferences WHERE key = ?')
+        .get('bool_key') as any
       assert.equal(rowTrue?.value === 'true', true)
       db.prepare(
         `INSERT INTO app_preferences (key, value, updated_at) VALUES (?, ?, datetime('now'))
          ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
       ).run('bool_key', 'false')
-      const rowFalse = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get('bool_key') as any
+      const rowFalse = db
+        .prepare('SELECT value FROM app_preferences WHERE key = ?')
+        .get('bool_key') as any
       assert.equal(rowFalse?.value === 'true', false)
     })
 

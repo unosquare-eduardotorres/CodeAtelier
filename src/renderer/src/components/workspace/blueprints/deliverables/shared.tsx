@@ -81,7 +81,11 @@ export function MetricTile({
 
 // ── DiscoveriesSection ──
 
-export function DiscoveriesSection({ discoveries }: { discoveries: string[] | undefined }): JSX.Element | null {
+export function DiscoveriesSection({
+  discoveries
+}: {
+  discoveries: string[] | undefined
+}): JSX.Element | null {
   if (!discoveries?.length) return null
   return (
     <div className="mt-6">
@@ -91,7 +95,10 @@ export function DiscoveriesSection({ discoveries }: { discoveries: string[] | un
       </h3>
       <div className="space-y-2">
         {discoveries.map((d, i) => (
-          <div key={i} className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/5 border border-warning/10">
+          <div
+            key={i}
+            className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/5 border border-warning/10"
+          >
             <span className="text-warning mt-0.5">•</span>
             <span className="text-sm text-text-secondary">{d}</span>
           </div>
@@ -140,7 +147,10 @@ export function CappedMarkdownBlock({
           onClick={() => setExpanded(!expanded)}
           className="flex items-center gap-1 text-xs text-accent hover:text-accent/80 font-medium transition-colors"
         >
-          <ChevronDown size={12} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          <ChevronDown
+            size={12}
+            className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+          />
           {expanded ? 'Collapse' : 'Expand'}
         </button>
       </div>
@@ -153,5 +163,3 @@ export function CappedMarkdownBlock({
     </div>
   )
 }
-
-

@@ -18,9 +18,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Documents & Integrations', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,13 +34,25 @@ test.describe('Documents & Integrations', () => {
 
   // ── Documents Tests ──
 
-  test('documents page renders with file list or empty state', async ({ electronPage: page }) => {
+  // nav hidden — the 'documents' entry is marked `hidden: true` in SETTINGS_MENU,
+  // so navigateToSettingsTab('documents') can no longer find a button. The page
+  // and its route are intact; unhide the entry to restore this coverage.
+  // The 'integrations' tests below are unaffected — that entry is still visible.
+  test.skip('documents page renders with file list or empty state', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('documents')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Either the documents page with file list or empty state
     const docsPage = page.locator('[data-testid="documents-page"]')
@@ -54,13 +64,20 @@ test.describe('Documents & Integrations', () => {
     expect(hasDocs || hasEmpty).toBeTruthy()
   })
 
-  test('document viewer renders markdown content', async ({ electronPage: page }) => {
+  // nav hidden — see note above.
+  test.skip('document viewer renders markdown content', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('documents')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const docsPage = page.locator('[data-testid="documents-page"]')
     const hasDocs = await docsPage.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -75,7 +92,10 @@ test.describe('Documents & Integrations', () => {
     const docItems = docsPage.locator('button').first()
     const hasDoc = await docItems.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasDoc) { test.skip(); return }
+    if (!hasDoc) {
+      test.skip()
+      return
+    }
 
     await docItems.click()
     await page.waitForTimeout(800)
@@ -94,11 +114,17 @@ test.describe('Documents & Integrations', () => {
 
   test('integrations page renders with integration cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('integrations')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const integrationsPage = page.locator('[data-testid="integrations-page"]')
     await expect(integrationsPage).toBeVisible({ timeout: 5_000 })
@@ -113,39 +139,64 @@ test.describe('Documents & Integrations', () => {
     expect(cardCount > 0 || hasExplainer).toBeTruthy()
   })
 
-  test('documents page header shows title and description text', async ({ electronPage: page }) => {
+  // nav hidden — see note above.
+  test.skip('documents page header shows title and description text', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('documents')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Should show a header with title text
     const docsPage = page.locator('[data-testid="documents-page"]')
     const hasDocs = await docsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasDocs) { test.skip(); return }
+    if (!hasDocs) {
+      test.skip()
+      return
+    }
 
     const headerText = docsPage.getByText(/documents|project docs/i).first()
     await expect(headerText).toBeVisible({ timeout: 3_000 })
   })
 
-  test('document file item displays file name', async ({ electronPage: page }) => {
+  // nav hidden — see note above.
+  test.skip('document file item displays file name', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('documents')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const docsPage = page.locator('[data-testid="documents-page"]')
     const hasDocs = await docsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasDocs) { test.skip(); return }
+    if (!hasDocs) {
+      test.skip()
+      return
+    }
 
     // If there are document items, the first should have text
     const docItems = docsPage.locator('button').first()
     const hasItem = await docItems.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasItem) { test.skip(); return }
+    if (!hasItem) {
+      test.skip()
+      return
+    }
 
     const itemText = await docItems.textContent()
     expect(itemText!.trim().length).toBeGreaterThan(0)
@@ -153,33 +204,51 @@ test.describe('Documents & Integrations', () => {
 
   test('integration categories group cards under headings', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('integrations')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const integrationsPage = page.locator('[data-testid="integrations-page"]')
     const hasPage = await integrationsPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Should have category labels or section headings
     const headings = integrationsPage.locator('h2, h3, h4')
     const labels = integrationsPage.getByText(/testing|deployment|code quality|mcp/i)
 
     const headingCount = await headings.count()
-    const labelVisible = await labels.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const labelVisible = await labels
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(headingCount > 0 || labelVisible).toBeTruthy()
   })
 
   test('integration card shows availability status and toggle', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const nav = new SettingsNav(page)
     const navigated = await nav.navigateToSettingsTab('integrations')
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const cards = page.locator('[data-testid="integration-card"]')
     const cardCount = await cards.count()

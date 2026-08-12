@@ -17,13 +17,13 @@ export function formatTimeAgo(date: Date): string {
  */
 export function stripMarkdownInline(text: string): string {
   return text
-    .replace(/^#{1,6}\s+/gm, '')       // headings
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')  // links → text
-    .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, '$1')  // bold/italic
-    .replace(/`([^`]+)`/g, '$1')        // inline code
-    .replace(/```[\s\S]*?```/g, '')     // code blocks
-    .replace(/\n{2,}/g, ' — ')          // paragraph breaks → dash
-    .replace(/\n/g, ' ')                // remaining newlines
-    .replace(/\s{2,}/g, ' ')            // collapse spaces
+    .replace(/^#{1,6}\s+/gm, '') // headings
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // links → text
+    .replace(/[*_]{1,3}([^*_]+)[*_]{1,3}/g, '$1') // bold/italic
+    .replace(/`([^`]+)`/g, '$1') // inline code
+    .replace(/```[\s\S]*?```/g, '') // code blocks
+    .replace(/\n{2,}/g, ' — ') // paragraph breaks → dash
+    .replace(/\n/g, ' ') // remaining newlines
+    .replace(/\s{2,}/g, ' ') // collapse spaces
     .trim()
 }

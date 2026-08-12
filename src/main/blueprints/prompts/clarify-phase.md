@@ -4,7 +4,7 @@
 **Phase**: clarify
 **Mode**: read-only (interactive with user — you do NOT write files)
 
-> **IMPORTANT**: Do NOT call the `ask_user` tool. Emit questions ONLY as the ````blueprint-clarify-questions```` fenced JSON block below. Any ask_user calls will be intercepted and may cause delays.
+> **IMPORTANT**: Do NOT call the `ask_user` tool. Emit questions ONLY as the `blueprint-clarify-questions` fenced JSON block below. Any ask_user calls will be intercepted and may cause delays.
 
 ## Blueprint Context
 
@@ -45,6 +45,7 @@ Use `mcp__memory__memory_search` with relevant terms. If a previous decision ans
 ### Source 3: Existing Code
 
 If the workspace has source files, use code-intelligence tools:
+
 - `mcp__code-graph__graph_map` or `Glob` for structure
 - `mcp__code-graph__search_identifiers` for specific symbols
 - `Read` for config files and key source files
@@ -65,6 +66,8 @@ Re-check the spec from the SPECIFY phase. If the gap was already addressed there
 ## Output Contracts
 
 You communicate via **three fenced JSON blocks**. Prose is limited to a 2–3 sentence intro before each block. All detail goes INSIDE the JSON.
+
+**Fence rule (mandatory):** every block opens and closes with exactly three backticks, and a **blank line must separate one block's closing fence from the next block's opening fence**. Never put a closing fence and an opening fence on the same line — the runs merge into six backticks and the block is then rendered as raw text to the user instead of as a card.
 
 ### 1. Findings Block
 
@@ -103,6 +106,7 @@ Each finding includes a `resolvedBy` field when auto-resolved:
 ````
 
 **Field rules:**
+
 - `id`: stable string, e.g. "f1", "f2" — kept across rounds
 - `category`: one of `missing_requirements` | `ambiguous_language` | `unstated_assumptions` | `conflicting_requirements` | `missing_edge_cases` | `incomplete_user_stories` | `missing_success_criteria` | `security_gaps` | `performance_gaps`
 - `severity`: `critical` | `high` | `medium` | `low`
@@ -135,6 +139,7 @@ Emit when you need user input:
 ````
 
 **Field rules:**
+
 - `id`: stable string, e.g. "q1", "q2"
 - `header`: short topic label
 - `question`: the actual question text
@@ -202,12 +207,12 @@ If the user sends "Session resumed" — re-emit the current findings block (with
 
 Use code-intelligence tools to verify spec claims against the actual codebase:
 
-| Goal | First tool | Fallback |
-|------|-----------|----------|
-| Verify a symbol/API exists | `mcp__code-graph__search_identifiers` | `Grep` |
-| Check file structure | `mcp__code-graph__file_outline` | `Read` |
-| Find related code | `mcp__semantic-search__semantic_search` | `Grep` |
-| Search workspace knowledge | `mcp__memory__memory_search` | — |
+| Goal                       | First tool                              | Fallback |
+| -------------------------- | --------------------------------------- | -------- |
+| Verify a symbol/API exists | `mcp__code-graph__search_identifiers`   | `Grep`   |
+| Check file structure       | `mcp__code-graph__file_outline`         | `Read`   |
+| Find related code          | `mcp__semantic-search__semantic_search` | `Grep`   |
+| Search workspace knowledge | `mcp__memory__memory_search`            | —        |
 
 **Greenfield caveat**: If the workspace has no source tree yet, skip code-intelligence tools.
 

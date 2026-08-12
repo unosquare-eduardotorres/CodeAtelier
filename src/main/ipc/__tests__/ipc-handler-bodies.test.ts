@@ -16,35 +16,36 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
-  setupElectronStub,
-  capturedHandlers,
+  setupFullMock,
+  getHandlers,
   mockMainWindow,
   mockEvent,
-  tryInvokeHandler,
-} from '../../services/__tests__/electron-stub'
+  tryInvokeHandler
+} from '../../services/__tests__/setup-full-mock'
 
-// Install the electron stub BEFORE any IPC module is imported
-setupElectronStub()
+// Install the full mock BEFORE any IPC module is imported
+setupFullMock()
 
 // ── Helper ──────────────────────────────────────────────────────────────────
 
 /** Track total registered handlers across all modules */
-let totalRegisteredHandlers = 0
+let _totalRegisteredHandlers = 0
 
 /** Register an IPC module and return the channels it registered */
-async function registerIpcModule(
-  modulePath: string,
-  needsWindow = false
-): Promise<string[]> {
-  const before = new Set(capturedHandlers.keys())
+async function registerIpcModule(modulePath: string, needsWindow = false): Promise<string[]> {
+  const before = new Set(getHandlers().keys())
   let mod: Record<string, unknown>
   try {
-    mod = await import(modulePath) as Record<string, unknown>
+    mod = (await import(modulePath)) as Record<string, unknown>
   } catch (err: any) {
     // Module may fail to import due to native module ABI mismatch
     const msg = err?.message || ''
-    if (msg.includes('NODE_MODULE_VERSION') || msg.includes('better-sqlite3') || msg.includes('napi')
-      || msg.includes('scope is not a function')) {
+    if (
+      msg.includes('NODE_MODULE_VERSION') ||
+      msg.includes('better-sqlite3') ||
+      msg.includes('napi') ||
+      msg.includes('scope is not a function')
+    ) {
       // Expected under Node.js — native ABI mismatch or tsx CJS-ESM interop
       // issue with electron-log's .scope() method under Node v25+
       return []
@@ -53,8 +54,9 @@ async function registerIpcModule(
   }
 
   const registerFn = Object.values(mod).find(
-    (v) => typeof v === 'function' && (v as Function).name.startsWith('register')
-  ) as Function | undefined
+    (v) =>
+      typeof v === 'function' && (v as (...args: unknown[]) => unknown).name.startsWith('register')
+  ) as ((...args: unknown[]) => unknown) | undefined
 
   if (!registerFn) {
     throw new Error(`No register function found in ${modulePath}`)
@@ -69,18 +71,21 @@ async function registerIpcModule(
   } catch (err: any) {
     // Register function may throw if it hits native module issues
     const msg = err?.message || ''
-    if (msg.includes('NODE_MODULE_VERSION') || msg.includes('better-sqlite3')
-      || msg.includes('scope is not a function')) {
+    if (
+      msg.includes('NODE_MODULE_VERSION') ||
+      msg.includes('better-sqlite3') ||
+      msg.includes('scope is not a function')
+    ) {
       return []
     }
     throw err
   }
 
   const newChannels: string[] = []
-  for (const key of capturedHandlers.keys()) {
+  for (const key of getHandlers().keys()) {
     if (!before.has(key)) newChannels.push(key)
   }
-  totalRegisteredHandlers += newChannels.length
+  _totalRegisteredHandlers += newChannels.length
   return newChannels
 }
 
@@ -132,256 +137,141 @@ async function testHandlersForModule(
 
 describe('IPC handler bodies — zero-coverage files', () => {
   test('app-preference handlers execute', async () => {
-    await testHandlersForModule(
-      'app-preference',
-      '../app-preference.ipc',
-      false,
-      {
-        '*': { key: 'theme', value: 'dark' },
-      }
-    )
+    await testHandlersForModule('app-preference', '../app-preference.ipc', false, {
+      '*': { key: 'theme', value: 'dark' }
+    })
   })
 
   test('bug handlers execute', async () => {
-    await testHandlersForModule(
-      'bug',
-      '../bug.ipc',
-      true,
-      {
-        '*': {
-          id: 'bug-1',
-          errorMessage: 'test error',
-          process: 'main',
-          appVersion: '1.0.0',
-          note: 'test note',
-        },
+    await testHandlersForModule('bug', '../bug.ipc', true, {
+      '*': {
+        id: 'bug-1',
+        errorMessage: 'test error',
+        process: 'main',
+        appVersion: '1.0.0',
+        note: 'test note'
       }
-    )
+    })
   })
 
   test('core-agent-alias handlers execute', async () => {
-    await testHandlersForModule(
-      'core-agent-alias',
-      '../core-agent-alias.ipc',
-      false,
-      {
-        '*': { agentId: 'agent-1', alias: 'Test Alias', id: 'alias-1' },
-      }
-    )
+    await testHandlersForModule('core-agent-alias', '../core-agent-alias.ipc', false, {
+      '*': { agentId: 'agent-1', alias: 'Test Alias', id: 'alias-1' }
+    })
   })
 
   test('core-agent-prompt handlers execute', async () => {
-    await testHandlersForModule(
-      'core-agent-prompt',
-      '../core-agent-prompt.ipc',
-      false,
-      {
-        '*': { agentId: 'agent-1', promptId: 'prompt-1', id: 'prompt-1', content: 'test' },
-      }
-    )
+    await testHandlersForModule('core-agent-prompt', '../core-agent-prompt.ipc', false, {
+      '*': { agentId: 'agent-1', promptId: 'prompt-1', id: 'prompt-1', content: 'test' }
+    })
   })
 
   test('cost handlers execute', async () => {
-    await testHandlersForModule(
-      'cost',
-      '../cost.ipc',
-      false,
-      {
-        '*': { workspaceId: 'ws-1', conversationId: 'conv-1' },
-      }
-    )
+    await testHandlersForModule('cost', '../cost.ipc', false, {
+      '*': { workspaceId: 'ws-1', conversationId: 'conv-1' }
+    })
   })
 
   test('docs handlers execute', async () => {
-    await testHandlersForModule(
-      'docs',
-      '../docs.ipc',
-      false,
-      {
-        '*': { filePath: '/tmp/test.md', workspacePath: '/tmp/ws' },
-      }
-    )
+    await testHandlersForModule('docs', '../docs.ipc', false, {
+      '*': { filePath: '/tmp/test.md', workspacePath: '/tmp/ws' }
+    })
   })
 
   test('events handlers execute', async () => {
-    await testHandlersForModule(
-      'events',
-      '../events.ipc',
-      false,
-      {
-        '*': { conversationId: 'conv-1', workspaceId: 'ws-1', limit: 10 },
-      }
-    )
+    await testHandlersForModule('events', '../events.ipc', false, {
+      '*': { conversationId: 'conv-1', workspaceId: 'ws-1', limit: 10 }
+    })
   })
 
   test('github handlers execute', async () => {
-    await testHandlersForModule(
-      'github',
-      '../github.ipc',
-      false,
-      {
-        '*': { token: 'ghp_test_token_123456' },
-      }
-    )
+    await testHandlersForModule('github', '../github.ipc', false, {
+      '*': { token: 'ghp_test_token_123456' }
+    })
   })
 
   test('hooks handlers execute', async () => {
-    await testHandlersForModule(
-      'hooks',
-      '../hooks.ipc',
-      false,
-      {
-        '*': { workspaceId: 'ws-1' },
-      }
-    )
+    await testHandlersForModule('hooks', '../hooks.ipc', false, {
+      '*': { workspaceId: 'ws-1' }
+    })
   })
 
   test('insights handlers execute', async () => {
-    await testHandlersForModule(
-      'insights',
-      '../insights.ipc',
-      false,
-      {
-        '*': { workspaceId: 'ws-1', conversationId: 'conv-1' },
-      }
-    )
+    await testHandlersForModule('insights', '../insights.ipc', false, {
+      '*': { workspaceId: 'ws-1', conversationId: 'conv-1' }
+    })
   })
 
   test('log handlers execute', async () => {
-    await testHandlersForModule(
-      'log',
-      '../log.ipc',
-      false,
-      {
-        '*': { level: 'info', message: 'test log' },
-      }
-    )
+    await testHandlersForModule('log', '../log.ipc', false, {
+      '*': { level: 'info', message: 'test log' }
+    })
   })
 
   test('platform handlers execute', async () => {
-    await testHandlersForModule(
-      'platform',
-      '../platform.ipc',
-      false,
-      { '*': undefined }
-    )
+    await testHandlersForModule('platform', '../platform.ipc', false, { '*': undefined })
   })
 
   test('shell handlers execute', async () => {
-    await testHandlersForModule(
-      'shell',
-      '../shell.ipc',
-      false,
-      { '*': '/tmp/test-file' }
-    )
+    await testHandlersForModule('shell', '../shell.ipc', false, { '*': '/tmp/test-file' })
   })
 
   test('subscription handlers execute', async () => {
-    await testHandlersForModule(
-      'subscription',
-      '../subscription.ipc',
-      false,
-      { '*': undefined }
-    )
+    await testHandlersForModule('subscription', '../subscription.ipc', false, { '*': undefined })
   })
 
   test('token handlers execute', async () => {
-    await testHandlersForModule(
-      'token',
-      '../token.ipc',
-      false,
-      {
-        '*': { workspaceId: 'ws-1', conversationId: 'conv-1', sessionId: 'sess-1', limit: 10 },
-      }
-    )
+    await testHandlersForModule('token', '../token.ipc', false, {
+      '*': { workspaceId: 'ws-1', conversationId: 'conv-1', sessionId: 'sess-1', limit: 10 }
+    })
   })
 
   test('update handlers execute', async () => {
-    await testHandlersForModule(
-      'update',
-      '../update.ipc',
-      false,
-      {
-        '*': { autoCheck: true, autoDownload: false },
-      }
-    )
+    await testHandlersForModule('update', '../update.ipc', false, {
+      '*': { autoCheck: true, autoDownload: false }
+    })
   })
 
   test('user-profile handlers execute', async () => {
-    await testHandlersForModule(
-      'user-profile',
-      '../user-profile.ipc',
-      false,
-      {
-        '*': { name: 'Test User', email: 'test@example.com' },
-      }
-    )
+    await testHandlersForModule('user-profile', '../user-profile.ipc', false, {
+      '*': { name: 'Test User', email: 'test@example.com' }
+    })
   })
 
   test('zoom handlers execute', async () => {
-    await testHandlersForModule(
-      'zoom',
-      '../zoom.ipc',
-      true,
-      {
-        '*': { level: 1.0 },
-      }
-    )
+    await testHandlersForModule('zoom', '../zoom.ipc', true, {
+      '*': { level: 1.0 }
+    })
   })
 
   test('repo handlers execute', async () => {
-    await testHandlersForModule(
-      'repo',
-      '../repo.ipc',
-      false,
-      {
-        '*': { workspaceId: 'ws-1', path: '/tmp/test', remote: 'origin' },
-      }
-    )
+    await testHandlersForModule('repo', '../repo.ipc', false, {
+      '*': { workspaceId: 'ws-1', path: '/tmp/test', remote: 'origin' }
+    })
   })
 
   test('sync handlers execute', async () => {
-    await testHandlersForModule(
-      'sync',
-      '../sync.ipc',
-      false,
-      {
-        '*': { workspaceId: 'ws-1', agentId: 'agent-1', force: false },
-      }
-    )
+    await testHandlersForModule('sync', '../sync.ipc', false, {
+      '*': { workspaceId: 'ws-1', agentId: 'agent-1', force: false }
+    })
   })
 
   test('ollama handlers execute', async () => {
-    await testHandlersForModule(
-      'ollama',
-      '../ollama.ipc',
-      true,
-      {
-        '*': { model: 'llama3', tag: 'latest' },
-      }
-    )
+    await testHandlersForModule('ollama', '../ollama.ipc', true, {
+      '*': { model: 'llama3', tag: 'latest' }
+    })
   })
 
   test('code-graph handlers execute', async () => {
-    await testHandlersForModule(
-      'code-graph',
-      '../code-graph.ipc',
-      true,
-      {
-        '*': { workspaceId: 'ws-1', path: '/tmp/test.ts' },
-      }
-    )
+    await testHandlersForModule('code-graph', '../code-graph.ipc', true, {
+      '*': { workspaceId: 'ws-1', path: '/tmp/test.ts' }
+    })
   })
 
   test('embedding handlers execute', async () => {
-    await testHandlersForModule(
-      'embedding',
-      '../embedding.ipc',
-      true,
-      {
-        '*': { workspaceId: 'ws-1' },
-      }
-    )
+    await testHandlersForModule('embedding', '../embedding.ipc', true, {
+      '*': { workspaceId: 'ws-1' }
+    })
   })
 })
 
@@ -391,294 +281,203 @@ describe('IPC handler bodies — zero-coverage files', () => {
 
 describe('IPC handler bodies — low-coverage files', () => {
   test('conversation-crud handlers execute', async () => {
-    await testHandlersForModule(
-      'conversation-crud',
-      '../conversation-crud.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          id: 'conv-1',
-          title: 'Test Chat',
-          agentId: 'agent-1',
-          mode: 'chat',
-        },
+    await testHandlersForModule('conversation-crud', '../conversation-crud.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        id: 'conv-1',
+        title: 'Test Chat',
+        agentId: 'agent-1',
+        mode: 'chat'
       }
-    )
+    })
   })
 
   test('chat-mode handlers execute', async () => {
-    await testHandlersForModule(
-      'chat-mode',
-      '../chat-mode.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          mode: 'chat',
-          agentId: 'agent-1',
-        },
+    await testHandlersForModule('chat-mode', '../chat-mode.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        mode: 'chat',
+        agentId: 'agent-1'
       }
-    )
+    })
   })
 
   test('chat-completion handlers execute', async () => {
-    await testHandlersForModule(
-      'chat-completion',
-      '../chat-completion.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          message: 'Hello',
-          model: 'claude-sonnet-4-6',
-        },
+    await testHandlersForModule('chat-completion', '../chat-completion.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        message: 'Hello',
+        model: 'claude-sonnet-4-6'
       }
-    )
+    })
   })
 
   test('chat-message handlers execute', async () => {
-    await testHandlersForModule(
-      'chat-message',
-      '../chat-message.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          messageId: 'msg-1',
-          id: 'msg-1',
-          content: 'test',
-        },
+    await testHandlersForModule('chat-message', '../chat-message.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+        id: 'msg-1',
+        content: 'test'
       }
-    )
+    })
   })
 
   test('workspace handlers execute', async () => {
-    await testHandlersForModule(
-      'workspace',
-      '../workspace.ipc',
-      true,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          id: 'ws-1',
-          path: '/tmp/test-workspace',
-          name: 'Test Workspace',
-        },
+    await testHandlersForModule('workspace', '../workspace.ipc', true, {
+      '*': {
+        workspaceId: 'ws-1',
+        id: 'ws-1',
+        path: '/tmp/test-workspace',
+        name: 'Test Workspace'
       }
-    )
+    })
   })
 
   test('project handlers execute', async () => {
-    await testHandlersForModule(
-      'project',
-      '../project.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          projectId: 'proj-1',
-          id: 'proj-1',
-        },
+    await testHandlersForModule('project', '../project.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        projectId: 'proj-1',
+        id: 'proj-1'
       }
-    )
+    })
   })
 
   test('project-specialist handlers execute', async () => {
-    await testHandlersForModule(
-      'specialist',
-      '../project-specialist.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          specialistId: 'spec-1',
-          id: 'spec-1',
-          name: 'Test Specialist',
-        },
+    await testHandlersForModule('specialist', '../project-specialist.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        specialistId: 'spec-1',
+        id: 'spec-1',
+        name: 'Test Specialist'
       }
-    )
+    })
   })
 
   test('idea handlers execute', async () => {
-    await testHandlersForModule(
-      'idea',
-      '../idea.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          ideaId: 'idea-1',
-          id: 'idea-1',
-          title: 'Test Idea',
-          description: 'Test description',
-        },
+    await testHandlersForModule('idea', '../idea.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        ideaId: 'idea-1',
+        id: 'idea-1',
+        title: 'Test Idea',
+        description: 'Test description'
       }
-    )
+    })
   })
 
-
   test('plan handlers execute', async () => {
-    await testHandlersForModule(
-      'plan',
-      '../plan.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          planId: 'plan-1',
-          id: 'plan-1',
-          conversationId: 'conv-1',
-        },
+    await testHandlersForModule('plan', '../plan.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        planId: 'plan-1',
+        id: 'plan-1',
+        conversationId: 'conv-1'
       }
-    )
+    })
   })
 
   test('session handlers execute', async () => {
-    await testHandlersForModule(
-      'session',
-      '../session.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          sessionId: 'sess-1',
-          id: 'sess-1',
-          conversationId: 'conv-1',
-        },
+    await testHandlersForModule('session', '../session.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        sessionId: 'sess-1',
+        id: 'sess-1',
+        conversationId: 'conv-1'
       }
-    )
+    })
   })
 
   test('checkpoint handlers execute', async () => {
-    await testHandlersForModule(
-      'checkpoint',
-      '../checkpoint.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          checkpointId: 'cp-1',
-          id: 'cp-1',
-          conversationId: 'conv-1',
-          sessionId: 'sess-1',
-          action: 'approve',
-        },
+    await testHandlersForModule('checkpoint', '../checkpoint.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        checkpointId: 'cp-1',
+        id: 'cp-1',
+        conversationId: 'conv-1',
+        sessionId: 'sess-1',
+        action: 'approve'
       }
-    )
+    })
   })
 
   test('memory handlers execute', async () => {
-    await testHandlersForModule(
-      'memory',
-      '../memory.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          memoryId: 'mem-1',
-          id: 'mem-1',
-          content: 'test memory',
-          category: 'architecture',
-        },
+    await testHandlersForModule('memory', '../memory.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        memoryId: 'mem-1',
+        id: 'mem-1',
+        content: 'test memory',
+        category: 'architecture'
       }
-    )
+    })
   })
 
   test('specialist handlers execute', async () => {
-    await testHandlersForModule(
-      'specialist',
-      '../specialist.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          specialistId: 'spec-1',
-          id: 'spec-1',
-          name: 'Test Specialist',
-        },
+    await testHandlersForModule('specialist', '../specialist.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        specialistId: 'spec-1',
+        id: 'spec-1',
+        name: 'Test Specialist'
       }
-    )
+    })
   })
 
   test('skill handlers execute', async () => {
-    await testHandlersForModule(
-      'skill',
-      '../skill.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          skillId: 'skill-1',
-          id: 'skill-1',
-          name: 'Test Skill',
-        },
+    await testHandlersForModule('skill', '../skill.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        skillId: 'skill-1',
+        id: 'skill-1',
+        name: 'Test Skill'
       }
-    )
+    })
   })
 
   test('sdk-control handlers execute', async () => {
-    await testHandlersForModule(
-      'sdk-control',
-      '../sdk-control.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          sessionId: 'sess-1',
-        },
+    await testHandlersForModule('sdk-control', '../sdk-control.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        sessionId: 'sess-1'
       }
-    )
+    })
   })
 
   test('indexing handlers execute', async () => {
-    await testHandlersForModule(
-      'indexing',
-      '../indexing.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          path: '/tmp/test-workspace',
-        },
+    await testHandlersForModule('indexing', '../indexing.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        path: '/tmp/test-workspace'
       }
-    )
+    })
   })
 
   test('permission handlers execute', async () => {
-    await testHandlersForModule(
-      'permission',
-      '../permission.ipc',
-      false,
-      {
-        '*': {
-          conversationId: 'conv-1',
-          toolName: 'bash',
-          decision: 'allow',
-        },
+    await testHandlersForModule('permission', '../permission.ipc', false, {
+      '*': {
+        conversationId: 'conv-1',
+        toolName: 'bash',
+        decision: 'allow'
       }
-    )
+    })
   })
 
   test('workspace-deploy handlers execute', async () => {
-    await testHandlersForModule(
-      'workspace-deploy',
-      '../workspace-deploy.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          deployId: 'deploy-1',
-          id: 'deploy-1',
-          targetPath: '/tmp/deploy',
-        },
+    await testHandlersForModule('workspace-deploy', '../workspace-deploy.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        deployId: 'deploy-1',
+        id: 'deploy-1',
+        targetPath: '/tmp/deploy'
       }
-    )
+    })
   })
 
   test('conversation-specialist handlers execute', async () => {
@@ -690,56 +489,41 @@ describe('IPC handler bodies — low-coverage files', () => {
         '*': {
           workspaceId: 'ws-1',
           conversationId: 'conv-1',
-          specialistId: 'spec-1',
-        },
+          specialistId: 'spec-1'
+        }
       }
     )
   })
 
   test('agent handlers execute', async () => {
-    await testHandlersForModule(
-      'agent',
-      '../agent.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          agentId: 'agent-1',
-          id: 'agent-1',
-        },
+    await testHandlersForModule('agent', '../agent.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        agentId: 'agent-1',
+        id: 'agent-1'
       }
-    )
+    })
   })
 
   test('agent-lifecycle handlers execute', async () => {
-    await testHandlersForModule(
-      'agent-lifecycle',
-      '../agent-lifecycle.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          agentId: 'agent-1',
-        },
+    await testHandlersForModule('agent-lifecycle', '../agent-lifecycle.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        agentId: 'agent-1'
       }
-    )
+    })
   })
 
   test('code-changes handlers execute', async () => {
-    await testHandlersForModule(
-      'code-changes',
-      '../code-changes.ipc',
-      false,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          conversationId: 'conv-1',
-          sessionId: 'sess-1',
-          checkpointId: 'cp-1',
-        },
+    await testHandlersForModule('code-changes', '../code-changes.ipc', false, {
+      '*': {
+        workspaceId: 'ws-1',
+        conversationId: 'conv-1',
+        sessionId: 'sess-1',
+        checkpointId: 'cp-1'
       }
-    )
+    })
   })
 })
 
@@ -749,98 +533,73 @@ describe('IPC handler bodies — low-coverage files', () => {
 
 describe('IPC handler bodies — pipeline files', () => {
   test('blueprint handlers execute (1,153 lines at 4%)', async () => {
-    await testHandlersForModule(
-      'blueprint',
-      '../blueprint.ipc',
-      true,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          blueprintId: 'bp-1',
-          id: 'bp-1',
-          title: 'Test Blueprint',
-          conversationId: 'conv-1',
-          phase: 'specify',
-          taskId: 'task-1',
-          artifact: 'test artifact content',
-          description: 'test description',
-          ideaId: 'idea-1',
-          approved: true,
-        },
+    await testHandlersForModule('blueprint', '../blueprint.ipc', true, {
+      '*': {
+        workspaceId: 'ws-1',
+        blueprintId: 'bp-1',
+        id: 'bp-1',
+        title: 'Test Blueprint',
+        conversationId: 'conv-1',
+        phase: 'specify',
+        taskId: 'task-1',
+        artifact: 'test artifact content',
+        description: 'test description',
+        ideaId: 'idea-1',
+        approved: true
       }
-    )
+    })
   })
 
   test('audit handlers execute (791 lines at 10%)', async () => {
-    await testHandlersForModule(
-      'audit',
-      '../audit.ipc',
-      true,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          auditId: 'audit-1',
-          id: 'audit-1',
-          conversationId: 'conv-1',
-          path: '/tmp/test-workspace',
-        },
+    await testHandlersForModule('audit', '../audit.ipc', true, {
+      '*': {
+        workspaceId: 'ws-1',
+        auditId: 'audit-1',
+        id: 'audit-1',
+        conversationId: 'conv-1',
+        path: '/tmp/test-workspace'
       }
-    )
+    })
   })
 
   test('grill handlers execute (506 lines at 11%)', async () => {
-    await testHandlersForModule(
-      'grill',
-      '../grill.ipc',
-      true,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          grillId: 'grill-1',
-          sessionId: 'session-1',
-          id: 'grill-1',
-          conversationId: 'conv-1',
-          trackId: 'track-1',
-        },
+    await testHandlersForModule('grill', '../grill.ipc', true, {
+      '*': {
+        workspaceId: 'ws-1',
+        grillId: 'grill-1',
+        sessionId: 'session-1',
+        id: 'grill-1',
+        conversationId: 'conv-1',
+        trackId: 'track-1'
       }
-    )
+    })
   })
 
   test('mpa handlers execute (443 lines at 12%)', async () => {
-    await testHandlersForModule(
-      'mpa',
-      '../mpa.ipc',
-      true,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          runId: 'run-1',
-          id: 'run-1',
-          conversationId: 'conv-1',
-          goalId: 'goal-1',
-          title: 'Test Goal',
-          description: 'Test MPA campaign',
-        },
+    await testHandlersForModule('mpa', '../mpa.ipc', true, {
+      '*': {
+        workspaceId: 'ws-1',
+        runId: 'run-1',
+        id: 'run-1',
+        conversationId: 'conv-1',
+        goalId: 'goal-1',
+        title: 'Test Goal',
+        description: 'Test MPA campaign'
       }
-    )
+    })
   })
 
   test('council handlers execute (296 lines at 14%)', async () => {
-    await testHandlersForModule(
-      'council',
-      '../council.ipc',
-      true,
-      {
-        '*': {
-          workspaceId: 'ws-1',
-          councilId: 'council-1',
-          sessionId: 'session-1',
-          id: 'council-1',
-          conversationId: 'conv-1',
-          question: 'Should we refactor?',
-        },
+    await testHandlersForModule('council', '../council.ipc', true, {
+      '*': {
+        workspaceId: 'ws-1',
+        councilId: 'council-1',
+        sessionId: 'session-1',
+        id: 'council-1',
+        conversationId: 'conv-1',
+        question: 'Should we refactor?'
       }
-    )
+    })
   })
 })
 
@@ -851,7 +610,7 @@ describe('IPC handler bodies — pipeline files', () => {
 describe('IPC handler validation — error branches', () => {
   test('handler rejects null args when object expected', async () => {
     // Bug list handler expects filters or undefined - test with null
-    const bugList = capturedHandlers.get('bug:list')
+    const bugList = getHandlers().get('bug:list')
     if (bugList) {
       // BUG_LIST accepts optional filters — null should still pass validateSender
       await tryInvokeHandler('bug:list', null)
@@ -861,7 +620,7 @@ describe('IPC handler validation — error branches', () => {
   })
 
   test('handler rejects unauthorized sender', async () => {
-    const handler = capturedHandlers.get('bug:list')
+    const handler = getHandlers().get('bug:list')
     if (handler) {
       try {
         await handler({ senderFrame: { url: 'https://evil.com' } })
@@ -873,7 +632,7 @@ describe('IPC handler validation — error branches', () => {
   })
 
   test('handler rejects missing senderFrame', async () => {
-    const handler = capturedHandlers.get('bug:list')
+    const handler = getHandlers().get('bug:list')
     if (handler) {
       try {
         await handler({})
@@ -913,10 +672,10 @@ describe('IPC handler validation — error branches', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('IPC handler registration — infrastructure', () => {
-  test('capturedHandlers_is_accessible', () => {
-    assert.equal(typeof capturedHandlers.get, 'function', 'capturedHandlers has get()')
-    assert.equal(typeof capturedHandlers.has, 'function', 'capturedHandlers has has()')
-    assert.equal(typeof capturedHandlers.size, 'number', 'capturedHandlers has size')
+  test('getHandlers()_is_accessible', () => {
+    assert.equal(typeof getHandlers().get, 'function', 'getHandlers() has get()')
+    assert.equal(typeof getHandlers().has, 'function', 'getHandlers() has has()')
+    assert.equal(typeof getHandlers().size, 'number', 'getHandlers() has size')
   })
 
   test('mockEvent_passes_validateSender', () => {

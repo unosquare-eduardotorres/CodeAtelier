@@ -36,18 +36,27 @@ export async function runBlueprintCreate(ctx: E2EServiceContext): Promise<E2ETra
     log.info(`[blueprint-create] Created blueprint: ${result.id}, phases: ${result.phases.length}`)
 
     // Emit the blueprint data as assistant text (for validJson assertion)
-    transcript.push(textEntry(JSON.stringify({
-      id: result.id,
-      title: result.title,
-      phases: result.phases.map((p) => ({ type: p.phase, status: p.status }))
-    })))
+    transcript.push(
+      textEntry(
+        JSON.stringify({
+          id: result.id,
+          title: result.title,
+          phases: result.phases.map((p) => ({ type: p.phase, status: p.status }))
+        })
+      )
+    )
 
     transcript.push(statusEntry('blueprint_created'))
 
     // Cleanup
     blueprintService.delete(result.id)
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -55,7 +64,9 @@ export async function runBlueprintCreate(ctx: E2EServiceContext): Promise<E2ETra
 
 // ── Blueprint Phase Management ──
 
-export async function runBlueprintPhaseManagement(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runBlueprintPhaseManagement(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -95,7 +106,12 @@ export async function runBlueprintPhaseManagement(ctx: E2EServiceContext): Promi
     // Cleanup
     blueprintService.delete(bp.id)
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -103,7 +119,9 @@ export async function runBlueprintPhaseManagement(ctx: E2EServiceContext): Promi
 
 // ── Blueprint Progress Tracking ──
 
-export async function runBlueprintProgressTracking(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runBlueprintProgressTracking(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -122,7 +140,12 @@ export async function runBlueprintProgressTracking(ctx: E2EServiceContext): Prom
       { taskId: 'task-2', wave: 1, description: 'Create API routes' },
       { taskId: 'task-3', wave: 2, description: 'Add authentication', dependsOn: ['task-1'] },
       { taskId: 'task-4', wave: 2, description: 'Write tests', dependsOn: ['task-2'] },
-      { taskId: 'task-5', wave: 3, description: 'Deploy to staging', dependsOn: ['task-3', 'task-4'] }
+      {
+        taskId: 'task-5',
+        wave: 3,
+        description: 'Deploy to staging',
+        dependsOn: ['task-3', 'task-4']
+      }
     ])
 
     transcript.push(statusEntry(`tasks_populated: ${tasks.length}`))
@@ -140,7 +163,12 @@ export async function runBlueprintProgressTracking(ctx: E2EServiceContext): Prom
     // Cleanup
     blueprintService.delete(bp.id)
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -148,7 +176,9 @@ export async function runBlueprintProgressTracking(ctx: E2EServiceContext): Prom
 
 // ── Blueprint Task Execution (Hybrid) ──
 
-export async function runBlueprintTaskExecution(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runBlueprintTaskExecution(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -162,7 +192,11 @@ export async function runBlueprintTaskExecution(ctx: E2EServiceContext): Promise
     })
 
     blueprintService.populateTasks(bp.id, [
-      { taskId: 'task-exec-1', wave: 1, description: 'Create a greeting utility function in src/greet-util.ts' }
+      {
+        taskId: 'task-exec-1',
+        wave: 1,
+        description: 'Create a greeting utility function in src/greet-util.ts'
+      }
     ])
 
     transcript.push(statusEntry('blueprint_with_tasks_created'))
@@ -176,7 +210,12 @@ export async function runBlueprintTaskExecution(ctx: E2EServiceContext): Promise
     // Cleanup
     blueprintService.delete(bp.id)
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -184,7 +223,9 @@ export async function runBlueprintTaskExecution(ctx: E2EServiceContext): Promise
 
 // ── Blueprint Clarify Live (Real Local LLM) ──
 
-export async function runBlueprintClarifyLive(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runBlueprintClarifyLive(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -195,14 +236,16 @@ export async function runBlueprintClarifyLive(ctx: E2EServiceContext): Promise<E
     const bp = blueprintService.create({
       workspaceId: ctx.workspaceId,
       title: 'E2E Clarify Live Test',
-      description: 'Build a thing that does stuff. It should be fast and work well. Users need to interact with it somehow.'
+      description:
+        'Build a thing that does stuff. It should be fast and work well. Users need to interact with it somehow.'
     })
 
     log.info(`[blueprint-clarify-live] Created blueprint ${bp.id}`)
     transcript.push(statusEntry('blueprint_created'))
 
     // 2. Seed a minimal spec artifact so we can skip specify and jump to clarify
-    const { blueprintPhaseRepository } = await import('../../../db/repositories/blueprint.repository')
+    const { blueprintPhaseRepository } =
+      await import('../../../db/repositories/blueprint.repository')
     const specPhase = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'specify')
     if (specPhase) {
       blueprintPhaseRepository.updateStatus(specPhase.id, 'complete')
@@ -236,13 +279,15 @@ export async function runBlueprintClarifyLive(ctx: E2EServiceContext): Promise<E
     blueprintSpecService.on('clarifyAwaitingInput', onAwaiting)
 
     // Start the phase (non-blocking — uses events)
-    const clarifyPromise = blueprintSpecService.startClarifyPhase({
-      blueprintId: bp.id,
-      workspaceId: ctx.workspaceId,
-      workspacePath: ctx.workspacePath
-    }).catch((err) => {
-      log.warn(`[blueprint-clarify-live] Clarify phase threw: ${(err as Error).message}`)
-    })
+    const clarifyPromise = blueprintSpecService
+      .startClarifyPhase({
+        blueprintId: bp.id,
+        workspaceId: ctx.workspaceId,
+        workspacePath: ctx.workspacePath
+      })
+      .catch((err) => {
+        log.warn(`[blueprint-clarify-live] Clarify phase threw: ${(err as Error).message}`)
+      })
 
     // Wait for a signal with timeout
     const waitStart = Date.now()
@@ -269,7 +314,9 @@ export async function runBlueprintClarifyLive(ctx: E2EServiceContext): Promise<E
         })
         transcript.push(statusEntry('clarify_answer_roundtrip_ok'))
       } catch (answerErr) {
-        log.warn(`[blueprint-clarify-live] Answer round-trip threw: ${(answerErr as Error).message}`)
+        log.warn(
+          `[blueprint-clarify-live] Answer round-trip threw: ${(answerErr as Error).message}`
+        )
         transcript.push(statusEntry('clarify_answer_roundtrip_attempted'))
       }
     } else if (clarifySignal === 'gate') {
@@ -278,10 +325,20 @@ export async function runBlueprintClarifyLive(ctx: E2EServiceContext): Promise<E
     } else if (clarifySignal === 'awaiting') {
       // This is the bug signature — stall/dead ask_user
       transcript.push(statusEntry('clarify_stall_awaiting_input'))
-      transcript.push({ role: 'system', type: 'error', content: 'Clarify stalled in awaitingInput — ask_user bridge may be broken', timestamp: Date.now() })
+      transcript.push({
+        role: 'system',
+        type: 'error',
+        content: 'Clarify stalled in awaitingInput — ask_user bridge may be broken',
+        timestamp: Date.now()
+      })
     } else {
       transcript.push(statusEntry('clarify_timeout'))
-      transcript.push({ role: 'system', type: 'error', content: 'Clarify timed out with no signal', timestamp: Date.now() })
+      transcript.push({
+        role: 'system',
+        type: 'error',
+        content: 'Clarify timed out with no signal',
+        timestamp: Date.now()
+      })
     }
 
     // Wait for the clarify promise to settle
@@ -290,10 +347,17 @@ export async function runBlueprintClarifyLive(ctx: E2EServiceContext): Promise<E
     // 6. Cleanup
     try {
       blueprintService.cancel(ctx.workspaceId)
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
     blueprintService.delete(bp.id)
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript

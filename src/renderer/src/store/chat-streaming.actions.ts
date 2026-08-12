@@ -18,7 +18,9 @@ import {
 import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import type { PerConversationStreamState } from './chat-action-utils'
-import type { ChatState } from './chat.store'
+import type { ChatState, PendingToolPermission } from './chat.store'
+import { findPlanBlock } from '@renderer/components/chat/plan-detection'
+import { usePlanExecutionStore } from './plan-execution.store'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,8 @@ export interface ChatStreamingState {
   /** STALL-DETECT-01: Conversation ID whose stream has stalled (no real content for 3 minutes).
    *  null when no stall detected. Used to show a warning banner — does NOT kill the stream. */
   streamStalledConversationId: string | null
+  /** Inline tool-permission prompt — cleared when its turn finalizes. */
+  pendingToolPermission: PendingToolPermission | null
   /** MULTI-CHAT-06: Per-conversation streaming state snapshots. */
   conversationStreams: Map<string, PerConversationStreamState>
   messages: Message[]
@@ -76,13 +80,16 @@ export class ChatStreamingInternals {
   private accumulators = new Map<string, StreamSegmentAccumulator>()
   /** PRE-MORTEM-2: Pending metadata written by appendStreamChunkAction, consumed by
    *  the accumulator's onChange to avoid an extra Map-copy set() per chunk. */
-  private pendingMeta = new Map<string, {
-    role?: 'specialist'
-    specialist?: string | null
-    taskId?: string | null
-    phase?: ConversationPhase | null
-    requestId?: string | null
-  }>()
+  private pendingMeta = new Map<
+    string,
+    {
+      role?: 'specialist'
+      specialist?: string | null
+      taskId?: string | null
+      phase?: ConversationPhase | null
+      requestId?: string | null
+    }
+  >()
   private storeGet: GetFn | null = null
   private storeSet: SetFn | null = null
 
@@ -134,10 +141,14 @@ export class ChatStreamingInternals {
             streamingContent: state.currentContent,
             streamingSegments: state.segments,
             streamingRole: meta?.role ?? existing?.streamingRole ?? ('specialist' as const),
-            streamingSpecialist: (meta?.specialist !== undefined ? meta.specialist : existing?.streamingSpecialist) ?? null,
-            streamingTaskId: (meta?.taskId !== undefined ? meta.taskId : existing?.streamingTaskId) ?? null,
+            streamingSpecialist:
+              (meta?.specialist !== undefined ? meta.specialist : existing?.streamingSpecialist) ??
+              null,
+            streamingTaskId:
+              (meta?.taskId !== undefined ? meta.taskId : existing?.streamingTaskId) ?? null,
             streamingPhase: meta?.phase ?? existing?.streamingPhase ?? null,
-            activeRequestId: (meta?.requestId !== undefined ? meta.requestId : existing?.activeRequestId) ?? null,
+            activeRequestId:
+              (meta?.requestId !== undefined ? meta.requestId : existing?.activeRequestId) ?? null,
             isStreaming: existing?.isStreaming ?? true,
             toolActivities: state.currentToolActivities,
             pendingQuestions: existing?.pendingQuestions ?? null,
@@ -149,19 +160,23 @@ export class ChatStreamingInternals {
           const isActive = prev.activeConversation?.id === conversationId
           return {
             conversationStreams: streams,
-            ...(isActive ? {
-              streamingContent: state.currentContent,
-              streamingSegments: state.segments,
-              toolActivities: state.currentToolActivities,
-              // Also project metadata when present
-              ...(meta ? {
-                streamingRole: entry.streamingRole,
-                streamingSpecialist: entry.streamingSpecialist,
-                streamingTaskId: entry.streamingTaskId,
-                streamingPhase: entry.streamingPhase,
-                isStreaming: true
-              } : {})
-            } : {})
+            ...(isActive
+              ? {
+                  streamingContent: state.currentContent,
+                  streamingSegments: state.segments,
+                  toolActivities: state.currentToolActivities,
+                  // Also project metadata when present
+                  ...(meta
+                    ? {
+                        streamingRole: entry.streamingRole,
+                        streamingSpecialist: entry.streamingSpecialist,
+                        streamingTaskId: entry.streamingTaskId,
+                        streamingPhase: entry.streamingPhase,
+                        isStreaming: true
+                      }
+                    : {})
+                }
+              : {})
           }
         })
       })
@@ -204,13 +219,16 @@ export class ChatStreamingInternals {
   }
 
   /** PRE-MORTEM-2: Stash metadata for the next accumulator onChange to consume. */
-  setPendingMeta(conversationId: string, meta: {
-    role?: 'specialist'
-    specialist?: string | null
-    taskId?: string | null
-    phase?: ConversationPhase | null
-    requestId?: string | null
-  }): void {
+  setPendingMeta(
+    conversationId: string,
+    meta: {
+      role?: 'specialist'
+      specialist?: string | null
+      taskId?: string | null
+      phase?: ConversationPhase | null
+      requestId?: string | null
+    }
+  ): void {
     this.pendingMeta.set(conversationId, meta)
   }
 
@@ -322,7 +340,8 @@ export class ChatStreamingInternals {
             // GAP-R7-1: Clean up stashed streaming state for the timed-out conversation.
             // Without this, the stash retains isStreaming: true, causing BUG-R7-1 (locked
             // input when the user switches to this conversation).
-            const currentStreams = this.storeGet?.().conversationStreams ?? new Map<string, PerConversationStreamState>()
+            const currentStreams =
+              this.storeGet?.().conversationStreams ?? new Map<string, PerConversationStreamState>()
             const newStreams = new Map(currentStreams)
             newStreams.delete(convId)
             // BUG-R5-1: Derive isStreaming from active conv membership, not global set size.
@@ -332,13 +351,30 @@ export class ChatStreamingInternals {
             // conv is the active one. A background conv timing out shouldn't clear
             // the active conv's phase label or request tracking.
             const isActiveConv = activeId === convId
+            // WEDGE-FIX: release the send flag too. `sendingConversationIds`
+            // drives the composer lock and the Stop button independently of
+            // `isStreaming`; if the stream dies silently after the 30s reconcile
+            // declined, clearing only the streaming state removes the thinking
+            // indicator but leaves the composer permanently disabled.
+            const currentSending =
+              this.storeGet?.().sendingConversationIds ?? new Set<string>()
+            const newSending = new Set(currentSending)
+            newSending.delete(convId)
             this.storeSet?.({
               isStreaming: activeId ? newIds.has(activeId) : false,
               ...(isActiveConv ? { activeRequestId: null } : {}),
               streamingConversationIds: newIds,
+              sendingConversationIds: newSending,
               conversationStreams: newStreams,
               ...(isActiveConv
-                ? { conversationState: { phase: 'idle', from: null, event: null, conversationId: null } }
+                ? {
+                    conversationState: {
+                      phase: 'idle',
+                      from: null,
+                      event: null,
+                      conversationId: null
+                    }
+                  }
                 : {}),
               // STALL-DETECT-01: Clear stall flag on safety timeout.
               // Use per-conversation matching (not isActiveConv) so background
@@ -349,7 +385,11 @@ export class ChatStreamingInternals {
               // SAFETY-ORPHAN-QUESTIONS: Clear orphaned question cards on safety timeout.
               // The backend is dead — answers can't be routed to the CLI anymore.
               ...(isActiveConv
-                ? { pendingQuestions: null, pendingQuestionAction: null, pendingQuestionRequestId: null }
+                ? {
+                    pendingQuestions: null,
+                    pendingQuestionAction: null,
+                    pendingQuestionRequestId: null
+                  }
                 : {})
             })
           }
@@ -384,10 +424,24 @@ export function appendStreamChunkAction(
   const isCurrentlyStreaming = isActive ? get().isStreaming : (buffer?.isStreaming ?? false)
 
   // CHUNK-LEAK-01: Drop chunks when no active request is expected AND not streaming.
-  if (!effectiveRequestId && !isCurrentlyStreaming) return
+  if (!effectiveRequestId && !isCurrentlyStreaming) {
+    if (chunk?.includes?.('```plan\n')) {
+      rendererLog.warn(
+        `[appendStreamChunk:plan-block-DROPPED] reason=no-active-request ` +
+          `conversationId=${conversationId} chunkLen=${chunk.length}`
+      )
+    }
+    return
+  }
 
   // Drop stale chunks (mismatched request)
   if (effectiveRequestId && requestId && requestId !== effectiveRequestId) {
+    if (chunk?.includes?.('```plan\n')) {
+      rendererLog.warn(
+        `[appendStreamChunk:plan-block-DROPPED] reason=stale-request ` +
+          `conversationId=${conversationId} expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
+      )
+    }
     rendererLog.debug(
       `[appendStreamChunk] Dropped stale chunk: expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
     )
@@ -397,8 +451,25 @@ export function appendStreamChunkAction(
   // STREAM-REQID-BYPASS-01: If we expect a specific request but this chunk has no ID,
   // drop it — it's likely a late chunk from a previous request that omitted requestId.
   if (effectiveRequestId && !requestId) {
-    rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (effectiveRequestId set)')
+    if (chunk?.includes?.('```plan\n')) {
+      rendererLog.warn(
+        `[appendStreamChunk:plan-block-DROPPED] reason=no-requestId ` +
+          `conversationId=${conversationId} chunkLen=${chunk.length}`
+      )
+    }
+    rendererLog.debug(
+      '[appendStreamChunk] Dropped chunk without requestId (effectiveRequestId set)'
+    )
     return
+  }
+
+  // Log plan block reception for diagnostics
+  if (chunk?.includes?.('```plan\n')) {
+    rendererLog.info(
+      `[appendStreamChunk:plan-block] conversationId=${conversationId} ` +
+        `effectiveRequestId=${effectiveRequestId?.slice(0, 12)} requestId=${requestId?.slice(0, 12)} ` +
+        `isCurrentlyStreaming=${isCurrentlyStreaming} chunkLen=${chunk.length}`
+    )
   }
 
   // Reset safety timer — backend is still alive
@@ -424,7 +495,8 @@ export function appendStreamChunkAction(
   // PRE-MORTEM-2: Stash metadata so the accumulator's onChange merges it in the
   // same set() call that writes content. This eliminates a redundant Map copy
   // that the old separate set() did on every chunk (~50/sec).
-  const updatedPhase = role === 'specialist' ? 'specialist-executing' as const : 'specialist-responding' as const
+  const updatedPhase =
+    role === 'specialist' ? ('specialist-executing' as const) : ('specialist-responding' as const)
   streamingInternals.setPendingMeta(conversationId, {
     role,
     specialist: specialist ?? undefined,
@@ -436,6 +508,75 @@ export function appendStreamChunkAction(
   // Push chunk through per-conversation segment accumulator.
   // SentenceBuffer will fire onChange which reads pendingMeta and does a single set().
   streamingInternals.getOrCreateAccumulatorFor(conversationId).appendText(chunk)
+}
+
+// ── Interrupt flush ──────────────────────────────────────────────────────
+
+/**
+ * Commit whatever the agent has streamed so far as a message, so an interrupt
+ * card (question / tool permission) lands BELOW the text that led to it rather
+ * than above it. Shared by setPendingQuestions and setPendingToolPermission.
+ *
+ * `idPrefix` only distinguishes the synthetic message ids in the transcript.
+ */
+export function flushStreamingIntoMessage(get: GetFn, set: SetFn, idPrefix: string): void {
+  // FLUSH-ORDER-01: Flush the active conversation's accumulator BEFORE reading state.
+  const activeConversation = get().activeConversation
+  streamingInternals.flushAccumulator(activeConversation?.id)
+
+  // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
+  const buffer = activeConversation
+    ? get().conversationStreams.get(activeConversation.id)
+    : undefined
+  const streamingContent = buffer?.streamingContent ?? get().streamingContent
+  const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
+  const streamingRole = buffer?.streamingRole ?? get().streamingRole
+  const streamingSpecialist = buffer?.streamingSpecialist ?? get().streamingSpecialist
+  const toolActivities = buffer?.toolActivities ?? get().toolActivities
+
+  if (
+    !activeConversation ||
+    (!streamingContent && streamingSegments.length === 0 && toolActivities.length === 0)
+  ) {
+    return
+  }
+
+  const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .join('\n\n')
+
+  const mergedTools = [
+    ...streamingSegments.flatMap((s) => s.toolActivities),
+    ...toolActivities
+  ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
+
+  if (mergedContent || mergedTools.length > 0) {
+    const message: Message = {
+      id: `${idPrefix}-${Date.now()}`,
+      conversationId: activeConversation.id,
+      role: streamingRole,
+      ...(streamingRole === 'specialist' && streamingSpecialist
+        ? { agentId: streamingSpecialist }
+        : {}),
+      contentMd: mergedContent,
+      attachmentsJson: '[]',
+      createdAt:
+        streamingSegments.length > 0
+          ? new Date(streamingSegments[0].timestamp).toISOString()
+          : new Date().toISOString(),
+      toolActivities: mergedTools.length > 0 ? mergedTools : undefined
+    }
+
+    set((state) => ({
+      messages: [...state.messages, message],
+      streamingContent: '',
+      streamingSegments: [],
+      toolActivities: []
+    }))
+  }
+
+  streamingInternals.resetAccumulator(activeConversation.id)
 }
 
 // ── finalizeStream helpers ───────────────────────────────────────────────
@@ -498,11 +639,7 @@ function computeFinalizeStateDelta(
   return base
 }
 
-function reloadMessagesFromDb(
-  conversationId: string,
-  get: GetFn,
-  set: SetFn
-): void {
+function reloadMessagesFromDb(conversationId: string, get: GetFn, set: SetFn): void {
   const reloadGeneration = streamingInternals.messageGeneration
   window.api
     .getMessages({ conversationId })
@@ -543,8 +680,10 @@ export function finalizeStreamAction(
   // Read streaming state from the buffer (or globals for active conv as fallback)
   const streamingSegments = buffer?.streamingSegments ?? (isActive ? get().streamingSegments : [])
   const streamingContent = buffer?.streamingContent ?? (isActive ? get().streamingContent : '')
-  const streamingRole = buffer?.streamingRole ?? (isActive ? get().streamingRole : 'specialist' as const)
-  const streamingSpecialist = buffer?.streamingSpecialist ?? (isActive ? get().streamingSpecialist : null)
+  const streamingRole =
+    buffer?.streamingRole ?? (isActive ? get().streamingRole : ('specialist' as const))
+  const streamingSpecialist =
+    buffer?.streamingSpecialist ?? (isActive ? get().streamingSpecialist : null)
   const toolActivities = buffer?.toolActivities ?? (isActive ? get().toolActivities : [])
 
   if (!taskId) streamingInternals.clearSafetyTimer(conversationId)
@@ -552,7 +691,9 @@ export function finalizeStreamAction(
   // Main path: streamed content exists
   if (streamingContent || streamingSegments.length > 0) {
     const { mergedContent, mergedTools } = mergeStreamedContent(
-      streamingSegments, streamingContent, toolActivities
+      streamingSegments,
+      streamingContent,
+      toolActivities
     )
 
     const newMessages: Message[] = []
@@ -594,16 +735,24 @@ export function finalizeStreamAction(
       return {
         conversationStreams: streams,
         // Only append messages + update globals for active conversation
-        ...(isActive ? {
-          messages: [...state.messages, ...newMessages],
-          ...computeFinalizeStateDelta(taskId, { id: conversationId }, state.streamingConversationIds),
-          ...(taskId ? {
-            activeRequestId: state.activeRequestId,
-            streamingPhase: state.streamingPhase,
-            toolActivities: state.toolActivities,
-            streamingSpecialist: state.streamingSpecialist
-          } : {})
-        } : {})
+        ...(isActive
+          ? {
+              messages: [...state.messages, ...newMessages],
+              ...computeFinalizeStateDelta(
+                taskId,
+                { id: conversationId },
+                state.streamingConversationIds
+              ),
+              ...(taskId
+                ? {
+                    activeRequestId: state.activeRequestId,
+                    streamingPhase: state.streamingPhase,
+                    toolActivities: state.toolActivities,
+                    streamingSpecialist: state.streamingSpecialist
+                  }
+                : {})
+            }
+          : {})
       }
     })
   } else if (taskId) {
@@ -612,7 +761,12 @@ export function finalizeStreamAction(
       const streams = new Map(state.conversationStreams)
       const existing = streams.get(conversationId)
       if (existing) {
-        streams.set(conversationId, { ...existing, streamingContent: '', streamingSegments: [], streamingTaskId: null })
+        streams.set(conversationId, {
+          ...existing,
+          streamingContent: '',
+          streamingSegments: [],
+          streamingTaskId: null
+        })
       }
       return {
         conversationStreams: streams,
@@ -649,6 +803,31 @@ export function finalizeStreamAction(
   }
 
   streamingInternals.resetAccumulator(conversationId)
+
+  // PERM-INLINE-01: A tool-permission card must not outlive its turn. The
+  // server denies on its own 15-min timeout and never tells the renderer, so
+  // the end of the stream is the only signal that the card is dead. Per-task
+  // finalizes (taskId) are mid-turn and must not clear it.
+  if (!taskId && get().pendingToolPermission?.permission.conversationId === conversationId) {
+    set({ pendingToolPermission: null })
+  }
+
+  // PLAN-RACE-FIX-E1: After finalize, schedule a deferred check for late plan blocks.
+  // The backend's late injection (PLAN-RACE-FIX-01) sends the plan chunk after the
+  // complete event. ChunkConsumer's rAF batching could delay it by one frame,
+  // causing it to arrive after this finalize ran. This deferred scan catches that.
+  setTimeout(() => {
+    // GAP-2-GUARD: If the user switched conversations within 500ms, get().messages
+    // now contains messages from a different conversation. Bail out to avoid
+    // populating plan content for a stale conversation.
+    if (get().activeConversation?.id !== conversationId) return
+    const currentMessages = get().messages
+    const msg = currentMessages.find((m: Message) => m.id === messageId)
+    const block = msg?.contentMd ? findPlanBlock(msg.contentMd) : null
+    if (block?.content) {
+      usePlanExecutionStore.getState().setLatestPlanContent(conversationId, block.content)
+    }
+  }, 500)
 }
 
 export function finalizeTurnBubbleAction(
@@ -710,7 +889,12 @@ export function finalizeTurnBubbleAction(
         const streams = new Map(state.conversationStreams)
         const existing = streams.get(activeConversation.id)
         if (existing) {
-          streams.set(activeConversation.id, { ...existing, streamingContent: '', streamingSegments: [], toolActivities: [] })
+          streams.set(activeConversation.id, {
+            ...existing,
+            streamingContent: '',
+            streamingSegments: [],
+            toolActivities: []
+          })
         }
         return {
           messages: [...state.messages, message],
@@ -726,9 +910,20 @@ export function finalizeTurnBubbleAction(
         const streams = new Map(state.conversationStreams)
         const existing = streams.get(activeConversation.id)
         if (existing) {
-          streams.set(activeConversation.id, { ...existing, streamingContent: '', streamingSegments: [], toolActivities: [] })
+          streams.set(activeConversation.id, {
+            ...existing,
+            streamingContent: '',
+            streamingSegments: [],
+            toolActivities: []
+          })
         }
-        return { streamingContent: '', streamingSegments: [], toolActivities: [], isStreaming: true, conversationStreams: streams }
+        return {
+          streamingContent: '',
+          streamingSegments: [],
+          toolActivities: [],
+          isStreaming: true,
+          conversationStreams: streams
+        }
       })
     }
   }

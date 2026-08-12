@@ -177,8 +177,20 @@ describe('LibraryDocService — Context7 API (mocked)', () => {
         return new Response('Not found', { status: 404 })
       }) as typeof globalThis.fetch
 
+      // Pin tier 1 (local cache) to a miss. It is a process-wide singleton and a
+      // populated cache short-circuits resolveLibrary before any HTTP call, which
+      // is not what this test is about.
+      const { libraryDocRepository } = require('../../db/repositories/library-doc.repository')
+      const origListPackages = libraryDocRepository.listPackages
+      libraryDocRepository.listPackages = () => []
+
       // No Context7 key → tier 2 skipped → npm fallback should fire
-      const results = await service.resolveLibrary('test-ws', '/tmp/nonexistent', 'express')
+      let results: Awaited<ReturnType<typeof service.resolveLibrary>>
+      try {
+        results = await service.resolveLibrary('test-ws', '/tmp/nonexistent', 'express')
+      } finally {
+        libraryDocRepository.listPackages = origListPackages
+      }
 
       assert.ok(
         fetchedUrl.includes('registry.npmjs.org/express'),

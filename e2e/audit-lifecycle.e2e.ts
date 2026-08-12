@@ -36,7 +36,7 @@ test.describe('Audit Lifecycle', () => {
     page: import('@playwright/test').Page
   ): Promise<{ health: HealthPage; settings: WorkspaceSettings }> {
     const welcomePage = new WelcomePage(page)
-    const chrome = new AppChrome(page)
+    const _chrome = new AppChrome(page)
     const settings = new WorkspaceSettings(page)
     const health = new HealthPage(page)
 
@@ -59,7 +59,10 @@ test.describe('Audit Lifecycle', () => {
     // Navigate to Settings tab then Health
     // First check if we need to switch to settings view in the sidebar
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasSettingsTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSettingsTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasSettingsTab) {
       // Click on the sidebar Settings tab to show workspace settings
@@ -235,7 +238,10 @@ test.describe('Audit Lifecycle', () => {
     // Navigate back to Health
     const settings = new WorkspaceSettings(page)
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)

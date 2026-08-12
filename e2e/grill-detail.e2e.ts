@@ -23,9 +23,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Grill Detail Views', () => {
-  async function navigateToGrillPage(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToGrillPage(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -41,18 +39,18 @@ test.describe('Grill Detail Views', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('ideas')
+    await settingsNav.navigateToSettingsTab('ideas')
     await page.waitForTimeout(1_000)
     return true
   }
 
-  async function navigateToGrillSession(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToGrillSession(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for a completed grill session to inspect
-    const sessionCards = page.locator('[data-testid="grill-session-card"], [class*="cursor-pointer"]').filter({
-      hasText: /completed|grilled|score/i
-    })
+    const sessionCards = page
+      .locator('[data-testid="grill-session-card"], [class*="cursor-pointer"]')
+      .filter({
+        hasText: /completed|grilled|score/i
+      })
     if ((await sessionCards.count()) === 0) return false
 
     await sessionCards.first().click()
@@ -60,17 +58,24 @@ test.describe('Grill Detail Views', () => {
     return true
   }
 
-  test('decisions view renders with decision history list', async ({
-    electronPage: page
-  }) => {
+  test('decisions view renders with decision history list', async ({ electronPage: page }) => {
     const ready = await navigateToGrillPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToGrillSession(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Switch to decisions tab if tabs exist
-    const decisionsTab = page.locator('button').filter({ hasText: /Decisions|Decision/i }).first()
+    const decisionsTab = page
+      .locator('button')
+      .filter({ hasText: /Decisions|Decision/i })
+      .first()
     if (await decisionsTab.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await decisionsTab.click()
       await page.waitForTimeout(500)
@@ -78,7 +83,10 @@ test.describe('Grill Detail Views', () => {
 
     const decisionsView = page.locator('[data-testid="grill-decisions-view"]')
     const isVisible = await decisionsView.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(decisionsView).toBeVisible()
 
@@ -87,16 +95,23 @@ test.describe('Grill Detail Views', () => {
     expect(viewText?.trim().length).toBeGreaterThan(0)
   })
 
-  test('decision cards show status, score, and rationale', async ({
-    electronPage: page
-  }) => {
+  test('decision cards show status, score, and rationale', async ({ electronPage: page }) => {
     const ready = await navigateToGrillPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToGrillSession(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
-    const decisionsTab = page.locator('button').filter({ hasText: /Decisions|Decision/i }).first()
+    const decisionsTab = page
+      .locator('button')
+      .filter({ hasText: /Decisions|Decision/i })
+      .first()
     if (await decisionsTab.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await decisionsTab.click()
       await page.waitForTimeout(500)
@@ -104,7 +119,10 @@ test.describe('Grill Detail Views', () => {
 
     const decisionsView = page.locator('[data-testid="grill-decisions-view"]')
     const isVisible = await decisionsView.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Look for decision group sections (grouped by iteration/track)
     const groups = decisionsView.locator('h3, [class*="font-semibold"]')
@@ -122,14 +140,18 @@ test.describe('Grill Detail Views', () => {
     expect(viewText?.length).toBeGreaterThan(20)
   })
 
-  test('chat view shows grill conversation messages', async ({
-    electronPage: page
-  }) => {
+  test('chat view shows grill conversation messages', async ({ electronPage: page }) => {
     const ready = await navigateToGrillPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToGrillSession(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Switch to chat tab
     const chatTab = page.locator('button').filter({ hasText: /Chat/i }).first()
@@ -140,7 +162,10 @@ test.describe('Grill Detail Views', () => {
 
     const chatView = page.locator('[data-testid="grill-chat-view"]')
     const isVisible = await chatView.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(chatView).toBeVisible()
 
@@ -149,26 +174,39 @@ test.describe('Grill Detail Views', () => {
     expect(chatText?.trim().length).toBeGreaterThan(0)
   })
 
-  test('radar chart renders SVG with track axis labels', async ({
-    electronPage: page
-  }) => {
+  test('radar chart renders SVG with track axis labels', async ({ electronPage: page }) => {
     const ready = await navigateToGrillPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToGrillSession(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Switch to radar/overview tab
-    const radarTab = page.locator('button').filter({ hasText: /Radar|Overview|Scores/i }).first()
+    const radarTab = page
+      .locator('button')
+      .filter({ hasText: /Radar|Overview|Scores/i })
+      .first()
     if (await radarTab.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await radarTab.click()
       await page.waitForTimeout(500)
     }
 
     // Look for SVG radar chart
-    const svg = page.locator('svg').filter({ has: page.locator('polygon, path') }).first()
+    const svg = page
+      .locator('svg')
+      .filter({ has: page.locator('polygon, path') })
+      .first()
     const hasSvg = await svg.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSvg) { test.skip(); return }
+    if (!hasSvg) {
+      test.skip()
+      return
+    }
 
     await expect(svg).toBeVisible()
 
@@ -178,28 +216,44 @@ test.describe('Grill Detail Views', () => {
     expect(labelCount).toBeGreaterThan(0)
   })
 
-  test('radar chart shows score polygon for completed tracks', async ({
-    electronPage: page
-  }) => {
+  test('radar chart shows score polygon for completed tracks', async ({ electronPage: page }) => {
     const ready = await navigateToGrillPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToGrillSession(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
-    const radarTab = page.locator('button').filter({ hasText: /Radar|Overview|Scores/i }).first()
+    const radarTab = page
+      .locator('button')
+      .filter({ hasText: /Radar|Overview|Scores/i })
+      .first()
     if (await radarTab.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await radarTab.click()
       await page.waitForTimeout(500)
     }
 
-    const svg = page.locator('svg').filter({ has: page.locator('polygon, path') }).first()
+    const svg = page
+      .locator('svg')
+      .filter({ has: page.locator('polygon, path') })
+      .first()
     const hasSvg = await svg.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSvg) { test.skip(); return }
+    if (!hasSvg) {
+      test.skip()
+      return
+    }
 
     // Should have polygon element (the score shape)
     const polygon = svg.locator('polygon')
-    const hasPolygon = await polygon.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasPolygon = await polygon
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     if (hasPolygon) {
       await expect(polygon.first()).toBeVisible()
       // Polygon should have points attribute
@@ -212,28 +266,44 @@ test.describe('Grill Detail Views', () => {
     }
   })
 
-  test('score tooltips appear on hover', async ({
-    electronPage: page
-  }) => {
+  test('score tooltips appear on hover', async ({ electronPage: page }) => {
     const ready = await navigateToGrillPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToGrillSession(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
-    const radarTab = page.locator('button').filter({ hasText: /Radar|Overview|Scores/i }).first()
+    const radarTab = page
+      .locator('button')
+      .filter({ hasText: /Radar|Overview|Scores/i })
+      .first()
     if (await radarTab.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await radarTab.click()
       await page.waitForTimeout(500)
     }
 
-    const svg = page.locator('svg').filter({ has: page.locator('polygon, path') }).first()
+    const svg = page
+      .locator('svg')
+      .filter({ has: page.locator('polygon, path') })
+      .first()
     const hasSvg = await svg.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSvg) { test.skip(); return }
+    if (!hasSvg) {
+      test.skip()
+      return
+    }
 
     // Look for interactive score dots/circles
     const dots = svg.locator('circle')
-    if ((await dots.count()) === 0) { test.skip(); return }
+    if ((await dots.count()) === 0) {
+      test.skip()
+      return
+    }
 
     // Hover over the first dot
     await dots.first().hover()
@@ -242,8 +312,11 @@ test.describe('Grill Detail Views', () => {
     // Tooltip should appear (may be a title attribute or a separate element)
     const tooltip = page.locator('[role="tooltip"], [class*="tooltip"], title')
     const titleAttr = await dots.first().getAttribute('title')
-    const hasTooltip = (await tooltip.first().isVisible({ timeout: 2_000 }).catch(() => false)) ||
-      titleAttr !== null
+    const hasTooltip =
+      (await tooltip
+        .first()
+        .isVisible({ timeout: 2_000 })
+        .catch(() => false)) || titleAttr !== null
 
     // Score dots should at minimum have some identifying attribute
     expect(await dots.count()).toBeGreaterThan(0)

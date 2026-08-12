@@ -20,8 +20,12 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { getDatabase } from '../db/index'
 import { specialistRepository } from '../db/repositories'
-import { specialistBuilderService } from '../services/specialist-builder.service'
+import {
+  specialistBuilderService,
+  isIngestionSatisfied
+} from '../services/specialist-builder.service'
 import { stackDriftDetectorService } from '../services/stack-drift-detector.service'
+import { memoryBootstrapRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 import { requireObject, requireString, optionalBoolean } from './validate-args'
@@ -44,6 +48,8 @@ interface ProjectSpecialistRow {
   created_at: string
   updated_at: string
   skill_recommendations_json: string | null
+  build_method: 'agentic' | 'oneshot' | 'skeleton' | null
+  ingestion_run_id: string | null
 }
 
 function emitProgress(specialistId: string, phase: string, message: string): void {
@@ -63,7 +69,7 @@ function loadRow(workspaceId: string): ProjectSpecialistRow | undefined {
     .prepare(
       `SELECT id, workspace_id, agent_id, display_name, icon, color, prompt, build_status,
               stack_fingerprint, detected_techs, last_built_at,
-              skill_recommendations_json,
+              skill_recommendations_json, build_method, ingestion_run_id,
               created_at, updated_at
          FROM specialists WHERE workspace_id = ?`
     )
@@ -90,6 +96,22 @@ function serializeRow(row: ProjectSpecialistRow): Record<string, unknown> {
   } catch {
     skillRecommendations = null
   }
+  // Ingestion state drives the Rebuild gate + freshness line in the UI. Read
+  // live rather than trusting the stored run id, which only records the run
+  // that informed the LAST build.
+  let ingestion: Record<string, unknown> | null = null
+  try {
+    const latest = memoryBootstrapRepository.getLatestRun(row.workspace_id) ?? null
+    ingestion = {
+      satisfied: isIngestionSatisfied(latest),
+      status: latest?.status ?? null,
+      factsCreated: latest?.factsCreated ?? 0,
+      finishedAt: latest?.finishedAt ?? null
+    }
+  } catch {
+    ingestion = null
+  }
+
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -103,6 +125,9 @@ function serializeRow(row: ProjectSpecialistRow): Record<string, unknown> {
     detectedTechs,
     skillRecommendations,
     lastBuiltAt: row.last_built_at,
+    buildMethod: row.build_method,
+    ingestionRunId: row.ingestion_run_id,
+    ingestion,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   }
@@ -276,8 +301,7 @@ export function registerProjectSpecialistIpc(): void {
             WHERE s.id = ?`
         )
         .get(specialistId) as
-        | { id: string; workspace_id: string; detected_techs: string; repo_path: string }
-        | undefined
+        { id: string; workspace_id: string; detected_techs: string; repo_path: string } | undefined
 
       if (!row) throw new Error(`Specialist not found: ${specialistId}`)
 

@@ -97,7 +97,8 @@ export const useBugStore = create<BugStore>((set, get) => ({
       bugs: state.bugs.map((b) => (ids.includes(b.id) ? { ...b, isResolved: true } : b)),
       unresolvedCount: Math.max(
         0,
-        state.unresolvedCount - ids.filter((id) => state.bugs.find((b) => b.id === id && !b.isResolved)).length
+        state.unresolvedCount -
+          ids.filter((id) => state.bugs.find((b) => b.id === id && !b.isResolved)).length
       ),
       selectedBugIds: new Set<string>()
     }))
@@ -107,7 +108,9 @@ export const useBugStore = create<BugStore>((set, get) => ({
   bulkDeleteBugs: async (ids) => {
     await Promise.all(ids.map((id) => window.api.deleteBug({ id })))
     set((state) => {
-      const deletedUnresolved = ids.filter((id) => state.bugs.find((b) => b.id === id && !b.isResolved)).length
+      const deletedUnresolved = ids.filter((id) =>
+        state.bugs.find((b) => b.id === id && !b.isResolved)
+      ).length
       return {
         bugs: state.bugs.filter((b) => !ids.includes(b.id)),
         unresolvedCount: Math.max(0, state.unresolvedCount - deletedUnresolved),

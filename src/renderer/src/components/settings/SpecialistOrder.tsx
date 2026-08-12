@@ -66,11 +66,14 @@ export default function SpecialistOrder(): React.JSX.Element {
   if (orderedList.length === 0) return <></>
 
   return (
-    <div data-testid="specialist-order" className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+    <div
+      data-testid="specialist-order"
+      className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm"
+    >
       <h4 className="text-sm font-medium text-text-primary">Specialist Priority Order</h4>
       <p className="text-xs text-text-secondary mt-0.5 mb-4">
-        Drag to reorder. Specialists listed first are presented first to the agent when
-        decomposing tasks into sub-tasks.
+        Drag to reorder. Specialists listed first are presented first to the agent when decomposing
+        tasks into sub-tasks.
       </p>
       <div className="space-y-1">
         {orderedList.map((specialist, index) => (

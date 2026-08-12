@@ -29,7 +29,8 @@ describe('SkillEnrichmentService.parseEnrichment', () => {
   })
 
   test('JSON with markdown fences → fences stripped before parse', () => {
-    const raw = '```json\n{"keywords":["react"],"applicableTo":"UI","complexity":"foundational"}\n```'
+    const raw =
+      '```json\n{"keywords":["react"],"applicableTo":"UI","complexity":"foundational"}\n```'
     const result = svc.parseEnrichment(raw)
     assert.deepEqual(result.keywords, ['react'])
     assert.equal(result.complexity, 'foundational')

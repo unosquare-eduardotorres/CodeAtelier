@@ -16,6 +16,7 @@ interface CodeGraphTagRow {
   line: number
   name: string
   kind: 'def' | 'ref'
+  symbol_kind: string | null
   file_mtime: number
   indexed_at: string
 }
@@ -26,7 +27,17 @@ export interface RepomapTag {
   line: number
   name: string
   kind: 'def' | 'ref'
+  /**
+   * Tree-sitter capture subtype ('function' | 'method' | 'class' | 'interface' |
+   * 'type' | 'enum' | 'module' | 'constant' for defs; 'call' | 'type' | 'class' |
+   * 'implementation' | … for refs). `null` for rows indexed before schema v130
+   * or when the grammar's query carries no subtype.
+   */
+  symbolKind?: string | null
 }
+
+/** Column list shared by every tag SELECT — keeps symbol_kind from being forgotten. */
+const TAG_COLUMNS = 'rel_fname, fname, line, name, kind, symbol_kind'
 
 /**
  * Repository for the `code_graph_tags` table.
@@ -60,13 +71,23 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
 
       // Insert all new tags
       const insertStmt = db.prepare(`
-        INSERT INTO code_graph_tags (workspace_id, rel_fname, fname, line, name, kind, file_mtime)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO code_graph_tags
+          (workspace_id, rel_fname, fname, line, name, kind, symbol_kind, file_mtime)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `)
 
       for (const tag of tags) {
         const mtime = fileMtimes.get(tag.relFname) ?? 0
-        insertStmt.run(workspaceId, tag.relFname, tag.fname, tag.line, tag.name, tag.kind, mtime)
+        insertStmt.run(
+          workspaceId,
+          tag.relFname,
+          tag.fname,
+          tag.line,
+          tag.name,
+          tag.kind,
+          tag.symbolKind ?? null,
+          mtime
+        )
       }
     })
 
@@ -80,7 +101,7 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
     const db = this.db()
     const rows = db
       .prepare(
-        `SELECT rel_fname, fname, line, name, kind FROM code_graph_tags
+        `SELECT ${TAG_COLUMNS} FROM code_graph_tags
          WHERE workspace_id = ? AND kind = 'def'`
       )
       .all(workspaceId) as CodeGraphTagRow[]
@@ -94,7 +115,7 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
     const db = this.db()
     const rows = db
       .prepare(
-        'SELECT rel_fname, fname, line, name, kind FROM code_graph_tags WHERE workspace_id = ? AND rel_fname = ?'
+        `SELECT ${TAG_COLUMNS} FROM code_graph_tags WHERE workspace_id = ? AND rel_fname = ?`
       )
       .all(workspaceId, relFname) as CodeGraphTagRow[]
     return rows.map(mapRowToTag)
@@ -110,6 +131,8 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
       maxResults?: number
       includeDefinitions?: boolean
       includeReferences?: boolean
+      /** Restrict to these Tree-sitter capture subtypes (e.g. ['function', 'method']). */
+      symbolKinds?: string[]
     }
   ): RepomapTag[] {
     const db = this.db()
@@ -126,14 +149,22 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
             ? "AND kind = 'ref'"
             : 'AND 1 = 0'
 
+    const params: (string | number)[] = [workspaceId, `%${query}%`]
+    let symbolKindFilter = ''
+    if (opts?.symbolKinds && opts.symbolKinds.length > 0) {
+      symbolKindFilter = `AND symbol_kind IN (${opts.symbolKinds.map(() => '?').join(', ')})`
+      params.push(...opts.symbolKinds)
+    }
+    params.push(maxResults)
+
     const rows = db
       .prepare(
-        `SELECT rel_fname, fname, line, name, kind FROM code_graph_tags
-         WHERE workspace_id = ? AND name LIKE ? ${kindFilter}
+        `SELECT ${TAG_COLUMNS} FROM code_graph_tags
+         WHERE workspace_id = ? AND name LIKE ? ${kindFilter} ${symbolKindFilter}
          ORDER BY kind ASC, rel_fname ASC
          LIMIT ?`
       )
-      .all(workspaceId, `%${query}%`, maxResults) as CodeGraphTagRow[]
+      .all(...params) as CodeGraphTagRow[]
     return rows.map(mapRowToTag)
   }
 
@@ -180,9 +211,7 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
   findAllByWorkspace(workspaceId: string): RepomapTag[] {
     const db = this.db()
     const rows = db
-      .prepare(
-        'SELECT rel_fname, fname, line, name, kind FROM code_graph_tags WHERE workspace_id = ?'
-      )
+      .prepare(`SELECT ${TAG_COLUMNS} FROM code_graph_tags WHERE workspace_id = ?`)
       .all(workspaceId) as CodeGraphTagRow[]
     return rows.map(mapRowToTag)
   }
@@ -194,24 +223,37 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
    */
   findDeadCode(
     workspaceId: string,
-    options?: { path?: string; maxResults?: number }
+    options?: { path?: string; maxResults?: number; excludeSymbolKinds?: string[] }
   ): RepomapTag[] {
     const db = this.db()
     const limit = options?.maxResults ?? 100
     // MCP-06: Escape LIKE wildcards in user-supplied path
     const pathFilter = options?.path ? `AND d.rel_fname LIKE ? || '%' ESCAPE '\\'` : ''
-    const params: (string | number)[] = [workspaceId, workspaceId]
+    // Bind in the order the placeholders appear in the SQL below:
+    //   d.workspace_id → [path] → [excluded kinds] → r.workspace_id → LIMIT
+    const params: (string | number)[] = [workspaceId]
     if (options?.path) {
       params.push(escapeLikePattern(options.path))
     }
-    params.push(limit)
+
+    // Structural declarations (interfaces, type aliases) are referenced by shape,
+    // not by call, so "no cross-file reference" is a much weaker dead-code signal
+    // for them. NULL symbol_kind (pre-v130 rows) is never excluded.
+    let kindExclusion = ''
+    if (options?.excludeSymbolKinds && options.excludeSymbolKinds.length > 0) {
+      const placeholders = options.excludeSymbolKinds.map(() => '?').join(', ')
+      kindExclusion = `AND (d.symbol_kind IS NULL OR d.symbol_kind NOT IN (${placeholders}))`
+      params.push(...options.excludeSymbolKinds)
+    }
+    params.push(workspaceId, limit)
 
     const rows = db
       .prepare(
-        `SELECT d.rel_fname, d.fname, d.line, d.name, d.kind
+        `SELECT d.rel_fname, d.fname, d.line, d.name, d.kind, d.symbol_kind
          FROM code_graph_tags d
          WHERE d.workspace_id = ? AND d.kind = 'def'
          ${pathFilter}
+         ${kindExclusion}
          AND NOT EXISTS (
            SELECT 1 FROM code_graph_tags r
            WHERE r.workspace_id = ?
@@ -256,6 +298,25 @@ export class CodeGraphTagRepository extends BaseRepository<CodeGraphTagRow, Repo
   }
 
   /**
+   * True when the workspace has definition tags but none carries a capture subtype.
+   *
+   * A v130 upgrade leaves every pre-existing row with `symbol_kind = NULL` while
+   * file mtimes still match, so the incremental cache would keep serving untyped
+   * tags forever. This is the one-shot signal that a full re-parse is owed.
+   */
+  hasUntypedIndex(workspaceId: string): boolean {
+    const row = this.db()
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           COUNT(symbol_kind) AS typed
+         FROM code_graph_tags WHERE workspace_id = ? AND kind = 'def'`
+      )
+      .get(workspaceId) as { total: number; typed: number }
+    return row.total > 0 && row.typed === 0
+  }
+
+  /**
    * Count total tags for a workspace.
    */
   countByWorkspace(workspaceId: string): number {
@@ -273,7 +334,8 @@ function mapRowToTag(row: CodeGraphTagRow): RepomapTag {
     fname: row.fname,
     line: row.line,
     name: row.name,
-    kind: row.kind
+    kind: row.kind,
+    symbolKind: row.symbol_kind ?? null
   }
 }
 

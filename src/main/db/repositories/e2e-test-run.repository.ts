@@ -89,13 +89,14 @@ export class E2ETestRunRepository extends BaseRepository<E2ETestRunRow, E2ETestR
         )
         .run(status, totals.passed, totals.failed, totals.skipped, totals.error, id)
     } else {
-      this.db()
-        .prepare(`UPDATE e2e_test_runs SET status = ? WHERE id = ?`)
-        .run(status, id)
+      this.db().prepare(`UPDATE e2e_test_runs SET status = ? WHERE id = ?`).run(status, id)
     }
   }
 
-  updateTotals(id: string, totals: { passed: number; failed: number; skipped: number; error: number }): void {
+  updateTotals(
+    id: string,
+    totals: { passed: number; failed: number; skipped: number; error: number }
+  ): void {
     this.db()
       .prepare(
         `UPDATE e2e_test_runs

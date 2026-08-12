@@ -170,16 +170,17 @@ The primary application icon is the ornate diamond sigil. It scales across all c
 - ATELIER text: Georgia serif, 56px, color `#B8976A`, letter-spacing 28, flanked by 2px lines and 8px copper dot endpoints
 
 **Required export sizes for macOS:**
-| File | Size | Usage |
-|------|------|-------|
-| `icon_16x16.png` | 16×16 | Finder list view |
-| `icon_32x32.png` | 32×32 | Finder list @2x |
-| `icon_64x64.png` | 64×64 | Dock small |
-| `icon_128x128.png` | 128×128 | Finder preview |
-| `icon_256x256.png` | 256×256 | Finder preview @2x |
-| `icon_512x512.png` | 512×512 | App Store |
-| `icon_1024x1024.png` | 1024×1024 | App Store @2x |
-| `icon.svg` | Vector | Source of truth |
+
+| File                 | Size      | Usage              |
+| -------------------- | --------- | ------------------ |
+| `icon_16x16.png`     | 16×16     | Finder list view   |
+| `icon_32x32.png`     | 32×32     | Finder list @2x    |
+| `icon_64x64.png`     | 64×64     | Dock small         |
+| `icon_128x128.png`   | 128×128   | Finder preview     |
+| `icon_256x256.png`   | 256×256   | Finder preview @2x |
+| `icon_512x512.png`   | 512×512   | App Store          |
+| `icon_1024x1024.png` | 1024×1024 | App Store @2x      |
+| `icon.svg`           | Vector    | Source of truth    |
 
 ### 4.2 macOS Tray Icon (Menu Bar)
 
@@ -195,9 +196,10 @@ The tray icon is a **monochrome template image**. macOS automatically applies th
 - No inner frames or decorative dots (too small)
 
 **Required files:**
-| File | Size | Usage |
-|------|------|-------|
-| `trayTemplate.png` | 18×18 | Menu bar @1x |
+
+| File                  | Size  | Usage                 |
+| --------------------- | ----- | --------------------- |
+| `trayTemplate.png`    | 18×18 | Menu bar @1x          |
 | `trayTemplate@2x.png` | 36×36 | Menu bar @2x (Retina) |
 
 **CRITICAL**: The filenames must end in `Template` (e.g., `trayTemplate.png`) for macOS to treat them as template images that auto-adapt to light/dark mode. Without the `Template` suffix, the icon will render as a fixed color.
@@ -228,19 +230,20 @@ All agent icons are **custom SVG line drawings** in the gold-line Renaissance st
 - Feel like they could be etchings in a cathedral window pane
 
 Icon descriptions for each agent:
-| Agent | Icon Description |
-|-------|-----------------|
-| React Architect | Three intersecting orbital ellipses with center dot (atom) |
-| .NET Architect | Rounded rectangle frame with chevron arrow inside, corner dot |
-| Agentic Architect | Hub-and-spoke: one circle at top connected to three circles at bottom via lines |
-| PostgreSQL Architect | Database cylinder: top ellipse, vertical sides, bottom curve, middle divider line |
-| UX/UI Specialist | Rounded square containing a small circle, small rectangle, and two horizontal lines |
-| Git/GitHub | Merge graph: two circles at top converging via curved paths to one circle at bottom |
-| Requirements PO/BA | Document rectangle with three horizontal lines and a checkmark at bottom |
-| Code Planner | Three connected module rectangles in an inverted-V arrangement with connecting paths |
-| Execution Planner | Calendar/Gantt rectangle with header line and three progress bars of varying width |
-| CI/CD DevOps | Circular arrows (deploy cycle) with gear-spoke lines radiating outward |
-| Cloud Infrastructure | Cloud outline with three short vertical lines below (rain/connection metaphor) |
+
+| Agent                | Icon Description                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| React Architect      | Three intersecting orbital ellipses with center dot (atom)                           |
+| .NET Architect       | Rounded rectangle frame with chevron arrow inside, corner dot                        |
+| Agentic Architect    | Hub-and-spoke: one circle at top connected to three circles at bottom via lines      |
+| PostgreSQL Architect | Database cylinder: top ellipse, vertical sides, bottom curve, middle divider line    |
+| UX/UI Specialist     | Rounded square containing a small circle, small rectangle, and two horizontal lines  |
+| Git/GitHub           | Merge graph: two circles at top converging via curved paths to one circle at bottom  |
+| Requirements PO/BA   | Document rectangle with three horizontal lines and a checkmark at bottom             |
+| Code Planner         | Three connected module rectangles in an inverted-V arrangement with connecting paths |
+| Execution Planner    | Calendar/Gantt rectangle with header line and three progress bars of varying width   |
+| CI/CD DevOps         | Circular arrows (deploy cycle) with gear-spoke lines radiating outward               |
+| Cloud Infrastructure | Cloud outline with three short vertical lines below (rain/connection metaphor)       |
 
 ### 4.4 Brand Mark: CA Monogram
 

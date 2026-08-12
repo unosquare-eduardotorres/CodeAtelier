@@ -29,7 +29,8 @@ function git(args: string[]): string {
     cwd: WORKSPACE_PATH,
     encoding: 'utf-8',
     timeout: 10_000,
-    maxBuffer: 1024 * 1024 // 1MB
+    maxBuffer: 1024 * 1024, // 1MB
+    windowsHide: true
   })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(result.stderr || `git exited with code ${result.status}`)
@@ -42,7 +43,7 @@ const SAFE_REF_RE = /^[a-zA-Z0-9._/@{}\-~^:]+$/
 // git_log
 server.tool(
   'git_log',
-  'Get recent git commit history with hash, author, date, and message.',
+  'Commit history for a file or range — who changed what, when. Use to date a regression or find the commit that introduced a behaviour. Not a code search: use Grep or code-graph for that.',
   {
     maxCount: z.number().int().min(1).max(200).optional().default(20),
     path: z.string().optional().describe('Filter to commits touching this file/directory'),
@@ -69,7 +70,10 @@ server.tool(
       })
     return {
       content: [
-        { type: 'text' as const, text: truncateToolOutput(JSON.stringify({ commits, count: commits.length }), 10_000) }
+        {
+          type: 'text' as const,
+          text: truncateToolOutput(JSON.stringify({ commits, count: commits.length }), 10_000)
+        }
       ]
     }
   }
@@ -78,7 +82,7 @@ server.tool(
 // git_diff
 server.tool(
   'git_diff',
-  'Show diff between commits, branches, or working tree changes.',
+  'What a commit, branch or the working tree actually changed. Use before reviewing or reverting; not for reading a file in full.',
   {
     ref: z
       .string()
@@ -114,7 +118,7 @@ server.tool(
 // git_blame
 server.tool(
   'git_blame',
-  'Show line-by-line authorship for a file.',
+  'Line-by-line authorship. Use to find who to ask about a line, or which commit introduced it.',
   {
     filePath: z.string().describe('Relative file path to blame'),
     startLine: z.number().int().min(1).max(100000).optional().describe('Start line number'),
@@ -136,7 +140,7 @@ server.tool(
 // git_show
 server.tool(
   'git_show',
-  'Show details of a specific commit.',
+  'One commit in full — message, metadata and diff. Use after git_log narrows you to a candidate.',
   {
     ref: z
       .string()

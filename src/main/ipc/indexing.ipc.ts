@@ -8,7 +8,14 @@ import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 import { workspaceRepository, codeChunkRepository } from '../db/repositories'
 import { convertTagsToChunks } from '../services/tag-to-chunk-adapter'
-import type { IndexingState } from '../../shared/types'
+import { discoverSrcFiles } from '../services/code-graph.service'
+import { toPosixRel } from '../services/code-graph-exclusions'
+import { loadAllIgnorePatterns } from '../services/workspace-ignore'
+import {
+  runExclusionPreflight,
+  applyExclusions
+} from '../services/index-exclusion-preflight.service'
+import type { ExclusionPreflightResult, IndexingState } from '../../shared/types'
 
 export function registerIndexingIpc(mainWindow: BrowserWindow): void {
   // Forward indexing progress events to the renderer
@@ -33,14 +40,22 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     // Get repomap tags via tree-sitter (dynamic import for lazy loading)
     const { getTags, initParser } =
       (await import('repomap-mcp/dist/tags.js')) as typeof import('repomap-mcp/dist/tags.js')
-    const { findSrcFiles } =
-      (await import('repomap-mcp/dist/file-discovery.js')) as typeof import('repomap-mcp/dist/file-discovery.js')
+    const { isSupportedFile } =
+      (await import('repomap-mcp/dist/languages.js')) as typeof import('repomap-mcp/dist/languages.js')
 
     await initParser()
 
     log.info(`[Indexing] Scanning workspace: ${workspace.repoPath}`)
-    const files = findSrcFiles(workspace.repoPath)
-    log.info(`[Indexing] Found ${files.length} source files`)
+
+    // Use the SAME pruning walker as the code graph. repomap's findSrcFiles
+    // walks the entire tree (Pods/, bin/, node_modules/, ...) and only filters
+    // afterwards — by which point every file has been stat'd, parsed and read.
+    const discovery = discoverSrcFiles(workspace.repoPath, isSupportedFile)
+    const files = discovery.files
+    log.info(
+      `[Indexing] Discovery: ${files.length} files, ${discovery.prunedDirs} directories pruned, ` +
+        `${discovery.oversizeSkipped} oversize files skipped`
+    )
 
     // Load existing file mtimes from persisted chunks for incremental skip
     const existingMtimes = codeChunkRepository.getFileMtimes(args.workspaceId)
@@ -57,7 +72,7 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     const currentFiles = new Set<string>()
 
     for (const file of files) {
-      const relPath = file.replace(workspace.repoPath + '/', '')
+      const relPath = toPosixRel(file, workspace.repoPath)
       currentFiles.add(relPath)
 
       try {
@@ -96,7 +111,10 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     // Start indexing (async — fires progress events via EventEmitter)
     const indexingOptions = {
       generateDescriptions: !!settings.semanticSearchDescriptions,
-      descriptionModel: (settings.descriptionModel as string) || 'claude-haiku-4-5-20251001'
+      descriptionModel: (settings.descriptionModel as string) || 'claude-haiku-4-5-20251001',
+      // Defence in depth: the walker already pruned these directories, but
+      // chunks resumed from persisted state bypass discovery entirely.
+      skipPatterns: loadAllIgnorePatterns(workspace.repoPath)
     }
     vectorSearchService
       .indexProject(args.workspaceId, workspace.repoPath, chunks, fileContents, indexingOptions)
@@ -104,6 +122,26 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
         log.error('[Indexing] Pipeline failed:', err)
       })
   })
+
+  ipcMain.handle(
+    IPC_CHANNELS.INDEXING_PREFLIGHT_EXCLUSIONS,
+    (event, args: { workspaceId: string }): ExclusionPreflightResult => {
+      validateSender(event)
+      const workspace = workspaceRepository.findById(args.workspaceId)
+      if (!workspace) throw new Error('Workspace not found')
+      return runExclusionPreflight(workspace.repoPath)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.INDEXING_APPLY_EXCLUSIONS,
+    (event, args: { workspaceId: string; patterns: string[] }): { written: string[] } => {
+      validateSender(event)
+      const workspace = workspaceRepository.findById(args.workspaceId)
+      if (!workspace) throw new Error('Workspace not found')
+      return applyExclusions(workspace.repoPath, args.patterns ?? [])
+    }
+  )
 
   ipcMain.handle(IPC_CHANNELS.INDEXING_PAUSE, (event, args: { workspaceId: string }) => {
     validateSender(event)

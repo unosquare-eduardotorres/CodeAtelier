@@ -7,12 +7,7 @@
  */
 
 import { AUDIT_TRACKS } from '../../shared/constants'
-import type {
-  AuditFinding,
-  AuditResult,
-  AuditRun,
-  AuditPlan
-} from '../../shared/types'
+import type { AuditFinding, AuditResult, AuditRun, AuditPlan } from '../../shared/types'
 
 // ── Overall Score ────────────────────────────────────────────────────────────
 
@@ -163,7 +158,7 @@ export function generateRemediationPlanMarkdown(
       lines.push('')
     }
     if (item.files.length > 0) {
-      lines.push(`**Files:** ${item.files.map((f) => '\`' + f + '\`').join(', ')}`)
+      lines.push(`**Files:** ${item.files.map((f) => '`' + f + '`').join(', ')}`)
       lines.push('')
     }
     if (item.dependsOn && item.dependsOn.length > 0) {

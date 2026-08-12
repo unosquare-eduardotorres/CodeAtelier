@@ -28,7 +28,7 @@ test.describe('Grill Evaluation', () => {
    */
   async function navigateToIdeas(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
-    const chrome = new AppChrome(page)
+    const _chrome = new AppChrome(page)
     const settings = new WorkspaceSettings(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -47,7 +47,10 @@ test.describe('Grill Evaluation', () => {
 
     // Navigate to settings > ideas
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -108,15 +111,11 @@ test.describe('Grill Evaluation', () => {
 
     // Streaming content should appear — either thinking indicator or transcript text
     const streamingIndicator = page.locator('[data-testid="streaming-indicator"]')
-    const hasStreaming = await streamingIndicator
-      .isVisible({ timeout: 30_000 })
-      .catch(() => false)
+    const hasStreaming = await streamingIndicator.isVisible({ timeout: 30_000 }).catch(() => false)
 
     // Or check for transcript text accumulating
     const transcript = page.locator('[class*="overflow-y-auto"]').first()
-    const hasText = await transcript
-      .evaluate((el) => el.textContent?.length ?? 0)
-      .catch(() => 0)
+    const hasText = await transcript.evaluate((el) => el.textContent?.length ?? 0).catch(() => 0)
 
     expect(hasStreaming || hasText > 0).toBeTruthy()
   })

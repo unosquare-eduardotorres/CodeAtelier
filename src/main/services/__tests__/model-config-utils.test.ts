@@ -70,8 +70,7 @@ describe('ModelConfigService.getOllamaBaseUrl', () => {
 // ── fallbackAction (private) ────────────────────────────────────────────
 
 describe('ModelConfigService.fallbackAction (private)', () => {
-  const fallback = (action: string) =>
-    (modelConfigService as any).fallbackAction(action)
+  const fallback = (action: string) => (modelConfigService as any).fallbackAction(action)
 
   test('sub-action "specialist:plan" → falls back to "specialist" base', () => {
     const result = fallback('specialist:plan')

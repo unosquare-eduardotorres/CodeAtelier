@@ -21,9 +21,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Council Verdict Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -43,7 +41,7 @@ test.describe('Council Verdict Deep', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
     await page.waitForTimeout(800)
 
     // Look for a completed session card to open
@@ -68,9 +66,15 @@ test.describe('Council Verdict Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasVerdict = await navigateToCouncilWithVerdict(page)
-    if (!hasVerdict) { test.skip(); return }
+    if (!hasVerdict) {
+      test.skip()
+      return
+    }
 
     const verdictCard = page.locator('[data-testid="council-verdict-card"]')
     await expect(verdictCard).toBeVisible()
@@ -85,13 +89,17 @@ test.describe('Council Verdict Deep', () => {
     expect(hasScore).toBeTruthy()
   })
 
-  test('agrees section lists consensus items among advisors', async ({
-    electronPage: page
-  }) => {
+  test('agrees section lists consensus items among advisors', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasVerdict = await navigateToCouncilWithVerdict(page)
-    if (!hasVerdict) { test.skip(); return }
+    if (!hasVerdict) {
+      test.skip()
+      return
+    }
 
     const verdictCard = page.locator('[data-testid="council-verdict-card"]')
 
@@ -101,13 +109,17 @@ test.describe('Council Verdict Deep', () => {
     expect(hasAgreement).toBeTruthy()
   })
 
-  test('clashes section shows areas of disagreement', async ({
-    electronPage: page
-  }) => {
+  test('clashes section shows areas of disagreement', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasVerdict = await navigateToCouncilWithVerdict(page)
-    if (!hasVerdict) { test.skip(); return }
+    if (!hasVerdict) {
+      test.skip()
+      return
+    }
 
     const verdictCard = page.locator('[data-testid="council-verdict-card"]')
 
@@ -117,13 +129,17 @@ test.describe('Council Verdict Deep', () => {
     expect(hasClashes).toBeTruthy()
   })
 
-  test('blind spots section shows unconsidered aspects', async ({
-    electronPage: page
-  }) => {
+  test('blind spots section shows unconsidered aspects', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasVerdict = await navigateToCouncilWithVerdict(page)
-    if (!hasVerdict) { test.skip(); return }
+    if (!hasVerdict) {
+      test.skip()
+      return
+    }
 
     const verdictCard = page.locator('[data-testid="council-verdict-card"]')
 
@@ -133,20 +149,27 @@ test.describe('Council Verdict Deep', () => {
     expect(hasBlindSpots).toBeTruthy()
   })
 
-  test('expandable revision recommendations toggle open/close', async ({
-    electronPage: page
-  }) => {
+  test('expandable revision recommendations toggle open/close', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasVerdict = await navigateToCouncilWithVerdict(page)
-    if (!hasVerdict) { test.skip(); return }
+    if (!hasVerdict) {
+      test.skip()
+      return
+    }
 
     const verdictCard = page.locator('[data-testid="council-verdict-card"]')
 
     // Look for "Recommended Revisions" expandable section
     const revisionsHeader = verdictCard.getByText(/Recommended Revisions/i).first()
     const hasRevisions = await revisionsHeader.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRevisions) { test.skip(); return }
+    if (!hasRevisions) {
+      test.skip()
+      return
+    }
 
     // Click to collapse (default is expanded)
     const toggleBtn = revisionsHeader.locator('..').locator('button').first()
@@ -163,13 +186,17 @@ test.describe('Council Verdict Deep', () => {
     await expect(verdictCard.getByText(/Recommended Revisions/i).first()).toBeVisible()
   })
 
-  test('advisor score chips show per-advisor individual scores', async ({
-    electronPage: page
-  }) => {
+  test('advisor score chips show per-advisor individual scores', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasVerdict = await navigateToCouncilWithVerdict(page)
-    if (!hasVerdict) { test.skip(); return }
+    if (!hasVerdict) {
+      test.skip()
+      return
+    }
 
     const verdictCard = page.locator('[data-testid="council-verdict-card"]')
 
@@ -184,7 +211,10 @@ test.describe('Council Verdict Deep', () => {
 
     // At least some advisor chips should be visible (completed advisors)
     // If no individual scores exist, skip
-    if (foundAdvisors === 0) { test.skip(); return }
+    if (foundAdvisors === 0) {
+      test.skip()
+      return
+    }
     expect(foundAdvisors).toBeGreaterThan(0)
   })
 })

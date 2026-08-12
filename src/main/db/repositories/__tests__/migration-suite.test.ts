@@ -23,9 +23,7 @@ function trySetup(): MigrationEnv | null {
     const { migrations } = require('../../index')
     return { Database, migrations }
   } catch (err) {
-    console.log(
-      `\n⚠ better-sqlite3 native module not compatible — migration suite skipped.`
-    )
+    console.log(`\n⚠ better-sqlite3 native module not compatible — migration suite skipped.`)
     console.log(`  (${(err as Error).message.split('\n')[0]})`)
     return null
   }
@@ -123,13 +121,7 @@ if (!env) {
       const db = createSchemaDb()
       try {
         const tables = getTableNames(db)
-        const expected = [
-          'workspaces',
-          'conversations',
-          'messages',
-          'specialists',
-          'skills'
-        ]
+        const expected = ['workspaces', 'conversations', 'messages', 'specialists', 'skills']
         for (const t of expected) {
           assert.ok(tables.includes(t), `Missing table: ${t}`)
         }
@@ -293,68 +285,82 @@ if (!env) {
     })
   })
 
-    test('v123_backfills_model_config_json_and_hardens_llm_provider', () => {
-      const db = createSchemaDb()
-      try {
-        // Insert a workspace
-        db.prepare(`INSERT INTO workspaces (id, name, repo_path, settings_json, created_at, last_opened_at)
-          VALUES ('ws-test', 'Test', '/tmp/test', '{"llmProvider":"claude"}', datetime('now'), datetime('now'))`).run()
+  test('v123_backfills_model_config_json_and_hardens_llm_provider', () => {
+    const db = createSchemaDb()
+    try {
+      // Insert a workspace
+      db.prepare(
+        `INSERT INTO workspaces (id, name, repo_path, settings_json, created_at, last_opened_at)
+          VALUES ('ws-test', 'Test', '/tmp/test', '{"llmProvider":"claude"}', datetime('now'), datetime('now'))`
+      ).run()
 
-        // Insert a conversation without model_config_json — llm_provider takes NOT NULL DEFAULT 'claude'
-        db.prepare(`INSERT INTO conversations (id, workspace_id, title, mode, type, model_config_json)
-          VALUES ('conv-1', 'ws-test', 'Test Chat', 'plan', 'chat', NULL)`).run()
+      // Insert a conversation without model_config_json — llm_provider takes NOT NULL DEFAULT 'claude'
+      db.prepare(
+        `INSERT INTO conversations (id, workspace_id, title, mode, type, model_config_json)
+          VALUES ('conv-1', 'ws-test', 'Test Chat', 'plan', 'chat', NULL)`
+      ).run()
 
-        // Run migration 123
-        const m123 = env.migrations.find((m) => m.version === 123)
-        assert.ok(m123, 'Migration 123 should exist')
-        m123!.up(db)
+      // Run migration 123
+      const m123 = env.migrations.find((m) => m.version === 123)
+      assert.ok(m123, 'Migration 123 should exist')
+      m123!.up(db)
 
-        // Verify backfill
-        const row = db.prepare('SELECT model_config_json, llm_provider FROM conversations WHERE id = ?')
-          .get('conv-1') as { model_config_json: string | null; llm_provider: string | null }
-        assert.ok(row.model_config_json, 'model_config_json should be backfilled')
-        assert.strictEqual(row.llm_provider, 'claude', 'llm_provider should preserve DEFAULT value')
+      // Verify backfill
+      const row = db
+        .prepare('SELECT model_config_json, llm_provider FROM conversations WHERE id = ?')
+        .get('conv-1') as { model_config_json: string | null; llm_provider: string | null }
+      assert.ok(row.model_config_json, 'model_config_json should be backfilled')
+      assert.strictEqual(row.llm_provider, 'claude', 'llm_provider should preserve DEFAULT value')
 
-        const snapshot = JSON.parse(row.model_config_json!)
-        assert.ok(snapshot.plan, 'snapshot should have plan')
-        assert.ok(snapshot.build, 'snapshot should have build')
-        assert.ok(snapshot.background, 'snapshot should have background')
-        assert.ok(snapshot.snapshotAt, 'snapshot should have snapshotAt')
-        assert.ok(snapshot.plan.modelId, 'plan should have modelId')
-        assert.ok(snapshot.plan.provider, 'plan should have provider')
-      } finally {
-        db.close()
-      }
-    })
+      const snapshot = JSON.parse(row.model_config_json!)
+      assert.ok(snapshot.plan, 'snapshot should have plan')
+      assert.ok(snapshot.build, 'snapshot should have build')
+      assert.ok(snapshot.background, 'snapshot should have background')
+      assert.ok(snapshot.snapshotAt, 'snapshot should have snapshotAt')
+      assert.ok(snapshot.plan.modelId, 'plan should have modelId')
+      assert.ok(snapshot.plan.provider, 'plan should have provider')
+    } finally {
+      db.close()
+    }
+  })
 
-    test('v123_skips_conversations_with_existing_snapshot', () => {
-      const db = createSchemaDb()
-      try {
-        db.prepare(`INSERT INTO workspaces (id, name, repo_path, settings_json, created_at, last_opened_at)
-          VALUES ('ws-test2', 'Test2', '/tmp/test2', '{}', datetime('now'), datetime('now'))`).run()
+  test('v123_skips_conversations_with_existing_snapshot', () => {
+    const db = createSchemaDb()
+    try {
+      db.prepare(
+        `INSERT INTO workspaces (id, name, repo_path, settings_json, created_at, last_opened_at)
+          VALUES ('ws-test2', 'Test2', '/tmp/test2', '{}', datetime('now'), datetime('now'))`
+      ).run()
 
-        const existingSnapshot = JSON.stringify({
-          plan: { provider: 'claude', modelId: 'claude-opus-4-8', source: 'roles' },
-          build: { provider: 'claude', modelId: 'claude-sonnet-4-6', source: 'default' },
-          background: { provider: 'claude', modelId: 'claude-haiku-4-5', source: 'default' },
-          snapshotAt: '2026-01-01T00:00:00.000Z'
-        })
+      const existingSnapshot = JSON.stringify({
+        plan: { provider: 'claude', modelId: 'claude-opus-4-8', source: 'roles' },
+        build: { provider: 'claude', modelId: 'claude-sonnet-4-6', source: 'default' },
+        background: { provider: 'claude', modelId: 'claude-haiku-4-5', source: 'default' },
+        snapshotAt: '2026-01-01T00:00:00.000Z'
+      })
 
-        db.prepare(`INSERT INTO conversations (id, workspace_id, title, mode, type, llm_provider, model_config_json)
-          VALUES ('conv-existing', 'ws-test2', 'Existing', 'plan', 'chat', 'claude', ?)`).run(existingSnapshot)
+      db.prepare(
+        `INSERT INTO conversations (id, workspace_id, title, mode, type, llm_provider, model_config_json)
+          VALUES ('conv-existing', 'ws-test2', 'Existing', 'plan', 'chat', 'claude', ?)`
+      ).run(existingSnapshot)
 
-        const m123 = env.migrations.find((m) => m.version === 123)
-        m123!.up(db)
+      const m123 = env.migrations.find((m) => m.version === 123)
+      m123!.up(db)
 
-        // Should not be modified
-        const row = db.prepare('SELECT model_config_json FROM conversations WHERE id = ?')
-          .get('conv-existing') as { model_config_json: string }
-        const snapshot = JSON.parse(row.model_config_json)
-        assert.equal(snapshot.snapshotAt, '2026-01-01T00:00:00.000Z', 'existing snapshot should not be overwritten')
-      } finally {
-        db.close()
-      }
-    })
+      // Should not be modified
+      const row = db
+        .prepare('SELECT model_config_json FROM conversations WHERE id = ?')
+        .get('conv-existing') as { model_config_json: string }
+      const snapshot = JSON.parse(row.model_config_json)
+      assert.equal(
+        snapshot.snapshotAt,
+        '2026-01-01T00:00:00.000Z',
+        'existing snapshot should not be overwritten'
+      )
+    } finally {
+      db.close()
+    }
+  })
 
   describe('Migration idempotency', () => {
     test('schema.sql can be applied twice without error (CREATE IF NOT EXISTS)', () => {

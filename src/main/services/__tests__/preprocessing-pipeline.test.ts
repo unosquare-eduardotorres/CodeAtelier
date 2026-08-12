@@ -11,6 +11,7 @@ import { test, describe, summaryAsync } from './test-harness'
 import {
   preprocessChunk,
   buildScopeContexts,
+  runPreprocessingPipeline,
   type RawChunk,
   type PreprocessingOptions,
   DEFAULT_PREPROCESSING_OPTIONS
@@ -88,26 +89,14 @@ function defaultOpts(overrides: Partial<PreprocessingOptions> = {}): Preprocessi
 
 describe('preprocessChunk — basic behavior', () => {
   test('returns ProcessedChunk[] for a public function', () => {
-    const result = preprocessChunk(
-      makeChunk(),
-      FILE_CONTENT,
-      null,
-      'my-project',
-      defaultOpts()
-    )
+    const result = preprocessChunk(makeChunk(), FILE_CONTENT, null, 'my-project', defaultOpts())
     assert.ok(result !== null)
     assert.ok(Array.isArray(result))
     assert.ok(result.length >= 1)
   })
 
   test('embedText includes header and body', () => {
-    const result = preprocessChunk(
-      makeChunk(),
-      FILE_CONTENT,
-      null,
-      'my-project',
-      defaultOpts()
-    )!
+    const result = preprocessChunk(makeChunk(), FILE_CONTENT, null, 'my-project', defaultOpts())!
     const embed = result[0].embedText
     assert.ok(embed.includes('# File:'))
     assert.ok(embed.includes('# Signature:'))
@@ -115,13 +104,7 @@ describe('preprocessChunk — basic behavior', () => {
   })
 
   test('metadata fields are correctly populated', () => {
-    const result = preprocessChunk(
-      makeChunk(),
-      FILE_CONTENT,
-      null,
-      'my-project',
-      defaultOpts()
-    )!
+    const result = preprocessChunk(makeChunk(), FILE_CONTENT, null, 'my-project', defaultOpts())!
     const meta = result[0].metadata
     assert.equal(meta.projectName, 'my-project')
     assert.equal(meta.symbolName, 'validateToken')
@@ -204,34 +187,15 @@ describe('preprocessChunk — description prepend', () => {
   })
 
   test('no description prefix when description is undefined', () => {
-    const result = preprocessChunk(
-      makeChunk(),
-      FILE_CONTENT,
-      null,
-      'proj',
-      defaultOpts()
-    )!
+    const result = preprocessChunk(makeChunk(), FILE_CONTENT, null, 'proj', defaultOpts())!
     assert.ok(result[0].embedText.startsWith('# File:'))
   })
 
   test('hasDescription metadata reflects description presence', () => {
-    const with_ = preprocessChunk(
-      makeChunk(),
-      FILE_CONTENT,
-      null,
-      'proj',
-      defaultOpts(),
-      'desc'
-    )!
+    const with_ = preprocessChunk(makeChunk(), FILE_CONTENT, null, 'proj', defaultOpts(), 'desc')!
     assert.equal(with_[0].metadata.hasDescription, true)
 
-    const without = preprocessChunk(
-      makeChunk(),
-      FILE_CONTENT,
-      null,
-      'proj',
-      defaultOpts()
-    )!
+    const without = preprocessChunk(makeChunk(), FILE_CONTENT, null, 'proj', defaultOpts())!
     assert.equal(without[0].metadata.hasDescription, false)
   })
 })
@@ -472,13 +436,7 @@ describe('findScopeContext — integration via buildScopeContexts', () => {
   })
 
   test('empty scope map → method gets null className', () => {
-    const result = preprocessChunk(
-      makeMethodChunk(),
-      FILE_CONTENT,
-      null,
-      'proj',
-      defaultOpts()
-    )!
+    const result = preprocessChunk(makeMethodChunk(), FILE_CONTENT, null, 'proj', defaultOpts())!
     assert.equal(result[0].metadata.className, null)
   })
 })
@@ -602,15 +560,27 @@ describe('buildScopeContexts — sibling method signatures', () => {
   test('collects only public method signatures as siblings', () => {
     const tags: RawChunk[] = [
       makeClassChunk({ startLine: 1, endLine: 50 }),
-      makeMethodChunk({ symbolName: 'login', isPublic: true, startLine: 5, endLine: 10, signature: 'login(user: string): Promise<void>' }),
-      makeMethodChunk({ symbolName: 'hashPassword', isPublic: false, startLine: 15, endLine: 20, signature: 'hashPassword(pw: string): string' })
+      makeMethodChunk({
+        symbolName: 'login',
+        isPublic: true,
+        startLine: 5,
+        endLine: 10,
+        signature: 'login(user: string): Promise<void>'
+      }),
+      makeMethodChunk({
+        symbolName: 'hashPassword',
+        isPublic: false,
+        startLine: 15,
+        endLine: 20,
+        signature: 'hashPassword(pw: string): string'
+      })
     ]
     const contexts = buildScopeContexts(tags)
     const scope = contexts.get('AuthService')
     assert.ok(scope)
     // Only public methods
-    assert.ok(scope!.siblingMethodSignatures.some(s => s.includes('login')))
-    assert.ok(!scope!.siblingMethodSignatures.some(s => s.includes('hashPassword')))
+    assert.ok(scope!.siblingMethodSignatures.some((s) => s.includes('login')))
+    assert.ok(!scope!.siblingMethodSignatures.some((s) => s.includes('hashPassword')))
   })
 
   test('class with no methods → empty sibling signatures', () => {
@@ -618,6 +588,53 @@ describe('buildScopeContexts — sibling method signatures', () => {
     const scope = contexts.get('AuthService')
     assert.ok(scope)
     assert.equal(scope!.siblingMethodSignatures.length, 0)
+  })
+})
+
+// ── skipPatterns pass-through ───────────────────────────────────────
+// Semantic search never passed .atelierignore/.gitignore rules into the
+// pipeline, so the late-stage filter had nothing workspace-specific to match.
+
+describe('runPreprocessingPipeline — skipPatterns', () => {
+  const podsChunk = makeChunk({
+    id: 'pods-1',
+    filePath: 'apps/mobile/ios/Pods/Alamofire/Source/Alamofire.swift',
+    symbolName: 'request'
+  })
+  const libsChunk = makeChunk({ id: 'libs-1', filePath: 'libs/Domain/Order.ts' })
+  const ownChunk = makeChunk({ id: 'own-1', filePath: 'src/services/auth.service.ts' })
+  const contents = new Map([
+    [podsChunk.filePath, FILE_CONTENT],
+    [libsChunk.filePath, FILE_CONTENT],
+    [ownChunk.filePath, FILE_CONTENT]
+  ])
+
+  const runWith = async (skipPatterns: string[]): Promise<Set<string>> => {
+    const result = await runPreprocessingPipeline(
+      [podsChunk, libsChunk, ownChunk],
+      contents,
+      'proj',
+      defaultOpts({ skipPatterns }),
+      () => {}
+    )
+    return new Set(result.map((c) => c.metadata.filePath))
+  }
+
+  test('drops files matching a caller-supplied pattern', async () => {
+    const paths = await runWith(['**/libs/**'])
+    assert.equal(paths.has(libsChunk.filePath), false)
+    assert.equal(paths.has(ownChunk.filePath), true)
+  })
+
+  test('keeps generic Tier-2 directories when no pattern is supplied', async () => {
+    const paths = await runWith([])
+    assert.equal(paths.has(libsChunk.filePath), true)
+    assert.equal(paths.has(ownChunk.filePath), true)
+  })
+
+  test('built-in exclusions drop Pods even with no caller patterns', async () => {
+    const paths = await runWith([])
+    assert.equal(paths.has(podsChunk.filePath), false)
   })
 })
 

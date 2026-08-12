@@ -92,7 +92,8 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.CHAT_SET_GOAL)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.CHAT_SET_GOAL)
     const goal = requireString(args, 'goal', IPC_CHANNELS.CHAT_SET_GOAL)
-    const goalMode = (args.goalMode === 'advisory' ? 'advisory' : 'enforce') as 'advisory' | 'enforce'
+    const goalMode = (args.goalMode === 'advisory' ? 'advisory' : 'enforce') as
+      'advisory' | 'enforce'
 
     // Validate goal length (CLI caps at 4000 chars)
     if (goal.length > 4000) {
@@ -111,7 +112,10 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
     if (adapter && 'setGoalCondition' in adapter) {
       ;(adapter as ProjectSpecialistRoleAdapter).setGoalCondition(conversationId, goal, goalMode)
     } else {
-      log.warn('[CHAT_SET_GOAL] Adapter not found or missing setGoalCondition for workspace:', workspaceId)
+      log.warn(
+        '[CHAT_SET_GOAL] Adapter not found or missing setGoalCondition for workspace:',
+        workspaceId
+      )
     }
 
     log.info('SET_GOAL received:', { conversationId, goalLen: goal.length, goalMode, workspaceId })
@@ -148,5 +152,18 @@ export function registerChatMessageIpc(_mainWindow: BrowserWindow): void {
       state: conversationStateMachine.currentState,
       requestId: streams[0]?.requestId ?? null
     }
+  })
+
+  // ── Manual escape hatch for a wedged conversation ──
+  // Stop only helps while a stream is actually running. When the busy state
+  // outlives the stream, Stop is a no-op and the chat is unusable until the
+  // app restarts — this gives the user a way out without one.
+  ipcMain.handle(IPC_CHANNELS.CHAT_FORCE_RELEASE, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.CHAT_FORCE_RELEASE
+    const args = requireObject(rawArgs, ch)
+    const conversationId = requireString(args, 'conversationId', ch)
+    const released = chatStreamService.releaseConversation(conversationId, 'user-force-release')
+    return { released }
   })
 }

@@ -48,7 +48,10 @@ test.describe('Plans Hub', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -92,7 +95,8 @@ test.describe('Plans Hub', () => {
     const emptyStateById = page.locator('[data-testid="plan-empty-state"]')
     const emptyState = page.getByText(/no plans yet/i)
     const hasEmptyById = await emptyStateById.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasEmpty = hasEmptyById || await emptyState.isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasEmpty =
+      hasEmptyById || (await emptyState.isVisible({ timeout: 3_000 }).catch(() => false))
 
     if (hasEmpty) {
       // Empty state should explain where plans come from
@@ -218,7 +222,7 @@ test.describe('Plans Hub', () => {
     // Should have a source badge (prefer testid, fall back to text)
     const sourceBadge = firstCard.locator('[data-testid^="plan-source-"]')
     const hasSourceBadge = await sourceBadge.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasSourceEmoji = /[💬🔥🔍🏛️🎯📘]/.test(text ?? '')
+    const hasSourceEmoji = /💬|🔥|🔍|🏛️|🎯|📘/u.test(text ?? '')
     const hasSourceLabel = /chat|grill|audit|council|goals|blueprint/i.test(text ?? '')
 
     expect(hasSourceBadge || hasSourceEmoji || hasSourceLabel).toBeTruthy()
@@ -257,11 +261,11 @@ test.describe('Plans Hub', () => {
     }
 
     // Check all cards for metrics (phases, risks, files)
-    let foundMetrics = false
+    let _foundMetrics = false
     for (let i = 0; i < Math.min(count, 5); i++) {
       const text = await planCards.nth(i).textContent()
       if (/\d+\s*phase|risk|file/i.test(text ?? '')) {
-        foundMetrics = true
+        _foundMetrics = true
         break
       }
     }

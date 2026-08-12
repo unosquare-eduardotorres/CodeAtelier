@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Health Audit', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,19 +36,23 @@ test.describe('Health Audit', () => {
     return true
   }
 
-  async function navigateToHealth(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToHealth(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('health')
   }
 
   test('health page renders with landing or history', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Either the health-page testid or the health-landing testid should be visible
     const healthPage = page.locator('[data-testid="health-page"]')
@@ -65,10 +67,16 @@ test.describe('Health Audit', () => {
 
   test('start audit button opens configure view', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Look for the "New Audit" button on the landing page
     const startBtn = page.locator('[data-testid="health-start-btn"]')
@@ -78,7 +86,10 @@ test.describe('Health Audit', () => {
       // Might already be in active/configure view
       const fallbackBtn = page.getByText(/new audit/i).first()
       const hasFallback = await fallbackBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!hasFallback) { test.skip(); return }
+      if (!hasFallback) {
+        test.skip()
+        return
+      }
       await fallbackBtn.click()
     } else {
       await startBtn.click()
@@ -91,19 +102,29 @@ test.describe('Health Audit', () => {
     const hasConfig = await configureView.isVisible({ timeout: 5_000 }).catch(() => false)
 
     // Either the configure testid or the configure heading should be present
-    const hasConfigText = await page.getByText(/configure audit/i).first()
+    const hasConfigText = await page
+      .getByText(/configure audit/i)
+      .first()
       .isVisible({ timeout: 3_000 })
       .catch(() => false)
 
     expect(hasConfig || hasConfigText).toBeTruthy()
   })
 
-  test('configure view shows mode selection (Light/Deep) and track toggles', async ({ electronPage: page }) => {
+  test('configure view shows mode selection (Light/Deep) and track toggles', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Navigate to configure if on landing
     const startBtn = page.locator('[data-testid="health-start-btn"]')
@@ -115,7 +136,10 @@ test.describe('Health Audit', () => {
 
     const configureView = page.locator('[data-testid="health-configure"]')
     const hasConfig = await configureView.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // Should show Light and Deep mode options
     const lightOption = page.getByText(/light/i).first()
@@ -130,10 +154,16 @@ test.describe('Health Audit', () => {
 
   test('track selector shows 6 grill tracks with checkboxes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Navigate to configure
     const startBtn = page.locator('[data-testid="health-start-btn"]')
@@ -145,7 +175,10 @@ test.describe('Health Audit', () => {
 
     const configureView = page.locator('[data-testid="health-configure"]')
     const hasConfig = await configureView.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // Should show the auditor section with track cards
     const auditorSection = page.getByText(/auditors/i).first()
@@ -160,19 +193,31 @@ test.describe('Health Audit', () => {
 
   test('active audit shows streaming progress indicator', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Check if an audit is currently running (shows progress)
     const healthPage = page.locator('[data-testid="health-page"]')
     const hasPage = await healthPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasPage) { test.skip(); return }
+    if (!hasPage) {
+      test.skip()
+      return
+    }
 
     // Look for progress indicators (spinner, percentage, or streaming text)
     const spinner = page.locator('.animate-spin')
-    const hasSpinner = await spinner.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSpinner = await spinner
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     const progressText = page.getByText(/running|analyzing|streaming/i).first()
     const hasProgress = await progressText.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -188,10 +233,16 @@ test.describe('Health Audit', () => {
 
   test('completed audit shows plan step with route options', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Look for plan-related buttons (only visible after an audit completes)
     const planBtn = page.getByRole('button', { name: /plan|generate plan|create plan/i }).first()
@@ -209,10 +260,16 @@ test.describe('Health Audit', () => {
 
   test('audit history lists past runs with rerun option', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToHealth(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Check for health landing with history
     const landing = page.locator('[data-testid="health-landing"]')

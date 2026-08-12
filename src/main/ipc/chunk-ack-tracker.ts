@@ -83,7 +83,7 @@ export class ChunkAckTracker {
       return ChunkAckTracker.SLOW_INTERVAL_MS
     }
     if (wasBackpressured && pending > ChunkAckTracker.LOW_WATER_MARK) {
-      return ChunkAckTracker.SLOW_INTERVAL_MS  // Stay slow until below LWM
+      return ChunkAckTracker.SLOW_INTERVAL_MS // Stay slow until below LWM
     }
     this.isBackpressured.set(conversationId, false)
     return ChunkAckTracker.NORMAL_INTERVAL_MS
@@ -104,9 +104,10 @@ export class ChunkAckTracker {
   } {
     const activations = this._backpressureActivations.get(conversationId) ?? 0
     const latencies = this._ackLatencies.get(conversationId) ?? []
-    const avgAckLatency = latencies.length > 0
-      ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
-      : null
+    const avgAckLatency =
+      latencies.length > 0
+        ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
+        : null
     const maxPending = this._maxPendingChunks.get(conversationId) ?? 0
 
     return { backpressureActivations: activations, avgAckLatency, maxPendingChunks: maxPending }

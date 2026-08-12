@@ -138,11 +138,7 @@ if (loaded) {
     test('processes_multiple_nonexistent_files', () => {
       const service = new ChatStreamService(createMockWindow(), createMockCallbacks())
       const process = (service as any).processAttachments.bind(service)
-      const result = process([
-        '/fake/file1.txt',
-        '/fake/file2.ts',
-        '/fake/image.png'
-      ])
+      const result = process(['/fake/file1.txt', '/fake/file2.ts', '/fake/image.png'])
       // Each failed file should add a failure message
       assert.ok(typeof result.textContent === 'string')
       assert.ok(Array.isArray(result.images))
@@ -195,7 +191,9 @@ if (loaded) {
       let sentData: any = null
       const win = {
         webContents: {
-          send: (channel: string, data: any) => { sentData = { channel, data } },
+          send: (channel: string, data: any) => {
+            sentData = { channel, data }
+          },
           isDestroyed: () => false
         },
         isDestroyed: () => false
@@ -209,7 +207,9 @@ if (loaded) {
     test('does_not_throw_when_window_destroyed', () => {
       const win = {
         webContents: {
-          send: () => { throw new Error('destroyed') },
+          send: () => {
+            throw new Error('destroyed')
+          },
           isDestroyed: () => true
         },
         isDestroyed: () => true
@@ -367,7 +367,12 @@ if (loaded) {
         const { ConversationLifecycle } = require('../conversation-lifecycle')
         const lifecycle = new ConversationLifecycle()
         lifecycle.begin('conv-1')
-        const listeners = build(ctx, lifecycle, () => {}, () => {})
+        const listeners = build(
+          ctx,
+          lifecycle,
+          () => {},
+          () => {}
+        )
         assert.ok(typeof listeners.onChunk === 'function')
         assert.ok(typeof listeners.onComplete === 'function')
         assert.ok(typeof listeners.onIntent === 'function')
@@ -419,13 +424,16 @@ if (loaded) {
 
       const finalize = (service as any).finalizeStreamMessage.bind(service)
       // Should return early without throwing
-      await finalize({
-        conversationId: 'conv-1',
-        requestId: 'req-1',
-        streamingRole: 'specialist',
-        streamedContent: 'test content',
-        adapterAgentId: 'specialist'
-      }, mockLifecycle)
+      await finalize(
+        {
+          conversationId: 'conv-1',
+          requestId: 'req-1',
+          streamingRole: 'specialist',
+          streamedContent: 'test content',
+          adapterAgentId: 'specialist'
+        },
+        mockLifecycle
+      )
     })
 
     test('skips_when_requestId_mismatch', async () => {
@@ -438,13 +446,16 @@ if (loaded) {
 
       const finalize = (service as any).finalizeStreamMessage.bind(service)
       // Should return early due to requestId mismatch with lifecycle
-      await finalize({
-        conversationId: 'conv-1',
-        requestId: 'req-orphaned',
-        streamingRole: 'specialist',
-        streamedContent: 'test content',
-        adapterAgentId: 'specialist'
-      }, mockLifecycle)
+      await finalize(
+        {
+          conversationId: 'conv-1',
+          requestId: 'req-orphaned',
+          streamingRole: 'specialist',
+          streamedContent: 'test content',
+          adapterAgentId: 'specialist'
+        },
+        mockLifecycle
+      )
       // No assertion needed — just verifying no throw
     })
   })

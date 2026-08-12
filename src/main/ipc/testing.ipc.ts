@@ -11,7 +11,11 @@ import { requireObject, requireString, optionalString } from './validate-args'
 import { e2eRunnerService, preflight } from '../services/e2e-testing/e2e-runner.service'
 import { getScenarioSummaries } from '../services/e2e-testing/scenario-catalog'
 import { fixtureManager } from '../services/e2e-testing/fixture-manager'
-import { e2eTestRunRepository, e2eTestResultRepository, workspaceRepository } from '../db/repositories'
+import {
+  e2eTestRunRepository,
+  e2eTestResultRepository,
+  workspaceRepository
+} from '../db/repositories'
 
 export function registerTestingIpc(mainWindow: BrowserWindow): void {
   e2eRunnerService.setMainWindow(mainWindow)
@@ -36,9 +40,14 @@ export function registerTestingIpc(mainWindow: BrowserWindow): void {
   // ── Preflight check: is oMLX reachable? ──
   ipcMain.handle(IPC_CHANNELS.TESTING_PREFLIGHT, async (event, rawArgs?: unknown) => {
     validateSender(event)
-    const workspaceId = rawArgs != null
-      ? optionalString(requireObject(rawArgs, IPC_CHANNELS.TESTING_PREFLIGHT), 'workspaceId', IPC_CHANNELS.TESTING_PREFLIGHT)
-      : undefined
+    const workspaceId =
+      rawArgs != null
+        ? optionalString(
+            requireObject(rawArgs, IPC_CHANNELS.TESTING_PREFLIGHT),
+            'workspaceId',
+            IPC_CHANNELS.TESTING_PREFLIGHT
+          )
+        : undefined
     return preflight(workspaceId)
   })
 
@@ -69,7 +78,9 @@ export function registerTestingIpc(mainWindow: BrowserWindow): void {
 
       const workspaceId = optionalString(args, 'workspaceId', ch)
       const forceTools = args.forceTools === true
-      return { runId: await e2eRunnerService.run({ scenarioIds, category, workspaceId, forceTools }) }
+      return {
+        runId: await e2eRunnerService.run({ scenarioIds, category, workspaceId, forceTools })
+      }
     }
 
     return { runId: await e2eRunnerService.run() }

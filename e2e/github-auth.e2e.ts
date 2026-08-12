@@ -21,9 +21,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('GitHub Auth', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,9 +36,7 @@ test.describe('GitHub Auth', () => {
   }
 
   /** Navigate to repository settings and find the GitHub token section. */
-  async function navigateToGitHubSection(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToGitHubSection(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to settings sidebar
     const settingsBtn = page.locator('[data-testid="sidebar-tab-settings"]')
     const hasSidebar = await settingsBtn.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -73,10 +69,16 @@ test.describe('GitHub Auth', () => {
 
   test('GitHub token section renders in repository settings', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToGitHubSection(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="github-token-section"]')
     await expect(section).toBeVisible()
@@ -86,12 +88,20 @@ test.describe('GitHub Auth', () => {
     await expect(heading).toBeVisible()
   })
 
-  test('unconfigured state shows token input field and connect button', async ({ electronPage: page }) => {
+  test('unconfigured state shows token input field and connect button', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToGitHubSection(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="github-token-section"]')
 
@@ -119,17 +129,26 @@ test.describe('GitHub Auth', () => {
 
   test('token input accepts personal access token text', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToGitHubSection(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="github-token-section"]')
 
     // Check if unconfigured
     const tokenInput = section.locator('input[type="password"]')
     const hasInput = await tokenInput.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasInput) { test.skip(); return }
+    if (!hasInput) {
+      test.skip()
+      return
+    }
 
     // Type a token (using a fake one for testing)
     await tokenInput.fill('ghp_test1234567890')
@@ -141,16 +160,25 @@ test.describe('GitHub Auth', () => {
 
   test('connect button disabled when token is empty', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToGitHubSection(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="github-token-section"]')
 
     const tokenInput = section.locator('input[type="password"]')
     const hasInput = await tokenInput.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasInput) { test.skip(); return }
+    if (!hasInput) {
+      test.skip()
+      return
+    }
 
     // Clear the input
     await tokenInput.fill('')
@@ -164,12 +192,20 @@ test.describe('GitHub Auth', () => {
     }
   })
 
-  test('connected state shows green "Connected" badge with username', async ({ electronPage: page }) => {
+  test('connected state shows green "Connected" badge with username', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToGitHubSection(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="github-token-section"]')
 
@@ -195,10 +231,16 @@ test.describe('GitHub Auth', () => {
 
   test('disconnect button returns to unconfigured state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasSection = await navigateToGitHubSection(page)
-    if (!hasSection) { test.skip(); return }
+    if (!hasSection) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="github-token-section"]')
 

@@ -88,11 +88,17 @@ function trimLargestArray(obj: unknown, maxChars: number): string | null {
 
   const arr = record[largestKey] as unknown[]
 
-  return trimArray(arr, maxChars, (trimmedArr, omitted) => {
-    const result = { ...record, [largestKey]: trimmedArr }
-    const output = JSON.stringify(result)
-    return omitted > 0 ? output + `\n[...${omitted} more items omitted]` : output
-  }, record, largestKey)
+  return trimArray(
+    arr,
+    maxChars,
+    (trimmedArr, omitted) => {
+      const result = { ...record, [largestKey]: trimmedArr }
+      const output = JSON.stringify(result)
+      return omitted > 0 ? output + `\n[...${omitted} more items omitted]` : output
+    },
+    record,
+    largestKey
+  )
 }
 
 /**
@@ -114,9 +120,8 @@ function trimArray(
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2)
     const trimmedArr = arr.slice(0, mid)
-    const test = record && key
-      ? JSON.stringify({ ...record, [key]: trimmedArr })
-      : JSON.stringify(trimmedArr)
+    const test =
+      record && key ? JSON.stringify({ ...record, [key]: trimmedArr }) : JSON.stringify(trimmedArr)
     if (test.length <= budget) {
       lo = mid
     } else {

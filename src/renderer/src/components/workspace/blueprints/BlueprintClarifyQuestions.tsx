@@ -5,7 +5,10 @@
 
 import { useState, useCallback, type JSX } from 'react'
 import { Send, MessageSquare } from 'lucide-react'
-import type { ClarifyQuestion, ClarifyQuestionsBlock } from '../../../../../shared/blueprint-clarify-parsers'
+import type {
+  ClarifyQuestion,
+  ClarifyQuestionsBlock
+} from '../../../../../shared/blueprint-clarify-parsers'
 
 interface BlueprintClarifyQuestionsProps {
   questions: ClarifyQuestionsBlock
@@ -161,10 +164,7 @@ export function BlueprintClarifyQuestions({
 
       {/* Actions */}
       <div className="flex items-center justify-between pt-1">
-        <button
-          onClick={onSkip}
-          className="text-[10px] text-text-muted hover:text-text-secondary"
-        >
+        <button onClick={onSkip} className="text-[10px] text-text-muted hover:text-text-secondary">
           Skip clarification
         </button>
         <button
@@ -214,9 +214,7 @@ function QuestionCard({
               }`}
             >
               {opt.label}
-              {opt.recommended && (
-                <span className="ml-1 text-[9px] text-green-400">★</span>
-              )}
+              {opt.recommended && <span className="ml-1 text-[9px] text-green-400">★</span>}
               {opt.recommended && opt.recommendedReason && (
                 <span className="absolute bottom-full left-0 mb-1 hidden group-hover:block bg-surface-overlay border border-border/50 rounded px-2 py-1 text-[9px] text-text-muted whitespace-nowrap z-10">
                   {opt.recommendedReason}

@@ -93,8 +93,7 @@ export default tool({
                   socket?.destroy()
 
                   const memories = response.payload?.memories as
-                    | Array<{ content: string; category?: string; tier?: number }>
-                    | undefined
+                    Array<{ content: string; category?: string; tier?: number }> | undefined
 
                   if (!memories || memories.length === 0) {
                     resolve(`No memories found for topic: "${args.topic}"`)
@@ -122,15 +121,11 @@ export default tool({
 
           socket.on('error', () => {
             clearTimeout(timeout)
-            resolve(
-              `Memory read request queued for topic: "${args.topic}" (socket unavailable)`
-            )
+            resolve(`Memory read request queued for topic: "${args.topic}" (socket unavailable)`)
           })
         } catch {
           clearTimeout(timeout)
-          resolve(
-            `Memory read request queued for topic: "${args.topic}" (connection failed)`
-          )
+          resolve(`Memory read request queued for topic: "${args.topic}" (connection failed)`)
         }
       })
     }

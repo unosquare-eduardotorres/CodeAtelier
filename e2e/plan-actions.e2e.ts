@@ -47,7 +47,10 @@ test.describe('Plan Actions — Button Execution', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -148,12 +151,8 @@ test.describe('Plan Actions — Button Execution', () => {
 
     // After "Start Goal", should navigate to Goals/MPA area
     // Check for Goals page indicators — campaign view, goal input, or MPA-related UI
-    const goalsIndicator = page
-      .getByText(/goal|campaign|multi-phase/i)
-      .first()
-    const hasGoalsPage = await goalsIndicator
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const goalsIndicator = page.getByText(/goal|campaign|multi-phase/i).first()
+    const hasGoalsPage = await goalsIndicator.isVisible({ timeout: 10_000 }).catch(() => false)
 
     // The plan status should also have changed to "handed_off" when we go back
     // For now, verify navigation happened
@@ -162,9 +161,7 @@ test.describe('Plan Actions — Button Execution', () => {
 
   // ── 3. "Council" — starts council session ──
 
-  test('"Council" starts council session with plan as context', async ({
-    electronPage: page
-  }) => {
+  test('"Council" starts council session with plan as context', async ({ electronPage: page }) => {
     await navigateToPlans(page)
     await requireSavedPlan(page)
 
@@ -186,12 +183,8 @@ test.describe('Plan Actions — Button Execution', () => {
     await page.waitForTimeout(2_000)
 
     // Council session should start — check for council UI indicators
-    const councilIndicator = page
-      .getByText(/council|deliberat|review/i)
-      .first()
-    const hasCouncil = await councilIndicator
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const councilIndicator = page.getByText(/council|deliberat|review/i).first()
+    const hasCouncil = await councilIndicator.isVisible({ timeout: 10_000 }).catch(() => false)
 
     expect(hasCouncil).toBeTruthy()
   })
@@ -222,9 +215,7 @@ test.describe('Plan Actions — Button Execution', () => {
     // After clicking copy, there should be a visual feedback (toast, or button state change)
     // Check for a success indicator — toast notification or button text change
     const toastOrFeedback = page.getByText(/copied|clipboard/i).first()
-    const hasFeedback = await toastOrFeedback
-      .isVisible({ timeout: 3_000 })
-      .catch(() => false)
+    const hasFeedback = await toastOrFeedback.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Try reading clipboard content as verification
     const clipboardContent = await page
@@ -371,9 +362,7 @@ test.describe('Plan Actions — Button Execution', () => {
 
   // ── 7. "Open Conversation" — navigates to linked conversation ──
 
-  test('"Open Conversation" navigates to linked conversation', async ({
-    electronPage: page
-  }) => {
+  test('"Open Conversation" navigates to linked conversation', async ({ electronPage: page }) => {
     await navigateToPlans(page)
 
     // "Open Conversation" appears on handed_off and in_progress plans
@@ -385,9 +374,7 @@ test.describe('Plan Actions — Button Execution', () => {
       await page.waitForTimeout(300)
     }
 
-    const openConvBtn = page
-      .locator('[data-testid="plan-action-open-conversation"]')
-      .first()
+    const openConvBtn = page.locator('[data-testid="plan-action-open-conversation"]').first()
     const hasBtn = await openConvBtn.isVisible({ timeout: 5_000 }).catch(() => false)
 
     if (!hasBtn) {
@@ -403,9 +390,7 @@ test.describe('Plan Actions — Button Execution', () => {
           await page.waitForTimeout(300)
         }
 
-        const retryBtn = page
-          .locator('[data-testid="plan-action-open-conversation"]')
-          .first()
+        const retryBtn = page.locator('[data-testid="plan-action-open-conversation"]').first()
         const hasRetry = await retryBtn.isVisible({ timeout: 3_000 }).catch(() => false)
         if (!hasRetry) {
           test.skip()

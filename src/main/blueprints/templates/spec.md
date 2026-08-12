@@ -4,7 +4,7 @@
 **Created**: {{DATE}}
 **Status**: Draft
 
-## User Scenarios & Testing *(mandatory)*
+## User Scenarios & Testing _(mandatory)_
 
 <!--
   IMPORTANT: User stories should be PRIORITIZED as user journeys ordered by importance.
@@ -69,7 +69,7 @@
 - What happens when [boundary condition]?
 - How does system handle [error scenario]?
 
-## Requirements *(mandatory)*
+## Requirements _(mandatory)_
 
 ### Functional Requirements
 
@@ -79,14 +79,14 @@
 - **FR-004**: System MUST [data requirement]
 - **FR-005**: System MUST [behavior]
 
-*Mark unclear requirements with*: [NEEDS CLARIFICATION: reason]
+_Mark unclear requirements with_: [NEEDS CLARIFICATION: reason]
 
-### Key Entities *(include if feature involves data)*
+### Key Entities _(include if feature involves data)_
 
 - **[Entity 1]**: [What it represents, key attributes without implementation]
 - **[Entity 2]**: [What it represents, relationships to other entities]
 
-## Success Criteria *(mandatory)*
+## Success Criteria _(mandatory)_
 
 <!--
   Define measurable success criteria.

@@ -24,13 +24,13 @@ Step 5  Emit + persist results
 
 ## The 5 Advisors
 
-| Role | Name | Tool Access |
-|---|---|---|
-| `contrarian` | The Contrarian | Full (read-only) |
+| Role               | Name                         | Tool Access      |
+| ------------------ | ---------------------------- | ---------------- |
+| `contrarian`       | The Contrarian               | Full (read-only) |
 | `first-principles` | The First Principles Thinker | Full (read-only) |
-| `expansionist` | The Expansionist | Full (read-only) |
-| `outsider` | The Outsider | **None** |
-| `executor` | The Executor | Full (read-only) |
+| `expansionist`     | The Expansionist             | Full (read-only) |
+| `outsider`         | The Outsider                 | **None**         |
+| `executor`         | The Executor                 | Full (read-only) |
 
 ---
 
@@ -299,13 +299,13 @@ Emit EXACTLY ONE structured output block:
 
 ## Output Schemas (for parsing)
 
-Parsers extract the **last** fenced block matching each tag: `` ```<tag>\n...\n``` ``.
+Parsers extract the **last** fenced block matching each tag: ` ```<tag>\n...\n``` `.
 
-| Stage | Fence tag | Required fields |
-|---|---|---|
-| Advisor | `council-review` | `advisorRole`, `score` (1-100), `verdict`, `keyFindings[]`, `blindSpots[]`, `evidence[]`, `summary` |
-| Peer review | `council-peer-review` | `strongestResponse`, `strongestReason`, `biggestBlindSpot`, `blindSpotDescription`, `missedByAll` |
-| Chairman | `council-verdict` | `overallScore`, `sections.{agrees, clashes, blindSpots, recommendation, oneThingFirst}`, `revisions[]`, `individualScores` |
+| Stage       | Fence tag             | Required fields                                                                                                            |
+| ----------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Advisor     | `council-review`      | `advisorRole`, `score` (1-100), `verdict`, `keyFindings[]`, `blindSpots[]`, `evidence[]`, `summary`                        |
+| Peer review | `council-peer-review` | `strongestResponse`, `strongestReason`, `biggestBlindSpot`, `blindSpotDescription`, `missedByAll`                          |
+| Chairman    | `council-verdict`     | `overallScore`, `sections.{agrees, clashes, blindSpots, recommendation, oneThingFirst}`, `revisions[]`, `individualScores` |
 
 **Verdict enum:** `proceed-with-changes` | `needs-revision` | `rethink`
 **Scoring bands:** 80-100 excellent · 60-79 good · 40-59 concerning · 1-39 problematic

@@ -24,16 +24,28 @@ const icon = process.platform === 'win32' ? iconWin : iconDefault
 import { getDatabase, closeDatabase } from './db'
 import {
   agentSessionRepository,
+  appPreferenceRepository,
   grillSessionRepository,
   usageLogRepository,
-  turnUsageRepository
+  turnUsageRepository,
+  workspaceRepository
 } from './db/repositories'
+// Direct module import — bugRepository is not re-exported from the barrel.
+// Was a lazy require('./db/repositories/bug.repository'), which resolved to a
+// non-existent path in packaged builds, so main-process bugs were never recorded.
+import { bugRepository } from './db/repositories/bug.repository'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
 import { memoryExtractionService } from './services/memory-extraction.service'
 import { memoryEngineService } from './services/memory-engine.service'
+import { memoryBootstrapService } from './services/memory-bootstrap.service'
 import { autoUpdateService } from './services/auto-update.service'
 import { eventLoggerService } from './services/event-logger.service'
+import { trackService, registerTrackBusyProbe } from './services/track.service'
+import { lifecycleRegistry } from './services/conversation-lifecycle'
+import { blueprintService } from './services/blueprint.service'
+import { blueprintRepository } from './db/repositories/blueprint.repository'
+import { landingService } from './services/landing.service'
 import { grillAgentService } from './services/grill-agent.service'
 import { grillPersistenceController } from './services/grill-persistence.controller'
 import { auditAgentService } from './services/audit-agent.service'
@@ -46,16 +58,17 @@ import { fileWatcherService } from './services/file-watcher.service'
 import { localEmbeddingProvider } from './services/local-embedding.provider'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 import { notificationService } from './services/notification.service'
+import { backgroundTaskWatcherService } from './services/background-task-watcher.service'
 import { memoryConsolidationService } from './services/memory-consolidation.service'
 
 // Augment PATH to include Homebrew and npm global bin directories
 // CRITICAL: Ensures child_process.spawn() can locate binaries like 'opencode',
 // which the @opencode-ai/sdk needs to start its server locally
-import { 
-  augmentOpenCodeCliPath, 
+import {
+  augmentOpenCodeCliPath,
   locateOpenCodeCli,
   resolveOpencodePath,
-  ensureOpencodePathInEnv 
+  ensureOpencodePathInEnv
 } from '../shared/opencode-cli-path'
 
 // Augment PATH before any services or child processes are initialized
@@ -66,12 +79,10 @@ augmentOpenCodeCliPath()
 try {
   // Use npm-based resolution (more robust than hardcoded paths)
   const opencodePath = resolveOpencodePath()
-  
+
   if (opencodePath) {
     ensureOpencodePathInEnv()
-    log.info(
-      `[OpenCode CLI] Resolved: ${opencodePath}. PATH updated.`,
-    )
+    log.info(`[OpenCode CLI] Resolved: ${opencodePath}. PATH updated.`)
   } else {
     log.warn(
       `[OpenCode CLI] WARNING: Could not find 'opencode' binary. Install with: npm install -g @opencode-ai/cli`
@@ -137,10 +148,6 @@ process.on('unhandledRejection', (reason) => {
 /** Report a main-process error to the bug tracker DB + notify renderer */
 function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
   try {
-    // Lazy import to avoid circular deps during early bootstrap
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { bugRepository } = require('./db/repositories/bug.repository')
-
     // Parse source file/line from stack trace
     let sourceFile: string | undefined
     let sourceLine: number | undefined
@@ -176,9 +183,16 @@ function reportMainProcessBug(error: Error, severity: 'error' | 'fatal'): void {
         }
       }
     }
-  } catch {
-    // Bug tracker itself failed — don't crash the crash handler
-    log.error('[BugTracker] Failed to report main process error to bug tracker')
+  } catch (reportError) {
+    // Bug tracker itself failed — don't crash the crash handler.
+    // Log the underlying cause: a bare message here made a MODULE_NOT_FOUND
+    // from the old lazy require() indistinguishable from a real DB failure.
+    log.error(
+      '[BugTracker] Failed to report main process error to bug tracker:',
+      reportError,
+      '| original error:',
+      error.message
+    )
   }
 }
 
@@ -336,9 +350,7 @@ function createWindow(): void {
   // ── Renderer crash/hang observability ──
   // Without these handlers, a renderer crash or freeze is completely silent.
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
-    log.error(
-      `[Renderer] Process gone — reason: ${details.reason}, exitCode: ${details.exitCode}`
-    )
+    log.error(`[Renderer] Process gone — reason: ${details.reason}, exitCode: ${details.exitCode}`)
     // Write renderer crash info to vitals for crash-diagnosis
     vitalsLog.error(
       `[RENDERER-GONE] reason=${details.reason} exitCode=${details.exitCode} detail="" rss_mb=${Math.round(process.memoryUsage().rss / 1024 / 1024)}`
@@ -387,6 +399,67 @@ function createWindow(): void {
     log.warn('[Startup] Failed to clean up stale sessions (non-critical):', error)
   }
 
+  // Reclaim worktrees left behind by a crash.
+  //
+  // Teardown is two-step (mark 'removing' → git worktree remove → delete row),
+  // so a hard quit in the middle leaves either a tombstone row or a row whose
+  // directory is already gone. Both pin a branch that no chat can then claim,
+  // so this runs before any conversation gets a chance to ask for one.
+  void trackService
+    .pruneOrphans()
+    .then((reclaimed) => {
+      if (reclaimed > 0) {
+        log.info(`[Startup] Reclaimed ${reclaimed} orphaned worktree(s) from previous run`)
+      }
+      // Then the idle policy. Ordered after pruning because a missing directory
+      // is the reaper's skip case and the pruner's job, so running it first
+      // means the reaper only ever looks at trees that really exist.
+      return trackService.reapIdle()
+    })
+    .then((reaped) => {
+      if (reaped > 0) {
+        log.info(`[Startup] Reclaimed ${reaped} idle clean worktree(s) — no uncommitted work lost`)
+      }
+    })
+    .catch((error) => {
+      log.warn('[Startup] Worktree pruning failed (non-critical):', error)
+    })
+
+  // Handing a branch from a chat to a blueprint (or back) must be refused while
+  // the current owner is mid-turn — otherwise a second writer is pointed at a
+  // directory the first is still writing into. `transferOwner` cannot ask the
+  // services that know: blueprint.service already reaches back into
+  // track.service through blueprint-track, so importing it there would close an
+  // import cycle. The probes are registered here instead, at the root, where
+  // importing both is already free.
+  registerTrackBusyProbe('chat', (conversationId) =>
+    lifecycleRegistry.isStreaming(conversationId) ? 'it is streaming a reply right now' : null
+  )
+  registerTrackBusyProbe('blueprint', (blueprintId) => {
+    const workspaceId = blueprintRepository.findById(blueprintId)?.workspaceId
+    if (!workspaceId) return null
+    // Scoped to THIS blueprint rather than `isRunning(workspaceId)`: the latter
+    // is true whenever any blueprint in the workspace is running, which would
+    // refuse handoffs that have nothing to do with the running one.
+    return blueprintService.getActiveBlueprintId(workspaceId) === blueprintId
+      ? 'its pipeline is still running'
+      : null
+  })
+
+  // Boot is not the only moment worktrees go idle. Without a timer the retention
+  // policy silently becomes "whenever you restart the app", so a long-lived
+  // session accumulates trees indefinitely no matter how untouched they are.
+  trackService.startIdleReaper()
+
+  // Landed branches accumulate the same way idle worktrees do — branch-per-chat
+  // plus branch-per-blueprint leaves hundreds of merged `chat/*` and
+  // `blueprint/*` refs behind over a few months. Only tracks whose work has
+  // already reached the mainline AND whose tree is clean are collected.
+  void landingService
+    .gcAllWorkspaces()
+    .catch((error) => log.warn('[Startup] Branch GC failed (non-critical):', error))
+  landingService.startBranchGc()
+
   // Prune old events to prevent unbounded DB growth
   try {
     eventLoggerService.prune(30)
@@ -405,12 +478,12 @@ function createWindow(): void {
   // Initialize notification service with main window + load preference
   notificationService.setMainWindow(mainWindow)
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids circular dep
-    const { appPreferenceRepository } = require('./db/repositories')
     const prefs = appPreferenceRepository.getAppPreferences()
     notificationService.setEnabled(prefs.notificationsEnabled)
-  } catch {
-    /* non-fatal — default to enabled */
+  } catch (error) {
+    // Non-fatal — default to enabled. Logged because a silent failure here is
+    // exactly what made "notifications off" silently revert on every launch.
+    log.warn('[Notifications] Failed to load saved preference, defaulting to enabled:', error)
   }
 
   // Register IPC handlers
@@ -419,11 +492,18 @@ function createWindow(): void {
   // Initialize file watcher handler — connects fs.watch events to Code Graph + Semantic Search
   initFileWatcherHandler()
 
+  // Watch detached background processes so their exit can notify + wake the agent
+  backgroundTaskWatcherService.setMainWindow(mainWindow)
+  backgroundTaskWatcherService.start()
+
   // Initialize auto-updater (production only — dev uses electron-vite HMR)
   if (!is.dev) {
     autoUpdateService.init(mainWindow)
     // Check for updates shortly after launch to avoid blocking startup
     setTimeout(() => autoUpdateService.checkForUpdates(), 5000)
+    // ...then keep checking: a session left open for hours must still notice a
+    // release published after launch.
+    autoUpdateService.startPeriodicChecks()
   }
 
   // HMR for renderer based on electron-vite cli.
@@ -509,25 +589,41 @@ app.whenReady().then(() => {
     log.debug('Memory decay sweep error (non-fatal):', e)
   }
 
+  // ── Feed Brain: demote crash-orphaned runs to `paused` so they resume ──
+  // A force-quit leaves rows claiming to be `running` with no process behind
+  // them; without this they would block new runs forever.
+  try {
+    memoryBootstrapService.recoverOrphanedRuns()
+  } catch (e) {
+    log.debug('Bootstrap orphan recovery error (non-fatal):', e)
+  }
+
   // ── Memory Consolidation: idle job starts when a workspace is opened ──
   // (wired in workspace.ipc.ts handleWorkspaceOpen — not at app launch,
   //  because there's no real workspace ID until the user opens one)
 
   // ── Embedding: auto-load model at startup (delayed, non-fatal) ──
-  setTimeout(() => {
-    import('./services/local-embedding.provider').then(({ localEmbeddingProvider }) =>
-      localEmbeddingProvider.ensureEmbeddingReady().catch((e) =>
-        log.debug('Startup embedding auto-load (non-fatal):', e)
+  // Configure against the last-opened workspace first — the facade defaults to
+  // the oMLX backend, which can never succeed on Windows.
+  setTimeout(async () => {
+    try {
+      const [lastWorkspace] = workspaceRepository.findAll() // ORDER BY last_opened_at DESC
+      if (lastWorkspace) localEmbeddingProvider.configureForWorkspace(lastWorkspace.id)
+      const ready = await localEmbeddingProvider.ensureEmbeddingReady()
+      log.info(
+        `Startup embedding probe: ready=${ready} model=${localEmbeddingProvider.activeModelName || '(none)'}`
       )
-    )
+    } catch (e) {
+      log.info('Startup embedding auto-load failed (non-fatal):', e)
+    }
   }, 5000)
 
   // ── Prompt Optimizer: pre-warm CLI session (delayed, non-fatal) ──
   setTimeout(() => {
     import('./services/prompt-optimizer.service').then(({ promptOptimizerService }) =>
-      promptOptimizerService.warmup().catch((e) =>
-        log.debug('Prompt optimizer warmup (non-fatal):', e)
-      )
+      promptOptimizerService
+        .warmup()
+        .catch((e) => log.debug('Prompt optimizer warmup (non-fatal):', e))
     )
   }, 8_000)
 
@@ -592,7 +688,12 @@ app.whenReady().then(() => {
   // We snapshot watcher state before stopping so we can restart after wake.
   // fileWatcherService.stopAll() closes fs.watch handles and clears all state,
   // so we need to preserve {workspaceId, workspacePath, options} to recreate them.
-  let suspendedWatchers: { workspaceId: string; workspacePath: string; codeGraphEnabled: boolean; semanticSearchEnabled: boolean }[] = []
+  let suspendedWatchers: {
+    workspaceId: string
+    workspacePath: string
+    codeGraphEnabled: boolean
+    semanticSearchEnabled: boolean
+  }[] = []
   let suspendedConsolidationWorkspace: string | null = null
 
   powerMonitor.on('suspend', () => {
@@ -661,7 +762,6 @@ app.whenReady().then(() => {
     const reResolved = resolveOpencodePath()
     if (!reResolved) {
       // Resolution failed - log to bug tracker
-      const { bugRepository } = require('./db/repositories/bug.repository')
       bugRepository.upsertBug({
         process: 'main' as const,
         severity: 'error',
@@ -680,7 +780,6 @@ app.whenReady().then(() => {
   } catch (error) {
     // Log resolution failure to bug tracker
     try {
-      const { bugRepository } = require('./db/repositories/bug.repository')
       bugRepository.upsertBug({
         process: 'main' as const,
         severity: 'error',
@@ -692,8 +791,9 @@ app.whenReady().then(() => {
         appVersion: app.getVersion(),
         osInfo: `${process.platform} ${os.release()}`
       })
-    } catch {
-      // Silent fail - don't crash the crash handler
+    } catch (reportError) {
+      // Don't crash the crash handler — but never fail silently.
+      log.error('[BugTracker] Failed to record OpenCode CLI resolution failure:', reportError)
     }
   }
 
@@ -845,6 +945,29 @@ app.on('before-quit', async (event) => {
       log.debug('oMLX embedding dispose error (expected during quit):', e)
     }
 
+    // Stop the periodic worktree reaper before anything else touches the DB
+    try {
+      trackService.stopIdleReaper()
+      landingService.stopBranchGc()
+    } catch (e) {
+      log.debug('Track maintenance stop error (expected during quit):', e)
+    }
+
+    // Stop polling background processes (the processes themselves are detached
+    // and intentionally survive the app — they stay listed on next launch)
+    try {
+      backgroundTaskWatcherService.stop()
+    } catch (e) {
+      log.debug('Background task watcher stop error (expected during quit):', e)
+    }
+
+    // Release the loopback port used to serve cloud-drive update feeds
+    try {
+      await autoUpdateService.dispose()
+    } catch (e) {
+      log.debug('Auto-update dispose error (expected during quit):', e)
+    }
+
     // Close database last — WAL checkpoint must happen while the process is alive
     closeDatabase()
   }
@@ -862,6 +985,13 @@ app.on('before-quit', async (event) => {
   } catch (e) {
     log.warn('[before-quit] Cleanup threw:', e)
   }
+
+  // Outside cleanup() on purpose: cleanup is raced against the 4s timeout above,
+  // so a slow shutdown (live sessions still winding down) would fall through to
+  // app.exit(0) and skip the install entirely. Synchronous — the 5s failsafe
+  // still has headroom. Re-entry is safe: `isQuitting` is already true, so a
+  // before-quit triggered by quitAndInstall() returns immediately.
+  autoUpdateService.installOnQuitIfReady()
 
   // Force-exit: app.exit(0) terminates all child processes (renderer, GPU,
   // utility) immediately — bypasses the cooperative window-close ack that

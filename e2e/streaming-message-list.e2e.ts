@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Streaming & Message List', () => {
   /** Ensure we're in a workspace with chat view ready. */
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const chat = new ChatPage(page)
 
@@ -61,9 +59,7 @@ test.describe('Streaming & Message List', () => {
     }
 
     // Wait for message input
-    const inputReady = await chat.messageInput
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
     if (!inputReady) {
       test.skip()
       return
@@ -103,9 +99,7 @@ test.describe('Streaming & Message List', () => {
       return
     }
 
-    const inputReady = await chat.messageInput
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
     if (!inputReady) {
       test.skip()
       return
@@ -124,9 +118,7 @@ test.describe('Streaming & Message List', () => {
 
     // Check for streaming indicator
     const streamingIndicator = page.locator('[data-testid="streaming-indicator"]')
-    const isStreaming = await streamingIndicator
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const isStreaming = await streamingIndicator.isVisible({ timeout: 15_000 }).catch(() => false)
 
     if (isStreaming) {
       // Wait for streaming to complete
@@ -151,9 +143,7 @@ test.describe('Streaming & Message List', () => {
 
     if (messageCount < 2) {
       // Need at least a user + assistant pair — try sending a message
-      const inputReady = await chat.messageInput
-        .isVisible({ timeout: 15_000 })
-        .catch(() => false)
+      const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
       if (!inputReady) {
         test.skip()
         return
@@ -192,9 +182,7 @@ test.describe('Streaming & Message List', () => {
       return
     }
 
-    const inputReady = await chat.messageInput
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
     if (!inputReady) {
       test.skip()
       return
@@ -211,9 +199,7 @@ test.describe('Streaming & Message List', () => {
     await chat.sendMessage('Explain the entire history of computing in great detail')
 
     // Wait for stop button to appear
-    const hasStop = await chat.stopButton
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const hasStop = await chat.stopButton.isVisible({ timeout: 15_000 }).catch(() => false)
     if (!hasStop) {
       // Response completed too quickly
       test.skip()
@@ -289,9 +275,7 @@ test.describe('Streaming & Message List', () => {
       return
     }
 
-    const inputReady = await chat.messageInput
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
     if (!inputReady) {
       test.skip()
       return

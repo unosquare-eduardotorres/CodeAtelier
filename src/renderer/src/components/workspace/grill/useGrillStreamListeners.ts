@@ -91,8 +91,7 @@ export function useGrillStreamListeners(opts: {
         questions: data.questions,
         trackId: (data.trackId ?? selectedTrack) as GrillTrackId | undefined,
         suggestedNextTrack: data.suggestedNextTrack as
-          | { trackId: GrillTrackId; reason: string }
-          | undefined
+          { trackId: GrillTrackId; reason: string } | undefined
       }
       setCurrentIteration(iteration)
       setPhase('answering')

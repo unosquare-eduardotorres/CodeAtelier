@@ -3,7 +3,7 @@ import Database from 'better-sqlite3'
 // where `electron` is not available. The `app` object is only needed when
 // DB_PATH is not set (i.e., inside the Electron main process).
 function getElectronApp(): typeof import('electron').app {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
   return require('electron').app
 }
 import { join } from 'node:path'
@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 129
+export const CURRENT_SCHEMA_VERSION = 143
 
 export interface Migration {
   version: number
@@ -2679,8 +2679,12 @@ export const migrations: Migration[] = [
 
       // Chat-group actions overridden by model presets
       const chatActions = [
-        'da-vinci', 'da-vinci:plan', 'da-vinci:build',
-        'project-specialist', 'project-specialist:plan', 'project-specialist:build'
+        'da-vinci',
+        'da-vinci:plan',
+        'da-vinci:build',
+        'project-specialist',
+        'project-specialist:plan',
+        'project-specialist:build'
       ]
       function buildCfg(modelId: string): string {
         const cfg: Record<string, { provider: string; modelId: string }> = {}
@@ -2699,14 +2703,18 @@ export const migrations: Migration[] = [
           insert.run(`${ws.id}_${p.suffix}`, ws.id, p.name, buildCfg(p.modelId))
         }
       }
-      dbLogger.info(`[migration-108] ✓ Seeded Claude model presets for ${workspaces.length} workspace(s)`)
+      dbLogger.info(
+        `[migration-108] ✓ Seeded Claude model presets for ${workspaces.length} workspace(s)`
+      )
     }
   },
   {
     version: 109,
     name: 'add-conversation-type-column',
     up: (db) => {
-      db.exec(`ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint'))`)
+      db.exec(
+        `ALTER TABLE conversations ADD COLUMN type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint'))`
+      )
       dbLogger.info('[migration-109] ✓ Added type column to conversations')
     }
   },
@@ -2771,9 +2779,15 @@ export const migrations: Migration[] = [
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_workspace ON memory_facts(workspace_id)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status)`)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref)`
+      )
 
       // ── memory_contradictions: audit trail for conflicting facts ──
       db.exec(`
@@ -2787,7 +2801,9 @@ export const migrations: Migration[] = [
           resolved_at TEXT
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status)`
+      )
 
       // ── memory_doc_state: content-hash gate for doc watcher ──
       db.exec(`
@@ -2803,7 +2819,9 @@ export const migrations: Migration[] = [
       // ── Drop legacy memories table (fresh start — decision #3) ──
       db.exec(`DROP TABLE IF EXISTS memories`)
 
-      dbLogger.info('[migration-112] ✓ Created memory_facts, memory_contradictions, memory_doc_state; dropped memories')
+      dbLogger.info(
+        '[migration-112] ✓ Created memory_facts, memory_contradictions, memory_doc_state; dropped memories'
+      )
     }
   },
 
@@ -2827,7 +2845,9 @@ export const migrations: Migration[] = [
           total_error INTEGER NOT NULL DEFAULT 0
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_workspace ON e2e_test_runs(workspace_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_workspace ON e2e_test_runs(workspace_id)`
+      )
       db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_runs_status ON e2e_test_runs(status)`)
 
       db.exec(`
@@ -2845,7 +2865,9 @@ export const migrations: Migration[] = [
         )
       `)
       db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_run ON e2e_test_results(run_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_scenario ON e2e_test_results(scenario_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_e2e_test_results_scenario ON e2e_test_results(scenario_id)`
+      )
       db.exec(`CREATE INDEX IF NOT EXISTS idx_e2e_test_results_status ON e2e_test_results(status)`)
 
       dbLogger.info('[migration-113] ✓ Created e2e_test_runs, e2e_test_results tables')
@@ -2858,23 +2880,32 @@ export const migrations: Migration[] = [
     name: 'upgrade-sonnet-5-seed-fable-5-presets',
     up: (db) => {
       // 1. Update built-in Sonnet presets: swap claude-sonnet-4-6 → claude-sonnet-5 in action_config_json
-      const sonnetPresets = db.prepare(
-        `SELECT id, action_config_json FROM llm_presets WHERE is_built_in = 1 AND name = 'Claude Sonnet'`
-      ).all() as { id: string; action_config_json: string }[]
+      const sonnetPresets = db
+        .prepare(
+          `SELECT id, action_config_json FROM llm_presets WHERE is_built_in = 1 AND name = 'Claude Sonnet'`
+        )
+        .all() as { id: string; action_config_json: string }[]
 
       const updateStmt = db.prepare(
         `UPDATE llm_presets SET action_config_json = ?, updated_at = datetime('now') WHERE id = ?`
       )
       for (const preset of sonnetPresets) {
-        const updatedJson = preset.action_config_json.replace(/claude-sonnet-4-6/g, 'claude-sonnet-5')
+        const updatedJson = preset.action_config_json.replace(
+          /claude-sonnet-4-6/g,
+          'claude-sonnet-5'
+        )
         updateStmt.run(updatedJson, preset.id)
       }
 
       // 2. Seed Fable 5 preset for each workspace (same chat-group actions as migration-108)
       const workspaces = db.prepare('SELECT id FROM workspaces').all() as { id: string }[]
       const chatActions = [
-        'da-vinci', 'da-vinci:plan', 'da-vinci:build',
-        'project-specialist', 'project-specialist:plan', 'project-specialist:build'
+        'da-vinci',
+        'da-vinci:plan',
+        'da-vinci:build',
+        'project-specialist',
+        'project-specialist:plan',
+        'project-specialist:build'
       ]
       const cfg: Record<string, { provider: string; modelId: string }> = {}
       for (const a of chatActions) cfg[a] = { provider: 'claude', modelId: 'claude-fable-5' }
@@ -2887,7 +2918,9 @@ export const migrations: Migration[] = [
         insert.run(`${ws.id}_claude-fable`, ws.id, 'Claude Fable', fableJson)
       }
 
-      dbLogger.info(`[migration-114] ✓ Upgraded Sonnet presets to v5 + seeded Fable 5 for ${workspaces.length} workspace(s)`)
+      dbLogger.info(
+        `[migration-114] ✓ Upgraded Sonnet presets to v5 + seeded Fable 5 for ${workspaces.length} workspace(s)`
+      )
     }
   },
 
@@ -2898,12 +2931,15 @@ export const migrations: Migration[] = [
     up: (db) => {
       // Remove orphaned facts whose workspace was deleted before FK cascade existed.
       // Without this, the INSERT…SELECT below violates the FK on memory_facts_new.
-      const purged = db.prepare(
-        `DELETE FROM memory_facts
+      const purged = db
+        .prepare(
+          `DELETE FROM memory_facts
          WHERE workspace_id IS NOT NULL
            AND workspace_id NOT IN (SELECT id FROM workspaces)`
-      ).run()
-      if (purged.changes > 0) dbLogger.warn(`[migration-115] Purged ${purged.changes} orphaned memory_facts`)
+        )
+        .run()
+      if (purged.changes > 0)
+        dbLogger.warn(`[migration-115] Purged ${purged.changes} orphaned memory_facts`)
 
       // SQLite cannot ALTER CHECK constraints — must rebuild the table.
       // Precedent: migration 107 (blueprint_tasks 'skipped' status).
@@ -2968,7 +3004,9 @@ export const migrations: Migration[] = [
         DROP TABLE memory_contradictions_bak;
         CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status);
       `)
-      dbLogger.info('[migration-115] ✓ Extended memory_facts source_type CHECK to include blueprint + grill')
+      dbLogger.info(
+        '[migration-115] ✓ Extended memory_facts source_type CHECK to include blueprint + grill'
+      )
     }
   },
 
@@ -2978,13 +3016,15 @@ export const migrations: Migration[] = [
     name: 'sync-plan-prompt-diagram-styling',
     up: (db) => {
       const newPlanPrompt = DEFAULT_PROMPTS['da-vinci'].plan
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE core_agent_prompts
         SET default_prompt_text = ?,
             prompt_text = CASE WHEN is_custom = 0 THEN ? ELSE prompt_text END,
             updated_at = datetime('now')
         WHERE agent_role = 'da-vinci' AND mode = 'plan'
-      `).run(newPlanPrompt, newPlanPrompt)
+      `
+      ).run(newPlanPrompt, newPlanPrompt)
       dbLogger.info('[migration-116] ✓ Plan prompt updated with diagram styling + icon guidance')
     }
   },
@@ -3001,8 +3041,11 @@ export const migrations: Migration[] = [
       // 0a. Rebuild core_agent_prompts CHECK to include 'specialist'
       // The current CHECK (from migration 92) only allows ('da-vinci', 'generalist').
       // We must widen it before UPDATE can set agent_role = 'specialist'.
-      const promptCols = (db.prepare('PRAGMA table_info(core_agent_prompts)').all() as Array<{ name: string }>)
-        .map(c => c.name).join(', ')
+      const promptCols = (
+        db.prepare('PRAGMA table_info(core_agent_prompts)').all() as Array<{ name: string }>
+      )
+        .map((c) => c.name)
+        .join(', ')
       db.exec(`
         CREATE TABLE core_agent_prompts_new (
           id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
@@ -3015,7 +3058,9 @@ export const migrations: Migration[] = [
           UNIQUE(agent_role, mode)
         )
       `)
-      db.exec(`INSERT INTO core_agent_prompts_new (${promptCols}) SELECT ${promptCols} FROM core_agent_prompts`)
+      db.exec(
+        `INSERT INTO core_agent_prompts_new (${promptCols}) SELECT ${promptCols} FROM core_agent_prompts`
+      )
       db.exec('DROP TABLE core_agent_prompts')
       db.exec('ALTER TABLE core_agent_prompts_new RENAME TO core_agent_prompts')
 
@@ -3036,34 +3081,53 @@ export const migrations: Migration[] = [
       dbLogger.info('[migration-117] ✓ CHECK constraints rebuilt to include specialist')
 
       // 1. Rewrite message roles
-      const msgResult = db.prepare(`
+      const msgResult = db
+        .prepare(
+          `
         UPDATE messages SET role = 'specialist' WHERE role = 'da-vinci'
-      `).run()
-      dbLogger.info(`[migration-117] Rewrote ${msgResult.changes} message roles da-vinci → specialist`)
+      `
+        )
+        .run()
+      dbLogger.info(
+        `[migration-117] Rewrote ${msgResult.changes} message roles da-vinci → specialist`
+      )
 
       // 2. Rewrite core_agent_prompts agent_role
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE core_agent_prompts SET agent_role = 'specialist' WHERE agent_role = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 3. Rewrite core_agent_aliases agent_role
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE core_agent_aliases SET agent_role = 'specialist' WHERE agent_role = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 4. Rewrite agent_sessions agent_type
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE agent_sessions SET agent_type = 'specialist' WHERE agent_type = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 5. Rewrite model overrides in workspace settings JSON
       // Replace 'da-vinci' → 'specialist', 'da-vinci:plan' → 'specialist:plan',
       // 'da-vinci:build' → 'specialist:build', 'project-specialist' → 'specialist',
       // 'project-specialist:plan' → 'specialist:plan', 'project-specialist:build' → 'specialist:build'
-      const workspaces = db.prepare(`SELECT id, settings_json FROM workspaces WHERE settings_json IS NOT NULL`).all() as Array<{ id: string; settings_json: string }>
+      const workspaces = db
+        .prepare(`SELECT id, settings_json FROM workspaces WHERE settings_json IS NOT NULL`)
+        .all() as Array<{ id: string; settings_json: string }>
       const updateSettings = db.prepare(`UPDATE workspaces SET settings_json = ? WHERE id = ?`)
       for (const ws of workspaces) {
-        if (!ws.settings_json || !ws.settings_json.includes('da-vinci') && !ws.settings_json.includes('project-specialist')) continue
+        if (
+          !ws.settings_json ||
+          (!ws.settings_json.includes('da-vinci') &&
+            !ws.settings_json.includes('project-specialist'))
+        )
+          continue
         let updated = ws.settings_json
         // Order matters: replace longer keys first
         updated = updated.replace(/"project-specialist:plan"/g, '"specialist:plan"')
@@ -3077,24 +3141,34 @@ export const migrations: Migration[] = [
           const parsed = JSON.parse(updated)
           delete parsed.specialistSwapAccepted
           updated = JSON.stringify(parsed)
-        } catch { /* leave as-is if parse fails */ }
+        } catch {
+          /* leave as-is if parse fails */
+        }
         if (updated !== ws.settings_json) {
           updateSettings.run(updated, ws.id)
         }
       }
 
       // 6. Rewrite events entries
-      db.prepare(`
+      db.prepare(
+        `
         UPDATE events SET agent_id = 'specialist' WHERE agent_id = 'da-vinci'
-      `).run()
+      `
+      ).run()
 
       // 7. Rewrite model preset action keys in llm_presets
-      const presets = db.prepare(
-        `SELECT id, action_config_json FROM llm_presets WHERE action_config_json IS NOT NULL`
-      ).all() as Array<{ id: string; action_config_json: string }>
+      const presets = db
+        .prepare(
+          `SELECT id, action_config_json FROM llm_presets WHERE action_config_json IS NOT NULL`
+        )
+        .all() as Array<{ id: string; action_config_json: string }>
       const updatePreset = db.prepare(`UPDATE llm_presets SET action_config_json = ? WHERE id = ?`)
       for (const preset of presets) {
-        if (!preset.action_config_json.includes('da-vinci') && !preset.action_config_json.includes('project-specialist')) continue
+        if (
+          !preset.action_config_json.includes('da-vinci') &&
+          !preset.action_config_json.includes('project-specialist')
+        )
+          continue
         let updated = preset.action_config_json
         // Order matters: replace longer keys first
         updated = updated.replace(/"project-specialist:plan"/g, '"specialist:plan"')
@@ -3138,10 +3212,18 @@ export const migrations: Migration[] = [
         )
       `)
 
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_workspace ON handoff_events(workspace_id, created_at DESC)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_source ON handoff_events(source, source_session_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_status ON handoff_events(status) WHERE status = 'pending'`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_handoff_events_parent ON handoff_events(parent_handoff_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_workspace ON handoff_events(workspace_id, created_at DESC)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_source ON handoff_events(source, source_session_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_status ON handoff_events(status) WHERE status = 'pending'`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_handoff_events_parent ON handoff_events(parent_handoff_id)`
+      )
 
       dbLogger.info('[migration-118] ✓ Created handoff_events table')
     }
@@ -3153,9 +3235,7 @@ export const migrations: Migration[] = [
     name: 'memory-system-overhaul',
     up: (db) => {
       // ── 1. Purge all pending contradiction rows (review queue reset) ──
-      const purged = db.prepare(
-        `DELETE FROM memory_contradictions WHERE status = 'pending'`
-      ).run()
+      const purged = db.prepare(`DELETE FROM memory_contradictions WHERE status = 'pending'`).run()
       if (purged.changes > 0) {
         dbLogger.info(`[migration-119] Purged ${purged.changes} pending contradiction rows`)
       }
@@ -3163,14 +3243,18 @@ export const migrations: Migration[] = [
       // ── 1b. Deduplicate resolved contradiction pairs before creating UNIQUE index ──
       // handleContradiction may have inserted (A,B) and (B,A) as separate resolved rows.
       // Keep only the newest row per normalized pair; delete the rest.
-      const deduped = db.prepare(`
+      const deduped = db
+        .prepare(
+          `
         DELETE FROM memory_contradictions
         WHERE rowid NOT IN (
           SELECT MAX(rowid)
           FROM memory_contradictions
           GROUP BY MIN(old_fact_id, new_fact_id), MAX(old_fact_id, new_fact_id)
         )
-      `).run()
+      `
+        )
+        .run()
       if (deduped.changes > 0) {
         dbLogger.info(`[migration-119] Deduped ${deduped.changes} duplicate contradiction pairs`)
       }
@@ -3198,15 +3282,21 @@ export const migrations: Migration[] = [
           created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
       `)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_confirmations_fact ON memory_confirmations(fact_id)`)
-      db.exec(`CREATE INDEX IF NOT EXISTS idx_memory_confirmations_date ON memory_confirmations(created_at)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_confirmations_fact ON memory_confirmations(fact_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_confirmations_date ON memory_confirmations(created_at)`
+      )
 
       // ── 5. Backfill confirmation events from existing confirmation_count ──
       // For each fact with confirmation_count > 0, insert that many auto_dedup events
       // spread across the fact's lifetime so tier recalibration has data to work with.
-      const factsWithConfirms = db.prepare(
-        `SELECT id, confirmation_count, created_at FROM memory_facts WHERE confirmation_count > 0`
-      ).all() as Array<{ id: string; confirmation_count: number; created_at: string }>
+      const factsWithConfirms = db
+        .prepare(
+          `SELECT id, confirmation_count, created_at FROM memory_facts WHERE confirmation_count > 0`
+        )
+        .all() as Array<{ id: string; confirmation_count: number; created_at: string }>
 
       const insertConfirm = db.prepare(
         `INSERT INTO memory_confirmations (fact_id, source_type, weight, created_at) VALUES (?, 'auto_dedup', 0.5, ?)`
@@ -3218,23 +3308,30 @@ export const migrations: Migration[] = [
         }
       }
       if (factsWithConfirms.length > 0) {
-        dbLogger.info(`[migration-119] Backfilled confirmation events for ${factsWithConfirms.length} facts`)
+        dbLogger.info(
+          `[migration-119] Backfilled confirmation events for ${factsWithConfirms.length} facts`
+        )
       }
 
       // ── 6. Demote T3/T2 facts that lack human confirmation ──
       // Any T3 (Wisdom) fact drops to T1; any T2 (Knowledge) drops to T1.
       // They can re-earn their tier through the new evidence-based rules.
-      const demoted = db.prepare(
-        `UPDATE memory_facts SET tier = 1, updated_at = datetime('now')
+      const demoted = db
+        .prepare(
+          `UPDATE memory_facts SET tier = 1, updated_at = datetime('now')
          WHERE tier >= 2 AND status = 'active'`
-      ).run()
+        )
+        .run()
       if (demoted.changes > 0) {
-        dbLogger.info(`[migration-119] Demoted ${demoted.changes} T2/T3 facts to T1 for re-evaluation`)
+        dbLogger.info(
+          `[migration-119] Demoted ${demoted.changes} T2/T3 facts to T1 for re-evaluation`
+        )
       }
 
       // ── 7. Detect and flag volatile facts (version/count patterns) ──
-      const volatilePatterns = db.prepare(
-        `UPDATE memory_facts SET volatile = 1, updated_at = datetime('now')
+      const volatilePatterns = db
+        .prepare(
+          `UPDATE memory_facts SET volatile = 1, updated_at = datetime('now')
          WHERE status = 'active'
            AND (
              content LIKE '%schemaVersion%' OR content LIKE '%schema_version%'
@@ -3242,7 +3339,8 @@ export const migrations: Migration[] = [
              OR content LIKE '%CURRENT_SCHEMA_VERSION%'
              OR title LIKE '%version%' AND (content LIKE '%=%' OR content LIKE '%:%')
            )`
-      ).run()
+        )
+        .run()
       if (volatilePatterns.changes > 0) {
         dbLogger.info(`[migration-119] Flagged ${volatilePatterns.changes} facts as volatile`)
       }
@@ -3295,8 +3393,12 @@ export const migrations: Migration[] = [
 
       // Revision linking: soft-link to the plan this one supersedes
       try {
-        db.exec(`ALTER TABLE plans ADD COLUMN previous_plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL`)
-      } catch { /* column may already exist */ }
+        db.exec(
+          `ALTER TABLE plans ADD COLUMN previous_plan_id TEXT REFERENCES plans(id) ON DELETE SET NULL`
+        )
+      } catch {
+        /* column may already exist */
+      }
 
       dbLogger.info('[migration-122] ✓ Created plan_status_history table + previous_plan_id column')
     }
@@ -3320,13 +3422,17 @@ export const migrations: Migration[] = [
         settings_json: string | null
       }
 
-      const rows = db.prepare(`
+      const rows = db
+        .prepare(
+          `
         SELECT c.id as conv_id, c.workspace_id, c.llm_provider,
                w.settings_json
         FROM conversations c
         JOIN workspaces w ON c.workspace_id = w.id
         WHERE c.model_config_json IS NULL
-      `).all() as BackfillRow[]
+      `
+        )
+        .all() as BackfillRow[]
 
       if (rows.length === 0) {
         dbLogger.info('[migration-123] No conversations need backfill')
@@ -3343,12 +3449,15 @@ export const migrations: Migration[] = [
           let settings: Record<string, unknown> = {}
           try {
             settings = row.settings_json ? JSON.parse(row.settings_json) : {}
-          } catch { /* corrupted settings — use defaults */ }
+          } catch {
+            /* corrupted settings — use defaults */
+          }
 
           const workspaceProvider = (settings.llmProvider as LLMProvider) ?? 'claude'
           const workspaceBackend = (settings.localLlmBackend as LocalLLMBackend) ?? undefined
           const modelRoles = (settings.modelRoles ?? undefined) as ModelRoleMap | undefined
-          const modelOverrides = (settings.modelOverrides ?? undefined) as ModelOverrides | undefined
+          const modelOverrides = (settings.modelOverrides ?? undefined) as
+            ModelOverrides | undefined
 
           const resolveOpts = { modelRoles, modelOverrides, workspaceProvider, workspaceBackend }
 
@@ -3363,11 +3472,7 @@ export const migrations: Migration[] = [
           const resolvedProvider = snapshot.plan.provider
           const effectiveProvider = row.llm_provider || resolvedProvider
 
-          updateSnapshot.run(
-            JSON.stringify(snapshot),
-            effectiveProvider,
-            row.conv_id
-          )
+          updateSnapshot.run(JSON.stringify(snapshot), effectiveProvider, row.conv_id)
           backfilled++
         } catch (err) {
           dbLogger.warn(`[migration-123] Failed to backfill conversation ${row.conv_id}:`, err)
@@ -3426,12 +3531,16 @@ export const migrations: Migration[] = [
       // Add completed_at to blueprints
       db.exec(`ALTER TABLE blueprints ADD COLUMN completed_at TEXT`)
       // Backfill from updated_at for existing terminal blueprints
-      db.exec(`UPDATE blueprints SET completed_at = updated_at WHERE status IN ('complete', 'failed', 'cancelled')`)
+      db.exec(
+        `UPDATE blueprints SET completed_at = updated_at WHERE status IN ('complete', 'failed', 'cancelled')`
+      )
 
       // Add completed_at to plans
       db.exec(`ALTER TABLE plans ADD COLUMN completed_at TEXT`)
       // Backfill from updated_at for existing terminal plans
-      db.exec(`UPDATE plans SET completed_at = updated_at WHERE status IN ('completed', 'archived')`)
+      db.exec(
+        `UPDATE plans SET completed_at = updated_at WHERE status IN ('completed', 'archived')`
+      )
 
       dbLogger.info('[migration-126] ✓ Added completed_at to blueprints and plans tables')
     }
@@ -3488,7 +3597,9 @@ export const migrations: Migration[] = [
       db.exec('ALTER TABLE conversations_new RENAME TO conversations')
 
       // Recreate indexes dropped with the old table
-      db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)')
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)'
+      )
       db.exec(
         `CREATE INDEX IF NOT EXISTS idx_conversations_audit_run ON conversations(source_audit_run_id) WHERE source_audit_run_id IS NOT NULL`
       )
@@ -3510,6 +3621,662 @@ export const migrations: Migration[] = [
     up: (db) => {
       db.exec(`ALTER TABLE conversations ADD COLUMN source_branch TEXT DEFAULT NULL`)
       dbLogger.info('[migration-129] ✓ Added source_branch column to conversations')
+    }
+  },
+  {
+    version: 130,
+    name: 'code-graph-edge-typing-and-provenance',
+    up: (db) => {
+      // Deliberately plain TEXT without CHECK — SQLite ALTER TABLE ADD COLUMN
+      // with a CHECK on a populated table is an avoidable footgun. The enum is
+      // enforced in TypeScript (EdgeResolution / SymbolKind).
+      db.exec(`ALTER TABLE code_graph_tags ADD COLUMN symbol_kind TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE code_graph_edges ADD COLUMN resolution TEXT NOT NULL DEFAULT 'inferred'`)
+      db.exec(`ALTER TABLE code_graph_edges ADD COLUMN def_fanout INTEGER NOT NULL DEFAULT 1`)
+      dbLogger.info('[migration-130] ✓ Added symbol_kind, resolution, def_fanout')
+      dbLogger.info(
+        '[migration-130] Existing rows keep default values until the next index run, ' +
+          'which detects the untyped index and re-parses every file automatically.'
+      )
+    }
+  },
+  {
+    version: 131,
+    name: 'drop-unused-code-graph-resolution-index',
+    up: (db) => {
+      // resolution is never a WHERE/ORDER BY term — ordering happens in JS.
+      // The index only cost migration time and per-insert maintenance on
+      // workspaces with millions of edges.
+      db.exec('DROP INDEX IF EXISTS idx_graph_resolution')
+      dbLogger.info('[migration-131] ✓ Dropped unused idx_graph_resolution')
+    }
+  },
+
+  // ── Migration 132: Add 'bootstrap' to memory_facts source_type CHECK ──
+  {
+    version: 132,
+    name: 'memory-facts-bootstrap-source-type',
+    up: (db) => {
+      // MemorySourceType has included 'bootstrap' since the bootstrap pipeline
+      // shipped, but the CHECK was never extended past migration 115. Every
+      // deterministic bootstrap write (docs, stack, architecture, history,
+      // structure) therefore failed with
+      //   CHECK constraint failed: source_type IN (...)
+      // and the per-fact try/catch in memory-extraction.service swallowed it,
+      // so Feed Brain / Deep Scan silently produced 0 facts from those phases.
+      // Only agent-recorded facts (source_type 'tool', via the memory MCP
+      // server) ever landed.
+      //
+      // SQLite cannot ALTER a CHECK constraint — rebuild the table.
+      // Mirrors migration 115, including the memory_contradictions FK detach.
+      const purged = db
+        .prepare(
+          `DELETE FROM memory_facts
+         WHERE workspace_id IS NOT NULL
+           AND workspace_id NOT IN (SELECT id FROM workspaces)`
+        )
+        .run()
+      if (purged.changes > 0)
+        dbLogger.warn(`[migration-132] Purged ${purged.changes} orphaned memory_facts`)
+
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_contradictions_bak AS
+          SELECT * FROM memory_contradictions;
+        DROP TABLE IF EXISTS memory_contradictions;
+      `)
+
+      db.exec(`
+        CREATE TABLE memory_facts_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT REFERENCES workspaces(id) ON DELETE CASCADE,
+          category TEXT NOT NULL CHECK (category IN ('decision','convention','gotcha','preference','reference')),
+          title TEXT NOT NULL,
+          content TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(tags)),
+          scope_paths TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(scope_paths)),
+          tier INTEGER NOT NULL DEFAULT 0 CHECK (tier BETWEEN 0 AND 3),
+          confidence REAL NOT NULL DEFAULT 0.5,
+          confirmation_count INTEGER NOT NULL DEFAULT 0,
+          last_confirmed_at TEXT,
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','superseded','archived')),
+          superseded_by TEXT,
+          merged_into TEXT,
+          volatile INTEGER NOT NULL DEFAULT 0,
+          source_type TEXT NOT NULL CHECK (source_type IN ('session','commit','document','tool','manual','claude-md','blueprint','grill','bootstrap')),
+          source_ref TEXT,
+          embedding BLOB,
+          embedding_pending INTEGER NOT NULL DEFAULT 1,
+          last_accessed_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+      `)
+
+      // Column-explicit copy: migrations 118/119 added merged_into and volatile
+      // after 115, so positional INSERT…SELECT * is not safe here.
+      db.exec(`
+        INSERT INTO memory_facts_new (
+          id, workspace_id, category, title, content, tags, scope_paths,
+          tier, confidence, confirmation_count, last_confirmed_at, status,
+          superseded_by, merged_into, volatile, source_type, source_ref,
+          embedding, embedding_pending, last_accessed_at, created_at, updated_at
+        )
+        SELECT
+          id, workspace_id, category, title, content, tags, scope_paths,
+          tier, confidence, confirmation_count, last_confirmed_at, status,
+          superseded_by, merged_into, volatile, source_type, source_ref,
+          embedding, embedding_pending, last_accessed_at, created_at, updated_at
+        FROM memory_facts;
+        DROP TABLE memory_facts;
+        ALTER TABLE memory_facts_new RENAME TO memory_facts;
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_workspace ON memory_facts(workspace_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_status ON memory_facts(status);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_category ON memory_facts(category);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_tier ON memory_facts(tier DESC, confidence DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_embedding_pending ON memory_facts(embedding_pending) WHERE embedding_pending = 1;
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_source ON memory_facts(source_type, source_ref);
+      `)
+
+      db.exec(`
+        CREATE TABLE memory_contradictions (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          old_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          new_fact_id TEXT NOT NULL REFERENCES memory_facts(id),
+          status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('auto_resolved','pending','user_resolved')),
+          resolution TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          resolved_at TEXT
+        );
+        INSERT INTO memory_contradictions
+          SELECT * FROM memory_contradictions_bak
+          WHERE old_fact_id IN (SELECT id FROM memory_facts)
+            AND new_fact_id IN (SELECT id FROM memory_facts);
+        DROP TABLE memory_contradictions_bak;
+        CREATE INDEX IF NOT EXISTS idx_memory_contradictions_status ON memory_contradictions(status);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_contradictions_pair
+          ON memory_contradictions(old_fact_id, new_fact_id);
+      `)
+
+      dbLogger.info(
+        "[migration-132] ✓ Extended memory_facts source_type CHECK to include 'bootstrap'"
+      )
+    }
+  },
+
+  // ── Migration 133: Durable Feed Brain ingestion queue ──
+  {
+    version: 133,
+    name: 'memory-bootstrap-run-queue',
+    up: (db) => {
+      // Bootstrap used to be a purely in-memory pipeline: discovery and
+      // extraction were interleaved, so the item total was unknowable, progress
+      // was phase-index guesswork, and cancelling or quitting discarded every
+      // partially-processed file. These two tables turn it into a durable job
+      // queue — plan up front, drain incrementally, resume where it stopped.
+      // Purely additive: memory_doc_state stays as the cross-run fast path.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_bootstrap_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          status TEXT NOT NULL,
+          current_phase TEXT,
+          items_total INTEGER NOT NULL DEFAULT 0,
+          items_done INTEGER NOT NULL DEFAULT 0,
+          items_skipped INTEGER NOT NULL DEFAULT 0,
+          items_failed INTEGER NOT NULL DEFAULT 0,
+          facts_created INTEGER NOT NULL DEFAULT 0,
+          active_ms INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          finished_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_bootstrap_items (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          run_id TEXT NOT NULL REFERENCES memory_bootstrap_runs(id) ON DELETE CASCADE,
+          workspace_id TEXT NOT NULL,
+          phase TEXT NOT NULL,
+          kind TEXT NOT NULL,
+          source_ref TEXT NOT NULL,
+          content_hash TEXT,
+          priority INTEGER NOT NULL DEFAULT 100,
+          chunk_total INTEGER NOT NULL DEFAULT 0,
+          chunk_done INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL DEFAULT 'pending',
+          facts_created INTEGER NOT NULL DEFAULT 0,
+          error TEXT,
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bootstrap_items_run
+          ON memory_bootstrap_items(run_id, status, priority);
+        CREATE INDEX IF NOT EXISTS idx_bootstrap_runs_ws
+          ON memory_bootstrap_runs(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-133] ✓ Created memory_bootstrap_runs + memory_bootstrap_items')
+    }
+  },
+
+  // ── Migration 134: Specialist build provenance ──
+  {
+    version: 134,
+    name: 'specialist-build-provenance',
+    up: (db) => {
+      // A specialist whose LLM tailoring silently failed was persisted with
+      // build_status='ready' and the untouched template skeleton — identical
+      // in the UI to a genuinely tailored one. These two columns make the
+      // degradation visible instead of inferring it from prompt length.
+      //
+      // Plain TEXT without CHECK, matching migration 130's reasoning: the enum
+      // ('agentic' | 'oneshot' | 'skeleton') is enforced in TypeScript.
+      db.exec(`ALTER TABLE specialists ADD COLUMN build_method TEXT DEFAULT NULL`)
+      db.exec(`ALTER TABLE specialists ADD COLUMN ingestion_run_id TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-134] ✓ Added build_method + ingestion_run_id to specialists')
+    }
+  },
+
+  // ── Migration 135: Full-text search index over memory facts ──
+  {
+    version: 135,
+    name: 'memory-facts-fts',
+    up: (db) => {
+      // Keyword retrieval was `LIKE '%q%'` plus JS token overlap computed over
+      // every active fact loaded with its embedding BLOB. That is linear in the
+      // corpus on every turn, and `LIKE` cannot rank.
+      //
+      // This is a *standard* FTS5 table, not the external-content form used by
+      // library_docs_fts: that one keys off an INTEGER rowid, and
+      // memory_facts.id is TEXT (hex randomblob). `fact_id` is UNINDEXED so it
+      // is stored and returnable without polluting the term index.
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+          fact_id UNINDEXED,
+          title,
+          content,
+          tags
+        );
+      `)
+
+      // Sync via triggers rather than from the repository. Facts are written
+      // through a dozen paths — createFact, updateFact, updateFactInPlace,
+      // archiveFact, supersedeFact, mergeFact, decayFacts, bulk dedup — and a
+      // manually-synced index only has to be forgotten once to start returning
+      // stale titles forever. Triggers cannot be bypassed.
+      //
+      // Every fact is indexed regardless of status; `searchFts` joins back to
+      // memory_facts and filters there, so a status change needs no index work.
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_ai
+        AFTER INSERT ON memory_facts BEGIN
+          INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+          VALUES (new.id, new.title, new.content, new.tags);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_ad
+        AFTER DELETE ON memory_facts BEGIN
+          DELETE FROM memory_facts_fts WHERE fact_id = old.id;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS memory_facts_fts_au
+        AFTER UPDATE ON memory_facts BEGIN
+          DELETE FROM memory_facts_fts WHERE fact_id = old.id;
+          INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+          VALUES (new.id, new.title, new.content, new.tags);
+        END;
+      `)
+
+      // Backfill. Guarded so re-running against a partially-built index cannot
+      // double-insert every row.
+      db.exec(`DELETE FROM memory_facts_fts;`)
+      db.exec(`
+        INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+        SELECT id, title, content, tags FROM memory_facts;
+      `)
+
+      const indexed = (
+        db.prepare('SELECT count(*) AS n FROM memory_facts_fts').get() as { n: number }
+      ).n
+      dbLogger.info(
+        `[migration-135] ✓ Created memory_facts_fts + triggers (${indexed} fact(s) indexed)`
+      )
+    }
+  },
+
+  // ── Migration 136: Bi-temporal validity on memory facts ──
+  {
+    version: 136,
+    name: 'memory-facts-bitemporal',
+    up: (db) => {
+      // Four timestamps, separating when something was *true* from when we
+      // happened to *learn* it:
+      //   valid_from  — when the fact became true of the project
+      //   valid_to    — when it stopped being true (NULL = still true)
+      //   observed_at — when the source stated it (a commit date, a file mtime)
+      //   recorded_at — when this row was written
+      //
+      // Two concrete wins. A commit-sourced fact can carry the commit's date
+      // rather than today's, which matters across a long history. And
+      // `computeRecency` read `updated_at`, so a dedup merge made a decade-old
+      // convention look brand new — it now reads `observed_at`, which a merge
+      // does not touch.
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN valid_from TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN valid_to TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN observed_at TEXT`)
+      db.exec(`ALTER TABLE memory_facts ADD COLUMN recorded_at TEXT`)
+
+      // Backfill from what we have. An active fact's window is still open; a
+      // superseded or archived one closed when it was last touched.
+      db.exec(`
+        UPDATE memory_facts SET
+          recorded_at = created_at,
+          observed_at = created_at,
+          valid_from  = created_at,
+          valid_to    = CASE
+                          WHEN status IN ('superseded', 'archived') THEN updated_at
+                          ELSE NULL
+                        END
+      `)
+
+      // The hot retrieval predicate.
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_facts_valid
+          ON memory_facts(workspace_id, status, valid_to)
+      `)
+
+      const open = (
+        db.prepare('SELECT count(*) AS n FROM memory_facts WHERE valid_to IS NULL').get() as {
+          n: number
+        }
+      ).n
+      dbLogger.info(`[migration-136] ✓ Added bi-temporal columns (${open} fact(s) currently valid)`)
+    }
+  },
+
+  // ── Migration 137: Typed relationships between facts ──
+  {
+    version: 137,
+    name: 'memory-edges',
+    up: (db) => {
+      // Relationships between facts were spread across three ad-hoc places:
+      // `superseded_by`, `merged_into`, and `memory_contradictions` — the last
+      // of which had also been pressed into service as a cluster-review queue
+      // by prefixing its `resolution` text. One typed edge table replaces all
+      // of it and gives synthesis somewhere to record parent/child links.
+      //
+      // Edge direction is always "from acts on to":
+      //   A supersedes   B  — A replaced B
+      //   A contradicts  B  — A conflicts with B
+      //   A derived_from B  — A was synthesised from B
+      //   A relates_to   B  — undirected association
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_edges (
+          id         TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          from_id    TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+          to_id      TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+          edge_type  TEXT NOT NULL CHECK (edge_type IN
+                       ('derived_from','relates_to','contradicts','supersedes')),
+          confidence REAL NOT NULL DEFAULT 1.0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(from_id, to_id, edge_type)
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_edges_from ON memory_edges(from_id, edge_type);
+        CREATE INDEX IF NOT EXISTS idx_memory_edges_to   ON memory_edges(to_id, edge_type);
+      `)
+
+      // Backfill. INSERT OR IGNORE covers the UNIQUE constraint, and the
+      // subqueries drop rows pointing at facts that no longer exist — the FK
+      // would reject those and abort the whole migration.
+      db.exec(`
+        INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type)
+        SELECT f.superseded_by, f.id, 'supersedes'
+          FROM memory_facts f
+         WHERE f.superseded_by IS NOT NULL
+           AND EXISTS (SELECT 1 FROM memory_facts n WHERE n.id = f.superseded_by);
+      `)
+
+      db.exec(`
+        INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type)
+        SELECT f.merged_into, f.id, 'supersedes'
+          FROM memory_facts f
+         WHERE f.merged_into IS NOT NULL
+           AND EXISTS (SELECT 1 FROM memory_facts n WHERE n.id = f.merged_into);
+      `)
+
+      db.exec(`
+        INSERT OR IGNORE INTO memory_edges (from_id, to_id, edge_type)
+        SELECT c.new_fact_id, c.old_fact_id, 'contradicts'
+          FROM memory_contradictions c
+         WHERE EXISTS (SELECT 1 FROM memory_facts a WHERE a.id = c.new_fact_id)
+           AND EXISTS (SELECT 1 FROM memory_facts b WHERE b.id = c.old_fact_id);
+      `)
+
+      const edges = (db.prepare('SELECT count(*) AS n FROM memory_edges').get() as { n: number }).n
+      dbLogger.info(`[migration-137] ✓ Created memory_edges (${edges} edge(s) backfilled)`)
+    }
+  },
+
+  // ── Migration 138: Narrow the FTS update trigger to indexed columns ──
+  {
+    version: 138,
+    name: 'memory-facts-fts-narrow-update-trigger',
+    up: (db) => {
+      // Migration 135 created `memory_facts_fts_au` as AFTER UPDATE ON
+      // memory_facts — every column. That put a DELETE + INSERT into the FTS
+      // index on the *read* path: `touchFacts` writes `last_accessed_at` for
+      // up to ten facts on every single retrieval, and `decayFacts`,
+      // `confirmFact`, `setEmbedding`, `setVolatile` and `reopenValidity` all
+      // fire it too. None of them change indexed text, so every one of those
+      // rewrites reindexed identical strings and dirtied the WAL.
+      //
+      // Two guards, because they catch different things:
+      //   UPDATE OF — skips statements that never mention the indexed columns
+      //               (the touch/decay/confirm paths).
+      //   WHEN      — skips statements that do mention them but write the same
+      //               value (updateFactInPlace re-writing an identical title).
+      //
+      // `IS NOT` rather than `<>` so a NULL on either side compares correctly;
+      // `tags` is nullable and `<>` would silently never fire for it.
+      db.exec(`DROP TRIGGER IF EXISTS memory_facts_fts_au;`)
+      db.exec(`
+        CREATE TRIGGER memory_facts_fts_au
+        AFTER UPDATE OF title, content, tags ON memory_facts
+        WHEN old.title   IS NOT new.title
+          OR old.content IS NOT new.content
+          OR old.tags    IS NOT new.tags
+        BEGIN
+          DELETE FROM memory_facts_fts WHERE fact_id = old.id;
+          INSERT INTO memory_facts_fts(fact_id, title, content, tags)
+          VALUES (new.id, new.title, new.content, new.tags);
+        END;
+      `)
+
+      dbLogger.info('[migration-138] ✓ Narrowed memory_facts_fts_au to title/content/tags changes')
+    }
+  },
+
+  // ── Migration 139: Per-conversation git worktrees ──
+  {
+    version: 139,
+    name: 'chat-worktrees',
+    up: (db) => {
+      // `conversations.branch_name` has recorded a branch per chat since v6, but
+      // nothing enforced it: every conversation's CLI ran with cwd = workspace
+      // root, and MAX_CONCURRENT_STREAMS allows three of them at once. Three
+      // writers, one HEAD — work begun on one branch could be committed to
+      // another with no error anywhere. This table binds a conversation to a
+      // real directory so the branch it claims is the branch it writes to.
+      //
+      // Note this is NOT a revival of `agent_worktrees` (v9, dropped in v66).
+      // That table was keyed per *specialist* for a pool of parallel agents
+      // sharing one chat. This is keyed per *conversation*, which is the unit
+      // that actually owns a branch.
+      //
+      // Two uniqueness rules, both load-bearing:
+      //   conversation_id            — one tree per conversation.
+      //   (workspace_id, branch_name) — git itself refuses to check the same
+      //                                 branch out in two worktrees, so the DB
+      //                                 rejects it first with a clear error
+      //                                 instead of surfacing a raw git failure.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS chat_worktrees (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+          branch_name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_worktrees_branch
+          ON chat_worktrees(workspace_id, branch_name);
+        CREATE INDEX IF NOT EXISTS idx_chat_worktrees_status
+          ON chat_worktrees(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-139] ✓ Created chat_worktrees')
+    }
+  },
+
+  // ── Migration 140: Retained worktrees survive their conversation ──
+  {
+    version: 140,
+    name: 'chat-worktrees-retained',
+    disableForeignKeys: true,
+    up: (db) => {
+      // v139 declared `conversation_id NOT NULL ... ON DELETE CASCADE`, which
+      // made "never lose uncommitted work" impossible to honour. Teardown on
+      // chat close/delete now parks a dirty tree as `retained` instead of
+      // running `worktree remove --force` over it — but the conversation row is
+      // deleted moments later, and CASCADE took the only record of the
+      // directory with it. The tree survived on disk with nothing pointing at
+      // it: not reapable, not listable, not findable by branch, so the next
+      // chat wanting that branch got a raw git error instead of a clear
+      // "already checked out" message.
+      //
+      // SET NULL keeps the row. A retained tree is parked work, not a chat's
+      // execution target, so losing the conversation link is the correct
+      // semantics rather than a workaround. UNIQUE still holds: SQLite permits
+      // multiple NULLs in a unique index, so any number of trees can be parked.
+      //
+      // SQLite cannot alter a foreign key in place — the table must be rebuilt.
+      db.exec(`
+        CREATE TABLE chat_worktrees_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          conversation_id TEXT UNIQUE REFERENCES conversations(id) ON DELETE SET NULL,
+          branch_name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+
+        INSERT INTO chat_worktrees_new
+          (id, workspace_id, conversation_id, branch_name, path,
+           base_branch, status, created_at, last_used_at)
+        SELECT id, workspace_id, conversation_id, branch_name, path,
+               base_branch, status, created_at, last_used_at
+          FROM chat_worktrees;
+
+        DROP TABLE chat_worktrees;
+        ALTER TABLE chat_worktrees_new RENAME TO chat_worktrees;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_worktrees_branch
+          ON chat_worktrees(workspace_id, branch_name);
+        CREATE INDEX IF NOT EXISTS idx_chat_worktrees_status
+          ON chat_worktrees(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-140] ✓ chat_worktrees.conversation_id is nullable (SET NULL)')
+    }
+  },
+
+  // ── Migration 141: chat_worktrees → work_tracks (owner-keyed) ──
+  {
+    version: 141,
+    name: 'work-tracks',
+    up: (db) => {
+      // `conversation_id REFERENCES conversations(id)` was the wrong key.
+      //
+      // It is why v140 needed a SET NULL escape hatch: retained work outlives
+      // the chat that produced it, so the owning row has to be able to have no
+      // owner. And it locks the table to chats. A blueprint run is not a
+      // conversation and a synthetic id like `blueprint-build-<id>-<task>` is
+      // not a row, so the FK rejects every non-chat writer outright — which is
+      // precisely the set of writers (Blueprint BUILD/VERIFY, MPA execute) that
+      // most needs its own tree, because they write to the user's own checkout.
+      //
+      // A *track* is one unit of parallel work: one branch, one worktree, one
+      // owner. The owner is identified structurally (`owner_kind`) rather than
+      // relationally, and there is deliberately NO foreign key: an owner may be
+      // a row in another table, a synthetic run id, or nothing at all once the
+      // work is retained.
+      //
+      // UNIQUE(owner_kind, owner_id) replaces UNIQUE(conversation_id). SQLite
+      // permits multiple NULLs in a unique index, so any number of retained
+      // tracks can sit ownerless side by side.
+      //
+      // landing_mode / landed_at / landed_into are the columns the landing
+      // phase needs. They are added now, unused, because a second rebuild of
+      // this table later is a migration nobody should have to write twice.
+      db.exec(`
+        CREATE TABLE work_tracks (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          owner_kind TEXT NOT NULL,
+          owner_id TEXT,
+          branch_name TEXT NOT NULL,
+          path TEXT NOT NULL UNIQUE,
+          base_branch TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'active',
+          landing_mode TEXT,
+          landed_at TEXT,
+          landed_into TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_used_at TEXT
+        );
+
+        INSERT INTO work_tracks
+          (id, workspace_id, owner_kind, owner_id, branch_name, path,
+           base_branch, status, created_at, last_used_at)
+        SELECT id, workspace_id, 'chat', conversation_id, branch_name, path,
+               base_branch, status, created_at, last_used_at
+          FROM chat_worktrees;
+
+        DROP TABLE chat_worktrees;
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_tracks_owner
+          ON work_tracks(owner_kind, owner_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_work_tracks_branch
+          ON work_tracks(workspace_id, branch_name);
+        CREATE INDEX IF NOT EXISTS idx_work_tracks_status
+          ON work_tracks(workspace_id, status);
+      `)
+
+      dbLogger.info('[migration-141] ✓ chat_worktrees → work_tracks (owner_kind/owner_id)')
+    }
+  },
+
+  // ── Migration 142: which files each track has touched ──
+  {
+    version: 142,
+    name: 'track-file-claims',
+    up: (db) => {
+      // Blueprint's wave scheduler already refuses to run two tasks that touch
+      // the same file, and that guard is the reason parallel BUILD is safe. It
+      // is also scoped to a single wave: it has no idea chats, other blueprints
+      // or campaigns exist, so two *tracks* editing the same file is invisible
+      // until one of them tries to land and gets a merge conflict — hours later,
+      // with both sets of work already written.
+      //
+      // This table is the cheap generalisation: record what each track has
+      // touched, and the same overlap check that guards a wave can warn across
+      // the whole workspace. Prediction only — nothing is blocked on it.
+      //
+      // (track_id, file_path) is the primary key so re-recording a turn is an
+      // upsert rather than unbounded growth, and first_seen_at survives it:
+      // "who touched this first" is the question a user asks when two tracks
+      // collide. Rows die with their track via ON DELETE CASCADE.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS track_file_claims (
+          track_id TEXT NOT NULL REFERENCES work_tracks(id) ON DELETE CASCADE,
+          file_path TEXT NOT NULL,
+          first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          PRIMARY KEY (track_id, file_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_track_file_claims_path
+          ON track_file_claims(file_path);
+      `)
+
+      dbLogger.info('[migration-142] ✓ Created track_file_claims')
+    }
+  },
+  {
+    version: 143,
+    name: 'blueprint-task-user-skip',
+    up: (db) => {
+      // A task can be genuinely unverifiable — its planned files live outside
+      // any tree BUILD is allowed to read — and no amount of retrying changes
+      // that. Until now the only way out was `status = 'skipped'`, which
+      // retryPhase resets to 'pending' on every attempt, so the run looped on
+      // the same task forever.
+      //
+      // User intent gets its own column rather than a sixth status value for
+      // two reasons: the failure cascade writes 'skipped' by itself (so status
+      // cannot distinguish "a human decided" from "collateral damage"), and a
+      // retry must be able to reset status without erasing the decision.
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN skipped_by_user_at TEXT`)
+
+      dbLogger.info('[migration-143] ✓ Added blueprint_tasks.skipped_by_user_at')
     }
   }
 ]
@@ -3647,7 +4414,11 @@ export function getDatabase(): Database.Database {
       // Zombie-state prevention: if migrations fail, close the DB and null out
       // the singleton so the app doesn't silently run on an unmigrated schema.
       dbLogger.error('[DB] Migration failed — closing DB to prevent zombie state:', migrationError)
-      try { db.close() } catch { /* best-effort close */ }
+      try {
+        db.close()
+      } catch {
+        /* best-effort close */
+      }
       db = null
       throw migrationError
     }
@@ -3691,9 +4462,7 @@ export function getDatabase(): Database.Database {
         const walSizeBytes = statSync(walPath).size
         const walSizeMB = Math.round(walSizeBytes / (1024 * 1024))
         if (walSizeBytes > 256 * 1024 * 1024) {
-          dbLogger.warn(
-            `[DB] ⚠ WAL file is ${walSizeMB} MB — possible checkpoint starvation`
-          )
+          dbLogger.warn(`[DB] ⚠ WAL file is ${walSizeMB} MB — possible checkpoint starvation`)
         } else if (walSizeBytes > 128 * 1024 * 1024) {
           dbLogger.info(`[DB] WAL file is ${walSizeMB} MB — elevated but within limits`)
         }
@@ -3872,5 +4641,3 @@ function seedDefaultSkills(database: Database.Database): void {
       '2026-03-21'
     )
 }
-
-

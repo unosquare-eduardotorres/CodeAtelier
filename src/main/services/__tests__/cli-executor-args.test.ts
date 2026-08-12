@@ -1,11 +1,11 @@
 /**
  * Unit tests for CLI executor pure functions — buildCLIArgs, buildProcessEnv,
- * writeSystemPromptFile logic (replicated from private methods).
+ * system-prompt-file ownership (replicated from private methods).
  *
  * Phase 14, Track 2 — cli-executor.ts (~868 lines at 31.56%)
  */
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { test, describe, summaryAsync } from './test-harness'
 
 // ── Replicated pure logic from CLIExecutor.buildCLIArgs ──
@@ -147,10 +147,44 @@ function buildProcessEnv(
 }
 
 /**
- * Replicated hash-based dedup logic from writeSystemPromptFile (cli-executor.ts:784).
+ * Replicated system-prompt-file ownership model from CLIExecutor.
+ *
+ * Mirrors the real lifecycle: writeSystemPromptFile() parks a fresh path on
+ * `pending`; spawn() transfers it to the spawn's own `owned` binding; only that
+ * spawn's exit/error handler may delete it. killProcess() deletes nothing.
  */
-function computePromptHash(prompt: string): string {
-  return createHash('md5').update(prompt).digest('hex').slice(0, 12)
+class PromptFileOwnershipModel {
+  /** Paths that currently exist on "disk". */
+  readonly disk = new Set<string>()
+  private pending: string | null = null
+  private counter = 0
+
+  /** buildCLIArgs -> writeSystemPromptFile: always a fresh, uniquely named file. */
+  write(): string {
+    const filePath = `/tmp/code-atelier-prompts/system-prompt-${++this.counter}.md`
+    this.disk.add(filePath)
+    this.pending = filePath
+    return filePath
+  }
+
+  /** spawn() succeeded — ownership moves from `pending` to the spawn. */
+  takeOwnership(): { owned: string | null; onExit: () => void } {
+    const owned = this.pending
+    this.pending = null
+    return {
+      owned,
+      // The process's own exit/error handler: deletes only what it owns.
+      onExit: () => {
+        if (owned) this.disk.delete(owned)
+      }
+    }
+  }
+
+  /** spawn() threw before ownership transferred. */
+  discardPending(): void {
+    if (this.pending) this.disk.delete(this.pending)
+    this.pending = null
+  }
 }
 
 // ── Tests ──
@@ -288,7 +322,10 @@ describe('buildCLIArgs — tool lists', () => {
 describe('buildCLIArgs — additional directories', () => {
   test('multiple_add_dir_flags', () => {
     const args = buildCLIArgs({ additionalDirectories: ['/path/a', '/path/b'] })
-    const indices = args.reduce<number[]>((acc, v, i) => (v === '--add-dir' ? [...acc, i] : acc), [])
+    const indices = args.reduce<number[]>(
+      (acc, v, i) => (v === '--add-dir' ? [...acc, i] : acc),
+      []
+    )
     assert.equal(indices.length, 2)
     assert.equal(args[indices[0] + 1], '/path/a')
     assert.equal(args[indices[1] + 1], '/path/b')
@@ -425,29 +462,79 @@ describe('buildProcessEnv', () => {
   })
 })
 
-// ── writeSystemPromptFile hash logic tests ──
+// ── writeSystemPromptFile ownership tests ──
 
-describe('computePromptHash — dedup logic', () => {
-  test('deterministic_hash_for_same_content', () => {
-    const hash1 = computePromptHash('You are a helpful assistant.')
-    const hash2 = computePromptHash('You are a helpful assistant.')
-    assert.equal(hash1, hash2)
+describe('system prompt file — per-spawn ownership', () => {
+  test('each_spawn_gets_its_own_file', () => {
+    const m = new PromptFileOwnershipModel()
+    const a = m.write()
+    m.takeOwnership()
+    const b = m.write()
+    m.takeOwnership()
+    assert.notEqual(a, b, 'spawns must not share a prompt file')
   })
 
-  test('different_prompt_produces_different_hash', () => {
-    const hash1 = computePromptHash('You are a helpful assistant.')
-    const hash2 = computePromptHash('You are a code reviewer.')
-    assert.notEqual(hash1, hash2)
+  test('REGRESSION_killed_spawn_exit_does_not_delete_a_later_spawns_file', () => {
+    const m = new PromptFileOwnershipModel()
+
+    // Spawn 1 starts and is later SIGTERM'd.
+    m.write()
+    const spawn1 = m.takeOwnership()
+
+    // Spawn 2 starts and bakes its own path into argv.
+    const file2 = m.write()
+    const spawn2 = m.takeOwnership()
+
+    // Spawn 1's async 'exit' handler fires AFTER spawn 2 is already running.
+    // This is the exact ordering that produced
+    // "System prompt file not found: …" followed by empty-exit turns.
+    spawn1.onExit()
+
+    assert.ok(
+      m.disk.has(file2),
+      "a terminated spawn's exit handler must not delete a newer spawn's prompt file"
+    )
+    assert.equal(spawn2.owned, file2)
   })
 
-  test('hash_is_12_characters', () => {
-    const hash = computePromptHash('test prompt')
-    assert.equal(hash.length, 12)
+  test('exit_handler_removes_its_own_file', () => {
+    const m = new PromptFileOwnershipModel()
+    const file = m.write()
+    const spawn = m.takeOwnership()
+    assert.ok(m.disk.has(file))
+    spawn.onExit()
+    assert.ok(!m.disk.has(file), 'a spawn must clean up the file it owns')
   })
 
-  test('hash_is_hex_string', () => {
-    const hash = computePromptHash('test prompt')
-    assert.match(hash, /^[0-9a-f]{12}$/)
+  test('double_exit_is_idempotent', () => {
+    const m = new PromptFileOwnershipModel()
+    m.write()
+    const spawn1 = m.takeOwnership()
+    spawn1.onExit()
+
+    // A second spawn's file must survive spawn 1's handler running twice
+    // (exit + error can both fire).
+    const file2 = m.write()
+    m.takeOwnership()
+    spawn1.onExit()
+
+    assert.ok(m.disk.has(file2))
+  })
+
+  test('spawn_failure_discards_the_untransferred_file', () => {
+    const m = new PromptFileOwnershipModel()
+    const file = m.write()
+    m.discardPending() // spawn() threw (ENOENT/ENOEXEC)
+    assert.ok(!m.disk.has(file), 'a file nobody will read must not be left behind')
+  })
+
+  test('spawn_failure_does_not_touch_an_owned_file', () => {
+    const m = new PromptFileOwnershipModel()
+    const file1 = m.write()
+    m.takeOwnership()
+    m.write()
+    m.discardPending()
+    assert.ok(m.disk.has(file1), 'discarding a pending file must not affect an owned one')
   })
 })
 
@@ -457,6 +544,52 @@ describe('CLI Executor — module import coverage', () => {
   test('cleanupStalePromptFiles_is_exported', async () => {
     const mod = await import('../cli-executor')
     assert.equal(typeof mod.cleanupStalePromptFiles, 'function')
+  })
+})
+
+// ── Prompt-file ownership on the SHIPPED class ──
+//
+// The model above documents the intended lifecycle, but it is a replica: a
+// regression that re-introduces a shared cleanup call in cli-executor.ts would
+// leave it green. These cases drive the real private methods via bracket
+// access so the wiring itself is under test.
+
+describe('CLI Executor — prompt file ownership (real class)', () => {
+  test('writeSystemPromptFile_returns_a_distinct_path_each_call', async () => {
+    const { CLIExecutor } = await import('../cli-executor')
+    const exec = new CLIExecutor()
+    const a = exec['writeSystemPromptFile']('prompt A')
+    const b = exec['writeSystemPromptFile']('prompt B')
+
+    assert.notEqual(a, b, 'each spawn must get its own file, never a shared reused path')
+    assert.ok(existsSync(a), 'first prompt file must exist on disk')
+    assert.ok(existsSync(b), 'second prompt file must exist on disk')
+    assert.equal(readFileSync(a, 'utf-8'), 'prompt A')
+    assert.equal(readFileSync(b, 'utf-8'), 'prompt B')
+
+    exec['deleteSystemPromptFile'](a)
+    exec['deleteSystemPromptFile'](b)
+  })
+
+  test('deleteSystemPromptFile_removes_only_the_path_it_was_given', async () => {
+    const { CLIExecutor } = await import('../cli-executor')
+    const exec = new CLIExecutor()
+    const a = exec['writeSystemPromptFile']('owned by process A')
+    const b = exec['writeSystemPromptFile']('owned by process B')
+
+    exec['deleteSystemPromptFile'](a)
+
+    assert.ok(!existsSync(a), 'the owned path must be removed')
+    assert.ok(existsSync(b), "a dying process must not unlink another spawn's live prompt file")
+
+    exec['deleteSystemPromptFile'](b)
+  })
+
+  test('deleteSystemPromptFile_tolerates_null', async () => {
+    const { CLIExecutor } = await import('../cli-executor')
+    const exec = new CLIExecutor()
+    // spawn() never ran, so there is nothing owned — must be a no-op, not a throw.
+    assert.doesNotThrow(() => exec['deleteSystemPromptFile'](null))
   })
 })
 

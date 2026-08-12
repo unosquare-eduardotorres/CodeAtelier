@@ -18,9 +18,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Ideas Management', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -55,9 +53,15 @@ test.describe('Ideas Management', () => {
 
   test('ideas list renders with idea cards or empty state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToIdeas(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Either ideas list with cards or empty state
     const ideaCards = page.locator('[data-testid="idea-card"]')
@@ -75,14 +79,23 @@ test.describe('Ideas Management', () => {
 
   test('create idea modal opens with title/description fields', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToIdeas(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Find and click create/new idea button
     const createBtn = page.getByRole('button', { name: /new idea|capture.*idea|add idea/i }).first()
     const hasCreate = await createBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCreate) { test.skip(); return }
+    if (!hasCreate) {
+      test.skip()
+      return
+    }
 
     await createBtn.click()
     await page.waitForTimeout(800)
@@ -110,13 +123,22 @@ test.describe('Ideas Management', () => {
 
   test('idea card shows title, status, and action buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToIdeas(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ideaCards = page.locator('[data-testid="idea-card"]')
     const count = await ideaCards.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     const firstCard = ideaCards.first()
     await expect(firstCard).toBeVisible()
@@ -133,13 +155,22 @@ test.describe('Ideas Management', () => {
 
   test('idea status toggle changes card appearance', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToIdeas(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const ideaCards = page.locator('[data-testid="idea-card"]')
     const count = await ideaCards.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Look for status badges on cards
     const statusBadges = page.locator('[data-testid="idea-card"]').locator('.rounded-full')
@@ -154,13 +185,22 @@ test.describe('Ideas Management', () => {
 
   test('delete idea removes card from list', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToIdeas(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const deleteBtn = page.locator('[data-testid="idea-delete-btn"]').first()
     const hasDelete = await deleteBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDelete) { test.skip(); return }
+    if (!hasDelete) {
+      test.skip()
+      return
+    }
 
     // Verify delete button is present and clickable (don't actually delete)
     await expect(deleteBtn).toBeVisible()

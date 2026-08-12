@@ -25,6 +25,7 @@ import { remarkStripStrayBackticks } from '../remark-plugins'
 import type { StructuredPlan, PlanRootCause, PlanPhase } from '../../../../../shared/types'
 import { MermaidDiagram } from '@renderer/components/common'
 import { RootCausesList, PhasesList, SectionCard } from './PlanHelpers'
+import { PlanSectionIcon } from './PlanSectionIcon'
 
 // ── Helpers ──
 
@@ -218,10 +219,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   } = props
 
   const titleSection = structuredPlan?.summary ? (
-    <details
-      open
-      className="rounded-lg border border-border-subtle bg-surface-overlay group"
-    >
+    <details open className="rounded-lg border border-border-subtle bg-surface-overlay group">
       <summary className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-text-muted uppercase tracking-wide cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
         <ChevronRight
           size={12}
@@ -241,7 +239,10 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
   const summarySection = false
 
   const problemAnalysisSection = structuredPlan?.problemSummary && (
-    <div data-testid="task-plan-investigation" className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3">
+    <div
+      data-testid="task-plan-investigation"
+      className="rounded border border-[var(--color-plan-card-border)] bg-surface-base/30 p-3"
+    >
       <div className="flex items-center gap-2 text-sm font-semibold text-[var(--color-plan-card-text)] mb-2">
         <Search size={14} className="text-[var(--color-plan-card)]" />
         Problem Analysis
@@ -422,8 +423,8 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
           key={`${section.heading}-${index}`}
           className="rounded border border-mode-plan-border bg-mode-plan-muted overflow-hidden"
         >
-          <div className="px-4 py-3">
-            {section.icon && <span className="text-base mr-2">{section.icon}</span>}
+          <div className="px-4 py-3 flex items-center gap-2">
+            <PlanSectionIcon icon={section.icon} />
             <span className="text-sm font-semibold text-mode-plan-text">{section.heading}</span>
           </div>
           <div className="px-4 pb-4 prose prose-sm prose-invert max-w-none">

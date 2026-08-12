@@ -19,7 +19,10 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDING_CHECK_STATUS,
-    async (event, args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }): Promise<EmbeddingModelStatus> => {
+    async (
+      event,
+      args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }
+    ): Promise<EmbeddingModelStatus> => {
       validateSender(event)
 
       // Align facade backend with workspace preferences before probing status
@@ -59,9 +62,9 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
 
         // Auto-initialize when Ollama + embedding model are available
         if (ollamaStatus.running && ollamaEmbModel && !localEmbeddingProvider.isReady) {
-          localEmbeddingProvider
-            .initialize(ollamaUrl)
-            .catch(() => { /* non-fatal */ })
+          localEmbeddingProvider.initialize(ollamaUrl).catch(() => {
+            /* non-fatal */
+          })
         }
 
         return {
@@ -81,9 +84,7 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
 
       // ── oMLX branch (default) ──
       const status = await omlxManager.checkStatus(resolvedBaseUrl, resolvedApiKey)
-      const embeddingModel = status.allModels?.find(
-        (m) => m.loaded && m.modelType === 'embedding'
-      )
+      const embeddingModel = status.allModels?.find((m) => m.loaded && m.modelType === 'embedding')
 
       // When admin API is unavailable, synthesize allModels from /v1/models
       const allModels = status.allModels ?? []
@@ -91,9 +92,9 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
       // Auto-initialize embedding provider when a loaded embedding model is found
       // but the provider hasn't been initialized yet
       if (embeddingModel?.loaded && !localEmbeddingProvider.isReady) {
-        localEmbeddingProvider
-          .initialize(resolvedBaseUrl, resolvedApiKey)
-          .catch(() => { /* non-fatal — UI will show the model status regardless */ })
+        localEmbeddingProvider.initialize(resolvedBaseUrl, resolvedApiKey).catch(() => {
+          /* non-fatal — UI will show the model status regardless */
+        })
       }
 
       return {
@@ -109,8 +110,11 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.EMBEDDING_INITIALIZE, async (event, args?: { baseUrl?: string; apiKey?: string }) => {
-    validateSender(event)
-    await localEmbeddingProvider.initialize(args?.baseUrl, args?.apiKey)
-  })
+  ipcMain.handle(
+    IPC_CHANNELS.EMBEDDING_INITIALIZE,
+    async (event, args?: { baseUrl?: string; apiKey?: string }) => {
+      validateSender(event)
+      await localEmbeddingProvider.initialize(args?.baseUrl, args?.apiKey)
+    }
+  )
 }

@@ -2,6 +2,7 @@
  * CLI Executor — /goal command builder, goalMode gating, and drain-logic tests.
  *
  * Covers:
+ * - resolveEmptyTurnFailure: zero-NDJSON turns are failures, classified, abort-exempt
  * - buildGoalCommand: newline collapsing, 4,000-char truncation, empty → null, clear-alias guard
  * - goalMode gating: advisory → no /goal queued, enforce → queued
  * - Drain logic: trailing result consumed / timer path proceeds
@@ -11,9 +12,63 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { buildGoalCommand } from '../cli-executor'
+import { buildGoalCommand, resolveEmptyTurnFailure, spawnSignatureSatisfies } from '../cli-executor'
 import { buildBuilderGoalCondition } from '../mpa-goal-conditions'
 import type { MpaPlanArtifact } from '../../../shared/mpa-types'
+
+// ── resolveEmptyTurnFailure ──
+
+describe('resolveEmptyTurnFailure — zero-NDJSON turns', () => {
+  function input(overrides: Partial<Parameters<typeof resolveEmptyTurnFailure>[0]> = {}) {
+    return {
+      msgCount: 0,
+      aborted: false,
+      betasRejected: false,
+      exitCode: 0,
+      stderrError: null,
+      ...overrides
+    }
+  }
+
+  test('a turn that produced messages is never a failure', () => {
+    assert.equal(resolveEmptyTurnFailure(input({ msgCount: 3 })), null)
+  })
+
+  // Regression: a clean exit with zero output used to fall through to
+  // telemetry.finalize(), which promotes started → succeeded.
+  test('zero messages with exit 0 → empty-exit failure', () => {
+    const result = resolveEmptyTurnFailure(input())
+    assert.equal(result?.reason, 'empty-exit')
+    assert.match(result!.message, /CLI produced no output \(empty-exit, exit 0\)/)
+  })
+
+  test('zero messages with a non-zero exit → crash', () => {
+    const result = resolveEmptyTurnFailure(input({ exitCode: 1 }))
+    assert.equal(result?.reason, 'crash')
+  })
+
+  test('stderr carried the betas rejection → betas-rejected wins over exit code', () => {
+    const result = resolveEmptyTurnFailure(input({ betasRejected: true, exitCode: 1 }))
+    assert.equal(result?.reason, 'betas-rejected')
+  })
+
+  test('stderr detail is appended to the message', () => {
+    const result = resolveEmptyTurnFailure(input({ stderrError: 'boom' }))
+    assert.match(result!.message, /— boom$/)
+  })
+
+  test('null exit code is rendered rather than dropped', () => {
+    const result = resolveEmptyTurnFailure(input({ exitCode: null }))
+    assert.equal(result?.reason, 'empty-exit')
+    assert.match(result!.message, /exit null/)
+  })
+
+  // Pressing Stop legitimately yields zero messages — that path must stay silent.
+  test('zero messages after a deliberate abort → no failure', () => {
+    assert.equal(resolveEmptyTurnFailure(input({ aborted: true })), null)
+    assert.equal(resolveEmptyTurnFailure(input({ aborted: true, exitCode: 143 })), null)
+  })
+})
 
 // ── buildGoalCommand ──
 
@@ -141,8 +196,7 @@ describe('goalMode gating — replicated', () => {
     goalMode: 'advisory' | 'enforce' | undefined
   ): { goalQueued: boolean; goalCmd: string | null } {
     const effectiveGoalMode = goalMode ?? 'advisory'
-    const goalCmd =
-      goal && effectiveGoalMode === 'enforce' ? buildGoalCommand(goal) : null
+    const goalCmd = goal && effectiveGoalMode === 'enforce' ? buildGoalCommand(goal) : null
     return {
       goalQueued: goalCmd !== null,
       goalCmd
@@ -232,8 +286,10 @@ describe('Drain logic — replicated', () => {
       { type: 'result' }, // finalize here
       { type: 'result' } // trailing — drained
     ]
-    const { finalizedOnIndex, drainAttempted, drainedMessage } =
-      simulateResultHandling(messages, true)
+    const { finalizedOnIndex, drainAttempted, drainedMessage } = simulateResultHandling(
+      messages,
+      true
+    )
     assert.equal(finalizedOnIndex, 1) // First result
     assert.equal(drainAttempted, true)
     assert.deepEqual(drainedMessage, { type: 'result' }) // Trailing result consumed
@@ -244,8 +300,10 @@ describe('Drain logic — replicated', () => {
       { type: 'assistant' },
       { type: 'result' } // finalize here — no trailing
     ]
-    const { finalizedOnIndex, drainAttempted, drainedMessage } =
-      simulateResultHandling(messages, true)
+    const { finalizedOnIndex, drainAttempted, drainedMessage } = simulateResultHandling(
+      messages,
+      true
+    )
     assert.equal(finalizedOnIndex, 1)
     assert.equal(drainAttempted, true)
     assert.equal(drainedMessage, null) // Timer would win
@@ -263,8 +321,10 @@ describe('Drain logic — replicated', () => {
       { type: 'result' },
       { type: 'assistant' } // unexpected trailing — would be discarded with warning
     ]
-    const { finalizedOnIndex, drainAttempted, drainedMessage } =
-      simulateResultHandling(messages, true)
+    const { finalizedOnIndex, drainAttempted, drainedMessage } = simulateResultHandling(
+      messages,
+      true
+    )
     assert.equal(finalizedOnIndex, 0)
     assert.equal(drainAttempted, true)
     assert.deepEqual(drainedMessage, { type: 'assistant' })
@@ -320,6 +380,46 @@ describe('buildBuilderGoalCondition — ID capping', () => {
     assert.ok(condition.includes('P40'))
     assert.ok(condition.includes('… and 60 more'))
     assert.ok(!condition.includes('P41'))
+  })
+})
+
+// ── spawnSignatureSatisfies ──
+
+// Regression: --max-turns/--effort/--model are baked into argv at spawn, so a
+// turn served over stdin silently inherits them. A maxTurns:1 recovery nudge
+// respawned the shared process and capped the whole session at one turn.
+describe('spawnSignatureSatisfies — argv-baked flag reuse', () => {
+  const desired = { model: 'claude-sonnet-4-6', maxTurns: 200, effort: 'high' }
+
+  test('no live process → cannot be reused', () => {
+    assert.equal(spawnSignatureSatisfies(null, desired), false)
+  })
+
+  test('exact match → reusable', () => {
+    assert.equal(spawnSignatureSatisfies({ ...desired }, desired), true)
+  })
+
+  test('maxTurns differs → not reusable', () => {
+    assert.equal(spawnSignatureSatisfies({ ...desired, maxTurns: 1 }, desired), false)
+  })
+
+  test('effort differs → not reusable', () => {
+    assert.equal(spawnSignatureSatisfies({ ...desired, effort: 'low' }, desired), false)
+  })
+
+  test('model differs → not reusable', () => {
+    assert.equal(spawnSignatureSatisfies({ ...desired, model: 'claude-opus-4-8' }, desired), false)
+  })
+
+  // `undefined` means "no constraint" — a caller that legitimately omits a field
+  // must not force a spurious respawn (and a full MCP reconnection).
+  test('undefined desired fields are ignored even when the live process has a value', () => {
+    assert.equal(spawnSignatureSatisfies({ ...desired }, {}), true)
+    assert.equal(
+      spawnSignatureSatisfies({ ...desired }, { model: 'claude-sonnet-4-6' }),
+      true,
+      'declaring only the model must not compare maxTurns/effort'
+    )
   })
 })
 

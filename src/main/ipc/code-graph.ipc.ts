@@ -4,6 +4,7 @@ import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { codeGraphService } from '../services/code-graph.service'
 import { validateSender } from './validate-sender'
+import { requireObject, requireString } from './validate-args'
 import { safeWindowSend } from './safe-send'
 import { workspaceRepository } from '../db/repositories'
 import type { CodeGraphIndexingState } from '../../shared/types'
@@ -52,9 +53,11 @@ export function registerCodeGraphIpc(mainWindow: BrowserWindow): void {
     }
   )
 
-  ipcMain.handle(IPC_CHANNELS.CODE_GRAPH_GET_STATUS, (event, args: { workspaceId: string }) => {
+  ipcMain.handle(IPC_CHANNELS.CODE_GRAPH_GET_STATUS, (event, rawArgs: unknown) => {
     validateSender(event)
-    return codeGraphService.getIndexingState(args.workspaceId)
+    const ch = IPC_CHANNELS.CODE_GRAPH_GET_STATUS
+    const workspaceId = requireString(requireObject(rawArgs, ch), 'workspaceId', ch)
+    return codeGraphService.getIndexingState(workspaceId)
   })
 
   ipcMain.handle(IPC_CHANNELS.CODE_GRAPH_HAS_INDEX, (event, args: { workspaceId: string }) => {

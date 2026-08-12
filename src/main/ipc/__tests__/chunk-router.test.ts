@@ -10,7 +10,13 @@
 import assert from 'node:assert/strict'
 import type { BrowserWindow } from 'electron'
 import { test, describe, summaryAsync, createSpy } from './../../services/__tests__/test-harness'
-import { routeChunk, getAndClearToolActivities, type ChunkRouterContext } from '../chunk-router'
+import {
+  routeChunk,
+  getAndClearToolActivities,
+  capEditDiffBudget,
+  type ChunkRouterContext
+} from '../chunk-router'
+import type { ToolActivity } from '../../../shared/types'
 import type { StreamChunk } from '../../services'
 import { IPC_CHANNELS } from '../../../shared/constants'
 import { trySetupTestDb, seedConversation } from '../../db/repositories/__tests__/db-test-helper'
@@ -180,13 +186,19 @@ describe('chunk-router › handleStatus edge cases', () => {
 describe('chunk-router › handleStatus suppression', () => {
   test('agent_switched: prefix → suppressed (no send)', () => {
     const { window, send } = mockWindow()
-    routeChunk(ctx('c-agent', window), { type: 'status', content: 'agent_switched:davinci' } as StreamChunk)
+    routeChunk(ctx('c-agent', window), {
+      type: 'status',
+      content: 'agent_switched:davinci'
+    } as StreamChunk)
     assert.equal(send.callCount, 0)
   })
 
   test('model_switched: prefix → suppressed (no send)', () => {
     const { window, send } = mockWindow()
-    routeChunk(ctx('c-model', window), { type: 'status', content: 'model_switched:claude-sonnet-4' } as StreamChunk)
+    routeChunk(ctx('c-model', window), {
+      type: 'status',
+      content: 'model_switched:claude-sonnet-4'
+    } as StreamChunk)
     assert.equal(send.callCount, 0)
   })
 
@@ -198,7 +210,10 @@ describe('chunk-router › handleStatus suppression', () => {
 
   test('finishReason: prefix → suppressed (no send)', () => {
     const { window, send } = mockWindow()
-    routeChunk(ctx('c-finish', window), { type: 'status', content: 'finishReason:completed' } as StreamChunk)
+    routeChunk(ctx('c-finish', window), {
+      type: 'status',
+      content: 'finishReason:completed'
+    } as StreamChunk)
     assert.equal(send.callCount, 0)
   })
 
@@ -212,7 +227,10 @@ describe('chunk-router › handleStatus suppression', () => {
 
   test('non-metadata status → still rendered', () => {
     const { window, send } = mockWindow()
-    routeChunk(ctx('c-custom', window), { type: 'status', content: 'processing your request' } as StreamChunk)
+    routeChunk(ctx('c-custom', window), {
+      type: 'status',
+      content: 'processing your request'
+    } as StreamChunk)
     assert.equal(send.callCount, 1)
   })
 })
@@ -220,7 +238,10 @@ describe('chunk-router › handleStatus suppression', () => {
 describe('chunk-router › handleSessionState size guard', () => {
   test('normal-sized session_state → forwarded', () => {
     const { window, send } = mockWindow()
-    routeChunk(ctx('c-state', window), { type: 'session_state', content: 'session_diff:small' } as StreamChunk)
+    routeChunk(ctx('c-state', window), {
+      type: 'session_state',
+      content: 'session_diff:small'
+    } as StreamChunk)
     assert.equal(send.callCount, 1)
     assert.equal(send.lastCall?.[0], IPC_CHANNELS.SDK_SESSION_STATE)
   })
@@ -374,7 +395,10 @@ describe('chunk-router › handleText control signal filtering', () => {
   test('legitimate text containing "busy" is NOT dropped', () => {
     const { window } = mockWindow()
     const c = ctx('c-legit', window)
-    routeChunk(c, { type: 'text', content: 'The server is busy processing your request.' } as StreamChunk)
+    routeChunk(c, {
+      type: 'text',
+      content: 'The server is busy processing your request.'
+    } as StreamChunk)
     assert.equal(c.contentAccumulator.value, 'The server is busy processing your request.')
   })
 
@@ -396,19 +420,19 @@ describe('chunk-router › handleStatus busy suppression', () => {
 
   test('status chunk with JSON content {"type":"busy"} → suppressed via regex', () => {
     const { window, send } = mockWindow()
-    routeChunk(
-      ctx('c-json-busy-status', window),
-      { type: 'status', content: '{"type":"busy"}' } as StreamChunk
-    )
+    routeChunk(ctx('c-json-busy-status', window), {
+      type: 'status',
+      content: '{"type":"busy"}'
+    } as StreamChunk)
     assert.equal(send.callCount, 0)
   })
 
   test('status chunk with JSON content {"type":"idle"} → suppressed via regex', () => {
     const { window, send } = mockWindow()
-    routeChunk(
-      ctx('c-json-idle-status', window),
-      { type: 'status', content: '{"type":"idle"}' } as StreamChunk
-    )
+    routeChunk(ctx('c-json-idle-status', window), {
+      type: 'status',
+      content: '{"type":"idle"}'
+    } as StreamChunk)
     assert.equal(send.callCount, 0)
   })
 })
@@ -544,9 +568,7 @@ describe('chunk-router › handlePhaseProgress', () => {
       // A phaseProgress chunk with taskStatus 'complete' must have been sent —
       // this is what fails today if toolInputRaw isn't wired end to end.
       const calls = send.calls ?? []
-      const phaseProgressCall = calls.find(
-        (c) => (c[1] as Record<string, unknown>)?.phaseProgress
-      )
+      const phaseProgressCall = calls.find((c) => (c[1] as Record<string, unknown>)?.phaseProgress)
       assert.ok(phaseProgressCall, 'expected a CHAT_MESSAGE_CHUNK send carrying phaseProgress')
       const pp = (phaseProgressCall![1] as Record<string, unknown>).phaseProgress as Record<
         string,
@@ -661,6 +683,50 @@ describe('chunk-router › handlePhaseProgress', () => {
     })
   })
 }
+
+describe('chunk-router › capEditDiffBudget', () => {
+  function activity(id: string, diffChars: number): ToolActivity {
+    const half = 'x'.repeat(diffChars / 2)
+    return {
+      id,
+      toolName: 'Edit',
+      status: 'completed',
+      startedAt: 0,
+      editDiffs: [{ oldString: half, newString: half }]
+    }
+  }
+
+  test('under budget keeps every diff', () => {
+    const out = capEditDiffBudget([activity('a', 100), activity('b', 100)], 1_000)
+    assert.equal(out[0].editDiffs?.length, 1)
+    assert.equal(out[1].editDiffs?.length, 1)
+  })
+
+  test('over budget drops the OLDEST diffs and records the omission', () => {
+    const out = capEditDiffBudget([activity('old', 100), activity('new', 100)], 150)
+    assert.equal(out[0].editDiffs, undefined, 'oldest activity loses its diffs')
+    assert.equal(out[0].editDiffsOmitted, 1)
+    assert.equal(out[1].editDiffs?.length, 1, 'newest activity keeps its diffs')
+  })
+
+  test('activity rows themselves are never dropped', () => {
+    const out = capEditDiffBudget([activity('a', 100), activity('b', 100)], 0)
+    assert.equal(out.length, 2)
+    assert.equal(out[0].toolName, 'Edit')
+  })
+
+  test('accumulates an existing editDiffsOmitted count', () => {
+    const a = { ...activity('a', 100), editDiffsOmitted: 3 }
+    const out = capEditDiffBudget([a], 0)
+    assert.equal(out[0].editDiffsOmitted, 4)
+  })
+
+  test('activities without diffs pass through untouched', () => {
+    const plain: ToolActivity = { id: 'p', toolName: 'Read', status: 'completed', startedAt: 0 }
+    const out = capEditDiffBudget([plain], 0)
+    assert.deepEqual(out[0], plain)
+  })
+})
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()

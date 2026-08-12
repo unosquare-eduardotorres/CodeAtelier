@@ -1,11 +1,8 @@
 {
   "all": true,
   "src": ["src"],
-  "_comment": "Coverage is scoped to the main process + shared code, which is what the custom unit suite (src/main/__tests__/run-all.ts) exercises. The renderer (React .tsx) is covered by e2e/manual testing, not these unit tests, so including it here only diluted the line ratio and made test:cov:check ungateable.",
-  "include": [
-    "src/main/**/*.ts",
-    "src/shared/**/*.ts"
-  ],
+  "_comment": "Coverage is scoped to the main process + shared code, which is what the custom unit suite (src/main/__tests__/run-all.ts) exercises. The renderer (React .tsx) is covered by e2e/manual testing, not these unit tests, so including it here only diluted the line ratio and made test:cov:check ungateable. FR-008: 'include' alone does not stop renderer files from entering the report — several main-process test files transitively import renderer modules (e.g. src/main/services/__tests__/sentence-buffer.test.ts imports ../../../renderer/src/utils/sentence-buffer), which pulled src/renderer/src/store, src/renderer/src/utils and src/renderer/src/components/workspace/grill into the denominator via c8's all:true. The imports themselves stay (they exercise real shared logic) — 'exclude' below is the deliberate, explicit fix so the denominator can no longer move because an import changed.",
+  "include": ["src/main/**/*.ts", "src/shared/**/*.ts"],
   "exclude": [
     "**/__tests__/**",
     "**/*.test.ts",
@@ -17,11 +14,12 @@
     "src/shared/mpa-types.ts",
     "src/main/services/agent-session.types.ts",
     "src/main/services/executor-types.ts",
+    "src/renderer/**",
     "e2e/**",
     "out/**",
     "dist/**"
   ],
-  "reporter": ["text", "text-summary", "html", "lcov"],
+  "reporter": ["text", "text-summary", "html", "lcov", "json-summary"],
   "report-dir": "./coverage",
   "exclude-after-remap": true,
   "skip-full": false,

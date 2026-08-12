@@ -1,0 +1,79 @@
+name: Coverage Gate
+
+# Enforces the coverage floor defined in test:cov:check (package.json) on every
+# pull request and on pushes to main. This is the automatic-enforcement half of
+# the coverage effort — a correct local gate that nothing runs in CI is the
+# status quo this workflow closes (FR-029, US-003 AS1).
+#
+# Do NOT add a `build:mac` step here. CLAUDE.md documents that build:mac
+# mutilates node_modules/package.json and restores them via an EXIT trap; a
+# failed or interrupted run leaves the environment in a state that produces
+# load failures indistinguishable from real test regressions.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# Cancel superseded runs on the same PR/branch so the gate stays fast to read.
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Typecheck, lint, coverage gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Node 24 matches the Electron 42 runtime (Chromium 148 + Node 24) per
+      # CLAUDE.md, so the coverage run reflects the same engine as production.
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      # better-sqlite3 13 is N-API — the same prebuilt binary works under
+      # both Node.js and Electron, so no electron-rebuild step is needed here.
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      # Fails loudly when a *.test.ts file exists on disk under src/main or
+      # src/shared but isn't wired into run-all.ts's registry (and isn't in
+      # its justified DENY_LIST) — closing FR-031/SC-009 automatically
+      # instead of relying on local discipline. Runs before the coverage
+      # gate: an orphaned test contributes zero coverage, so catching it
+      # here explains a coverage shortfall that the gate step alone cannot.
+      - name: Check for orphaned test files
+        run: npm run test:check-orphans
+
+      # c8 --check-coverage prints, per failing metric, the metric name, the
+      # required threshold and the actual achieved value, then exits non-zero
+      # — satisfying FR-030 without any extra flags. run-all.ts also sets
+      # process.exitCode = 1 if any test module fails to import, so a broken
+      # suite can never be reported as a passing coverage measurement.
+      - name: Coverage gate (test:cov:check)
+        env:
+          # Forward-compatible: once db-test-helper.ts honours this flag, a
+          # broken in-memory DB setup fails the job instead of silently
+          # skipping tests into a green run. Currently a harmless no-op.
+          CA_STRICT_DB_TESTS: '1'
+        run: npm run test:cov:check
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14

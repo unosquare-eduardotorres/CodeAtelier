@@ -92,9 +92,7 @@ export function* normalizeMessage(
     const initTools = msg.tools as Array<{ name: string }> | undefined
     if (initTools?.length) {
       const mcpToolCount = initTools.filter((t) => t.name?.startsWith('mcp__')).length
-      executorLog.info(
-        `[init:tools] totalTools=${initTools.length} mcpTools=${mcpToolCount}`
-      )
+      executorLog.info(`[init:tools] totalTools=${initTools.length} mcpTools=${mcpToolCount}`)
     }
 
     return
@@ -135,7 +133,24 @@ export function* normalizeMessage(
   if (msg.type === 'assistant') {
     const assistantMsg = msg.message as Record<string, unknown> | undefined
     if (assistantMsg?.content && Array.isArray(assistantMsg.content)) {
-      tools.registerFromAssistantMessage(assistantMsg.content as Record<string, unknown>[])
+      const blocks = assistantMsg.content as Record<string, unknown>[]
+      tools.registerFromAssistantMessage(blocks)
+      // Backfill tool inputs. Under --include-partial-messages the tool_use
+      // content_block_start carries `input: {}` (the arguments stream as
+      // input_json_delta, which is not accumulated), so without this the
+      // tool_result chunk ships no toolInputRaw and downstream metadata
+      // extraction — file path chip, Input section, Edit diffs — never runs.
+      for (const block of blocks) {
+        if (block.type !== 'tool_use') continue
+        const toolId = block.id as string | undefined
+        const toolInput = block.input as Record<string, unknown> | undefined
+        if (!toolId || !toolInput || Object.keys(toolInput).length === 0) continue
+        tools.backfillInput(
+          toolId,
+          summarizeToolInput(block.name as string, toolInput, cwd),
+          JSON.stringify(toolInput)
+        )
+      }
     }
     return
   }
@@ -294,12 +309,31 @@ export function* normalizeMessage(
     if (userMsg?.content && Array.isArray(userMsg.content)) {
       for (const block of userMsg.content as Record<string, unknown>[]) {
         if (block.type === 'tool_result') {
-          const toolUseId = block.tool_use_id as string | undefined
+          // A tool_result without tool_use_id would silently no-op consume(),
+          // leaving the entry pending forever (pendingToolCount never returns to
+          // 0 — the executor then stays on the tool-result timeout branch and
+          // the UI keeps showing the tool as running). With exactly one tool in
+          // flight the correlation is unambiguous, so recover it.
+          const rawToolUseId = block.tool_use_id as string | undefined
+          const toolUseId = rawToolUseId ?? tools.getSolePendingId()
+          if (!rawToolUseId) {
+            executorLog.warn(
+              `[CLI:tool-result-missing-id] tool_result had no tool_use_id — ` +
+                (toolUseId
+                  ? `recovered from sole pending tool (${tools.resolve(toolUseId)})`
+                  : `${tools.pendingToolCount} pending, cannot correlate`)
+            )
+          }
           const toolName = tools.resolve(toolUseId)
           // Retrieve stored input summary + raw JSON before consuming the tracker entry
           const storedInput = tools.resolveInput(toolUseId)
           const storedRawInput = tools.resolveRawInput(toolUseId)
-          tools.consume(toolUseId)
+          if (!tools.consume(toolUseId) && toolUseId) {
+            executorLog.warn(
+              `[CLI:tool-consume-miss] tool_result for untracked id ${toolUseId} — ` +
+                `${tools.pendingToolCount} entr(ies) still pending`
+            )
+          }
 
           let resultContent: string | undefined
           if (typeof block.content === 'string') {
@@ -424,9 +458,18 @@ export function* normalizeMessage(
 
   // ── tool_progress — elapsed time updates ──
   if (msg.type === 'tool_progress') {
+    // CLI 2.1.218: tool_use_id on heartbeat frames is a synthetic
+    // "<realId>-heartbeat-N" that matches neither the originating tool_use nor
+    // the tool_result. parent_tool_use_id carries the stable id. Correlating on
+    // the synthetic id makes every 30s tick look like a brand-new running tool.
+    const parentId = msg.parent_tool_use_id as string | undefined
+    const rawId = msg.tool_use_id as string | undefined
+    const stableId = parentId ?? rawId?.replace(/-heartbeat-\d+$/, '')
+    // Never emit an uncorrelatable progress frame — downstream would mint an id.
+    if (!stableId) return
     yield {
       type: 'tool_progress',
-      toolId: msg.tool_use_id as string,
+      toolId: stableId,
       toolName: msg.tool_name as string,
       elapsedSeconds: msg.elapsed_time_seconds as number,
       content: `${msg.elapsed_time_seconds}s`

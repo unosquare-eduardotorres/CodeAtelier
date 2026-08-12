@@ -67,7 +67,11 @@ function useCompleteDialogInit(
 ): DialogInitState & { userEditedRef: React.MutableRefObject<boolean> } {
   const [branchName, setBranchName] = useState('')
   const [baseBranch, setBaseBranch] = useState('')
-  const [branches, setBranches] = useState<{ local: string[]; remote: string[]; current: string } | null>(null)
+  const [branches, setBranches] = useState<{
+    local: string[]
+    remote: string[]
+    current: string
+  } | null>(null)
   const [branchesLoading, setBranchesLoading] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
   const [prDescription, setPrDescription] = useState('')
@@ -243,7 +247,12 @@ interface CompleteDialogProps {
   isOpen: boolean
   conversationTitle: string
   conversationId: string
-  onConfirm: (branchName: string, commitMessage: string, description: string, baseBranch?: string) => Promise<void>
+  onConfirm: (
+    branchName: string,
+    commitMessage: string,
+    description: string,
+    baseBranch?: string
+  ) => Promise<void>
   onClose: () => Promise<void>
   onCancel: () => void
 }
@@ -302,7 +311,12 @@ export default function CompleteDialog({
     setIsSubmitting(true)
     setError(null)
     try {
-      await onConfirm(branchName.trim(), commitMessage.trim(), prDescription.trim(), baseBranch.trim() || undefined)
+      await onConfirm(
+        branchName.trim(),
+        commitMessage.trim(),
+        prDescription.trim(),
+        baseBranch.trim() || undefined
+      )
     } catch (e) {
       setError((e as Error).message)
       setIsSubmitting(false)
@@ -321,7 +335,10 @@ export default function CompleteDialog({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
 
       {/* Dialog */}
-      <div data-testid="complete-dialog" className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95">
+      <div
+        data-testid="complete-dialog"
+        className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl p-6 max-w-lg w-full mx-4 animate-in fade-in zoom-in-95"
+      >
         {/* Header */}
         <div className="flex items-center gap-3 mb-5">
           <div className="flex-shrink-0 w-10 h-10 rounded-full bg-success-muted flex items-center justify-center">
@@ -337,7 +354,10 @@ export default function CompleteDialog({
         <div className={noChanges ? 'opacity-40 pointer-events-none' : ''}>
           {/* Branch name input */}
           <div className="mb-4">
-            <label htmlFor="branch-name" className="block text-sm font-medium text-text-body mb-1.5">
+            <label
+              htmlFor="branch-name"
+              className="block text-sm font-medium text-text-body mb-1.5"
+            >
               Branch name
             </label>
             <input
@@ -355,7 +375,10 @@ export default function CompleteDialog({
 
           {/* Target branch (base for PR) */}
           <div className="mb-4">
-            <label htmlFor="base-branch" className="block text-sm font-medium text-text-body mb-1.5">
+            <label
+              htmlFor="base-branch"
+              className="block text-sm font-medium text-text-body mb-1.5"
+            >
               Target branch
               <span className="text-xs text-text-muted font-normal ml-1">(merge into)</span>
             </label>
@@ -372,17 +395,24 @@ export default function CompleteDialog({
                 placeholder="main"
               />
               {branchesLoading && (
-                <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-text-muted" />
+                <Loader2
+                  size={14}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-text-muted"
+                />
               )}
             </div>
             {branches && (
               <datalist id={`branch-options-${conversationId}`}>
                 {branches.local
-                  .filter(b => b !== branchName)
-                  .map(b => <option key={`local:${b}`} value={b} />)}
+                  .filter((b) => b !== branchName)
+                  .map((b) => (
+                    <option key={`local:${b}`} value={b} />
+                  ))}
                 {branches.remote
-                  .filter(b => !branches.local.includes(b))
-                  .map(b => <option key={`remote:${b}`} value={b} />)}
+                  .filter((b) => !branches.local.includes(b))
+                  .map((b) => (
+                    <option key={`remote:${b}`} value={b} />
+                  ))}
               </datalist>
             )}
           </div>
@@ -456,7 +486,9 @@ export default function CompleteDialog({
             <div className="max-h-32 overflow-y-auto bg-surface-base border border-border-subtle rounded-lg p-2 space-y-1">
               {fileChanges.map((fc, i) => (
                 <div key={i} className="flex items-center gap-2 text-xs font-mono">
-                  <span className={`${CHANGE_TYPE_COLORS[fc.changeType] ?? 'text-text-secondary'} flex-shrink-0 w-16`}>
+                  <span
+                    className={`${CHANGE_TYPE_COLORS[fc.changeType] ?? 'text-text-secondary'} flex-shrink-0 w-16`}
+                  >
                     {fc.changeType}
                   </span>
                   <span className="text-text-secondary truncate">{fc.filePath}</span>
@@ -473,8 +505,8 @@ export default function CompleteDialog({
               <div>
                 <p className="font-medium">No uncommitted changes found</p>
                 <p className="text-text-secondary mt-0.5">
-                  Changes may have been committed in another session.
-                  You can close this conversation to clean up.
+                  Changes may have been committed in another session. You can close this
+                  conversation to clean up.
                 </p>
               </div>
             </div>

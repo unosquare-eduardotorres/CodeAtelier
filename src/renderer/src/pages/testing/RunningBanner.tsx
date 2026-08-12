@@ -48,9 +48,7 @@ export default function RunningBanner({
     }
   }, [startedAt])
 
-  const completed = counts
-    ? counts.passed + counts.failed + counts.error + counts.skipped
-    : 0
+  const completed = counts ? counts.passed + counts.failed + counts.error + counts.skipped : 0
 
   return (
     <div className="relative rounded-xl border border-info/30 overflow-hidden">
@@ -58,7 +56,8 @@ export default function RunningBanner({
       <div
         className="absolute inset-x-0 top-0 h-1 animate-e2e-sweep"
         style={{
-          backgroundImage: 'linear-gradient(90deg, transparent 0%, #3b82f6 25%, #8b5cf6 50%, #3b82f6 75%, transparent 100%)'
+          backgroundImage:
+            'linear-gradient(90deg, transparent 0%, #3b82f6 25%, #8b5cf6 50%, #3b82f6 75%, transparent 100%)'
         }}
       />
 
@@ -76,21 +75,15 @@ export default function RunningBanner({
               <span className="text-sm font-semibold text-info">
                 {scenarioTitle ? `Running: ${scenarioTitle}` : 'Running tests...'}
               </span>
-              <span className="text-xs tabular-nums text-text-muted">
-                {formatElapsed(elapsed)}
-              </span>
+              <span className="text-xs tabular-nums text-text-muted">{formatElapsed(elapsed)}</span>
             </div>
 
             {/* Inline counts */}
             <div className="flex items-center gap-3 text-xs">
               {counts && (
                 <>
-                  <span className="tabular-nums text-success">
-                    ✓ {counts.passed}
-                  </span>
-                  <span className="tabular-nums text-danger">
-                    ✗ {counts.failed + counts.error}
-                  </span>
+                  <span className="tabular-nums text-success">✓ {counts.passed}</span>
+                  <span className="tabular-nums text-danger">✗ {counts.failed + counts.error}</span>
                   <span className="tabular-nums text-text-muted">
                     {completed}/{counts.total} done
                   </span>

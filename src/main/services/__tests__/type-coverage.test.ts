@@ -17,10 +17,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 
 // ── Runtime imports for constants that existing tests DON'T cover ──
-import {
-  BLUEPRINT_PHASE_ORDER,
-  PHASE_TO_STATUS
-} from '../../../shared/blueprint-types'
+import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../../shared/blueprint-types'
 
 import {
   // Already covered in shared-types-coverage.test.ts:
@@ -39,6 +36,7 @@ import {
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   CLAUDE_1M_CONTEXT_WINDOW,
   supportsContext1M,
+  requiresContext1MBeta,
   MODEL_ACTIONS_META,
   COMPLEXITY_TO_EFFORT,
   SPECIALIST_BUDGET_CAPS,
@@ -311,7 +309,6 @@ describe('Constants — MCP definitions', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('Constants — functions', () => {
-
   test('supportsContext1M_returns_boolean', () => {
     assert.equal(typeof supportsContext1M, 'function')
     // Known 1M model
@@ -320,6 +317,29 @@ describe('Constants — functions', () => {
     // Unknown model
     const result2 = supportsContext1M('unknown-model')
     assert.equal(result2, false)
+  })
+
+  // Regression: gating a native-1M model behind the API-key-only
+  // `context-1m-2025-08-07` beta silently downgrades Max/OAuth sessions to 200K.
+  // Only the legacy Sonnet 4.x ids may return true here.
+  test('requiresContext1MBeta_only_for_legacy_sonnet_4x', () => {
+    for (const legacy of [
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5-20250514',
+      'claude-sonnet-4-20250514'
+    ]) {
+      assert.equal(requiresContext1MBeta(legacy), true, `${legacy} needs the legacy beta`)
+    }
+    for (const native of [
+      'claude-opus-5',
+      'claude-opus-4-8',
+      'claude-sonnet-5',
+      'claude-fable-5',
+      'claude-haiku-4-5-20251001',
+      'unknown-model'
+    ]) {
+      assert.equal(requiresContext1MBeta(native), false, `${native} must not be gated`)
+    }
   })
 
   test('getModelActionForRole_returns_action_for_known_roles', () => {

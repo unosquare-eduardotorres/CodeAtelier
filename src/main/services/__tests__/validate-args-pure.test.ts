@@ -22,7 +22,7 @@ import {
   optionalBoolean,
   optionalNullableString,
   requireStringArray,
-  requirePlainObject,
+  requirePlainObject
 } from '../../ipc/validate-args'
 
 describe('validate-args › requireObject', () => {
@@ -253,8 +253,8 @@ describe('safe-send › safeWindowSend', () => {
         send: (ch: string, ...args: unknown[]) => {
           sentChannel = ch
           sentArgs = args
-        },
-      },
+        }
+      }
     } as any
     const result = safeWindowSend(win, 'test:channel', { data: 1 })
     assert.equal(result, true)
@@ -268,8 +268,8 @@ describe('safe-send › safeWindowSend', () => {
       webContents: {
         send: () => {
           throw new Error('should not be called')
-        },
-      },
+        }
+      }
     } as any
     const result = safeWindowSend(win, 'test:channel')
     assert.equal(result, false)
@@ -281,8 +281,8 @@ describe('safe-send › safeWindowSend', () => {
       webContents: {
         send: () => {
           throw new Error('Object has been destroyed')
-        },
-      },
+        }
+      }
     } as any
     const result = safeWindowSend(win, 'test:channel')
     assert.equal(result, false)
@@ -295,8 +295,8 @@ describe('safe-send › safeWindowSend', () => {
       webContents: {
         send: (_ch: string, ...args: unknown[]) => {
           passedArgs.push(args)
-        },
-      },
+        }
+      }
     } as any
     safeWindowSend(win, 'ch', 'a', 'b', 'c')
     assert.deepEqual(passedArgs[0], ['a', 'b', 'c'])
@@ -325,7 +325,7 @@ describe('encrypt-settings-keys › encryptSettingsKeys', () => {
   test('skips already-encrypted fields', () => {
     const input = {
       anthropicApiKey: 'alreadyEncrypted==',
-      anthropicApiKeyEncrypted: true,
+      anthropicApiKeyEncrypted: true
     }
     const result = encryptSettingsKeys(input)
     assert.equal(result.anthropicApiKey, 'alreadyEncrypted==')
@@ -348,7 +348,7 @@ describe('encrypt-settings-keys › encryptSettingsKeys', () => {
     const input = {
       anthropicApiKey: 'key1',
       openCodeApiKey: 'key2',
-      localApiKey: 'key3',
+      localApiKey: 'key3'
     }
     const result = encryptSettingsKeys(input)
     assert.equal(result.anthropicApiKeyEncrypted, true)
@@ -360,7 +360,7 @@ describe('encrypt-settings-keys › encryptSettingsKeys', () => {
     const input = {
       anthropicApiKey: 'sk-123',
       otherSetting: 'value',
-      count: 42,
+      count: 42
     }
     const result = encryptSettingsKeys(input)
     assert.equal(result.otherSetting, 'value')
@@ -408,7 +408,9 @@ describe('encrypt-settings-keys › decryptSettingsKey', () => {
   test('returns undefined for corrupt base64 with encrypted flag', () => {
     // Long base64-looking string that cannot be decrypted by our mock
     // (doesn't start with 'ENC:' once decoded)
-    const corruptBase64 = Buffer.from('NOT_ENCRYPTED_DATA_THAT_IS_LONGER_THAN_100_CHARS_TO_AVOID_PLAINTEXT_FALLBACK_PATH_XXXXXXXXXXXXXXXXXXXXXXXXX').toString('base64')
+    const corruptBase64 = Buffer.from(
+      'NOT_ENCRYPTED_DATA_THAT_IS_LONGER_THAN_100_CHARS_TO_AVOID_PLAINTEXT_FALLBACK_PATH_XXXXXXXXXXXXXXXXXXXXXXXXX'
+    ).toString('base64')
     const result = decryptSettingsKey(corruptBase64, true)
     assert.equal(result, undefined)
   })

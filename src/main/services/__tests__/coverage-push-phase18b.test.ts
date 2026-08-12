@@ -97,9 +97,9 @@ describe('chat-shared — chunk tap registry', () => {
     const mockWindow = {
       webContents: {
         send: () => {},
-        id: 1,
+        id: 1
       },
-      isDestroyed: () => false,
+      isDestroyed: () => false
     }
     try {
       forwardChunkToRenderer(

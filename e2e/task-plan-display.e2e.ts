@@ -22,9 +22,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Task Plan Display', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -61,32 +59,43 @@ test.describe('Task Plan Display', () => {
     return true
   }
 
-  test('plan content renders in execution panel Plan tab', async ({
-    electronPage: page
-  }) => {
+  test('plan content renders in execution panel Plan tab', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     // Check if a plan indicator exists (slim indicator in messages or badge)
     const planIndicator = page.locator('[data-testid="plan-slim-indicator"]')
-    const hasPlanIndicator = await planIndicator.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasPlanIndicator = await planIndicator
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasPlanIndicator) {
       // No plan available — try triggering one
-      const inputReady = await chat.messageInput
-        .isVisible({ timeout: 15_000 })
-        .catch(() => false)
-      if (!inputReady) { test.skip(); return }
+      const inputReady = await chat.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
+      if (!inputReady) {
+        test.skip()
+        return
+      }
 
       const isEnabled = await chat.isInputEnabled()
-      if (!isEnabled) { test.skip(); return }
+      if (!isEnabled) {
+        test.skip()
+        return
+      }
 
       await chat.sendMessage('Create a plan to add a hello world function')
       await chat.waitForStreamComplete(120_000)
     }
 
     const panelOpened = await openPlanTab(page)
-    if (!panelOpened) { test.skip(); return }
+    if (!panelOpened) {
+      test.skip()
+      return
+    }
 
     // Plan content should be visible inside the panel
     const panel = page.locator('[data-testid="chat-execution-panel"]')
@@ -101,10 +110,16 @@ test.describe('Task Plan Display', () => {
     electronPage: page
   }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const panelOpened = await openPlanTab(page)
-    if (!panelOpened) { test.skip(); return }
+    if (!panelOpened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="chat-execution-panel"]')
 
@@ -112,7 +127,10 @@ test.describe('Task Plan Display', () => {
     const sectionHeaders = panel.locator('button, summary, [role="button"]')
     const headerCount = await sectionHeaders.count()
 
-    if (headerCount === 0) { test.skip(); return }
+    if (headerCount === 0) {
+      test.skip()
+      return
+    }
 
     // Click the first section header to toggle
     const firstHeader = sectionHeaders.first()
@@ -126,10 +144,16 @@ test.describe('Task Plan Display', () => {
 
   test('plan shows title and summary inside panel', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const panelOpened = await openPlanTab(page)
-    if (!panelOpened) { test.skip(); return }
+    if (!panelOpened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="chat-execution-panel"]')
 
@@ -143,14 +167,18 @@ test.describe('Task Plan Display', () => {
     expect(fullText!.length).toBeGreaterThan(0)
   })
 
-  test('markdown content renders inside plan sections', async ({
-    electronPage: page
-  }) => {
+  test('markdown content renders inside plan sections', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const panelOpened = await openPlanTab(page)
-    if (!panelOpened) { test.skip(); return }
+    if (!panelOpened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="chat-execution-panel"]')
 
@@ -164,15 +192,24 @@ test.describe('Task Plan Display', () => {
 
   test('build action bar shows at bottom of plan', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const panelOpened = await openPlanTab(page)
-    if (!panelOpened) { test.skip(); return }
+    if (!panelOpened) {
+      test.skip()
+      return
+    }
 
     // Look for the build action bar inside the panel
     const panel = page.locator('[data-testid="chat-execution-panel"]')
     const buildBar = panel.locator('[data-testid="task-plan-build-bar"]')
-    const hasBuildBar = await buildBar.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasBuildBar = await buildBar
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasBuildBar) {
       // Build bar may have been dismissed by a previous user click
@@ -190,14 +227,18 @@ test.describe('Task Plan Display', () => {
     expect(barText?.length).toBeGreaterThan(0)
   })
 
-  test('plan type badge displays correctly', async ({
-    electronPage: page
-  }) => {
+  test('plan type badge displays correctly', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const panelOpened = await openPlanTab(page)
-    if (!panelOpened) { test.skip(); return }
+    if (!panelOpened) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="chat-execution-panel"]')
 

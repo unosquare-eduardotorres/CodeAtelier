@@ -2,8 +2,8 @@
 /**
  * Process Manager MCP Server — resilient background process management.
  *
- * Exposes four tools: run_background, check_process, stop_process, list_processes.
- * Designed for dev servers, watchers, and tunnels that never exit.
+ * Exposes five tools: run_background, check_process, wait_process, stop_process,
+ * list_processes.  Designed for dev servers, watchers, tunnels, and long builds.
  *
  * **Key design:** Processes are spawned `detached` with log-file stdio so they
  * survive MCP server restarts.  A JSON manifest persists PIDs to disk; on startup
@@ -31,6 +31,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
+import { detachedHiddenSpawnOptions } from '../../shared/spawn-options'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 
@@ -41,6 +42,17 @@ const RING_BUFFER_MAX_LINES = 200
 const MAX_LINE_LENGTH = 500
 const INITIAL_OUTPUT_WAIT_MS = 2000
 const SIGTERM_GRACE_MS = 3000
+
+// ── wait_process bounds ──
+// The agent turn itself is capped at 10 minutes (MAX_INTERACTION_TIMEOUT_MS in
+// agent-session.service.ts).  The hard ceiling here is deliberately well under
+// that, so a wait can never be the thing that kills the turn.
+const WAIT_POLL_INTERVAL_MS = 2000
+const WAIT_DEFAULT_TIMEOUT_MS = 120_000 // 2 min
+const WAIT_MAX_TIMEOUT_MS = 480_000 // 8 min
+
+/** Exit records older than this are swept at startup (watcher never consumed them). */
+const EXIT_RECORD_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024 // 5 MB
 const LOG_TRUNCATE_KEEP_BYTES = 1024 * 1024 // keep last 1 MB on truncation
 
@@ -58,7 +70,7 @@ function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void 
   if (process.platform === 'win32') {
     try {
       const forceFlag = signal === 'SIGKILL' ? ' /F' : ''
-      execSync(`taskkill /PID ${pid} /T${forceFlag}`, { stdio: 'ignore' })
+      execSync(`taskkill /PID ${pid} /T${forceFlag}`, { stdio: 'ignore', windowsHide: true })
     } catch {
       /* process may already be dead */
     }
@@ -82,7 +94,7 @@ function killProcessTree(pid: number, signal: NodeJS.Signals = 'SIGTERM'): void 
 function isProcessAlive(pid: number): boolean {
   try {
     if (process.platform === 'win32') {
-      execSync(`tasklist /FI "PID eq ${pid}" /NH`, { stdio: 'ignore' })
+      execSync(`tasklist /FI "PID eq ${pid}" /NH`, { stdio: 'ignore', windowsHide: true })
       return true
     }
     process.kill(-pid, 0)
@@ -106,10 +118,31 @@ function isProcessAlive(pid: number): boolean {
 // quick tests, etc.).  The allowlist exists to prevent accidental execution
 // of system-level tools by a misguided LLM, not to sandbox arbitrary code.
 const ALLOWED_COMMAND_PREFIXES = [
-  'npm', 'npx', 'yarn', 'pnpm', 'node', 'python', 'python3',
-  'go', 'cargo', 'make', 'gradle', 'mvn', 'dotnet', 'ruby',
-  'docker', 'docker-compose', 'supabase', 'firebase',
-  'bun', 'deno', 'tsx', 'ts-node', 'jest', 'vitest', 'playwright'
+  'npm',
+  'npx',
+  'yarn',
+  'pnpm',
+  'node',
+  'python',
+  'python3',
+  'go',
+  'cargo',
+  'make',
+  'gradle',
+  'mvn',
+  'dotnet',
+  'ruby',
+  'docker',
+  'docker-compose',
+  'supabase',
+  'firebase',
+  'bun',
+  'deno',
+  'tsx',
+  'ts-node',
+  'jest',
+  'vitest',
+  'playwright'
 ]
 
 // ── State Directory ──
@@ -127,6 +160,8 @@ interface ProcessManifestEntry {
   cwd: string
   startedAt: number
   logFile: string // filename relative to LOGS_DIR
+  /** Agent opted in to an exit notification + auto-resume for this process. */
+  notifyOnExit?: boolean
 }
 
 // ── Ring Buffer ──
@@ -183,6 +218,7 @@ export interface TrackedProcess {
   exitCode: number | null
   exited: boolean
   reconnected: boolean // true if rediscovered on startup
+  notifyOnExit: boolean // agent asked to be woken when this process exits
 }
 
 const trackedProcesses = new Map<number, TrackedProcess>()
@@ -235,7 +271,8 @@ function writeManifest(): void {
         command: p.command,
         cwd: p.cwd,
         startedAt: p.startedAt,
-        logFile: p.logFile
+        logFile: p.logFile,
+        notifyOnExit: p.notifyOnExit
       }))
     writeFileSync(MANIFEST_PATH, JSON.stringify(entries, null, 2))
   } catch {
@@ -266,6 +303,40 @@ function deleteLogFile(logFile: string): void {
     }
   } catch {
     /* ignore */
+  }
+}
+
+/**
+ * Persist an exit record for a watched process.
+ *
+ * `writeManifest()` drops exited entries, so the exit code would otherwise be
+ * lost the moment the process finishes.  The main-process background task
+ * watcher reads these records to report the exit code, and deletes them once
+ * consumed.  Best-effort only: if this MCP server dies before the child does,
+ * no record is written and the watcher falls back to liveness polling.
+ */
+function writeExitRecord(tracked: TrackedProcess): void {
+  if (!tracked.notifyOnExit) return
+  try {
+    ensureStateDir()
+    // Snapshot the tail into the record itself — the log file may be reaped
+    // before the watcher gets a chance to read it.
+    refreshOutputFromLog(tracked)
+    writeFileSync(
+      join(STATE_DIR, `exit-${tracked.pid}.json`),
+      JSON.stringify({
+        pid: tracked.pid,
+        label: tracked.label,
+        command: tracked.command,
+        cwd: tracked.cwd,
+        startedAt: tracked.startedAt,
+        exitedAt: Date.now(),
+        exitCode: tracked.exitCode,
+        tail: tracked.output.getRecent(50).join('\n')
+      })
+    )
+  } catch {
+    /* non-critical */
   }
 }
 
@@ -327,7 +398,9 @@ function reconnectFromManifest(): void {
     if (alive) {
       // Validate this is actually our process (not PID reuse)
       if (!validatePidOwnership(entry.pid, entry.command)) {
-        console.error(`[process-manager] PID ${entry.pid} reused by another process — discarding "${entry.label}"`)
+        console.error(
+          `[process-manager] PID ${entry.pid} reused by another process — discarding "${entry.label}"`
+        )
         deleteLogFile(entry.logFile)
         continue // skip reconnection
       }
@@ -339,10 +412,7 @@ function reconnectFromManifest(): void {
         const logPath = join(LOGS_DIR, entry.logFile)
         if (existsSync(logPath)) {
           const content = readFileSync(logPath, 'utf-8')
-          const lines = content
-            .split('\n')
-            .filter(Boolean)
-            .slice(-RING_BUFFER_MAX_LINES)
+          const lines = content.split('\n').filter(Boolean).slice(-RING_BUFFER_MAX_LINES)
           for (const line of lines) {
             output.push(line)
           }
@@ -362,7 +432,8 @@ function reconnectFromManifest(): void {
         output,
         exitCode: null,
         exited: false,
-        reconnected: true
+        reconnected: true,
+        notifyOnExit: entry.notifyOnExit === true
       })
       reconnected++
     } else {
@@ -380,6 +451,29 @@ function reconnectFromManifest(): void {
 
   // Sweep orphan log files not referenced by any tracked process
   sweepOrphanLogs()
+  sweepStaleExitRecords()
+}
+
+/**
+ * Delete exit records the main-process watcher never consumed (the app was
+ * closed when the process finished).  Without this they accumulate forever.
+ */
+function sweepStaleExitRecords(): void {
+  try {
+    for (const file of readdirSync(STATE_DIR)) {
+      if (!file.startsWith('exit-') || !file.endsWith('.json')) continue
+      const recordPath = join(STATE_DIR, file)
+      try {
+        if (Date.now() - statSync(recordPath).mtimeMs > EXIT_RECORD_TTL_MS) {
+          unlinkSync(recordPath)
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch {
+    /* state dir may not exist yet */
+  }
 }
 
 function sweepOrphanLogs(): void {
@@ -407,6 +501,19 @@ function onExit(): void {
   writeManifest()
 }
 
+/**
+ * True once the stdio transport is gone — the host closed our stdin, which
+ * means the agent turn was aborted.  `wait_process` checks this every poll so
+ * a cancelled turn doesn't leave a loop spinning in an orphaned server.
+ */
+let transportClosed = false
+process.stdin.on('end', () => {
+  transportClosed = true
+})
+process.stdin.on('close', () => {
+  transportClosed = true
+})
+
 process.on('exit', onExit)
 process.on('SIGTERM', () => {
   onExit()
@@ -428,20 +535,22 @@ const server = new McpServer({
 
 server.tool(
   'run_background',
-  'Spawn a command in the background and return immediately. Use instead of Bash for dev servers, watchers, and commands that don\'t exit. Processes survive across sessions.',
+  "Spawn a command in the background and return immediately. Use instead of Bash for dev servers, watchers, and commands that don't exit. Processes survive across sessions.",
   {
     command: z.string().describe('Shell command to run (e.g., "npm run dev")'),
     cwd: z.string().optional().describe('Working directory (defaults to workspace root)'),
-    label: z.string().optional().describe('Human label for tracking (e.g., "Vite dev server")')
+    label: z.string().optional().describe('Human label for tracking (e.g., "Vite dev server")'),
+    notifyOnExit: z
+      .boolean()
+      .optional()
+      .describe(
+        'Set true for a command that is EXPECTED TO FINISH (a build, a long test run). The user is notified and you are woken up with the result as a new message when it exits. Leave false/unset for dev servers and watchers that never exit.'
+      )
   },
-  async ({ command, cwd, label }) => {
+  async ({ command, cwd, label, notifyOnExit }) => {
     // Enforce command allowlist — mitigates shell injection surface
     const firstToken = command.trim().split(/\s+/)[0]
-    if (
-      !ALLOWED_COMMAND_PREFIXES.some(
-        (p) => firstToken === p || firstToken.endsWith(`/${p}`)
-      )
-    ) {
+    if (!ALLOWED_COMMAND_PREFIXES.some((p) => firstToken === p || firstToken.endsWith(`/${p}`))) {
       return {
         content: [
           {
@@ -485,7 +594,10 @@ server.tool(
     const child = spawn(command, {
       shell: true,
       cwd: workingDir,
-      detached: true, // own process group — survives MCP server exit
+      // detached on POSIX only — own process group survives MCP server exit.
+      // On Windows DETACHED_PROCESS suppresses windowsHide (nodejs/node#21825),
+      // and children already outlive the parent; teardown uses `taskkill /T`.
+      ...detachedHiddenSpawnOptions,
       stdio: ['ignore', logFd, logFd] // stdout+stderr → log file
     })
 
@@ -530,7 +642,8 @@ server.tool(
       output,
       exitCode: null,
       exited: false,
-      reconnected: false
+      reconnected: false,
+      notifyOnExit: notifyOnExit === true
     }
 
     trackedProcesses.set(child.pid, tracked)
@@ -538,12 +651,14 @@ server.tool(
     child.on('exit', (code) => {
       tracked.exitCode = code
       tracked.exited = true
+      writeExitRecord(tracked)
       writeManifest()
     })
 
     child.on('error', (err) => {
       output.push(`[process error] ${err.message}`)
       tracked.exited = true
+      writeExitRecord(tracked)
       writeManifest()
     })
 
@@ -575,7 +690,14 @@ server.tool(
             label: processLabel,
             status: tracked.exited ? 'exited' : 'running',
             exitCode: tracked.exitCode,
-            initialOutput: initialOutput || '(no output yet)'
+            notifyOnExit: tracked.notifyOnExit,
+            initialOutput: initialOutput || '(no output yet)',
+            ...(tracked.notifyOnExit && !tracked.exited
+              ? {
+                  nextStep:
+                    'This process is watched. Either call wait_process to block for the result now, or end your turn and tell the user plainly that you will reply again in a new message when it finishes. Do NOT promise to "check back later" — you cannot act between turns on your own.'
+                }
+              : {})
           })
         }
       ]
@@ -614,6 +736,7 @@ server.tool(
       } catch {
         alive = false
         tracked.exited = true
+        writeExitRecord(tracked)
         writeManifest()
       }
     }
@@ -634,6 +757,145 @@ server.tool(
             uptimeMs: Date.now() - tracked.startedAt,
             reconnected: tracked.reconnected,
             recentOutput: tracked.output.getRecent(50).join('\n')
+          })
+        }
+      ]
+    }
+  }
+)
+
+// ── Tool: wait_process ──
+
+/** Clamp a caller-supplied wait budget into the safe range. */
+export function clampWaitTimeout(timeoutMs?: number): number {
+  const requested = timeoutMs ?? WAIT_DEFAULT_TIMEOUT_MS
+  if (!Number.isFinite(requested)) return WAIT_DEFAULT_TIMEOUT_MS
+  return Math.min(Math.max(requested, WAIT_POLL_INTERVAL_MS), WAIT_MAX_TIMEOUT_MS)
+}
+
+export interface WaitOutcome {
+  /** The process exited within the budget. */
+  exited: boolean
+  /** The wait was cut short because the transport closed (turn aborted). */
+  aborted: boolean
+  waitedMs: number
+}
+
+/**
+ * Poll until the process exits, the transport closes, or the budget runs out.
+ *
+ * Extracted from the tool handler so the three exit paths are testable without
+ * spawning real processes.
+ */
+export async function waitForProcessExit(opts: {
+  timeoutMs: number
+  isExited: () => boolean
+  isTransportClosed: () => boolean
+  pollIntervalMs?: number
+}): Promise<WaitOutcome> {
+  const pollIntervalMs = opts.pollIntervalMs ?? WAIT_POLL_INTERVAL_MS
+  const startedAt = Date.now()
+  const deadline = startedAt + opts.timeoutMs
+
+  while (Date.now() < deadline) {
+    if (opts.isExited()) {
+      return { exited: true, aborted: false, waitedMs: Date.now() - startedAt }
+    }
+    if (opts.isTransportClosed()) {
+      return { exited: false, aborted: true, waitedMs: Date.now() - startedAt }
+    }
+    // Never sleep past the deadline
+    const remaining = deadline - Date.now()
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(pollIntervalMs, Math.max(remaining, 0)))
+    )
+  }
+
+  return {
+    exited: opts.isExited(),
+    aborted: false,
+    waitedMs: Date.now() - startedAt
+  }
+}
+
+server.tool(
+  'wait_process',
+  'Block until a background process exits, then return its exit code and final output. Bounded: default 120s, hard maximum 480s. Use this for a build or test run you need the result of right now.',
+  {
+    pid: z.number().describe('Process ID to wait for'),
+    timeoutMs: z
+      .number()
+      .optional()
+      .describe('How long to wait in milliseconds (default 120000, maximum 480000)')
+  },
+  async ({ pid, timeoutMs }) => {
+    const tracked = trackedProcesses.get(pid)
+    if (!tracked) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              error: `No tracked process with PID ${pid}. Use list_processes to see all tracked processes.`
+            })
+          }
+        ]
+      }
+    }
+
+    // Signal-0 liveness on the leader PID only — matches check_process semantics.
+    const leaderAlive = (): boolean => {
+      try {
+        process.kill(pid, 0)
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    const { exited, aborted, waitedMs } = await waitForProcessExit({
+      timeoutMs: clampWaitTimeout(timeoutMs),
+      isExited: () => tracked.exited || !leaderAlive(),
+      isTransportClosed: () => transportClosed
+    })
+
+    refreshOutputFromLog(tracked)
+
+    if (exited) {
+      tracked.exited = true
+      writeExitRecord(tracked)
+      writeManifest()
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({
+              pid,
+              label: tracked.label,
+              status: 'exited',
+              exitCode: tracked.exitCode,
+              waitedMs,
+              recentOutput: tracked.output.getRecent(50).join('\n') || '(no output captured)'
+            })
+          }
+        ]
+      }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({
+            pid,
+            label: tracked.label,
+            status: aborted ? 'waitAborted' : 'stillRunning',
+            stillRunning: true,
+            waitedMs,
+            recentOutput: tracked.output.getRecent(50).join('\n') || '(no output captured)',
+            nextStep: aborted
+              ? 'The turn was cancelled while waiting. The process is still running and still tracked.'
+              : 'Still running after the wait budget. Either call wait_process again, or stop waiting and tell the user plainly that you will reply again in a new message when it finishes (requires the process to have been started with notifyOnExit: true). Do NOT promise to check back later on your own — you cannot act between turns.'
           })
         }
       ]
@@ -786,6 +1048,7 @@ server.tool(
     for (const deadPid of deadPids) {
       const dead = trackedProcesses.get(deadPid)
       if (dead) {
+        writeExitRecord(dead)
         deleteLogFile(dead.logFile)
         trackedProcesses.delete(deadPid)
       }

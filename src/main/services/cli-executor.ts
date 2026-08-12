@@ -20,7 +20,7 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { writeFileSync, mkdirSync, existsSync, unlinkSync, readdirSync, statSync } from 'node:fs'
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { app } from 'electron'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -62,6 +62,32 @@ export type TerminalReason =
   | 'tool_deferred'
   | 'max_turns'
   | 'completed'
+
+// ── Spawn signature ──
+
+/** The argv-baked flags of a live process. These cannot change without a respawn. */
+export interface SpawnSignature {
+  model?: string
+  maxTurns?: number
+  effort?: string
+}
+
+/**
+ * Whether a live process can serve a turn that wants `desired`.
+ *
+ * Only fields the caller actually declares are compared — `undefined` means
+ * "no constraint". Callers that legitimately omit a field (the continueSession
+ * fast path never rebuilds tool policy) must not force spurious respawns.
+ */
+export function spawnSignatureSatisfies(
+  live: SpawnSignature | null,
+  desired: SpawnSignature
+): boolean {
+  if (!live) return false
+  return (['model', 'maxTurns', 'effort'] as const).every(
+    (k) => desired[k] === undefined || live[k] === desired[k]
+  )
+}
 
 // ── CLI Execute Options ──
 
@@ -165,6 +191,24 @@ const MESSAGE_TIMEOUT_MS = 5 * 60_000 // 5 minutes
  */
 const TOOL_RESULT_TIMEOUT_MS = 10 * 60_000 // 10 minutes
 
+/**
+ * How often to log a breadcrumb while a read is parked. Applies to every wait,
+ * including the deliberately untimed human-input wait — the point is that a
+ * stalled executor always leaves a trail in main.log.
+ */
+const WAIT_BREADCRUMB_MS = 60_000 // 1 minute
+
+/**
+ * Granularity of the suspendable wall clock in raceRead.
+ *
+ * The read timeout is a ticking budget rather than a single setTimeout, so it
+ * can be paused while a human decision (tool-permission prompt) is outstanding.
+ * A timeout therefore fires up to one tick late — irrelevant against the 5- and
+ * 10-minute budgets, and the tick is clamped to the budget so sub-tick timeouts
+ * still fire on time.
+ */
+const TIMEOUT_TICK_MS = 5_000
+
 /** Maximum character length for a /goal condition sent to the CLI. */
 const GOAL_MAX_CHARS = 4_000
 
@@ -177,10 +221,18 @@ const STDERR_ERROR_PATTERN = /error|fatal|panic|ENOENT|EACCES|permission denied|
 export class CLIExecutor {
   private cliProcess: ChildProcess | null = null
   private sessionId: string | undefined = undefined
-  /** Temp file path for the current system prompt (cleaned up on process kill) */
-  private systemPromptFile: string | null = null
-  /** Hash of last written system prompt — avoids rewriting identical content to disk. */
-  private lastSystemPromptHash: string | null = null
+  /**
+   * System prompt file written by buildCLIArgs for the spawn currently being
+   * set up. Ownership transfers to the spawned process as soon as spawn()
+   * returns, after which only that process's own exit/error handler may delete
+   * it — see spawnCLIProcess().
+   *
+   * This used to be a single shared `systemPromptFile` with hash-based reuse,
+   * which meant a dying process's async exit handler could unlink a path that a
+   * newer spawn had already baked into its argv, producing
+   * "System prompt file not found: …" and a cascade of empty-exit turns.
+   */
+  private pendingSystemPromptFile: string | null = null
   /** Persisted NDJSON iterator — survives across turns so multi-turn stdin/stdout works */
   private ndjsonIterator: AsyncGenerator<Record<string, unknown>> | null = null
   /**
@@ -194,12 +246,248 @@ export class CLIExecutor {
   private lastStderrError: string | null = null
   /** Exit code from the most recent process exit — checked after stream exhausts */
   private lastExitCode: number | null = null
+  /**
+   * Whether stderr carried the CLI's "custom betas are API-key-only" rejection
+   * this execution. Classifies an otherwise-clean empty turn: the CLI drops the
+   * beta, so a request sized for the beta window overflows and yields nothing.
+   */
+  private betasRejected = false
+  /**
+   * ToolTracker for the in-flight execute(). Exposed via getPendingToolNames()
+   * so lifecycle code (the recovery nudge) can tell a live turn from an idle one
+   * before deciding to kill the process.
+   */
+  private activeTools: ToolTracker | null = null
+  /**
+   * Tool calls that were still pending when the process was killed. Drained by
+   * execute() into synthetic failed tool_result chunks so the persisted activity
+   * and the UI report them as failed rather than leaving them stuck at 'running'
+   * (which the finalize path renders as done).
+   */
+  private orphanedToolCalls: Array<{ id: string; name: string }> = []
   /** Whether a /goal command was queued for the current turn — enables trailing-result drain */
   private goalQueuedForTurn = false
+  /**
+   * Spawn-time flags of the live process: `--model`, `--max-turns`, `--effort`.
+   *
+   * These are baked into argv and cannot change without a respawn, so a caller
+   * reusing the process via `continueSession` inherits them silently. Recording
+   * them lets the executor factory notice that a live process's budget does not
+   * fit the turn it is about to serve. Null while no process is running.
+   */
+  private spawnSignature: SpawnSignature | null = null
+
+  /**
+   * Rejects as soon as the current child process exits or errors.
+   *
+   * Every await on the NDJSON iterator races this. Without it, a turn parked
+   * on `iterator.next()` can outlive the process that was supposed to feed it:
+   * the `exit` handler nulls `cliProcess` but does not end stdout, so the
+   * `for await` inside parseNdjsonStream never completes. That is survivable
+   * on the timeout-guarded branches, but the ask_user branch has NO timeout by
+   * design (a human may take arbitrarily long), so a dead child there parks
+   * the read loop forever — silent, with the stream lock still held.
+   *
+   * Null while no process is running. Always has a no-op catch attached so a
+   * rejection nobody happens to be racing can't become an unhandled rejection.
+   */
+  private exitSignal: Promise<never> | null = null
+  /** Rejector for `exitSignal`, invoked from the process 'exit'/'error' handlers. */
+  private rejectExitSignal: ((err: Error) => void) | null = null
+
+  /**
+   * Permission prompts currently awaiting a human decision: requestId → raised-at.
+   *
+   * A permission prompt never appears on the NDJSON stream as a `tool_use` — it
+   * is handed to the CLI via `--permission-prompt-tool` and invoked out of band
+   * over the IPC bridge — so ToolTracker cannot see it and `hasAskUserPending()`
+   * is false while the user is deciding. The only thing pending is the *gated*
+   * tool (Bash/Edit/Write), which puts the read on TOOL_RESULT_TIMEOUT_MS and
+   * tears the turn down ten minutes into the human's deliberation.
+   *
+   * AgentSessionService populates this from the bridge (prompt raised → begin,
+   * response sent → end), and raceRead suspends its wall clock while it is
+   * non-empty. The exit signal stays armed throughout: a dead child still
+   * unwinds the read immediately, so suspension cannot recreate a parked await.
+   */
+  private readonly humanDecisionPending = new Map<string, number>()
+
+  /**
+   * Notified with the request ids dropped by clearHumanDecisions.
+   *
+   * Those requests can never be answered — the turn is over or the child is
+   * gone — so whoever raised the prompt in the UI has to be told, otherwise the
+   * modal/card sits on "waiting for the agent" forever. Set by
+   * AgentSessionService when it creates the executor.
+   */
+  onHumanDecisionsCleared: ((requestIds: string[], reason: string) => void) | null = null
 
   /** Get the captured session ID */
   getSessionId(): string | undefined {
     return this.sessionId
+  }
+
+  /** Tool calls dispatched but not yet resolved. Empty when idle. */
+  getPendingToolNames(): string[] {
+    return this.activeTools?.pendingToolNames ?? []
+  }
+
+  /**
+   * Arm a fresh exit signal for a newly spawned process. Any previous signal is
+   * settled first so a stale one can never reject a future turn.
+   */
+  private armExitSignal(): void {
+    this.disarmExitSignal('superseded by new process')
+    this.exitSignal = new Promise<never>((_, reject) => {
+      this.rejectExitSignal = reject
+    })
+    // The signal is only consumed when a read is actually in flight. Attaching
+    // a sink here keeps an unraced rejection from surfacing as an unhandled one.
+    this.exitSignal.catch(() => {})
+  }
+
+  /** Settle and clear the current exit signal. */
+  private disarmExitSignal(reason: string): void {
+    this.rejectExitSignal?.(new Error(reason))
+    this.rejectExitSignal = null
+    this.exitSignal = null
+  }
+
+  /** Whether a permission prompt is outstanding (wall clock suspended). */
+  hasHumanDecisionPending(): boolean {
+    return this.humanDecisionPending.size > 0
+  }
+
+  /** A permission prompt was raised — suspend the read wall clock. */
+  beginHumanDecision(requestId: string): void {
+    if (this.humanDecisionPending.has(requestId)) return
+    this.humanDecisionPending.set(requestId, Date.now())
+    executorLog.info(
+      `[CLI:human-decision] begin requestId=${requestId} — wall clock suspended ` +
+        `(outstanding=${this.humanDecisionPending.size})`
+    )
+  }
+
+  /** The user answered — resume the read wall clock with its budget intact. */
+  endHumanDecision(requestId: string): void {
+    const startedAt = this.humanDecisionPending.get(requestId)
+    if (startedAt === undefined) return
+    this.humanDecisionPending.delete(requestId)
+    executorLog.info(
+      `[CLI:human-decision] end requestId=${requestId} after ` +
+        `${Math.round((Date.now() - startedAt) / 1000)}s — wall clock resumes ` +
+        `(outstanding=${this.humanDecisionPending.size})`
+    )
+  }
+
+  /**
+   * Drop every outstanding decision. Called on process exit/kill and at turn
+   * finalize: a prompt whose turn is over can never be answered, and leaving
+   * the entry resident would suspend the clock for the rest of the process.
+   */
+  clearHumanDecisions(reason: string): void {
+    if (this.humanDecisionPending.size === 0) return
+    const requestIds = [...this.humanDecisionPending.keys()]
+    executorLog.info(`[CLI:human-decision] cleared ${requestIds.length} outstanding — ${reason}`)
+    this.humanDecisionPending.clear()
+    try {
+      this.onHumanDecisionsCleared?.(requestIds, reason)
+    } catch (err) {
+      // Notification is best-effort — never let a UI concern break teardown.
+      executorLog.warn('[CLI:human-decision] cleared-notification failed:', err)
+    }
+  }
+
+  /** `req-abc (22m)` per outstanding decision — for wait breadcrumbs. */
+  private describeHumanDecisions(): string {
+    const now = Date.now()
+    return [...this.humanDecisionPending]
+      .map(([id, startedAt]) => `${id} (${Math.round((now - startedAt) / 60_000)}m)`)
+      .join(', ')
+  }
+
+  /**
+   * Race a read against process death.
+   *
+   * `timeoutMs === null` means "no wall-clock limit" (human input) — but the
+   * exit signal still applies, because no human can answer a prompt whose
+   * process is gone.
+   *
+   * When a budget IS set it is spent as a ticking countdown that only
+   * decrements while no human decision is outstanding. The budget therefore
+   * measures time the machine is actually owed a result, not time the user
+   * spent deciding on a permission prompt: approving after 40 minutes resumes
+   * with the full budget intact instead of finding a torn-down turn.
+   */
+  private async raceRead(
+    read: Promise<IteratorResult<Record<string, unknown>>>,
+    timeoutMs: number | null,
+    timeoutMessage: string
+  ): Promise<IteratorResult<Record<string, unknown>>> {
+    const contenders: Array<Promise<IteratorResult<Record<string, unknown>>>> = [read]
+    if (this.exitSignal) contenders.push(this.exitSignal)
+
+    let timeoutHandle: ReturnType<typeof setInterval> | undefined
+    if (timeoutMs !== null) {
+      // Clamp the tick to the budget so short timeouts still fire on time.
+      const tick = Math.max(1, Math.min(TIMEOUT_TICK_MS, timeoutMs))
+      contenders.push(
+        new Promise<never>((_, reject) => {
+          let remaining = timeoutMs
+          timeoutHandle = setInterval(() => {
+            if (this.humanDecisionPending.size > 0) return // clock suspended
+            remaining -= tick
+            if (remaining <= 0) reject(new Error(timeoutMessage))
+          }, tick)
+          // Never hold the event loop open purely for the timeout.
+          timeoutHandle.unref?.()
+        })
+      )
+    }
+
+    try {
+      return await Promise.race(contenders)
+    } finally {
+      clearInterval(timeoutHandle)
+    }
+  }
+
+  /**
+   * Emit a periodic breadcrumb while a read is parked.
+   *
+   * The 35-minute production hang was diagnosable only as "main.log stops":
+   * a parked await produces no output at all, so an indefinite wait and a dead
+   * main process look identical after the fact. This makes waiting observable
+   * — every WAIT_BREADCRUMB_MS the log records what is being waited on and for
+   * how long, so the next occurrence is evidence rather than silence.
+   */
+  private async withWaitBreadcrumb<T>(
+    label: string,
+    tools: ToolTracker,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const startedAt = Date.now()
+    const timer = setInterval(() => {
+      const waitedSec = Math.round((Date.now() - startedAt) / 1000)
+      // Name the suspension: otherwise a paused clock and a dead process look
+      // identical in the log — which is exactly how the original hang read.
+      const suspension = this.hasHumanDecisionPending()
+        ? ` — SUSPENDED for human decision (${this.describeHumanDecisions()})`
+        : ''
+      executorLog.warn(
+        `[CLI:await-breadcrumb] still waiting on ${label} after ${waitedSec}s ` +
+          `(pending=${tools.pendingToolCount} names=[${tools.pendingToolNames.join(', ')}] ` +
+          `alive=${this.isAlive()} pid=${this.cliProcess?.pid ?? 'none'})${suspension}`
+      )
+    }, WAIT_BREADCRUMB_MS)
+    // Never hold the event loop open purely for diagnostics.
+    timer.unref?.()
+
+    try {
+      return await run()
+    } finally {
+      clearInterval(timer)
+    }
   }
 
   /**
@@ -208,6 +496,11 @@ export class CLIExecutor {
    */
   isAlive(): boolean {
     return this.cliProcess !== null && !this.cliProcess.killed && this.cliProcess.exitCode === null
+  }
+
+  /** Spawn-time flags of the live process, or null when idle. */
+  getSpawnSignature(): SpawnSignature | null {
+    return this.isAlive() ? this.spawnSignature : null
   }
 
   /**
@@ -230,6 +523,7 @@ export class CLIExecutor {
     // Reset per-execution error state
     this.lastStderrError = null
     this.lastExitCode = null
+    this.betasRejected = false
 
     heartbeat.start()
 
@@ -239,6 +533,25 @@ export class CLIExecutor {
         if (!this.cliReadyForInput) {
           executorLog.warn(
             '[CLI:send] CLI not ready for input — previous turn may still be processing'
+          )
+        }
+        // Defensive breadcrumb only. Respawning from here is not an option: the
+        // continueSession options object deliberately omits `resume`, the tool
+        // policy and the MCP config, so spawning from it would drop the
+        // conversation. The respawn decision belongs to the executor factory,
+        // which can build full options. This just makes it visible when some
+        // caller bypasses that check and inherits a mismatched budget.
+        if (
+          !spawnSignatureSatisfies(this.spawnSignature, {
+            model: options.model,
+            maxTurns: options.maxTurns,
+            effort: options.effort
+          })
+        ) {
+          executorLog.error(
+            `[CLI:reuse-signature-mismatch] live=${JSON.stringify(this.spawnSignature)} ` +
+              `requested={model:${options.model},maxTurns:${options.maxTurns},effort:${options.effort}} ` +
+              '— proceeding with stdin write; this turn inherits the live process flags'
           )
         }
         executorLog.info('[CLI:send] Continuing existing session — writing message to stdin')
@@ -258,6 +571,12 @@ export class CLIExecutor {
       } else {
         await this.spawnCLIProcess(options)
       }
+
+      // Publish the tracker only now: spawnCLIProcess kills any live process
+      // first, and killProcess reads `activeTools` to find work it is about to
+      // orphan. Assigning earlier would hand it this turn's empty tracker and
+      // lose the previous turn's in-flight calls.
+      this.activeTools = tools
 
       // Read NDJSON from stdout — reuse the iterator across turns so the
       // underlying stream stays open for multi-turn interactive mode.
@@ -289,39 +608,35 @@ export class CLIExecutor {
             // Tool call in flight — use generous timeout unless waiting for
             // human input (ask_user / elicitation), which has no timeout.
             if (tools.hasAskUserPending()) {
-              // Human input has no meaningful timeout — user decides when to respond
-              // Log only on 0→N transition (not per message)
+              // Human input has no wall-clock timeout — the user decides when to
+              // respond. The exit signal still applies (see raceRead): a prompt
+              // whose process has died can never be answered, and parking here
+              // forever is what wedges the conversation lock.
               if (lastLoggedPendingTools === 0) {
-                executorLog.debug(
-                  `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending) — timeout suspended`
+                executorLog.info(
+                  `[CLI:await] Waiting for human input (${tools.pendingToolCount} pending: ${tools.pendingToolNames.join(', ')}) — wall-clock timeout suspended, exit signal armed`
                 )
               }
               lastLoggedPendingTools = tools.pendingToolCount
-              iterResult = await this.ndjsonIterator.next()
+              iterResult = await this.withWaitBreadcrumb('human-input', tools, () =>
+                this.raceRead(this.ndjsonIterator!.next(), null, '')
+              )
             } else {
               // MCP tool execution: generous timeout prevents indefinite hangs
               // Log only on 0→N transition (not per message)
               if (lastLoggedPendingTools === 0) {
-                executorLog.debug(
-                  `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
+                executorLog.info(
+                  `[CLI:await] Waiting for tool result (${tools.pendingToolCount} pending: ${tools.pendingToolNames.join(', ')}) — ${TOOL_RESULT_TIMEOUT_MS / 1000}s timeout`
                 )
               }
               lastLoggedPendingTools = tools.pendingToolCount
-              let toolTimeoutHandle: ReturnType<typeof setTimeout> | undefined
-              iterResult = await Promise.race([
-                this.ndjsonIterator.next(),
-                new Promise<never>((_, reject) => {
-                  toolTimeoutHandle = setTimeout(
-                    () =>
-                      reject(
-                        new Error(
-                          `CLI tool result timeout — no response from MCP tool for ${TOOL_RESULT_TIMEOUT_MS / 60_000} minutes`
-                        )
-                      ),
-                    TOOL_RESULT_TIMEOUT_MS
-                  )
-                })
-              ]).finally(() => clearTimeout(toolTimeoutHandle))
+              iterResult = await this.withWaitBreadcrumb('tool-result', tools, () =>
+                this.raceRead(
+                  this.ndjsonIterator!.next(),
+                  TOOL_RESULT_TIMEOUT_MS,
+                  `CLI tool result timeout — no response from MCP tool for ${TOOL_RESULT_TIMEOUT_MS / 60_000} minutes`
+                )
+              )
             }
           } else {
             // Log tool-complete transition (N→0) once
@@ -332,21 +647,11 @@ export class CLIExecutor {
               lastLoggedPendingTools = 0
             }
             // No tools pending — use normal timeout to detect CLI stalls
-            let timeoutHandle: ReturnType<typeof setTimeout> | undefined
-            iterResult = await Promise.race([
+            iterResult = await this.raceRead(
               this.ndjsonIterator.next(),
-              new Promise<never>((_, reject) => {
-                timeoutHandle = setTimeout(
-                  () =>
-                    reject(
-                      new Error(
-                        `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
-                      )
-                    ),
-                  MESSAGE_TIMEOUT_MS
-                )
-              })
-            ]).finally(() => clearTimeout(timeoutHandle))
+              MESSAGE_TIMEOUT_MS,
+              `CLI message timeout — no NDJSON received for ${MESSAGE_TIMEOUT_MS / 1000}s`
+            )
           }
           if (iterResult.done) {
             executorLog.info('[CLI:stream] Iterator exhausted (process ended)')
@@ -386,6 +691,21 @@ export class CLIExecutor {
           if (msg.type === 'result') {
             this.cliReadyForInput = true
             this.goalQueuedForTurn = false
+            // A finished turn owns no live permission prompt: the CLI already
+            // resolved (or auto-denied) it. Leaving the entry resident would
+            // keep the wall clock suspended for every later turn.
+            this.clearHumanDecisions('turn finalized')
+            // A turn that produced its result owes no further tool results.
+            // Anything still pending was never consumed (e.g. a tool_result
+            // that arrived without a tool_use_id) — carrying it forward pins
+            // pendingToolCount above zero and wedges the next turn on the
+            // tool-result timeout branch with a stale map.
+            if (tools.pendingToolCount > 0) {
+              executorLog.warn(
+                `[CLI:pending-leak] n=${tools.pendingToolCount} names=[${tools.pendingToolNames.join(', ')}] — clearing at end of turn`
+              )
+              tools.clear()
+            }
             // Stop heartbeat immediately — the stream is pausing between turns
             // and no more activity is expected until the next send().  Without
             // this, the timer keeps firing stall warnings during the idle gap.
@@ -403,7 +723,9 @@ export class CLIExecutor {
               const drainTimer = new Promise<'timeout'>((resolve) =>
                 setTimeout(() => resolve('timeout'), 1500)
               )
-              const drainNext = drainIterator.next().then((r) => ({ ...r, _source: 'iter' as const }))
+              const drainNext = drainIterator
+                .next()
+                .then((r) => ({ ...r, _source: 'iter' as const }))
               const drainResult = await Promise.race([drainNext, drainTimer])
               if (drainResult !== 'timeout' && !drainResult.done) {
                 const trailingMsg = drainResult.value as Record<string, unknown>
@@ -434,19 +756,27 @@ export class CLIExecutor {
       }
       executorLog.info(`[CLI:stream-end] Total NDJSON messages received: ${msgCount}`)
 
-      // Detect CLI crash: process exited with non-zero code and produced no messages
-      if (msgCount === 0 && this.lastExitCode !== null && this.lastExitCode !== 0) {
-        const stderrHint = this.lastStderrError ? ` — ${this.lastStderrError}` : ''
+      yield* this.drainOrphanedToolCalls()
+
+      const emptyTurn = resolveEmptyTurnFailure({
+        msgCount,
+        aborted: options.abortController?.signal.aborted ?? false,
+        betasRejected: this.betasRejected,
+        exitCode: this.lastExitCode,
+        stderrError: this.lastStderrError
+      })
+      if (emptyTurn) {
         executorLog.error(
-          `[CLI:crash-detected] CLI exited with code ${this.lastExitCode} before producing any output${stderrHint}`
+          `[CLI:empty-turn] reason=${emptyTurn.reason} exitCode=${this.lastExitCode ?? 'null'} ` +
+            `— process produced zero NDJSON messages`
         )
-        const errorMsg = `CLI failed to start (exit code ${this.lastExitCode})${stderrHint}`
-        telemetry.recordFailure(new Error(errorMsg))
-        yield { type: 'error', error: errorMsg }
+        telemetry.recordFailure(new Error(emptyTurn.message))
+        yield { type: 'error', error: emptyTurn.message }
       }
     } catch (error) {
       executorLog.error('CLI execution error:', error)
       telemetry.recordFailure(error as Error)
+      yield* this.drainOrphanedToolCalls()
       yield {
         type: 'error',
         error: `CLI execution failed: ${(error as Error).message}`
@@ -584,9 +914,26 @@ export class CLIExecutor {
   async killProcess(): Promise<void> {
     if (!this.cliProcess) return
 
+    // Anything still pending is real work that will never report back. Record it
+    // so execute() can surface it as failed instead of leaving it at 'running'.
+    const orphaned = this.activeTools?.pendingToolEntries ?? []
+    if (orphaned.length) {
+      executorLog.warn(
+        `[CLI:orphaned-tools] killing process with ${orphaned.length} unresolved ` +
+          `tool call(s): [${orphaned.map(([, name]) => name).join(', ')}] — marking failed`
+      )
+      this.orphanedToolCalls.push(...orphaned.map(([id, name]) => ({ id, name })))
+      this.activeTools?.clear()
+    }
+
     const proc = this.cliProcess
     const iter = this.ndjsonIterator
     this.cliProcess = null
+    this.spawnSignature = null
+    // Unblock any in-flight read immediately — killProcess() awaits the
+    // generator's return() below, which queues behind a pending next().
+    this.disarmExitSignal('CLI process killed while awaiting output')
+    this.clearHumanDecisions('CLI process killed')
     this.ndjsonIterator = null
     this.cliReadyForInput = false
 
@@ -611,19 +958,22 @@ export class CLIExecutor {
 
     // Step 3: Wait for process exit with 5s SIGKILL escalation.
     return new Promise<void>((resolve) => {
+      // No prompt-file cleanup here: the file belongs to `proc`, and proc's own
+      // 'exit' handler (wired in spawnCLIProcess) deletes it. Doing it from
+      // killProcess is what allowed a terminated process to unlink the file a
+      // newer spawn had already baked into its argv. Files orphaned by a
+      // process that never emits 'exit' are swept by cleanupStalePromptFiles().
       const forceKillTimer = setTimeout(() => {
         try {
           proc.kill('SIGKILL')
         } catch {
           // Already dead
         }
-        this.cleanupSystemPromptFile()
         resolve()
       }, 5000)
 
       proc.once('exit', () => {
         clearTimeout(forceKillTimer)
-        this.cleanupSystemPromptFile()
         resolve()
       })
 
@@ -635,16 +985,44 @@ export class CLIExecutor {
   // ── Private helpers ──
 
   /**
+   * Emit a synthetic failed tool_result for every tool call the killed process
+   * left unresolved, then forget them.
+   *
+   * chunk-router's accumulateToolActivity seeds a tool_use as `status: 'running'`
+   * and only a tool_result flips it, so an orphaned call is persisted — and
+   * rendered — as if it had completed. Riding the normal merge path with an
+   * error result makes it say failed, which is what actually happened.
+   */
+  private *drainOrphanedToolCalls(): Generator<StreamChunk> {
+    if (!this.orphanedToolCalls.length) return
+    const orphaned = this.orphanedToolCalls
+    this.orphanedToolCalls = []
+    for (const { id, name } of orphaned) {
+      yield {
+        type: 'tool_result',
+        toolName: name,
+        toolId: id,
+        content: 'Tool call abandoned — the CLI process was terminated before it returned.',
+        isError: true
+      }
+    }
+  }
+
+  /**
    * Spawn a fresh CLI process, wire abort/stderr/exit handlers, and write
    * the initial user message to stdin.
    * Extracted from execute() — cohesive process lifecycle setup concern.
    */
   private async spawnCLIProcess(options: CLIExecuteOptions): Promise<void> {
-    // Kill any existing process BEFORE building args — killProcess() calls
-    // cleanupSystemPromptFile() which deletes this.systemPromptFile.
-    // If buildCLIArgs runs first, it writes a new prompt file that
-    // killProcess then immediately deletes (race condition).
+    // Kill any existing process BEFORE building args. Prompt files are now
+    // owned per-spawn, so a dying process can only delete its own file — but
+    // killing first still keeps the old process off the new one's stdin.
     await this.killProcess()
+
+    // Owned by THIS spawn only. buildCLIArgs writes the file and parks it on
+    // this.pendingSystemPromptFile; ownership moves here once spawn() succeeds,
+    // and the exit/error handlers below close over this binding.
+    let ownedSystemPromptFile: string | null = null
 
     const args = this.buildCLIArgs(options)
     const env = this.buildProcessEnv(options)
@@ -670,10 +1048,30 @@ export class CLIExecutor {
         cwd: options.cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-        detached: false
+        detached: false,
+        windowsHide: true
       })
+      // Arm before any handler can fire, so an immediate spawn failure still
+      // has a signal to reject.
+      this.armExitSignal()
+      // Transfer prompt-file ownership to this process. From here only this
+      // process's exit/error handler may unlink it.
+      ownedSystemPromptFile = this.pendingSystemPromptFile
+      this.pendingSystemPromptFile = null
+      // Record what this process was actually spawned with. buildCLIArgs bakes
+      // these into argv, so every later turn served off stdin inherits them.
+      this.spawnSignature = {
+        model: options.model,
+        maxTurns: options.maxTurns,
+        effort: options.effort
+      }
     } catch (err) {
       this.cliProcess = null
+      this.spawnSignature = null
+      // spawn() threw before ownership transferred — nobody will ever read this
+      // file, so drop it here rather than leaving it for the 24h stale sweeper.
+      this.deleteSystemPromptFile(this.pendingSystemPromptFile)
+      this.pendingSystemPromptFile = null
       const code = (err as NodeJS.ErrnoException).code
       const message = (err as Error).message
       this.lastStderrError = `Failed to spawn claude CLI: ${message}`
@@ -707,6 +1105,11 @@ export class CLIExecutor {
     this.cliProcess.stderr?.on('data', (data: Buffer) => {
       const text = data.toString('utf-8').trim()
       if (!text) return
+      // The CLI silently drops `--betas` on subscription logins. Record it so an
+      // empty turn can be classified rather than reported as a generic crash.
+      if (/Custom betas are only available for API key users/i.test(text)) {
+        this.betasRejected = true
+      }
       if (STDERR_ERROR_PATTERN.test(text)) {
         executorLog.error(`[CLI:stderr-ERROR] ${text.slice(0, 500)}`)
         this.lastStderrError = text.slice(0, 500)
@@ -719,16 +1122,39 @@ export class CLIExecutor {
     this.cliProcess.on('exit', (code, signal) => {
       executorLog.info(`[CLI:exit] code=${code} signal=${signal}`)
       this.lastExitCode = code
-      // EXEC-03: Clean up temp system prompt file on natural exit/crash
-      this.cleanupSystemPromptFile()
+      // EXEC-03: Clean up this process's own temp system prompt file on
+      // natural exit/crash. Scoped to the owned path so a later spawn's file
+      // survives — deleting shared state here is what caused the
+      // "System prompt file not found" cascade.
+      this.deleteSystemPromptFile(ownedSystemPromptFile)
+      ownedSystemPromptFile = null
+      const exited = this.cliProcess
       this.cliProcess = null
+      this.spawnSignature = null
+      // Break any in-flight read. 'exit' does not imply stdout has ended — an
+      // inherited fd can hold it open — so destroying it is what actually lets
+      // parseNdjsonStream's `for await` finish. The signal covers the case
+      // where even that doesn't land.
+      try {
+        exited?.stdout?.destroy()
+      } catch {
+        /* already torn down */
+      }
+      this.disarmExitSignal(
+        `CLI process exited (code=${code} signal=${signal}) while awaiting output`
+      )
+      this.clearHumanDecisions(`CLI process exited (code=${code} signal=${signal})`)
     })
 
     this.cliProcess.on('error', (err) => {
       executorLog.error('[CLI:error]', err)
-      // EXEC-03: Clean up temp system prompt file on spawn error
-      this.cleanupSystemPromptFile()
+      // EXEC-03: Clean up this process's own temp system prompt file
+      this.deleteSystemPromptFile(ownedSystemPromptFile)
+      ownedSystemPromptFile = null
       this.cliProcess = null
+      this.spawnSignature = null
+      this.disarmExitSignal(`CLI process error while awaiting output: ${err.message}`)
+      this.clearHumanDecisions(`CLI process error: ${err.message}`)
     })
 
     // Write the initial user message to stdin
@@ -760,11 +1186,26 @@ export class CLIExecutor {
     }
     const accepted = writeNdjsonMessage(this.cliProcess.stdin, message)
     if (!accepted) {
-      // stdin buffer is full — wait for it to drain before continuing
+      // stdin buffer is full — wait for it to drain before continuing.
+      const stdin = this.cliProcess.stdin
       await new Promise<void>((resolve) => {
-        this.cliProcess?.stdin?.once('drain', resolve)
+        let settled = false
+        // Both paths must tear down the other, or a write that drains normally
+        // leaves a 10s timer pinned and a 'drain' listener attached to a stream
+        // that outlives this call — leaking a listener per backpressured write.
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(safety)
+          stdin.off('drain', finish)
+          resolve()
+        }
         // Safety: resolve after 10s if drain never fires (process may have died)
-        setTimeout(resolve, 10_000)
+        const safety = setTimeout(() => {
+          executorLog.warn('[CLI:stdin] drain never fired within 10s — continuing')
+          finish()
+        }, 10_000)
+        stdin.once('drain', finish)
       })
     }
     this.cliReadyForInput = false
@@ -901,48 +1342,36 @@ export class CLIExecutor {
   }
 
   /**
-   * Write a system prompt to a temp file. Uses content hashing to avoid
-   * rewriting identical prompts (common on cache-hit turns via Strategy ζ).
-   * Returns the absolute path to the file. The file is cleaned up when
-   * the CLI process exits (via killProcess) or on the next call.
+   * Write a system prompt to a temp file owned by the spawn being set up.
+   * Returns the absolute path. The file lives until the process that was
+   * spawned with it exits — no other process may delete it.
+   *
+   * There is deliberately no hash-based reuse across spawns: sharing one file
+   * between processes is exactly what let a terminated process delete a live
+   * one's prompt. buildCLIArgs runs once per spawn, so this is one ~20K write
+   * per process launch — negligible next to the spawn itself.
    */
   private writeSystemPromptFile(prompt: string): string {
-    // Hash-based dedup: skip write if content hasn't changed and file still exists
-    const hash = createHash('md5').update(prompt).digest('hex').slice(0, 12)
-    if (
-      hash === this.lastSystemPromptHash &&
-      this.systemPromptFile &&
-      existsSync(this.systemPromptFile)
-    ) {
-      return this.systemPromptFile
-    }
-
-    // Clean up previous file if content changed
-    this.cleanupSystemPromptFile()
-
     const dir = join(tmpdir(), 'code-atelier-prompts')
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
     const filePath = join(dir, `system-prompt-${Date.now()}-${randomUUID().slice(0, 8)}.md`)
     writeFileSync(filePath, prompt, 'utf-8')
-    this.systemPromptFile = filePath
-    this.lastSystemPromptHash = hash
+    this.pendingSystemPromptFile = filePath
     return filePath
   }
 
   /**
-   * Remove the current system prompt temp file.
+   * Remove one specific system prompt temp file.
+   * Callers must pass the path they own — never shared mutable state.
    */
-  private cleanupSystemPromptFile(): void {
-    if (this.systemPromptFile) {
-      try {
-        unlinkSync(this.systemPromptFile)
-      } catch {
-        // Non-fatal — file may already be gone
-      }
-      this.systemPromptFile = null
-      this.lastSystemPromptHash = null
+  private deleteSystemPromptFile(filePath: string | null): void {
+    if (!filePath) return
+    try {
+      unlinkSync(filePath)
+    } catch {
+      // Non-fatal — file may already be gone
     }
   }
 
@@ -957,6 +1386,43 @@ export class CLIExecutor {
       CLAUDE_AGENT_SDK_CLIENT_APP: `code-atelier/${app.getVersion()}`,
       CLAUDE_CODE_SUPPRESS_SESSION_ATTRIBUTION: '1'
     }
+  }
+}
+
+// ── Empty-turn classification ──
+
+/** Why a turn produced zero NDJSON messages. */
+export type EmptyTurnReason = 'betas-rejected' | 'crash' | 'empty-exit'
+
+/**
+ * Decide whether a finished turn should be booked as a failure, and why.
+ *
+ * A turn that emitted zero NDJSON messages is a failure regardless of exit code:
+ * the previous guard only fired on a NON-ZERO exit, so a clean exit with no
+ * output fell through to telemetry.finalize() and was promoted to 'succeeded'.
+ *
+ * The single legitimate empty turn is a user-requested abort — pressing Stop
+ * yields nothing by design, and turning that into a typed error would regress it.
+ *
+ * Returns null when there is nothing to report. Exported for testing.
+ */
+export function resolveEmptyTurnFailure(input: {
+  msgCount: number
+  aborted: boolean
+  betasRejected: boolean
+  exitCode: number | null
+  stderrError: string | null
+}): { reason: EmptyTurnReason; message: string } | null {
+  if (input.msgCount !== 0 || input.aborted) return null
+  const reason: EmptyTurnReason = input.betasRejected
+    ? 'betas-rejected'
+    : input.exitCode !== null && input.exitCode !== 0
+      ? 'crash'
+      : 'empty-exit'
+  const stderrHint = input.stderrError ? ` — ${input.stderrError}` : ''
+  return {
+    reason,
+    message: `CLI produced no output (${reason}, exit ${input.exitCode ?? 'null'})${stderrHint}`
   }
 }
 

@@ -1,7 +1,6 @@
 import type { GrillDecision, MpaPlanArtifact, MpaVerifyReport } from '../../shared/mpa-types'
 import { sanitizePromptInput } from './sanitize-prompt-input'
 
-
 // ── Phase 1: Planner Agent Prompt ──
 
 export function buildPlannerSystemPrompt(params: {

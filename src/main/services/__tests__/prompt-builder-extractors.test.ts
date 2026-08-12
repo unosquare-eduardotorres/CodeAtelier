@@ -220,7 +220,9 @@ describe('extractEssentialSections — all essential headers', () => {
     assert.ok(result.includes('Mode'))
     assert.ok(result.includes('Conventions'))
     assert.ok(result.includes('Key Commands'))
-    assert.ok(result.includes('Guidelines'))
+    // Guidelines is no longer essential -- removed from essentialHeaders in
+    // 80d7a73, a day after this case was written.
+    assert.ok(!result.includes('Guidelines'))
     assert.ok(!result.includes('Skills'))
     assert.ok(!result.includes('Design System'))
   })

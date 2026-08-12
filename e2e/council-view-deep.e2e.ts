@@ -22,9 +22,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Council View Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,13 +36,11 @@ test.describe('Council View Deep', () => {
     return true
   }
 
-  async function navigateToCouncilView(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToCouncilView(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
     await page.waitForTimeout(800)
 
     // Check if already on council view (active session)
@@ -65,13 +61,17 @@ test.describe('Council View Deep', () => {
     return view.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('view renders with member columns for each advisor', async ({
-    electronPage: page
-  }) => {
+  test('view renders with member columns for each advisor', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     const view = page.locator('[data-testid="council-view"]')
     await expect(view).toBeVisible()
@@ -90,18 +90,24 @@ test.describe('Council View Deep', () => {
     expect(foundAdvisors).toBeGreaterThan(0)
   })
 
-  test('filter bar allows toggling advisor visibility', async ({
-    electronPage: page
-  }) => {
+  test('filter bar allows toggling advisor visibility', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     const view = page.locator('[data-testid="council-view"]')
 
     // In framing/deliberating phase, sidebar shows advisor buttons for selection
-    const advisorButtons = view.locator('button').filter({ hasText: /Contrarian|First Principles|Expansionist|Outsider|Executor/i })
+    const advisorButtons = view
+      .locator('button')
+      .filter({ hasText: /Contrarian|First Principles|Expansionist|Outsider|Executor/i })
     const count = await advisorButtons.count()
 
     if (count > 1) {
@@ -113,13 +119,17 @@ test.describe('Council View Deep', () => {
     }
   })
 
-  test('advisor details tab shows individual analysis', async ({
-    electronPage: page
-  }) => {
+  test('advisor details tab shows individual analysis', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     // In complete phase, tabs are shown
     const advisorsTab = page.locator('[data-testid="council-advisor-tab-advisors"]')
@@ -140,13 +150,17 @@ test.describe('Council View Deep', () => {
     await expect(content.first()).toBeVisible()
   })
 
-  test('verdict panel displays synthesized chairman decision', async ({
-    electronPage: page
-  }) => {
+  test('verdict panel displays synthesized chairman decision', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     // In complete phase, overview tab shows the verdict
     const overviewTab = page.locator('[data-testid="council-advisor-tab-overview"]')
@@ -176,15 +190,24 @@ test.describe('Council View Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     // In complete phase, peer-reviews tab shows rankings matrix
     const peerTab = page.locator('[data-testid="council-advisor-tab-peer-reviews"]')
     const hasTab = await peerTab.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasTab) { test.skip(); return }
+    if (!hasTab) {
+      test.skip()
+      return
+    }
 
     await peerTab.click()
     await page.waitForTimeout(500)
@@ -197,9 +220,15 @@ test.describe('Council View Deep', () => {
 
   test('member columns can be collapsed/expanded', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     const view = page.locator('[data-testid="council-view"]')
 
@@ -223,13 +252,17 @@ test.describe('Council View Deep', () => {
     }
   })
 
-  test('back navigation returns to council landing page', async ({
-    electronPage: page
-  }) => {
+  test('back navigation returns to council landing page', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasView = await navigateToCouncilView(page)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     // Look for "Back to Sessions" button
     const backBtn = page.getByRole('button', { name: /back to sessions/i }).first()

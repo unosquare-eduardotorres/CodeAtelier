@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Memory Feed Banner', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,18 +40,25 @@ test.describe('Memory Feed Banner', () => {
     page: import('@playwright/test').Page
   ): Promise<import('@playwright/test').Locator | null> {
     const banner = page.locator('[data-testid="memory-feed-banner"]')
-    const hasBanner = await banner.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasBanner = await banner
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     return hasBanner ? banner.first() : null
   }
 
-  test('memory feed banner shows during CLAUDE.md ingestion', async ({
-    electronPage: page
-  }) => {
+  test('memory feed banner shows during CLAUDE.md ingestion', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = await findMemoryFeedBanner(page)
-    if (!banner) { test.skip(); return }
+    if (!banner) {
+      test.skip()
+      return
+    }
 
     // Banner should be visible
     await expect(banner).toBeVisible()
@@ -63,14 +68,18 @@ test.describe('Memory Feed Banner', () => {
     expect(text?.length).toBeGreaterThan(0)
   })
 
-  test('running state shows spinner and source label', async ({
-    electronPage: page
-  }) => {
+  test('running state shows spinner and source label', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = await findMemoryFeedBanner(page)
-    if (!banner) { test.skip(); return }
+    if (!banner) {
+      test.skip()
+      return
+    }
 
     const text = await banner.textContent()
 
@@ -78,7 +87,10 @@ test.describe('Memory Feed Banner', () => {
     const spinner = banner.locator('.animate-spin')
     const isRunning = await spinner.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!isRunning) { test.skip(); return }
+    if (!isRunning) {
+      test.skip()
+      return
+    }
 
     // Should show a source label (CLAUDE.md ingestion, Codebase scan, etc.)
     const hasSourceLabel =
@@ -98,16 +110,25 @@ test.describe('Memory Feed Banner', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = await findMemoryFeedBanner(page)
-    if (!banner) { test.skip(); return }
+    if (!banner) {
+      test.skip()
+      return
+    }
 
     // Check for success state (green check icon, success-muted background)
     const successIcon = banner.locator('svg.text-success')
     const isCompleted = await successIcon.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!isCompleted) { test.skip(); return }
+    if (!isCompleted) {
+      test.skip()
+      return
+    }
 
     // Should have dismiss button
     const dismissBtn = banner.locator('button[aria-label="Dismiss"]')
@@ -117,20 +138,27 @@ test.describe('Memory Feed Banner', () => {
     await expect(banner).toBeHidden({ timeout: 12_000 })
   })
 
-  test('error state shows error message with dismiss button', async ({
-    electronPage: page
-  }) => {
+  test('error state shows error message with dismiss button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = await findMemoryFeedBanner(page)
-    if (!banner) { test.skip(); return }
+    if (!banner) {
+      test.skip()
+      return
+    }
 
     // Check for error state (danger coloring)
     const errorIcon = banner.locator('svg.text-danger')
     const isError = await errorIcon.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!isError) { test.skip(); return }
+    if (!isError) {
+      test.skip()
+      return
+    }
 
     // Should show "failed:" text
     const text = await banner.textContent()
@@ -146,20 +174,27 @@ test.describe('Memory Feed Banner', () => {
     await expect(banner).toBeHidden({ timeout: 3_000 })
   })
 
-  test('cancel button stops the feed operation', async ({
-    electronPage: page
-  }) => {
+  test('cancel button stops the feed operation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = await findMemoryFeedBanner(page)
-    if (!banner) { test.skip(); return }
+    if (!banner) {
+      test.skip()
+      return
+    }
 
     // Cancel button is only in running state
     const cancelBtn = banner.locator('button:has-text("Cancel")')
     const hasCancel = await cancelBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasCancel) { test.skip(); return }
+    if (!hasCancel) {
+      test.skip()
+      return
+    }
 
     await expect(cancelBtn).toBeVisible()
 

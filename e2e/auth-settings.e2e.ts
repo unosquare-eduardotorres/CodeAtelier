@@ -21,9 +21,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Auth Settings', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,9 +35,7 @@ test.describe('Auth Settings', () => {
     return true
   }
 
-  async function navigateToAuthSettings(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToAuthSettings(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     await page.waitForTimeout(500)
@@ -57,7 +53,7 @@ test.describe('Auth Settings', () => {
 
     // Try via specialist settings (auth may be nested there)
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('specialist')
+    await settingsNav.navigateToSettingsTab('specialist')
     await page.waitForTimeout(800)
 
     // Look for auth settings tab within workspace settings
@@ -72,9 +68,15 @@ test.describe('Auth Settings', () => {
 
   test('auth settings tab renders with mode selector', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasAuth = await navigateToAuthSettings(page)
-    if (!hasAuth) { test.skip(); return }
+    if (!hasAuth) {
+      test.skip()
+      return
+    }
 
     const authTab = page.locator('[data-testid="auth-settings-tab"]')
     await expect(authTab).toBeVisible()
@@ -91,36 +93,52 @@ test.describe('Auth Settings', () => {
 
   test('Claude Max mode is the default selection', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasAuth = await navigateToAuthSettings(page)
-    if (!hasAuth) { test.skip(); return }
+    if (!hasAuth) {
+      test.skip()
+      return
+    }
 
     const authTab = page.locator('[data-testid="auth-settings-tab"]')
 
     // Claude Max radio should be checked by default
     const claudeMaxRadio = authTab.locator('input[value="claude-max"]')
     const hasRadio = await claudeMaxRadio.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRadio) { test.skip(); return }
+    if (!hasRadio) {
+      test.skip()
+      return
+    }
 
     const isChecked = await claudeMaxRadio.isChecked()
     // Default is claude-max unless previously changed
     expect(isChecked).toBeTruthy()
   })
 
-  test('switching to API Key mode reveals key input field', async ({
-    electronPage: page
-  }) => {
+  test('switching to API Key mode reveals key input field', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasAuth = await navigateToAuthSettings(page)
-    if (!hasAuth) { test.skip(); return }
+    if (!hasAuth) {
+      test.skip()
+      return
+    }
 
     const authTab = page.locator('[data-testid="auth-settings-tab"]')
 
     // Click the API Key radio
     const apiKeyRadio = authTab.locator('input[value="api-key"]')
     const hasRadio = await apiKeyRadio.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRadio) { test.skip(); return }
+    if (!hasRadio) {
+      test.skip()
+      return
+    }
 
     await apiKeyRadio.click()
     await page.waitForTimeout(300)
@@ -134,9 +152,15 @@ test.describe('Auth Settings', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasAuth = await navigateToAuthSettings(page)
-    if (!hasAuth) { test.skip(); return }
+    if (!hasAuth) {
+      test.skip()
+      return
+    }
 
     const authTab = page.locator('[data-testid="auth-settings-tab"]')
 
@@ -145,7 +169,10 @@ test.describe('Auth Settings', () => {
     if (await apiKeyRadio.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await apiKeyRadio.click()
       await page.waitForTimeout(300)
-    } else { test.skip(); return }
+    } else {
+      test.skip()
+      return
+    }
 
     // Verify input type is password
     const apiKeyInput = authTab.locator('#api-key-input')
@@ -157,9 +184,15 @@ test.describe('Auth Settings', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasAuth = await navigateToAuthSettings(page)
-    if (!hasAuth) { test.skip(); return }
+    if (!hasAuth) {
+      test.skip()
+      return
+    }
 
     const authTab = page.locator('[data-testid="auth-settings-tab"]')
 
@@ -171,9 +204,15 @@ test.describe('Auth Settings', () => {
 
   test('error state shows inline error message', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasAuth = await navigateToAuthSettings(page)
-    if (!hasAuth) { test.skip(); return }
+    if (!hasAuth) {
+      test.skip()
+      return
+    }
 
     const authTab = page.locator('[data-testid="auth-settings-tab"]')
 
@@ -182,7 +221,10 @@ test.describe('Auth Settings', () => {
     if (await apiKeyRadio.isVisible({ timeout: 3_000 }).catch(() => false)) {
       await apiKeyRadio.click()
       await page.waitForTimeout(300)
-    } else { test.skip(); return }
+    } else {
+      test.skip()
+      return
+    }
 
     // Clear any existing key
     const apiKeyInput = authTab.locator('#api-key-input')

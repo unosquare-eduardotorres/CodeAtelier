@@ -11,9 +11,7 @@ import type { AdapterMcpContext, AdapterPromptContext } from '../agent-session.t
 
 // ── Helpers ──
 
-function createAdapter(
-  overrides: Partial<ConstructorParameters<typeof AuditRoleAdapter>[0]> = {}
-) {
+function createAdapter(overrides: Partial<ConstructorParameters<typeof AuditRoleAdapter>[0]> = {}) {
   return new AuditRoleAdapter({
     workspaceId: 'ws-1',
     trackId: 'code',

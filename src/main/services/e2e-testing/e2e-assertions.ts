@@ -104,9 +104,7 @@ export function responseMinLength(n: number): E2EAssertion {
       return {
         name: `responseMinLength(${n})`,
         passed,
-        reason: passed
-          ? undefined
-          : `Response length ${text.length} < minimum ${n}`
+        reason: passed ? undefined : `Response length ${text.length} < minimum ${n}`
       }
     }
   }
@@ -125,8 +123,7 @@ export function toolCalled(
         if (!t.toolName) return false
         // Match by exact name or case-insensitive contains
         const nameMatch =
-          t.toolName === toolName ||
-          t.toolName.toLowerCase().includes(toolName.toLowerCase())
+          t.toolName === toolName || t.toolName.toLowerCase().includes(toolName.toLowerCase())
         if (!nameMatch) return false
         if (argsMatcher && t.toolArgs) {
           return argsMatcher(t.toolArgs)
@@ -330,10 +327,7 @@ export function toolCalledTimes(toolName: string, minCount: number): E2EAssertio
       const toolUses = getToolUses(transcript)
       const count = toolUses.filter((t) => {
         if (!t.toolName) return false
-        return (
-          t.toolName === toolName ||
-          t.toolName.toLowerCase().includes(toolName.toLowerCase())
-        )
+        return t.toolName === toolName || t.toolName.toLowerCase().includes(toolName.toLowerCase())
       }).length
 
       const passed = count >= minCount
@@ -356,9 +350,7 @@ export function anyToolCalled(toolNames: string[]): E2EAssertion {
       const toolUses = getToolUses(transcript)
       const found = toolNames.some((name) =>
         toolUses.some(
-          (t) =>
-            t.toolName === name ||
-            t.toolName?.toLowerCase().includes(name.toLowerCase())
+          (t) => t.toolName === name || t.toolName?.toLowerCase().includes(name.toLowerCase())
         )
       )
 
@@ -533,15 +525,11 @@ export function promptOptimizerResultPresent(): E2EAssertion {
           reason: `Prompt Optimizer returned error sentinel: "${ERROR_SENTINEL}"`
         }
       }
-      const found = results.some(
-        (e) => (e.toolResult ?? e.content ?? '').length > 0
-      )
+      const found = results.some((e) => (e.toolResult ?? e.content ?? '').length > 0)
       return {
         name: 'promptOptimizerResultPresent',
         passed: found,
-        reason: found
-          ? undefined
-          : `Prompt Optimizer tool_result empty. Results: ${results.length}`
+        reason: found ? undefined : `Prompt Optimizer tool_result empty. Results: ${results.length}`
       }
     }
   }
@@ -630,9 +618,7 @@ export function responseMaxLength(n: number): E2EAssertion {
       return {
         name: `responseMaxLength(${n})`,
         passed,
-        reason: passed
-          ? undefined
-          : `Response length ${text.length} > maximum ${n}`
+        reason: passed ? undefined : `Response length ${text.length} > maximum ${n}`
       }
     }
   }
@@ -644,21 +630,35 @@ export function responseMaxLength(n: number): E2EAssertion {
  * frequency, and overall response brevity relative to a normal response.
  * This is heuristic — not exact — but catches obviously non-compressed responses.
  */
-export function responseBrevityCheck(opts: {
-  /** Maximum average words per sentence (caveman ≈ 5–8, normal ≈ 15–25) */
-  maxAvgWordsPerSentence?: number
-  /** Max ratio of filler words (a/an/the/just/really/basically/certainly) to total words */
-  maxFillerRatio?: number
-  /** Max total words in response */
-  maxTotalWords?: number
-} = {}): E2EAssertion {
+export function responseBrevityCheck(
+  opts: {
+    /** Maximum average words per sentence (caveman ≈ 5–8, normal ≈ 15–25) */
+    maxAvgWordsPerSentence?: number
+    /** Max ratio of filler words (a/an/the/just/really/basically/certainly) to total words */
+    maxFillerRatio?: number
+    /** Max total words in response */
+    maxTotalWords?: number
+  } = {}
+): E2EAssertion {
   const maxAvg = opts.maxAvgWordsPerSentence ?? 12
   const maxFiller = opts.maxFillerRatio ?? 0.08
   const maxWords = opts.maxTotalWords ?? 150
 
   const FILLER_WORDS = new Set([
-    'a', 'an', 'the', 'just', 'really', 'basically', 'actually', 'simply',
-    'certainly', 'sure', 'of', 'course', 'happy', 'to'
+    'a',
+    'an',
+    'the',
+    'just',
+    'really',
+    'basically',
+    'actually',
+    'simply',
+    'certainly',
+    'sure',
+    'of',
+    'course',
+    'happy',
+    'to'
   ])
 
   return {
@@ -683,7 +683,9 @@ export function responseBrevityCheck(opts: {
         issues.push(`avgWords/sentence=${avgWordsPerSentence.toFixed(1)} > ${maxAvg}`)
       }
       if (fillerRatio > maxFiller) {
-        issues.push(`fillerRatio=${(fillerRatio * 100).toFixed(1)}% > ${(maxFiller * 100).toFixed(0)}%`)
+        issues.push(
+          `fillerRatio=${(fillerRatio * 100).toFixed(1)}% > ${(maxFiller * 100).toFixed(0)}%`
+        )
       }
       if (words.length > maxWords) {
         issues.push(`totalWords=${words.length} > ${maxWords}`)

@@ -16,11 +16,14 @@ import {
   computeAuditIndicator,
   computeGrillIndicator,
   computeBlueprintIndicator,
-  computeIndexingIndicator
+  computeIndexingIndicator,
+  computeBrainIndicator
 } from './status-bar/status-indicator-helpers'
 import type { IndexingStateInfo } from './status-bar/status-indicator-helpers'
 import type { BlueprintStatusBarInfo } from './hooks/useBlueprintStatusBar'
+import type { BootstrapStatusBarInfo } from './hooks/useBootstrapStatusBar'
 import { BlueprintDropdown } from './status-bar/BlueprintDropdown'
+import { BrainDropdown } from './status-bar/BrainDropdown'
 
 import { isMacPlatform as isMac } from '@renderer/utils/platform'
 
@@ -67,10 +70,8 @@ function BlueprintIndicatorWithDropdown({
     return undefined
   }, [dropdownOpen, handleClickOutside])
 
-  const indicatorProps = computeBlueprintIndicator(
-    blueprintStatus,
-    onNavigateToBlueprint,
-    () => setDropdownOpen((v) => !v)
+  const indicatorProps = computeBlueprintIndicator(blueprintStatus, onNavigateToBlueprint, () =>
+    setDropdownOpen((v) => !v)
   )
 
   return (
@@ -80,6 +81,52 @@ function BlueprintIndicatorWithDropdown({
         <BlueprintDropdown
           entries={blueprintStatus.backgroundEntries}
           onSelect={onSwitchToWorkspaceBlueprint}
+          onClose={() => setDropdownOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── BrainIndicatorWithDropdown ─────────────────────────────────────────
+
+function BrainIndicatorWithDropdown({
+  bootstrapStatus,
+  onNavigateToMemory,
+  onSwitchToWorkspaceMemory
+}: {
+  bootstrapStatus: BootstrapStatusBarInfo
+  onNavigateToMemory: () => void
+  onSwitchToWorkspaceMemory: (workspaceId: string) => void
+}): React.JSX.Element {
+  const [dropdownOpen, setDropdownOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  const handleClickOutside = useCallback((e: MouseEvent) => {
+    if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+      setDropdownOpen(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (dropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+    return undefined
+  }, [dropdownOpen, handleClickOutside])
+
+  const indicatorProps = computeBrainIndicator(bootstrapStatus, onNavigateToMemory, () =>
+    setDropdownOpen((v) => !v)
+  )
+
+  return (
+    <div ref={wrapperRef} className="relative">
+      <StatusIndicator {...indicatorProps} />
+      {dropdownOpen && bootstrapStatus.backgroundEntries.length > 0 && (
+        <BrainDropdown
+          entries={bootstrapStatus.backgroundEntries}
+          onSelect={onSwitchToWorkspaceMemory}
           onClose={() => setDropdownOpen(false)}
         />
       )}
@@ -108,6 +155,8 @@ interface StatusBarProps {
   grillStatus: { status: string; ideaId: string } | null
   // Blueprint
   blueprintStatus: BlueprintStatusBarInfo
+  // Feed Brain ingestion
+  bootstrapStatus: BootstrapStatusBarInfo
   // Indexing
   indexingState: IndexingStateInfo | null
   // Callbacks
@@ -117,6 +166,8 @@ interface StatusBarProps {
   onNavigateToGrill: (ideaId: string) => void
   onNavigateToBlueprint: () => void
   onSwitchToWorkspaceBlueprint: (workspaceId: string) => void
+  onNavigateToMemory: () => void
+  onSwitchToWorkspaceMemory: (workspaceId: string) => void
   onZoomIn: () => void
   onZoomOut: () => void
   onZoomReset: () => void
@@ -141,6 +192,7 @@ export default function StatusBar({
   lastAuditScore,
   grillStatus,
   blueprintStatus,
+  bootstrapStatus,
   indexingState,
   onNavigateToSettings,
   onOpenContextModal,
@@ -148,6 +200,8 @@ export default function StatusBar({
   onNavigateToGrill,
   onNavigateToBlueprint,
   onSwitchToWorkspaceBlueprint,
+  onNavigateToMemory,
+  onSwitchToWorkspaceMemory,
   onZoomIn,
   onZoomOut,
   onZoomReset,
@@ -279,6 +333,11 @@ export default function StatusBar({
           blueprintStatus={blueprintStatus}
           onNavigateToBlueprint={onNavigateToBlueprint}
           onSwitchToWorkspaceBlueprint={onSwitchToWorkspaceBlueprint}
+        />
+        <BrainIndicatorWithDropdown
+          bootstrapStatus={bootstrapStatus}
+          onNavigateToMemory={onNavigateToMemory}
+          onSwitchToWorkspaceMemory={onSwitchToWorkspaceMemory}
         />
         <StatusIndicator
           {...computeIndexingIndicator(indexingState, () =>

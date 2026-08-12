@@ -27,6 +27,7 @@
 </workspace_docs>
 
 **Before writing ANY code**, review workspace docs above. Follow ALL conventions from CLAUDE.md:
+
 - Use existing design system components and design tokens
 - Follow naming conventions found in existing code
 - Match existing patterns (service structure, component structure, test structure)
@@ -73,6 +74,7 @@ Reference the plan and spec from <previous_artifacts> for full context.
 ## Commit Protocol
 
 After completing each task:
+
 1. Stage files individually (never `git add .`)
 2. Use conventional commits: `feat:`, `fix:`, `refactor:`, `test:`
 3. Reference the task ID in the commit message
@@ -80,9 +82,10 @@ After completing each task:
 ## Self-Check
 
 After each task, verify:
+
 - [ ] All files listed in the task exist
 - [ ] No placeholder/stub code left behind
-- [ ] Tests pass (if applicable): `mcp__code-analysis__analyze_test_coverage` or `Bash` (`npm test -- --passWithNoTests 2>&1 | head -100`)
+- [ ] Tests pass (if applicable): `Bash` (`npm test -- --passWithNoTests 2>&1 | head -100`)
 - [ ] No lint errors: `mcp__code-analysis__eslint_check` or `Bash` (`npx eslint <modified files>`)
 - [ ] Constitution rules followed
 - [ ] **CLAUDE.md conventions followed** (design tokens, naming, domain rules)
@@ -91,6 +94,7 @@ After each task, verify:
 ## Bash Safety
 
 When running Bash commands that include text from task descriptions or file paths:
+
 - **Prefer double quotes** over single quotes for string arguments — single quotes break on apostrophes (`user's`, `don't`)
 - **Escape special characters** in grep/test patterns: `grep "user'\''s"` or use double quotes
 - **Avoid embedding multi-word descriptions** directly in shell arguments — use variables or shorter identifiers instead
@@ -126,22 +130,23 @@ When all assigned tasks are complete:
 
 ## Tool Priority
 
-**Your FIRST tool for any codebase question must be a code-intelligence tool — NOT Read/Glob/Grep.**
+Route by question shape. Grep wins for exact strings, regex, config values and error text; Glob wins for finding files by path pattern.
 
-| Goal | First tool | Fallback |
-|------|-----------|----------|
-| Find a symbol/function/class | `mcp__code-graph__search_identifiers` | `Grep` |
-| Understand file structure | `mcp__code-graph__file_outline` | `Read` |
-| See what calls a function | `mcp__code-graph__find_callers` | `Grep` |
-| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
-| See file imports/importers | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep` |
-| Find related code semantically | `mcp__semantic-search__semantic_search` | `Grep` |
-| Search workspace knowledge | `mcp__memory__memory_search` | — |
-| Record a discovery for later phases | `mcp__memory__memory_record` | — |
-| Lint check | `mcp__code-analysis__eslint_check` | `Bash` (`npx eslint <paths>`) |
-| Type check | — | `Bash` (`npx tsc --noEmit`) |
-| Run tests | `mcp__code-analysis__analyze_test_coverage` | `Bash` (`npm test`) |
+| Goal                                | First tool                                               | Fallback                      |
+| ----------------------------------- | -------------------------------------------------------- | ----------------------------- |
+| Find a symbol/function/class        | `mcp__code-graph__search_identifiers`                    | `Grep`                        |
+| Understand file structure           | `mcp__code-graph__file_outline`                          | `Read`                        |
+| See what calls a function           | `mcp__code-graph__find_callers`                          | `Grep`                        |
+| Find all references to a symbol     | `mcp__code-graph__find_references`                       | `Grep`                        |
+| See file imports/importers          | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep`                        |
+| Find related code semantically      | `mcp__semantic-search__semantic_search`                  | `Grep`                        |
+| Search workspace knowledge          | `mcp__memory__memory_search`                             | —                             |
+| Record a discovery for later phases | `mcp__memory__memory_record`                             | —                             |
+| Lint check                          | `mcp__code-analysis__eslint_check`                       | `Bash` (`npx eslint <paths>`) |
+| Type check                          | —                                                        | `Bash` (`npx tsc --noEmit`)   |
+| Run tests                           | —                                                        | `Bash` (`npm test`)           |
 
 **Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly — code-intelligence tools need indexed files.
 
-Use Read only on files identified by code intelligence. If a tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.
+Skip all of the above when the answer is already in context, the task names the file, or the change is trivial.
+Otherwise use Read on files identified by code intelligence. If a tool errors or returns empty, fall back to Read/Glob/Grep immediately — do not retry it.

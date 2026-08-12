@@ -11,8 +11,20 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { execSync } from 'node:child_process'
 import { test, describe, beforeEach, afterEach, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 import type { BootstrapProgress, BootstrapPhaseLabel } from '../../../shared/types'
 import { MCP_TOOLS } from '../../../shared/constants'
+
+// Idempotent — the shared runner installs this too. Present so the file can
+// also be run on its own (`npx tsx …/memory-bootstrap.test.ts`), which the
+// service-loading tests below need.
+setupElectronStub()
+
+// db/index must be loaded before any repository: base-repository imports it,
+// so requiring a repository cold trips a TDZ cycle
+// (`Cannot access 'BaseRepository' before initialization`).
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+require('../../db/index')
 
 // ── BootstrapProgress type shape ────────────────────────────────────────────
 
@@ -20,13 +32,23 @@ describe('BootstrapProgress type', () => {
   test('progress events have required fields', () => {
     const progress: BootstrapProgress = {
       jobId: 'bootstrap-1-123456',
+      runId: 'run-1',
+      workspaceId: 'ws-1',
       phaseIndex: 2,
       phaseCount: 7,
       phaseLabel: 'stack',
       factsCreated: 5,
       message: 'Extracting tech stack facts…',
       jobStatus: 'running',
-      mode: 'full'
+      mode: 'full',
+      itemsTotal: 40,
+      itemsDone: 12,
+      itemsSkipped: 3,
+      itemsFailed: 0,
+      currentItem: null,
+      perPhase: {},
+      etaSeconds: null,
+      itemsPerMinute: null
     }
 
     assert.equal(progress.jobId, 'bootstrap-1-123456')
@@ -38,22 +60,41 @@ describe('BootstrapProgress type', () => {
   })
 
   test('jobStatus covers all states', () => {
-    const states: BootstrapProgress['jobStatus'][] = ['running', 'done', 'cancelled', 'error']
-    assert.equal(states.length, 4, 'Should have 4 job status states')
+    const states: BootstrapProgress['jobStatus'][] = [
+      'planning',
+      'running',
+      'paused',
+      'done',
+      'cancelled',
+      'error'
+    ]
+    assert.equal(states.length, 6, 'Should have 6 job status states')
   })
 
   test('phase labels cover full mode', () => {
     const phases: BootstrapPhaseLabel[] = [
-      'preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize'
+      'preflight',
+      'docs',
+      'stack',
+      'architecture',
+      'history',
+      'structure',
+      'finalize'
     ]
     assert.equal(phases.length, 7, 'Full mode has 7 phases')
   })
 
   test('phase labels cover deep-scan mode', () => {
     const phases: BootstrapPhaseLabel[] = [
-      'preflight', 'docs', 'stack', 'agent-exploration', 'finalize'
+      'preflight',
+      'docs',
+      'stack',
+      'architecture',
+      'history',
+      'agent-exploration',
+      'finalize'
     ]
-    assert.equal(phases.length, 5, 'Deep-scan mode has 5 phases')
+    assert.equal(phases.length, 7, 'Deep-scan mode has 7 phases')
   })
 })
 
@@ -63,7 +104,13 @@ describe('phase ordering', () => {
   test('full mode progresses through all phases in order', () => {
     const phases: BootstrapPhaseLabel[] = []
     const expectedOrder: BootstrapPhaseLabel[] = [
-      'preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize'
+      'preflight',
+      'docs',
+      'stack',
+      'architecture',
+      'history',
+      'structure',
+      'finalize'
     ]
 
     // Simulate collecting progress events
@@ -76,12 +123,19 @@ describe('phase ordering', () => {
 
   test('deep-scan mode uses different phase set', () => {
     const deepScanPhases: BootstrapPhaseLabel[] = [
-      'preflight', 'docs', 'stack', 'agent-exploration', 'finalize'
+      'preflight',
+      'docs',
+      'stack',
+      'architecture',
+      'history',
+      'agent-exploration',
+      'finalize'
     ]
 
-    // Verify agent-exploration replaces architecture+history+structure
-    assert.ok(!deepScanPhases.includes('architecture'))
-    assert.ok(!deepScanPhases.includes('history'))
+    // Deep scan adds agent-exploration on top of architecture+history,
+    // and is the only mode that omits the structure phase.
+    assert.ok(deepScanPhases.includes('architecture'))
+    assert.ok(deepScanPhases.includes('history'))
     assert.ok(!deepScanPhases.includes('structure'))
     assert.ok(deepScanPhases.includes('agent-exploration'))
   })
@@ -98,36 +152,45 @@ describe('doc discovery', () => {
   })
 
   afterEach(() => {
-    try { rmSync(testDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+    try {
+      rmSync(testDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   })
 
   test('discovers README and doc files', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { discoverDocs } = await import('../memory-bootstrap/discovery')
 
     writeFileSync(join(testDir, 'README.md'), '# Test Project\nThis is a test')
     writeFileSync(join(testDir, 'CLAUDE.md'), '# Claude config')
     mkdirSync(join(testDir, 'docs'), { recursive: true })
     writeFileSync(join(testDir, 'docs', 'guide.md'), '# Guide\nSome content')
 
-    // Access the private method via the class prototype for testing
-    // We test through the public API by checking that docs are found
-    const discoverDocs = (memoryBootstrapService as any).discoverDocs.bind(memoryBootstrapService)
     const docs = discoverDocs(testDir)
 
     assert.ok(docs.length >= 3, `Should find at least 3 doc files (found ${docs.length})`)
-    assert.ok(docs.some((f: string) => f.includes('README.md')), 'Should find README.md')
-    assert.ok(docs.some((f: string) => f.includes('CLAUDE.md')), 'Should find CLAUDE.md')
-    assert.ok(docs.some((f: string) => f.includes('guide.md')), 'Should find docs/guide.md')
+    assert.ok(
+      docs.some((f: string) => f.includes('README.md')),
+      'Should find README.md'
+    )
+    assert.ok(
+      docs.some((f: string) => f.includes('CLAUDE.md')),
+      'Should find CLAUDE.md'
+    )
+    assert.ok(
+      docs.some((f: string) => f.includes('guide.md')),
+      'Should find docs/guide.md'
+    )
   })
 
   test('skips node_modules and .git', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { discoverDocs } = await import('../memory-bootstrap/discovery')
 
     mkdirSync(join(testDir, 'node_modules', 'pkg'), { recursive: true })
     writeFileSync(join(testDir, 'node_modules', 'pkg', 'README.md'), '# Package')
     writeFileSync(join(testDir, 'README.md'), '# Root readme')
 
-    const discoverDocs = (memoryBootstrapService as any).discoverDocs.bind(memoryBootstrapService)
     const docs = discoverDocs(testDir)
 
     const hasNodeModules = docs.some((f: string) => f.includes('node_modules'))
@@ -135,11 +198,10 @@ describe('doc discovery', () => {
   })
 
   test('deduplicates found files', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { discoverDocs } = await import('../memory-bootstrap/discovery')
 
     writeFileSync(join(testDir, 'README.md'), '# Readme')
 
-    const discoverDocs = (memoryBootstrapService as any).discoverDocs.bind(memoryBootstrapService)
     const docs = discoverDocs(testDir)
 
     const readmeCount = docs.filter((f: string) => f.endsWith('README.md')).length
@@ -158,20 +220,30 @@ describe('manifest collection', () => {
   })
 
   afterEach(() => {
-    try { rmSync(testDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+    try {
+      rmSync(testDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   })
 
   test('collects package.json and tsconfig', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { collectManifests } = await import('../memory-bootstrap/discovery')
 
-    writeFileSync(join(testDir, 'package.json'), JSON.stringify({
-      name: 'test-project', dependencies: { lodash: '^4.0.0' }
-    }))
-    writeFileSync(join(testDir, 'tsconfig.json'), JSON.stringify({
-      compilerOptions: { strict: true }
-    }))
+    writeFileSync(
+      join(testDir, 'package.json'),
+      JSON.stringify({
+        name: 'test-project',
+        dependencies: { lodash: '^4.0.0' }
+      })
+    )
+    writeFileSync(
+      join(testDir, 'tsconfig.json'),
+      JSON.stringify({
+        compilerOptions: { strict: true }
+      })
+    )
 
-    const collectManifests = (memoryBootstrapService as any).collectManifests.bind(memoryBootstrapService)
     const content = collectManifests(testDir)
 
     assert.ok(content.includes('package.json'), 'Should include package.json')
@@ -180,13 +252,12 @@ describe('manifest collection', () => {
   })
 
   test('collects migration directory listing', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { collectManifests } = await import('../memory-bootstrap/discovery')
 
     mkdirSync(join(testDir, 'migrations'), { recursive: true })
     writeFileSync(join(testDir, 'migrations', '001_init.sql'), 'CREATE TABLE')
     writeFileSync(join(testDir, 'migrations', '002_users.sql'), 'ALTER TABLE')
 
-    const collectManifests = (memoryBootstrapService as any).collectManifests.bind(memoryBootstrapService)
     const content = collectManifests(testDir)
 
     assert.ok(content.includes('migrations'), 'Should include migrations directory')
@@ -194,17 +265,23 @@ describe('manifest collection', () => {
   })
 
   test('returns empty string for empty project', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { collectManifests } = await import('../memory-bootstrap/discovery')
 
     // Use a dedicated empty dir to avoid race with concurrent tests
-    const emptyDir = join(tmpdir(), 'bootstrap-empty-' + Date.now() + '-' + Math.random().toString(36).slice(2))
+    const emptyDir = join(
+      tmpdir(),
+      'bootstrap-empty-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+    )
     mkdirSync(emptyDir, { recursive: true })
     try {
-      const collectManifests = (memoryBootstrapService as any).collectManifests.bind(memoryBootstrapService)
       const content = collectManifests(emptyDir)
       assert.equal(content, '', 'Should return empty string')
     } finally {
-      try { rmSync(emptyDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+      try {
+        rmSync(emptyDir, { recursive: true, force: true })
+      } catch {
+        /* best-effort */
+      }
     }
   })
 })
@@ -229,14 +306,17 @@ describe('git changed files', () => {
   })
 
   afterEach(() => {
-    try { rmSync(testDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+    try {
+      rmSync(testDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   })
 
   test('returns empty set for non-git directory', async () => {
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { getChangedFilesSinceCommit } = await import('../memory-bootstrap/discovery')
 
-    const getChangedFiles = (memoryBootstrapService as any).getChangedFilesSinceCommit.bind(memoryBootstrapService)
-    const changed = getChangedFiles(testDir, 'abc123')
+    const changed = getChangedFilesSinceCommit(testDir, 'abc123')
 
     assert.equal(changed.size, 0, 'Should return empty set for non-git dir')
   })
@@ -244,7 +324,7 @@ describe('git changed files', () => {
   test('returns changed files in a git repo', async () => {
     if (!isGitAvailable) return // skip without git
 
-    const { memoryBootstrapService } = await import('../memory-bootstrap.service')
+    const { getChangedFilesSinceCommit } = await import('../memory-bootstrap/discovery')
 
     // Set up a git repo
     execSync('git init', { cwd: testDir })
@@ -258,8 +338,7 @@ describe('git changed files', () => {
     writeFileSync(join(testDir, 'file2.ts'), 'const b = 2')
     execSync('git add . && git commit -m "add file2"', { cwd: testDir })
 
-    const getChangedFiles = (memoryBootstrapService as any).getChangedFilesSinceCommit.bind(memoryBootstrapService)
-    const changed = getChangedFiles(testDir, initialSha)
+    const changed = getChangedFilesSinceCommit(testDir, initialSha)
 
     assert.ok(changed.has('file2.ts'), 'Should detect file2.ts as changed')
     assert.ok(!changed.has('file1.ts'), 'Should not include unchanged file1.ts')
@@ -307,19 +386,31 @@ describe('incremental marker gating', () => {
 describe('mode selection', () => {
   test('full mode uses 7 phases', () => {
     const fullPhases: BootstrapPhaseLabel[] = [
-      'preflight', 'docs', 'stack', 'architecture', 'history', 'structure', 'finalize'
+      'preflight',
+      'docs',
+      'stack',
+      'architecture',
+      'history',
+      'structure',
+      'finalize'
     ]
     assert.equal(fullPhases.length, 7)
     assert.equal(fullPhases[0], 'preflight')
     assert.equal(fullPhases[fullPhases.length - 1], 'finalize')
   })
 
-  test('deep-scan mode uses 5 phases with agent-exploration', () => {
+  test('deep-scan mode uses 7 phases with agent-exploration', () => {
     const deepScanPhases: BootstrapPhaseLabel[] = [
-      'preflight', 'docs', 'stack', 'agent-exploration', 'finalize'
+      'preflight',
+      'docs',
+      'stack',
+      'architecture',
+      'history',
+      'agent-exploration',
+      'finalize'
     ]
-    assert.equal(deepScanPhases.length, 5)
-    assert.equal(deepScanPhases[3], 'agent-exploration')
+    assert.equal(deepScanPhases.length, 7)
+    assert.equal(deepScanPhases[5], 'agent-exploration')
   })
 
   test('incremental mode is a variant of full mode', () => {
@@ -363,7 +454,9 @@ describe('deep scan agent runner', () => {
   test('deep scan allowedTools includes memory + code-graph + built-in read tools', () => {
     // This mirrors what spawnDeepScanAgent passes to runAgenticClaude
     const allowedTools = [
-      'Read', 'Grep', 'Glob',
+      'Read',
+      'Grep',
+      'Glob',
       ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
       ...MCP_TOOLS.MEMORY._ALL_NAMES
     ]
@@ -384,14 +477,8 @@ describe('deep scan agent runner', () => {
     )
 
     // Must include code-graph tools for exploration
-    assert.ok(
-      allowedTools.includes('mcp__code-graph__graph_map'),
-      'should include graph_map'
-    )
-    assert.ok(
-      allowedTools.includes('mcp__code-graph__file_outline'),
-      'should include file_outline'
-    )
+    assert.ok(allowedTools.includes('mcp__code-graph__graph_map'), 'should include graph_map')
+    assert.ok(allowedTools.includes('mcp__code-graph__file_outline'), 'should include file_outline')
 
     // Must NOT include Write or Edit (read-only agent)
     assert.ok(!allowedTools.includes('Write'), 'should NOT include Write')
@@ -400,7 +487,9 @@ describe('deep scan agent runner', () => {
 
   test('deep scan tool list is non-empty and reasonable size', () => {
     const allowedTools = [
-      'Read', 'Grep', 'Glob',
+      'Read',
+      'Grep',
+      'Glob',
       ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
       ...MCP_TOOLS.MEMORY._ALL_NAMES
     ]
@@ -412,10 +501,7 @@ describe('deep scan agent runner', () => {
 
   test('CLAUDE.md regen allowedTools excludes memory but includes code-graph', () => {
     // This mirrors what regenerateClaudeMdAgentic passes
-    const allowedTools = [
-      'Read', 'Grep', 'Glob',
-      ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-    ]
+    const allowedTools = ['Read', 'Grep', 'Glob', ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES]
 
     // Should include read tools and code-graph
     assert.ok(allowedTools.includes('Read'), 'should include Read')

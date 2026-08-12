@@ -1,5 +1,15 @@
-/** Copy text to clipboard with an Electron-safe fallback. Returns true on success. */
+/** Copy text to clipboard — Electron-native first, then Web API fallback. */
 export async function copyTextToClipboard(text: string): Promise<boolean> {
+  // Electron's native clipboard — works reliably on all platforms
+  if (window.api?.clipboardWriteText) {
+    try {
+      window.api.clipboardWriteText(text)
+      return true
+    } catch {
+      /* fall through to Web API */
+    }
+  }
+  // Web API fallback
   try {
     await navigator.clipboard.writeText(text)
     return true

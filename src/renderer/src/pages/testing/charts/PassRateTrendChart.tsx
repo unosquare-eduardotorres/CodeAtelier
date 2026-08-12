@@ -15,7 +15,11 @@ interface Props {
   onSelectRun: (id: string) => void
 }
 
-export default function PassRateTrendChart({ runs, selectedRunId, onSelectRun }: Props): React.JSX.Element | null {
+export default function PassRateTrendChart({
+  runs,
+  selectedRunId,
+  onSelectRun
+}: Props): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Last 20 completed runs, oldest→newest
@@ -40,7 +44,13 @@ export default function PassRateTrendChart({ runs, selectedRunId, onSelectRun }:
     return {
       grid: { left: 36, right: 12, top: 8, bottom: 24 },
       xAxis: { type: 'category', data: labels, boundaryGap: false },
-      yAxis: { type: 'value', min: 0, max: 100, splitNumber: 4, axisLabel: { formatter: '{value}%' } },
+      yAxis: {
+        type: 'value',
+        min: 0,
+        max: 100,
+        splitNumber: 4,
+        axisLabel: { formatter: '{value}%' }
+      },
       tooltip: {
         trigger: 'axis',
         formatter: (params: unknown) => {
@@ -50,29 +60,34 @@ export default function PassRateTrendChart({ runs, selectedRunId, onSelectRun }:
           return `<b>${p.value}% pass rate</b><br/>${run.totalPassed}/${total} passed`
         }
       },
-      series: [{
-        type: 'line',
-        data,
-        smooth: true,
-        symbol: 'circle',
-        symbolSize: (_, params) => (params.dataIndex === selectedIdx ? 10 : 5),
-        itemStyle: {
-          color: (params) => (params.dataIndex === selectedIdx ? '#3b82f6' : '#22c55e')
-        },
-        lineStyle: { color: '#22c55e', width: 2 },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(34, 197, 94, 0.25)' },
-            { offset: 1, color: 'rgba(34, 197, 94, 0.02)' }
-          ])
-        },
-        markLine: selectedIdx >= 0 ? {
-          silent: true,
-          symbol: 'none',
-          data: [{ xAxis: selectedIdx }],
-          lineStyle: { color: '#3b82f6', type: 'dashed', width: 1 }
-        } : undefined
-      }]
+      series: [
+        {
+          type: 'line',
+          data,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: (_, params) => (params.dataIndex === selectedIdx ? 10 : 5),
+          itemStyle: {
+            color: (params) => (params.dataIndex === selectedIdx ? '#3b82f6' : '#22c55e')
+          },
+          lineStyle: { color: '#22c55e', width: 2 },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(34, 197, 94, 0.25)' },
+              { offset: 1, color: 'rgba(34, 197, 94, 0.02)' }
+            ])
+          },
+          markLine:
+            selectedIdx >= 0
+              ? {
+                  silent: true,
+                  symbol: 'none',
+                  data: [{ xAxis: selectedIdx }],
+                  lineStyle: { color: '#3b82f6', type: 'dashed', width: 1 }
+                }
+              : undefined
+        }
+      ]
     }
   }, [completed, selectedRunId])
 

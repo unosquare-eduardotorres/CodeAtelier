@@ -40,7 +40,10 @@ export default function ActivationBanner({
   }
 
   return (
-    <div data-testid="activation-banner" className="rounded border border-primary/30 bg-primary-muted p-6">
+    <div
+      data-testid="activation-banner"
+      className="rounded border border-primary/30 bg-primary-muted p-6"
+    >
       <div className="flex items-start gap-4">
         <div className="flex-shrink-0 w-10 h-10 rounded-lg bg-primary-muted flex items-center justify-center">
           <Sparkles size={20} className="text-primary-text" />

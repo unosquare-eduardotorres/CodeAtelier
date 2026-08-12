@@ -148,7 +148,10 @@ export default function BlueprintPhaseTimeline({
 
               {/* Connector line between items */}
               {idx < entries.length - 1 && (
-                <div className="absolute left-[19px] w-px h-1.5 bg-border-subtle" style={{ marginTop: '28px' }} />
+                <div
+                  className="absolute left-[19px] w-px h-1.5 bg-border-subtle"
+                  style={{ marginTop: '28px' }}
+                />
               )}
             </div>
           )

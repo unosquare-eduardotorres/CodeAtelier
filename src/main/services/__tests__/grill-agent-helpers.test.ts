@@ -10,7 +10,6 @@ import { GRILL_TRACKS } from '../../../shared/constants'
 
 // ── Replicated pure logic from GrillAgentService ──
 
-
 /**
  * Replicated from GrillAgentService.parseGrillEvaluation.
  * Extracts and validates grill evaluation from LLM response.
@@ -51,10 +50,14 @@ function transitionGrillStatus(
   event: 'start' | 'complete' | 'fail' | 'cancel'
 ): GrillStatus {
   switch (event) {
-    case 'start': return current === 'pending' ? 'evaluating' : current
-    case 'complete': return current === 'evaluating' ? 'complete' : current
-    case 'fail': return current === 'evaluating' ? 'failed' : current
-    case 'cancel': return current === 'evaluating' || current === 'pending' ? 'cancelled' : current
+    case 'start':
+      return current === 'pending' ? 'evaluating' : current
+    case 'complete':
+      return current === 'evaluating' ? 'complete' : current
+    case 'fail':
+      return current === 'evaluating' ? 'failed' : current
+    case 'cancel':
+      return current === 'evaluating' || current === 'pending' ? 'cancelled' : current
   }
 }
 
@@ -63,9 +66,12 @@ function transitionGrillStatus(
  */
 function parseGrillDecision(text: string): 'proceed' | 'revise' | 'reject' | null {
   const lower = text.toLowerCase()
-  if (lower.includes('"decision":"reject"') || lower.includes('"decision": "reject"')) return 'reject'
-  if (lower.includes('"decision":"revise"') || lower.includes('"decision": "revise"')) return 'revise'
-  if (lower.includes('"decision":"proceed"') || lower.includes('"decision": "proceed"')) return 'proceed'
+  if (lower.includes('"decision":"reject"') || lower.includes('"decision": "reject"'))
+    return 'reject'
+  if (lower.includes('"decision":"revise"') || lower.includes('"decision": "revise"'))
+    return 'revise'
+  if (lower.includes('"decision":"proceed"') || lower.includes('"decision": "proceed"'))
+    return 'proceed'
   return null
 }
 
@@ -91,7 +97,8 @@ describe('Grill — track ID validation', () => {
 
 describe('Grill — parseGrillEvaluation', () => {
   test('valid_grill_evaluation_block_parsed', () => {
-    const text = '```grill-evaluation\n{"score": 7.5, "questions": [{"question": "Why?", "severity": "high"}]}\n```'
+    const text =
+      '```grill-evaluation\n{"score": 7.5, "questions": [{"question": "Why?", "severity": "high"}]}\n```'
     const result = parseGrillEvaluation(text)
     assert.ok(result)
     assert.equal(result!.score, 7.5)
@@ -110,12 +117,14 @@ describe('Grill — parseGrillEvaluation', () => {
   })
 
   test('score_out_of_range_negative_returns_null', () => {
-    const text = '```grill-evaluation\n{"score": -1, "questions": [{"question": "Q", "severity": "low"}]}\n```'
+    const text =
+      '```grill-evaluation\n{"score": -1, "questions": [{"question": "Q", "severity": "low"}]}\n```'
     assert.equal(parseGrillEvaluation(text), null)
   })
 
   test('score_out_of_range_above_10_returns_null', () => {
-    const text = '```grill-evaluation\n{"score": 11, "questions": [{"question": "Q", "severity": "low"}]}\n```'
+    const text =
+      '```grill-evaluation\n{"score": 11, "questions": [{"question": "Q", "severity": "low"}]}\n```'
     assert.equal(parseGrillEvaluation(text), null)
   })
 
@@ -135,7 +144,8 @@ describe('Grill — parseGrillEvaluation', () => {
   })
 
   test('NaN_score_returns_null', () => {
-    const text = '```grill-evaluation\n{"score": "high", "questions": [{"question": "Q", "severity": "low"}]}\n```'
+    const text =
+      '```grill-evaluation\n{"score": "high", "questions": [{"question": "Q", "severity": "low"}]}\n```'
     assert.equal(parseGrillEvaluation(text), null)
   })
 
@@ -176,7 +186,10 @@ describe('Grill — decision parsing', () => {
   })
 
   test('reject_decision_detected', () => {
-    assert.equal(parseGrillDecision('Output:\n{"decision": "reject", "reason": "Too risky"}'), 'reject')
+    assert.equal(
+      parseGrillDecision('Output:\n{"decision": "reject", "reason": "Too risky"}'),
+      'reject'
+    )
   })
 
   test('no_decision_returns_null', () => {

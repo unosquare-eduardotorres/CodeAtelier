@@ -71,7 +71,10 @@ test.describe('Blueprint Clarify Q&A Flow', () => {
     const blueprintTab = page
       .locator('[data-testid="workspace-settings-tab"]')
       .filter({ hasText: /blueprint/i })
-    const hasBlueprintTab = await blueprintTab.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasBlueprintTab = await blueprintTab
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     if (hasBlueprintTab) {
       await blueprintTab.first().click()
       await page.waitForTimeout(500)
@@ -150,15 +153,11 @@ test.describe('Blueprint Clarify Q&A Flow', () => {
     await page.waitForTimeout(1_000)
 
     // 5. Fill in title and description
-    const titleInput = page.locator(
-      '[data-testid="blueprint-page"] input[type="text"]'
-    ).first()
+    const titleInput = page.locator('[data-testid="blueprint-page"] input[type="text"]').first()
     await expect(titleInput).toBeVisible({ timeout: 5_000 })
     await titleInput.fill('E2E Clarify Flow')
 
-    const descriptionTextarea = page.locator(
-      '[data-testid="blueprint-page"] textarea'
-    ).first()
+    const descriptionTextarea = page.locator('[data-testid="blueprint-page"] textarea').first()
     const hasDesc = await descriptionTextarea.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasDesc) {
       await descriptionTextarea.fill(
@@ -188,7 +187,10 @@ test.describe('Blueprint Clarify Q&A Flow', () => {
     // 7. Assert transcript order (Fixes 2+3): agent bubble → findings card → question footer
     //    Findings card should be in the transcript (not the footer)
     const findingsCard = page.locator('[data-testid="blueprint-findings-card"]')
-    const hasFindingsCard = await findingsCard.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasFindingsCard = await findingsCard
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!IS_LIVE) {
       // Shim always emits findings — they must be visible
@@ -198,12 +200,13 @@ test.describe('Blueprint Clarify Q&A Flow', () => {
     // If findings card is present, verify DOM order: findings before question footer
     if (hasFindingsCard) {
       const chatView = page.locator('[data-testid="blueprint-chat-view"]')
-      const findingsPosition = await chatView.locator('[data-testid="blueprint-findings-card"]').first().evaluate(
-        (el) => {
+      const findingsPosition = await chatView
+        .locator('[data-testid="blueprint-findings-card"]')
+        .first()
+        .evaluate((el) => {
           const rect = el.getBoundingClientRect()
           return rect.top
-        }
-      )
+        })
       const footerPosition = await questionFooter.evaluate((el) => {
         const rect = el.getBoundingClientRect()
         return rect.top
@@ -221,22 +224,31 @@ test.describe('Blueprint Clarify Q&A Flow', () => {
       await expect(questionSections).toBeVisible()
 
       // q1: Click the recommended option (JSON) — first radio/option button
-      const q1Options = questionFooter.locator('label, [role="radio"], [role="checkbox"], button').filter({ hasText: /JSON/i })
-      const hasQ1 = await q1Options.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const q1Options = questionFooter
+        .locator('label, [role="radio"], [role="checkbox"], button')
+        .filter({ hasText: /JSON/i })
+      const hasQ1 = await q1Options
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       if (hasQ1) {
         await q1Options.first().click()
         await page.waitForTimeout(200)
       }
 
       // q2: Click "Other" and type the sentinel
-      const otherButtons = questionFooter.locator('label, [role="radio"], [role="checkbox"], button').filter({ hasText: /other/i })
+      const otherButtons = questionFooter
+        .locator('label, [role="radio"], [role="checkbox"], button')
+        .filter({ hasText: /other/i })
       const otherCount = await otherButtons.count()
       if (otherCount >= 2) {
         // Second "Other" is for q2
         await otherButtons.nth(1).click()
         await page.waitForTimeout(200)
         // Type sentinel into the "Other" text input
-        const otherInput = questionFooter.locator('input[type="text"], textarea').filter({ hasText: '' })
+        const otherInput = questionFooter
+          .locator('input[type="text"], textarea')
+          .filter({ hasText: '' })
         const otherInputCount = await otherInput.count()
         if (otherInputCount > 0) {
           await otherInput.last().fill(E2E_SENTINEL)
@@ -320,7 +332,9 @@ test.describe('Blueprint Clarify Q&A Flow', () => {
 
     // ── Assert: Timestamps are stable (Fix 5) ──
     // Read rendered timestamps, wait, re-read — they should be identical
-    const timestampElements = page.locator('[data-testid="blueprint-chat-view"] [class*="text-muted"]').filter({ hasText: /\d{1,2}:\d{2}|ago|just now/i })
+    const timestampElements = page
+      .locator('[data-testid="blueprint-chat-view"] [class*="text-muted"]')
+      .filter({ hasText: /\d{1,2}:\d{2}|ago|just now/i })
     const tsCount = await timestampElements.count()
     if (tsCount > 0) {
       const timestamps1 = await timestampElements.allTextContents()

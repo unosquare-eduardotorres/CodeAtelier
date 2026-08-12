@@ -28,8 +28,7 @@ export class UserProfileRepository extends BaseRepository<UserProfileRow, UserPr
   getProfile(): UserProfile | null {
     const db = this.db()
     const row = db.prepare("SELECT * FROM user_profile WHERE id = 'default'").get() as
-      | UserProfileRow
-      | undefined
+      UserProfileRow | undefined
     return row ? mapRow(row) : null
   }
 

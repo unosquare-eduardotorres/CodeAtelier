@@ -1,19 +1,30 @@
 import {
-  Scene, PerspectiveCamera, WebGLRenderer, BufferGeometry,
-  Float32BufferAttribute, ShaderMaterial, Points, Color, NormalBlending
+  Scene,
+  PerspectiveCamera,
+  WebGLRenderer,
+  BufferGeometry,
+  Float32BufferAttribute,
+  ShaderMaterial,
+  Points,
+  Color,
+  NormalBlending
 } from 'three'
 import {
-  SCENE_BG, easeOutCubic, PARTICLE_DURATION,
-  PARTICLE_COUNT_HIGH, PARTICLE_COUNT_LOW, FRAME_TIME_THRESHOLD
+  SCENE_BG,
+  easeOutCubic,
+  PARTICLE_DURATION,
+  PARTICLE_COUNT_HIGH,
+  PARTICLE_COUNT_LOW,
+  FRAME_TIME_THRESHOLD
 } from './transition-constants'
 import { teardownRenderer } from './transition-utils'
 
 // ── Gold palette for vertex colors (monochromatic warm gold) ──
 const GOLD_PALETTE: readonly [number, number, number][] = [
-  [0.85, 0.72, 0.45],  // warmGold
-  [0.78, 0.65, 0.38],  // deepGold
-  [0.92, 0.80, 0.55],  // lightGold
-  [0.70, 0.58, 0.32],  // antiqueGold
+  [0.85, 0.72, 0.45], // warmGold
+  [0.78, 0.65, 0.38], // deepGold
+  [0.92, 0.8, 0.55], // lightGold
+  [0.7, 0.58, 0.32] // antiqueGold
 ]
 
 // ── Custom shaders ──
@@ -195,7 +206,7 @@ export class GoldParticleAnimation {
 
     // Compute text extent so background ring clears the text with margin
     const textMaxX = textTargets.reduce((max, t) => Math.max(max, Math.abs(t[0])), 0)
-    const ringInner = Math.max(2.5, textMaxX + 0.8)  // at least 0.8 units clear of text edge
+    const ringInner = Math.max(2.5, textMaxX + 0.8) // at least 0.8 units clear of text edge
 
     for (let i = 0; i < count; i++) {
       // Scattered start positions (ring around center)
@@ -212,7 +223,7 @@ export class GoldParticleAnimation {
         targets[i * 3 + 2] = textTargets[i][2]
       } else {
         const bgAngle = Math.random() * Math.PI * 2
-        const bgRadius = ringInner + Math.random() * 2.5  // ring clears text
+        const bgRadius = ringInner + Math.random() * 2.5 // ring clears text
         targets[i * 3] = Math.cos(bgAngle) * bgRadius
         targets[i * 3 + 1] = Math.sin(bgAngle) * (bgRadius * 0.5)
         targets[i * 3 + 2] = (Math.random() - 0.5) * 2
@@ -229,8 +240,8 @@ export class GoldParticleAnimation {
       phases[i] = Math.random() * Math.PI * 2
       speeds[i] = 0.5 + Math.random() * 1.5
       sizes[i] = isText
-        ? 0.06 + Math.random() * 0.06  // text: 0.06–0.12 (~2–5px on screen) — fine dust
-        : 0.04 + Math.random() * 0.06  // background: 0.04–0.10 (~2–4px)
+        ? 0.06 + Math.random() * 0.06 // text: 0.06–0.12 (~2–5px on screen) — fine dust
+        : 0.04 + Math.random() * 0.06 // background: 0.04–0.10 (~2–4px)
     }
 
     const geo = new BufferGeometry()
@@ -243,14 +254,14 @@ export class GoldParticleAnimation {
     const mat = new ShaderMaterial({
       uniforms: {
         uTime: { value: 0 },
-        uOpacity: { value: 0.85 },
+        uOpacity: { value: 0.85 }
       },
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
       vertexColors: true,
       transparent: true,
       depthWrite: false,
-      blending: NormalBlending,
+      blending: NormalBlending
     })
 
     this.scene!.add(new Points(geo, mat))
@@ -274,18 +285,21 @@ export class GoldParticleAnimation {
     // Phase 2: Hold as text   (0.30–0.72) — 756ms hold
     // Phase 3: Explode outward (0.72–1.0)
     for (let i = 0; i < count; i++) {
-      const ix = i * 3, iy = i * 3 + 1, iz = i * 3 + 2
+      const ix = i * 3,
+        iy = i * 3 + 1,
+        iz = i * 3 + 2
       const spd = this.speeds[i]
 
-      if (t < 0.30) {
-        const ct = t / 0.30
+      if (t < 0.3) {
+        const ct = t / 0.3
         const ease = easeOutCubic(ct)
         const spiralAngle = (1 - ease) * spd * 3
         const orbX = Math.cos(spiralAngle + i) * (1 - ease) * (3 + spd)
         const orbY = Math.sin(spiralAngle + i * 0.7) * (1 - ease) * (2 + spd * 0.5)
         posAttr.array[ix] = orbX * (1 - ease) + this.targets[ix] * ease
         posAttr.array[iy] = orbY * (1 - ease) + this.targets[iy] * ease
-        posAttr.array[iz] = (Math.sin(i + elapsed * 0.002) * 0.5) * (1 - ease) + this.targets[iz] * ease
+        posAttr.array[iz] =
+          Math.sin(i + elapsed * 0.002) * 0.5 * (1 - ease) + this.targets[iz] * ease
       } else if (t < 0.72) {
         const breath = Math.sin(elapsed * 0.006) * 0.015
         posAttr.array[ix] = this.targets[ix] * (1 + breath)
@@ -303,7 +317,8 @@ export class GoldParticleAnimation {
     posAttr.needsUpdate = true
 
     // Fade out during explosion phase
-    this.mat.uniforms.uOpacity.value = t < 0.72 ? 0.85 : Math.max(0, 0.85 - ((t - 0.72) / 0.28) * 0.85)
+    this.mat.uniforms.uOpacity.value =
+      t < 0.72 ? 0.85 : Math.max(0, 0.85 - ((t - 0.72) / 0.28) * 0.85)
 
     // Gentle camera drift
     this.camera.position.x = Math.sin(elapsed * 0.0005) * 0.25

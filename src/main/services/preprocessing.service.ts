@@ -496,7 +496,10 @@ async function runDescriptionPhase(
   let totalCached = 0
   let totalGenerated = 0
 
-  memoryCheckpoint('DESC_PHASE_START', { descriptionsTotal, chunksCollected: allChunksForDesc.length })
+  memoryCheckpoint('DESC_PHASE_START', {
+    descriptionsTotal,
+    chunksCollected: allChunksForDesc.length
+  })
   onDescriptionProgress?.({
     descriptionsProcessed: 0,
     descriptionsTotal,

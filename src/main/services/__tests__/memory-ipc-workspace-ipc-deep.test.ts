@@ -30,10 +30,10 @@ void (async () => {
         send: () => {},
         on: () => {},
         removeListener: () => {},
-        id: 1,
+        id: 1
       },
       on: () => {},
-      isDestroyed: () => false,
+      isDestroyed: () => false
     } as any
 
     // Register the IPC handlers
@@ -78,7 +78,7 @@ void (async () => {
         try {
           await handler(mockEvent, {})
           // May succeed with empty workspace returning empty array
-        } catch (err: any) {
+        } catch (_err: any) {
           // Expected — workspaceId validation
           assert.ok(true)
         }
@@ -100,7 +100,7 @@ void (async () => {
         if (!handler) return
         try {
           await handler(mockEvent, {})
-        } catch (err: any) {
+        } catch (_err: any) {
           // Should fail on missing fields
           assert.ok(true)
         }
@@ -108,7 +108,9 @@ void (async () => {
     })
   } else {
     describe('memory.ipc (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 
@@ -220,7 +222,11 @@ void (async () => {
           await handler(mockEvent, { workspaceId: 'ws-1', authMode: 'invalid-mode' })
         } catch (err: any) {
           // Should throw on invalid authMode
-          assert.ok(err.message.includes('authMode') || err.message.includes('authentication') || err.message.includes('Failed'))
+          assert.ok(
+            err.message.includes('authMode') ||
+              err.message.includes('authentication') ||
+              err.message.includes('Failed')
+          )
         }
       })
 
@@ -282,7 +288,9 @@ void (async () => {
     })
   } else {
     describe('workspace.ipc (skipped — load failed)', () => {
-      test('module unavailable', () => { assert.ok(true) })
+      test('module unavailable', () => {
+        assert.ok(true)
+      })
     })
   }
 })()

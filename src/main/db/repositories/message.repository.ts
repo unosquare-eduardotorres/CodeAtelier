@@ -94,9 +94,55 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
    */
   getLastMessageTimestamp(conversationId: string): string | undefined {
     const row = this.db()
-      .prepare('SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1')
+      .prepare(
+        'SELECT created_at FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1'
+      )
       .get(conversationId) as { created_at: string } | undefined
     return row?.created_at
+  }
+
+  /**
+   * Scan a workspace's messages for embedded ```plan blocks, newest first.
+   *
+   * Used by the recall MCP server: the `plans` registry is frequently empty,
+   * but the plan text always survives in the message that rendered it.
+   * Selects only the columns needed so a workspace-wide scan never pulls
+   * tool_activities_json (which can be megabytes) into memory.
+   */
+  findPlanBlockMessages(
+    workspaceId: string,
+    limit = 50
+  ): Array<{
+    id: string
+    conversationId: string
+    conversationTitle: string | null
+    createdAt: string
+    contentMd: string
+  }> {
+    const rows = this.db()
+      .prepare(
+        `SELECT m.id, m.conversation_id, c.title AS conversation_title,
+                m.created_at, m.content_md
+         FROM messages m
+         JOIN conversations c ON c.id = m.conversation_id
+         WHERE c.workspace_id = ? AND m.content_md LIKE '%' || ? || 'plan%'
+         ORDER BY m.created_at DESC
+         LIMIT ?`
+      )
+      .all(workspaceId, '```', limit) as Array<{
+      id: string
+      conversation_id: string
+      conversation_title: string | null
+      created_at: string
+      content_md: string
+    }>
+    return rows.map((row) => ({
+      id: row.id,
+      conversationId: row.conversation_id,
+      conversationTitle: row.conversation_title ?? null,
+      createdAt: row.created_at,
+      contentMd: row.content_md
+    }))
   }
 
   findById(id: string): Message | undefined {
@@ -131,9 +177,7 @@ export class MessageRepository extends BaseRepository<MessageRow, Message> {
   }
 
   updatePlanAction(messageId: string, action: string): void {
-    this.db()
-      .prepare('UPDATE messages SET plan_action = ? WHERE id = ?')
-      .run(action, messageId)
+    this.db().prepare('UPDATE messages SET plan_action = ? WHERE id = ?').run(action, messageId)
   }
 }
 

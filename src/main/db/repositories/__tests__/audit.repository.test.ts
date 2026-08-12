@@ -20,7 +20,12 @@ if (!env) {
     // ── createRun ──
 
     test('createRun() inserts and returns audit run', () => {
-      const run = auditRepository.createRun(wsId, 'deep', ['security', 'performance'], ['node', 'react'])
+      const run = auditRepository.createRun(
+        wsId,
+        'deep',
+        ['security', 'performance'],
+        ['node', 'react']
+      )
       assert.ok(run.id)
       assert.equal(run.workspaceId, wsId)
       assert.equal(run.mode, 'deep')

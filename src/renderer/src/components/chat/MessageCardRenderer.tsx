@@ -158,13 +158,16 @@ export default function MessageCardRenderer({
           components={markdownComponents}
         />
         {/* Slim indicator — full plan details live in the Plan tab */}
-        <div data-testid="plan-slim-indicator" className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-plan-card/30 bg-plan-card-muted">
+        <div
+          data-testid="plan-slim-indicator"
+          className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-plan-card/30 bg-plan-card-muted"
+        >
           <FileText size={14} className="text-plan-card flex-shrink-0" />
-          <span className="text-sm text-plan-card-text">
-            Plan available — view in the Plan tab
-          </span>
+          <span className="text-sm text-plan-card-text">Plan available — view in the Plan tab</span>
           {isLatestPlan === false && (
-            <span data-testid="plan-superseded-label" className="text-xs text-text-muted ml-auto">superseded</span>
+            <span data-testid="plan-superseded-label" className="text-xs text-text-muted ml-auto">
+              superseded
+            </span>
           )}
         </div>
       </div>

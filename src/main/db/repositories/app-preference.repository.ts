@@ -1,5 +1,10 @@
 import { BaseRepository } from '../base-repository'
-import type { AppPreferences, AppTheme, UpdateSourceProvider, UserAvatarVariant } from '../../../shared/types'
+import type {
+  AppPreferences,
+  AppTheme,
+  UpdateSourceProvider,
+  UserAvatarVariant
+} from '../../../shared/types'
 
 interface AppPreferenceRow {
   key: string
@@ -19,8 +24,7 @@ export class AppPreferenceRepository extends BaseRepository<
   get(key: string): string | null {
     const db = this.db()
     const row = db.prepare('SELECT value FROM app_preferences WHERE key = ?').get(key) as
-      | AppPreferenceRow
-      | undefined
+      AppPreferenceRow | undefined
     return row ? row.value : null
   }
 
@@ -67,7 +71,8 @@ export class AppPreferenceRepository extends BaseRepository<
         const raw = this.get('user_avatar_variant')
         return raw === '1' || raw === '2' || raw === '3' ? raw : '1'
       })(),
-      maxStreamLifetimeMin: this.getInt('max_stream_lifetime_min', 30, 10, 120)
+      maxStreamLifetimeMin: this.getInt('max_stream_lifetime_min', 30, 10, 120),
+      blueprintAutoMode: this.getBool('blueprint_auto_mode', true)
     }
   }
 }

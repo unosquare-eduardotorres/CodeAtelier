@@ -102,6 +102,12 @@ if (conversationCrudRegistered) {
     test('registers conversation:reorder', () => {
       assert.ok(capturedHandlers.has('conversation:reorder'))
     })
+
+    test('registers chat:branchOptions', () => {
+      // The chat branch picker is useless without it: no list, no holder
+      // labels, and no way to see that a branch is already taken.
+      assert.ok(capturedHandlers.has('chat:branchOptions'))
+    })
   })
 
   describe('conversation-crud.ipc — validation', () => {
@@ -137,6 +143,11 @@ if (conversationCrudRegistered) {
 
     test('chat:getMessages rejects missing conversationId', async () => {
       const result = await tryInvokeHandler('chat:getMessages', {})
+      assert.equal(result.ok, false)
+    })
+
+    test('chat:branchOptions rejects missing workspaceId', async () => {
+      const result = await tryInvokeHandler('chat:branchOptions', {})
       assert.equal(result.ok, false)
     })
   })

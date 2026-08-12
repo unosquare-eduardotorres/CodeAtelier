@@ -11,7 +11,8 @@ import {
   streamingInternals as internals,
   appendStreamChunkAction,
   finalizeStreamAction,
-  finalizeTurnBubbleAction
+  finalizeTurnBubbleAction,
+  flushStreamingIntoMessage
 } from './chat-streaming.actions'
 import {
   buildStreamingResetState,
@@ -20,7 +21,10 @@ import {
   createOptimisticUserMessage,
   createErrorMessage,
   parseBlockedByError,
-  emptyStreamState
+  emptyStreamState,
+  reconcileStopState,
+  reconcileBootStreamingState,
+  partitionStreamsForWorkspaceSwitch
 } from './chat-action-utils'
 import type { PerConversationStreamState } from './chat-action-utils'
 import type {
@@ -36,9 +40,28 @@ import type {
   LLMProvider,
   Message,
   ModelRoleMap,
+  PendingPermission,
+  PermissionOutcome,
   ThinkingEffort,
   ToolActivity
 } from '../../../shared/types'
+import {
+  PERMISSION_CANCELLED_MESSAGE,
+  PERMISSION_TIMEOUT_MESSAGE
+} from '../../../shared/permission-messages'
+
+/**
+ * An inline tool-permission prompt and what the user did with it.
+ *
+ * The card deliberately survives its own resolution: it flips to "waiting" and
+ * is only cleared when the stream actually moves again (finalizeStream). A
+ * broken approval therefore reads as a card stuck on "waiting" rather than as
+ * an empty chat.
+ */
+export interface PendingToolPermission {
+  permission: PendingPermission
+  decision: 'pending' | 'approved' | 'denied'
+}
 
 // ChatStreamingInternals + internals singleton are in ./chat-streaming.actions.ts
 
@@ -110,6 +133,12 @@ export interface ChatState {
   /** Request ID from IPC bridge ask_user — presence indicates CLI/bridge backend */
   pendingQuestionRequestId: string | null
 
+  /** Inline tool-permission prompt for the active conversation (null = none). */
+  pendingToolPermission: PendingToolPermission | null
+
+  /** Retry offer after a permission died with its turn (null = none). */
+  permissionRetry: { conversationId: string; retryText: string } | null
+
   loadConversations: (workspaceId: string) => Promise<void>
   createConversation: (
     workspaceId: string,
@@ -122,14 +151,20 @@ export interface ChatState {
     communicationTone?: CommunicationTone | null,
     sourceAuditRunId?: string,
     branchName?: string,
-    autoBranch?: boolean
+    autoBranch?: boolean,
+    /** Take the branch from its current holder — explicit user confirmation only. */
+    takeover?: boolean
   ) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
   updateMode: (mode: ConversationMode) => Promise<void>
   renameConversation: (id: string, title: string) => Promise<void>
   stopGeneration: () => Promise<void>
-  sendMessage: (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => Promise<void>
+  sendMessage: (
+    text: string,
+    attachments?: string[],
+    options?: { hidden?: boolean; skipOptimizer?: boolean }
+  ) => Promise<void>
   appendStreamChunk: (
     conversationId: string,
     chunk: string,
@@ -140,17 +175,14 @@ export interface ChatState {
   ) => void
   /** Reset safety timer without processing content — used by keepalive signals from backend. */
   handleKeepalive: (conversationId?: string) => void
-  updateStreamingIdentity: (
-    role: 'specialist',
+  updateStreamingIdentity: (role: 'specialist', taskId?: string, specialist?: string) => void
+  finalizeStream: (
+    conversationId: string,
+    messageId: string,
     taskId?: string,
-    specialist?: string
+    requestId?: string
   ) => void
-  finalizeStream: (conversationId: string, messageId: string, taskId?: string, requestId?: string) => void
-  finalizeTurnBubble: (
-    turnId: string,
-    turnRole?: 'specialist',
-    turnSpecialist?: string
-  ) => void
+  finalizeTurnBubble: (turnId: string, turnRole?: 'specialist', turnSpecialist?: string) => void
   addToolActivity: (activity: ToolActivity) => void
   updateToolActivity: (activity: Partial<ToolActivity> & { toolName: string }) => void
 
@@ -178,6 +210,28 @@ export interface ChatState {
   setPendingQuestions: (questions: GrillQuestion[], action?: string, requestId?: string) => void
   submitQuestionAnswers: (answers: GrillAnswerPayload[]) => void
   skipAllQuestions: () => void
+
+  // Inline tool permission actions
+  setPendingToolPermission: (permission: PendingPermission) => void
+  /**
+   * A permission reached a terminal state elsewhere (the modal was clicked, the
+   * turn was torn down, the CLI died). Marks the inline receipt on a decision
+   * and clears it otherwise, so it never sits on "waiting for the agent to
+   * continue…" for a turn that no longer exists.
+   */
+  resolvePermissionExternally: (data: {
+    permissionId: string
+    conversationId?: string
+    outcome: PermissionOutcome
+  }) => void
+
+  /**
+   * Re-send the last user message after a permission died with its turn. Retry
+   * cannot mean "re-approve": the CLI child that owed the tool result is gone
+   * and the requestId is meaningless, so this is a NEW turn.
+   */
+  retryAfterPermission: () => Promise<void>
+  dismissPermissionRetry: () => void
 
   // Auto mode switch pill (e.g., build → plan on investigation prompts)
   autoModeSwitchPill: { from: ConversationMode; to: ConversationMode } | null
@@ -259,6 +313,20 @@ export interface ChatState {
   // Conversation reordering
   reorderConversations: (orderedIds: string[]) => Promise<void>
 
+  /**
+   * BOOT-REHYDRATE: adopt streams main is already running. The renderer can
+   * restart on its own (crash auto-reload, RewindDialog reload) while main and
+   * its streams survive — without this the boot state claims nothing is running.
+   */
+  rehydrateStreamingState: () => Promise<void>
+
+  /**
+   * Workspace switch — clear the previous workspace's view state WITHOUT
+   * dropping conversations that are still streaming in the background.
+   * Mirrors blueprint.store's resetForWorkspaceSwitch.
+   */
+  resetForWorkspaceSwitch: () => void
+
   reset: () => void
 }
 
@@ -291,6 +359,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   pendingQuestions: previousChatState?.pendingQuestions ?? null,
   pendingQuestionAction: previousChatState?.pendingQuestionAction ?? null,
   pendingQuestionRequestId: previousChatState?.pendingQuestionRequestId ?? null,
+  pendingToolPermission: previousChatState?.pendingToolPermission ?? null,
+  permissionRetry: null,
   autoModeSwitchPill: null,
   sessionRecovery: null,
   budgetCapBanner: null,
@@ -325,8 +395,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // conversation (or creates one).
       const { activeConversation } = get()
       if (activeConversation && activeConversation.workspaceId !== workspaceId) {
-        get().reset()
-        // reset() already calls internals.resetAccumulator() and internals.clearSafetyTimer()
+        // BACKGROUND-CHAT-01: view-state-only reset — a conversation still
+        // streaming in the previous workspace keeps its buffer and indicators.
+        get().resetForWorkspaceSwitch()
       }
 
       const conversations = await window.api.getConversations({ workspaceId })
@@ -342,10 +413,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
       set((state) => ({
         conversations,
-        effortLevels: { ...state.effortLevels, ...hydratedEfforts },
-        // MULTI-CHAT-06: Clear stashed streaming state from previous workspace.
-        // Stale entries with different conversation IDs are harmless but waste memory.
-        conversationStreams: new Map()
+        effortLevels: { ...state.effortLevels, ...hydratedEfforts }
+        // BACKGROUND-CHAT-01: conversationStreams is NOT cleared here — background
+        // streams from another workspace must keep accumulating. Finished entries
+        // are dropped by resetForWorkspaceSwitch().
       }))
     } catch (error) {
       rendererLog.error('Failed to load conversations:', error)
@@ -363,7 +434,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     communicationTone?: CommunicationTone | null,
     sourceAuditRunId?: string,
     branchName?: string,
-    autoBranch?: boolean
+    autoBranch?: boolean,
+    takeover?: boolean
   ) => {
     // BUG-A-FIX: Coordinate with selectConversation via switchGeneration.
     // Without this, a rapid selectConversation during the async createConversation
@@ -380,7 +452,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       communicationTone,
       sourceAuditRunId,
       branchName,
-      autoBranch
+      autoBranch,
+      takeover
     })
     // BUG-A-FIX: Bail if a selectConversation (or another createConversation)
     // superseded this one while we awaited the IPC round-trip.
@@ -525,9 +598,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (switchGeneration !== myGeneration) return
 
     // PER-CONV-ACCUM: Project from always-warm buffer (or empty if no buffer)
-    const restored = isConversationStillStreaming && buffer
-      ? buffer
-      : emptyStreamState()
+    const restored = isConversationStillStreaming && buffer ? buffer : emptyStreamState()
     // BUG-R8-1: Detect re-selection (selecting the already-active conversation)
     const isReselection = get().activeConversation?.id === id
 
@@ -551,7 +622,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       budgetCapBanner: null,
       blockedByBanner: null,
       turnLimitReached: null,
+      permissionRetry: null,
       streamStalledConversationId: null,
+      // The inline permission card belongs to one conversation — keep it only
+      // when that conversation is the one being shown.
+      pendingToolPermission:
+        state.pendingToolPermission?.permission.conversationId === id
+          ? state.pendingToolPermission
+          : null,
       pendingQuestions: isConversationStillStreaming
         ? (restored.pendingQuestions ?? (isReselection ? state.pendingQuestions : null))
         : null,
@@ -559,7 +637,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         ? (restored.pendingQuestionAction ?? (isReselection ? state.pendingQuestionAction : null))
         : null,
       pendingQuestionRequestId: isConversationStillStreaming
-        ? (restored.pendingQuestionRequestId ?? (isReselection ? state.pendingQuestionRequestId : null))
+        ? (restored.pendingQuestionRequestId ??
+          (isReselection ? state.pendingQuestionRequestId : null))
         : null,
       // Hydrate effort from persisted conversation state
       effortLevels: conversation.effort
@@ -620,7 +699,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }))
         }
       }
-    } catch { /* non-critical — todos are ephemeral fallback */ }
+    } catch {
+      /* non-critical — todos are ephemeral fallback */
+    }
 
     // SWITCH-GENERATION: Bail if superseded during todo load
     if (switchGeneration !== myGeneration) return
@@ -630,7 +711,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const phaseData = await window.api.getPhaseProgress({ conversationId: id })
       if (switchGeneration !== myGeneration) return
       if (phaseData && phaseData.progress.length > 0) {
-        const { startExecution, updatePhase, updateTask, markFileTouched } = usePlanExecutionStore.getState()
+        const { startExecution, updatePhase, updateTask, markFileTouched } =
+          usePlanExecutionStore.getState()
         startExecution(id, {
           planId: phaseData.planId,
           title: phaseData.planTitle,
@@ -641,7 +723,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         for (const p of phaseData.progress) {
           updatePhase(id, {
             phaseId: p.phaseId,
-            phaseTitle: phaseData.phases.find((ph) => ph.id === p.phaseId)?.title ?? `Phase ${p.phaseId}`,
+            phaseTitle:
+              phaseData.phases.find((ph) => ph.id === p.phaseId)?.title ?? `Phase ${p.phaseId}`,
             status: p.status as PhaseStatus['status'],
             totalPhases: phaseData.phases.length
           })
@@ -664,7 +747,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }
         }
       }
-    } catch { /* non-critical */ }
+    } catch {
+      /* non-critical */
+    }
   },
 
   renameConversation: async (id: string, title: string) => {
@@ -695,6 +780,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // MULTI-CHAT-03: Pass conversationId so only THIS chat is stopped,
       // not all streams across the workspace.
       await window.api.stopGeneration(activeConversation?.id)
+
+      // WEDGE-ESCALATION: Stop only unwinds a stream that is actually running.
+      // When the busy state outlived its stream, stop is a no-op and main keeps
+      // rejecting sends with "already being processed" — leaving the user with
+      // no way out short of restarting. If main still reports this chat busy
+      // after a stop, escalate to the explicit force-release.
+      if (activeConversation?.id) {
+        const state = await window.api.getStreamingState().catch(() => null)
+        const stillBusy = state?.streams?.some((s) => s.conversationId === activeConversation.id)
+        if (stillBusy) {
+          rendererLog.warn(
+            `[STOP-ESCALATE] main still reports ${activeConversation.id.slice(0, 12)} busy after stop — force-releasing`
+          )
+          await window.api.forceReleaseConversation(activeConversation.id)
+        }
+      }
     } catch (error) {
       rendererLog.error('Failed to stop generation:', error)
     }
@@ -705,7 +806,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (activeConversation?.id !== get().activeConversation?.id) return
 
     // PER-CONV-ACCUM helper: clean up the conversation buffer alongside globals
-    const cleanupBuffer = (state: ChatState): { conversationStreams: Map<string, PerConversationStreamState> } => {
+    const cleanupBuffer = (
+      state: ChatState
+    ): { conversationStreams: Map<string, PerConversationStreamState> } => {
       if (!activeConversation) return { conversationStreams: state.conversationStreams }
       const streams = new Map(state.conversationStreams)
       streams.delete(activeConversation.id)
@@ -765,14 +868,52 @@ export const useChatStore = create<ChatState>((set, get) => ({
       internals.clearSafetyTimer(activeConversation.id)
     }
     internals.resetAccumulator(activeConvId)
+
+    // WEDGE-RECOVERY: Stop must always be able to un-stick the input — see
+    // reconcileStopState for the rule (and its tests).
+    const reconciled = await reconcileStopState(
+      () => window.api.getStreamingState(),
+      () => get().sendingConversationIds,
+      activeConvId,
+      (error) => rendererLog.warn('[stopGeneration] Streaming-state reconcile failed:', error)
+    )
+    if (reconciled) set(reconciled)
+
+    // WEDGE-FIX: Stop is the user's escape hatch and must never be conditional
+    // on main agreeing. The reconcile above declines whenever main still reports
+    // this conversation busy (or the query failed) — exactly the wedged case the
+    // user is trying to escape. CHAT_FORCE_RELEASE above already force-releases
+    // main's lock, so the renderer flag follows unconditionally.
+    if (activeConvId) {
+      const stillSending = get().sendingConversationIds
+      if (stillSending.has(activeConvId)) {
+        const released = new Set(stillSending)
+        released.delete(activeConvId)
+        set({ sendingConversationIds: released })
+      }
+    }
   },
 
-  sendMessage: async (text: string, attachments?: string[], options?: { hidden?: boolean; skipOptimizer?: boolean }) => {
-    const { activeConversation, updateMode, isStreaming: alreadyStreaming, sendingConversationIds } = get()
+  sendMessage: async (
+    text: string,
+    attachments?: string[],
+    options?: { hidden?: boolean; skipOptimizer?: boolean }
+  ) => {
+    const {
+      activeConversation,
+      updateMode,
+      isStreaming: alreadyStreaming,
+      sendingConversationIds
+    } = get()
     // SEND-RACE-02: Per-conversation send guard. Prevents rapid double-clicks from
     // bypassing the isStreaming check (stale React closure). Phase 2 ready:
     // only blocks sends on the SAME conversation, not globally.
-    if (!activeConversation || alreadyStreaming || sendingConversationIds.has(activeConversation.id)) return
+    if (
+      !activeConversation ||
+      alreadyStreaming ||
+      sendingConversationIds.has(activeConversation.id)
+    )
+      return
     set({
       sendingConversationIds: new Set([...sendingConversationIds, activeConversation.id]),
       // SEND-ASKUSER-01: Clear stale pending questions so the card doesn't persist alongside new stream
@@ -782,15 +923,37 @@ export const useChatStore = create<ChatState>((set, get) => ({
     })
 
     // SEND-SAFETY-TIMEOUT: Auto-reset sendingConversationIds if it stays set for >30s
-    // (covers IPC hangs or missed resets from unexpected errors)
+    // (covers IPC hangs or missed resets from unexpected errors).
+    //
+    // SEND-SAFETY-RECONCILE: clearing blind desyncs the renderer from main —
+    // main's own gate (streamingLocks + state machine) releases no earlier than
+    // its 5-min inactivity timer, and keepalive ticks keep resetting that while
+    // a stream is nominally alive. Re-enabling the composer at 30s therefore
+    // just produces "A message is already being processed" rejections. Only
+    // release once main confirms it is idle; otherwise leave the flag set —
+    // MessageInput keeps the Stop button visible while `isSending` is true,
+    // which is the escape hatch (CHAT_STOP force-releases main's lock).
     const convId = activeConversation.id
     const isSendingTimeout = setTimeout(() => {
-      if (get().sendingConversationIds.has(convId)) {
-        rendererLog.warn(`[SEND-SAFETY] sendingConversationIds stuck for 30s — force-removing ${convId.slice(0, 12)}`)
-        const updated = new Set(get().sendingConversationIds)
-        updated.delete(convId)
-        set({ sendingConversationIds: updated })
-      }
+      void (async () => {
+        if (!get().sendingConversationIds.has(convId)) return
+        const reconciled = await reconcileStopState(
+          () => window.api.getStreamingState(),
+          () => get().sendingConversationIds,
+          convId,
+          (error) => rendererLog.warn('[SEND-SAFETY] reconcile failed:', error)
+        )
+        if (reconciled) {
+          rendererLog.warn(
+            `[SEND-SAFETY] stuck for 30s and main is idle — releasing ${convId.slice(0, 12)}`
+          )
+          set(reconciled)
+        } else {
+          rendererLog.warn(
+            `[SEND-SAFETY] stuck for 30s but main still streaming — keeping ${convId.slice(0, 12)} disabled (Stop available)`
+          )
+        }
+      })()
     }, 30_000)
 
     // GAP-C-FIX: Capture switchGeneration so we can detect if selectConversation
@@ -802,7 +965,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       internals.bumpGeneration()
 
       // Auto-detect plan intent in build mode → switch to plan
-      if (activeConversation.mode === 'build' && (detectPlanIntent(text) || detectComplexTask(text))) {
+      if (
+        activeConversation.mode === 'build' &&
+        (detectPlanIntent(text) || detectComplexTask(text))
+      ) {
         await updateMode('plan')
         // GAP-C-FIX: Bail if selectConversation (or createConversation) fired during
         // updateMode. Without this, streamingConversationIds would contain the wrong
@@ -811,7 +977,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       const isHidden = options?.hidden === true
-      const optimisticMessage = isHidden ? null : createOptimisticUserMessage(activeConversation.id, text, attachments)
+      const optimisticMessage = isHidden
+        ? null
+        : createOptimisticUserMessage(activeConversation.id, text, attachments)
 
       set((state) => ({
         // MULTI-CHAT-06: Remove stale optimistic message from a previous blocked-by attempt
@@ -832,7 +1000,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
         // activeRequestId is set AFTER the backend returns — see below.
         activeRequestId: null,
         // Track this conversation as streaming (for sidebar indicator when user switches away)
-        streamingConversationIds: new Set([...state.streamingConversationIds, activeConversation.id])
+        streamingConversationIds: new Set([
+          ...state.streamingConversationIds,
+          activeConversation.id
+        ])
       }))
 
       // Reset segment accumulator for new message
@@ -959,7 +1130,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const convId = get().activeConversation?.id
     if (!convId) return // No active conversation — nothing to attach tool activity to
     internals.resetSafetyTimer(convId)
-    internals.recordChunkActivity(convId)  // STALL-DETECT-02: Tool activity is real activity
+    internals.recordChunkActivity(convId) // STALL-DETECT-02: Tool activity is real activity
     internals.getOrCreateAccumulatorFor(convId).handleToolActivity(activity)
   },
 
@@ -967,20 +1138,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const convId = get().activeConversation?.id
     if (!convId) return // No active conversation — nothing to update
     internals.resetSafetyTimer(convId)
-    internals.recordChunkActivity(convId)  // STALL-DETECT-02: Tool activity is real activity
-    internals.getOrCreateAccumulatorFor(convId)
+    internals.recordChunkActivity(convId) // STALL-DETECT-02: Tool activity is real activity
+    internals
+      .getOrCreateAccumulatorFor(convId)
       .handleToolActivity(activity as Partial<ToolActivity> & { id: string; toolName: string })
   },
 
-  finalizeStream: (conversationId: string, messageId: string, taskId?: string, requestId?: string) => {
+  finalizeStream: (
+    conversationId: string,
+    messageId: string,
+    taskId?: string,
+    requestId?: string
+  ) => {
     finalizeStreamAction(get, set, conversationId, messageId, taskId, requestId)
   },
 
-  finalizeTurnBubble: (
-    turnId: string,
-    turnRole?: 'specialist',
-    turnSpecialist?: string
-  ) => {
+  finalizeTurnBubble: (turnId: string, turnRole?: 'specialist', turnSpecialist?: string) => {
     finalizeTurnBubbleAction(get, set, turnId, turnRole, turnSpecialist)
   },
 
@@ -992,9 +1165,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   continuePastBudgetCap: async () => {
     const { budgetCapBanner, activeConversation, isStreaming, sendingConversationIds } = get()
-    if (!budgetCapBanner || !activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id)) return
+    if (
+      !budgetCapBanner ||
+      !activeConversation ||
+      isStreaming ||
+      sendingConversationIds.has(activeConversation.id)
+    )
+      return
     set({ budgetCapBanner: null })
-    void get().sendMessage('Continue where you left off.', undefined, { hidden: true, skipOptimizer: true })
+    void get().sendMessage('Continue where you left off.', undefined, {
+      hidden: true,
+      skipOptimizer: true
+    })
   },
 
   dismissBudgetCap: () => set({ budgetCapBanner: null }),
@@ -1008,9 +1190,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // MULTI-CHAT-06: Remove the unsent optimistic message before switching away
     set((state) => ({
       blockedByBanner: null,
-      messages: optimisticId
-        ? state.messages.filter((m) => m.id !== optimisticId)
-        : state.messages
+      messages: optimisticId ? state.messages.filter((m) => m.id !== optimisticId) : state.messages
     }))
     await selectConversation(targetConvId)
   },
@@ -1020,7 +1200,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     if (!blockedByBanner) return
     // GAP-E-FIX: Capture target conversation before async gaps
     const targetConvId = get().activeConversation?.id
-    const { blockedConvId, retryText, retryAttachments, retryOptions, optimisticMessageId } = blockedByBanner
+    const { blockedConvId, retryText, retryAttachments, retryOptions, optimisticMessageId } =
+      blockedByBanner
     // MULTI-CHAT-06: Remove old optimistic message — sendMessage will create a fresh one on retry
     set((state) => ({
       blockedByBanner: null,
@@ -1055,17 +1236,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const optimisticId = blockedByBanner.optimisticMessageId
     set((state) => ({
       blockedByBanner: null,
-      messages: optimisticId
-        ? state.messages.filter((m) => m.id !== optimisticId)
-        : state.messages
+      messages: optimisticId ? state.messages.filter((m) => m.id !== optimisticId) : state.messages
     }))
   },
 
   continuePastTurnLimit: () => {
     const { activeConversation, isStreaming, sendingConversationIds } = get()
-    if (!activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id)) return
+    if (!activeConversation || isStreaming || sendingConversationIds.has(activeConversation.id))
+      return
     set({ turnLimitReached: null })
-    void get().sendMessage('Continue where you left off. Do not repeat completed work.', undefined, { hidden: true, skipOptimizer: true })
+    void get().sendMessage(
+      'Continue where you left off. Do not repeat completed work.',
+      undefined,
+      { hidden: true, skipOptimizer: true }
+    )
   },
 
   dismissTurnLimit: () => set({ turnLimitReached: null }),
@@ -1081,7 +1265,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ conversationState: data })
   },
 
-  completeConversation: async (branchName: string, commitMessage: string, description: string, baseBranch?: string) => {
+  completeConversation: async (
+    branchName: string,
+    commitMessage: string,
+    description: string,
+    baseBranch?: string
+  ) => {
     const { activeConversation, conversations } = get()
     if (!activeConversation) throw new Error('No active conversation')
 
@@ -1203,8 +1392,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
               budgetCapBanner: null,
               blockedByBanner: null,
               turnLimitReached: null,
-              sendingConversationIds: new Set<string>(),  // IMP-R9-1: Prevent locked input after close during send
-              conversationState: { phase: 'idle' as const, from: null, event: null, conversationId: null }
+              sendingConversationIds: new Set<string>(), // IMP-R9-1: Prevent locked input after close during send
+              conversationState: {
+                phase: 'idle' as const,
+                from: null,
+                event: null,
+                conversationId: null
+              }
             }
           : {})
       }
@@ -1216,59 +1410,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     // Flush any accumulated streaming content into a committed message
     // BEFORE showing the question card. This preserves chronological ordering:
     // the agent's pre-question text appears before the user's answer.
-    // FLUSH-ORDER-01: Flush the active conversation's accumulator BEFORE reading state.
-    const activeConversation = get().activeConversation
-    internals.flushAccumulator(activeConversation?.id)
-
-    // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
-    const buffer = activeConversation ? get().conversationStreams.get(activeConversation.id) : undefined
-    const streamingContent = buffer?.streamingContent ?? get().streamingContent
-    const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
-    const streamingRole = buffer?.streamingRole ?? get().streamingRole
-    const streamingSpecialist = buffer?.streamingSpecialist ?? get().streamingSpecialist
-    const toolActivities = buffer?.toolActivities ?? get().toolActivities
-
-    if (
-      activeConversation &&
-      (streamingContent || streamingSegments.length > 0 || toolActivities.length > 0)
-    ) {
-      const mergedContent = [...streamingSegments.map((s) => s.content), streamingContent]
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .join('\n\n')
-
-      const mergedTools = [
-        ...streamingSegments.flatMap((s) => s.toolActivities),
-        ...toolActivities
-      ].map((a) => (a.status === 'running' ? { ...a, status: 'completed' as const } : a))
-
-      if (mergedContent || mergedTools.length > 0) {
-        const message: Message = {
-          id: `pre-question-${Date.now()}`,
-          conversationId: activeConversation.id,
-          role: streamingRole,
-          ...(streamingRole === 'specialist' && streamingSpecialist
-            ? { agentId: streamingSpecialist }
-            : {}),
-          contentMd: mergedContent,
-          attachmentsJson: '[]',
-          createdAt:
-            streamingSegments.length > 0
-              ? new Date(streamingSegments[0].timestamp).toISOString()
-              : new Date().toISOString(),
-          toolActivities: mergedTools.length > 0 ? mergedTools : undefined
-        }
-
-        set((state) => ({
-          messages: [...state.messages, message],
-          streamingContent: '',
-          streamingSegments: [],
-          toolActivities: []
-        }))
-      }
-
-      internals.resetAccumulator(activeConversation?.id)
-    }
+    flushStreamingIntoMessage(get, set, 'pre-question')
 
     set({
       pendingQuestions: questions,
@@ -1325,10 +1467,64 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  setPendingToolPermission: (permission) => {
+    // Same ordering rule as the question card — commit the agent's pre-permission
+    // text so the card renders below it, not above it.
+    flushStreamingIntoMessage(get, set, 'pre-permission')
+    set({ pendingToolPermission: { permission, decision: 'pending' } })
+  },
+
+  resolvePermissionExternally: ({ permissionId, conversationId, outcome }) => {
+    const pending = get().pendingToolPermission
+    const matchesCard = pending?.permission.id === permissionId
+
+    if (outcome === 'approved' || outcome === 'denied') {
+      // The modal decided; the card becomes the receipt. PERM-INLINE-01 in
+      // finalizeStream clears it once the turn actually moves.
+      if (matchesCard && pending) set({ pendingToolPermission: { ...pending, decision: outcome } })
+      return
+    }
+
+    if (matchesCard) set({ pendingToolPermission: null })
+
+    // Unanswered: say so in the transcript and offer a retry. Scoped to the
+    // conversation that raised it so a background workspace cannot write into
+    // the chat currently on screen.
+    const activeId = get().activeConversation?.id
+    if (!activeId) return
+    if (conversationId && conversationId !== activeId && !matchesCard) return
+
+    get().appendLocalMessage(
+      outcome === 'timedout' ? PERMISSION_TIMEOUT_MESSAGE : PERMISSION_CANCELLED_MESSAGE
+    )
+
+    const lastUserText = [...get().messages].reverse().find((m) => m.role === 'user')?.contentMd
+    if (lastUserText) {
+      set({ permissionRetry: { conversationId: activeId, retryText: lastUserText } })
+    }
+  },
+
+  retryAfterPermission: async () => {
+    const retry = get().permissionRetry
+    if (!retry) return
+    set({ permissionRetry: null })
+    // Guard against a conversation switch between click and send.
+    if (get().activeConversation?.id !== retry.conversationId) return
+    await get().sendMessage(retry.retryText)
+  },
+
+  dismissPermissionRetry: () => set({ permissionRetry: null }),
+
   setCompactSuggestion: (data) => set({ compactSuggestion: data }),
 
   clearDisplay: () => {
-    set({ messages: [], streamingContent: '', streamingSegments: [], toolActivities: [] })
+    set({
+      messages: [],
+      streamingContent: '',
+      streamingSegments: [],
+      toolActivities: [],
+      pendingToolPermission: null
+    })
   },
 
   appendLocalMessage: (content: string, opts?: { role?: Message['role']; agentId?: string }) => {
@@ -1423,6 +1619,86 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  rehydrateStreamingState: async () => {
+    let backendStreams: Array<{ conversationId: string; requestId: string }>
+    try {
+      const backendState = await window.api.getStreamingState()
+      backendStreams = backendState.streams ?? []
+    } catch (error) {
+      // Same rule as reconcileStopState: never act on a failed query — the
+      // local state is the only state we have.
+      rendererLog.warn('[BOOT-REHYDRATE] Streaming-state query failed:', error)
+      return
+    }
+
+    const patch = reconcileBootStreamingState(backendStreams, {
+      streamingConversationIds: get().streamingConversationIds,
+      conversationStreams: get().conversationStreams,
+      activeConversationId: get().activeConversation?.id ?? null
+    })
+    if (!patch) return
+
+    rendererLog.info(
+      `[BOOT-REHYDRATE] Adopted ${backendStreams.length} stream(s) still running in main`
+    )
+    set(patch)
+  },
+
+  resetForWorkspaceSwitch: () => {
+    // Flush the outgoing conversation's accumulator so its buffer holds the
+    // latest chunks before we stop projecting it to the globals.
+    const activeId = get().activeConversation?.id
+    if (activeId) internals.flushAccumulator(activeId)
+
+    const state = get()
+    const { kept: keptStreams, dropped } = partitionStreamsForWorkspaceSwitch(
+      state.conversationStreams
+    )
+    // Only finished conversations lose their accumulator + safety timer.
+    for (const conversationId of dropped) {
+      internals.resetAccumulator(conversationId)
+      internals.clearSafetyTimer(conversationId)
+    }
+
+    set({
+      conversations: [],
+      activeConversation: null,
+      messages: [],
+      streamingContent: '',
+      streamingSegments: [],
+      streamingRole: 'specialist' as const,
+      streamingSpecialist: null,
+      streamingTaskId: null,
+      isStreaming: false,
+      sendingConversationIds: new Set(
+        [...state.sendingConversationIds].filter((id) => keptStreams.has(id))
+      ),
+      streamingConversationIds: new Set(
+        [...state.streamingConversationIds].filter((id) => keptStreams.has(id))
+      ),
+      conversationStreams: keptStreams,
+      activeRequestId: null,
+      streamingPhase: null,
+      toolActivities: [],
+      compactSuggestion: null,
+      pendingQuestions: null,
+      pendingQuestionAction: null,
+      pendingQuestionRequestId: null,
+      pendingToolPermission: null,
+      permissionRetry: null,
+      budgetCapBanner: null,
+      blockedByBanner: null,
+      turnLimitReached: null,
+      sessionRecovery: null,
+      autoModeSwitchPill: null,
+      draftTexts: {},
+      contextUsages: {},
+      effortLevels: {},
+      streamStalledConversationId: null,
+      conversationState: { phase: 'idle', from: null, event: null, conversationId: null }
+    })
+  },
+
   reset: () => {
     internals.resetAccumulator()
     internals.clearSafetyTimer()
@@ -1436,7 +1712,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       streamingSpecialist: null,
       streamingTaskId: null,
       isStreaming: false,
-      sendingConversationIds: new Set<string>(),  // GAP-R8-1: Prevent locked input after workspace switch during send
+      sendingConversationIds: new Set<string>(), // GAP-R8-1: Prevent locked input after workspace switch during send
       streamingConversationIds: new Set<string>(),
       conversationStreams: new Map(),
       activeRequestId: null,
@@ -1446,6 +1722,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       pendingQuestions: null,
       pendingQuestionAction: null,
       pendingQuestionRequestId: null,
+      pendingToolPermission: null,
       budgetCapBanner: null,
       blockedByBanner: null,
       turnLimitReached: null,
@@ -1497,6 +1774,7 @@ export const useChatActions = (): Pick<
   | 'reorderConversations'
   | 'setConversationState'
   | 'setEffort'
+  | 'rehydrateStreamingState'
 > =>
   useChatStore(
     useShallow((s) => ({
@@ -1530,7 +1808,8 @@ export const useChatActions = (): Pick<
       loadContextUsage: s.loadContextUsage,
       reorderConversations: s.reorderConversations,
       setConversationState: s.setConversationState,
-      setEffort: s.setEffort
+      setEffort: s.setEffort,
+      rehydrateStreamingState: s.rehydrateStreamingState
     }))
   )
 

@@ -153,7 +153,6 @@ export abstract class BlueprintBaseAdapter extends BaseRoleAdapter {
     /* no-op */
   }
 
-
   override onSessionStop(): void {
     this.systemPrompt = null
     this.goalCondition = null

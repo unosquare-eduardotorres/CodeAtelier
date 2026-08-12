@@ -66,7 +66,10 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
   )
 
   return (
-    <div data-testid="welcome-modal" className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(15,21,23,0.85)] backdrop-blur-md">
+    <div
+      data-testid="welcome-modal"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(15,21,23,0.85)] backdrop-blur-md"
+    >
       <div
         ref={modalRef}
         className="relative w-full max-w-md mx-4 bg-surface-raised border border-border-subtle rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-300 motion-reduce:animate-none"

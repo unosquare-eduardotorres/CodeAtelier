@@ -85,7 +85,10 @@ export function parsePhaseCompletionBlock(
           if (text[i] === '{') depth++
           else if (text[i] === '}') {
             depth--
-            if (depth === 0) { endBrace = i; break }
+            if (depth === 0) {
+              endBrace = i
+              break
+            }
           }
         }
         if (endBrace > -1) {
@@ -117,7 +120,10 @@ export function parsePhaseCompletionBlock(
           if (text[i] === '{') depth++
           else if (text[i] === '}') {
             depth--
-            if (depth === 0) { jsonEnd = i; break }
+            if (depth === 0) {
+              jsonEnd = i
+              break
+            }
           }
         }
         if (jsonEnd > -1) {
@@ -146,7 +152,7 @@ export function parsePhaseCompletionBlock(
     if (text.length > 200) {
       bpLog.warn(
         `[parsePhaseCompletionBlock] No completion block found in ${text.length}-char output` +
-        (expectedPhase ? ` (expectedPhase: ${expectedPhase})` : '')
+          (expectedPhase ? ` (expectedPhase: ${expectedPhase})` : '')
       )
     }
   } catch (err) {

@@ -150,18 +150,47 @@ function useSubscriptionChecks(): SubscriptionChecksState {
 }
 
 export default function AISubscriptionsSection(): React.JSX.Element {
-  const { result, isValidating, isConfiguring, configureError, runValidation, handleAutoConfigure } =
-    useSubscriptionChecks()
+  const {
+    result,
+    isValidating,
+    isConfiguring,
+    configureError,
+    runValidation,
+    handleAutoConfigure
+  } = useSubscriptionChecks()
 
   const hasResult = !!result
-  const cli = deriveRowStatus(isValidating, hasResult, result?.claudeCli.installed ?? false, 'Installed', 'Not Found')
-  const auth = deriveRowStatus(isValidating, hasResult, result?.claudeAuth.authenticated ?? false, 'Logged In', 'Not Authenticated', result?.claudeCli.installed ? 'error' : 'warning')
-  const max = deriveRowStatus(isValidating, hasResult, result?.claudeMax.active ?? false, 'Active', 'Inactive', 'warning')
+  const cli = deriveRowStatus(
+    isValidating,
+    hasResult,
+    result?.claudeCli.installed ?? false,
+    'Installed',
+    'Not Found'
+  )
+  const auth = deriveRowStatus(
+    isValidating,
+    hasResult,
+    result?.claudeAuth.authenticated ?? false,
+    'Logged In',
+    'Not Authenticated',
+    result?.claudeCli.installed ? 'error' : 'warning'
+  )
+  const max = deriveRowStatus(
+    isValidating,
+    hasResult,
+    result?.claudeMax.active ?? false,
+    'Active',
+    'Inactive',
+    'warning'
+  )
 
   const showAutoConfigureButton = result && !result.claudeCli.installed
 
   return (
-    <div data-testid="ai-subscriptions-section" className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+    <div
+      data-testid="ai-subscriptions-section"
+      className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm"
+    >
       <div className="flex items-center gap-2 mb-0.5">
         <ShieldCheck size={15} className="text-primary-text" />
         <h4 className="text-sm font-medium text-text-primary">AI Subscriptions</h4>

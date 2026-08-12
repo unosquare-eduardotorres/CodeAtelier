@@ -16,7 +16,11 @@ import {
   TokenDetailsModal,
   UnsavedChangesDialog
 } from '@renderer/components/common'
-import { WorkspaceTransition, useTransitionState, consumeUserInitiated } from '@renderer/components/transitions'
+import {
+  WorkspaceTransition,
+  useTransitionState,
+  consumeUserInitiated
+} from '@renderer/components/transitions'
 import { NotificationStack } from '@renderer/components/notifications'
 import { useBackgroundSessionListeners } from '@renderer/hooks/useBackgroundSessionListeners'
 import { BugTrackerPage } from '@renderer/components/bugs'
@@ -44,6 +48,7 @@ import {
   useNavigationHandlers
 } from './hooks'
 import { useBlueprintStatusBar } from './hooks/useBlueprintStatusBar'
+import { useBootstrapStatusBar } from './hooks/useBootstrapStatusBar'
 
 import { isMacPlatform as isMac } from '@renderer/utils/platform'
 
@@ -165,17 +170,14 @@ export default function AppLayout(): React.JSX.Element {
   // ── Unsaved-changes navigation guard ──
   const [pendingNav, setPendingNav] = useState<(() => void) | null>(null)
 
-  const guardNavigation = useCallback(
-    (action: () => void) => {
-      const guard = useSettingsStore.getState().unsavedGuard
-      if (guard?.isDirty()) {
-        setPendingNav(() => action)
-      } else {
-        action()
-      }
-    },
-    []
-  )
+  const guardNavigation = useCallback((action: () => void) => {
+    const guard = useSettingsStore.getState().unsavedGuard
+    if (guard?.isDirty()) {
+      setPendingNav(() => action)
+    } else {
+      action()
+    }
+  }, [])
 
   const guardedSetView = useCallback(
     (v: 'chat' | 'app-settings' | 'help' | 'bugs') => guardNavigation(() => setView(v)),
@@ -199,11 +201,33 @@ export default function AppLayout(): React.JSX.Element {
 
   const handleNotificationNavigate = useCallback(
     (sidebar: 'chat' | 'settings', tab?: string) => {
-      guardedSetSidebarView(sidebar)
-      if (tab) guardedSetTab(tab as SettingsTab)
+      // One guarded action for the whole navigation. Routing sidebarView and
+      // tab through two separate guard calls meant the sidebar applied
+      // immediately while the tab deferred behind the unsaved-changes prompt,
+      // leaving a split-brain sidebar.
+      //
+      // `view` must be reset too: renderMainContent early-returns for
+      // 'bugs' | 'help' | 'app-settings' before it ever consults sidebarView,
+      // so from those pages a notification click was a silent no-op.
+      guardNavigation(() => {
+        setView('chat')
+        setSidebarView(sidebar)
+        if (tab) setWorkspaceSettingsTab(tab as SettingsTab)
+      })
     },
-    [guardedSetSidebarView, guardedSetTab]
+    [guardNavigation]
   )
+
+  /**
+   * Escape hatch when the main content throws deterministically — "Try Again"
+   * alone just re-renders the same broken view. Navigate back to chat first so
+   * the retry has somewhere safe to land. Bypasses guardNavigation on purpose:
+   * the user is already stuck on a crashed screen.
+   */
+  const handleErrorBoundaryReset = useCallback(() => {
+    setView('chat')
+    setSidebarView('chat')
+  }, [])
 
   const handleUnsavedSave = useCallback(async () => {
     const guard = useSettingsStore.getState().unsavedGuard
@@ -228,10 +252,7 @@ export default function AppLayout(): React.JSX.Element {
   // ── Pending onboard: auto-navigate to Blueprints tab ──
   const pendingOnboard = useBlueprintStore((s) => s.pendingOnboard)
   useEffect(() => {
-    if (
-      activeWorkspace &&
-      pendingOnboard?.workspaceId === activeWorkspace.id
-    ) {
+    if (activeWorkspace && pendingOnboard?.workspaceId === activeWorkspace.id) {
       // Direct navigation — fresh workspace has no unsaved state
       setSidebarView('settings')
       setWorkspaceSettingsTab('blueprints')
@@ -267,6 +288,7 @@ export default function AppLayout(): React.JSX.Element {
 
   // Blueprint status for StatusBar indicator
   const blueprintStatus = useBlueprintStatusBar()
+  const bootstrapStatus = useBootstrapStatusBar()
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
 
   // ── Workspace transition animation ──
@@ -303,6 +325,20 @@ export default function AppLayout(): React.JSX.Element {
       await openWorkspace(workspaceId)
       setSidebarView('settings')
       setWorkspaceSettingsTab('blueprints')
+    },
+    [openWorkspace]
+  )
+
+  const handleNavigateToMemory = useCallback(() => {
+    guardedSetSidebarView('settings')
+    guardedSetTab('memory')
+  }, [guardedSetSidebarView, guardedSetTab])
+
+  const handleSwitchToWorkspaceMemory = useCallback(
+    async (workspaceId: string) => {
+      await openWorkspace(workspaceId)
+      setSidebarView('settings')
+      setWorkspaceSettingsTab('memory')
     },
     [openWorkspace]
   )
@@ -453,10 +489,35 @@ export default function AppLayout(): React.JSX.Element {
           className="flex items-center gap-1.5 ml-auto relative z-10"
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
-          <HeaderIconButton icon={Home} isActive={false} onClick={handleGoHome} title="Home" ariaLabel="Home" />
-          <HeaderIconButton icon={Sliders} isActive={view === 'app-settings'} onClick={() => toggleView('app-settings')} title="Settings" ariaLabel="Settings" />
-          <HeaderIconButton icon={Bug} isActive={view === 'bugs'} onClick={() => toggleView('bugs')} title="Bug Tracker" ariaLabel="Bug Tracker" badge={unresolvedBugCount} />
-          <HeaderIconButton icon={CircleHelp} isActive={view === 'help'} onClick={() => toggleView('help')} title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`} ariaLabel="Help" />
+          <HeaderIconButton
+            icon={Home}
+            isActive={false}
+            onClick={handleGoHome}
+            title="Home"
+            ariaLabel="Home"
+          />
+          <HeaderIconButton
+            icon={Sliders}
+            isActive={view === 'app-settings'}
+            onClick={() => toggleView('app-settings')}
+            title="Settings"
+            ariaLabel="Settings"
+          />
+          <HeaderIconButton
+            icon={Bug}
+            isActive={view === 'bugs'}
+            onClick={() => toggleView('bugs')}
+            title="Bug Tracker"
+            ariaLabel="Bug Tracker"
+            badge={unresolvedBugCount}
+          />
+          <HeaderIconButton
+            icon={CircleHelp}
+            isActive={view === 'help'}
+            onClick={() => toggleView('help')}
+            title={`Help (${isMac ? '⌘' : 'Ctrl+'}/)`}
+            ariaLabel="Help"
+          />
         </div>
       </div>
 
@@ -479,7 +540,7 @@ export default function AppLayout(): React.JSX.Element {
           </Sidebar>
         )}
 
-        <ErrorBoundary>{renderMainContent()}</ErrorBoundary>
+        <ErrorBoundary onReset={handleErrorBoundaryReset}>{renderMainContent()}</ErrorBoundary>
       </div>
 
       <ToastContainer onNavigate={(target) => guardedSetView(target as typeof view)} />
@@ -509,6 +570,7 @@ export default function AppLayout(): React.JSX.Element {
         lastAuditScore={lastAuditScore}
         grillStatus={grillStatus}
         blueprintStatus={blueprintStatus}
+        bootstrapStatus={bootstrapStatus}
         indexingState={indexingState}
         sidebarView={sidebarView}
         onNavigateToSettings={(tab) => {
@@ -529,6 +591,8 @@ export default function AppLayout(): React.JSX.Element {
         onNavigateToGrill={handleNavigateToGrill}
         onNavigateToBlueprint={handleNavigateToBlueprint}
         onSwitchToWorkspaceBlueprint={handleSwitchToWorkspaceBlueprint}
+        onNavigateToMemory={handleNavigateToMemory}
+        onSwitchToWorkspaceMemory={handleSwitchToWorkspaceMemory}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
         onZoomReset={handleZoomReset}

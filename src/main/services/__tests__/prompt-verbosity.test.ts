@@ -65,7 +65,10 @@ describe('Lean Conditional Gating', () => {
       model: 'claude-opus-4-8'
     })
     // W2: full and lean unified — both include the same type taxonomy prompt
-    assert.ok(out.includes('mcp__memory__memory_search'), 'Lean mode should include memory tools prompt on turn 1')
+    assert.ok(
+      out.includes('mcp__memory__memory_search'),
+      'Lean mode should include memory tools prompt on turn 1'
+    )
   })
 
   test('full mode includes memory protocol prompt', () => {
@@ -77,7 +80,10 @@ describe('Lean Conditional Gating', () => {
       model: 'claude-haiku-4-5-20251001'
     })
     // W2: full and lean are now unified — check for content present in the unified prompt
-    assert.ok(out.includes('mcp__memory__memory_search'), 'Full mode should include memory tools prompt')
+    assert.ok(
+      out.includes('mcp__memory__memory_search'),
+      'Full mode should include memory tools prompt'
+    )
   })
 
   test('lean mode uses compressed direct-answer boost on turn 3+', () => {
@@ -105,10 +111,7 @@ describe('Lean Conditional Gating', () => {
       model: 'claude-haiku-4-5-20251001'
     })
     // W2: full variant compressed — no more verbose "Answer-Complete Rule" subsection
-    assert.ok(
-      out.includes('STOP'),
-      'Full mode should contain STOP rule for direct answers'
-    )
+    assert.ok(out.includes('STOP'), 'Full mode should contain STOP rule for direct answers')
   })
 
   test('lean mode tightens ask-question regex', () => {

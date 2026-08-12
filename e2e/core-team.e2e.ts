@@ -19,9 +19,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Core Team', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,19 +33,23 @@ test.describe('Core Team', () => {
     return true
   }
 
-  async function navigateToTeam(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToTeam(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('team')
   }
 
   test('core team page renders with agent card grid', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToTeam(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const teamPage = page.locator('[data-testid="core-team-page"]')
     const hasTeamPage = await teamPage.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -60,18 +62,30 @@ test.describe('Core Team', () => {
 
   test('agent card shows avatar, name, and description', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToTeam(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const teamPage = page.locator('[data-testid="core-team-page"]')
     const hasTeamPage = await teamPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTeamPage) { test.skip(); return }
+    if (!hasTeamPage) {
+      test.skip()
+      return
+    }
 
     const firstCard = page.locator('[data-testid="core-agent-card"]').first()
     const hasCard = await firstCard.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     // Card should have a name (h4 element)
     const nameEl = firstCard.locator('h4').first()
@@ -91,24 +105,39 @@ test.describe('Core Team', () => {
 
   test('"Used In" badges display correctly', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToTeam(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const teamPage = page.locator('[data-testid="core-team-page"]')
     const hasTeamPage = await teamPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTeamPage) { test.skip(); return }
+    if (!hasTeamPage) {
+      test.skip()
+      return
+    }
 
     const firstCard = page.locator('[data-testid="core-agent-card"]').first()
     const hasCard = await firstCard.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCard) { test.skip(); return }
+    if (!hasCard) {
+      test.skip()
+      return
+    }
 
     // Check for "Used In" badge labels
     const expectedBadges = ['Chat', 'Grill', 'Plan', 'Build']
     let foundCount = 0
     for (const badge of expectedBadges) {
-      const badgeEl = firstCard.locator('span').filter({ hasText: new RegExp(`^${badge}$`) }).first()
+      const badgeEl = firstCard
+        .locator('span')
+        .filter({ hasText: new RegExp(`^${badge}$`) })
+        .first()
       const hasBadge = await badgeEl.isVisible({ timeout: 1_000 }).catch(() => false)
       if (hasBadge) foundCount++
     }
@@ -119,14 +148,23 @@ test.describe('Core Team', () => {
 
   test('agent name shows alias when configured', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToTeam(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const teamPage = page.locator('[data-testid="core-team-page"]')
     const hasTeamPage = await teamPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTeamPage) { test.skip(); return }
+    if (!hasTeamPage) {
+      test.skip()
+      return
+    }
 
     // The first card should have a name visible — it's either the default or an alias
     const firstCard = page.locator('[data-testid="core-agent-card"]').first()
@@ -137,14 +175,23 @@ test.describe('Core Team', () => {
 
   test('at least one core agent (specialist) is always present', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToTeam(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const teamPage = page.locator('[data-testid="core-team-page"]')
     const hasTeamPage = await teamPage.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTeamPage) { test.skip(); return }
+    if (!hasTeamPage) {
+      test.skip()
+      return
+    }
 
     // Core team should always show at least one agent
     const agentCards = page.locator('[data-testid="core-agent-card"]')

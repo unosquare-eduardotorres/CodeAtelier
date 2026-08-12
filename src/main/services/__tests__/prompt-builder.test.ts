@@ -13,6 +13,9 @@
  *  - buildClaudeMdLayer with empty workspacePath → ''
  */
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 import { PromptBuilder } from '../prompt-builder'
 
@@ -247,6 +250,79 @@ describe('PromptBuilder.buildClaudeMdLayer', () => {
 
   test('nonexistent path returns empty string (no CLAUDE.md)', () => {
     assert.equal(builder.buildClaudeMdLayer('/nonexistent/path/xyz', 'build'), '')
+  })
+})
+
+// ── Instruction layer budget ──
+
+/**
+ * The instruction layer is prepended to every prompt. Uncapped it reached 12k
+ * chars (~3.4k tokens) on a repo with several rule files, which is the kind of
+ * cost nobody attributes to the right place. These pin the tier ceilings.
+ */
+describe('PromptBuilder instruction layer budget', () => {
+  /** Workspace with enough rule-file bulk to exceed every tier budget. */
+  function withRuleFiles(body: (root: string) => void): void {
+    const root = mkdtempSync(join(tmpdir(), 'prompt-builder-instr-'))
+    try {
+      const filler = 'Always prefer the repository convention over personal taste. '.repeat(120)
+      writeFileSync(join(root, 'AGENTS.md'), `# Agents\n\n${filler}`, 'utf-8')
+      writeFileSync(join(root, '.clinerules'), `# Cline\n\n${filler}`, 'utf-8')
+      writeFileSync(join(root, '.windsurfrules'), `# Windsurf\n\n${filler}`, 'utf-8')
+      mkdirSync(join(root, '.cursor', 'rules'), { recursive: true })
+      writeFileSync(join(root, '.cursor', 'rules', 'a.mdc'), `# A\n\n${filler}`, 'utf-8')
+      writeFileSync(join(root, '.cursor', 'rules', 'b.mdc'), `# B\n\n${filler}`, 'utf-8')
+      body(root)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+
+  function layerFor(root: string, tier: 'minimal' | 'standard' | 'full'): string {
+    // Private by design; the header of this file documents the `as any` access.
+    return (builder as any).buildInstructionSourcesLayer(root, tier, [])
+  }
+
+  test('minimal tier contributes nothing', () => {
+    withRuleFiles((root) => {
+      assert.equal(layerFor(root, 'minimal'), '')
+    })
+  })
+
+  test('standard tier is capped at 4k characters', () => {
+    withRuleFiles((root) => {
+      const layer = layerFor(root, 'standard')
+      assert.ok(layer.length > 0, 'the layer should still carry some instructions')
+      assert.ok(
+        layer.length <= 4_000 + 200,
+        `standard layer was ${layer.length} chars, expected ≤ ~4000`
+      )
+    })
+  })
+
+  test('full tier is allowed more than standard', () => {
+    withRuleFiles((root) => {
+      const full = layerFor(root, 'full')
+      const standard = layerFor(root, 'standard')
+      assert.ok(
+        full.length > standard.length,
+        `full (${full.length}) should exceed standard (${standard.length})`
+      )
+      assert.ok(full.length <= 12_000 + 200)
+    })
+  })
+
+  test('the cache is keyed by tier, so tiers do not serve each other', () => {
+    withRuleFiles((root) => {
+      // Standard first: with a tier-agnostic key this would be cached and
+      // handed straight back for the `full` request below.
+      const standard = layerFor(root, 'standard')
+      const full = layerFor(root, 'full')
+      assert.notEqual(standard.length, full.length)
+
+      // And the second read of the same tier is still the capped one.
+      assert.equal(layerFor(root, 'standard').length, standard.length)
+    })
   })
 })
 

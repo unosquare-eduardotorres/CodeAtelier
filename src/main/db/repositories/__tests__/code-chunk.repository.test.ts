@@ -53,7 +53,10 @@ if (!env) {
         makeChunk('chunk2', 'src/module-a.ts'),
         makeChunk('chunk3', 'src/module-b.ts')
       ]
-      const mtimes = new Map([['src/module-a.ts', 1000], ['src/module-b.ts', 2000]])
+      const mtimes = new Map([
+        ['src/module-a.ts', 1000],
+        ['src/module-b.ts', 2000]
+      ])
       codeChunkRepository.upsertChunks(wsId, chunks, mtimes)
 
       const all = codeChunkRepository.findByWorkspace(wsId)
@@ -105,7 +108,8 @@ if (!env) {
       updated[0].body = 'function chunk1() { return 99; }'
       codeChunkRepository.upsertChunks(wsId, updated, new Map([['src/module-a.ts', 3000]]))
 
-      const chunk = codeChunkRepository.findByFile(wsId, 'src/module-a.ts')
+      const chunk = codeChunkRepository
+        .findByFile(wsId, 'src/module-a.ts')
         .find((c: any) => c.id === 'chunk1')
       assert.ok(chunk)
       assert.ok(chunk.body.includes('return 99'))

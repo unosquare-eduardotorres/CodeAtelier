@@ -107,8 +107,6 @@ function createShell(args: CreateShellArgs): Workspace {
   )
   projectLog.info(`[project:shell] Workspace registered: ${workspace.id}`)
 
-
-
   // ── Seed Project Specialist row ──
   try {
     const db = getDatabase()

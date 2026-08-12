@@ -46,7 +46,11 @@ export function createTimedCleanupMap(label: string): TimedCleanupMap {
       const existing = map.get(workspaceId)
       if (existing) {
         for (const cleanup of existing) {
-          try { cleanup() } catch (e) { cleanupLog.warn(`[${label}:stale-cleanup] Error:`, e) }
+          try {
+            cleanup()
+          } catch (e) {
+            cleanupLog.warn(`[${label}:stale-cleanup] Error:`, e)
+          }
         }
         cleanupLog.info(
           `[${label}:cleanup] Cleared ${existing.length} stale listeners for ${workspaceId}`
@@ -88,7 +92,11 @@ export function createTimedCleanupMap(label: string): TimedCleanupMap {
             `[${label}:auto-cleanup] Timer fired for ${workspaceId} — cleaning ${cleanups.length} listeners`
           )
           for (const cleanup of cleanups) {
-            try { cleanup() } catch (e) { cleanupLog.warn(`[${label}:auto-cleanup] Error:`, e) }
+            try {
+              cleanup()
+            } catch (e) {
+              cleanupLog.warn(`[${label}:auto-cleanup] Error:`, e)
+            }
           }
           map.delete(workspaceId)
         }
@@ -104,7 +112,11 @@ export function createTimedCleanupMap(label: string): TimedCleanupMap {
       const cleanups = map.get(workspaceId)
       if (cleanups) {
         for (const cleanup of cleanups) {
-          try { cleanup() } catch (e) { cleanupLog.warn(`[${label}:run-cleanup] Error:`, e) }
+          try {
+            cleanup()
+          } catch (e) {
+            cleanupLog.warn(`[${label}:run-cleanup] Error:`, e)
+          }
         }
         map.delete(workspaceId)
       }

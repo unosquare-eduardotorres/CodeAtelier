@@ -26,10 +26,7 @@ import {
   captureLoginShellEnv,
   resetLoginShellCache
 } from '../blueprint-preflight.service'
-import type {
-  PreflightCheck,
-  PreflightResult
-} from '../../../shared/preflight-types'
+import type { PreflightCheck, PreflightResult } from '../../../shared/preflight-types'
 
 // ── Registry tests ──
 
@@ -73,18 +70,26 @@ describe('KNOWN_SERVICES registry', () => {
 
   test('B5: SUPABASE_SERVICE_ROLE_KEY is optional, not required', () => {
     const supabase = KNOWN_SERVICES.find((s) => s.id === 'supabase')!
-    assert.ok(!supabase.requiredEnvVars.includes('SUPABASE_SERVICE_ROLE_KEY'),
-      'SERVICE_ROLE_KEY should be optional')
-    assert.ok(supabase.optionalEnvVars?.includes('SUPABASE_SERVICE_ROLE_KEY'),
-      'SERVICE_ROLE_KEY should be in optionalEnvVars')
+    assert.ok(
+      !supabase.requiredEnvVars.includes('SUPABASE_SERVICE_ROLE_KEY'),
+      'SERVICE_ROLE_KEY should be optional'
+    )
+    assert.ok(
+      supabase.optionalEnvVars?.includes('SUPABASE_SERVICE_ROLE_KEY'),
+      'SERVICE_ROLE_KEY should be in optionalEnvVars'
+    )
   })
 
   test('B5: STRIPE_WEBHOOK_SECRET is optional, not required', () => {
     const stripe = KNOWN_SERVICES.find((s) => s.id === 'stripe')!
-    assert.ok(!stripe.requiredEnvVars.includes('STRIPE_WEBHOOK_SECRET'),
-      'WEBHOOK_SECRET should be optional')
-    assert.ok(stripe.optionalEnvVars?.includes('STRIPE_WEBHOOK_SECRET'),
-      'WEBHOOK_SECRET should be in optionalEnvVars')
+    assert.ok(
+      !stripe.requiredEnvVars.includes('STRIPE_WEBHOOK_SECRET'),
+      'WEBHOOK_SECRET should be optional'
+    )
+    assert.ok(
+      stripe.optionalEnvVars?.includes('STRIPE_WEBHOOK_SECRET'),
+      'WEBHOOK_SECRET should be in optionalEnvVars'
+    )
   })
 
   test('B5: psql is presenceWarnOnly (hosted DBs)', () => {
@@ -94,12 +99,18 @@ describe('KNOWN_SERVICES registry', () => {
 
   test('B7: no false-positive keywords (container, payment, database migration)', () => {
     for (const svc of KNOWN_SERVICES) {
-      assert.ok(!svc.taskKeywords.includes('container'),
-        `${svc.id} should not have 'container' keyword (React false positive)`)
-      assert.ok(!svc.taskKeywords.includes('payment'),
-        `${svc.id} should not have 'payment' keyword (generic false positive)`)
-      assert.ok(!svc.taskKeywords.includes('database migration'),
-        `${svc.id} should not have 'database migration' keyword (SQLite false positive)`)
+      assert.ok(
+        !svc.taskKeywords.includes('container'),
+        `${svc.id} should not have 'container' keyword (React false positive)`
+      )
+      assert.ok(
+        !svc.taskKeywords.includes('payment'),
+        `${svc.id} should not have 'payment' keyword (generic false positive)`
+      )
+      assert.ok(
+        !svc.taskKeywords.includes('database migration'),
+        `${svc.id} should not have 'database migration' keyword (SQLite false positive)`
+      )
     }
   })
 })
@@ -241,7 +252,10 @@ describe('runPreflightChecks', () => {
       for (let i = 1; i < result.checks.length; i++) {
         const prev = statusOrder[result.checks[i - 1].status] ?? 2
         const curr = statusOrder[result.checks[i].status] ?? 2
-        assert.ok(prev <= curr, `Check order violation at index ${i}: ${result.checks[i - 1].status} > ${result.checks[i].status}`)
+        assert.ok(
+          prev <= curr,
+          `Check order violation at index ${i}: ${result.checks[i - 1].status} > ${result.checks[i].status}`
+        )
       }
     }
   })
@@ -259,8 +273,14 @@ describe('runPreflightChecks', () => {
 
     for (const check of result.checks) {
       // Check that no env var VALUE appears in the result — only names
-      assert.ok(!check.message.includes('sk_live_'), `Message contains secret value: ${check.message}`)
-      assert.ok(!check.message.includes('sk_test_'), `Message contains secret value: ${check.message}`)
+      assert.ok(
+        !check.message.includes('sk_live_'),
+        `Message contains secret value: ${check.message}`
+      )
+      assert.ok(
+        !check.message.includes('sk_test_'),
+        `Message contains secret value: ${check.message}`
+      )
       // Verify shape: should have name, message, status, sources — no 'value' field
       assert.ok(!('value' in check), `Check ${check.id} has a 'value' field — secret leak risk`)
     }
@@ -283,8 +303,11 @@ describe('runPreflightChecks', () => {
 
     const serviceRoleCheck = result.checks.find((c) => c.id === 'SUPABASE_SERVICE_ROLE_KEY')
     if (serviceRoleCheck) {
-      assert.equal(serviceRoleCheck.status, 'warn',
-        'SUPABASE_SERVICE_ROLE_KEY should be warn, not blocker')
+      assert.equal(
+        serviceRoleCheck.status,
+        'warn',
+        'SUPABASE_SERVICE_ROLE_KEY should be warn, not blocker'
+      )
     }
   })
 })
@@ -337,8 +360,11 @@ describe('buildPreflightDiscoveries', () => {
     }
 
     const discoveries = buildPreflightDiscoveries(result)
-    assert.equal(discoveries.length, 0,
-      'D11: Warnings should NOT produce discoveries (only blockers do)')
+    assert.equal(
+      discoveries.length,
+      0,
+      'D11: Warnings should NOT produce discoveries (only blockers do)'
+    )
   })
 
   test('skips pass checks', () => {
@@ -380,7 +406,10 @@ describe('buildPreflightDiscoveries', () => {
     }
 
     const discoveries = buildPreflightDiscoveries(result)
-    assert.ok(discoveries[0].includes('skip commands'), 'CLI blocker should mention skipping commands')
+    assert.ok(
+      discoveries[0].includes('skip commands'),
+      'CLI blocker should mention skipping commands'
+    )
   })
 })
 
@@ -504,4 +533,6 @@ describe('approval payload redaction', () => {
   })
 })
 
-void summaryAsync()
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

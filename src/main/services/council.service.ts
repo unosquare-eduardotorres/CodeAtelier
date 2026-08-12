@@ -55,6 +55,8 @@ interface AdvisorInstance {
   session: AgentSessionService | null
   status: CouncilMemberStatus
   review: CouncilReview | null
+  /** Per-conversation cancel: track the syntheticConvId used for send(). */
+  lastConversationId?: string
 }
 
 interface CouncilSessionEntry {
@@ -277,9 +279,15 @@ export class CouncilService extends EventEmitter {
               content: [
                 `**Score**: ${verdict.overallScore}/10`,
                 `**Recommendation**: ${verdict.sections.recommendation}`,
-                verdict.sections.blindSpots ? `**Blind Spots**: ${verdict.sections.blindSpots}` : '',
-                verdict.sections.oneThingFirst ? `**Do First**: ${verdict.sections.oneThingFirst}` : ''
-              ].filter(Boolean).join('\n\n'),
+                verdict.sections.blindSpots
+                  ? `**Blind Spots**: ${verdict.sections.blindSpots}`
+                  : '',
+                verdict.sections.oneThingFirst
+                  ? `**Do First**: ${verdict.sections.oneThingFirst}`
+                  : ''
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
               tags: ['council', 'verdict'],
               sourceType: 'blueprint',
               sourceRef: entry.dbSessionId ?? null,
@@ -404,10 +412,11 @@ export class CouncilService extends EventEmitter {
         await session.start(entry.workspacePath, 'plan')
 
         const syntheticConvId = `council-${role}-${crypto.randomUUID().slice(0, 8)}`
+        advisor.lastConversationId = syntheticConvId
         await session.send('Begin your review.', syntheticConvId, [])
 
         // Collect response and parse
-        const responseText = session.getStreamedContent()
+        const responseText = session.getStreamedContent(syntheticConvId)
         const review = parseCouncilReview(responseText, role)
 
         if (review) {
@@ -588,7 +597,7 @@ Respond ONLY with a JSON block:
       const syntheticConvId = `council-chairman-${crypto.randomUUID().slice(0, 8)}`
       await session.send('Synthesize the council verdict.', syntheticConvId, [])
 
-      const responseText = session.getStreamedContent()
+      const responseText = session.getStreamedContent(syntheticConvId)
       const verdict = parseCouncilVerdict(responseText)
 
       if (verdict) {
@@ -617,7 +626,7 @@ Respond ONLY with a JSON block:
     for (const advisor of entry.advisors.values()) {
       if (advisor.session) {
         try {
-          advisor.session.cancelCurrentQuery()
+          advisor.session.cancelCurrentQuery(advisor.lastConversationId)
         } catch {
           /* non-fatal */
         }
@@ -814,8 +823,12 @@ Respond ONLY with a JSON block:
               `**Score**: ${verdict.overallScore}/10`,
               `**Recommendation**: ${verdict.sections.recommendation}`,
               verdict.sections.blindSpots ? `**Blind Spots**: ${verdict.sections.blindSpots}` : '',
-              verdict.sections.oneThingFirst ? `**Do First**: ${verdict.sections.oneThingFirst}` : ''
-            ].filter(Boolean).join('\n\n'),
+              verdict.sections.oneThingFirst
+                ? `**Do First**: ${verdict.sections.oneThingFirst}`
+                : ''
+            ]
+              .filter(Boolean)
+              .join('\n\n'),
             tags: ['council', 'verdict'],
             sourceType: 'blueprint',
             sourceRef: sessionId,
@@ -886,9 +899,10 @@ Respond ONLY with a JSON block:
 
         await session.start(entry.workspacePath, 'plan')
         const syntheticConvId = `council-resume-${role}-${crypto.randomUUID().slice(0, 8)}`
+        advisor.lastConversationId = syntheticConvId
         await session.send('Begin your review.', syntheticConvId, [])
 
-        const responseText = session.getStreamedContent()
+        const responseText = session.getStreamedContent(syntheticConvId)
         const review = parseCouncilReview(responseText, role)
 
         if (review) {

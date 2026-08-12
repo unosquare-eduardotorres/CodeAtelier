@@ -89,11 +89,7 @@ function OptionRow({
       onKeyDown={onKeyDown}
       className={`w-full flex items-start gap-3 px-4 py-3 text-left transition-colors duration-150 min-h-[44px] outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset ${getOptionBg(isSelected, isRecommended)}`}
     >
-      {multiSelect ? (
-        <CheckboxIcon selected={isSelected} />
-      ) : (
-        <RadioIcon selected={isSelected} />
-      )}
+      {multiSelect ? <CheckboxIcon selected={isSelected} /> : <RadioIcon selected={isSelected} />}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm text-text-primary font-medium">{option.label}</span>
@@ -105,9 +101,7 @@ function OptionRow({
           )}
         </div>
         {option.recommendedReason && (
-          <p className="text-xs text-warning/80 mt-0.5 italic">
-            {option.recommendedReason}
-          </p>
+          <p className="text-xs text-warning/80 mt-0.5 italic">{option.recommendedReason}</p>
         )}
         {option.description && (
           <p className="text-xs text-text-muted mt-0.5">{option.description}</p>
@@ -381,9 +375,7 @@ export default function GrillQuestionCard({
       return state.selectedOptions.length > 0
     }
     return (
-      state.selectedOptions.length > 0 ||
-      state.otherSelected ||
-      state.otherText.trim().length > 0
+      state.selectedOptions.length > 0 || state.otherSelected || state.otherText.trim().length > 0
     )
   }).length
 

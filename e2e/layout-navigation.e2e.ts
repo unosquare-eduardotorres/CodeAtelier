@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Layout & Navigation', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,7 +35,10 @@ test.describe('Layout & Navigation', () => {
 
   test('unified sidebar renders with navigation tabs', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const sidebar = page.locator('[data-testid="unified-sidebar"]')
     await expect(sidebar).toBeVisible({ timeout: 10_000 })
@@ -51,11 +52,17 @@ test.describe('Layout & Navigation', () => {
 
   test('sidebar tab switching changes main content area', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const settingsTab = page.locator('[data-testid="sidebar-tab-settings"]')
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
-    if (!(await settingsTab.isVisible({ timeout: 3_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await settingsTab.isVisible({ timeout: 3_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     // Click Settings tab
     await settingsTab.click()
@@ -71,22 +78,36 @@ test.describe('Layout & Navigation', () => {
     await page.waitForTimeout(800)
 
     // Chat content should be visible
-    const chatContent = page.locator('[data-testid="chat-panel"], [data-testid="new-chat-page"], [data-testid="message-input"]')
-    const hasChat = await chatContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const chatContent = page.locator(
+      '[data-testid="chat-panel"], [data-testid="new-chat-page"], [data-testid="message-input"]'
+    )
+    const hasChat = await chatContent
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     // Chat or new-chat page should be visible
     expect(typeof hasChat).toBe('boolean')
   })
 
   test('sidebar collapse/expand toggles via Cmd+B', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const sidebar = page.locator('[data-testid="unified-sidebar"]')
-    if (!(await sidebar.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await sidebar.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     // Get initial sidebar width
     const initialBox = await sidebar.boundingBox()
-    if (!initialBox) { test.skip(); return }
+    if (!initialBox) {
+      test.skip()
+      return
+    }
 
     // Toggle sidebar with Cmd+B
     await page.keyboard.press('Meta+b')
@@ -111,7 +132,10 @@ test.describe('Layout & Navigation', () => {
 
   test('status bar shows workspace name and connection state', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     await expect(statusBar).toBeVisible({ timeout: 5_000 })
@@ -128,27 +152,41 @@ test.describe('Layout & Navigation', () => {
 
   test('workspace settings button opens settings panel', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const settingsTab = page.locator('[data-testid="sidebar-tab-settings"]')
-    if (!(await settingsTab.isVisible({ timeout: 3_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await settingsTab.isVisible({ timeout: 3_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await settingsTab.click()
     await page.waitForTimeout(800)
 
     // Settings panel should render with setting categories
-    const settingsItems = page.locator('button').filter({ hasText: /models|repository|team|ideas|memory|documents|tokens|health|council|goals/i })
+    const settingsItems = page.locator('button').filter({
+      hasText: /models|repository|team|ideas|memory|documents|tokens|health|council|goals/i
+    })
     const count = await settingsItems.count()
     expect(count).toBeGreaterThan(0)
   })
 
   test('home button returns to welcome screen', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const homeBtn = page.locator('[aria-label="Home"]')
     const hasHome = await homeBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasHome) { test.skip(); return }
+    if (!hasHome) {
+      test.skip()
+      return
+    }
 
     await homeBtn.click()
     await page.waitForTimeout(1_500)

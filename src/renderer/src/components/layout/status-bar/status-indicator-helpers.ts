@@ -4,9 +4,10 @@
  * exports its component (Fast Refresh requirement).
  */
 
-import { ShieldCheck, Flame, LayoutGrid, Database } from 'lucide-react'
+import { ShieldCheck, Flame, LayoutGrid, Database, Brain } from 'lucide-react'
 import type { StatusIndicatorProps } from './StatusIndicator'
 import type { BlueprintStatusBarInfo } from '../hooks/useBlueprintStatusBar'
+import type { BootstrapStatusBarInfo } from '../hooks/useBootstrapStatusBar'
 
 // ── Compute helpers ─────────────────────────────────────────────────────────
 
@@ -197,4 +198,72 @@ export function computeIndexingIndicator(
     }
   }
   return { icon: Database, state: 'hidden', title: 'Indexing', onClick }
+}
+
+/**
+ * Feed Brain ingestion.
+ *
+ * Hidden when idle — an ingestion that has finished is not news, and the
+ * status bar should stay quiet the rest of the time. A paused run is rendered
+ * as 'attention' precisely so it does not get forgotten.
+ */
+export function computeBrainIndicator(
+  info: BootstrapStatusBarInfo,
+  onClick: () => void,
+  onBadgeClick: () => void
+): StatusIndicatorProps {
+  const { active, backgroundCount } = info
+  const badgeProps =
+    backgroundCount > 0
+      ? { badge: backgroundCount, onBadgeClick, badgeClickable: true }
+      : { badge: null }
+
+  if (active) {
+    if (active.jobStatus === 'paused') {
+      return {
+        icon: Brain,
+        state: 'attention',
+        activeColor: 'teal',
+        label: 'Paused',
+        title: `Feed Brain paused at ${active.itemsDone}/${active.itemsTotal} items — click to resume`,
+        onClick,
+        ...badgeProps
+      }
+    }
+    if (active.jobStatus === 'error') {
+      return {
+        icon: Brain,
+        state: 'error',
+        activeColor: 'teal',
+        label: 'Error',
+        title: 'Feed Brain failed — click to view',
+        onClick,
+        ...badgeProps
+      }
+    }
+    return {
+      icon: Brain,
+      state: 'active',
+      activeColor: 'teal',
+      label: active.jobStatus === 'planning' ? 'Planning…' : `Feeding… ${active.percent}%`,
+      title: `Feed Brain: ${active.itemsDone}/${active.itemsTotal} items, ${active.factsCreated} memories — click to view`,
+      onClick,
+      ...badgeProps
+    }
+  }
+
+  if (backgroundCount > 0) {
+    return {
+      icon: Brain,
+      state: 'active',
+      activeColor: 'teal',
+      label: `${backgroundCount} feeding`,
+      title: `${backgroundCount} workspace(s) ingesting in the background`,
+      onClick: onBadgeClick,
+      badge: backgroundCount,
+      badgeClickable: false
+    }
+  }
+
+  return { icon: Brain, state: 'hidden', title: 'Feed Brain', onClick }
 }

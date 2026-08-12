@@ -56,12 +56,7 @@ const GRILL_IDENTITY: MessageIdentity = {
 // ── Props ───────────────────────────────────────────────────────────────────
 
 export type GrillPhase =
-  | 'selecting'
-  | 'evaluating'
-  | 'answering'
-  | 'paused'
-  | 'completing'
-  | 'completed'
+  'selecting' | 'evaluating' | 'answering' | 'paused' | 'completing' | 'completed'
 
 interface GrillChatViewProps {
   messages: GrillChatMessage[]
@@ -78,7 +73,11 @@ interface GrillChatViewProps {
 
 // ── Message-history renderer ────────────────────────────────────────────────
 
-function renderGrillMessage(msg: GrillChatMessage, i: number, avatarSize: 'md' | 'lg' | 'xl'): React.ReactNode {
+function renderGrillMessage(
+  msg: GrillChatMessage,
+  i: number,
+  avatarSize: 'md' | 'lg' | 'xl'
+): React.ReactNode {
   switch (msg.type) {
     case 'agent':
       return (

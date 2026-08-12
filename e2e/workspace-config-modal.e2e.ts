@@ -20,9 +20,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Workspace Config Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -42,9 +40,7 @@ test.describe('Workspace Config Modal', () => {
   }
 
   /** Try to open the Workspace Config modal. */
-  async function openWorkspaceConfigModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openWorkspaceConfigModal(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for workspace settings / config button in sidebar or header
     const configBtn = page.locator('[aria-label*="orkspace"]').first()
     let hasBtn = await configBtn.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -210,7 +206,10 @@ test.describe('Workspace Config Modal', () => {
     // Path should be shown for the active workspace
     // If no workspaces exist, this is expected to be false
     if (!foundPath) {
-      const empty = await modal.getByText(/no workspaces/i).isVisible().catch(() => false)
+      const empty = await modal
+        .getByText(/no workspaces/i)
+        .isVisible()
+        .catch(() => false)
       if (!empty) {
         // Workspace exists but path not visible — could be just the name shown
         expect(true).toBeTruthy()

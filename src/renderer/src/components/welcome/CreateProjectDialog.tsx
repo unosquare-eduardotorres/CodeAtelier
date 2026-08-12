@@ -103,9 +103,21 @@ function useCreateProject(onCreated: (id: string) => void) {
   }, [isValid, projectName, parentFolder, description, attachments, onCreated])
 
   return {
-    projectName, setProjectName, parentFolder, description, setDescription,
-    attachments, setAttachments, isCreating, error, folderError, nameError,
-    isValid, resolvedPath, handleCreate, handleSelectFolder
+    projectName,
+    setProjectName,
+    parentFolder,
+    description,
+    setDescription,
+    attachments,
+    setAttachments,
+    isCreating,
+    error,
+    folderError,
+    nameError,
+    isValid,
+    resolvedPath,
+    handleCreate,
+    handleSelectFolder
   }
 }
 
@@ -116,9 +128,21 @@ export default function CreateProjectDialog({
   onCreated
 }: CreateProjectDialogProps): React.JSX.Element {
   const {
-    projectName, setProjectName, parentFolder, description, setDescription,
-    attachments, setAttachments, isCreating, error, folderError, nameError,
-    isValid, resolvedPath, handleCreate, handleSelectFolder
+    projectName,
+    setProjectName,
+    parentFolder,
+    description,
+    setDescription,
+    attachments,
+    setAttachments,
+    isCreating,
+    error,
+    folderError,
+    nameError,
+    isValid,
+    resolvedPath,
+    handleCreate,
+    handleSelectFolder
   } = useCreateProject(onCreated)
 
   // Escape key closes (disabled while creating)
@@ -258,8 +282,8 @@ export default function CreateProjectDialog({
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-primary-muted border border-primary/20">
             <Lightbulb size={14} className="text-primary-text flex-shrink-0 mt-0.5" />
             <p className="text-xs text-text-secondary leading-relaxed">
-              <span className="font-medium text-text-primary">Tip:</span> for best results, draft
-              a short plan in Claude first — goals, key features, tech choices — save it as PLAN.md
+              <span className="font-medium text-text-primary">Tip:</span> for best results, draft a
+              short plan in Claude first — goals, key features, tech choices — save it as PLAN.md
               and attach it here. It will seed the Blueprint pipeline.
             </p>
           </div>

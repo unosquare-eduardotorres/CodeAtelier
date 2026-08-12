@@ -31,7 +31,8 @@ export function runCliOneShot(
         timeout: opts.timeout ?? DEFAULT_TIMEOUT,
         maxBuffer: opts.maxBuffer ?? DEFAULT_MAX_BUFFER,
         cwd: opts.cwd,
-        env: buildEnvWithPath()
+        env: buildEnvWithPath(),
+        windowsHide: true
       },
       (err, stdout, stderr) => {
         if (err) {

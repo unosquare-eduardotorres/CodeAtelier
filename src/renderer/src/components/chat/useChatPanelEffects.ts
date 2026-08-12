@@ -1,17 +1,14 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useWorkspaceStore, useSpecialistStore } from '@renderer/store'
 import { useProjectSpecialistStore } from '@renderer/store/project-specialist.store'
 
 /**
  * Manages specialist loading, specialist store reload,
- * and the Generate-Specialist modal auto-open/dismiss lifecycle.
+ * and auto-triggering specialist builds for pending workspaces.
  */
 export function useChatPanelEffects(): {
   projectSpecialist:
-    | ReturnType<typeof useProjectSpecialistStore.getState>['byWorkspace'][string]
-    | null
-  generateModalOpen: boolean
-  handleDismissGenerate: () => void
+    ReturnType<typeof useProjectSpecialistStore.getState>['byWorkspace'][string] | null
 } {
   const { activeWorkspace } = useWorkspaceStore()
 
@@ -33,31 +30,17 @@ export function useChatPanelEffects(): {
     }
   }, [projectSpecialist?.buildStatus, loadSpecialists])
 
-  // Generate-Specialist modal — auto-opens for pending/failed specialists,
-  // session-dismissed Set prevents re-opening after "Maybe later".
-  const [generateModalOpen, setGenerateModalOpen] = useState(false)
-  const [dismissedWorkspaces] = useState<Set<string>>(() => new Set())
-
+  // Auto-trigger specialist build for pending workspaces (no modal)
+  const build = useProjectSpecialistStore((s) => s.build)
+  const [autoTriggered] = useState<Set<string>>(() => new Set())
   useEffect(() => {
     const wsId = activeWorkspace?.id
-    if (!wsId || !projectSpecialist) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- close modal when workspace unloads
-      setGenerateModalOpen(false)
-      return
+    if (!wsId || !projectSpecialist) return
+    if (projectSpecialist.buildStatus === 'pending' && !autoTriggered.has(wsId)) {
+      autoTriggered.add(wsId)
+      void build(wsId)
     }
-    if (dismissedWorkspaces.has(wsId)) return
-    if (projectSpecialist.buildStatus === 'pending' || projectSpecialist.buildStatus === 'failed') {
-      setGenerateModalOpen(true)
-    } else {
-      setGenerateModalOpen(false)
-    }
-  }, [activeWorkspace?.id, projectSpecialist, dismissedWorkspaces])
+  }, [activeWorkspace?.id, projectSpecialist, autoTriggered, build])
 
-  const handleDismissGenerate = useCallback(() => {
-    const wsId = activeWorkspace?.id
-    if (wsId) dismissedWorkspaces.add(wsId)
-    setGenerateModalOpen(false)
-  }, [activeWorkspace, dismissedWorkspaces])
-
-  return { projectSpecialist, generateModalOpen, handleDismissGenerate }
+  return { projectSpecialist }
 }

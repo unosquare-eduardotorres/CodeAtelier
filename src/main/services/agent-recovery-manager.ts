@@ -25,6 +25,18 @@ const TURN_LIMIT_EXHAUSTED_MSG =
   'The session is preserved and you can send another message to continue where I left off.\n\n' +
   '_Send "continue" or describe what you\'d like me to do next._'
 
+/**
+ * Shown when auto-continuation is stopped early because the previous
+ * continuation produced nothing. Same chunk shape and `turnLimit` payload as
+ * the exhausted case — the user still gets the Continue button — only the
+ * reason differs.
+ */
+const TURN_LIMIT_STALLED_MSG =
+  '\n\n---\n\n' +
+  '⏱️ **Turn limit reached** — the last auto-continuation ran no tools and produced ' +
+  'no output, so I stopped rather than repeat it. The session is preserved.\n\n' +
+  '_Send "continue", or add detail about what you\'d like me to do next._'
+
 export class AgentRecoveryManager {
   private readonly s: AgentSessionHost
 
@@ -52,6 +64,14 @@ export class AgentRecoveryManager {
 
     this.s.maxTurnsContinuations++
     this.s.circuitBreaker.reset()
+    // The gratuitous-tool heuristic is per-TURN (it keys off _toolCallCount === 1),
+    // so its text measure must be per-turn too. Without this baseline the
+    // continuation's first tool call sees the pre-break wrap-up text, trips
+    // gratuitous-tool-soft-stop, and the stream is cut at session.service:1686
+    // before the continuation does any work.
+    const continuationCtx = this.s.activeStreams?.get(conversationId)
+    if (continuationCtx)
+      continuationCtx.accumulatedTextBaseline = continuationCtx.accumulatedText.length
     this.s.log.info(
       `[PIPELINE:max-turns-continue] continuation=${this.s.maxTurnsContinuations}/${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
         `conversationId=${conversationId}`
@@ -68,7 +88,11 @@ export class AgentRecoveryManager {
     if (isLocal) {
       const discoveries = this.s.toolActivityAccumulator.buildDiscoverySummary(2000)
       const planState = localPlanStateService.getForConversation(conversationId)
-      const partialPlan = this.s.accumulatedText.slice(-1000)
+      const partialPlan = (
+        this.s.activeStreams?.get(conversationId)?.accumulatedText ??
+        this.s.accumulatedText ??
+        ''
+      ).slice(-1000)
 
       continuationPrompt = [
         '## Continuation — Complete the Plan',
@@ -199,7 +223,15 @@ export class AgentRecoveryManager {
     llmProvider: LLMProvider
     recoveryDepth: number
   }): Promise<'handled' | 'continue'> {
-    const { streamState, conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth } = params
+    const {
+      streamState,
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      mcpResult,
+      llmProvider,
+      recoveryDepth
+    } = params
 
     // Skip if the underlying cause was API overload
     if (streamState.overloadDetected && streamState.lastTerminalReason === 'max_turns') {
@@ -221,30 +253,54 @@ export class AgentRecoveryManager {
       return 'handled'
     }
 
+    // A continuation that resolved no tool and wrote no text did not advance the
+    // task. Firing another is guaranteed to repeat it — which is exactly what
+    // produced five identical zero-output continuations in a row. Both signals
+    // come for free: continueTurnLimit resets the circuit breaker and sets
+    // accumulatedTextBaseline on every continuation.
+    const ctx = this.s.activeStreams?.get(conversationId)
+    const textDelta = (ctx?.accumulatedText.length ?? 0) - (ctx?.accumulatedTextBaseline ?? 0)
+    const madeProgress = this.s.circuitBreaker.count > 0 || textDelta > 0
+    // The first continuation is always allowed — only subsequent ones must show
+    // evidence that the previous one did something.
+    const stalled = this.s.maxTurnsContinuations > 0 && !madeProgress
+
     if (
       streamState.lastTerminalReason === 'max_turns' &&
-      this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
+      this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS &&
+      !stalled
     ) {
       await this.continueTurnLimit({
-        conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth
+        conversationId,
+        systemPrompt,
+        isBuildMode,
+        mcpResult,
+        llmProvider,
+        recoveryDepth
       })
       return 'handled'
     }
 
-    // All auto-continuations exhausted — emit a structured turn_limit chunk
-    // so the renderer can show a one-click Continue button.
-    if (
-      streamState.lastTerminalReason === 'max_turns' &&
-      this.s.maxTurnsContinuations >= SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
-    ) {
-      this.s.log.info(
-        `[PIPELINE:max-turns-exhausted] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
-          `continuations used — emitting turn_limit chunk for conversationId=${conversationId}`
-      )
+    // We hit max_turns but are NOT continuing — either the budget is spent or the
+    // last continuation made no progress. Either way the user still gets the
+    // one-click Continue button, so the stalled path is not a dead end.
+    if (streamState.lastTerminalReason === 'max_turns') {
+      if (stalled) {
+        this.s.log.warn(
+          `[PIPELINE:continuation-stalled] continuation ${this.s.maxTurnsContinuations}/` +
+            `${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} resolved 0 tool calls and wrote 0 ` +
+            `characters — stopping instead of repeating it for conversationId=${conversationId}`
+        )
+      } else {
+        this.s.log.info(
+          `[PIPELINE:max-turns-exhausted] All ${SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS} ` +
+            `continuations used — emitting turn_limit chunk for conversationId=${conversationId}`
+        )
+      }
       // Emit structured chunk for the renderer's Continue button
       this.s.emit('chunk', {
         type: 'turn_limit',
-        content: TURN_LIMIT_EXHAUSTED_MSG,
+        content: stalled ? TURN_LIMIT_STALLED_MSG : TURN_LIMIT_EXHAUSTED_MSG,
         turnLimit: {
           continuable: true,
           continuationsUsed: this.s.maxTurnsContinuations,
@@ -284,7 +340,7 @@ export class AgentRecoveryManager {
     ) {
       try {
         const result = await this.s.recoveryNudge.attemptPlanToolRecovery({
-          cliExecutor: this.s.cliExecutor,
+          cliExecutor: this.s.getOrCreateCliExecutor(conversationId),
           systemPrompt,
           workspacePath: this.s.workspacePath!,
           model: resolveModelFromSnapshot(
@@ -301,7 +357,8 @@ export class AgentRecoveryManager {
           onChunk: (chunk) => this.s.emit('chunk', chunk),
           onTokens: (tokens) => {
             this.s.tokenUsage += tokens
-          }
+          },
+          blockedTool: streamState.planModeBlockedTool
         })
         planRecoveryAttempted = result.attempted
       } catch (err) {
@@ -325,18 +382,31 @@ export class AgentRecoveryManager {
     const shouldSkipNudge =
       (streamState.lastTerminalReason && skipNudgeReasons.has(streamState.lastTerminalReason)) ||
       planRecoveryAttempted
-    if (
+    const nudgeWanted =
       this.s.circuitBreaker.count > 0 &&
       !streamState.hasTextAfterLastTool &&
       !shouldSkipNudge &&
       !timedOut
-    ) {
+    // The nudge calls execute() WITHOUT continueSession, which spawns a fresh
+    // process and therefore SIGTERMs the current one. That executor is the same
+    // per-conversation instance, so nudging while a tool is in flight kills the
+    // very work the nudge is supposed to be recovering from.
+    const nudgeExecutor = nudgeWanted ? this.s.getOrCreateCliExecutor(conversationId) : null
+    const pendingTools = nudgeExecutor?.getPendingToolNames() ?? []
+    if (pendingTools.length) {
+      this.s.log.warn(
+        `[PIPELINE:recovery-nudge-skipped-pending] conversationId=${conversationId} ` +
+          `— ${pendingTools.length} tool(s) still in flight [${pendingTools.join(', ')}]; ` +
+          `killing the session would orphan real work`
+      )
+    }
+    if (nudgeWanted && !pendingTools.length) {
       this.s.log.warn(
         `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
-          `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${this.s.accumulatedText.length}`
+          `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
       )
       const recoveryResult = await this.s.recoveryNudge.attemptRecovery({
-        cliExecutor: this.s.cliExecutor,
+        cliExecutor: nudgeExecutor!,
         systemPrompt,
         workspacePath: this.s.workspacePath!,
         model: resolveModelFromSnapshot(
@@ -360,7 +430,12 @@ export class AgentRecoveryManager {
       this.s.log.info(
         `[PIPELINE:recovery-nudge-result] recovered=${recoveryResult.recovered} textLen=${recoveryResult.text.length}`
       )
-      this.s.accumulatedText += recoveryResult.text
+      const recovCtx = this.s.activeStreams?.get(conversationId)
+      if (recovCtx) {
+        recovCtx.accumulatedText += recoveryResult.text
+      } else {
+        this.s.accumulatedText += recoveryResult.text
+      }
     }
   }
 
@@ -373,7 +448,9 @@ export class AgentRecoveryManager {
     recoveryDepth: number
   ): void {
     // Auto-capture conversation summary for ALL providers
-    if (this.s.accumulatedText.length > 100) {
+    const convAccText =
+      this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
+    if (convAccText.length > 100) {
       try {
         const summary = this.extractStructuredSummary(conversationId)
         if (summary) {
@@ -393,7 +470,7 @@ export class AgentRecoveryManager {
 
     // Delegate intent detection to the adapter
     this.s.adapter.emitDetectedIntents({
-      accumulatedText: this.s.accumulatedText,
+      accumulatedText: convAccText,
       controlToolState: this.s.controlToolState,
       mode: this.s.currentMode,
       conversationId,
@@ -414,7 +491,7 @@ export class AgentRecoveryManager {
     if (!this.s.controlToolState.plan && !this.s.controlToolState.askUser) {
       this.s.emit('intent', {
         type: 'response',
-        content: this.s.accumulatedText
+        content: convAccText
       } as AgentIntent)
     }
 
@@ -463,18 +540,28 @@ export class AgentRecoveryManager {
     }
 
     this.s.log.info(
-      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${this.s.accumulatedText.length}`
+      `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
     )
 
     // Step 1: Handle overload / max_turns auto-continue
     const overloadResult = await this.handleOverloadOrMaxTurns({
-      streamState, conversationId, systemPrompt, isBuildMode, mcpResult, llmProvider, recoveryDepth
+      streamState,
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      mcpResult,
+      llmProvider,
+      recoveryDepth
     })
     if (overloadResult === 'handled') return
 
     // Step 2: Plan-mode tool-block recovery + nudge
     await this.attemptStreamRecovery({
-      streamState, conversationId, systemPrompt, isBuildMode, timedOut
+      streamState,
+      conversationId,
+      systemPrompt,
+      isBuildMode,
+      timedOut
     })
 
     // Step 3: Summary capture, intent detection, completion
@@ -485,34 +572,38 @@ export class AgentRecoveryManager {
 
   /** Save partial progress on error (all providers). */
   private saveErrorProgress(): void {
-    if (
-      this.s.accumulatedText.length <= 50 ||
-      !this.s.currentConversationId
-    ) {
+    const errConvId =
+      this.s.lastStreamOpts?.conversationId ??
+      (this.s as any).lastActiveConversationId ??
+      this.s.currentConversationId
+    const errAccText = errConvId
+      ? (this.s.activeStreams?.get(errConvId)?.accumulatedText ?? this.s.accumulatedText ?? '')
+      : ''
+    if (errAccText.length <= 50 || !errConvId) {
       return
     }
     try {
-      const summary = this.extractStructuredSummary(this.s.currentConversationId)
+      const summary = this.extractStructuredSummary(errConvId)
       if (summary) {
         // Guard: don't overwrite a richer prior summary with a sparse error-path one.
         // A brief error turn can produce near-empty output that would clobber
         // detailed context from a prior successful turn.
-        const existingSummary = conversationRepository.getSummary(this.s.currentConversationId)
+        const existingSummary = conversationRepository.getSummary(errConvId)
         if (existingSummary && summary.length < existingSummary.length) {
           this.s.log.info(
             `[S6:error-summary-skipped] existing=${existingSummary.length} new=${summary.length} — keeping richer summary`
           )
         } else {
-          conversationRepository.updateSummary(this.s.currentConversationId, summary)
+          conversationRepository.updateSummary(errConvId, summary)
           this.s.log.info(
-            `[S6:error-summary-saved] conversationId=${this.s.currentConversationId} provider=${this.s.llmProvider} len=${summary.length}`
+            `[S6:error-summary-saved] conversationId=${errConvId} provider=${this.s.llmProvider} len=${summary.length}`
           )
         }
       }
     } catch {
       /* non-fatal */
     }
-    this.saveCurrentPlanState(this.s.currentConversationId)
+    this.saveCurrentPlanState(errConvId)
   }
 
   /** Classify a stream error into one of the known categories. */
@@ -530,8 +621,7 @@ export class AgentRecoveryManager {
       !timedOut &&
       !isAbort &&
       /529|overloaded|server_is_overloaded|503 Service/i.test(error.message)
-    const isMaxTurns =
-      !timedOut && !isAbort && error.message?.includes('maximum number of turns')
+    const isMaxTurns = !timedOut && !isAbort && error.message?.includes('maximum number of turns')
     const isContextOverflow =
       !timedOut &&
       !isAbort &&
@@ -587,11 +677,26 @@ export class AgentRecoveryManager {
     recoveryDepth = 0,
     effectiveTimeoutMs?: number
   ): Promise<void> {
-    this.s.sdkAbortController = null
+    // Clear abort controller for the errored conversation (from lastStreamOpts if available)
+    const errorConvId =
+      this.s.lastStreamOpts?.conversationId ?? (this.s as any).lastActiveConversationId ?? null
+    if (errorConvId) {
+      const ctx = this.s.activeStreams?.get(errorConvId)
+      if (ctx) {
+        ctx.abortController = null
+      } else {
+        // Fallback: clear via property (handles test doubles + _directAbortController)
+        this.s.sdkAbortController = null
+      }
+    } else {
+      this.s.sdkAbortController = null
+    }
     this.saveErrorProgress()
 
-    const { isOverload, isMaxTurns, isContextOverflow, isAbort } =
-      this.classifyStreamError(error, timedOut)
+    const { isOverload, isMaxTurns, isContextOverflow, isAbort } = this.classifyStreamError(
+      error,
+      timedOut
+    )
 
     // API overload — don't auto-continue
     if (isOverload) {
@@ -615,8 +720,7 @@ export class AgentRecoveryManager {
       this.s.lastStreamOpts &&
       this.s.maxTurnsContinuations < SESSION_CONSTANTS.MAX_TURN_CONTINUATIONS
     ) {
-      const { conversationId, systemPrompt, isBuildMode, llmProvider } =
-        this.s.lastStreamOpts
+      const { conversationId, systemPrompt, isBuildMode, llmProvider } = this.s.lastStreamOpts
       // AUTOCONT-STALE-MCP-01: Rebuild mcpResult from adapter to pick up any
       // MCP config changes made since the stream started. lastStreamOpts captured
       // mcpResult at executeStream() entry — using it directly risks invoking
@@ -626,7 +730,10 @@ export class AgentRecoveryManager {
         const controlCallbacks = this.s.adapter.buildControlCallbacks({
           conversationId,
           emit: (evt, payload) => this.s.emitAdapterEvent(evt, payload),
-          getAccumulatedText: () => this.s.accumulatedText
+          getAccumulatedText: () =>
+            this.s.activeStreams?.get(conversationId)?.accumulatedText ??
+            this.s.accumulatedText ??
+            ''
         })
         freshMcpResult = this.s.adapter.buildMcpConfig({
           mode: this.s.currentMode,
@@ -638,10 +745,17 @@ export class AgentRecoveryManager {
         })
       } catch {
         // Non-fatal: fall back to stale mcpResult from lastStreamOpts
-        this.s.log.warn('[PIPELINE:error-autocont] Failed to rebuild mcpResult — using stale config')
+        this.s.log.warn(
+          '[PIPELINE:error-autocont] Failed to rebuild mcpResult — using stale config'
+        )
       }
       await this.continueTurnLimit({
-        conversationId, systemPrompt, isBuildMode, mcpResult: freshMcpResult, llmProvider, recoveryDepth
+        conversationId,
+        systemPrompt,
+        isBuildMode,
+        mcpResult: freshMcpResult,
+        llmProvider,
+        recoveryDepth
       })
       return
     }
@@ -721,7 +835,8 @@ export class AgentRecoveryManager {
     if (!this.s.workspaceId || this.s.currentMode !== 'plan') return
     try {
       const filesExplored = this.s.toolActivityAccumulator.getExploredFiles()
-      const text = this.s.accumulatedText
+      const text =
+        this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? ''
 
       const planLineRegex =
         /^\s*(?:\d+[.)]\s|[-*]\s|#{2,4}\s(?:Step|Phase|Change|Modify|Add|Remove|Update|Create|Fix|Implement)|\*{1,2}\d+[.)]\*{0,2}\s)/i
@@ -758,7 +873,8 @@ export class AgentRecoveryManager {
   // ── Structured Summary Extraction ─────────────────────────────────────
 
   extractStructuredSummary(_conversationId: string): string | null {
-    const text = this.s.accumulatedText
+    const text =
+      this.s.activeStreams?.get(_conversationId)?.accumulatedText ?? this.s.accumulatedText
     if (!text || text.length < 50) return null
 
     const filesExplored = this.s.toolActivityAccumulator.getExploredFiles()

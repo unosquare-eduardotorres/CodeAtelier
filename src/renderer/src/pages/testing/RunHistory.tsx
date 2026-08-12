@@ -7,6 +7,7 @@
 
 import { History, CheckCircle2, XCircle, Loader2, Clock, Ban } from 'lucide-react'
 import type { E2ERunSummary } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 import SectionCard from './SectionCard'
 
 interface RunHistoryProps {
@@ -21,7 +22,7 @@ interface RunHistoryProps {
 
 function relativeTime(dateStr: string): string {
   const now = Date.now()
-  const then = new Date(dateStr).getTime()
+  const then = parseDbTimestamp(dateStr).getTime()
   const diffMs = now - then
   if (diffMs < 0) return 'just now'
 
@@ -33,12 +34,12 @@ function relativeTime(dateStr: string): string {
   if (hours < 24) return `${hours}h ago`
   const days = Math.floor(hours / 24)
   if (days < 30) return `${days}d ago`
-  return new Date(dateStr).toLocaleDateString()
+  return parseDbTimestamp(dateStr).toLocaleDateString()
 }
 
 function runDuration(run: E2ERunSummary): string | null {
   if (!run.finishedAt || !run.startedAt) return null
-  const ms = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
+  const ms = parseDbTimestamp(run.finishedAt).getTime() - parseDbTimestamp(run.startedAt).getTime()
   if (ms < 0) return null
   if (ms < 60_000) return `${(ms / 1000).toFixed(0)}s`
   const mins = Math.floor(ms / 60_000)
@@ -79,8 +80,7 @@ export default function RunHistory({
       <div className="flex gap-2 overflow-x-auto px-3 py-2 pb-3">
         {runs.map((run) => {
           const isActive = run.id === selectedRunId
-          const total =
-            run.totalPassed + run.totalFailed + run.totalSkipped + run.totalError
+          const total = run.totalPassed + run.totalFailed + run.totalSkipped + run.totalError
           const duration = runDuration(run)
 
           return (
@@ -125,9 +125,7 @@ export default function RunHistory({
                       {run.totalError > 0 && (
                         <span className="text-warning">{run.totalError}!</span>
                       )}
-                      {run.totalSkipped > 0 && (
-                        <span>{run.totalSkipped} skip</span>
-                      )}
+                      {run.totalSkipped > 0 && <span>{run.totalSkipped} skip</span>}
                       <span className="text-text-muted">/ {total}</span>
                     </div>
                   </div>
@@ -138,13 +136,22 @@ export default function RunHistory({
               {total > 0 && (
                 <div className="h-1 rounded-full bg-surface-base overflow-hidden flex w-full mt-1.5">
                   {run.totalPassed > 0 && (
-                    <div className="bg-success" style={{ width: `${(run.totalPassed / total) * 100}%` }} />
+                    <div
+                      className="bg-success"
+                      style={{ width: `${(run.totalPassed / total) * 100}%` }}
+                    />
                   )}
                   {run.totalFailed > 0 && (
-                    <div className="bg-danger" style={{ width: `${(run.totalFailed / total) * 100}%` }} />
+                    <div
+                      className="bg-danger"
+                      style={{ width: `${(run.totalFailed / total) * 100}%` }}
+                    />
                   )}
                   {run.totalError > 0 && (
-                    <div className="bg-warning" style={{ width: `${(run.totalError / total) * 100}%` }} />
+                    <div
+                      className="bg-warning"
+                      style={{ width: `${(run.totalError / total) * 100}%` }}
+                    />
                   )}
                 </div>
               )}

@@ -28,11 +28,13 @@ The system prompt is passed as a **flat text string** to the `claude` CLI via a 
 
 ```typescript
 // ❌ NOT POSSIBLE — CLI takes a plain text file, not structured blocks
-system: [{
-  type: 'text',
-  text: systemPrompt,
-  cache_control: { type: 'ephemeral' }
-}]
+system: [
+  {
+    type: 'text',
+    text: systemPrompt,
+    cache_control: { type: 'ephemeral' }
+  }
+]
 ```
 
 The `claude` CLI is an **opaque external process** (`@anthropic-ai/claude-code`). It manages its own API calls internally. We cannot control the `system` parameter structure it sends to the Claude API.
@@ -63,6 +65,7 @@ This is a core optimization in the Claude API that the SDK almost certainly leve
 ## Token Savings Estimate
 
 If prompt caching were NOT already happening (it likely is):
+
 - System prompt: ~1,000–1,800 tokens
 - Per audit: 10–15 API round-trips
 - Savings: ~900–1,200 input tokens per audit (90% cache read discount on turns 2–15)

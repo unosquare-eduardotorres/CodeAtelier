@@ -10,19 +10,23 @@
  * Uses CDP fixture (Electron 41+ compatible).
  */
 import { test, expect } from './helpers/electron-fixture'
-import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 
-/** All known settings tab IDs. */
+/**
+ * All settings tab IDs that are VISIBLE in the nav.
+ *
+ * `goals`, `plans`, `documents`, `tokens` and `events` are omitted: they are
+ * marked `hidden: true` in SETTINGS_MENU, so no button renders for them (their
+ * routes and pages still work).
+ */
 const ALL_TAB_IDS = [
   // Tools group
   'health',
-  'goals',
   'council',
   'ideas',
-  'plans',
   'blueprints',
+  'testing',
   // Configuration group
   'specialist',
   'team',
@@ -30,10 +34,7 @@ const ALL_TAB_IDS = [
   'code-intelligence',
   'integrations',
   'models',
-  'documents',
-  'memory',
-  'tokens',
-  'events'
+  'memory'
 ]
 
 test.describe('Settings Navigation', () => {
@@ -59,7 +60,10 @@ test.describe('Settings Navigation', () => {
 
     // Switch to settings tab in sidebar
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -71,9 +75,7 @@ test.describe('Settings Navigation', () => {
   test('settings panel renders with all tab buttons', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -91,9 +93,7 @@ test.describe('Settings Navigation', () => {
   test('each tab is clickable and active indicator follows', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -119,9 +119,7 @@ test.describe('Settings Navigation', () => {
   test('tab switching updates content area', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -145,16 +143,15 @@ test.describe('Settings Navigation', () => {
   test('tools group tabs are visible', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
       return
     }
 
-    const toolTabs = ['health', 'goals', 'council', 'ideas', 'plans', 'blueprints']
+    // 'goals' and 'plans' are hidden from the nav — see ALL_TAB_IDS.
+    const toolTabs = ['health', 'council', 'ideas', 'blueprints', 'testing']
     let visibleCount = 0
 
     for (const tabId of toolTabs) {
@@ -169,15 +166,14 @@ test.describe('Settings Navigation', () => {
   test('configuration group tabs are visible', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
       return
     }
 
+    // 'documents', 'tokens' and 'events' are hidden from the nav — see ALL_TAB_IDS.
     const configTabs = [
       'specialist',
       'team',
@@ -185,10 +181,7 @@ test.describe('Settings Navigation', () => {
       'code-intelligence',
       'integrations',
       'models',
-      'documents',
-      'memory',
-      'tokens',
-      'events'
+      'memory'
     ]
     let visibleCount = 0
 
@@ -204,9 +197,7 @@ test.describe('Settings Navigation', () => {
   test('collapse settings panel hides labels', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()
@@ -254,9 +245,7 @@ test.describe('Settings Navigation', () => {
   test('close workspace settings returns to chat', async ({ electronPage: page }) => {
     const settings = await openWorkspaceSettings(page)
 
-    const hasPanel = await settings.settingsPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasPanel = await settings.settingsPanel.isVisible({ timeout: 10_000 }).catch(() => false)
 
     if (!hasPanel) {
       test.skip()

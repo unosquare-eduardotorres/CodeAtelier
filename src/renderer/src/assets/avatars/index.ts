@@ -15,13 +15,7 @@ import caGrillme from './code-atelier/grillme.png'
 import caMain from './code-atelier/mannequin-main.png'
 
 export type AvatarKey =
-  | 'user-1'
-  | 'user-2'
-  | 'user-3'
-  | 'da-vinci'
-  | 'atelier-auditor'
-  | 'grillme'
-  | 'mannequin-main'
+  'user-1' | 'user-2' | 'user-3' | 'da-vinci' | 'atelier-auditor' | 'grillme' | 'mannequin-main'
 
 const AVATAR_SETS: Record<AppTheme, Record<AvatarKey, string>> = {
   'code-atelier': {
@@ -80,13 +74,19 @@ export const USER_AVATAR_OPTIONS: readonly {
   label: string
   description: string
 }[] = [
-  { variant: '1', label: 'The Hooded Artisan', description: 'Mysterious hooded craftsman with jeweled clasp' },
-  { variant: '2', label: 'The Scholar', description: 'Renaissance scholar with high Medici collar' },
+  {
+    variant: '1',
+    label: 'The Hooded Artisan',
+    description: 'Mysterious hooded craftsman with jeweled clasp'
+  },
+  {
+    variant: '2',
+    label: 'The Scholar',
+    description: 'Renaissance scholar with high Medici collar'
+  },
   { variant: '3', label: 'The Inventor', description: 'Workshop inventor with brass goggles' }
 ] as const
 
 /** Ordered mannequin keys for per-workspace rotation.
  *  Currently one portrait — add keys here when new mannequin images are created. */
-export const MANNEQUIN_ROTATION: readonly AvatarKey[] = [
-  'mannequin-main'
-] as const
+export const MANNEQUIN_ROTATION: readonly AvatarKey[] = ['mannequin-main'] as const

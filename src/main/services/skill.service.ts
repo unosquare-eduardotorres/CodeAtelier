@@ -466,7 +466,8 @@ Instructions:
         {
           stdio: ['ignore', 'pipe', 'pipe'],
           env,
-          signal
+          signal,
+          windowsHide: true
         }
       )
 

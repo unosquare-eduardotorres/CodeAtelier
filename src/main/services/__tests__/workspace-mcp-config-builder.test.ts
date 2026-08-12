@@ -57,7 +57,17 @@ const ESSENTIAL_CG: string[] = [
 ]
 
 const ALL_CG = MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-const CONTROL_TOOLS = MCP_TOOLS.CONTROL_ACTIONS._ALL_NAMES
+
+// The model-callable control tools, i.e. what belongs in an allowedTools list.
+// Deliberately NOT CONTROL_ACTIONS._ALL_NAMES: that also contains
+// permission_prompt, which the model never calls directly -- it is handed to
+// the CLI via --permission-prompt-tool and is absent from the allowlist that
+// workspace-mcp-config.ts builds (see lines 343-345 / 496-498 there).
+const CONTROL_TOOLS = [
+  MCP_TOOLS.CONTROL_ACTIONS.EMIT_PLAN.name,
+  MCP_TOOLS.CONTROL_ACTIONS.ASK_USER.name,
+  MCP_TOOLS.CONTROL_ACTIONS.EMIT_PHASE_PROGRESS.name
+]
 
 // ── Dispatch tests ───────────────────────────────────────────────────────
 
@@ -207,9 +217,7 @@ describe('buildLocalProviderMcpConfig — large tier', () => {
   })
 
   test('large tier → defaults when contextTier is omitted', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: true, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: true, mode: 'plan' }))
     // omitting contextTier defaults to 'large' — should include all CG
     for (const tool of ALL_CG) {
       assert.ok(result.allowedTools!.includes(tool), `Missing: ${tool}`)
@@ -301,10 +309,7 @@ describe('buildLocalProviderMcpConfig — feature flag combos', () => {
         makeOpts({ isLocalProvider: true, contextTier: tier, mode: 'plan' })
       )
       for (const tool of CONTROL_TOOLS) {
-        assert.ok(
-          result.allowedTools!.includes(tool),
-          `Missing control tool in ${tier}: ${tool}`
-        )
+        assert.ok(result.allowedTools!.includes(tool), `Missing control tool in ${tier}: ${tool}`)
       }
     }
   })
@@ -314,40 +319,30 @@ describe('buildLocalProviderMcpConfig — feature flag combos', () => {
 
 describe('buildClaudeProviderMcpConfig — build mode', () => {
   test('build mode → allowedTools is undefined', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'build' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'build' }))
     assert.equal(result.allowedTools, undefined)
   })
 
   test('build mode → disallowedTools contains Agent, ToolSearch etc.', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'build' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'build' }))
     assert.ok(result.disallowedTools.includes('Agent'))
     assert.ok(result.disallowedTools.includes('ToolSearch'))
   })
 
   test('build mode → no mcpServers when externalMcpActive is empty', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'build' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'build' }))
     assert.equal(result.mcpServers, undefined)
   })
 })
 
 describe('buildClaudeProviderMcpConfig — plan mode', () => {
   test('plan mode → allowedTools is an array', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     assert.ok(Array.isArray(result.allowedTools))
   })
 
   test('plan mode → base allowed includes Read, Glob, Grep, Bash', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     assert.ok(result.allowedTools!.includes('Read'))
     assert.ok(result.allowedTools!.includes('Glob'))
     assert.ok(result.allowedTools!.includes('Grep'))
@@ -355,12 +350,19 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
   })
 
   test('plan mode → CG tools included when repomapEnabled + workspaceId', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     for (const tool of ALL_CG) {
       assert.ok(result.allowedTools!.includes(tool), `Missing: ${tool}`)
     }
+  })
+
+  // The Claude path must grant the whole registry, like every other server in
+  // that list. It previously hand-enumerated 14 of 15 and silently dropped
+  // wiring_check for ~7 weeks.
+  test('plan mode → Claude CG allowlist is exactly CODE_GRAPH._ALL_NAMES', () => {
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
+    const granted = result.allowedTools!.filter((t) => t.startsWith(MCP_TOOLS.CODE_GRAPH._PREFIX))
+    assert.deepEqual([...granted].sort(), [...ALL_CG].sort())
   })
 
   test('plan mode → semantic-search tools when enabled', () => {
@@ -390,12 +392,16 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
   })
 
   test('plan mode → git-context tools always present (default localMcpActive)', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     for (const tool of MCP_TOOLS.GIT_CONTEXT._ALL_NAMES) {
       assert.ok(result.allowedTools!.includes(tool), `Missing: ${tool}`)
     }
+    // git_show is real and registered but was absent from the registry, so plan
+    // mode silently blocked it. Assert it explicitly so it cannot regress.
+    assert.ok(
+      result.allowedTools!.includes(MCP_TOOLS.GIT_CONTEXT.GIT_SHOW.name),
+      'plan mode must allow git_show'
+    )
   })
 
   test('plan mode → git-context disabled via localMcpActive', () => {
@@ -411,43 +417,15 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
     }
   })
 
-  test('plan mode → github-context only when githubConfigured=true', () => {
-    const withGithub = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: true })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
-      assert.ok(withGithub.allowedTools!.includes(tool), `Missing: ${tool}`)
-    }
-
-    const withoutGithub = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: false })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
-      assert.ok(!withoutGithub.allowedTools!.includes(tool), `Should not include: ${tool}`)
-    }
-  })
-
   test('plan mode → control actions always present', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     for (const tool of CONTROL_TOOLS) {
       assert.ok(result.allowedTools!.includes(tool), `Missing control tool: ${tool}`)
     }
   })
 
   test('plan mode → allowedTools includes Write, Edit (Claude permission-mode gates them)', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     // Write/Edit are exposed in the tool list so that a live
     // set_permission_mode(plan→acceptEdits) switch unlocks them without respawn.
     // --permission-mode plan gates writes at runtime.
@@ -456,17 +434,19 @@ describe('buildClaudeProviderMcpConfig — plan mode', () => {
   })
 
   test('plan mode → disallowedTools does NOT include Write, Edit (Claude path strips them)', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
+    assert.ok(
+      !result.disallowedTools.includes('Write'),
+      'Write should not be disallowed on Claude path'
     )
-    assert.ok(!result.disallowedTools.includes('Write'), 'Write should not be disallowed on Claude path')
-    assert.ok(!result.disallowedTools.includes('Edit'), 'Edit should not be disallowed on Claude path')
+    assert.ok(
+      !result.disallowedTools.includes('Edit'),
+      'Edit should not be disallowed on Claude path'
+    )
   })
 
   test('plan mode → no planBuiltinDisallowed for Claude path', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const result = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     assert.equal(result.planBuiltinDisallowed, undefined)
   })
 })
@@ -602,22 +582,32 @@ describe('Claude vs Local path — Write/Edit gating', () => {
     const result = buildWorkspaceMcpConfig(
       makeOpts({ isLocalProvider: true, contextTier: 'medium', mode: 'plan' })
     )
-    assert.ok(result.disallowedTools.includes('Write'), 'Local path should disallow Write in plan mode')
-    assert.ok(result.disallowedTools.includes('Edit'), 'Local path should disallow Edit in plan mode')
+    assert.ok(
+      result.disallowedTools.includes('Write'),
+      'Local path should disallow Write in plan mode'
+    )
+    assert.ok(
+      result.disallowedTools.includes('Edit'),
+      'Local path should disallow Edit in plan mode'
+    )
   })
 
   test('local-provider plan mode does NOT include Write/Edit in allowedTools', () => {
     const result = buildWorkspaceMcpConfig(
       makeOpts({ isLocalProvider: true, contextTier: 'medium', mode: 'plan' })
     )
-    assert.ok(!result.allowedTools!.includes('Write'), 'Local path should not allow Write in plan mode')
-    assert.ok(!result.allowedTools!.includes('Edit'), 'Local path should not allow Edit in plan mode')
+    assert.ok(
+      !result.allowedTools!.includes('Write'),
+      'Local path should not allow Write in plan mode'
+    )
+    assert.ok(
+      !result.allowedTools!.includes('Edit'),
+      'Local path should not allow Edit in plan mode'
+    )
   })
 
   test('Claude plan mode exposes Write/Edit; local plan mode does not', () => {
-    const claude = buildWorkspaceMcpConfig(
-      makeOpts({ isLocalProvider: false, mode: 'plan' })
-    )
+    const claude = buildWorkspaceMcpConfig(makeOpts({ isLocalProvider: false, mode: 'plan' }))
     const local = buildWorkspaceMcpConfig(
       makeOpts({ isLocalProvider: true, contextTier: 'large', mode: 'plan' })
     )
@@ -625,8 +615,10 @@ describe('Claude vs Local path — Write/Edit gating', () => {
     assert.ok(claude.allowedTools!.includes('Write'), 'Claude should allow Write')
     assert.ok(!claude.disallowedTools.includes('Write'), 'Claude should not disallow Write')
     // Local: Write/Edit in disallowed, not in allowed
-    assert.ok(local.allowedTools!.includes('Write') === false || local.allowedTools === undefined,
-      'Local should not allow Write in plan mode')
+    assert.ok(
+      local.allowedTools!.includes('Write') === false || local.allowedTools === undefined,
+      'Local should not allow Write in plan mode'
+    )
     assert.ok(local.disallowedTools.includes('Write'), 'Local should disallow Write')
   })
 })
@@ -655,19 +647,6 @@ describe('buildLocalProviderMcpConfig — small tier + codeGraph disabled', () =
 })
 
 describe('buildClaudeProviderMcpConfig — plan mode toggle combos', () => {
-  test('plan mode + checkpoint-context disabled → no checkpoint tools', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ localMcpActive: { 'checkpoint-context': false } })
-      })
-    )
-    for (const tool of MCP_TOOLS.CHECKPOINT_CONTEXT._ALL_NAMES) {
-      assert.ok(!result.allowedTools?.includes(tool), `Should not include: ${tool}`)
-    }
-  })
-
   test('plan mode + code-analysis disabled → no code-analysis tools', () => {
     const result = buildWorkspaceMcpConfig(
       makeOpts({
@@ -690,32 +669,6 @@ describe('buildClaudeProviderMcpConfig — plan mode toggle combos', () => {
       })
     )
     for (const tool of ALL_CG) {
-      assert.ok(!result.allowedTools?.includes(tool), `Should not include: ${tool}`)
-    }
-  })
-
-  test('plan mode + github enabled → includes github-context tools', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: true })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
-      assert.ok(result.allowedTools?.includes(tool), `Missing github tool: ${tool}`)
-    }
-  })
-
-  test('plan mode + github disabled → no github-context tools', () => {
-    const result = buildWorkspaceMcpConfig(
-      makeOpts({
-        isLocalProvider: false,
-        mode: 'plan',
-        featureFlags: baseFlags({ githubConfigured: false })
-      })
-    )
-    for (const tool of MCP_TOOLS.GITHUB_CONTEXT._ALL_NAMES) {
       assert.ok(!result.allowedTools?.includes(tool), `Should not include: ${tool}`)
     }
   })

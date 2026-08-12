@@ -48,8 +48,7 @@ interface IndexingStoreState {
 
 // Preserve state across HMR
 const previousState = import.meta.hot?.data?.indexingStoreState as
-  | Partial<IndexingStoreState>
-  | undefined
+  Partial<IndexingStoreState> | undefined
 
 export const useIndexingStore = create<IndexingStoreState>((set, get) => ({
   indexingState: previousState?.indexingState ?? null,

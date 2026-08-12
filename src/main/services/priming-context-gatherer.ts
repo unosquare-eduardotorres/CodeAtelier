@@ -64,7 +64,8 @@ export class PrimingContextGatherer {
         cwd: workspacePath,
         timeout: 5000,
         encoding: 'utf-8',
-        maxBuffer: 10_000
+        maxBuffer: 10_000,
+        windowsHide: true
       }).trim()
 
       if (gitDiff && gitDiff.length > 10) {

@@ -18,14 +18,15 @@
  * Uses CDP fixture (Electron 41+ compatible).
  */
 import { test, expect } from './helpers/electron-fixture'
-import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Pipeline', () => {
   // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
-  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+  test.beforeEach(async ({ electronPage }) => {
+    await pinSequentialBuild(electronPage)
+  })
 
   async function navigateToBlueprints(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
@@ -46,7 +47,10 @@ test.describe('Blueprint Pipeline', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -168,7 +172,10 @@ test.describe('Blueprint Pipeline', () => {
 
     // Progress bar should be present
     const progressBar = timelineNow.locator('[class*="bg-emerald"]')
-    const hasProgress = await progressBar.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasProgress = await progressBar
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasProgress).toBeTruthy()
   })
 
@@ -224,7 +231,7 @@ test.describe('Blueprint Pipeline', () => {
       await page.waitForTimeout(1_000)
 
       // Landing should no longer be visible (navigated to detail)
-      const landingStillVisible = await landing.isVisible({ timeout: 3_000 }).catch(() => false)
+      const _landingStillVisible = await landing.isVisible({ timeout: 3_000 }).catch(() => false)
       // Either landed on detail or timeline
       expect(true).toBeTruthy() // Navigation occurred
     }
@@ -263,7 +270,7 @@ test.describe('Blueprint Pipeline', () => {
     }
 
     // Pipeline should stop — landing or saved state should appear
-    const backToLanding = await page
+    const _backToLanding = await page
       .locator('[data-testid="blueprint-landing"]')
       .isVisible({ timeout: 5_000 })
       .catch(() => false)

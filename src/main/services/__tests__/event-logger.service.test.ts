@@ -479,10 +479,7 @@ if (env) {
         (e: any) => e.eventType === 'session.started' && e.sessionId === sessionId
       )
       assert.ok(sessionEvent)
-      assert.ok(
-        sessionEvent.sequenceNumber != null,
-        'session event should have a sequence number'
-      )
+      assert.ok(sessionEvent.sequenceNumber != null, 'session event should have a sequence number')
     })
   })
 }

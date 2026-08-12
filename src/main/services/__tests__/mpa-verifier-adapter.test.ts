@@ -41,7 +41,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify implementation',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     assert.equal(adapter.role, 'mpa-verifier')
   })
@@ -50,7 +56,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-99',
       goal: 'Verify',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     assert.equal(adapter.agentId, 'mpa-verifier-ws-99')
   })
@@ -61,7 +73,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     ;(adapter as any).systemPrompt = 'Fake prompt'
     const result = adapter.buildPrompts(makePromptCtx())
@@ -75,7 +93,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     assert.throws(
       () => adapter.buildPrompts(makePromptCtx()),
@@ -89,7 +113,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
     const { allowedTools } = result
@@ -105,7 +135,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     const result = adapter.buildMcpConfig(makeMcpCtx())
     const { disallowedTools } = result
@@ -121,7 +157,13 @@ describe('MpaVerifierAdapter', () => {
     const adapter = new MpaVerifierAdapter({
       workspaceId: 'ws-1',
       goal: 'Verify',
-      plan: { goalType: 'feature' as const, summary: 'plan', items: [], risks: [], existingPatterns: [] }
+      plan: {
+        goalType: 'feature' as const,
+        summary: 'plan',
+        items: [],
+        risks: [],
+        existingPatterns: []
+      }
     })
     adapter.setGoalCondition('All tests pass')
     ;(adapter as any).systemPrompt = 'some prompt'

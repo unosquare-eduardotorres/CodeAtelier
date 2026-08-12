@@ -43,9 +43,7 @@ export class AppChrome {
     }
 
     // Fallback: button with matching text
-    const byText = this.page
-      .getByRole('button', { name: new RegExp(tab, 'i') })
-      .first()
+    const byText = this.page.getByRole('button', { name: new RegExp(tab, 'i') }).first()
     if (await byText.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await byText.click()
       await this.page.waitForTimeout(800)
@@ -53,7 +51,9 @@ export class AppChrome {
     }
 
     // Fallback: aria-label
-    const byLabel = this.page.locator(`[aria-label="${tab}"], [aria-label="${tab[0].toUpperCase() + tab.slice(1)}"]`).first()
+    const byLabel = this.page
+      .locator(`[aria-label="${tab}"], [aria-label="${tab[0].toUpperCase() + tab.slice(1)}"]`)
+      .first()
     if (await byLabel.isVisible({ timeout: 2_000 }).catch(() => false)) {
       await byLabel.click()
       await this.page.waitForTimeout(800)

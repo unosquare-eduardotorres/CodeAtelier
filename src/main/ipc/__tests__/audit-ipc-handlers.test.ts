@@ -149,9 +149,7 @@ describe('computeAuditOverallScore', () => {
   })
 
   test('treats undefined coverageSufficient as sufficient', () => {
-    const results: AuditResult[] = [
-      makeResult({ trackId: 'code', status: 'completed', score: 85 })
-    ]
+    const results: AuditResult[] = [makeResult({ trackId: 'code', status: 'completed', score: 85 })]
     // coverageSufficient is undefined → should still be included
     const result = computeAuditOverallScore(results)
     assert.equal(result.overallScore, 85)
@@ -301,9 +299,7 @@ describe('generateAuditReportMarkdown', () => {
   test('skips findings table when findings are empty', () => {
     const run = makeRun({
       selectedTracks: ['code'],
-      results: [
-        makeResult({ trackId: 'code', status: 'completed', score: 90, findings: [] })
-      ]
+      results: [makeResult({ trackId: 'code', status: 'completed', score: 90, findings: [] })]
     })
     const md = generateAuditReportMarkdown(run, 'Test')
     assert.ok(!md.includes('### Findings'))
@@ -500,17 +496,13 @@ describe('formatFindingsAsContext', () => {
   })
 
   test('omits file when not present', () => {
-    const findings: AuditFinding[] = [
-      makeFinding({ filePath: undefined })
-    ]
+    const findings: AuditFinding[] = [makeFinding({ filePath: undefined })]
     const ctx = formatFindingsAsContext(findings)
     assert.ok(!ctx.includes('**File:**'))
   })
 
   test('omits recommendation when not present', () => {
-    const findings: AuditFinding[] = [
-      makeFinding({ recommendation: undefined })
-    ]
+    const findings: AuditFinding[] = [makeFinding({ recommendation: undefined })]
     const ctx = formatFindingsAsContext(findings)
     assert.ok(!ctx.includes('**Recommendation:**'))
   })
@@ -521,9 +513,7 @@ describe('formatFindingsAsContext', () => {
   })
 
   test('handles single finding', () => {
-    const findings: AuditFinding[] = [
-      makeFinding({ severity: 'critical', title: 'CVE-2025-001' })
-    ]
+    const findings: AuditFinding[] = [makeFinding({ severity: 'critical', title: 'CVE-2025-001' })]
     const ctx = formatFindingsAsContext(findings)
     assert.ok(ctx.includes('### 1. [CRITICAL] CVE-2025-001'))
     // No separator before/after single item
@@ -531,10 +521,7 @@ describe('formatFindingsAsContext', () => {
   })
 
   test('separates findings with double newline', () => {
-    const findings: AuditFinding[] = [
-      makeFinding({ id: 'f-1' }),
-      makeFinding({ id: 'f-2' })
-    ]
+    const findings: AuditFinding[] = [makeFinding({ id: 'f-1' }), makeFinding({ id: 'f-2' })]
     const ctx = formatFindingsAsContext(findings)
     assert.ok(ctx.includes('\n\n###'))
   })

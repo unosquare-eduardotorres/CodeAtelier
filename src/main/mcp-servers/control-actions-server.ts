@@ -3,12 +3,14 @@
  * Control Actions MCP Server — externalized for CLI interactive mode.
  *
  * Exposes four tools: emit_plan, ask_user, permission_prompt, emit_phase_progress.
- * Communicates events back to the Electron main process via a Unix domain
- * socket (IPC bridge). The main process creates the socket server before
+ * Communicates events back to the Electron main process via a socket
+ * (IPC bridge). The main process creates the socket server before
  * spawning the Claude CLI; this server connects to it on startup.
  *
  * Environment variables:
- *   IPC_SOCKET_PATH  — Path to the Unix domain socket for event bridge
+ *   IPC_SOCKET_PATH  — Socket address for event bridge. Supports two formats:
+ *                       Unix socket: "/tmp/code-atelier-ipc-abc.sock"
+ *                       TCP loopback: "tcp:127.0.0.1:49152"
  *   WORKSPACE_PATH   — Current workspace path
  *   CONVERSATION_ID  — Active conversation ID (optional)
  *   CONVERSATION_MODE — 'plan' | 'build' | 'danger'
@@ -24,13 +26,21 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { createConnection, type Socket } from 'node:net'
 import { createAskUserRegistry } from './ask-user-registry'
+import { parseIpcAddress } from '../../shared/ipc-address'
+import { shouldAutoApprove } from './tool-auto-approve'
+import { classifyIdleWait } from './idle-wait-guard'
+import { buildPermissionResult } from './permission-result'
+import { resolveBroadcastMode } from './mode-broadcast'
 
 // ── Environment ──
 const IPC_SOCKET_PATH = process.env.IPC_SOCKET_PATH
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
-// CONVERSATION_ID reserved for future per-conversation routing
-void process.env.CONVERSATION_ID
-const CONVERSATION_MODE = process.env.CONVERSATION_MODE ?? 'plan'
+// Identifies which conversation this server belongs to — one IPC bridge serves
+// every conversation in a workspace, so mode broadcasts must be filtered by it.
+const CONVERSATION_ID = process.env.CONVERSATION_ID
+/** Mutable: the CLI child owning this server outlives a mode switch, so the
+ *  spawn-time env goes stale the moment the user flips Plan → Build. */
+let conversationMode = process.env.CONVERSATION_MODE ?? 'plan'
 
 // ── IPC Bridge ──
 let ipcSocket: Socket | null = null
@@ -44,24 +54,40 @@ function connectIpc(): void {
   }
 
   try {
-    ipcSocket = createConnection(IPC_SOCKET_PATH)
+    // Support both Unix socket paths and TCP loopback (tcp:host:port)
+    const parsed = parseIpcAddress(IPC_SOCKET_PATH)
+    if (!parsed) {
+      console.error(`[control-actions-server] Invalid IPC_SOCKET_PATH: ${IPC_SOCKET_PATH}`)
+      return
+    }
+
+    if (parsed.type === 'tcp') {
+      ipcSocket = createConnection({ host: parsed.host, port: parsed.port })
+      // Prevent idle TCP connection drops during long ask_user waits (Windows)
+      ipcSocket.setKeepAlive(true, 30_000)
+      console.error(
+        `[control-actions-server] Connecting to IPC via TCP: ${parsed.host}:${parsed.port}`
+      )
+    } else {
+      ipcSocket = createConnection(parsed.path)
+      console.error(`[control-actions-server] Connecting to IPC via Unix socket: ${parsed.path}`)
+    }
+
     ipcSocket.on('error', (err) => {
       console.error(`[control-actions-server] IPC socket error: ${err.message}`)
       ipcSocket = null
       // The bridge is gone — no response can ever arrive. Resolve any blocked
       // ask_user promises so the turn unwinds cleanly instead of hanging forever.
       askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
-      permissionRegistry.resolveAll(
-        JSON.stringify({ behavior: 'deny', message: SOCKET_CLOSED_MESSAGE })
-      )
+      permissionRegistry.resolveAll(buildPermissionResult(false, undefined, SOCKET_CLOSED_MESSAGE))
+      pendingPermissionInputs.clear()
     })
     ipcSocket.on('close', () => {
       ipcSocket = null
       // Same teardown on a clean close (e.g. Stop killed the CLI + this child).
       askUserRegistry.resolveAll(SOCKET_CLOSED_MESSAGE)
-      permissionRegistry.resolveAll(
-        JSON.stringify({ behavior: 'deny', message: SOCKET_CLOSED_MESSAGE })
-      )
+      permissionRegistry.resolveAll(buildPermissionResult(false, undefined, SOCKET_CLOSED_MESSAGE))
+      pendingPermissionInputs.clear()
     })
   } catch (err) {
     console.error(`[control-actions-server] Failed to connect to IPC: ${(err as Error).message}`)
@@ -90,12 +116,25 @@ const askUserRegistry = createAskUserRegistry()
 
 /**
  * Registry of in-flight permission_prompt requests awaiting user approval/denial.
- * Same pattern as askUserRegistry — timeout-deny after 120s, socket-close resolves all.
+ * Same pattern as askUserRegistry — no auto-deny timeout, socket-close resolves
+ * all.
+ *
+ * The previous 15-minute auto-deny was dead code: the executor's own 10-minute
+ * read timeout always won the race and killed the turn first. Once that clock
+ * was made suspendable the auto-deny became reachable, and a wall clock that
+ * silently denies on the user's behalf is the wrong default — stopping the turn
+ * is the escape hatch.
  */
 const permissionRegistry = createAskUserRegistry()
 
-/** Timeout for permission prompts — denies automatically if user doesn't respond. */
-const PERMISSION_TIMEOUT_MS = 900_000 // 15 minutes — matches user multitasking workflow
+/**
+ * requestId → the tool input captured when the prompt was raised.
+ *
+ * The authoritative copy: the CLI requires `updatedInput` on an allow, and the
+ * main process does not reliably echo the input back on the response. Cleared
+ * on resolve, timeout and socket teardown so it cannot leak across a session.
+ */
+const pendingPermissionInputs = new Map<string, Record<string, unknown>>()
 
 const SOCKET_CLOSED_MESSAGE =
   'Connection to the app closed before you answered — ask again or proceed.'
@@ -132,13 +171,21 @@ function setupResponseListener(): void {
         }
         if (event.type === 'permissionResponse' && event.requestId) {
           const approved = (event.payload as Record<string, unknown>)?.approved === true
-          const result = approved
-            ? JSON.stringify({
-                behavior: 'allow',
-                updatedInput: (event.payload as Record<string, unknown>)?.input
-              })
-            : JSON.stringify({ behavior: 'deny', message: 'User denied the permission request.' })
-          permissionRegistry.resolve(event.requestId, result)
+          const originalInput = pendingPermissionInputs.get(event.requestId)
+          pendingPermissionInputs.delete(event.requestId)
+          const echoed = (event.payload as Record<string, unknown>)?.input as
+            Record<string, unknown> | undefined
+          permissionRegistry.resolve(
+            event.requestId,
+            buildPermissionResult(approved, echoed ?? originalInput)
+          )
+        }
+        if (event.type === 'modeChange') {
+          const next = resolveBroadcastMode(event, CONVERSATION_ID, conversationMode)
+          if (next !== conversationMode) {
+            console.error(`[control-actions-server] Mode changed ${conversationMode} → ${next}`)
+            conversationMode = next
+          }
         }
       } catch {
         console.error(`[control-actions-server] Malformed response: ${line.slice(0, 120)}`)
@@ -174,11 +221,14 @@ const planSchema = z.object({
     .describe('Plan classification'),
   title: z.string().describe('Short title for the plan'),
   summary: z.string().describe('1-3 sentence overview'),
-  goal: z.string().optional().describe(
-    'Clear, measurable completion condition defining what "done" looks like. ' +
-    'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
-    'no regressions in existing tests"'
-  ),
+  goal: z
+    .string()
+    .optional()
+    .describe(
+      'Clear, measurable completion condition defining what "done" looks like. ' +
+        'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
+        'no regressions in existing tests"'
+    ),
   problemSummary: z.string().optional(),
   rootCause: z.string().optional(),
   decisions: z.array(z.object({ what: z.string(), why: z.string() })).optional(),
@@ -273,6 +323,11 @@ server.tool(
   planSchema.shape,
   async (args) => {
     const plan = planSchema.parse(args)
+    console.error(
+      `[control-actions-server] emit_plan called — title="${plan.title}" ` +
+        `phases=${plan.phases?.length ?? 0} ` +
+        `ipcConnected=${!!ipcSocket && !ipcSocket.destroyed}`
+    )
     emitEvent('plan', plan)
     return {
       content: [{ type: 'text' as const, text: `Plan "${plan.title}" emitted successfully.` }]
@@ -349,41 +404,12 @@ server.tool(
   }
 )
 
-// ── Auto-approve whitelist ──────────────────────────────────────────
-// Tools that are inherently safe (read-only, no side effects) are auto-approved
-// server-side to avoid unnecessary UI roundtrips. This reduces noise for
-// non-destructive batches in build mode where acceptEdits still prompts for Bash.
-
-const AUTO_APPROVE_TOOLS = new Set([
-  'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch',
-  'SummarizePage', 'Snapshot', 'Evaluate', // browser read tools
-])
-
-/** Read-only Bash command prefixes that are safe to auto-approve. */
-const SAFE_BASH_PREFIXES = [
-  'git status', 'git log', 'git diff', 'git show', 'git branch',
-  'git tag', 'git remote', 'git rev-parse', 'git describe', 'git stash list',
-  'ls', 'cat ', 'head ', 'tail ', 'wc ', 'find ', 'du ', 'df ',
-  'echo ', 'pwd', 'whoami', 'date', 'uname', 'which ', 'type ',
-  'npm ls', 'npm list', 'npm test', 'npm run test', 'npm run lint',
-  'npm run typecheck', 'npm --version', 'npm run build',
-  'npx tsc --noEmit', 'npx tsc -noEmit',
-  'node --version', 'node -v',
-]
-
-function shouldAutoApprove(toolName: string, input: Record<string, unknown>): boolean {
-  if (AUTO_APPROVE_TOOLS.has(toolName)) return true
-  if (toolName === 'Bash' && typeof input.command === 'string') {
-    const cmd = input.command.trim()
-    return SAFE_BASH_PREFIXES.some((prefix) => cmd.startsWith(prefix))
-  }
-  return false
-}
-
 // permission_prompt tool — implements the Claude CLI --permission-prompt-tool contract.
 // When Claude needs permission for a tool call, it invokes this tool instead of
-// auto-denying. We surface the request in the Electron UI toast and block until
-// the user approves/denies (or a 15min timeout fires).
+// auto-denying. We surface the request in the Electron UI and block until the
+// user approves or denies. There is no auto-deny timeout — see askUserAndWait
+// ForResponse: the turn waits as long as the user needs, and a socket teardown
+// (Stop, app quit, CLI death) unwinds it.
 server.tool(
   'permission_prompt',
   'Request user permission before executing a tool. ' +
@@ -396,10 +422,28 @@ server.tool(
   async (args) => {
     const { tool_name, input, tool_use_id } = args
 
-    // Auto-approve safe read-only tools without UI roundtrip
-    if (shouldAutoApprove(tool_name, input)) {
+    // Refuse pure idle waits BEFORE auto-approve: build mode auto-approves any
+    // non-dangerous shell command, so `sleep 999` would otherwise run silently
+    // and spawn an unhideable console window on Windows. The deny message is fed
+    // back to the model, which then self-corrects to wait_process.
+    const idleWait = classifyIdleWait(tool_name, input)
+    if (idleWait) {
       return {
-        content: [{ type: 'text' as const, text: JSON.stringify({ behavior: 'allow', updatedInput: input }) }]
+        content: [
+          { type: 'text' as const, text: buildPermissionResult(false, undefined, idleWait) }
+        ]
+      }
+    }
+
+    // Auto-approve safe tools without UI roundtrip
+    if (shouldAutoApprove(tool_name, input, conversationMode)) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ behavior: 'allow', updatedInput: input })
+          }
+        ]
       }
     }
 
@@ -414,9 +458,12 @@ server.tool(
       })
       .join(', ')
 
-    // Send permission request to Electron UI via IPC bridge
-    const responsePromise = new Promise<string>((resolve) => {
+    // Send permission request to Electron UI via IPC bridge and wait. Resolves
+    // ONLY on a real permissionResponse or on socket teardown (resolveAll) —
+    // exactly like ask_user. A wall clock here would decide for the user.
+    const resultJson = await new Promise<string>((resolve) => {
       permissionRegistry.register(requestId, resolve)
+      pendingPermissionInputs.set(requestId, input)
 
       emitEvent(
         'permission',
@@ -425,31 +472,14 @@ server.tool(
           toolName: tool_name,
           toolUseId: tool_use_id,
           inputSummary,
-          input
+          input,
+          // Lets the main process detect drift between the live session mode and
+          // the mode this server is actually enforcing.
+          serverMode: conversationMode
         },
         requestId
       )
     })
-
-    // Race against timeout — auto-deny if user doesn't respond in time
-    const timeoutPromise = new Promise<string>((resolve) => {
-      setTimeout(() => {
-        // If the promise is still pending, resolve it via the registry
-        const resolved = permissionRegistry.resolve(
-          requestId,
-          JSON.stringify({ behavior: 'deny', message: 'No user response — denied by timeout.' })
-        )
-        if (!resolved) {
-          // Already resolved by user response — this is a no-op
-          return
-        }
-        resolve(
-          JSON.stringify({ behavior: 'deny', message: 'No user response — denied by timeout.' })
-        )
-      }, PERMISSION_TIMEOUT_MS)
-    })
-
-    const resultJson = await Promise.race([responsePromise, timeoutPromise])
 
     return {
       content: [{ type: 'text' as const, text: resultJson }]
@@ -469,7 +499,7 @@ async function main(): Promise<void> {
   await server.connect(transport)
 
   console.error(
-    `[control-actions-server] Started (workspace=${WORKSPACE_PATH}, mode=${CONVERSATION_MODE}, ipc=${IPC_SOCKET_PATH ? 'connected' : 'NONE'})`
+    `[control-actions-server] Started (workspace=${WORKSPACE_PATH}, mode=${conversationMode}, ipc=${IPC_SOCKET_PATH ? 'connected' : 'NONE'})`
   )
 }
 

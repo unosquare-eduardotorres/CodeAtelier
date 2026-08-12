@@ -21,9 +21,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Goal editing in execution panel', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -69,17 +67,29 @@ test.describe('Goal editing in execution panel', () => {
 
   test('shows Modified badge when goal text is changed', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const planTabOpen = await openPlanTab(page)
-    if (!planTabOpen) { test.skip(); return }
+    if (!planTabOpen) {
+      test.skip()
+      return
+    }
 
     const textarea = await findGoalTextarea(page)
-    if (!textarea) { test.skip(); return }
+    if (!textarea) {
+      test.skip()
+      return
+    }
 
     // Get original value
     const originalValue = await textarea.inputValue()
-    if (!originalValue) { test.skip(); return }
+    if (!originalValue) {
+      test.skip()
+      return
+    }
 
     // Type new text to modify the goal
     await textarea.fill(originalValue + ' — updated goal')
@@ -97,16 +107,28 @@ test.describe('Goal editing in execution panel', () => {
 
   test('Reset button reverts goal to original', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const planTabOpen = await openPlanTab(page)
-    if (!planTabOpen) { test.skip(); return }
+    if (!planTabOpen) {
+      test.skip()
+      return
+    }
 
     const textarea = await findGoalTextarea(page)
-    if (!textarea) { test.skip(); return }
+    if (!textarea) {
+      test.skip()
+      return
+    }
 
     const originalValue = await textarea.inputValue()
-    if (!originalValue) { test.skip(); return }
+    if (!originalValue) {
+      test.skip()
+      return
+    }
 
     // Modify the goal
     await textarea.fill('Completely different goal text')
@@ -116,7 +138,10 @@ test.describe('Goal editing in execution panel', () => {
     const goalCard = page.locator('[data-testid="goal-card"]')
     const resetBtn = goalCard.locator('button', { hasText: 'Reset' })
     const hasReset = await resetBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasReset) { test.skip(); return }
+    if (!hasReset) {
+      test.skip()
+      return
+    }
     await resetBtn.click()
     await page.waitForTimeout(300)
 
@@ -130,16 +155,28 @@ test.describe('Goal editing in execution panel', () => {
 
   test('Regenerate Plan sends message with updated goal', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const planTabOpen = await openPlanTab(page)
-    if (!planTabOpen) { test.skip(); return }
+    if (!planTabOpen) {
+      test.skip()
+      return
+    }
 
     const textarea = await findGoalTextarea(page)
-    if (!textarea) { test.skip(); return }
+    if (!textarea) {
+      test.skip()
+      return
+    }
 
     const originalValue = await textarea.inputValue()
-    if (!originalValue) { test.skip(); return }
+    if (!originalValue) {
+      test.skip()
+      return
+    }
 
     // Edit goal text
     const newGoal = 'Build a REST API with JWT authentication'
@@ -149,7 +186,10 @@ test.describe('Goal editing in execution panel', () => {
     // Click Regenerate Plan button
     const regenerateBtn = page.locator('[data-testid="goal-regenerate-plan"]')
     const hasRegenerate = await regenerateBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRegenerate) { test.skip(); return }
+    if (!hasRegenerate) {
+      test.skip()
+      return
+    }
     await regenerateBtn.click()
     await page.waitForTimeout(1_000)
 
@@ -163,13 +203,22 @@ test.describe('Goal editing in execution panel', () => {
 
   test('Regenerate Plan blocked while streaming', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const planTabOpen = await openPlanTab(page)
-    if (!planTabOpen) { test.skip(); return }
+    if (!planTabOpen) {
+      test.skip()
+      return
+    }
 
     const textarea = await findGoalTextarea(page)
-    if (!textarea) { test.skip(); return }
+    if (!textarea) {
+      test.skip()
+      return
+    }
 
     // Check if chat is currently streaming — if so, try to regenerate
     const stopBtn = page.locator('[data-testid="stop-streaming-button"]')
@@ -187,7 +236,10 @@ test.describe('Goal editing in execution panel', () => {
 
     const regenerateBtn = page.locator('[data-testid="goal-regenerate-plan"]')
     const hasRegenerate = await regenerateBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasRegenerate) { test.skip(); return }
+    if (!hasRegenerate) {
+      test.skip()
+      return
+    }
     await regenerateBtn.click()
     await page.waitForTimeout(500)
 
@@ -196,20 +248,30 @@ test.describe('Goal editing in execution panel', () => {
     await expect(toast).toBeVisible({ timeout: 3_000 })
   })
 
-  test('whitespace-only changes do not trigger Modified state', async ({
-    electronPage: page
-  }) => {
+  test('whitespace-only changes do not trigger Modified state', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const planTabOpen = await openPlanTab(page)
-    if (!planTabOpen) { test.skip(); return }
+    if (!planTabOpen) {
+      test.skip()
+      return
+    }
 
     const textarea = await findGoalTextarea(page)
-    if (!textarea) { test.skip(); return }
+    if (!textarea) {
+      test.skip()
+      return
+    }
 
     const originalValue = await textarea.inputValue()
-    if (!originalValue) { test.skip(); return }
+    if (!originalValue) {
+      test.skip()
+      return
+    }
 
     // Add trailing spaces only
     await textarea.fill(originalValue + '   ')

@@ -39,8 +39,12 @@ describe('code-analysis-server — parseComplexityMessage', () => {
   test('parses_function_complexity', () => {
     if (!parseComplexityMessage) return
     const result = parseComplexityMessage(
-      { message: "Function 'handleRequest' has a complexity of 15. Maximum allowed is 0.",
-        line: 42, column: 5, ruleId: 'complexity' },
+      {
+        message: "Function 'handleRequest' has a complexity of 15. Maximum allowed is 0.",
+        line: 42,
+        column: 5,
+        ruleId: 'complexity'
+      },
       '/project/src/api.ts'
     )
     assert.deepEqual(result, {
@@ -55,8 +59,12 @@ describe('code-analysis-server — parseComplexityMessage', () => {
   test('parses_method_complexity', () => {
     if (!parseComplexityMessage) return
     const result = parseComplexityMessage(
-      { message: "Method 'render' has a complexity of 8. Maximum allowed is 0.",
-        line: 100, column: 3, ruleId: 'complexity' },
+      {
+        message: "Method 'render' has a complexity of 8. Maximum allowed is 0.",
+        line: 100,
+        column: 3,
+        ruleId: 'complexity'
+      },
       '/project/src/component.tsx'
     )
     assert.equal(result!.function, 'render')
@@ -66,8 +74,12 @@ describe('code-analysis-server — parseComplexityMessage', () => {
   test('parses_arrow_function', () => {
     if (!parseComplexityMessage) return
     const result = parseComplexityMessage(
-      { message: "Arrow function has a complexity of 5. Maximum allowed is 0.",
-        line: 10, column: 1, ruleId: 'complexity' },
+      {
+        message: 'Arrow function has a complexity of 5. Maximum allowed is 0.',
+        line: 10,
+        column: 1,
+        ruleId: 'complexity'
+      },
       '/project/src/utils.ts'
     )
     assert.equal(result!.function, 'anonymous')
@@ -77,8 +89,7 @@ describe('code-analysis-server — parseComplexityMessage', () => {
   test('returns_null_for_non_complexity_rule', () => {
     if (!parseComplexityMessage) return
     const result = parseComplexityMessage(
-      { message: "Some other rule message",
-        line: 1, column: 1, ruleId: 'no-unused-vars' },
+      { message: 'Some other rule message', line: 1, column: 1, ruleId: 'no-unused-vars' },
       '/project/src/api.ts'
     )
     assert.equal(result, null)
@@ -87,8 +98,7 @@ describe('code-analysis-server — parseComplexityMessage', () => {
   test('returns_null_for_null_ruleId', () => {
     if (!parseComplexityMessage) return
     const result = parseComplexityMessage(
-      { message: "complexity of 5",
-        line: 1, column: 1, ruleId: null },
+      { message: 'complexity of 5', line: 1, column: 1, ruleId: null },
       '/project/src/api.ts'
     )
     assert.equal(result, null)
@@ -97,8 +107,7 @@ describe('code-analysis-server — parseComplexityMessage', () => {
   test('returns_null_for_no_score_in_message', () => {
     if (!parseComplexityMessage) return
     const result = parseComplexityMessage(
-      { message: "Function is too complex",
-        line: 1, column: 1, ruleId: 'complexity' },
+      { message: 'Function is too complex', line: 1, column: 1, ruleId: 'complexity' },
       '/project/src/api.ts'
     )
     assert.equal(result, null)
@@ -168,18 +177,27 @@ describe('code-analysis-server — diagnostic formatting', () => {
   interface EslintDiagnostic {
     filePath: string
     messages: Array<{
-      ruleId: string | null; severity: number; message: string; line: number; column: number
+      ruleId: string | null
+      severity: number
+      message: string
+      line: number
+      column: number
     }>
-    errorCount: number; warningCount: number; fixableErrorCount: number; fixableWarningCount: number
+    errorCount: number
+    warningCount: number
+    fixableErrorCount: number
+    fixableWarningCount: number
   }
 
   function summarizeDiagnostics(diagnostics: EslintDiagnostic[]): string {
     const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
     const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
-    const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+    const filesWithIssues = diagnostics.filter((d) => d.errorCount + d.warningCount > 0)
     const lines: string[] = [
-      `## ESLint Results`, ``,
-      `**${diagnostics.length}** files checked · **${totalErrors}** errors · **${totalWarnings}** warnings`, ``
+      `## ESLint Results`,
+      ``,
+      `**${diagnostics.length}** files checked · **${totalErrors}** errors · **${totalWarnings}** warnings`,
+      ``
     ]
     if (filesWithIssues.length === 0) {
       lines.push('✅ All files pass — zero errors, zero warnings.')
@@ -196,13 +214,21 @@ describe('code-analysis-server — diagnostic formatting', () => {
       }
     }
     const topRules = [...ruleCounts.entries()]
-      .sort((a, b) => (b[1].errors + b[1].warnings) - (a[1].errors + a[1].warnings)).slice(0, 10)
-    lines.push('### Top Issues by Rule', '', '| Rule | Errors | Warnings |', '|------|--------|----------|')
+      .sort((a, b) => b[1].errors + b[1].warnings - (a[1].errors + a[1].warnings))
+      .slice(0, 10)
+    lines.push(
+      '### Top Issues by Rule',
+      '',
+      '| Rule | Errors | Warnings |',
+      '|------|--------|----------|'
+    )
     for (const [rule, counts] of topRules) {
       lines.push(`| ${rule} | ${counts.errors} | ${counts.warnings} |`)
     }
-    const errorFiles = filesWithIssues.filter(f => f.errorCount > 0)
-      .sort((a, b) => b.errorCount - a.errorCount).slice(0, 15)
+    const errorFiles = filesWithIssues
+      .filter((f) => f.errorCount > 0)
+      .sort((a, b) => b.errorCount - a.errorCount)
+      .slice(0, 15)
     if (errorFiles.length > 0) {
       lines.push('', '### Files with Errors', '')
       for (const f of errorFiles) {
@@ -214,7 +240,14 @@ describe('code-analysis-server — diagnostic formatting', () => {
 
   test('summarize_no_issues', () => {
     const result = summarizeDiagnostics([
-      { filePath: 'a.ts', messages: [], errorCount: 0, warningCount: 0, fixableErrorCount: 0, fixableWarningCount: 0 }
+      {
+        filePath: 'a.ts',
+        messages: [],
+        errorCount: 0,
+        warningCount: 0,
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
+      }
     ])
     assert.ok(result.includes('All files pass'))
     assert.ok(result.includes('0** errors'))
@@ -228,7 +261,10 @@ describe('code-analysis-server — diagnostic formatting', () => {
           { ruleId: 'no-unused-vars', severity: 2, message: 'Unused var', line: 1, column: 1 },
           { ruleId: 'no-console', severity: 1, message: 'Console statement', line: 5, column: 1 }
         ],
-        errorCount: 1, warningCount: 1, fixableErrorCount: 0, fixableWarningCount: 0
+        errorCount: 1,
+        warningCount: 1,
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
       }
     ])
     assert.ok(result.includes('1** errors'))
@@ -245,7 +281,10 @@ describe('code-analysis-server — diagnostic formatting', () => {
           { ruleId: 'no-unused-vars', severity: 2, message: 'Unused', line: 2, column: 1 },
           { ruleId: 'semi', severity: 1, message: 'Missing ;', line: 3, column: 1 }
         ],
-        errorCount: 2, warningCount: 1, fixableErrorCount: 0, fixableWarningCount: 0
+        errorCount: 2,
+        warningCount: 1,
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
       }
     ])
     assert.ok(result.includes('no-unused-vars'))
@@ -254,12 +293,14 @@ describe('code-analysis-server — diagnostic formatting', () => {
 
   test('format_full_diagnostics_shows_per_file', () => {
     function formatFullDiagnostics(diagnostics: EslintDiagnostic[]): string {
-      const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+      const filesWithIssues = diagnostics.filter((d) => d.errorCount + d.warningCount > 0)
       const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
       const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
       const lines: string[] = [
-        `## ESLint Results (Full)`, ``,
-        `**${diagnostics.length}** files checked · **${totalErrors}** errors · **${totalWarnings}** warnings`, ``
+        `## ESLint Results (Full)`,
+        ``,
+        `**${diagnostics.length}** files checked · **${totalErrors}** errors · **${totalWarnings}** warnings`,
+        ``
       ]
       if (filesWithIssues.length === 0) {
         lines.push('✅ All files pass — zero errors, zero warnings.')
@@ -269,7 +310,9 @@ describe('code-analysis-server — diagnostic formatting', () => {
         lines.push(`### ${file.filePath}`, '')
         for (const msg of file.messages) {
           const sev = msg.severity === 2 ? '❌' : '⚠️'
-          lines.push(`- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`)
+          lines.push(
+            `- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`
+          )
         }
         lines.push('')
       }
@@ -279,8 +322,13 @@ describe('code-analysis-server — diagnostic formatting', () => {
     const result = formatFullDiagnostics([
       {
         filePath: 'src/api.ts',
-        messages: [{ ruleId: 'no-console', severity: 1, message: 'Console log', line: 10, column: 3 }],
-        errorCount: 0, warningCount: 1, fixableErrorCount: 0, fixableWarningCount: 0
+        messages: [
+          { ruleId: 'no-console', severity: 1, message: 'Console log', line: 10, column: 3 }
+        ],
+        errorCount: 0,
+        warningCount: 1,
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
       }
     ])
     assert.ok(result.includes('src/api.ts'))
@@ -295,11 +343,7 @@ describe('code-analysis-server — diagnostic formatting', () => {
 
 describe('code-analysis-server — rule severity resolution', () => {
   function resolveRuleSeverity(raw: unknown): 'error' | 'warn' | 'off' {
-    return raw === 2 || raw === 'error'
-      ? 'error'
-      : raw === 1 || raw === 'warn'
-        ? 'warn'
-        : 'off'
+    return raw === 2 || raw === 'error' ? 'error' : raw === 1 || raw === 'warn' ? 'warn' : 'off'
   }
 
   test('numeric_2_is_error', () => {
@@ -340,10 +384,7 @@ describe('code-analysis-server — formatRulesOutput', () => {
     return raw === 2 || raw === 'error' ? 'error' : raw === 1 || raw === 'warn' ? 'warn' : 'off'
   }
 
-  function formatRulesOutput(
-    targetFile: string,
-    rules: Record<string, unknown>
-  ): string {
+  function formatRulesOutput(targetFile: string, rules: Record<string, unknown>): string {
     const activeRules: Array<{ rule: string; severity: string; options: unknown }> = []
     for (const [rule, value] of Object.entries(rules)) {
       const arr = Array.isArray(value) ? value : [value]
@@ -359,8 +400,10 @@ describe('code-analysis-server — formatRulesOutput', () => {
       groups.set(prefix, list)
     }
     const lines: string[] = [
-      `## Active ESLint Rules for \`${targetFile}\``, ``,
-      `**${activeRules.length}** active rules (${activeRules.filter((r) => r.severity === 'error').length} errors, ${activeRules.filter((r) => r.severity === 'warn').length} warnings)`, ``
+      `## Active ESLint Rules for \`${targetFile}\``,
+      ``,
+      `**${activeRules.length}** active rules (${activeRules.filter((r) => r.severity === 'error').length} errors, ${activeRules.filter((r) => r.severity === 'warn').length} warnings)`,
+      ``
     ]
     for (const [group, groupRules] of [...groups.entries()].sort()) {
       lines.push(`### ${group} (${groupRules.length})`, '')
@@ -378,14 +421,14 @@ describe('code-analysis-server — formatRulesOutput', () => {
       'no-console': 2,
       '@typescript-eslint/no-unused-vars': 'error',
       'import/order': 1,
-      'semi': 0  // off — should be excluded
+      semi: 0 // off — should be excluded
     })
     assert.ok(output.includes('src/index.ts'))
     assert.ok(output.includes('3** active rules'))
     assert.ok(output.includes('### core'))
     assert.ok(output.includes('### @typescript-eslint'))
     assert.ok(output.includes('### import'))
-    assert.ok(!output.includes('semi'))  // off rules excluded
+    assert.ok(!output.includes('semi')) // off rules excluded
   })
 
   test('empty_rules_shows_zero', () => {
@@ -394,13 +437,13 @@ describe('code-analysis-server — formatRulesOutput', () => {
   })
 
   test('all_off_rules_shows_zero', () => {
-    const output = formatRulesOutput('src/index.ts', { 'semi': 0, 'no-var': 'off' })
+    const output = formatRulesOutput('src/index.ts', { semi: 0, 'no-var': 'off' })
     assert.ok(output.includes('0** active rules'))
   })
 
   test('array_rule_config_extracts_severity', () => {
     const output = formatRulesOutput('src/index.ts', {
-      'complexity': [1, { max: 10 }]
+      complexity: [1, { max: 10 }]
     })
     assert.ok(output.includes('1** active rules'))
     assert.ok(output.includes('warnings'))

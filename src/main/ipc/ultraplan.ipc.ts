@@ -17,10 +17,10 @@ import { requireObject, requireString } from './validate-args'
 const log = baseLog.scope('ultraplan-ipc')
 
 export function registerUltraplanIpc(): void {
-  ipcMain.handle((IPC_CHANNELS as any).ULTRAPLAN_RESPOND, async (event, rawArgs: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.ULTRAPLAN_RESPOND, async (event, rawArgs: unknown) => {
     validateSender(event)
 
-    const ch = (IPC_CHANNELS as any).ULTRAPLAN_RESPOND
+    const ch = IPC_CHANNELS.ULTRAPLAN_RESPOND
     const args = requireObject(rawArgs, ch)
     const action = requireString(args, 'action', ch)
 

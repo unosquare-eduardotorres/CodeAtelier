@@ -39,11 +39,14 @@ export const planSchema = z.object({
     ),
   title: z.string().describe('Short title for the plan (shown as card header)'),
   summary: z.string().describe('1-3 sentence overview of the plan'),
-  goal: z.string().optional().describe(
-    'Clear, measurable completion condition defining what "done" looks like. ' +
-    'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
-    'no regressions in existing tests"'
-  ),
+  goal: z
+    .string()
+    .optional()
+    .describe(
+      'Clear, measurable completion condition defining what "done" looks like. ' +
+        'Example: "All 3 phases complete, retry middleware tested with >80% coverage, ' +
+        'no regressions in existing tests"'
+    ),
   problemSummary: z.string().optional().describe('For diagnostic plans: what problem was found'),
   rootCause: z.string().optional().describe('For diagnostic plans: single root cause analysis'),
   decisions: z
@@ -108,7 +111,12 @@ export const planSchema = z.object({
     .array(
       z.object({
         heading: z.string(),
-        icon: z.string().optional(),
+        icon: z
+          .string()
+          .optional()
+          .describe(
+            'Optional Lucide icon id in kebab-case, e.g. "list-checks", "triangle-alert", "file-text". Bare id only - no "lucide:" prefix and no emoji.'
+          ),
         content: z.string().describe('Markdown content for this section'),
         mermaid: z.string().optional().describe('Optional mermaid diagram for this section')
       })
@@ -187,5 +195,7 @@ export const askUserSchema = z.object({
   action: z
     .string()
     .optional()
-    .describe('Optional programmatic action tag for the renderer. Omit for plain clarifying questions.')
+    .describe(
+      'Optional programmatic action tag for the renderer. Omit for plain clarifying questions.'
+    )
 })

@@ -1,3 +1,4 @@
+import type { CredentialFieldDef } from './integration-credentials.types'
 import type {
   GrillTrackId,
   GrillTrack,
@@ -39,12 +40,16 @@ export const IPC_CHANNELS = {
   CHAT_GET_TODOS: 'chat:getTodos',
   PLAN_GET_PHASE_PROGRESS: 'plan:getPhaseProgress',
   CHAT_SWITCH_BRANCH: 'chat:switchBranch',
+  /** Branches a new chat may pick from, with who currently holds each one. */
+  CHAT_BRANCH_OPTIONS: 'chat:branchOptions',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
   /** State machine transitions — renderer mirrors backend conversation state */
   CHAT_STATE_CHANGE: 'chat:stateChange',
   /** Query current streaming state — used by renderer on conversation switch to restore streaming indicator */
   CHAT_GET_STREAMING_STATE: 'chat:getStreamingState',
+  /** Manual escape hatch — force-release a conversation wedged in a busy state */
+  CHAT_FORCE_RELEASE: 'chat:forceRelease',
   /** Set a /goal condition for the next send on a conversation */
   CHAT_SET_GOAL: 'chat:setGoal',
 
@@ -66,12 +71,47 @@ export const IPC_CHANNELS = {
   PERMISSION_REQUEST: 'permission:request',
   /** Renderer → Main: user responded to a permission request */
   PERMISSION_RESPONSE: 'permission:response',
+  /** Main → Renderer: a permission request reached a terminal state (approved/denied/timedout/cancelled) */
+  PERMISSION_RESOLVED: 'permission:resolved',
   /** Main → Renderer: important completion or failure from a background workspace */
   COMPLETION_NOTIFICATION: 'workspace:completion',
   /** Main → Renderer: navigate to workspace + page after OS notification click */
   NOTIFICATION_NAVIGATE: 'notification:navigate',
   /** Renderer → Main: probe macOS notification support (unsigned build detection) */
   NOTIFICATION_PROBE: 'notification:probe',
+
+  // Background processes (process-manager MCP server)
+  /** Renderer → Main: list tracked background processes across all workspaces */
+  PROCESS_LIST: 'process:list',
+  /** Renderer → Main: stop a background process (SIGTERM → SIGKILL) */
+  PROCESS_STOP: 'process:stop',
+  /** Renderer → Main: cancel the auto-resume watch on a background process */
+  PROCESS_CANCEL_WATCH: 'process:cancelWatch',
+  /** Main → Renderer: background process list changed (started/exited/stopped) */
+  PROCESS_CHANGED: 'process:changed',
+
+  // Work tracks (branch + worktree + owner)
+  /** Renderer → Main: list a workspace's tracks with filesystem facts + disk budget */
+  TRACK_LIST: 'track:list',
+  /** Renderer → Main: destroy a track and everything uncommitted in it */
+  TRACK_DISCARD: 'track:discard',
+  /** Renderer → Main: open a track's worktree in Finder/Explorer */
+  TRACK_REVEAL: 'track:reveal',
+  /** Renderer → Main: hand retained work to a new chat */
+  TRACK_ADOPT: 'track:adopt',
+  /** Renderer → Main: land a track's work — PR, or merge into the integration branch */
+  TRACK_LAND: 'track:land',
+  /**
+   * Renderer → Main: what landing this track WOULD do. Read-only — no commit,
+   * no push, no merge. Backs the landing dialog's conflict forecast.
+   */
+  TRACK_LAND_PREVIEW: 'track:landPreview',
+  /**
+   * Main → Renderer: a workspace's track list changed (created, retained,
+   * removed, adopted, reaped). `workspaceId` is null when the change spanned
+   * workspaces (the reaper), meaning "refresh regardless".
+   */
+  TRACK_CHANGED: 'track:changed',
   /** Main → Renderer: navigate to workspace/page after tray menu click */
   TRAY_NAVIGATE: 'tray:navigate',
 
@@ -194,6 +234,13 @@ export const IPC_CHANNELS = {
   MEMORY_FEED_CANCEL: 'memory:feedCancel',
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
+  MEMORY_PROJECT_EXPORT: 'memory:project:export',
+
+  // Reflection review queue (synthesised parent facts awaiting approval)
+  MEMORY_REFLECTION_LIST: 'memory:reflection:list',
+  MEMORY_REFLECTION_APPROVE: 'memory:reflection:approve',
+  MEMORY_REFLECTION_REJECT: 'memory:reflection:reject',
+  MEMORY_REFLECTION_RUN: 'memory:reflection:run',
   MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
   MEMORY_SAVE_PLAN_EXECUTION: 'memory:savePlanExecution',
 
@@ -209,6 +256,11 @@ export const IPC_CHANNELS = {
   MEMORY_BOOTSTRAP_START: 'memory:bootstrap:start',
   MEMORY_BOOTSTRAP_CANCEL: 'memory:bootstrap:cancel',
   MEMORY_BOOTSTRAP_PROGRESS: 'memory:bootstrap:progress',
+  MEMORY_BOOTSTRAP_PAUSE: 'memory:bootstrap:pause',
+  MEMORY_BOOTSTRAP_RESUME: 'memory:bootstrap:resume',
+  MEMORY_BOOTSTRAP_SNAPSHOT: 'memory:bootstrap:snapshot',
+  MEMORY_BOOTSTRAP_LIST_RUNS: 'memory:bootstrap:listRuns',
+  MEMORY_BOOTSTRAP_LIST_ITEMS: 'memory:bootstrap:listItems',
 
   // Memory graph (knowledge graph visualization)
   MEMORY_GRAPH_GET: 'memory:graph:get',
@@ -242,6 +294,7 @@ export const IPC_CHANNELS = {
   UPDATE_CHECK: 'update:check',
   UPDATE_AVAILABLE: 'update:available',
   UPDATE_NOT_AVAILABLE: 'update:notAvailable',
+  UPDATE_STAGING: 'update:staging',
   UPDATE_DOWNLOADED: 'update:downloaded',
   UPDATE_ERROR: 'update:error',
   UPDATE_PROGRESS: 'update:progress',
@@ -269,6 +322,9 @@ export const IPC_CHANNELS = {
   REPO_GENERATE_COMMIT_MESSAGE: 'repo:generateCommitMessage',
   REPO_CREATE_PR: 'repo:createPr',
   REPO_LIST_BRANCHES: 'repo:listBranches',
+  REPO_GET_REF_FILE_DETAILS: 'repo:getRefFileDetails',
+  REPO_GET_REF_FILE_DIFF: 'repo:getRefFileDiff',
+  REPO_FETCH_ORIGIN: 'repo:fetchOrigin',
 
   // PR Description Generation
   CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription',
@@ -360,6 +416,8 @@ export const IPC_CHANNELS = {
   INDEXING_PROGRESS: 'indexing:progress',
   INDEXING_GET_STATUS: 'indexing:getStatus',
   INDEXING_LOAD_PERSISTED: 'indexing:loadPersisted',
+  INDEXING_PREFLIGHT_EXCLUSIONS: 'indexing:preflightExclusions',
+  INDEXING_APPLY_EXCLUSIONS: 'indexing:applyExclusions',
 
   // Semantic Search query
   SEMANTIC_SEARCH_QUERY: 'semanticSearch:query',
@@ -478,6 +536,16 @@ export const IPC_CHANNELS = {
   PLAN_GET_STATUS_HISTORY: 'plan:getStatusHistory',
   PLAN_FIND_BY_SOURCE: 'plan:findBySource',
 
+  // UltraPlan (CLI teleport-back response)
+  ULTRAPLAN_RESPOND: 'ultraplan:respond',
+
+  // Autofix PR (CI/review-driven fix run)
+  AUTOFIX_PR_START: 'autofixPr:start',
+  AUTOFIX_PR_STATUS: 'autofixPr:status',
+
+  // BTW (side-question answered against conversation context)
+  CHAT_BTW: 'chat:btw',
+
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
   GRILL_CANCEL: 'grill:cancel',
@@ -504,6 +572,10 @@ export const IPC_CHANNELS = {
 
   // External MCP Integrations
   WORKSPACE_CHECK_EXTERNAL_MCP: 'workspace:check-external-mcp',
+  INTEGRATION_SAVE_CREDENTIALS: 'integration:saveCredentials',
+  INTEGRATION_GET_CREDENTIAL_STATUS: 'integration:getCredentialStatus',
+  INTEGRATION_TEST_CONNECTION: 'integration:testConnection',
+  INTEGRATION_CLEAR_CREDENTIALS: 'integration:clearCredentials',
   CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
   CHAT_UPDATE_TONE: 'chat:updateTone',
   CHAT_UPDATE_ROUTING: 'chat:updateRouting',
@@ -556,6 +628,7 @@ export const IPC_CHANNELS = {
   // ── Blueprint Pipeline ──
 
   BLUEPRINT_CREATE: 'blueprint:create',
+  BLUEPRINT_BRANCH_OPTIONS: 'blueprint:branchOptions',
   BLUEPRINT_CREATE_FROM_IDEA: 'blueprint:createFromIdea',
   BLUEPRINT_GET: 'blueprint:get',
   BLUEPRINT_GET_DETAILS: 'blueprint:getDetails',
@@ -565,6 +638,8 @@ export const IPC_CHANNELS = {
 
   BLUEPRINT_ADVANCE_PHASE: 'blueprint:advancePhase',
   BLUEPRINT_SKIP_PHASE: 'blueprint:skipPhase',
+  /** Per-task user skip — survives retry (BP-TASK-USER-SKIP-01). */
+  BLUEPRINT_SKIP_TASK: 'blueprint:skipTask',
   BLUEPRINT_REWIND_PHASE: 'blueprint:rewindPhase',
   BLUEPRINT_BUILD_PROMPT: 'blueprint:buildPrompt',
   BLUEPRINT_SAVE_ARTIFACT: 'blueprint:saveArtifact',
@@ -652,7 +727,6 @@ export const IPC_CHANNELS = {
   HANDOFF_GET_HISTORY: 'handoff:getHistory',
   HANDOFF_GET_CHAIN: 'handoff:getChain',
   HANDOFF_PREVIEW: 'handoff:preview'
-
 } as const
 
 /** Attribution trailer appended to commits made through the app UI. */
@@ -739,7 +813,7 @@ export const AVAILABLE_MODELS = [
 export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string> = {
   specialist: 'claude-opus-5',
   'specialist:plan': 'claude-opus-5',
-  'specialist:build': 'claude-sonnet-5',
+  'specialist:build': 'claude-opus-5',
   'specialist:simple': 'claude-haiku-4-5-20251001',
   'specialist:moderate': 'claude-sonnet-5',
   'specialist:complex': 'claude-opus-5',
@@ -759,7 +833,7 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'blueprint:plan': 'claude-opus-5',
   'blueprint:tasks': 'claude-opus-5',
   'blueprint:review': 'claude-opus-5',
-  'blueprint:build': 'claude-sonnet-5',
+  'blueprint:build': 'claude-opus-5',
   'blueprint:verify': 'claude-opus-5',
 
   // Prompt optimization
@@ -768,7 +842,7 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   // Background one-shot actions
   'commit-message': 'claude-haiku-4-5-20251001',
   'pr-description': 'claude-haiku-4-5-20251001',
-  'condense': 'claude-haiku-4-5-20251001'
+  condense: 'claude-haiku-4-5-20251001'
 } as const
 
 // ── Role Groups (retained for Phase 2 role assignments) ──
@@ -786,11 +860,7 @@ export const ACTION_GROUPS: ActionGroup[] = [
     icon: '💬',
     description: 'Plan & Build mode conversations',
     providerConstrained: true,
-    actions: [
-      'specialist',
-      'specialist:plan',
-      'specialist:build'
-    ]
+    actions: ['specialist', 'specialist:plan', 'specialist:build']
   },
   {
     id: 'blueprint',
@@ -826,7 +896,15 @@ export const ACTION_GROUPS: ActionGroup[] = [
     label: 'Background Tasks',
     icon: '⚙️',
     description: 'Memory extraction, prompt optimization, and lightweight tasks',
-    actions: ['memoryFeed', 'activation', 'haiku', 'prompt:optimize', 'commit-message', 'pr-description', 'condense']
+    actions: [
+      'memoryFeed',
+      'activation',
+      'haiku',
+      'prompt:optimize',
+      'commit-message',
+      'pr-description',
+      'condense'
+    ]
   },
   {
     id: 'specialist',
@@ -853,7 +931,9 @@ export const ACTION_GROUPS: ActionGroup[] = [
  * Blueprint phases map to `blueprint:*` actions (mode is irrelevant — each phase IS its action).
  * MPA phases ride on specialist plan/build tiers.
  */
-const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./types').ModelAction>> = {
+const FIXED_ROLE_ACTIONS: Partial<
+  Record<import('./types').AgentRole, import('./types').ModelAction>
+> = {
   'blueprint-specify': 'blueprint:specify',
   'blueprint-clarify': 'blueprint:clarify',
   'blueprint-plan': 'blueprint:plan',
@@ -862,20 +942,25 @@ const FIXED_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, import('./
   'blueprint-build': 'blueprint:build',
   'blueprint-verify': 'blueprint:verify',
   // Mode-independent session roles (always plan mode)
-  'audit': 'audit',
-  'grill': 'grill',
+  audit: 'audit',
+  grill: 'grill',
   'council-member': 'council-member',
-  'council-chairman': 'council-chairman',
+  'council-chairman': 'council-chairman'
 }
 
 /**
  * MPA roles use specialist tiers for model resolution.
  * Planner/verifier share plan-tier; builder uses build-tier.
  */
-const MPA_ROLE_ACTIONS: Partial<Record<import('./types').AgentRole, { plan: import('./types').ModelAction; build: import('./types').ModelAction }>> = {
+const MPA_ROLE_ACTIONS: Partial<
+  Record<
+    import('./types').AgentRole,
+    { plan: import('./types').ModelAction; build: import('./types').ModelAction }
+  >
+> = {
   'mpa-planner': { plan: 'specialist:plan', build: 'specialist:plan' },
   'mpa-builder': { plan: 'specialist:build', build: 'specialist:build' },
-  'mpa-verifier': { plan: 'specialist:plan', build: 'specialist:plan' },
+  'mpa-verifier': { plan: 'specialist:plan', build: 'specialist:plan' }
 }
 
 /**
@@ -945,6 +1030,30 @@ export const CLAUDE_DEFAULT_CONTEXT_WINDOW = 200_000
 export const CLAUDE_1M_CONTEXT_WINDOW = 1_000_000
 
 /**
+ * Context-compaction band ratios, as a fraction of the effective context window.
+ * Uniform across all Claude window sizes (200K and 1M) — attention degrades on
+ * proportion of window filled, not absolute token count, so a 1M model at 85%
+ * is no healthier than a 200K model at 85%.
+ *
+ * Consumed by compaction-policy.ts (thresholds + CLI env), ipc/context-usage-level.ts
+ * (badge colour), and the renderer's processContextUsageUpdate. Keep them in sync
+ * by importing from here — do NOT re-hardcode.
+ */
+export const COMPACTION_RATIOS = {
+  /** Badge turns yellow. Matches classifyCompaction's internal 0.8 × suggest. */
+  warn: 0.48,
+  /** Modal offers Extract Nuance / Quick Compact. */
+  suggest: 0.6,
+  /** App auto band + the CLI's own auto-compact trigger. */
+  auto: 0.75,
+  /** Safety net: CLI demonstrably failed to compact — force the modal. */
+  critical: 0.9
+} as const
+
+/** critical ÷ auto — lets classifyCompaction derive the ceiling without new state. */
+export const AUTO_TO_CRITICAL_MULTIPLIER = COMPACTION_RATIOS.critical / COMPACTION_RATIOS.auto // 1.2
+
+/**
  * Check whether a model supports 1M context.
  * Matches exact IDs from CONTEXT_1M_SUPPORTED_MODELS, any `claude-sonnet-*` prefix,
  * or Opus 4.8+ (native 1M at standard pricing).
@@ -956,6 +1065,23 @@ export function supportsContext1M(model: string): boolean {
     model === 'claude-opus-5' ||
     model === 'claude-opus-4-8'
   )
+}
+
+/**
+ * Models whose 1M window requires the legacy `context-1m-2025-08-07` beta
+ * header, which the CLI accepts for API-key logins only. Current-generation
+ * models (Opus 5, Sonnet 5, Fable 5) have native 1M and must NOT be gated —
+ * gating them silently downgrades the session to 200K on a Max/OAuth login.
+ */
+export const CONTEXT_1M_REQUIRES_BETA = [
+  'claude-sonnet-4-6',
+  'claude-sonnet-4-5-20250514',
+  'claude-sonnet-4-20250514'
+] as const
+
+/** Whether a model's 1M window is gated behind the API-key-only beta header. */
+export function requiresContext1MBeta(model: string): boolean {
+  return (CONTEXT_1M_REQUIRES_BETA as readonly string[]).includes(model)
 }
 
 /** Human-readable metadata for each model action — used in the Models config UI */
@@ -1722,7 +1848,7 @@ export const COUNCIL_ADVISORS: Record<CouncilAdvisorRole, CouncilAdvisorDefiniti
       "Only cares about one thing: can this actually be done, and what's the fastest path? If the plan sounds brilliant but has no clear first step, says so.",
     toolAccess: 'full',
     toolGuidance:
-      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Use `analyze_test_coverage` to verify test claims.'
+      'Use `file_outline` on target files to gauge actual complexity vs what the plan claims. Use `symbol_hotspots` to find frequently-changed symbols that are risky to modify. Use `git_log` and `git_blame` on affected files to understand change velocity and ownership. Run the suite with `Bash` (`npm test`) to verify test claims.'
   }
 } as const
 
@@ -1803,7 +1929,8 @@ export const MCP_TOOLS = {
       'module_boundary_health',
       'Code Graph · module_boundary_health'
     ),
-    WIRING_CHECK: mcpTool('code-graph', 'wiring_check', 'Code Graph · wiring_check')
+    WIRING_CHECK: mcpTool('code-graph', 'wiring_check', 'Code Graph · wiring_check'),
+    SHORTEST_PATH: mcpTool('code-graph', 'shortest_path', 'Code Graph · shortest_path')
   }),
   SEMANTIC_SEARCH: mcpServer('semantic-search', {
     SEMANTIC_SEARCH: mcpTool('semantic-search', 'semantic_search', 'Semantic Search'),
@@ -1817,42 +1944,14 @@ export const MCP_TOOLS = {
   GIT_CONTEXT: mcpServer('git-context', {
     GIT_LOG: mcpTool('git-context', 'git_log', 'Git · log'),
     GIT_DIFF: mcpTool('git-context', 'git_diff', 'Git · diff'),
-    GIT_BLAME: mcpTool('git-context', 'git_blame', 'Git · blame')
-  }),
-  CHECKPOINT_CONTEXT: mcpServer('checkpoint-context', {
-    LIST_CHECKPOINTS: mcpTool('checkpoint-context', 'list_checkpoints', 'Checkpoints · list'),
-    GET_CHECKPOINT: mcpTool('checkpoint-context', 'get_checkpoint', 'Checkpoints · get')
-  }),
-  GITHUB_CONTEXT: mcpServer('github-context', {
-    GET_PR_STATUS: mcpTool('github-context', 'get_pr_status', 'GitHub · PR status'),
-    LIST_PR_COMMENTS: mcpTool('github-context', 'list_pr_comments', 'GitHub · PR comments'),
-    LIST_ISSUES: mcpTool('github-context', 'list_issues', 'GitHub · issues')
+    GIT_BLAME: mcpTool('git-context', 'git_blame', 'Git · blame'),
+    GIT_SHOW: mcpTool('git-context', 'git_show', 'Git · show')
   }),
   CODE_ANALYSIS: mcpServer('code-analysis', {
     ANALYZE_COMPLEXITY: mcpTool(
       'code-analysis',
       'analyze_complexity',
       'Analysis · analyze_complexity'
-    ),
-    ANALYZE_DEPENDENCIES: mcpTool(
-      'code-analysis',
-      'analyze_dependencies',
-      'Analysis · analyze_dependencies'
-    ),
-    ANALYZE_TEST_COVERAGE: mcpTool(
-      'code-analysis',
-      'analyze_test_coverage',
-      'Analysis · analyze_test_coverage'
-    ),
-    FIND_CODE_SMELLS: mcpTool(
-      'code-analysis',
-      'find_code_smells',
-      'Analysis · find_code_smells'
-    ),
-    SUGGEST_REFACTORING: mcpTool(
-      'code-analysis',
-      'suggest_refactoring',
-      'Analysis · suggest_refactoring'
     ),
     RESOLVE_LIBRARY_ID: mcpTool(
       'code-analysis',
@@ -1872,7 +1971,11 @@ export const MCP_TOOLS = {
   CONTROL_ACTIONS: mcpServer('control-actions', {
     EMIT_PLAN: mcpTool('control-actions', 'emit_plan', 'Control · emit_plan'),
     ASK_USER: mcpTool('control-actions', 'ask_user', 'Control · ask_user'),
-    PERMISSION_PROMPT: mcpTool('control-actions', 'permission_prompt', 'Control · permission_prompt'),
+    PERMISSION_PROMPT: mcpTool(
+      'control-actions',
+      'permission_prompt',
+      'Control · permission_prompt'
+    ),
     EMIT_PHASE_PROGRESS: mcpTool(
       'control-actions',
       'emit_phase_progress',
@@ -1884,11 +1987,21 @@ export const MCP_TOOLS = {
     MEMORY_RECORD: mcpTool('memory', 'memory_record', 'Memory · memory_record'),
     MEMORY_FLAG: mcpTool('memory', 'memory_flag', 'Memory · memory_flag')
   }),
+  RECALL: mcpServer('recall', {
+    RECALL_PLANS: mcpTool('recall', 'recall_plans', 'Recall · recall_plans'),
+    RECALL_PLAN: mcpTool('recall', 'recall_plan', 'Recall · recall_plan'),
+    RECALL_CONVERSATION: mcpTool('recall', 'recall_conversation', 'Recall · recall_conversation')
+  }),
   PROCESS_MANAGER: mcpServer('process-manager', {
     RUN_BACKGROUND: mcpTool('process-manager', 'run_background', 'Process · run_background'),
     CHECK_PROCESS: mcpTool('process-manager', 'check_process', 'Process · check_process'),
     STOP_PROCESS: mcpTool('process-manager', 'stop_process', 'Process · stop_process'),
-    LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes')
+    LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes'),
+    WAIT_PROCESS: mcpTool('process-manager', 'wait_process', 'Process · wait_process')
+  }),
+  JIRA: mcpServer('jira', {
+    GET_ISSUE: mcpTool('jira', 'get_issue', 'Jira · get_issue'),
+    SEARCH_ISSUES: mcpTool('jira', 'search_issues', 'Jira · search_issues')
   })
 } as const
 
@@ -1926,7 +2039,7 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
     description: 'AST-based navigation — callers, references, dead code, coupling',
     icon: 'Network',
     tokenImpact: 'high',
-    toolCount: 13,
+    toolCount: 15,
     featureFlagKey: 'repomapEnabled',
     defaultEnabled: true
   },
@@ -1943,40 +2056,30 @@ export const LOCAL_MCP_INTEGRATIONS: readonly LocalMcpDefinition[] = [
   {
     id: 'git-context',
     displayName: 'Git Context',
-    description: 'Git log, diff, and blame for version history',
+    description: 'Git log, diff, blame, and show for version history',
     icon: 'GitBranch',
     tokenImpact: 'low',
-    toolCount: 3,
+    toolCount: 4,
     featureFlagKey: null,
-    defaultEnabled: true
-  },
-  {
-    id: 'checkpoint-context',
-    displayName: 'Checkpoints',
-    description: 'List and restore conversation checkpoints',
-    icon: 'Clock',
-    tokenImpact: 'low',
-    toolCount: 2,
-    featureFlagKey: null,
-    defaultEnabled: true
-  },
-  {
-    id: 'github-context',
-    displayName: 'GitHub',
-    description: 'PR status, comments, and issue tracking',
-    icon: 'Github',
-    tokenImpact: 'low',
-    toolCount: 3,
-    featureFlagKey: 'githubConfigured',
     defaultEnabled: true
   },
   {
     id: 'code-analysis',
     displayName: 'Code Analysis',
-    description: 'TODO scanning, dependency health, test coverage, library documentation, and ESLint',
+    description: 'Lint, complexity, dead-code audit, and library documentation',
     icon: 'BarChart3',
     tokenImpact: 'low',
-    toolCount: 8,
+    toolCount: 7,
+    featureFlagKey: null,
+    defaultEnabled: true
+  },
+  {
+    id: 'recall',
+    displayName: 'Recall',
+    description: 'Search past plans and the conversation around them',
+    icon: 'History',
+    tokenImpact: 'low',
+    toolCount: 3,
     featureFlagKey: null,
     defaultEnabled: true
   }
@@ -2135,7 +2238,8 @@ export const RECOMMENDED_LOCAL_MODELS: import('./types').RecommendedLocalModel[]
     mlxOptimized: true,
     recommended: true,
     supportsVision: true,
-    description: 'Top pick for 64GB+ Macs — native vision, near-lossless 8-bit. Unsloth chat-template fixes for OpenCode tool calls',
+    description:
+      'Top pick for 64GB+ Macs — native vision, near-lossless 8-bit. Unsloth chat-template fixes for OpenCode tool calls',
     toolCallingNotes: 'Native tool calling, parallel support, thinking preservation',
     supportsParallelTools: true,
     supportsThinking: true
@@ -2268,6 +2372,22 @@ export interface ExternalMcpDefinition {
   commandPaths?: string[]
   /** Env vars always injected when this MCP is mounted (perf tuning, not user-supplied) */
   performanceEnv?: Record<string, string>
+  /**
+   * Bundled first-party server: mounted as `node <serverBasePath>/<entry>.js`.
+   * When set, `command`/`commandPaths` are ignored and the PATH availability
+   * check is skipped — the server ships with the app.
+   */
+  bundledServerEntry?: string
+  /** Declarative credential form rendered on the Integrations page */
+  credentialFields?: CredentialFieldDef[]
+  /** Enables the "Test Connection" button */
+  supportsConnectionTest?: boolean
+  /**
+   * This server's tools can legitimately run for many minutes (device farms,
+   * build pipelines). Only such servers extend the executor's idle timeout —
+   * a fast REST-backed server that goes quiet is hung, not working.
+   */
+  longRunningTools?: boolean
   /** Category for UI grouping */
   category: 'testing' | 'deployment' | 'monitoring' | 'other'
 
@@ -2295,6 +2415,8 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     icon: 'Smartphone',
     command: 'maestro',
     args: ['mcp'],
+    // Cloud runs and device-farm flows routinely exceed 5 minutes of silence.
+    longRunningTools: true,
     commandPaths: ['~/.maestro/bin/maestro'],
     envKeys: ['JAVA_HOME', 'MAESTRO_CLOUD_API_KEY'],
     performanceEnv: {
@@ -2397,6 +2519,167 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
           'The agent inspects the screen, writes YAML flows, runs them, and reports results — all autonomously.'
       }
     ]
+  },
+  {
+    id: 'jira',
+    displayName: 'Jira',
+    description:
+      'Read tickets, search with JQL, and pull acceptance criteria straight from your Jira board.',
+    icon: 'SquareKanban',
+    // Bundled first-party server — `command`/`args` are replaced at mount time
+    // with `node <serverBasePath>/jira-server.js`. Never resolved from PATH.
+    command: 'node',
+    args: [],
+    bundledServerEntry: 'jira-server',
+    envKeys: [
+      'JIRA_BASE_URL',
+      'JIRA_AUTH_MODE',
+      'JIRA_EMAIL',
+      'JIRA_USERNAME',
+      'JIRA_API_TOKEN',
+      // Forwarded from the parent process when set — corporate VPN / internal CA
+      'HTTPS_PROXY',
+      'HTTP_PROXY',
+      'NO_PROXY',
+      'NODE_EXTRA_CA_CERTS'
+    ],
+    performanceEnv: {
+      // Node ≥24 reads HTTPS_PROXY/HTTP_PROXY/NO_PROXY for global fetch when this
+      // is set. Harmless no-op on older runtimes.
+      NODE_USE_ENV_PROXY: '1'
+    },
+    supportsConnectionTest: true,
+    tokenImpact: 'low',
+    toolCount: 2,
+    prerequisite: 'Jira site URL + API token (or a PAT for Server / Data Center)',
+    docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/',
+    category: 'other',
+    toolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
+    // Both tools are read-only — available in plan mode too.
+    planModeToolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
+
+    credentialFields: [
+      {
+        key: 'authMode',
+        label: 'Authentication',
+        type: 'select',
+        envVar: 'JIRA_AUTH_MODE',
+        required: true,
+        options: [
+          {
+            value: 'cloud-token',
+            label: 'Jira Cloud — email + API token',
+            description:
+              'Create at id.atlassian.com → Security → API tokens. No admin rights needed.'
+          },
+          {
+            value: 'pat',
+            label: 'Server / Data Center — Personal Access Token',
+            description:
+              'Jira profile → Personal Access Tokens. Typical for VPN-hosted client Jira.'
+          },
+          {
+            value: 'basic',
+            label: 'Server / Data Center — username + password'
+          }
+        ]
+      },
+      {
+        key: 'baseUrl',
+        label: 'Jira URL',
+        type: 'url',
+        envVar: 'JIRA_BASE_URL',
+        required: true,
+        placeholder: 'https://client.atlassian.net',
+        help: 'For on-prem behind a VPN, use the same host you open in the browser.'
+      },
+      {
+        key: 'email',
+        label: 'Atlassian account email',
+        type: 'text',
+        envVar: 'JIRA_EMAIL',
+        required: true,
+        placeholder: 'you@company.com',
+        showWhen: { authMode: ['cloud-token'] }
+      },
+      {
+        key: 'username',
+        label: 'Username',
+        type: 'text',
+        envVar: 'JIRA_USERNAME',
+        required: true,
+        showWhen: { authMode: ['basic'] }
+      },
+      {
+        key: 'apiToken',
+        label: 'API token / PAT / password',
+        type: 'password',
+        envVar: 'JIRA_API_TOKEN',
+        secret: true,
+        required: true,
+        help: 'Stored encrypted in your OS keychain. Never leaves this machine except to your Jira host.'
+      }
+    ],
+
+    longDescription:
+      'Connect your Jira board so the agent can read the ticket it is working on. Instead of pasting acceptance criteria into chat, point the agent at an issue key — it pulls the summary, description, status, assignee and recent comments, and can run JQL searches to find related work. Read-only: nothing in Jira is ever modified.',
+
+    useCases: [
+      {
+        title: 'Implement Straight From a Ticket',
+        description:
+          'Say "implement PROJ-412" — the agent reads the description and acceptance criteria, then plans the work against your actual codebase.',
+        icon: 'FileCode'
+      },
+      {
+        title: 'Sprint Triage',
+        description:
+          'Ask for everything assigned to you in the current sprint. The agent runs the JQL and summarises what is blocked, in review, or untouched.',
+        icon: 'Layers'
+      },
+      {
+        title: 'Bug Reproduction Context',
+        description:
+          "Pull the bug report plus its comment thread so the agent has the reporter's steps and any follow-up findings before it starts debugging.",
+        icon: 'Bug'
+      },
+      {
+        title: 'PR Descriptions With Real Context',
+        description:
+          'The agent quotes the ticket summary and acceptance criteria when writing a PR description, so reviewers see the intent, not just the diff.',
+        icon: 'Eye'
+      }
+    ],
+
+    toolDescriptions: {
+      mcp__jira__get_issue:
+        'Fetches one issue by key (e.g. PROJ-123) — summary, status, assignee, reporter, priority, labels, description and the most recent comments. This is the "read the ticket" action.',
+      mcp__jira__search_issues:
+        'Runs a JQL query and returns compact rows (key, summary, status, assignee). Use it to find related tickets, sprint contents, or everything matching a label.'
+    },
+
+    workflowSteps: [
+      {
+        step: 'Pick auth mode',
+        description:
+          'Jira Cloud uses email + API token. Server / Data Center behind a VPN usually uses a Personal Access Token.'
+      },
+      {
+        step: 'Enter URL + token',
+        description:
+          'Credentials are encrypted with your OS keychain and stored per workspace — never in plain text.'
+      },
+      {
+        step: 'Test Connection',
+        description:
+          'Verifies the host is reachable and the token is valid before you enable the integration.'
+      },
+      {
+        step: 'Enable + use',
+        description:
+          'Toggle Jira ON, activate the pill in a chat, then reference issue keys naturally: "summarise PROJ-123".'
+      }
+    ]
   }
 ] as const
 
@@ -2426,7 +2709,19 @@ export const OMLX_EMBEDDING = {
   },
   /** Alternative models users can install in oMLX */
   alternativeModels: [
-    { id: 'mlx-community/bge-m3-mlx-4bit', label: 'BGE-M3 (4-bit, smaller)', modelName: 'bge-m3-4bit', dimensions: 1024, estimatedSizeMB: 350 },
-    { id: 'mlx-community/answerdotai-ModernBERT-base-4bit', label: 'ModernBERT Base (4-bit)', modelName: 'modernbert-base', dimensions: 768, estimatedSizeMB: 150 }
+    {
+      id: 'mlx-community/bge-m3-mlx-4bit',
+      label: 'BGE-M3 (4-bit, smaller)',
+      modelName: 'bge-m3-4bit',
+      dimensions: 1024,
+      estimatedSizeMB: 350
+    },
+    {
+      id: 'mlx-community/answerdotai-ModernBERT-base-4bit',
+      label: 'ModernBERT Base (4-bit)',
+      modelName: 'modernbert-base',
+      dimensions: 768,
+      estimatedSizeMB: 150
+    }
   ]
 } as const

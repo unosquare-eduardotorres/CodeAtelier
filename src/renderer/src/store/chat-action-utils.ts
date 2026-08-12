@@ -84,6 +84,80 @@ export function captureStreamState(state: {
   }
 }
 
+/**
+ * BACKGROUND-CHAT-01: split the per-conversation buffers on a workspace switch.
+ * A conversation still streaming keeps its buffer — the backend goes on sending
+ * chunks for it after the switch (same as a running blueprint), so dropping the
+ * buffer would lose the transcript when the user switches back. Finished
+ * conversations are dropped so their accumulator and safety timer can go too.
+ */
+export function partitionStreamsForWorkspaceSwitch(
+  streams: Map<string, PerConversationStreamState>
+): { kept: Map<string, PerConversationStreamState>; dropped: string[] } {
+  const kept = new Map<string, PerConversationStreamState>()
+  const dropped: string[] = []
+  for (const [conversationId, stream] of streams) {
+    if (stream.isStreaming) kept.set(conversationId, stream)
+    else dropped.push(conversationId)
+  }
+  return { kept, dropped }
+}
+
+/**
+ * BOOT-REHYDRATE: main outlives a renderer-only reload (the `render-process-gone`
+ * auto-reload in main/index.ts, RewindDialog's `window.location.reload`), so
+ * streams can already be running when the renderer boots with empty state.
+ * Without this the sidebar shows no spinner and the composer looks ready, but
+ * main rejects the next send with "a message is already being processed".
+ *
+ * Merges — never clobbers a stream the renderer has already started tracking
+ * from live chunks. Returns `null` when there is nothing to restore.
+ */
+export function reconcileBootStreamingState(
+  backendStreams: Array<{ conversationId: string; requestId: string }>,
+  current: {
+    streamingConversationIds: Set<string>
+    conversationStreams: Map<string, PerConversationStreamState>
+    activeConversationId: string | null
+  }
+): {
+  streamingConversationIds: Set<string>
+  conversationStreams: Map<string, PerConversationStreamState>
+  isStreaming: boolean
+  activeRequestId: string | null
+} | null {
+  if (backendStreams.length === 0) return null
+
+  const streamingConversationIds = new Set(current.streamingConversationIds)
+  const conversationStreams = new Map(current.conversationStreams)
+
+  for (const { conversationId, requestId } of backendStreams) {
+    streamingConversationIds.add(conversationId)
+    // Only seed where the renderer has no buffer yet — an existing buffer is
+    // already receiving live chunks and must not be reset to empty.
+    if (!conversationStreams.has(conversationId)) {
+      conversationStreams.set(conversationId, {
+        ...emptyStreamState(),
+        isStreaming: true,
+        // finalizeStreamAction compares this against the completion's requestId
+        // to reject late chunks from a superseded request.
+        activeRequestId: requestId
+      })
+    }
+  }
+
+  const activeStream = current.activeConversationId
+    ? backendStreams.find((s) => s.conversationId === current.activeConversationId)
+    : undefined
+
+  return {
+    streamingConversationIds,
+    conversationStreams,
+    isStreaming: !!activeStream,
+    activeRequestId: activeStream?.requestId ?? null
+  }
+}
+
 // ── Streaming state reset ────────────────────────────────────────────────
 
 /** Fields common to every "stop streaming" state transition. */
@@ -99,7 +173,7 @@ interface StreamingResetPatch {
   streamingTaskId: null
   conversationState: { phase: 'idle'; from: null; event: null; conversationId: null }
   streamingConversationIds: Set<string>
-  streamStalledConversationId: null  // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
+  streamStalledConversationId: null // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
 }
 
 /**
@@ -127,7 +201,7 @@ export function buildStreamingResetState(
     streamingTaskId: null,
     conversationState: { phase: 'idle', from: null, event: null, conversationId: null },
     streamingConversationIds: newStreamingIds,
-    streamStalledConversationId: null  // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
+    streamStalledConversationId: null // STALL-DETECT-05: Defense-in-depth — always clear stall flag on stream reset
   }
 }
 
@@ -250,6 +324,49 @@ export function parseBlockedByError(
   // MULTI-CHAT-04: Return blocking conversation info so the UI can offer
   // actionable "Switch to it" / "Stop it" buttons.
   return { errorMsg, blockedConvId, blockedConvTitle: blockedConv?.title }
+}
+
+// ── Stop reconciliation ──────────────────────────────────────
+
+/**
+ * WEDGE-RECOVERY: after a stop, reconcile the local send/stream flags against
+ * main.  `sendingConversationIds` is set before the send IPC and cleared in its
+ * finally — if that path is ever skipped the input stays disabled while nothing
+ * is actually running, and one Stop click must be enough to recover.
+ *
+ * Returns the state patch to apply, or `null` when nothing should change:
+ * either THIS conversation is still streaming in main, or the query failed (in
+ * which case the local state is the only state we have and must not be
+ * clobbered).
+ */
+export async function reconcileStopState(
+  fetchStreamingState: () => Promise<{
+    isStreaming: boolean
+    streams?: Array<{ conversationId: string; requestId: string }>
+  }>,
+  /** Read lazily — a send may have started during the IPC round-trip. */
+  readSendingConversationIds: () => Set<string>,
+  activeConversationId: string | null | undefined,
+  onError?: (error: unknown) => void
+): Promise<{ isStreaming: false; sendingConversationIds: Set<string> } | null> {
+  try {
+    const backendState = await fetchStreamingState()
+    // WEDGE-FIX: only THIS conversation's stream may block the release. The
+    // top-level `isStreaming` is the deprecated global flag ("any conversation
+    // is streaming"), so a background chat used to keep a wedged foreground
+    // chat locked forever. Fall back to it only when main is too old to send
+    // the per-conversation `streams` list.
+    const thisConvBusy = backendState.streams
+      ? backendState.streams.some((s) => s.conversationId === activeConversationId)
+      : backendState.isStreaming
+    if (thisConvBusy) return null
+    const remaining = new Set(readSendingConversationIds())
+    if (activeConversationId) remaining.delete(activeConversationId)
+    return { isStreaming: false, sendingConversationIds: remaining }
+  } catch (error) {
+    onError?.(error)
+    return null
+  }
 }
 
 // ── Message builders (continued) ────────────────────────────────────────

@@ -22,7 +22,12 @@ import { truncateToolOutput } from '../output-cap'
 describe('parseComplexityMessage', () => {
   test('extracts_complexity_from_valid_message', () => {
     const result = parseComplexityMessage(
-      { message: "Function 'render' has a complexity of 12. Maximum allowed is 0.", line: 42, column: 1, ruleId: 'complexity' },
+      {
+        message: "Function 'render' has a complexity of 12. Maximum allowed is 0.",
+        line: 42,
+        column: 1,
+        ruleId: 'complexity'
+      },
       'src/app.ts'
     )
     assert.ok(result)
@@ -34,7 +39,12 @@ describe('parseComplexityMessage', () => {
 
   test('extracts_method_name', () => {
     const result = parseComplexityMessage(
-      { message: "Method 'processData' has a complexity of 8. Maximum allowed is 0.", line: 10, column: 3, ruleId: 'complexity' },
+      {
+        message: "Method 'processData' has a complexity of 8. Maximum allowed is 0.",
+        line: 10,
+        column: 3,
+        ruleId: 'complexity'
+      },
       'src/service.ts'
     )
     assert.ok(result)
@@ -44,7 +54,7 @@ describe('parseComplexityMessage', () => {
 
   test('returns_null_for_non_complexity_rule', () => {
     const result = parseComplexityMessage(
-      { message: "Unexpected var", line: 1, column: 1, ruleId: 'no-var' },
+      { message: 'Unexpected var', line: 1, column: 1, ruleId: 'no-var' },
       'src/app.ts'
     )
     assert.equal(result, null)
@@ -52,7 +62,7 @@ describe('parseComplexityMessage', () => {
 
   test('returns_null_for_null_ruleId', () => {
     const result = parseComplexityMessage(
-      { message: "Some error", line: 1, column: 1, ruleId: null },
+      { message: 'Some error', line: 1, column: 1, ruleId: null },
       'src/app.ts'
     )
     assert.equal(result, null)
@@ -60,7 +70,7 @@ describe('parseComplexityMessage', () => {
 
   test('returns_null_when_no_complexity_number', () => {
     const result = parseComplexityMessage(
-      { message: "Function has no complexity", line: 1, column: 1, ruleId: 'complexity' },
+      { message: 'Function has no complexity', line: 1, column: 1, ruleId: 'complexity' },
       'src/app.ts'
     )
     assert.equal(result, null)
@@ -68,7 +78,12 @@ describe('parseComplexityMessage', () => {
 
   test('anonymous_function_when_no_name_match', () => {
     const result = parseComplexityMessage(
-      { message: "Arrow function has a complexity of 15. Maximum allowed is 0.", line: 5, column: 1, ruleId: 'complexity' },
+      {
+        message: 'Arrow function has a complexity of 15. Maximum allowed is 0.',
+        line: 5,
+        column: 1,
+        ruleId: 'complexity'
+      },
       'src/utils.ts'
     )
     assert.ok(result)
@@ -78,7 +93,12 @@ describe('parseComplexityMessage', () => {
 
   test('preserves_file_path', () => {
     const result = parseComplexityMessage(
-      { message: "Function 'x' has a complexity of 3. Maximum allowed is 0.", line: 1, column: 1, ruleId: 'complexity' },
+      {
+        message: "Function 'x' has a complexity of 3. Maximum allowed is 0.",
+        line: 1,
+        column: 1,
+        ruleId: 'complexity'
+      },
       'deep/nested/path/file.ts'
     )
     assert.ok(result)
@@ -87,7 +107,12 @@ describe('parseComplexityMessage', () => {
 
   test('preserves_column', () => {
     const result = parseComplexityMessage(
-      { message: "Function 'x' has a complexity of 3. Maximum allowed is 0.", line: 1, column: 15, ruleId: 'complexity' },
+      {
+        message: "Function 'x' has a complexity of 3. Maximum allowed is 0.",
+        line: 1,
+        column: 15,
+        ruleId: 'complexity'
+      },
       'src/app.ts'
     )
     assert.ok(result)

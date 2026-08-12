@@ -19,7 +19,13 @@ const PHASE_TIMEOUT_MS = 30 * 60_000
 
 // ── Replicated constants from council.service.ts ──
 
-const COUNCIL_PHASES = ['framing', 'deliberating', 'peer-review', 'synthesizing', 'complete'] as const
+const COUNCIL_PHASES = [
+  'framing',
+  'deliberating',
+  'peer-review',
+  'synthesizing',
+  'complete'
+] as const
 
 // ── Replicated constants from audit-agent.service.ts ──
 
@@ -31,7 +37,11 @@ const MIN_FINDINGS_FOR_ADEQUATE = 8
 
 // ── Import pure functions that are exported ──
 
-import { buildPlannerGoalCondition, buildBuilderGoalCondition, buildVerifierGoalCondition } from '../mpa-goal-conditions'
+import {
+  buildPlannerGoalCondition,
+  buildBuilderGoalCondition,
+  buildVerifierGoalCondition
+} from '../mpa-goal-conditions'
 import { parsePlanArtifact, hasFailingCriteria } from '../mpa-artifact-parsers'
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -43,10 +53,13 @@ describe('MPA Orchestration — state machine', () => {
   interface PipelineState {
     runId: string | null
     abortController: AbortController | null
-    gateLock: { resolve: ((v: boolean) => void) } | null
+    gateLock: { resolve: (v: boolean) => void } | null
   }
 
-  function computeStatus(pipeline: PipelineState | undefined): { running: boolean; runId: string | null } {
+  function computeStatus(pipeline: PipelineState | undefined): {
+    running: boolean
+    runId: string | null
+  } {
     if (!pipeline || !pipeline.runId) return { running: false, runId: null }
     return { running: true, runId: pipeline.runId }
   }
@@ -58,7 +71,11 @@ describe('MPA Orchestration — state machine', () => {
   })
 
   test('active_pipeline_returns_running', () => {
-    const pipeline: PipelineState = { runId: 'run-1', abortController: new AbortController(), gateLock: null }
+    const pipeline: PipelineState = {
+      runId: 'run-1',
+      abortController: new AbortController(),
+      gateLock: null
+    }
     const status = computeStatus(pipeline)
     assert.equal(status.running, true)
     assert.equal(status.runId, 'run-1')
@@ -130,15 +147,23 @@ describe('MPA — goal condition builders (deeper)', () => {
   })
 
   test('builder_goal_from_plan_with_items', () => {
-    const plan = { items: [{ id: '1', title: 'Create models', description: 'DB models', files: ['models.ts'] }] }
-    const result = buildBuilderGoalCondition(plan as Parameters<typeof buildBuilderGoalCondition>[0])
+    const plan = {
+      items: [{ id: '1', title: 'Create models', description: 'DB models', files: ['models.ts'] }]
+    }
+    const result = buildBuilderGoalCondition(
+      plan as Parameters<typeof buildBuilderGoalCondition>[0]
+    )
     assert.ok(typeof result === 'string')
     assert.ok(result.length > 0)
   })
 
   test('verifier_goal_from_plan', () => {
-    const plan = { items: [{ id: '1', title: 'Create models', description: 'DB models', files: ['models.ts'] }] }
-    const result = buildVerifierGoalCondition(plan as Parameters<typeof buildVerifierGoalCondition>[0])
+    const plan = {
+      items: [{ id: '1', title: 'Create models', description: 'DB models', files: ['models.ts'] }]
+    }
+    const result = buildVerifierGoalCondition(
+      plan as Parameters<typeof buildVerifierGoalCondition>[0]
+    )
     assert.ok(typeof result === 'string')
   })
 })
@@ -149,7 +174,10 @@ describe('MPA — goal condition builders (deeper)', () => {
 
 describe('Council — phase machine', () => {
   test('council_phases_are_in_correct_order', () => {
-    assert.deepEqual([...COUNCIL_PHASES], ['framing', 'deliberating', 'peer-review', 'synthesizing', 'complete'])
+    assert.deepEqual(
+      [...COUNCIL_PHASES],
+      ['framing', 'deliberating', 'peer-review', 'synthesizing', 'complete']
+    )
   })
 
   test('council_has_5_phases', () => {
@@ -168,7 +196,7 @@ describe('Council — phase machine', () => {
       { status: 'fulfilled', value: 'a' },
       { status: 'rejected', reason: new Error('fail') },
       { status: 'fulfilled', value: null },
-      { status: 'fulfilled', value: 'b' },
+      { status: 'fulfilled', value: 'b' }
     ]
     const collected = collectSettled(results)
     assert.deepEqual(collected, ['a', 'b'])
@@ -177,7 +205,7 @@ describe('Council — phase machine', () => {
   test('collectSettled_returns_empty_for_all_rejected', () => {
     const results: PromiseSettledResult<string | null>[] = [
       { status: 'rejected', reason: new Error('a') },
-      { status: 'rejected', reason: new Error('b') },
+      { status: 'rejected', reason: new Error('b') }
     ]
     assert.deepEqual(collectSettled(results), [])
   })
@@ -185,7 +213,7 @@ describe('Council — phase machine', () => {
   test('collectSettled_returns_empty_for_all_null', () => {
     const results: PromiseSettledResult<string | null>[] = [
       { status: 'fulfilled', value: null },
-      { status: 'fulfilled', value: null },
+      { status: 'fulfilled', value: null }
     ]
     assert.deepEqual(collectSettled(results), [])
   })
@@ -194,7 +222,7 @@ describe('Council — phase machine', () => {
     const results: PromiseSettledResult<number | null>[] = [
       { status: 'fulfilled', value: 3 },
       { status: 'fulfilled', value: 1 },
-      { status: 'fulfilled', value: 2 },
+      { status: 'fulfilled', value: 2 }
     ]
     assert.deepEqual(collectSettled(results), [3, 1, 2])
   })
@@ -234,7 +262,7 @@ describe('Council — anonymization pattern', () => {
   const ADVISOR_ROLES = ['architect', 'security', 'testing', 'performance', 'ux'] as const
 
   function anonymize(role: string): string {
-    const idx = ADVISOR_ROLES.indexOf(role as typeof ADVISOR_ROLES[number])
+    const idx = ADVISOR_ROLES.indexOf(role as (typeof ADVISOR_ROLES)[number])
     return idx >= 0 ? LABELS[idx] : 'X'
   }
 
@@ -307,14 +335,20 @@ describe('Audit Agent — batch size selection', () => {
 
 describe('Audit Agent — finding summarization', () => {
   // Replicated from summarizePreviousFindings
-  interface Finding { severity: string; title: string; filePath?: string }
+  interface Finding {
+    severity: string
+    title: string
+    filePath?: string
+  }
 
   function summarizePreviousFindings(findings: Finding[]): string {
     const recent = findings.slice(-10)
-    return recent.map((f) => {
-      const loc = f.filePath ? ` (${f.filePath})` : ''
-      return `- [${f.severity.toUpperCase()}] ${f.title}${loc}`
-    }).join('\n')
+    return recent
+      .map((f) => {
+        const loc = f.filePath ? ` (${f.filePath})` : ''
+        return `- [${f.severity.toUpperCase()}] ${f.title}${loc}`
+      })
+      .join('\n')
   }
 
   test('formats_findings_with_severity', () => {
@@ -360,7 +394,10 @@ describe('MPA — verify report analysis (deeper)', () => {
 
   test('hasFailingCriteria_empty_criteriaResults', () => {
     const report = { criteriaResults: [], crossCuttingIssues: [] }
-    assert.equal(hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]), false)
+    assert.equal(
+      hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]),
+      false
+    )
   })
 
   test('hasFailingCriteria_all_pass', () => {
@@ -368,7 +405,10 @@ describe('MPA — verify report analysis (deeper)', () => {
       criteriaResults: [{ criterion: 'Tests pass', status: 'pass', evidence: 'All green' }],
       crossCuttingIssues: []
     }
-    assert.equal(hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]), false)
+    assert.equal(
+      hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]),
+      false
+    )
   })
 
   test('hasFailingCriteria_one_fail', () => {
@@ -379,7 +419,10 @@ describe('MPA — verify report analysis (deeper)', () => {
       ],
       crossCuttingIssues: []
     }
-    assert.equal(hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]), true)
+    assert.equal(
+      hasFailingCriteria(report as unknown as Parameters<typeof hasFailingCriteria>[0]),
+      true
+    )
   })
 
   test('parsePlanArtifact_with_valid_plan', () => {

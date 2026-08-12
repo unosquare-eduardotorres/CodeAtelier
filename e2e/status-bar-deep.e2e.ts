@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Status Bar Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,13 +33,21 @@ test.describe('Status Bar Deep', () => {
     return true
   }
 
-  test('branch indicator shows current branch or "No repo" warning', async ({ electronPage: page }) => {
+  test('branch indicator shows current branch or "No repo" warning', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Look for branch info — either a branch name or "No repo" indicator
     const branchIndicator = statusBar.locator('[class*="font-mono"]').first()
@@ -61,13 +67,21 @@ test.describe('Status Bar Deep', () => {
     expect(hasBranch || hasNoRepo || true).toBeTruthy()
   })
 
-  test('context percentage button is clickable when context usage > 0', async ({ electronPage: page }) => {
+  test('context percentage button is clickable when context usage > 0', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Look for context percentage display (e.g., "45%", "12%")
     const contextBtn = statusBar.locator('button').filter({ hasText: /%/ }).first()
@@ -85,14 +99,23 @@ test.describe('Status Bar Deep', () => {
 
   test('token counter shows input/output token counts', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Look for token count display (contains numbers with "k", "K", or numeric content)
-    const tokenIndicator = statusBar.locator('button, span').filter({ hasText: /\d+[kK]?.*tok|token|in.*out/i }).first()
+    const tokenIndicator = statusBar
+      .locator('button, span')
+      .filter({ hasText: /\d+[kK]?.*tok|token|in.*out/i })
+      .first()
     const hasTokens = await tokenIndicator.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Token counter only shows during active conversations — accept either way
@@ -101,11 +124,17 @@ test.describe('Status Bar Deep', () => {
 
   test('zoom controls show current zoom percentage', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Look for zoom percentage display
     const zoomDisplay = statusBar.getByText(/\d+%/).first()
@@ -123,18 +152,26 @@ test.describe('Status Bar Deep', () => {
 
   test('zoom out/reset/in buttons change zoom factor display', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // First reset zoom to a known state
     await page.keyboard.press('Meta+0')
     await page.waitForTimeout(500)
 
     // Check for zoom-in button
-    const zoomInBtn = statusBar.locator('button[aria-label*="zoom in" i], button[title*="zoom in" i]').first()
+    const zoomInBtn = statusBar
+      .locator('button[aria-label*="zoom in" i], button[title*="zoom in" i]')
+      .first()
     const hasZoomIn = await zoomInBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
     if (hasZoomIn) {
@@ -159,11 +196,17 @@ test.describe('Status Bar Deep', () => {
 
   test('MCP tool badges appear based on active tools', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const statusBar = page.locator('[data-testid="status-bar"]')
     const hasStatusBar = await statusBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStatusBar) { test.skip(); return }
+    if (!hasStatusBar) {
+      test.skip()
+      return
+    }
 
     // Look for MCP tool indicators — CG (CodeGraph), Sem (Semantic), etc.
     const toolBadges = statusBar.locator('span, button').filter({ hasText: /^(CG|Sem|Web)$/ })

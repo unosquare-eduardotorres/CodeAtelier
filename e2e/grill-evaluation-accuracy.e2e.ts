@@ -20,9 +20,7 @@ test.describe('Grill Evaluation Accuracy', () => {
   /**
    * Helper: navigate to a grill with completed evaluation results.
    */
-  async function navigateToCompletedGrill(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToCompletedGrill(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const settings = new WorkspaceSettings(page)
 
@@ -41,7 +39,10 @@ test.describe('Grill Evaluation Accuracy', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -71,7 +72,10 @@ test.describe('Grill Evaluation Accuracy', () => {
 
     const hasEval = await evalBubble.isVisible({ timeout: 5_000 }).catch(() => false)
     const hasGauge = await scoreGauge.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasScore = await scoreText.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasScore = await scoreText
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     return hasEval || hasGauge || hasScore
   }
@@ -95,7 +99,10 @@ test.describe('Grill Evaluation Accuracy', () => {
     if (!hasEvalBubble) {
       // May render as a different component — check for score display
       const scoreDisplay = page.getByText(/\d+\s*\/\s*100/)
-      const hasScoreDisplay = await scoreDisplay.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasScoreDisplay = await scoreDisplay
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       if (hasScoreDisplay) {
         // Score is visible somewhere — verify it's a valid score
@@ -125,12 +132,13 @@ test.describe('Grill Evaluation Accuracy', () => {
     }
 
     // Should contain a label (Raw, Warming Up, Medium Rare, Well Done, Perfectly Grilled)
-    const hasLabel =
-      /raw|warming up|medium rare|well done|perfectly grilled/i.test(bubbleText ?? '')
+    const hasLabel = /raw|warming up|medium rare|well done|perfectly grilled/i.test(
+      bubbleText ?? ''
+    )
     expect(hasLabel).toBeTruthy()
 
     // Should contain feedback text (non-empty beyond just score and label)
-    expect((bubbleText?.length ?? 0)).toBeGreaterThan(10)
+    expect(bubbleText?.length ?? 0).toBeGreaterThan(10)
   })
 
   // ── ScoreGauge label ──

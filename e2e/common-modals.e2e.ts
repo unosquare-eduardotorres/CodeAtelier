@@ -16,9 +16,7 @@ test.describe('Common Modals', () => {
   /**
    * Helper: Ensure workspace is open.
    */
-  async function ensureWorkspaceOpen(
-    page: import('@playwright/test').Page
-  ): Promise<void> {
+  async function ensureWorkspaceOpen(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()

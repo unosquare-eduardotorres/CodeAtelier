@@ -1,12 +1,13 @@
 import type { ContextUsageLevel } from '../../shared/types'
+import { COMPACTION_RATIOS } from '../../shared/constants'
 
 /**
  * Resolve the UI context-usage `level` (badge/bar colour) and `qualityLevel`
  * (modal label) from RAW context-window usage.
  *
- * Thresholds align with the compaction trigger points in
- * agent-stream-processor (`computeCompactThresholds`): warning = 56%/48%,
- * suggest = 70%/60%, auto = 85%/75% (large >200K / small ≤200K windows).
+ * Thresholds come from COMPACTION_RATIOS and align with the compaction trigger
+ * points in compaction-policy (`resolveCompactionThresholds`): warning = 48%,
+ * suggest = 60%, auto = 75% — uniform for every window size.
  *
  * The previous implementation scored quality against a separate "quality
  * window" capped at 500K (50% of the real window). On a 1M-context model that
@@ -16,12 +17,12 @@ import type { ContextUsageLevel } from '../../shared/types'
  */
 export function resolveContextLevel(
   percentage: number,
-  contextWindow: number
+  /** Advisory only — the bands are window-size independent. Kept for call-site compatibility. */
+  _contextWindow: number
 ): { level: ContextUsageLevel; qualityLevel: 'excellent' | 'good' | 'moderate' | 'low' } {
-  const isSmallWindow = contextWindow <= 200_000
-  const warnPct = isSmallWindow ? 48 : 56
-  const suggestPct = isSmallWindow ? 60 : 70
-  const autoPct = isSmallWindow ? 75 : 85
+  const warnPct = COMPACTION_RATIOS.warn * 100 // 48
+  const suggestPct = COMPACTION_RATIOS.suggest * 100 // 60
+  const autoPct = COMPACTION_RATIOS.auto * 100 // 75
 
   const level: ContextUsageLevel =
     percentage >= autoPct

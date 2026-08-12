@@ -1,11 +1,7 @@
 import { Loader2, AlertTriangle } from 'lucide-react'
 
 export type SessionRecoveryPhase =
-  | 'started'
-  | 'building_context'
-  | 'resuming'
-  | 'completed'
-  | 'failed'
+  'started' | 'building_context' | 'resuming' | 'completed' | 'failed'
 
 interface SessionRecoveryBannerProps {
   phase: SessionRecoveryPhase

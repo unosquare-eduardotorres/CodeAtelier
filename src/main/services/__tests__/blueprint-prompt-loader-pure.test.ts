@@ -15,7 +15,11 @@ import {
   formatArtifacts,
   ARTIFACT_BUDGET_CHARS
 } from '../blueprint-prompt-loader'
-import type { BlueprintPhaseType, PhaseContext, BlueprintArtifact } from '../../../shared/blueprint-types'
+import type {
+  BlueprintPhaseType,
+  PhaseContext,
+  BlueprintArtifact
+} from '../../../shared/blueprint-types'
 
 // ── Helpers ──
 
@@ -42,7 +46,15 @@ function makePhaseContext(overrides: Partial<PhaseContext> = {}): PhaseContext {
 describe('buildPhaseSystemPrompt — fallback prompts', () => {
   // ── Each phase produces a valid prompt ──
 
-  const phases: BlueprintPhaseType[] = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify']
+  const phases: BlueprintPhaseType[] = [
+    'specify',
+    'clarify',
+    'plan',
+    'tasks',
+    'review',
+    'build',
+    'verify'
+  ]
 
   for (const phase of phases) {
     test(`${phase}_phase_produces_valid_prompt`, () => {
@@ -59,7 +71,15 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
 
   test('injects_blueprint_context_json', () => {
     const ctx = makePhaseContext({
-      blueprint: { id: 'bp-42', title: 'Login Feature', shortName: 'login', description: 'Add OAuth2 login', priority: 'medium' as any, currentPhase: 'specify' as any, settings: {} }
+      blueprint: {
+        id: 'bp-42',
+        title: 'Login Feature',
+        shortName: 'login',
+        description: 'Add OAuth2 login',
+        priority: 'medium' as any,
+        currentPhase: 'specify' as any,
+        settings: {}
+      }
     })
     const result = buildPhaseSystemPrompt('specify', ctx)
     assert.ok(result.includes('bp-42'), 'Should contain blueprint ID from context')
@@ -74,9 +94,12 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
   })
 
   test('constitution_content_injected', () => {
-    const result = buildPhaseSystemPrompt('plan', makePhaseContext({
-      constitution: 'Always use TypeScript strict mode.'
-    }))
+    const result = buildPhaseSystemPrompt(
+      'plan',
+      makePhaseContext({
+        constitution: 'Always use TypeScript strict mode.'
+      })
+    )
     assert.ok(result.includes('Always use TypeScript strict mode.'))
   })
 
@@ -88,11 +111,14 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
     // The fallback prompt for 'specify' includes {{GRILL_DECISIONS}} — force fallback
     // by checking if a phase with grill decisions shows them.
     // Since .md files exist on disk, we just verify the prompt is well-formed.
-    const result = buildPhaseSystemPrompt('specify', makePhaseContext({
-      grillDecisions: [
-        { header: 'Auth Method', selectedOption: 'OAuth2', reason: 'Industry standard' }
-      ]
-    }))
+    const result = buildPhaseSystemPrompt(
+      'specify',
+      makePhaseContext({
+        grillDecisions: [
+          { header: 'Auth Method', selectedOption: 'OAuth2', reason: 'Industry standard' }
+        ]
+      })
+    )
     // The prompt should still be valid even with grill decisions provided
     assert.ok(result.length > 100)
   })
@@ -105,68 +131,117 @@ describe('buildPhaseSystemPrompt — fallback prompts', () => {
   })
 
   test('artifact_with_contentMd_included', () => {
-    const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
-      previousArtifacts: [{
-        type: 'spec',
-        contentMd: '# Feature Specification\n\nAdd login page with OAuth2.',
-        contentJson: undefined,
-        filePath: undefined
-      }]
-    }))
+    const result = buildPhaseSystemPrompt(
+      'tasks',
+      makePhaseContext({
+        previousArtifacts: [
+          {
+            type: 'spec',
+            contentMd: '# Feature Specification\n\nAdd login page with OAuth2.',
+            contentJson: undefined,
+            filePath: undefined
+          }
+        ]
+      })
+    )
     assert.ok(result.includes('Feature Specification'))
     assert.ok(result.includes('Add login page with OAuth2'))
   })
 
   test('artifact_with_contentJson_only_included_as_compact_json_block', () => {
-    const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
-      previousArtifacts: [{
-        type: 'plan',
-        contentMd: undefined,
-        contentJson: { phases: [{ name: 'Phase 1' }] },
-        filePath: undefined
-      }]
-    }))
+    const result = buildPhaseSystemPrompt(
+      'tasks',
+      makePhaseContext({
+        previousArtifacts: [
+          {
+            type: 'plan',
+            contentMd: undefined,
+            contentJson: { phases: [{ name: 'Phase 1' }] },
+            filePath: undefined
+          }
+        ]
+      })
+    )
     assert.ok(result.includes('```json'))
     assert.ok(result.includes('Phase 1'))
     // Should use compact JSON (no pretty-printing)
     assert.ok(!result.includes('  "phases"'), 'Should NOT use pretty-printed JSON')
   })
 
-  test('artifact_with_both_contentMd_and_contentJson_prefers_md', () => {
-    const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
-      previousArtifacts: [{
-        type: 'plan',
-        contentMd: '# Plan Summary\nThis is the plan markdown.',
-        contentJson: { phases: [{ name: 'Phase 1' }] },
-        filePath: undefined
-      }]
-    }))
-    // Should include the markdown
-    assert.ok(result.includes('Plan Summary'))
-    assert.ok(result.includes('This is the plan markdown.'))
-    // Should NOT include the JSON dump since contentMd is present
-    assert.ok(!result.includes('```json'), 'JSON should be omitted when contentMd exists')
+  test('artifact_with_both_contentMd_and_contentJson_prefers_md_for_spec', () => {
+    const result = buildPhaseSystemPrompt(
+      'plan',
+      makePhaseContext({
+        previousArtifacts: [
+          {
+            type: 'spec',
+            contentMd: '# Spec Summary\nThis is the spec markdown.',
+            contentJson: { specUniqueField: 'should-not-appear' },
+            filePath: undefined
+          }
+        ]
+      })
+    )
+    // Spec should include the markdown (non-plan/tasks type prefers contentMd)
+    assert.ok(result.includes('Spec Summary'))
+    assert.ok(result.includes('This is the spec markdown.'))
+    // Should NOT include the JSON dump since spec type prefers contentMd
+    assert.ok(
+      !result.includes('should-not-appear'),
+      'JSON should be omitted for spec when contentMd exists'
+    )
+  })
+
+  test('artifact_plan_with_both_prefers_compact_json', () => {
+    const result = buildPhaseSystemPrompt(
+      'tasks',
+      makePhaseContext({
+        previousArtifacts: [
+          {
+            type: 'plan',
+            contentMd: '# Plan Summary\nVerbose plan output.',
+            contentJson: { phases: [{ name: 'Phase 1' }] },
+            filePath: undefined
+          }
+        ]
+      })
+    )
+    // Plan type should prefer projected compact JSON over verbose contentMd
+    assert.ok(result.includes('```json'), 'Plan should render as JSON block')
+    assert.ok(result.includes('Phase 1'), 'Projected JSON should keep phase names')
+    assert.ok(
+      !result.includes('Verbose plan output'),
+      'Should NOT include verbose contentMd for plan'
+    )
   })
 
   test('artifact_with_filePath_shows_path_line', () => {
-    const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
-      previousArtifacts: [{
-        type: 'spec',
-        contentMd: 'content',
-        contentJson: undefined,
-        filePath: 'src/features/login.ts'
-      }]
-    }))
+    const result = buildPhaseSystemPrompt(
+      'tasks',
+      makePhaseContext({
+        previousArtifacts: [
+          {
+            type: 'spec',
+            contentMd: 'content',
+            contentJson: undefined,
+            filePath: 'src/features/login.ts'
+          }
+        ]
+      })
+    )
     assert.ok(result.includes('**Path**: src/features/login.ts'))
   })
 
   test('multiple_artifacts_separated_by_dividers', () => {
-    const result = buildPhaseSystemPrompt('tasks', makePhaseContext({
-      previousArtifacts: [
-        { type: 'spec', contentMd: 'Spec content', contentJson: undefined, filePath: undefined },
-        { type: 'plan', contentMd: 'Plan content', contentJson: undefined, filePath: undefined }
-      ]
-    }))
+    const result = buildPhaseSystemPrompt(
+      'tasks',
+      makePhaseContext({
+        previousArtifacts: [
+          { type: 'spec', contentMd: 'Spec content', contentJson: undefined, filePath: undefined },
+          { type: 'plan', contentMd: 'Plan content', contentJson: undefined, filePath: undefined }
+        ]
+      })
+    )
     assert.ok(result.includes('Spec content'))
     assert.ok(result.includes('Plan content'))
     assert.ok(result.includes('---'))
@@ -211,10 +286,10 @@ describe('buildConstitutionEditorPrompt — fallback', () => {
   })
 
   test('existing_constitution_injected', () => {
-    const result = buildConstitutionEditorPrompt(
-      'Always write tests first.',
-      { name: 'P', path: '/tmp' }
-    )
+    const result = buildConstitutionEditorPrompt('Always write tests first.', {
+      name: 'P',
+      path: '/tmp'
+    })
     assert.ok(result.includes('Always write tests first.'))
   })
 })
@@ -223,22 +298,60 @@ describe('buildConstitutionEditorPrompt — fallback', () => {
 //  formatArtifacts — direct tests (context compaction)
 // ═════════════════════════════════════════════════════════════════════════
 
-describe('formatArtifacts — contentMd preference', () => {
-  test('prefers_contentMd_and_omits_contentJson', () => {
-    const result = formatArtifacts([{
-      type: 'spec',
-      contentMd: '# My Spec\nDetails here.',
-      contentJson: { title: 'Spec', sections: ['a', 'b'] }
-    }])
-    assert.ok(result.includes('# My Spec'), 'Should include markdown')
-    assert.ok(!result.includes('```json'), 'Should NOT include JSON when markdown exists')
+describe('formatArtifacts — rendering preference', () => {
+  test('prefers_contentMd_for_spec_artifacts', () => {
+    const result = formatArtifacts([
+      {
+        type: 'spec',
+        contentMd: '# My Spec\nDetails here.',
+        contentJson: { title: 'Spec', sections: ['a', 'b'] }
+      }
+    ])
+    assert.ok(result.includes('# My Spec'), 'Spec should use contentMd')
+    assert.ok(!result.includes('"title"'), 'Spec should not include JSON')
+  })
+
+  test('prefers_projected_contentJson_for_plan_artifacts_when_available', () => {
+    const result = formatArtifacts([
+      {
+        type: 'plan',
+        contentMd: 'Very long agent reasoning about the plan...',
+        contentJson: { summary: 'Build login', techStack: ['React'] }
+      }
+    ])
+    assert.ok(result.includes('"summary"'), 'Plan should use projected JSON')
+    assert.ok(!result.includes('Very long agent reasoning'), 'Plan should not use contentMd')
+  })
+
+  test('prefers_projected_contentJson_for_tasks_artifacts_when_available', () => {
+    const result = formatArtifacts([
+      {
+        type: 'tasks',
+        contentMd: 'Very long agent reasoning about tasks...',
+        contentJson: { id: 'T1', title: 'Task 1', wave: 1 }
+      }
+    ])
+    assert.ok(result.includes('"title"'), 'Tasks should use projected JSON')
+    assert.ok(!result.includes('Very long agent reasoning'), 'Tasks should not use contentMd')
+  })
+
+  test('falls_back_to_contentMd_for_plan_tasks_when_no_contentJson', () => {
+    const result = formatArtifacts([
+      {
+        type: 'plan',
+        contentMd: 'Plan details in markdown only.'
+      }
+    ])
+    assert.ok(result.includes('Plan details in markdown only.'))
   })
 
   test('falls_back_to_json_when_no_contentMd', () => {
-    const result = formatArtifacts([{
-      type: 'spec',
-      contentJson: { title: 'Spec' }
-    }])
+    const result = formatArtifacts([
+      {
+        type: 'spec',
+        contentJson: { title: 'Spec' }
+      }
+    ])
     assert.ok(result.includes('```json'), 'Should include JSON block')
     assert.ok(result.includes('"title"'), 'Should include JSON content')
   })
@@ -250,10 +363,12 @@ describe('formatArtifacts — contentMd preference', () => {
 
 describe('formatArtifacts — compact JSON (no pretty-printing)', () => {
   test('json_is_compact_not_pretty_printed', () => {
-    const result = formatArtifacts([{
-      type: 'plan',
-      contentJson: { summary: 'Build login', techStack: ['React', 'Node'] }
-    }])
+    const result = formatArtifacts([
+      {
+        type: 'plan',
+        contentJson: { summary: 'Build login', techStack: ['React', 'Node'] }
+      }
+    ])
     // Compact JSON has no leading whitespace before keys
     assert.ok(!result.includes('  "summary"'), 'Should not have indented keys')
     assert.ok(result.includes('"summary":'), 'Should have compact key')
@@ -262,16 +377,18 @@ describe('formatArtifacts — compact JSON (no pretty-printing)', () => {
 
 describe('formatArtifacts — field projection', () => {
   test('plan_json_projects_only_allowed_fields', () => {
-    const result = formatArtifacts([{
-      type: 'plan',
-      contentJson: {
-        summary: 'Build login page',
-        techStack: ['React'],
-        mustHaves: ['OAuth2'],
-        longDescription: 'This is a very long description that should be dropped...',
-        internalNotes: 'Internal notes should be dropped'
+    const result = formatArtifacts([
+      {
+        type: 'plan',
+        contentJson: {
+          summary: 'Build login page',
+          techStack: ['React'],
+          mustHaves: ['OAuth2'],
+          longDescription: 'This is a very long description that should be dropped...',
+          internalNotes: 'Internal notes should be dropped'
+        }
       }
-    }])
+    ])
     assert.ok(result.includes('Build login page'), 'Should keep summary')
     assert.ok(result.includes('React'), 'Should keep techStack')
     assert.ok(result.includes('OAuth2'), 'Should keep mustHaves')
@@ -280,30 +397,34 @@ describe('formatArtifacts — field projection', () => {
   })
 
   test('tasks_json_projects_only_allowed_fields', () => {
-    const result = formatArtifacts([{
-      type: 'tasks',
-      contentJson: {
-        id: 'T001',
-        title: 'Setup auth',
-        wave: 1,
-        longAnalysis: 'This long analysis text should be dropped',
-        files: ['auth.ts']
+    const result = formatArtifacts([
+      {
+        type: 'tasks',
+        contentJson: {
+          id: 'T001',
+          title: 'Setup auth',
+          wave: 1,
+          longAnalysis: 'This long analysis text should be dropped',
+          files: ['auth.ts']
+        }
       }
-    }])
+    ])
     assert.ok(result.includes('T001'), 'Should keep id')
     assert.ok(result.includes('Setup auth'), 'Should keep title')
     assert.ok(!result.includes('longAnalysis'), 'Should drop longAnalysis')
   })
 
   test('non_plan_non_tasks_json_keeps_all_fields', () => {
-    const result = formatArtifacts([{
-      type: 'review',
-      contentJson: {
-        score: 85,
-        findings: ['Good coverage'],
-        customField: 'kept'
+    const result = formatArtifacts([
+      {
+        type: 'review',
+        contentJson: {
+          score: 85,
+          findings: ['Good coverage'],
+          customField: 'kept'
+        }
       }
-    }])
+    ])
     assert.ok(result.includes('score'), 'Should keep score')
     assert.ok(result.includes('customField'), 'Should keep custom fields for non-plan/tasks types')
   })
@@ -336,9 +457,7 @@ describe('formatArtifacts — discovery consolidation', () => {
 
   test('caps_at_30_entries_with_omission_breadcrumb', () => {
     const entries = Array.from({ length: 40 }, (_, i) => `Discovery ${i}`)
-    const result = formatArtifacts([
-      { type: 'discoveries', contentJson: { entries } }
-    ])
+    const result = formatArtifacts([{ type: 'discoveries', contentJson: { entries } }])
     // Should have exactly 30 entries (the most recent ones)
     assert.ok(result.includes('- Discovery 10'), 'Should include entry 10 (start of last 30)')
     assert.ok(result.includes('- Discovery 39'), 'Should include last entry')
@@ -413,7 +532,10 @@ describe('formatArtifacts — size regression guard', () => {
         type: 'discoveries' as const,
         contentJson: {
           phase: 'build',
-          entries: Array.from({ length: 3 }, (__, j) => `Wave ${i} discovery ${j}: found pattern in file_${i}_${j}.ts`)
+          entries: Array.from(
+            { length: 3 },
+            (__, j) => `Wave ${i} discovery ${j}: found pattern in file_${i}_${j}.ts`
+          )
         }
       }))
     ]

@@ -4,25 +4,41 @@
  */
 'use strict'
 
-const noop = function() {}
+const noop = function () {
+  /* no-op logger method */
+}
 
 function createScopedLogger() {
   return {
-    info: noop, warn: noop, error: noop, debug: noop,
-    verbose: noop, log: noop, silly: noop,
-    scope: function() { return createScopedLogger() },
+    info: noop,
+    warn: noop,
+    error: noop,
+    debug: noop,
+    verbose: noop,
+    log: noop,
+    silly: noop,
+    scope: function () {
+      return createScopedLogger()
+    }
   }
 }
 
 const logger = {
-  info: noop, warn: noop, error: noop, debug: noop,
-  verbose: noop, log: noop, silly: noop,
-  scope: function(_name) { return createScopedLogger() },
+  info: noop,
+  warn: noop,
+  error: noop,
+  debug: noop,
+  verbose: noop,
+  log: noop,
+  silly: noop,
+  scope: function () {
+    return createScopedLogger()
+  },
   transports: {
     file: { level: false, maxSize: 0, format: '' },
-    console: { level: false, format: '' },
+    console: { level: false, format: '' }
   },
-  errorHandler: { startCatching: noop },
+  errorHandler: { startCatching: noop }
 }
 
 // Support both default and named exports

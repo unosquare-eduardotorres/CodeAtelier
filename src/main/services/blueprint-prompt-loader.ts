@@ -80,18 +80,36 @@ const AGENT_ENHANCEMENT_FILES: Partial<Record<BlueprintPhaseType, string>> = {
 
 // Fields to keep when projecting plan JSON (drops verbose description prose)
 const PLAN_PROJECTION_KEYS = new Set([
-  'summary', 'techStack', 'mustHaves', 'existingPatterns', 'keyLinks',
-  'phases', 'items', 'id', 'title', 'name', 'files', 'scope'
+  'summary',
+  'techStack',
+  'mustHaves',
+  'existingPatterns',
+  'keyLinks',
+  'phases',
+  'items',
+  'id',
+  'title',
+  'name',
+  'files',
+  'scope'
 ])
 
 // Fields to keep when projecting tasks JSON
 const TASKS_PROJECTION_KEYS = new Set([
-  'id', 'title', 'wave', 'files', 'scope', 'status', 'taskId',
-  'userStory', 'filePathsJson', 'description'
+  'id',
+  'title',
+  'wave',
+  'files',
+  'scope',
+  'status',
+  'taskId',
+  'userStory',
+  'filePathsJson',
+  'description'
 ])
 
 /** Per-phase char budget for the formatted artifacts block. */
-export const ARTIFACT_BUDGET_CHARS = 30_000
+export const ARTIFACT_BUDGET_CHARS = 50_000
 
 /** Max number of consolidated discovery entries before truncation. */
 const MAX_DISCOVERY_ENTRIES = 30
@@ -100,7 +118,10 @@ const MAX_DISCOVERY_ENTRIES = 30
  * Project only the allowed keys from an object (shallow, one level + recurse into arrays).
  * Returns a new object with only the allowed fields.
  */
-function projectFields(obj: Record<string, unknown>, allowed: Set<string>): Record<string, unknown> {
+function projectFields(
+  obj: Record<string, unknown>,
+  allowed: Set<string>
+): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   for (const key of Object.keys(obj)) {
     if (allowed.has(key)) {
@@ -164,9 +185,7 @@ export function formatArtifacts(
   // Render consolidated discoveries block
   if (allDiscoveryEntries.length > 0) {
     const capped = allDiscoveryEntries.length > MAX_DISCOVERY_ENTRIES
-    const entries = capped
-      ? allDiscoveryEntries.slice(-MAX_DISCOVERY_ENTRIES)
-      : allDiscoveryEntries
+    const entries = capped ? allDiscoveryEntries.slice(-MAX_DISCOVERY_ENTRIES) : allDiscoveryEntries
     const bullets = entries.map((e) => `- ${e}`).join('\n')
     const omitted = allDiscoveryEntries.length - entries.length
     const suffix = capped
@@ -185,7 +204,7 @@ export function formatArtifacts(
     if (total + entry.length > budgetChars && budgeted.length > 0) {
       const remaining = filtered.length - i
       budgeted.push(
-        `_(${remaining} artifact(s) truncated to stay within context budget — use Read or mcp__memory__memory_search for full content)_`
+        `_(${remaining} artifact(s) truncated to stay within context budget — use Read on the file paths shown above for full content)_`
       )
       break
     }
@@ -201,17 +220,25 @@ function renderSingleArtifact(a: BlueprintArtifact): string {
   const parts: string[] = [`### Artifact: ${a.type}`]
   if (a.filePath) parts.push(`**Path**: ${a.filePath}`)
 
-  // Prefer contentMd — skip JSON dump when markdown summary exists
-  if (a.contentMd) {
+  // For plan/tasks: prefer compact projected JSON when available.
+  // The full verbose agent output is on disk at filePath — Read it for details.
+  const preferCompactJson = (a.type === 'plan' || a.type === 'tasks') && a.contentJson
+
+  if (preferCompactJson) {
+    let json = a.contentJson!
+    if (a.type === 'plan') json = projectFields(json, PLAN_PROJECTION_KEYS)
+    else if (a.type === 'tasks') json = projectFields(json, TASKS_PROJECTION_KEYS)
+    parts.push('```json\n' + JSON.stringify(json) + '\n```')
+    if (a.filePath) {
+      parts.push(`_(Full agent output available at ${a.filePath} — use Read for complete details)_`)
+    }
+  } else if (a.contentMd) {
     parts.push(a.contentMd)
   } else if (a.contentJson) {
     // Field projection for known large artifact types
     let json = a.contentJson
-    if (a.type === 'plan') {
-      json = projectFields(json, PLAN_PROJECTION_KEYS)
-    } else if (a.type === 'tasks') {
-      json = projectFields(json, TASKS_PROJECTION_KEYS)
-    }
+    if (a.type === 'plan') json = projectFields(json, PLAN_PROJECTION_KEYS)
+    else if (a.type === 'tasks') json = projectFields(json, TASKS_PROJECTION_KEYS)
     // Compact JSON (no pretty-printing) for ~30-40% savings
     parts.push('```json\n' + JSON.stringify(json) + '\n```')
   }
@@ -285,7 +312,9 @@ function formatRetryContext(ctx: NonNullable<PhaseContext['retryContext']>): str
 
   if (ctx.filesModified.length > 0) {
     lines.push(`**Files modified before failure:** ${ctx.filesModified.join(', ')}`)
-    lines.push('⚠️ These files may be in an inconsistent state — re-read them before making further changes.')
+    lines.push(
+      '⚠️ These files may be in an inconsistent state — re-read them before making further changes.'
+    )
     lines.push('')
   }
   if (ctx.filesCreated.length > 0) {
@@ -293,7 +322,9 @@ function formatRetryContext(ctx: NonNullable<PhaseContext['retryContext']>): str
     lines.push('')
   }
   if (ctx.totalTasks > 0) {
-    lines.push(`**Progress:** ${ctx.tasksCompleted}/${ctx.totalTasks} tasks completed before failure`)
+    lines.push(
+      `**Progress:** ${ctx.tasksCompleted}/${ctx.totalTasks} tasks completed before failure`
+    )
     lines.push('')
   }
 
@@ -342,14 +373,13 @@ function replaceVariables(
       // Pre-loaded workspace documentation (CLAUDE.md, README.md, package.json, PLAN.md)
       .replace(
         '{{WORKSPACE_DOCS}}',
-        context.workspaceDocs || '(No workspace documentation found — use Read to check for CLAUDE.md, README.md, package.json)'
+        context.workspaceDocs ||
+          '(No workspace documentation found — use Read to check for CLAUDE.md, README.md, package.json)'
       )
       // Retry context (populated only on retry — guides the agent to build on prior work)
       .replace(
         '{{RETRY_CONTEXT}}',
-        context.retryContext
-          ? formatRetryContext(context.retryContext)
-          : ''
+        context.retryContext ? formatRetryContext(context.retryContext) : ''
       )
   )
 }

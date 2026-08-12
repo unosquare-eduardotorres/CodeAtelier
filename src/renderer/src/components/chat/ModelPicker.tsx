@@ -8,10 +8,7 @@
 
 import { useState, useMemo } from 'react'
 import { ChevronDown, ChevronRight, Settings, AlertCircle } from 'lucide-react'
-import {
-  AVAILABLE_MODELS,
-  DEFAULT_MODEL_CONFIG
-} from '../../../../shared/constants'
+import { AVAILABLE_MODELS, DEFAULT_MODEL_CONFIG } from '../../../../shared/constants'
 import type {
   LLMProvider,
   ModelAction,
@@ -121,15 +118,27 @@ export function ModelPicker({
 }: ModelPickerProps): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const modelOptions = useMemo(() => buildModelOptions(omlxModels), [omlxModels])
-  const claudeOptions = useMemo(() => modelOptions.filter((o) => o.group === 'claude'), [modelOptions])
-  const localOptions = useMemo(() => modelOptions.filter((o) => o.group === 'local'), [modelOptions])
+  const claudeOptions = useMemo(
+    () => modelOptions.filter((o) => o.group === 'claude'),
+    [modelOptions]
+  )
+  const localOptions = useMemo(
+    () => modelOptions.filter((o) => o.group === 'local'),
+    [modelOptions]
+  )
 
   // Resolved effective models for summary
   const resolved = useMemo(
     () =>
       SUMMARY_ROLES.map((role) => ({
         ...role,
-        ...resolveModel(role.action, overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider)
+        ...resolveModel(
+          role.action,
+          overrides,
+          workspaceModelRoles,
+          claudeModelOverrides,
+          workspaceProvider
+        )
       })),
     [overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider]
   )
@@ -196,7 +205,13 @@ export function ModelPicker({
         {expanded && (
           <div className="mt-2 space-y-1.5">
             {SUMMARY_ROLES.map((role) => {
-              const effective = resolveModel(role.action, overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider)
+              const effective = resolveModel(
+                role.action,
+                overrides,
+                workspaceModelRoles,
+                claudeModelOverrides,
+                workspaceProvider
+              )
               return (
                 <div key={role.action} className="flex items-center justify-between gap-3">
                   <span className="text-xs text-text-secondary">{role.label}</span>
@@ -208,13 +223,17 @@ export function ModelPicker({
                   >
                     <optgroup label="Claude">
                       {claudeOptions.map((opt) => (
-                        <option key={opt.id} value={opt.id}>{opt.label}</option>
+                        <option key={opt.id} value={opt.id}>
+                          {opt.label}
+                        </option>
                       ))}
                     </optgroup>
                     {localOptions.length > 0 && (
                       <optgroup label="Local (oMLX)">
                         {localOptions.map((opt) => (
-                          <option key={opt.id} value={opt.id}>{opt.id}</option>
+                          <option key={opt.id} value={opt.id}>
+                            {opt.id}
+                          </option>
                         ))}
                       </optgroup>
                     )}
@@ -269,7 +288,13 @@ export function ModelPicker({
             Per-conversation overrides — changes here only affect this conversation.
           </p>
           {SUMMARY_ROLES.map((role) => {
-            const effective = resolveModel(role.action, overrides, workspaceModelRoles, claudeModelOverrides, workspaceProvider)
+            const effective = resolveModel(
+              role.action,
+              overrides,
+              workspaceModelRoles,
+              claudeModelOverrides,
+              workspaceProvider
+            )
             return (
               <div key={role.action} className="flex items-center justify-between gap-4">
                 <div className="flex-1 min-w-0">
@@ -283,13 +308,17 @@ export function ModelPicker({
                 >
                   <optgroup label="Claude">
                     {claudeOptions.map((opt) => (
-                      <option key={opt.id} value={opt.id}>{opt.label}</option>
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
                     ))}
                   </optgroup>
                   {localOptions.length > 0 && (
                     <optgroup label="Local (oMLX)">
                       {localOptions.map((opt) => (
-                        <option key={opt.id} value={opt.id}>{opt.id}</option>
+                        <option key={opt.id} value={opt.id}>
+                          {opt.id}
+                        </option>
                       ))}
                     </optgroup>
                   )}
@@ -303,8 +332,8 @@ export function ModelPicker({
             <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/20 mt-2">
               <AlertCircle size={14} className="text-amber-400 shrink-0 mt-0.5" />
               <p className="text-xs text-amber-300">
-                <span className="font-medium">Mixed providers</span> — all actions will use the
-                Plan model&apos;s provider in the same conversation.
+                <span className="font-medium">Mixed providers</span> — all actions will use the Plan
+                model&apos;s provider in the same conversation.
               </p>
             </div>
           )}

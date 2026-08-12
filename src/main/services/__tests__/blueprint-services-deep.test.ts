@@ -51,7 +51,9 @@ try {
   stripClarificationsSection = mod.stripClarificationsSection
   CLARIFY_CORRECTION_MESSAGE = mod.CLARIFY_CORRECTION_MESSAGE
   specLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   const mod = require('../blueprint-goal-conditions')
@@ -63,36 +65,48 @@ try {
   buildBuildGoalCondition = mod.buildBuildGoalCondition
   buildVerifyGoalCondition = mod.buildVerifyGoalCondition
   goalsLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   const mod = require('../blueprint-artifact-parsers')
   parseDiscoveriesBlock = mod.parseDiscoveriesBlock
   parsePhaseCompletionBlock = mod.parsePhaseCompletionBlock
   parsersLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   validateTaskGraph = require('../blueprint-task-validator').validateTaskGraph
   validatorLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   const mod = require('../blueprint-phase-watchdog')
   PhaseActivityWatchdog = mod.PhaseActivityWatchdog
   STALL_TIMEOUT_MS = mod.STALL_TIMEOUT_MS
   watchdogLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   splitBinaryDocs = require('../blueprint-document-loader').splitBinaryDocs
   docLoaderLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 try {
   reportBlueprintPhaseError = require('../blueprint-error-reporter').reportBlueprintPhaseError
   errorReporterLoaded = true
-} catch {}
+} catch {
+  /* module optional under test env */
+}
 
 // ── stripClarificationsSection ───────────────────────────────────────────
 
@@ -216,7 +230,8 @@ if (parsersLoaded) {
     })
 
     test('parses_fenced_completion', () => {
-      const text = 'Content\n```blueprint-phase-complete\n{"phase":"specify","status":"complete","summary":"Done"}\n```'
+      const text =
+        'Content\n```blueprint-phase-complete\n{"phase":"specify","status":"complete","summary":"Done"}\n```'
       const result = parsePhaseCompletionBlock(text)
       assert.ok(result)
       assert.equal(result!.phase, 'specify')
@@ -240,9 +255,7 @@ if (validatorLoaded) {
     })
 
     test('single_task_is_valid', () => {
-      const result = validateTaskGraph([
-        { taskId: 't1', wave: 0, dependsOn: [] }
-      ])
+      const result = validateTaskGraph([{ taskId: 't1', wave: 0, dependsOn: [] }])
       assert.ok(result.valid)
       assert.equal(result.errors.length, 0)
     })
@@ -266,16 +279,12 @@ if (validatorLoaded) {
     })
 
     test('missing_dependency_detected', () => {
-      const result = validateTaskGraph([
-        { taskId: 't1', wave: 0, dependsOn: ['nonexistent'] }
-      ])
+      const result = validateTaskGraph([{ taskId: 't1', wave: 0, dependsOn: ['nonexistent'] }])
       assert.ok(!result.valid)
     })
 
     test('self_referencing_task_detected', () => {
-      const result = validateTaskGraph([
-        { taskId: 't1', wave: 0, dependsOn: ['t1'] }
-      ])
+      const result = validateTaskGraph([{ taskId: 't1', wave: 0, dependsOn: ['t1'] }])
       assert.ok(!result.valid)
     })
 

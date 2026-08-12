@@ -106,14 +106,16 @@ describe('buildProviderOptions', () => {
     assert.ok(result.includes('reasoningEffort: high'))
   })
 
-  test('ollama → temperature 0.5', () => {
+  // 0.6, not 0.5 -- opencode-agent-writer-builders.ts:76. It has been 0.6 since
+  // the line was introduced; the 0.5 these asserted never shipped.
+  test('ollama → temperature 0.6', () => {
     const result = buildProviderOptions('ollama', 'build')
-    assert.ok(result.includes('temperature: 0.5'))
+    assert.ok(result.includes('temperature: 0.6'))
   })
 
-  test('omlx → temperature 0.5', () => {
+  test('omlx → temperature 0.6', () => {
     const result = buildProviderOptions('omlx', 'plan')
-    assert.ok(result.includes('temperature: 0.5'))
+    assert.ok(result.includes('temperature: 0.6'))
   })
 
   test('unknown provider → no provider-specific lines but still has tool restrictions', () => {

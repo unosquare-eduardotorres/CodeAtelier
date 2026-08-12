@@ -12,11 +12,8 @@ import { setupElectronStub } from './electron-stub'
 setupElectronStub()
 
 void (async () => {
-  const {
-    StreamMetricsAggregator,
-    recordExternalToolActivity,
-    getAndClearToolActivities,
-  } = await import('../../ipc/chunk-router')
+  const { StreamMetricsAggregator, recordExternalToolActivity, getAndClearToolActivities } =
+    await import('../../ipc/chunk-router')
 
   // ── StreamMetricsAggregator ──────────────────────────────────────────────
 
@@ -237,7 +234,7 @@ void (async () => {
       recordExternalToolActivity(convId, {
         id: 'tool-1',
         toolName: 'read_file',
-        status: 'completed' as any,
+        status: 'completed' as any
       })
       const activities = getAndClearToolActivities(convId)
       assert.equal(activities.length, 1)
@@ -254,7 +251,7 @@ void (async () => {
       const convId = 'test-conv-clear-' + Date.now()
       recordExternalToolActivity(convId, {
         id: 'tool-2',
-        toolName: 'write_file',
+        toolName: 'write_file'
       })
       // First retrieval
       const first = getAndClearToolActivities(convId)
@@ -270,13 +267,13 @@ void (async () => {
       recordExternalToolActivity(convId, {
         id: 'tool-3',
         toolName: 'execute',
-        status: 'running' as any,
+        status: 'running' as any
       })
       // Record again with result
       recordExternalToolActivity(convId, {
         id: 'tool-3',
         toolName: 'execute',
-        status: 'completed' as any,
+        status: 'completed' as any
       })
       const activities = getAndClearToolActivities(convId)
       assert.equal(activities.length, 1)

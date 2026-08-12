@@ -11,6 +11,20 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { localEmbeddingProvider } from '../local-embedding.provider'
+import { workspaceRepository } from '../../db/repositories'
+
+/**
+ * `localEmbeddingProvider` is a process-wide singleton. When an earlier test
+ * file in the shared run calls `registerEmbeddingIpc(mainWindow)`, that adds
+ * permanent modelReady/modelError listeners which call
+ * `mainWindow.webContents.send(...)`. With a stub window that has no
+ * `webContents`, those listeners throw synchronously out of `emit()` and fail
+ * whichever test emitted. Drop them so each test controls its own listeners.
+ */
+function dropLeakedListeners(): void {
+  localEmbeddingProvider.removeAllListeners('modelReady')
+  localEmbeddingProvider.removeAllListeners('modelError')
+}
 
 describe('LocalEmbeddingProvider — interface contract', () => {
   test('exports singleton instance', () => {
@@ -19,7 +33,11 @@ describe('LocalEmbeddingProvider — interface contract', () => {
     assert.equal(typeof localEmbeddingProvider.initialize, 'function', 'initialize() method')
     assert.equal(typeof localEmbeddingProvider.dispose, 'function', 'dispose() method')
     assert.equal(typeof localEmbeddingProvider.reinitialize, 'function', 'reinitialize() method')
-    assert.equal(typeof localEmbeddingProvider.ensureEmbeddingReady, 'function', 'ensureEmbeddingReady() method')
+    assert.equal(
+      typeof localEmbeddingProvider.ensureEmbeddingReady,
+      'function',
+      'ensureEmbeddingReady() method'
+    )
   })
 
   test('has isReady getter', () => {
@@ -66,9 +84,12 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
   test('initialize with ollama backend and no model emits modelError', async () => {
     localEmbeddingProvider.setBackend('ollama')
     localEmbeddingProvider.dispose() // clear any previous model
+    dropLeakedListeners()
 
     const errors: string[] = []
-    const handler = (e: string): void => { errors.push(e) }
+    const handler = (e: string): void => {
+      errors.push(e)
+    }
     localEmbeddingProvider.on('modelError', handler)
 
     try {
@@ -76,7 +97,10 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
       assert.fail('Should have thrown when no model configured')
     } catch (err) {
       assert.ok(err instanceof Error)
-      assert.ok(err.message.includes('No Ollama embedding model'), `Error should mention model: ${err.message}`)
+      assert.ok(
+        err.message.includes('No Ollama embedding model'),
+        `Error should mention model: ${err.message}`
+      )
     }
 
     assert.ok(errors.length > 0, 'Should have emitted modelError')
@@ -102,8 +126,11 @@ describe('LocalEmbeddingProvider — Ollama error handling', () => {
 describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () => {
   test('omlx modelReady event propagates through facade when backend is omlx', () => {
     localEmbeddingProvider.setBackend('omlx')
+    dropLeakedListeners()
     const events: string[] = []
-    const handler = (): void => { events.push('modelReady') }
+    const handler = (): void => {
+      events.push('modelReady')
+    }
     localEmbeddingProvider.on('modelReady', handler)
 
     // Simulate oMLX emitting modelReady internally
@@ -116,8 +143,11 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
 
   test('omlx modelError event propagates through facade when backend is omlx', () => {
     localEmbeddingProvider.setBackend('omlx')
+    dropLeakedListeners()
     const errors: string[] = []
-    const handler = (e: string): void => { errors.push(e) }
+    const handler = (e: string): void => {
+      errors.push(e)
+    }
     localEmbeddingProvider.on('modelError', handler)
 
     const { omlxEmbeddingProvider } = require('../omlx-embedding.service')
@@ -131,8 +161,12 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
   test('omlx events are NOT forwarded when backend is ollama (cross-backend gating)', () => {
     localEmbeddingProvider.setBackend('ollama')
     const events: string[] = []
-    const readyHandler = (): void => { events.push('ready') }
-    const errorHandler = (): void => { events.push('error') }
+    const readyHandler = (): void => {
+      events.push('ready')
+    }
+    const errorHandler = (): void => {
+      events.push('error')
+    }
     localEmbeddingProvider.on('modelReady', readyHandler)
     localEmbeddingProvider.on('modelError', errorHandler)
 
@@ -144,6 +178,79 @@ describe('LocalEmbeddingProvider — oMLX event forwarding (C1 regression)', () 
     localEmbeddingProvider.removeListener('modelReady', readyHandler)
     localEmbeddingProvider.removeListener('modelError', errorHandler)
     localEmbeddingProvider.setBackend('omlx')
+  })
+})
+
+describe('LocalEmbeddingProvider — configureForWorkspace', () => {
+  /**
+   * Regression guard: the facade defaults to the oMLX backend, which cannot
+   * work on Windows. configureForWorkspace() is what aligns it with the
+   * workspace's persisted settings — if it stops selecting Ollama, embeddings
+   * silently fail everywhere off Apple Silicon.
+   */
+  function withSettings(settings: Record<string, unknown>, fn: () => void): void {
+    const original = workspaceRepository.getSettings
+    ;(workspaceRepository as any).getSettings = () => settings
+    try {
+      fn()
+    } finally {
+      ;(workspaceRepository as any).getSettings = original
+    }
+  }
+
+  test('selects the Ollama backend and applies model + base URL from settings', () => {
+    localEmbeddingProvider.setBackend('omlx')
+    localEmbeddingProvider.dispose()
+    dropLeakedListeners()
+
+    withSettings(
+      {
+        localLlmBackend: 'ollama',
+        localHost: '192.168.1.50',
+        localPort: 11500,
+        ollamaEmbeddingModel: 'bge-m3'
+      },
+      () => {
+        localEmbeddingProvider.configureForWorkspace('ws-1')
+      }
+    )
+
+    // activeModelName reads the Ollama model only when the Ollama backend is active,
+    // so this asserts both the backend switch and the model in one shot.
+    assert.equal(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  test('leaves the oMLX backend selected when settings say omlx', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    localEmbeddingProvider.setOllamaEmbeddingModel('bge-m3')
+    dropLeakedListeners()
+
+    withSettings({ localLlmBackend: 'omlx' }, () => {
+      localEmbeddingProvider.configureForWorkspace('ws-2')
+    })
+
+    // Back on oMLX, activeModelName delegates to omlxEmbeddingProvider and must
+    // no longer report the Ollama model.
+    assert.notEqual(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  test('does not throw when settings lookup fails', () => {
+    const original = workspaceRepository.getSettings
+    ;(workspaceRepository as any).getSettings = () => {
+      throw new Error('db unavailable')
+    }
+    try {
+      localEmbeddingProvider.configureForWorkspace('missing-ws')
+    } finally {
+      ;(workspaceRepository as any).getSettings = original
+      localEmbeddingProvider.setBackend('omlx')
+    }
   })
 })
 

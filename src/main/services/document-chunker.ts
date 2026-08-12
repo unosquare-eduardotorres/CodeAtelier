@@ -97,13 +97,38 @@ export function detectStrategy(filePath: string): ChunkStrategy {
 
   if (['md', 'mdx', 'markdown'].includes(ext)) return 'markdown'
 
-  if ([
-    'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs',
-    'py', 'pyi', 'rb', 'go', 'rs', 'java', 'kt', 'kts',
-    'c', 'cpp', 'h', 'hpp', 'cs', 'swift',
-    'sh', 'bash', 'zsh',
-    'sql', 'graphql', 'gql', 'prisma'
-  ].includes(ext)) return 'code'
+  if (
+    [
+      'ts',
+      'tsx',
+      'js',
+      'jsx',
+      'mjs',
+      'cjs',
+      'py',
+      'pyi',
+      'rb',
+      'go',
+      'rs',
+      'java',
+      'kt',
+      'kts',
+      'c',
+      'cpp',
+      'h',
+      'hpp',
+      'cs',
+      'swift',
+      'sh',
+      'bash',
+      'zsh',
+      'sql',
+      'graphql',
+      'gql',
+      'prisma'
+    ].includes(ext)
+  )
+    return 'code'
 
   return 'plain'
 }
@@ -191,7 +216,10 @@ function chunkMarkdown(content: string, docName?: string): DocumentChunk[] {
     const sectionText = `## ${section.title}\n\n${section.content}`
 
     // If adding this section would exceed target, flush current chunk
-    if (currentChunkContent.length + sectionText.length > TARGET_CHUNK_CHARS && currentChunkContent.length > 0) {
+    if (
+      currentChunkContent.length + sectionText.length > TARGET_CHUNK_CHARS &&
+      currentChunkContent.length > 0
+    ) {
       chunks.push({
         index: chunks.length,
         total: 0, // set later

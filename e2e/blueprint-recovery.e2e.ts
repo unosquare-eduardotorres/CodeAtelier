@@ -23,7 +23,9 @@ import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Recovery & Depth', () => {
   // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
-  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+  test.beforeEach(async ({ electronPage }) => {
+    await pinSequentialBuild(electronPage)
+  })
 
   // ── Shared helpers ────────────────────────────────────────────────
 
@@ -46,7 +48,10 @@ test.describe('Blueprint Recovery & Depth', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -59,7 +64,10 @@ test.describe('Blueprint Recovery & Depth', () => {
     const settings = new WorkspaceSettings(page)
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -155,9 +163,7 @@ test.describe('Blueprint Recovery & Depth', () => {
 
   // ── 2. Phase stream reconnects after disconnect simulation ────────
 
-  test('blueprint handles stream interruption gracefully', async ({
-    electronPage: page
-  }) => {
+  test('blueprint handles stream interruption gracefully', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     // Check for an active blueprint with a running phase
@@ -171,11 +177,15 @@ test.describe('Blueprint Recovery & Depth', () => {
 
     // Check if the blueprint is actively streaming (spinner or progress)
     const streamingIndicator = page.locator('[class*="animate-spin"], [class*="animate-pulse"]')
-    const isStreaming = await streamingIndicator.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const isStreaming = await streamingIndicator
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!isStreaming) {
       // Not actively streaming — check if there's phase output visible
-      const phaseOutput = page.locator('[data-testid="blueprint-phase-stream"]')
+      const phaseOutput = page
+        .locator('[data-testid="blueprint-phase-stream"]')
         .or(page.locator('.prose'))
         .first()
       const hasOutput = await phaseOutput.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -210,15 +220,16 @@ test.describe('Blueprint Recovery & Depth', () => {
 
     // Timeline should show which phase is active
     const activePhase = timeline.locator('[class*="bg-accent"], [class*="bg-emerald"]')
-    const hasActivePhase = await activePhase.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasActivePhase = await activePhase
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasActivePhase).toBeTruthy()
   })
 
   // ── 3. TaskListItem: individual tasks within wave progress ────────
 
-  test('TaskListItem shows individual build tasks with status', async ({
-    electronPage: page
-  }) => {
+  test('TaskListItem shows individual build tasks with status', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     // Navigate to an active or completed blueprint that has build tasks
@@ -253,7 +264,8 @@ test.describe('Blueprint Recovery & Depth', () => {
 
     if (taskCount === 0) {
       // Blueprint may not be in build phase yet — check for wave progress
-      const waveProgress = page.locator('[data-testid="blueprint-wave-progress"]')
+      const waveProgress = page
+        .locator('[data-testid="blueprint-wave-progress"]')
         .or(page.getByText(/wave \d+|task/i).first())
       const hasWave = await waveProgress.isVisible({ timeout: 5_000 }).catch(() => false)
 
@@ -286,15 +298,17 @@ test.describe('Blueprint Recovery & Depth', () => {
 
   // ── 4. BlueprintOnboardModal step-through ─────────────────────────
 
-  test('BlueprintOnboardModal completes full step-through', async ({
-    electronPage: page
-  }) => {
+  test('BlueprintOnboardModal completes full step-through', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     // Look for the onboard modal (appears on first visit)
-    const onboardModal = page.locator('[data-testid="blueprint-onboard-modal"]')
+    const onboardModal = page
+      .locator('[data-testid="blueprint-onboard-modal"]')
       .or(page.locator('[role="dialog"]'))
-    const hasModal = await onboardModal.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasModal = await onboardModal
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasModal) {
       // Modal may have been dismissed in a previous session
@@ -311,7 +325,10 @@ test.describe('Blueprint Recovery & Depth', () => {
       await learnMoreBtn.click()
       await page.waitForTimeout(500)
 
-      const modalAfterClick = await onboardModal.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const modalAfterClick = await onboardModal
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       if (!modalAfterClick) {
         test.skip()
         return
@@ -330,9 +347,11 @@ test.describe('Blueprint Recovery & Depth', () => {
     }
 
     // Find the CTA button ("Create Blueprint" or "Get Started" or "Got it")
-    const ctaBtn = page.getByRole('button', {
-      name: /create|get started|got it|start|close|dismiss/i
-    }).first()
+    const ctaBtn = page
+      .getByRole('button', {
+        name: /create|get started|got it|start|close|dismiss/i
+      })
+      .first()
     const hasCta = await ctaBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
     if (hasCta) {
@@ -340,7 +359,10 @@ test.describe('Blueprint Recovery & Depth', () => {
       await page.waitForTimeout(500)
 
       // Modal should close
-      const modalStillVisible = await onboardModal.first().isVisible({ timeout: 2_000 }).catch(() => false)
+      const modalStillVisible = await onboardModal
+        .first()
+        .isVisible({ timeout: 2_000 })
+        .catch(() => false)
       expect(modalStillVisible).toBeFalsy()
     }
   })

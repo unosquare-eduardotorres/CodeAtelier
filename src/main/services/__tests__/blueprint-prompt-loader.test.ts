@@ -24,7 +24,16 @@ import {
 
 describe('buildPhaseSystemPrompt — fallback paths', () => {
   const baseContext = {
-    blueprint: { id: 'bp-1', title: 'Test Blueprint', shortName: 'test', description: 'Test', priority: 'medium', currentPhase: 'specify', settings: {}, phases: [] },
+    blueprint: {
+      id: 'bp-1',
+      title: 'Test Blueprint',
+      shortName: 'test',
+      description: 'Test',
+      priority: 'medium',
+      currentPhase: 'specify',
+      settings: {},
+      phases: []
+    },
     constitution: 'Use TypeScript strict mode.',
     previousArtifacts: [],
     specFilePath: '/workspace/.blueprint/spec.md',
@@ -74,7 +83,11 @@ describe('buildPhaseSystemPrompt — fallback paths', () => {
       ...baseContext,
       previousArtifacts: [
         { type: 'spec' as const, contentMd: '# Specification\nBuild a widget.' },
-        { type: 'plan' as const, filePath: '/plan.md', contentJson: { summary: 'Two steps', techStack: ['React'] } }
+        {
+          type: 'plan' as const,
+          filePath: '/plan.md',
+          contentJson: { summary: 'Two steps', techStack: ['React'] }
+        }
       ]
     }
     const prompt = buildPhaseSystemPrompt('build', contextWithArtifacts)
@@ -89,7 +102,10 @@ describe('buildPhaseSystemPrompt — fallback paths', () => {
     const prompt = buildPhaseSystemPrompt('tasks', baseContext)
     // Completion block should include phase and status fields
     assert.ok(prompt.includes('blueprint-phase-complete'), 'completion block present')
-    assert.ok(prompt.includes('"phase": "tasks"') || prompt.includes('tasks'), 'tasks phase referenced')
+    assert.ok(
+      prompt.includes('"phase": "tasks"') || prompt.includes('tasks'),
+      'tasks phase referenced'
+    )
   })
 })
 
@@ -170,7 +186,16 @@ describe('buildFallbackConstitutionPrompt (internal)', () => {
 
 describe('buildPhaseSystemPrompt — all phases', () => {
   const baseContext = {
-    blueprint: { id: 'bp-1', title: 'Test', shortName: 'test', description: 'Test', priority: 'medium', currentPhase: 'specify', settings: {}, phases: [] },
+    blueprint: {
+      id: 'bp-1',
+      title: 'Test',
+      shortName: 'test',
+      description: 'Test',
+      priority: 'medium',
+      currentPhase: 'specify',
+      settings: {},
+      phases: []
+    },
     constitution: 'Use TS strict.',
     previousArtifacts: [] as Array<{ phase: string; content: string }>,
     specFilePath: '/workspace/.blueprint/spec.md',

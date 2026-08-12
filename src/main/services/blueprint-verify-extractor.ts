@@ -86,10 +86,7 @@ export async function extractVerifyCompletion(params: {
   if (text.length > MAX_EXTRACTION_INPUT_CHARS) {
     const head = text.slice(0, 10_000)
     const tail = text.slice(-(MAX_EXTRACTION_INPUT_CHARS - 10_000))
-    extractionInput =
-      head +
-      '\n\n[… middle truncated for extraction …]\n\n' +
-      tail
+    extractionInput = head + '\n\n[… middle truncated for extraction …]\n\n' + tail
     extractorLog.info(
       `[extractVerifyCompletion] Truncated input from ${text.length} to ${extractionInput.length} chars`
     )
@@ -113,11 +110,16 @@ export async function extractVerifyCompletion(params: {
         model,
         workspaceId,
         args: [
-          '-p', userMessage,
-          '--model', model,
-          '--system-prompt', EXTRACTION_SYSTEM_PROMPT,
-          '--permission-mode', 'plan',
-          '--max-turns', '1'
+          '-p',
+          userMessage,
+          '--model',
+          model,
+          '--system-prompt',
+          EXTRACTION_SYSTEM_PROMPT,
+          '--permission-mode',
+          'plan',
+          '--max-turns',
+          '1'
         ],
         cli: { timeout: 120_000 } // 2 min — CLI cold-start + API latency; 30s caused deterministic kills
       })
@@ -125,7 +127,8 @@ export async function extractVerifyCompletion(params: {
       return parseExtractionResponse(responseText, blueprintId)
     } catch (err) {
       extractorLog.warn(
-        `[extractVerifyCompletion] Attempt ${attempt}/2 failed for blueprint ${blueprintId}:`, err
+        `[extractVerifyCompletion] Attempt ${attempt}/2 failed for blueprint ${blueprintId}:`,
+        err
       )
       if (attempt === 2) return null
     }
@@ -195,7 +198,8 @@ export function parseExtractionResponse(
     } as BlueprintPhaseCompletion
   } catch (err) {
     extractorLog.warn(
-      `[parseExtractionResponse] JSON parse failed for blueprint ${blueprintId}:`, err
+      `[parseExtractionResponse] JSON parse failed for blueprint ${blueprintId}:`,
+      err
     )
     return null
   }

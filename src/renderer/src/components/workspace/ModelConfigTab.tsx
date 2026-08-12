@@ -55,7 +55,8 @@ export default function ModelConfigTab(): React.JSX.Element {
       <div className="px-6 pt-6">
         <h2 className="text-base font-semibold text-text-primary mb-1">Model Configuration</h2>
         <p className="text-xs text-text-muted mb-6">
-          Default for <span className="font-medium text-text-secondary">new</span> chats — existing chats keep their own settings
+          Default for <span className="font-medium text-text-secondary">new</span> chats — existing
+          chats keep their own settings
         </p>
 
         {/* ── Provider Connections ── */}

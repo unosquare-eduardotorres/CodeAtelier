@@ -30,9 +30,7 @@ export function BlueprintClarifyGateCard({
     <div
       data-testid="blueprint-clarify-gate"
       className={`rounded-xl border p-4 space-y-3 ${
-        hasBlockers
-          ? 'bg-amber-500/5 border-amber-500/30'
-          : 'bg-green-500/5 border-green-500/30'
+        hasBlockers ? 'bg-amber-500/5 border-amber-500/30' : 'bg-green-500/5 border-green-500/30'
       }`}
     >
       {/* Header */}
@@ -64,15 +62,9 @@ export function BlueprintClarifyGateCard({
             return (
               <div key={sev} className="contents">
                 <div className="text-text-secondary capitalize">{sev}</div>
-                <div className="text-center text-amber-400">
-                  {row.outstanding || '—'}
-                </div>
-                <div className="text-center text-green-400">
-                  {row.resolved || '—'}
-                </div>
-                <div className="text-center text-slate-400">
-                  {row.deferred || '—'}
-                </div>
+                <div className="text-center text-amber-400">{row.outstanding || '—'}</div>
+                <div className="text-center text-green-400">{row.resolved || '—'}</div>
+                <div className="text-center text-slate-400">{row.deferred || '—'}</div>
               </div>
             )
           })}

@@ -7,7 +7,7 @@ model: anthropic/claude-sonnet-4-6
 steps: 20
 max_turns: 20
 temperature: 0.8
-color: "#DC2626"
+color: '#DC2626'
 permission:
   Write: deny
   Edit: deny
@@ -45,6 +45,7 @@ Be adversarial but constructive. Your goal is to find real issues, not nitpick s
 ### Output Format
 
 For each issue found, report:
+
 - **Severity**: 🔴 Critical / 🟠 High / 🟡 Medium / 🟢 Low
 - **Location**: File path + line range
 - **Issue**: One-sentence description

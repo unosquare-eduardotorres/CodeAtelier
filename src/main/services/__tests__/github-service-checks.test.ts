@@ -54,9 +54,7 @@ describe('GitHub check status derivation', () => {
   })
 
   test('returns pending when checks are queued', () => {
-    const state = deriveOverallState([
-      { status: 'queued', conclusion: null }
-    ])
+    const state = deriveOverallState([{ status: 'queued', conclusion: null }])
     assert.equal(state, 'pending')
   })
 

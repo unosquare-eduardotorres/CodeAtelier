@@ -17,12 +17,19 @@ import { join, relative } from 'node:path'
 import { dbLogger } from '../logger'
 import { memoryExtractionService } from './memory-extraction.service'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
+import { matchesAny, matchesGlob } from './scope-matcher'
 
 const log = dbLogger
 
 const DEFAULT_WATCHER_GLOBS = ['docs/**/*.md', 'README.md', 'CLAUDE.md']
 const DEBOUNCE_MS = 60_000 // 60 seconds
 const COOLDOWN_MS = 60 * 60 * 1000 // 1 hour
+
+/** Offset of the first wildcard, or the pattern length when it has none. */
+function indexOfFirstWildcard(pattern: string): number {
+  const match = /[*?{]/.exec(pattern)
+  return match ? match.index : pattern.length
+}
 
 class MemoryDocWatcherService {
   private watchers: Array<ReturnType<typeof watch>> = []
@@ -69,8 +76,8 @@ class MemoryDocWatcherService {
         const watcher = watch(dir, { recursive: false }, (_event, filename) => {
           if (!filename) return
           const fullPath = join(dir, filename)
-          const relPath = relative(workspacePath, fullPath)
-          if (this.matchesGlob(relPath, patterns)) {
+          const relPath = relative(workspacePath, fullPath).replace(/\\/g, '/')
+          if (matchesAny(relPath, patterns)) {
             this.scheduleExtraction(relPath, fullPath)
           }
         })
@@ -81,14 +88,20 @@ class MemoryDocWatcherService {
     }
 
     if (this.watchers.length > 0) {
-      log.info(`[DocWatcher] Watching ${this.watchers.length} directories for ${patterns.join(', ')}`)
+      log.info(
+        `[DocWatcher] Watching ${this.watchers.length} directories for ${patterns.join(', ')}`
+      )
     }
   }
 
   /** Stop all watchers and clear state. */
   stop(): void {
     for (const w of this.watchers) {
-      try { w.close() } catch { /* ignore */ }
+      try {
+        w.close()
+      } catch {
+        /* ignore */
+      }
     }
     this.watchers = []
     for (const timer of this.debounceTimers.values()) {
@@ -100,42 +113,29 @@ class MemoryDocWatcherService {
   }
 
   /**
-   * Resolve a simple glob pattern to matching file paths relative to cwd.
-   * Supports: direct names (README.md), dir/** /*.ext patterns, *.ext.
-   * Uses readdirSync to avoid the external `glob` dependency.
+   * Resolve a glob pattern to matching file paths relative to cwd.
+   *
+   * Walks from the pattern's fixed prefix (everything before the first
+   * wildcard) so a narrow pattern does not cost a full-tree scan, then filters
+   * with the shared matcher — the same one used for change events, so the set
+   * of watched directories and the set of accepted changes cannot disagree.
    */
   private resolvePattern(cwd: string, pattern: string): string[] {
     const IGNORE = new Set(['node_modules', '.git'])
 
     // Direct file name (no wildcards)
-    if (!pattern.includes('*')) {
+    if (!/[*?{]/.test(pattern)) {
       const full = join(cwd, pattern)
       return existsSync(full) ? [pattern] : []
     }
 
-    // docs/**/*.md → prefix = 'docs/', ext = '.md'
-    if (pattern.includes('**')) {
-      const prefix = pattern.split('**')[0] // 'docs/' or ''
-      const suffixPart = pattern.split('**').pop() ?? ''
-      const ext = suffixPart.replace(/^\/\*/, '') // '/*.md' → '.md'
-      const baseDir = join(cwd, prefix)
-      if (!existsSync(baseDir)) return []
-      return this.walkDir(baseDir, IGNORE)
-        .filter((f) => f.endsWith(ext))
-        .map((f) => relative(cwd, f))
-    }
+    const fixedPrefix = pattern.slice(0, indexOfFirstWildcard(pattern)).replace(/[^/]*$/, '')
+    const baseDir = join(cwd, fixedPrefix)
+    if (!existsSync(baseDir)) return []
 
-    // *.md → top-level files with extension
-    if (pattern.startsWith('*.')) {
-      const ext = pattern.slice(1)
-      try {
-        return readdirSync(cwd, { withFileTypes: true })
-          .filter((d) => d.isFile() && d.name.endsWith(ext) && !IGNORE.has(d.name))
-          .map((d) => d.name)
-      } catch { return [] }
-    }
-
-    return []
+    return this.walkDir(baseDir, IGNORE)
+      .map((f) => relative(cwd, f).replace(/\\/g, '/'))
+      .filter((rel) => matchesGlob(rel, pattern))
   }
 
   /** Recursively walk a directory, skipping ignored dirs. */
@@ -151,31 +151,10 @@ class MemoryDocWatcherService {
           results.push(full)
         }
       }
-    } catch { /* permission error, etc. */ }
-    return results
-  }
-
-  /** Simple glob matching — supports *, **, and direct name matches. */
-  private matchesGlob(relPath: string, patterns: string[]): boolean {
-    for (const pattern of patterns) {
-      // Direct name match
-      if (pattern === relPath) return true
-
-      // Simple pattern: docs/**/*.md → match any .md in docs/
-      if (pattern.includes('**')) {
-        const prefix = pattern.split('**')[0]
-        const suffixPart = pattern.split('**').pop() ?? ''
-        const ext = suffixPart.replace(/^\/\*/, '') // '/*.md' → '.md'
-        if (relPath.startsWith(prefix) && relPath.endsWith(ext)) return true
-      }
-
-      // Extension wildcard: *.md → match any .md at the right level
-      if (pattern.startsWith('*.')) {
-        const ext = pattern.slice(1)
-        if (relPath.endsWith(ext) && !relPath.includes('/')) return true
-      }
+    } catch {
+      /* permission error, etc. */
     }
-    return false
+    return results
   }
 
   /** Schedule an extraction with debounce and cooldown gates. */

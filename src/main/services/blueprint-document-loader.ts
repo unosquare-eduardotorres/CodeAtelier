@@ -39,9 +39,25 @@ const MAX_DOC_CHARS = 50_000
 
 /** Binary extensions listed by path instead of read as UTF-8 */
 const BINARY_EXTS = new Set([
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp',
-  '.pdf', '.doc', '.docx',
-  '.zip', '.tar', '.gz', '.dmg', '.exe', '.mp3', '.mp4', '.wav'
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.svg',
+  '.ico',
+  '.bmp',
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.zip',
+  '.tar',
+  '.gz',
+  '.dmg',
+  '.exe',
+  '.mp3',
+  '.mp4',
+  '.wav'
 ])
 
 /** Content loaded from a reference document */
@@ -73,12 +89,15 @@ export async function loadReferenceDocContent(
       // User-dropped files may have absolute paths (e.g., /Users/foo/bar.pdf from Finder)
       if (isAbsolute(doc.path)) {
         // Phase 5.2: Allow managed docs root (copy-on-attach directory)
-        const inManagedRoot = managedDocsRoot && normalize(doc.path).startsWith(normalize(managedDocsRoot))
+        const inManagedRoot =
+          managedDocsRoot && normalize(doc.path).startsWith(normalize(managedDocsRoot))
         if (!inManagedRoot) {
           docLog.info(`[resolve] absolute path (external), checking existence: "${doc.path}"`)
         }
         const exists = existsSync(doc.path)
-        docLog.info(`[resolve] absolute path exists=${exists} → "${doc.path}"${inManagedRoot ? ' (managed)' : ''}`)
+        docLog.info(
+          `[resolve] absolute path exists=${exists} → "${doc.path}"${inManagedRoot ? ' (managed)' : ''}`
+        )
         if (!exists) {
           // Fallback: search workspace for the filename
           const fileName = basename(doc.path)
@@ -173,9 +192,10 @@ export async function loadAllReferenceDocuments(
  * Split reference documents into text-readable and binary-path-only groups.
  * Pure, synchronous, testable.
  */
-export function splitBinaryDocs(
-  docs: ReferenceDocument[]
-): { textDocs: ReferenceDocument[]; binaryPaths: string[] } {
+export function splitBinaryDocs(docs: ReferenceDocument[]): {
+  textDocs: ReferenceDocument[]
+  binaryPaths: string[]
+} {
   const textDocs: ReferenceDocument[] = []
   const binaryPaths: string[] = []
 
@@ -227,9 +247,9 @@ export async function buildReferenceDocsBlock(
   if (binaryPaths.length > 0) {
     parts.push(
       '### Binary Reference Files\n\n' +
-      'The following binary files were attached as reference. ' +
-      'Use your file tools to view them if needed:\n\n' +
-      binaryPaths.map((p) => `- \`${p}\``).join('\n')
+        'The following binary files were attached as reference. ' +
+        'Use your file tools to view them if needed:\n\n' +
+        binaryPaths.map((p) => `- \`${p}\``).join('\n')
     )
   }
 
@@ -249,7 +269,7 @@ const WORKSPACE_DOC_FILES = [
   { name: 'CLAUDE.md', path: 'CLAUDE.md' },
   { name: 'README.md', path: 'README.md' },
   { name: 'package.json', path: 'package.json' },
-  { name: 'PLAN.md', path: 'PLAN.md' },
+  { name: 'PLAN.md', path: 'PLAN.md' }
 ] as const
 
 /**
@@ -297,7 +317,12 @@ function findFileInWorkspace(workspacePath: string, fileName: string): string | 
 }
 
 /** Recursive directory walk limited to `maxDepth` levels. */
-function walkForFile(dir: string, target: string, depth: number, maxDepth: number): string | undefined {
+function walkForFile(
+  dir: string,
+  target: string,
+  depth: number,
+  maxDepth: number
+): string | undefined {
   if (depth > maxDepth) return undefined
   const entries = readdirSync(dir, { withFileTypes: true })
   // Check files first at this level

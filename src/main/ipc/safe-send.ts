@@ -18,11 +18,7 @@ const ipcLog = log.scope('safe-send')
  * Returns `true` if the send succeeded, `false` if the window was destroyed
  * or an error occurred.
  */
-export function safeWindowSend(
-  win: BrowserWindow,
-  channel: string,
-  ...args: unknown[]
-): boolean {
+export function safeWindowSend(win: BrowserWindow, channel: string, ...args: unknown[]): boolean {
   try {
     if (!win.isDestroyed()) {
       win.webContents.send(channel, ...args)

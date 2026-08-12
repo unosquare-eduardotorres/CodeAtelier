@@ -49,7 +49,10 @@ test.describe('IndexingProgressPanel', () => {
 
   test('progress panel renders when indexing is active', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const progressPanel = page.locator('[data-testid="indexing-progress-panel"]')
     const hasProgress = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -60,15 +63,23 @@ test.describe('IndexingProgressPanel', () => {
       const hasPage = await codeIntelPage.isVisible({ timeout: 3_000 }).catch(() => false)
 
       // Try to trigger indexing by clicking a "Start Indexing" button
-      const startBtn = page.locator('button:has-text("Start Indexing"), button:has-text("Index"), button:has-text("Rebuild")')
-      const hasStart = await startBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const startBtn = page.locator(
+        'button:has-text("Start Indexing"), button:has-text("Index"), button:has-text("Rebuild")'
+      )
+      const hasStart = await startBtn
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       if (hasStart) {
         await startBtn.first().click()
         await page.waitForTimeout(2_000)
 
         const nowVisible = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
-        if (!nowVisible) { test.skip(); return }
+        if (!nowVisible) {
+          test.skip()
+          return
+        }
       } else {
         expect(hasPage || true).toBe(true)
         test.skip()
@@ -79,11 +90,23 @@ test.describe('IndexingProgressPanel', () => {
     await expect(progressPanel).toBeVisible()
 
     // Should have a status label (Scanning, Preprocessing, Embedding, etc.)
-    const statusLabels = ['Scanning', 'Preprocessing', 'Embedding', 'Paused', 'Complete', 'Indexing']
+    const statusLabels = [
+      'Scanning',
+      'Preprocessing',
+      'Embedding',
+      'Paused',
+      'Complete',
+      'Indexing'
+    ]
     let foundStatus = false
     for (const label of statusLabels) {
       const el = progressPanel.locator(`text=${label}`)
-      if (await el.first().isVisible({ timeout: 1_000 }).catch(() => false)) {
+      if (
+        await el
+          .first()
+          .isVisible({ timeout: 1_000 })
+          .catch(() => false)
+      ) {
         foundStatus = true
         break
       }
@@ -93,11 +116,17 @@ test.describe('IndexingProgressPanel', () => {
 
   test('progress bar shows percentage completion', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const progressPanel = page.locator('[data-testid="indexing-progress-panel"]')
     const hasProgress = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasProgress) { test.skip(); return }
+    if (!hasProgress) {
+      test.skip()
+      return
+    }
 
     // Progress bar container should exist
     const progressBar = progressPanel.locator('.rounded-full.overflow-hidden')
@@ -106,7 +135,7 @@ test.describe('IndexingProgressPanel', () => {
     if (hasBar) {
       // Inner progress bar should have a width style
       const innerBar = progressBar.locator('div')
-      const style = await innerBar.getAttribute('style') ?? ''
+      const style = (await innerBar.getAttribute('style')) ?? ''
       expect(style).toContain('width:')
     }
 
@@ -116,18 +145,29 @@ test.describe('IndexingProgressPanel', () => {
 
   test('phase label displays current indexing phase', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const progressPanel = page.locator('[data-testid="indexing-progress-panel"]')
     const hasProgress = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasProgress) { test.skip(); return }
+    if (!hasProgress) {
+      test.skip()
+      return
+    }
 
     // Phase labels: "Scanning files...", "Preprocessing code...", "Embedding chunks...", etc.
     const phaseTexts = ['Scanning', 'Preprocessing', 'Embedding', 'Generating', 'Complete']
     let foundPhase = false
     for (const phase of phaseTexts) {
       const el = progressPanel.locator(`text=${phase}`)
-      if (await el.first().isVisible({ timeout: 1_000 }).catch(() => false)) {
+      if (
+        await el
+          .first()
+          .isVisible({ timeout: 1_000 })
+          .catch(() => false)
+      ) {
         foundPhase = true
         break
       }
@@ -137,15 +177,21 @@ test.describe('IndexingProgressPanel', () => {
 
   test('ETA label shows estimated time remaining', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const progressPanel = page.locator('[data-testid="indexing-progress-panel"]')
     const hasProgress = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasProgress) { test.skip(); return }
+    if (!hasProgress) {
+      test.skip()
+      return
+    }
 
     // ETA or progress info should be in the details section
     const details = progressPanel.locator('.text-text-secondary')
-    const detailsText = await details.first().textContent() ?? ''
+    const detailsText = (await details.first().textContent()) ?? ''
 
     // Should contain progress information (chunk counts, descriptions, etc.)
     expect(detailsText.length).toBeGreaterThan(0)
@@ -153,11 +199,17 @@ test.describe('IndexingProgressPanel', () => {
 
   test('pause resume button toggles indexing state', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const progressPanel = page.locator('[data-testid="indexing-progress-panel"]')
     const hasProgress = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasProgress) { test.skip(); return }
+    if (!hasProgress) {
+      test.skip()
+      return
+    }
 
     // Pause button should be visible during active indexing
     const pauseBtn = progressPanel.locator('button:has-text("Pause")')
@@ -181,22 +233,31 @@ test.describe('IndexingProgressPanel', () => {
 
   test('cancel button stops indexing operation', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const progressPanel = page.locator('[data-testid="indexing-progress-panel"]')
     const hasProgress = await progressPanel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasProgress) { test.skip(); return }
+    if (!hasProgress) {
+      test.skip()
+      return
+    }
 
     // Cancel button should be visible during active/paused indexing
     const cancelBtn = progressPanel.locator('button:has-text("Cancel")')
     const hasCancel = await cancelBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCancel) { test.skip(); return }
+    if (!hasCancel) {
+      test.skip()
+      return
+    }
 
     await expect(cancelBtn).toBeVisible()
 
     // Cancel button should have danger styling
-    const classes = await cancelBtn.getAttribute('class') ?? ''
+    const classes = (await cancelBtn.getAttribute('class')) ?? ''
     expect(classes).toContain('text-danger')
   })
 })

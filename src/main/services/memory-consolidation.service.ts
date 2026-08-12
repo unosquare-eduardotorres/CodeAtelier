@@ -14,6 +14,7 @@
 import { dbLogger } from '../logger'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { memoryEngineService, cosineSimilarity } from './memory-engine.service'
+import { workspaceRepository } from '../db/repositories'
 import type { MemoryFact } from '../../shared/types'
 
 const log = dbLogger
@@ -51,12 +52,13 @@ function selectStaleT0Facts(
   workspaceId: string,
   hasEvidence: (factId: string) => boolean
 ): MemoryFact[] {
-  return facts.filter((f) =>
-    f.tier === 0 &&
-    !f.lastAccessedAt &&
-    f.workspaceId === workspaceId &&
-    daysSince(f.createdAt) > STALE_T0_DAYS &&
-    !hasEvidence(f.id)
+  return facts.filter(
+    (f) =>
+      f.tier === 0 &&
+      !f.lastAccessedAt &&
+      f.workspaceId === workspaceId &&
+      daysSince(f.createdAt) > STALE_T0_DAYS &&
+      !hasEvidence(f.id)
   )
 }
 
@@ -106,7 +108,9 @@ class MemoryConsolidationService {
   private consolidate(workspaceId: string): ConsolidationResult {
     const embedded = memoryFactRepository.findWithEmbeddings(workspaceId)
     if (embedded.length < 2) {
-      log.info(`[Consolidation] Only ${embedded.length} facts with embeddings, nothing to consolidate`)
+      log.info(
+        `[Consolidation] Only ${embedded.length} facts with embeddings, nothing to consolidate`
+      )
       return emptyResult()
     }
 
@@ -171,7 +175,12 @@ class MemoryConsolidationService {
         autoMerged += this.mergeCluster(clusterFacts)
       } else {
         // Queue one review item per cluster
-        reviewItemsCreated += this.queueClusterReview(clusterFacts, cluster, embedded, pairSimilarities)
+        reviewItemsCreated += this.queueClusterReview(
+          clusterFacts,
+          cluster,
+          embedded,
+          pairSimilarities
+        )
       }
     }
 
@@ -191,8 +200,8 @@ class MemoryConsolidationService {
 
     log.info(
       `[Consolidation] Complete: ${clusters.length} clusters, ${autoMerged} merged, ` +
-      `${reviewItemsCreated} review items, ${staleArchived} stale archived, ` +
-      `${contradictionsPruned} contradictions pruned`
+        `${reviewItemsCreated} review items, ${staleArchived} stale archived, ` +
+        `${contradictionsPruned} contradictions pruned`
     )
 
     return result
@@ -202,9 +211,11 @@ class MemoryConsolidationService {
   private mergeCluster(facts: MemoryFact[]): number {
     // Sort: highest tier first, then most confirmations, then most recent
     facts.sort((a, b) =>
-      b.tier !== a.tier ? b.tier - a.tier :
-      b.confirmationCount !== a.confirmationCount ? b.confirmationCount - a.confirmationCount :
-      new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      b.tier !== a.tier
+        ? b.tier - a.tier
+        : b.confirmationCount !== a.confirmationCount
+          ? b.confirmationCount - a.confirmationCount
+          : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     )
 
     const canonical = facts[0]
@@ -231,7 +242,9 @@ class MemoryConsolidationService {
       })
     }
 
-    log.debug(`[Consolidation] Merged ${merged} facts into canonical ${canonical.id}: "${canonical.title}"`)
+    log.debug(
+      `[Consolidation] Merged ${merged} facts into canonical ${canonical.id}: "${canonical.title}"`
+    )
     return merged
   }
 
@@ -389,11 +402,40 @@ class MemoryConsolidationService {
       // 5. Run decay sweep
       memoryEngineService.runDecaySweepIfDue()
 
+      // 6. Reflection — synthesise parent facts from clusters. Opt-in per
+      //    workspace and capped per run; it is the only step that calls an LLM.
+      await this.runReflectionIfEnabled(workspaceId)
+
       log.info('[Consolidation] Idle consolidation complete')
     } catch (err) {
       log.warn('[Consolidation] Idle consolidation failed:', err)
     } finally {
       this.running = false
+    }
+  }
+
+  /**
+   * Run the reflection pass when the workspace has opted in.
+   *
+   * Imported lazily so the consolidation service does not drag the Claude CLI
+   * runner into every process that touches memory.
+   */
+  private async runReflectionIfEnabled(workspaceId: string): Promise<void> {
+    try {
+      const { memoryReflectionService } = await import('./memory-reflection.service')
+      if (!memoryReflectionService.isEnabled(workspaceId)) return
+
+      const workspace = workspaceRepository.findById(workspaceId)
+      if (!workspace?.repoPath) return
+
+      const result = await memoryReflectionService.runReflection(workspaceId, workspace.repoPath)
+      if (result.parentsProposed > 0) {
+        log.info(
+          `[Consolidation] Reflection proposed ${result.parentsProposed} parent fact(s) for review`
+        )
+      }
+    } catch (err) {
+      log.warn('[Consolidation] Reflection pass failed:', err)
     }
   }
 }

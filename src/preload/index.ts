@@ -1,9 +1,14 @@
-import { contextBridge, ipcRenderer, webUtils } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron'
 import { IPC_CHANNELS } from '../shared/constants'
+import type {
+  IntegrationConnectionResult,
+  IntegrationCredentialStatus
+} from '../shared/integration-credentials.types'
 import type {
   Workspace,
   Conversation,
   ConversationMode,
+  FileDiffResult,
   Message,
   AgentStatus,
   Specialist,
@@ -37,6 +42,7 @@ import type {
   OllamaStatus,
   PullProgress,
   IndexingState,
+  ExclusionPreflightResult,
   CodeGraphIndexingState,
   ContextUsage,
   AuditRun,
@@ -87,8 +93,9 @@ import type {
   HandoffDecision,
   HandoffRisk,
   ArtifactRef,
-  CodeAnchor,
+  CodeAnchor
 } from '../shared/handoff-types'
+import type { BlueprintBranchOptions } from '../shared/blueprint-types'
 
 const api = {
   // ── Workspace ──
@@ -185,9 +192,11 @@ const api = {
     sourceAuditRunId?: string
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
 
-
+  chatBranchOptions: (args: { workspaceId: string }): Promise<BlueprintBranchOptions> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_BRANCH_OPTIONS, args),
 
   updateMcpOverrides: (args: {
     conversationId: string
@@ -208,6 +217,32 @@ const api = {
 
   checkExternalMcp: (args: { command: string }): Promise<{ available: boolean; path?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_CHECK_EXTERNAL_MCP, args),
+
+  saveIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+    values: Record<string, string>
+  }): Promise<IntegrationCredentialStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_SAVE_CREDENTIALS, args),
+
+  getIntegrationCredentialStatus: (args: {
+    workspaceId: string
+    integrationId: string
+  }): Promise<IntegrationCredentialStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_GET_CREDENTIAL_STATUS, args),
+
+  testIntegrationConnection: (args: {
+    workspaceId: string
+    integrationId: string
+    values?: Record<string, string>
+  }): Promise<IntegrationConnectionResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_TEST_CONNECTION, args),
+
+  clearIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+  }): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_CLEAR_CREDENTIALS, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),
@@ -234,10 +269,7 @@ const api = {
   // MULTI-CHAT-03: Accept optional conversationId so only the target chat is stopped.
   // The CHAT_STOP handler already supports this; the preload was the missing link.
   stopGeneration: (conversationId?: string): Promise<void> =>
-    ipcRenderer.invoke(
-      IPC_CHANNELS.CHAT_STOP,
-      conversationId ? { conversationId } : undefined
-    ),
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_STOP, conversationId ? { conversationId } : undefined),
 
   getStreamingState: (): Promise<{
     isStreaming: boolean
@@ -246,10 +278,12 @@ const api = {
     requestId: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_STREAMING_STATE),
 
+  /** Force-release a conversation wedged in a busy state (manual escape hatch). */
+  forceReleaseConversation: (conversationId: string): Promise<{ released: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_FORCE_RELEASE, { conversationId }),
+
   compactConversation: (args?: { extractNuance?: boolean }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_COMPACT, args),
-
-
 
   // Chat commands
   completeConversation: (args: {
@@ -272,7 +306,9 @@ const api = {
   generatePrDescription: (args: { conversationId: string }): Promise<{ description: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GENERATE_PR_DESCRIPTION, args),
 
-  listBranches: (args: { workspaceId: string }): Promise<{
+  listBranches: (args: {
+    workspaceId: string
+  }): Promise<{
     local: string[]
     remote: string[]
     current: string
@@ -506,17 +542,28 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SYNC_APPLY, args),
 
   // ── Memory Engine (knowledge-aware facts) ──
-  memoryFactsList: (args: { workspaceId: string; status?: MemoryFactStatus }): Promise<MemoryFact[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_LIST, args),
+  memoryFactsList: (args: {
+    workspaceId: string
+    status?: MemoryFactStatus
+  }): Promise<MemoryFact[]> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_LIST, args),
 
-  memoryFactsSearch: (args: { workspaceId: string; query: string; category?: MemoryFactCategory }): Promise<MemoryFact[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_SEARCH, args),
+  memoryFactsSearch: (args: {
+    workspaceId: string
+    query: string
+    category?: MemoryFactCategory
+  }): Promise<MemoryFact[]> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_SEARCH, args),
 
   memoryFactsGet: (args: { id: string }): Promise<MemoryFact> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_GET, args),
 
-  memoryFactsUpdate: (args: { id: string; title?: string; content?: string; tags?: string[]; scopePaths?: string[]; category?: MemoryFactCategory }): Promise<MemoryFact> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_UPDATE, args),
+  memoryFactsUpdate: (args: {
+    id: string
+    title?: string
+    content?: string
+    tags?: string[]
+    scopePaths?: string[]
+    category?: MemoryFactCategory
+  }): Promise<MemoryFact> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_UPDATE, args),
 
   memoryFactsArchive: (args: { id: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_ARCHIVE, args),
@@ -527,25 +574,39 @@ const api = {
   memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }): Promise<MemoryFact> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_PROMOTE, args),
 
-  memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }): Promise<MemoryFact> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_SCOPE_TOGGLE, args),
+  memoryFactsScopeToggle: (args: {
+    id: string
+    global: boolean
+    workspaceId?: string
+  }): Promise<MemoryFact> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_SCOPE_TOGGLE, args),
 
   memoryFactsDelete: (args: { id: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_FACTS_DELETE, args),
 
   // Contradictions
-  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }): Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }> =>
+  memoryContradictionsList: (args?: {
+    status?: ContradictionStatus
+    limit?: number
+    offset?: number
+  }): Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_LIST, args),
 
-  memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }): Promise<MemoryContradiction> =>
+  memoryContradictionsResolve: (args: {
+    id: string
+    resolution: string
+    keepFactId: string
+    archiveFactId?: string
+  }): Promise<MemoryContradiction> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONTRADICTIONS_RESOLVE, args),
 
   // Capture settings
   memoryCaptureSettingsGet: (args: { workspaceId: string }): Promise<MemoryCaptureSettings> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CAPTURE_SETTINGS_GET, args),
 
-  memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CAPTURE_SETTINGS_SET, args),
+  memoryCaptureSettingsSet: (args: {
+    workspaceId: string
+    settings: Partial<MemoryCaptureSettings>
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CAPTURE_SETTINGS_SET, args),
 
   // Embedding status
   memoryEmbeddingStatus: (args?: { workspaceId?: string }): Promise<MemoryEmbeddingStatus> =>
@@ -568,24 +629,42 @@ const api = {
   },
 
   // Dedup scan
-  memoryDedupScan: (args: { workspaceId: string }): Promise<{ clustersFound: number; autoMerged: number }> =>
+  memoryDedupScan: (args: {
+    workspaceId: string
+  }): Promise<{ clustersFound: number; autoMerged: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_SCAN, args),
 
-  memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }): Promise<{ resolvedCount: number }> =>
+  memoryDedupAutoresolve: (args: {
+    workspaceId: string
+    minCosine?: number
+  }): Promise<{ resolvedCount: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DEDUP_AUTORESOLVE, args),
 
-  memoryConsolidate: (args: { workspaceId: string }): Promise<{ clustersFound: number; autoMerged: number; reviewItemsCreated: number; staleArchived: number; contradictionsPruned: number; reviewQueueCapped: number }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONSOLIDATE, args),
+  memoryConsolidate: (args: {
+    workspaceId: string
+  }): Promise<{
+    clustersFound: number
+    autoMerged: number
+    reviewItemsCreated: number
+    staleArchived: number
+    contradictionsPruned: number
+    reviewQueueCapped: number
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONSOLIDATE, args),
 
-  memoryReadClaudeMd: (args: { workspacePath: string }): Promise<{ content: string | null; path: string }> =>
+  memoryReadClaudeMd: (args: {
+    workspacePath: string
+  }): Promise<{ content: string | null; path: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_READ_CLAUDE_MD, args),
 
   // Memory graph
   memoryGraphGet: (args: { workspaceId: string }): Promise<MemoryGraphData> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GRAPH_GET, args),
 
-  memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }): Promise<{ created: number }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SAVE_MESSAGE, args),
+  memorySaveMessage: (args: {
+    workspaceId: string
+    messageContent: string
+    workspacePath?: string
+  }): Promise<{ created: number }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_SAVE_MESSAGE, args),
 
   memorySavePlanExecution: (args: {
     workspaceId: string
@@ -611,16 +690,24 @@ const api = {
   memoryIngestSelectFolder: (): Promise<string | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_SELECT_FOLDER),
 
-  memoryIngestDiscover: (args: { folderPath: string }): Promise<{ files: string[]; counts: Record<string, number>; truncated: boolean }> =>
+  memoryIngestDiscover: (args: {
+    folderPath: string
+  }): Promise<{ files: string[]; counts: Record<string, number>; truncated: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_DISCOVER, args),
 
-  memoryIngestDocuments: (args: { files: string[]; workspaceId: string; workspacePath: string }): Promise<{ jobId: string; factsCreated: number }> =>
+  memoryIngestDocuments: (args: {
+    files: string[]
+    workspaceId: string
+    workspacePath: string
+  }): Promise<{ jobId: string; factsCreated: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_DOCUMENTS, args),
 
   memoryIngestCancel: (args: { jobId: string }): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INGEST_CANCEL, args),
 
-  onMemoryIngestProgress: (callback: (data: import('../shared/types').IngestionProgress) => void): (() => void) => {
+  onMemoryIngestProgress: (
+    callback: (data: import('../shared/types').IngestionProgress) => void
+  ): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.MEMORY_INGEST_PROGRESS, handler)
     return () => {
@@ -629,15 +716,53 @@ const api = {
   },
 
   // ── Memory Bootstrap ──
-  memoryBootstrapStart: (
-    args: { workspaceId: string; workspacePath: string; mode?: import('../shared/types').BootstrapMode }
-  ): Promise<{ jobId: string; factsCreated: number }> =>
+  memoryBootstrapStart: (args: {
+    workspaceId: string
+    workspacePath: string
+    mode?: import('../shared/types').BootstrapMode
+    force?: boolean
+    scope?: import('../shared/types').BootstrapScope
+  }): Promise<{ jobId: string; runId: string; factsCreated: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_START, args),
 
   memoryBootstrapCancel: (args: { jobId: string }): Promise<boolean> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_CANCEL, args),
 
-  onMemoryBootstrapProgress: (callback: (data: import('../shared/types').BootstrapProgress) => void): (() => void) => {
+  memoryBootstrapPause: (args: { workspaceId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_PAUSE, args),
+
+  memoryBootstrapResume: (args: {
+    runId: string
+    workspacePath: string
+  }): Promise<{ jobId: string; runId: string; factsCreated: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_RESUME, args),
+
+  memoryBootstrapSnapshot: (args: {
+    workspaceId: string
+  }): Promise<{
+    progress: import('../shared/types').BootstrapProgress | null
+    latestRun: import('../shared/types').BootstrapRunSummary | null
+    resumableRunId: string | null
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_SNAPSHOT, args),
+
+  memoryBootstrapListRuns: (args: {
+    workspaceId: string
+    limit?: number
+  }): Promise<import('../shared/types').BootstrapRunSummary[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_LIST_RUNS, args),
+
+  memoryBootstrapListItems: (args: {
+    runId: string
+    status?: import('../shared/types').BootstrapItemStatus
+    phase?: import('../shared/types').BootstrapPhaseLabel
+    limit?: number
+    offset?: number
+  }): Promise<{ items: import('../shared/types').BootstrapItemView[]; total: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_BOOTSTRAP_LIST_ITEMS, args),
+
+  onMemoryBootstrapProgress: (
+    callback: (data: import('../shared/types').BootstrapProgress) => void
+  ): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: any): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.MEMORY_BOOTSTRAP_PROGRESS, handler)
     return () => {
@@ -656,6 +781,34 @@ const api = {
     workspaceId: string
   }): Promise<{ success: boolean; content: string; existing: string | null; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REGENERATE_CLAUDE_MD, args),
+
+  memoryProjectExport: (args: {
+    workspaceId: string
+    workspacePath: string
+  }): Promise<{
+    indexPath: string
+    topicPaths: string[]
+    factsProjected: number
+    factsPruned: number
+    warnings: string[]
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_PROJECT_EXPORT, args),
+
+  memoryReflectionList: (args: {
+    workspaceId: string
+  }): Promise<Array<{ parent: MemoryFact; children: MemoryFact[] }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_LIST, args),
+
+  memoryReflectionApprove: (args: { id: string }): Promise<MemoryFact | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_APPROVE, args),
+
+  memoryReflectionReject: (args: { id: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_REJECT, args),
+
+  memoryReflectionRun: (args: {
+    workspaceId: string
+    workspacePath: string
+  }): Promise<{ clustersConsidered: number; parentsProposed: number; errors: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REFLECTION_RUN, args),
 
   memoryFeedDocument: (args: {
     workspacePath: string
@@ -853,6 +1006,7 @@ const api = {
       messageId: string
       taskId?: string
       requestId?: string
+      workspaceId?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -862,6 +1016,7 @@ const api = {
         messageId: string
         taskId?: string
         requestId?: string
+        workspaceId?: string
       }
     ): void => callback(data)
     ipcRenderer.on(IPC_CHANNELS.CHAT_MESSAGE_COMPLETE, handler)
@@ -897,7 +1052,11 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_ASK_USER_RESPOND, data),
 
   /** IPC-BACKPRESSURE: Send ACK to backend after processing a batch of chunks. */
-  chunkAck: (data: { processed: number; timestamp: number }): void => {
+  chunkAck: (data: {
+    processed: number
+    timestamp: number
+    perConversation?: Record<string, number>
+  }): void => {
     ipcRenderer.send(IPC_CHANNELS.CHAT_CHUNK_ACK, data)
   },
 
@@ -996,11 +1155,21 @@ const api = {
     }
   },
 
-  onUpdateNotAvailable: (callback: () => void): (() => void) => {
-    const handler = (): void => callback()
+  onUpdateNotAvailable: (callback: (info: { currentVersion?: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info?: { currentVersion?: string }): void =>
+      callback(info ?? {})
     ipcRenderer.on(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_NOT_AVAILABLE, handler)
+    }
+  },
+
+  onUpdateStaging: (callback: (info: { version: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, info: { version: string }): void =>
+      callback(info)
+    ipcRenderer.on(IPC_CHANNELS.UPDATE_STAGING, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.UPDATE_STAGING, handler)
     }
   },
 
@@ -1088,14 +1257,43 @@ const api = {
   getFileDetails: (args: {
     conversationId: string
   }): Promise<
-    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
   > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
 
   getFileDiff: (args: {
     conversationId: string
     filePath: string
-  }): Promise<{ oldContent: string; newContent: string; language: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
+    oldPath?: string
+  }): Promise<FileDiffResult> => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DIFF, args),
+
+  getRefFileDetails: (args: {
+    conversationId: string
+    fromRef: string
+    toRef: string
+  }): Promise<
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS, args),
+
+  getRefFileDiff: (args: {
+    conversationId: string
+    filePath: string
+    fromRef: string
+    toRef: string
+    oldPath?: string
+  }): Promise<FileDiffResult> => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, args),
+
+  fetchOrigin: (args: { conversationId: string }): Promise<{ fetched: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.REPO_FETCH_ORIGIN, args),
 
   commitFiles: (args: {
     conversationId: string
@@ -1431,7 +1629,11 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.SUBSCRIPTION_AUTO_CONFIGURE),
 
   // ── Embedding Provider ──
-  embeddingCheckStatus: (args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }): Promise<EmbeddingModelStatus> =>
+  embeddingCheckStatus: (args?: {
+    baseUrl?: string
+    apiKey?: string
+    workspaceId?: string
+  }): Promise<EmbeddingModelStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS, args),
 
   embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }): Promise<void> =>
@@ -1533,6 +1735,15 @@ const api = {
     workspaceId: string
   }): Promise<{ loaded: boolean; status: string; symbolCount?: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.INDEXING_LOAD_PERSISTED, args),
+
+  indexingPreflightExclusions: (args: { workspaceId: string }): Promise<ExclusionPreflightResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_PREFLIGHT_EXCLUSIONS, args),
+
+  indexingApplyExclusions: (args: {
+    workspaceId: string
+    patterns: string[]
+  }): Promise<{ written: string[] }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INDEXING_APPLY_EXCLUSIONS, args),
 
   onIndexingProgress: (callback: (state: IndexingState) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: IndexingState): void =>
@@ -1970,18 +2181,15 @@ const api = {
   }): Promise<{ conversationId: string; planId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_IMPORT, args),
 
-  planGetStatusHistory: (args: {
-    planId: string
-  }): Promise<PlanStatusHistoryEntry[]> =>
+  planGetStatusHistory: (args: { planId: string }): Promise<PlanStatusHistoryEntry[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_STATUS_HISTORY, args),
 
-  planFindBySource: (args: {
-    source: string
-    sourceId: string
-  }): Promise<PlanRecord | null> =>
+  planFindBySource: (args: { source: string; sourceId: string }): Promise<PlanRecord | null> =>
     ipcRenderer.invoke(IPC_CHANNELS.PLAN_FIND_BY_SOURCE, args),
 
-  getPhaseProgress: (args: { conversationId: string }): Promise<{
+  getPhaseProgress: (args: {
+    conversationId: string
+  }): Promise<{
     planId: string
     planTitle: string
     planGoal?: string
@@ -1991,9 +2199,15 @@ const api = {
       tasks: Array<{ taskId: string; title: string; files: string[] }>
     }>
     phaseFiles: Record<number, string[]>
-    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[]; tasks?: Array<{ taskId: string; title: string; status: string }> }>
-  } | null> =>
-    ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_PHASE_PROGRESS, args),
+    progress: Array<{
+      phaseId: number
+      status: string
+      startedAt: string | null
+      completedAt: string | null
+      touchedFiles?: string[]
+      tasks?: Array<{ taskId: string; title: string; status: string }>
+    }>
+  } | null> => ipcRenderer.invoke(IPC_CHANNELS.PLAN_GET_PHASE_PROGRESS, args),
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: AuditProgressEvent): void => cb(data)
@@ -2083,7 +2297,10 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.GRILL_STREAM_COMPLETE, handler)
   },
 
-  grillCondenseRequirement: (args: { text: string; workspaceId?: string }): Promise<{ condensed: string }> =>
+  grillCondenseRequirement: (args: {
+    text: string
+    workspaceId?: string
+  }): Promise<{ condensed: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.GRILL_CONDENSE_REQUIREMENT, args),
 
   grillGeneratePlan: (args: {
@@ -2524,6 +2741,7 @@ const api = {
       toolName?: string
       toolInput?: Record<string, unknown>
       conversationTitle?: string
+      conversationId?: string
       mode?: string
     }) => void
   ): (() => void) => {
@@ -2541,6 +2759,7 @@ const api = {
         toolName?: string
         toolInput?: Record<string, unknown>
         conversationTitle?: string
+        conversationId?: string
         mode?: string
       }
     ): void => cb(data)
@@ -2554,7 +2773,36 @@ const api = {
     workspaceId: string
     type: string
     response: unknown
+    /** Original request payload — carries requestId back to the control-actions server. */
+    payload?: unknown
   }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_RESPONSE, args),
+
+  /**
+   * Listen for permission requests reaching a terminal state — including ones
+   * this window never answered (turn torn down, CLI died, auto-deny).
+   */
+  onPermissionResolved: (
+    cb: (data: {
+      permissionId: string
+      requestId: string
+      workspaceId: string
+      conversationId?: string
+      outcome: 'approved' | 'denied' | 'timedout' | 'cancelled'
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        permissionId: string
+        requestId: string
+        workspaceId: string
+        conversationId?: string
+        outcome: 'approved' | 'denied' | 'timedout' | 'cancelled'
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.PERMISSION_RESOLVED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PERMISSION_RESOLVED, handler)
+  },
 
   /** Probe macOS notification support (detects unsigned build issues). */
   probeNotificationSupport: (): Promise<'granted' | 'denied' | 'unsupported'> =>
@@ -2572,14 +2820,82 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
   },
 
+  // ── Background Processes ──
+
+  /** List detached background processes the agent spawned, across all workspaces. */
+  processList: (): Promise<import('../shared/types').BackgroundProcessInfo[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROCESS_LIST),
+
+  /** Stop a background process (SIGTERM, 3s grace, then SIGKILL). */
+  processStop: (args: { pid: number }): Promise<import('../shared/types').ProcessStopResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROCESS_STOP, args),
+
+  /** Disarm the auto-resume for a process without killing it. */
+  processCancelWatch: (args: {
+    pid: number
+  }): Promise<import('../shared/types').ProcessCancelWatchResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROCESS_CANCEL_WATCH, args),
+
+  /** Listen for background process list changes (started / exited / stopped). */
+  onProcessChanged: (cb: () => void): (() => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on(IPC_CHANNELS.PROCESS_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PROCESS_CHANGED, handler)
+  },
+
+  // ── Work Tracks ──
+
+  /** List a workspace's tracks with dirty/disk facts and the disk budget. */
+  trackList: (args: {
+    workspaceId: string
+  }): Promise<import('../shared/track-types').TrackListResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_LIST, args),
+
+  /** Destroy a track and everything uncommitted in it. Explicit user action only. */
+  trackDiscard: (args: { trackId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_DISCARD, args),
+
+  /** Open a track's worktree in Finder/Explorer. */
+  trackReveal: (args: { trackId: string }): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_REVEAL, args),
+
+  /** Hand retained work to a new chat. Resolves to the new conversation id. */
+  trackAdopt: (args: { trackId: string }): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_ADOPT, args),
+
+  /** Land a track's work — PR, or merge into the workspace's integration branch. */
+  trackLand: (args: {
+    trackId: string
+    commitMessage: string
+    description?: string
+    /** Overrides the track's base as the PR target. Ignored in integration mode. */
+    baseBranch?: string
+    /** Forces a mode for this landing, ignoring track and workspace settings. */
+    mode?: import('../shared/track-types').TrackLandingMode
+  }): Promise<import('../shared/track-types').LandingResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_LAND, args),
+
+  /** What landing this track would do. Read-only: nothing is committed or merged. */
+  trackLandPreview: (args: {
+    trackId: string
+    baseBranch?: string
+    mode?: import('../shared/track-types').TrackLandingMode
+  }): Promise<import('../shared/track-types').LandingPreview> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_LAND_PREVIEW, args),
+
+  /**
+   * Listen for track list changes (created, retained, removed, adopted, reaped).
+   * `workspaceId` is null when the change crossed workspaces — refresh anyway.
+   */
+  onTrackChanged: (cb: (data: { workspaceId: string | null }) => void): (() => void) => {
+    const handler = (_: unknown, data: { workspaceId: string | null }): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.TRACK_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TRACK_CHANGED, handler)
+  },
+
   /** Listen for tray context-menu navigate events. */
-  onTrayNavigate: (
-    cb: (data: { view: string; workspaceId?: string }) => void
-  ): (() => void) => {
-    const handler = (
-      _: unknown,
-      data: { view: string; workspaceId?: string }
-    ): void => cb(data)
+  onTrayNavigate: (cb: (data: { view: string; workspaceId?: string }) => void): (() => void) => {
+    const handler = (_: unknown, data: { view: string; workspaceId?: string }): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.TRAY_NAVIGATE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.TRAY_NAVIGATE, handler)
   },
@@ -2622,6 +2938,9 @@ const api = {
     settingsJson?: Record<string, unknown>
   }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE, args),
 
+  blueprintBranchOptions: (args: { workspaceId: string }): Promise<BlueprintBranchOptions> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_BRANCH_OPTIONS, args),
+
   blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),
 
@@ -2649,12 +2968,14 @@ const api = {
   blueprintClarifyProceed: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ proceeded: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_PROCEED, args),
+  }): Promise<{ proceeded: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_PROCEED, args),
 
   blueprintClarifyIterate: (args: {
     blueprintId: string
     workspaceId: string
-  }): Promise<{ iterated: boolean }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE, args),
+  }): Promise<{ iterated: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE, args),
 
   blueprintStartPlan: (args: {
     blueprintId: string
@@ -2721,24 +3042,31 @@ const api = {
   }): Promise<{ retrying: boolean; phase: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RETRY_PHASE, args),
 
-  blueprintAcknowledgeReview: (args: {
+  /** Skip (or un-skip) one build task. The mark survives retries. */
+  blueprintSkipTask: (args: {
     blueprintId: string
-  }): Promise<{ acknowledged: boolean }> =>
+    taskId: string
+    skipped?: boolean
+  }): Promise<{ skipped: boolean; skippedAt: string | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_TASK, args),
+
+  blueprintAcknowledgeReview: (args: { blueprintId: string }): Promise<{ acknowledged: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_ACKNOWLEDGE_REVIEW, args),
 
   // M3: Transcript retrieval
   blueprintGetTranscript: (args: {
     blueprintId: string
     afterSeq?: number
-  }): Promise<Array<{
-    id: string
-    blueprintId: string
-    seq: number
-    type: string
-    payload: Record<string, unknown>
-    createdAt: string
-  }>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_TRANSCRIPT, args),
+  }): Promise<
+    Array<{
+      id: string
+      blueprintId: string
+      seq: number
+      type: string
+      payload: Record<string, unknown>
+      createdAt: string
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_TRANSCRIPT, args),
 
   onBlueprintPhaseStart: (
     cb: (data: { blueprintId: string; workspaceId: string; phase: string }) => void
@@ -2806,7 +3134,12 @@ const api = {
       blueprintId: string
       workspaceId: string
       phase: string
-      artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
+      artifact: {
+        type: string
+        filePath?: string
+        contentMd?: string
+        contentJson?: Record<string, unknown>
+      }
     }) => void
   ): (() => void) => {
     const handler = (
@@ -2815,7 +3148,12 @@ const api = {
         blueprintId: string
         workspaceId: string
         phase: string
-        artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
+        artifact: {
+          type: string
+          filePath?: string
+          contentMd?: string
+          contentJson?: Record<string, unknown>
+        }
       }
     ): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT, handler)
@@ -3057,7 +3395,12 @@ const api = {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
+      pendingApproval: {
+        planSummary: string
+        completion?: Record<string, unknown>
+        reviewMarkdown?: string
+        preflight?: { result: Record<string, unknown>; overridden: boolean }
+      } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
       runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
@@ -3070,7 +3413,9 @@ const api = {
 
   // ── Blueprint Snapshot Pull (M7) ──
 
-  blueprintGetSnapshot: (args: { workspaceId: string }): Promise<{
+  blueprintGetSnapshot: (args: {
+    workspaceId: string
+  }): Promise<{
     seq: number
     workspaceId: string
     blueprintId: string | null
@@ -3080,7 +3425,12 @@ const api = {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
+    pendingApproval: {
+      planSummary: string
+      completion?: Record<string, unknown>
+      reviewMarkdown?: string
+      preflight?: { result: Record<string, unknown>; overridden: boolean }
+    } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
     runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
@@ -3200,8 +3550,7 @@ const api = {
     priority?: HandoffPriority
     createdBy?: 'user' | 'system'
     expiresAt?: string
-  }): Promise<HandoffRecord> =>
-    ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_CREATE, args),
+  }): Promise<HandoffRecord> => ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_CREATE, args),
 
   handoffExecute: (args: {
     source: HandoffSource
@@ -3243,15 +3592,10 @@ const api = {
   }): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_REJECT, args),
 
-  handoffGetHistory: (args: {
-    workspaceId: string
-    limit?: number
-  }): Promise<HandoffRecord[]> =>
+  handoffGetHistory: (args: { workspaceId: string; limit?: number }): Promise<HandoffRecord[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_GET_HISTORY, args),
 
-  handoffGetChain: (args: {
-    handoffId: string
-  }): Promise<HandoffRecord[]> =>
+  handoffGetChain: (args: { handoffId: string }): Promise<HandoffRecord[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.HANDOFF_GET_CHAIN, args),
 
   handoffPreview: (args: {
@@ -3294,17 +3638,17 @@ const api = {
     category?: string
     workspaceId?: string
     forceTools?: boolean
-  }): Promise<{ runId: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TESTING_RUN, args),
+  }): Promise<{ runId: string }> => ipcRenderer.invoke(IPC_CHANNELS.TESTING_RUN, args),
 
-  testingRequeueFailed: (args: { runId: string; workspaceId?: string }): Promise<{ runId: string }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TESTING_REQUEUE_FAILED, args),
+  testingRequeueFailed: (args: {
+    runId: string
+    workspaceId?: string
+  }): Promise<{ runId: string }> => ipcRenderer.invoke(IPC_CHANNELS.TESTING_REQUEUE_FAILED, args),
 
   testingResumeRun: (args: { runId: string; workspaceId?: string }): Promise<{ runId: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.TESTING_RESUME_RUN, args),
 
-  testingCancel: (): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TESTING_CANCEL),
+  testingCancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.TESTING_CANCEL),
 
   testingGetRuns: (args?: { workspaceId?: string }): Promise<E2ERunSummary[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.TESTING_GET_RUNS, args),
@@ -3315,12 +3659,15 @@ const api = {
   testingGetResultDetail: (args: { resultId: string }): Promise<E2EResultDetail | undefined> =>
     ipcRenderer.invoke(IPC_CHANNELS.TESTING_GET_RESULT_DETAIL, args),
 
-  onTestingProgress: (
-    cb: (data: E2EProgressEvent) => void
-  ): (() => void) => {
+  onTestingProgress: (cb: (data: E2EProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: E2EProgressEvent): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.TESTING_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.TESTING_PROGRESS, handler)
+  },
+
+  // ── Clipboard ──
+  clipboardWriteText: (text: string): void => {
+    clipboard.writeText(text)
   }
 } as const
 

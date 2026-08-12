@@ -34,7 +34,7 @@ const SEVERITY_MAP: Record<string, HandoffPriority> = {
   high: 'high',
   medium: 'medium',
   low: 'low',
-  info: 'low',
+  info: 'low'
 }
 
 // ── Adapter ──────────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ class AuditHandoffAdapter extends HandoffSourceAdapter<AuditAdapterInput> {
       .filter((r) => r.status === 'completed')
       .map((r) => ({
         title: `Audited ${r.trackId}`,
-        outcome: `Score: ${r.score ?? 'N/A'}/10, ${r.findings.length} finding(s)`,
+        outcome: `Score: ${r.score ?? 'N/A'}/10, ${r.findings.length} finding(s)`
       }))
   }
 
@@ -96,7 +96,8 @@ class AuditHandoffAdapter extends HandoffSourceAdapter<AuditAdapterInput> {
           ? `${finding.description}\n\n**Recommendation:** ${finding.recommendation}`
           : finding.description,
         priority: SEVERITY_MAP[finding.severity] ?? 'medium',
-        estimatedComplexity: finding.severity === 'critical' ? 8 : finding.severity === 'high' ? 6 : 4,
+        estimatedComplexity:
+          finding.severity === 'critical' ? 8 : finding.severity === 'high' ? 6 : 4
       }))
     )
   }
@@ -117,16 +118,18 @@ class AuditHandoffAdapter extends HandoffSourceAdapter<AuditAdapterInput> {
     return critical.map((f) => ({
       risk: f.title,
       severity: SEVERITY_MAP[f.severity] ?? 'medium',
-      mitigation: f.recommendation,
+      mitigation: f.recommendation
     }))
   }
 
   extractArtifacts(input: AuditAdapterInput): ArtifactRef[] {
-    return [{
-      type: 'finding',
-      path: `audit-run:${input.auditRunId}`,
-      description: `Audit run with ${input.results.flatMap((r) => r.findings).length} findings`,
-    }]
+    return [
+      {
+        type: 'finding',
+        path: `audit-run:${input.auditRunId}`,
+        description: `Audit run with ${input.results.flatMap((r) => r.findings).length} findings`
+      }
+    ]
   }
 
   extractFilesToReadFirst(input: AuditAdapterInput): string[] {
@@ -148,7 +151,7 @@ class AuditHandoffAdapter extends HandoffSourceAdapter<AuditAdapterInput> {
       auditRunId: input.auditRunId,
       overallScore: input.overallScore,
       trackCount: input.results.length,
-      findingCount: input.results.flatMap((r) => r.findings).length,
+      findingCount: input.results.flatMap((r) => r.findings).length
     }
   }
 }

@@ -8,6 +8,7 @@
 
 import { BaseRepository } from '../base-repository'
 import { safeParseJSON } from '../json-utils'
+import { dbLogger } from '../../logger'
 import type {
   MemoryFact,
   MemoryFactCategory,
@@ -18,8 +19,30 @@ import type {
   MemoryConfirmation,
   ConfirmationSourceType,
   ContradictionStatus,
-  MemoryDocState
+  MemoryDocState,
+  MemoryEdge,
+  MemoryEdgeType
 } from '../../../shared/types'
+
+/**
+ * Turn arbitrary user text into a safe FTS5 MATCH expression.
+ *
+ * FTS5 treats `-`, `"`, `*`, `:`, `(`, `^` and `NEAR`/`AND`/`OR`/`NOT` as
+ * syntax, so passing a raw prompt through would throw on perfectly ordinary
+ * input like `why does foo-bar break?`. Every token is stripped to word
+ * characters and quoted, then joined with OR: a fact matching more terms
+ * simply ranks higher under BM25.
+ */
+function toFtsQuery(query: string): string {
+  return query
+    .slice(0, 500)
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 1)
+    .slice(0, 32)
+    .map((token) => `"${token}"`)
+    .join(' OR ')
+}
 
 // ── Row shapes ──────────────────────────────────────────────────────────────
 
@@ -46,6 +69,12 @@ interface MemoryFactRow {
   last_accessed_at: string | null
   created_at: string
   updated_at: string
+  // Bi-temporal validity (migration 136). Nullable: rows predating the
+  // backfill, and any row written by an older binary, will not have them.
+  valid_from: string | null
+  valid_to: string | null
+  observed_at: string | null
+  recorded_at: string | null
   evidence_count?: number // populated by UI-facing queries only
 }
 
@@ -74,6 +103,15 @@ interface DocStateRow {
   last_extracted_at: string
 }
 
+interface MemoryEdgeRow {
+  id: string
+  from_id: string
+  to_id: string
+  edge_type: MemoryEdgeType
+  confidence: number
+  created_at: string
+}
+
 // ── Mappers ─────────────────────────────────────────────────────────────────
 
 function mapFactRow(row: MemoryFactRow): MemoryFact {
@@ -99,7 +137,24 @@ function mapFactRow(row: MemoryFactRow): MemoryFact {
     lastAccessedAt: row.last_accessed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    // Fall back to created_at so callers never have to special-case a row that
+    // predates the migration — which is exactly what the backfill assumed.
+    validFrom: row.valid_from ?? row.created_at ?? null,
+    validTo: row.valid_to ?? null,
+    observedAt: row.observed_at ?? row.created_at ?? null,
+    recordedAt: row.recorded_at ?? row.created_at ?? null,
     evidenceCount: row.evidence_count
+  }
+}
+
+function mapEdgeRow(row: MemoryEdgeRow): MemoryEdge {
+  return {
+    id: row.id,
+    fromId: row.from_id,
+    toId: row.to_id,
+    edgeType: row.edge_type,
+    confidence: row.confidence,
+    createdAt: row.created_at
   }
 }
 
@@ -206,6 +261,189 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return rows.map(mapFactRow)
   }
 
+  /**
+   * Rank-ordered keyword search over the FTS5 index.
+   *
+   * Replaces the `LIKE '%q%'` scan for retrieval. `LIKE` cannot rank and cannot
+   * use an index, so the old path scanned every active fact on every turn and
+   * then ordered by tier — which tells you nothing about how well a fact
+   * matches the query. BM25 orders by term rarity and density, which is what a
+   * keyword arm has to contribute to rank fusion.
+   *
+   * Facts are returned with their 0-based rank so a caller can fuse this list
+   * with the vector list without re-deriving positions.
+   */
+  searchFts(
+    workspaceId: string,
+    query: string,
+    limit = 50,
+    asOf?: string
+  ): Array<{ fact: MemoryFact; rank: number }> {
+    const match = toFtsQuery(query)
+    if (!match) return []
+
+    // Default: facts whose validity window is still open. With `asOf`, the
+    // facts that were true at that instant instead — which is the whole point
+    // of keeping superseded rows rather than deleting them.
+    const validity = asOf
+      ? `AND f.valid_from <= ? AND (f.valid_to IS NULL OR f.valid_to > ?)`
+      : `AND f.valid_to IS NULL AND f.status = 'active'`
+    const validityParams = asOf ? [asOf, asOf] : []
+
+    let rows: MemoryFactRow[]
+    try {
+      rows = this.db()
+        .prepare(
+          `SELECT f.* FROM memory_facts_fts fts
+             JOIN memory_facts f ON f.id = fts.fact_id
+            WHERE memory_facts_fts MATCH ?
+              AND (f.workspace_id = ? OR f.workspace_id IS NULL)
+              ${validity}
+            ORDER BY rank
+            LIMIT ?`
+        )
+        .all(match, workspaceId, ...validityParams, limit) as MemoryFactRow[]
+    } catch {
+      // Either a MATCH expression this sanitiser did not anticipate, or a DB
+      // that has not reached migration 135 yet. Both are recoverable: fall back
+      // to the LIKE scan so retrieval degrades in quality rather than failing.
+      //
+      // The LIKE scan has no validity predicate, so a point-in-time query
+      // silently becomes a current-facts query. Degraded ranking is an
+      // acceptable fallback; a wrong answer to "what did we believe in March"
+      // is not, so it is logged rather than hidden.
+      if (asOf) {
+        dbLogger.warn(
+          `[MemoryFactRepository] searchFts fell back to LIKE scan; asOf=${asOf} cannot be ` +
+            `honoured on that path. Results reflect current facts.`
+        )
+      }
+      return this.search(workspaceId, query, limit).map((fact, rank) => ({ fact, rank }))
+    }
+
+    return rows.map((row, rank) => ({ fact: mapFactRow(row), rank }))
+  }
+
+  /**
+   * Embeddings for a specific set of facts.
+   *
+   * `findWithEmbeddings` loads every active fact in the workspace with its
+   * BLOB, which is far too much work when the caller already knows the handful
+   * of ids it cares about (diversity re-ranking over a result page).
+   */
+  findEmbeddingsByIds(ids: string[]): Map<string, Float32Array> {
+    const out = new Map<string, Float32Array>()
+    if (ids.length === 0) return out
+
+    // Chunked to stay under SQLite's variable limit on a large result page.
+    for (let i = 0; i < ids.length; i += 400) {
+      const batch = ids.slice(i, i + 400)
+      const placeholders = batch.map(() => '?').join(',')
+      const rows = this.db()
+        .prepare(
+          `SELECT id, embedding FROM memory_facts
+            WHERE id IN (${placeholders}) AND embedding IS NOT NULL`
+        )
+        .all(...batch) as Array<{ id: string; embedding: Buffer }>
+
+      for (const row of rows) {
+        if (!row.embedding || row.embedding.length === 0) continue
+        out.set(
+          row.id,
+          new Float32Array(
+            row.embedding.buffer,
+            row.embedding.byteOffset,
+            row.embedding.byteLength / 4
+          )
+        )
+      }
+    }
+
+    return out
+  }
+
+  // ── Edges ─────────────────────────────────────────────────────────
+
+  /**
+   * Record a typed relationship. Idempotent: re-asserting an existing edge
+   * updates its confidence rather than failing the UNIQUE constraint.
+   */
+  createEdge(params: {
+    fromId: string
+    toId: string
+    edgeType: MemoryEdgeType
+    confidence?: number
+  }): MemoryEdge | null {
+    // A self-edge is always a bug and would corrupt graph traversal.
+    if (params.fromId === params.toId) return null
+
+    const row = this.db()
+      .prepare(
+        `INSERT INTO memory_edges (from_id, to_id, edge_type, confidence)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(from_id, to_id, edge_type)
+           DO UPDATE SET confidence = excluded.confidence
+         RETURNING *`
+      )
+      .get(params.fromId, params.toId, params.edgeType, params.confidence ?? 1.0) as
+      MemoryEdgeRow | undefined
+
+    return row ? mapEdgeRow(row) : null
+  }
+
+  /** Every edge touching a fact, in either direction. */
+  findEdgesForFact(factId: string): MemoryEdge[] {
+    const rows = this.db()
+      .prepare('SELECT * FROM memory_edges WHERE from_id = ? OR to_id = ? ORDER BY created_at')
+      .all(factId, factId) as MemoryEdgeRow[]
+    return rows.map(mapEdgeRow)
+  }
+
+  /** Edges between facts belonging to a workspace (for the graph view). */
+  findEdgesByWorkspace(workspaceId: string): MemoryEdge[] {
+    const rows = this.db()
+      .prepare(
+        `SELECT e.* FROM memory_edges e
+           JOIN memory_facts f ON f.id = e.from_id
+          WHERE f.workspace_id = ? OR f.workspace_id IS NULL
+          ORDER BY e.created_at`
+      )
+      .all(workspaceId) as MemoryEdgeRow[]
+    return rows.map(mapEdgeRow)
+  }
+
+  /** Facts one hop away from a seed, following a specific edge type. */
+  findNeighbours(factId: string, edgeType: MemoryEdgeType): MemoryFact[] {
+    const rows = this.db()
+      .prepare(
+        `SELECT f.* FROM memory_facts f
+           JOIN memory_edges e
+             ON (e.to_id = f.id AND e.from_id = ?)
+             OR (e.from_id = f.id AND e.to_id = ?)
+          WHERE e.edge_type = ?
+            AND f.status = 'active'`
+      )
+      .all(factId, factId, edgeType) as MemoryFactRow[]
+    return rows.map(mapFactRow)
+  }
+
+  deleteEdge(id: string): void {
+    this.db().prepare('DELETE FROM memory_edges WHERE id = ?').run(id)
+  }
+
+  /**
+   * Re-open a closed validity window.
+   *
+   * Used when an archived fact is brought back — approving a synthesis
+   * proposal, or un-archiving by hand. Without this the fact would be `active`
+   * with a `valid_to` in the past and would never be retrieved again.
+   */
+  reopenValidity(id: string): void {
+    this.db()
+      .prepare(`UPDATE memory_facts SET valid_to = NULL, updated_at = datetime('now') WHERE id = ?`)
+      .run(id)
+  }
+
   // ── Write ───────────────────────────────────────────────────────────────
 
   /** Insert a new fact. Returns the created fact. */
@@ -222,14 +460,23 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     sourceRef?: string | null
     embedding?: Buffer | null
     embeddingPending?: boolean
+    /**
+     * When the source stated this, if it is not "now" — a commit date, a file
+     * mtime. Drives recency scoring, so a fact mined from a 2011 commit is not
+     * ranked as though it were written today.
+     */
+    observedAt?: string | null
   }): MemoryFact {
     const row = this.db()
       .prepare(
         `INSERT INTO memory_facts
            (workspace_id, category, title, content, tags, scope_paths,
             tier, confidence, source_type, source_ref,
-            embedding, embedding_pending)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            embedding, embedding_pending,
+            valid_from, valid_to, observed_at, recorded_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 COALESCE(?, datetime('now')), NULL,
+                 COALESCE(?, datetime('now')), datetime('now'))
          RETURNING *`
       )
       .get(
@@ -244,7 +491,9 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
         params.sourceType,
         params.sourceRef ?? null,
         params.embedding ?? null,
-        params.embeddingPending === false ? 0 : 1
+        params.embeddingPending === false ? 0 : 1,
+        params.observedAt ?? null,
+        params.observedAt ?? null
       ) as MemoryFactRow
     return mapFactRow(row)
   }
@@ -264,9 +513,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       supersededBy?: string | null
     }
   ): MemoryFact {
-    const existing = this.db()
-      .prepare('SELECT * FROM memory_facts WHERE id = ?')
-      .get(id) as MemoryFactRow | undefined
+    const existing = this.db().prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as
+      MemoryFactRow | undefined
     if (!existing) throw new Error(`MemoryFact not found: ${id}`)
 
     const row = this.db()
@@ -316,9 +564,8 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   /** Increment confirmation count, touch last_confirmed_at, optionally bump tier. */
   confirmFact(id: string, newTier?: MemoryFactTier, newConfidence?: number): MemoryFact {
-    const existing = this.db()
-      .prepare('SELECT * FROM memory_facts WHERE id = ?')
-      .get(id) as MemoryFactRow | undefined
+    const existing = this.db().prepare('SELECT * FROM memory_facts WHERE id = ?').get(id) as
+      MemoryFactRow | undefined
     if (!existing) throw new Error(`MemoryFact not found: ${id}`)
 
     const row = this.db()
@@ -342,23 +589,32 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   /** Supersede a fact: mark old as superseded, record which fact replaced it. */
   supersedeFact(oldId: string, newId: string): void {
+    // Closing the validity window is the point of superseding: the fact was
+    // true until now, and a point-in-time query before this moment must still
+    // return it. Flipping status alone would lose that.
     this.db()
       .prepare(
         `UPDATE memory_facts SET
            status = 'superseded',
            superseded_by = ?,
+           valid_to = COALESCE(valid_to, datetime('now')),
            updated_at = datetime('now')
          WHERE id = ?`
       )
       .run(newId, oldId)
+
+    // Mirror into the edge graph so traversal does not have to know about the
+    // legacy `superseded_by` column.
+    this.createEdge({ fromId: newId, toId: oldId, edgeType: 'supersedes' })
   }
 
-  /** Archive a fact (soft delete). */
+  /** Archive a fact (soft delete). Closes its validity window. */
   archiveFact(id: string): void {
     this.db()
       .prepare(
         `UPDATE memory_facts SET
            status = 'archived',
+           valid_to = COALESCE(valid_to, datetime('now')),
            updated_at = datetime('now')
          WHERE id = ?`
       )
@@ -393,22 +649,39 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return rows.map(mapFactRow)
   }
 
-  /** Get all active facts with embeddings for a workspace (for cosine search). */
-  findWithEmbeddings(workspaceId: string): Array<{ fact: MemoryFact; embedding: Float32Array }> {
+  /**
+   * Facts with embeddings for a workspace (for cosine search).
+   *
+   * Defaults to currently-valid facts. Pass `asOf` for a point-in-time view,
+   * which reads the validity window rather than status — a superseded fact was
+   * still true before it was superseded.
+   */
+  findWithEmbeddings(
+    workspaceId: string,
+    asOf?: string
+  ): Array<{ fact: MemoryFact; embedding: Float32Array }> {
+    const validity = asOf
+      ? `AND valid_from <= ? AND (valid_to IS NULL OR valid_to > ?)`
+      : `AND valid_to IS NULL AND status = 'active'`
+
     const rows = this.db()
       .prepare(
         `SELECT * FROM memory_facts
          WHERE (workspace_id = ? OR workspace_id IS NULL)
-           AND status = 'active'
+           ${validity}
            AND embedding IS NOT NULL`
       )
-      .all(workspaceId) as MemoryFactRow[]
+      .all(workspaceId, ...(asOf ? [asOf, asOf] : [])) as MemoryFactRow[]
 
     return rows
       .filter((r) => r.embedding !== null)
       .map((r) => ({
         fact: mapFactRow(r),
-        embedding: new Float32Array(r.embedding!.buffer, r.embedding!.byteOffset, r.embedding!.byteLength / 4)
+        embedding: new Float32Array(
+          r.embedding!.buffer,
+          r.embedding!.byteOffset,
+          r.embedding!.byteLength / 4
+        )
       }))
   }
 
@@ -424,7 +697,12 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   }
 
   /** Count facts per workspace (for stats). */
-  countByWorkspace(workspaceId: string): { active: number; superseded: number; archived: number; pendingEmbedding: number } {
+  countByWorkspace(workspaceId: string): {
+    active: number
+    superseded: number
+    archived: number
+    pendingEmbedding: number
+  } {
     const row = this.db()
       .prepare(
         `SELECT
@@ -435,7 +713,12 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
          FROM memory_facts
          WHERE workspace_id = ? OR workspace_id IS NULL`
       )
-      .get(workspaceId) as { active: number; superseded: number; archived: number; pending_embedding: number }
+      .get(workspaceId) as {
+      active: number
+      superseded: number
+      archived: number
+      pending_embedding: number
+    }
     return {
       active: row.active ?? 0,
       superseded: row.superseded ?? 0,
@@ -527,7 +810,9 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       ? 'SELECT * FROM memory_contradictions WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?'
       : 'SELECT * FROM memory_contradictions ORDER BY created_at DESC LIMIT ? OFFSET ?'
     const args = status ? [status, limit, offset] : [limit, offset]
-    const rows = this.db().prepare(sql).all(...args) as ContradictionRow[]
+    const rows = this.db()
+      .prepare(sql)
+      .all(...args) as ContradictionRow[]
     return rows.map(mapContradictionRow)
   }
 
@@ -536,7 +821,9 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       ? 'SELECT COUNT(*) as cnt FROM memory_contradictions WHERE status = ?'
       : 'SELECT COUNT(*) as cnt FROM memory_contradictions'
     const args = status ? [status] : []
-    const row = this.db().prepare(sql).get(...args) as { cnt: number }
+    const row = this.db()
+      .prepare(sql)
+      .get(...args) as { cnt: number }
     return row.cnt
   }
 
@@ -570,10 +857,14 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
         const newFact = this.findById(row.new_fact_id)
         if (!oldFact || !newFact) continue
 
-        const oldIsOlder = new Date(oldFact.createdAt).getTime() <= new Date(newFact.createdAt).getTime()
+        const oldIsOlder =
+          new Date(oldFact.createdAt).getTime() <= new Date(newFact.createdAt).getTime()
         const archiveId = oldIsOlder ? oldFact.id : newFact.id
 
-        resolveStmt.run(`auto-resolved duplicate (cosine: ${cosine.toFixed(3)}, archived older)`, row.id)
+        resolveStmt.run(
+          `auto-resolved duplicate (cosine: ${cosine.toFixed(3)}, archived older)`,
+          row.id
+        )
         archiveStmt.run(archiveId)
         resolved++
       }
@@ -582,7 +873,11 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return resolved
   }
 
-  resolveContradiction(id: string, resolution: string, status: ContradictionStatus = 'user_resolved'): MemoryContradiction {
+  resolveContradiction(
+    id: string,
+    resolution: string,
+    status: ContradictionStatus = 'user_resolved'
+  ): MemoryContradiction {
     const row = this.db()
       .prepare(
         `UPDATE memory_contradictions SET
@@ -600,9 +895,7 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
 
   getDocState(workspaceId: string, filePath: string): MemoryDocState | undefined {
     const row = this.db()
-      .prepare(
-        'SELECT * FROM memory_doc_state WHERE workspace_id = ? AND file_path = ?'
-      )
+      .prepare('SELECT * FROM memory_doc_state WHERE workspace_id = ? AND file_path = ?')
       .get(workspaceId, filePath) as DocStateRow | undefined
     return row ? mapDocStateRow(row) : undefined
   }
@@ -625,10 +918,32 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return rows.map(mapDocStateRow)
   }
 
+  /**
+   * Epoch ms of the most recent fact mutation in a workspace, or 0 when the
+   * workspace has no facts. Used as a liveness signal: a dedupe-merge bumps
+   * `updated_at` without changing the active fact count.
+   */
+  getLastMutationAt(workspaceId: string): number {
+    // `updated_at` is always written as datetime('now') (UTC), so strftime
+    // gives a stable epoch regardless of the host timezone.
+    const row = this.db()
+      .prepare(
+        `SELECT CAST(strftime('%s', MAX(updated_at)) AS INTEGER) AS last_mutation
+           FROM memory_facts
+          WHERE workspace_id = ? OR workspace_id IS NULL`
+      )
+      .get(workspaceId) as { last_mutation: number | null } | undefined
+    return row?.last_mutation ? row.last_mutation * 1000 : 0
+  }
+
   // ── Confirmation event log ──────────────────────────────────────────────
 
   /** Record a confirmation event with source type and weight. */
-  addConfirmation(factId: string, sourceType: ConfirmationSourceType, weight = 1.0): MemoryConfirmation {
+  addConfirmation(
+    factId: string,
+    sourceType: ConfirmationSourceType,
+    weight = 1.0
+  ): MemoryConfirmation {
     const row = this.db()
       .prepare(
         `INSERT INTO memory_confirmations (fact_id, source_type, weight)
@@ -713,9 +1028,7 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   /** Mark a fact as volatile (version/count patterns). */
   setVolatile(id: string, volatile: boolean): void {
     this.db()
-      .prepare(
-        `UPDATE memory_facts SET volatile = ?, updated_at = datetime('now') WHERE id = ?`
-      )
+      .prepare(`UPDATE memory_facts SET volatile = ?, updated_at = datetime('now') WHERE id = ?`)
       .run(volatile ? 1 : 0, id)
   }
 
@@ -746,20 +1059,26 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
         `UPDATE memory_facts SET
            merged_into = ?,
            status = 'archived',
+           valid_to = COALESCE(valid_to, datetime('now')),
            updated_at = datetime('now')
          WHERE id = ?`
       )
       .run(canonicalId, sourceId)
+
+    this.createEdge({ fromId: canonicalId, toId: sourceId, edgeType: 'supersedes' })
   }
 
   /** Update a fact's content in-place (for UPDATE action on volatile/dedup).
    *  Preserves existing tags/scopePaths when the caller doesn't provide them. */
-  updateFactInPlace(id: string, params: {
-    title: string
-    content: string
-    tags?: string[]
-    scopePaths?: string[]
-  }): MemoryFact {
+  updateFactInPlace(
+    id: string,
+    params: {
+      title: string
+      content: string
+      tags?: string[]
+      scopePaths?: string[]
+    }
+  ): MemoryFact {
     // Only overwrite tags/scopePaths when explicitly provided — undefined means "keep existing"
     const row = this.db()
       .prepare(

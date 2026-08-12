@@ -161,7 +161,9 @@ export async function runCheckpointRewind(ctx: E2EServiceContext): Promise<E2ETr
       const msgCountAfter = messageRepository.findByConversation(ctx.conversationId).length
       const reduced = msgCountAfter < msgCountBefore
 
-      log.info(`[checkpoint-rewind] Messages: ${msgCountBefore} → ${msgCountAfter}, reduced: ${reduced}`)
+      log.info(
+        `[checkpoint-rewind] Messages: ${msgCountBefore} → ${msgCountAfter}, reduced: ${reduced}`
+      )
       transcript.push(statusEntry(reduced ? 'rewind_ok' : 'rewind_messages_not_reduced'))
     } else {
       transcript.push(statusEntry(`rewind_git_restore_failed: ${result.message}`))
@@ -178,7 +180,9 @@ export async function runCheckpointRewind(ctx: E2EServiceContext): Promise<E2ETr
 /**
  * Chat writes NEW file → restore → assert file removed (git clean semantics).
  */
-export async function runCheckpointUntracked(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runCheckpointUntracked(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -211,9 +215,8 @@ export async function runCheckpointUntracked(ctx: E2EServiceContext): Promise<E2
     // Get a checkpoint from before the write
     const cpAfter = checkpointService.listCheckpoints(ctx.conversationId)
     // Use either a new checkpoint or restore to pre-state via git clean
-    const targetCp = cpBefore.length > 0
-      ? cpBefore[0]
-      : cpAfter.length > 0 ? cpAfter[cpAfter.length - 1] : null
+    const targetCp =
+      cpBefore.length > 0 ? cpBefore[0] : cpAfter.length > 0 ? cpAfter[cpAfter.length - 1] : null
 
     if (targetCp) {
       const result = checkpointService.restoreGitState(targetCp.id, ctx.workspacePath)
@@ -225,7 +228,7 @@ export async function runCheckpointUntracked(ctx: E2EServiceContext): Promise<E2
       } else {
         // Fallback: manually clean
         const { execSync } = await import('child_process')
-        execSync('git clean -fd', { cwd: ctx.workspacePath, stdio: 'pipe' })
+        execSync('git clean -fd', { cwd: ctx.workspacePath, stdio: 'pipe', windowsHide: true })
         const fileGone = !existsSync(newFilePath)
         transcript.push(statusEntry(fileGone ? 'untracked_removed' : 'untracked_clean_failed'))
       }

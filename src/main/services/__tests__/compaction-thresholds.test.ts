@@ -22,17 +22,20 @@ import {
 import { TIER_LIMITS } from '../context-management'
 
 describe('resolveCompactionThresholds', () => {
-  test('1M window → suggest=700K (0.7), auto=850K (0.85)', () => {
-    assert.deepEqual(resolveCompactionThresholds(1_000_000), { suggest: 700_000, auto: 850_000 })
+  test('1M window → suggest=600K (0.6), auto=750K (0.75)', () => {
+    assert.deepEqual(resolveCompactionThresholds(1_000_000), { suggest: 600_000, auto: 750_000 })
   })
 
   test('200K window → suggest=120K (0.6), auto=150K (0.75)', () => {
     assert.deepEqual(resolveCompactionThresholds(200_000), { suggest: 120_000, auto: 150_000 })
   })
 
-  test('boundary at exactly 200K is treated as small window', () => {
-    const { suggest } = resolveCompactionThresholds(200_000)
-    assert.equal(suggest, 120_000) // 0.6, not 0.7
+  test('ratios are uniform — no small/large window branch', () => {
+    const small = resolveCompactionThresholds(200_000)
+    const large = resolveCompactionThresholds(200_001)
+    assert.equal(small.suggest / 200_000, 0.6)
+    assert.equal(large.suggest, Math.round(200_001 * 0.6))
+    assert.equal(large.auto, Math.round(200_001 * 0.75))
   })
 })
 
@@ -59,9 +62,9 @@ describe('resolveAppliedThresholds — local providers use the tier table', () =
 })
 
 describe('resolveAppliedThresholds — Claude derives from window, user overrides win', () => {
-  test('1M window with no overrides → 700K / 850K', () => {
+  test('1M window with no overrides → 600K / 750K', () => {
     const r = resolveAppliedThresholds({ isLocal: false, effectiveContextWindow: 1_000_000 })
-    assert.deepEqual(r, { suggest: 700_000, auto: 850_000 })
+    assert.deepEqual(r, { suggest: 600_000, auto: 750_000 })
   })
 
   test('200K window with no overrides → 120K / 150K', () => {
@@ -189,7 +192,7 @@ describe('classifyCompaction — band table', () => {
 
   test('auto band with auto-compact ENABLED → auto-compact-pending', () => {
     const r = classifyCompaction({
-      inputTokens: 200,
+      inputTokens: 160, // in [A, 1.2·A) → below the critical ceiling of 180
       suggestThreshold: S,
       autoThreshold: A,
       isAutoCompactEnabled: true,
@@ -201,7 +204,7 @@ describe('classifyCompaction — band table', () => {
 
   test('auto band with auto-compact DISABLED → critical', () => {
     const r = classifyCompaction({
-      inputTokens: 200,
+      inputTokens: 160,
       suggestThreshold: S,
       autoThreshold: A,
       isAutoCompactEnabled: false,
@@ -210,19 +213,57 @@ describe('classifyCompaction — band table', () => {
     })
     assert.equal(r.level, 'critical')
   })
+
+  test('just below the critical ceiling (1.2·A) stays auto-compact-pending', () => {
+    const r = classifyCompaction({
+      inputTokens: 179, // ceiling = 150 * 1.2 = 180
+      suggestThreshold: S,
+      autoThreshold: A,
+      isAutoCompactEnabled: true,
+      compactSuggested: false,
+      turnsSinceCompactSuggestion: 0
+    })
+    assert.equal(r.level, 'auto-compact-pending')
+  })
+
+  test('at the critical ceiling → critical even when auto-compact is ENABLED', () => {
+    const r = classifyCompaction({
+      inputTokens: 180,
+      suggestThreshold: S,
+      autoThreshold: A,
+      isAutoCompactEnabled: true,
+      compactSuggested: false,
+      turnsSinceCompactSuggestion: 0
+    })
+    assert.equal(r.level, 'critical')
+  })
+
+  test('well above the ceiling → critical, debounce state preserved', () => {
+    const r = classifyCompaction({
+      inputTokens: 500,
+      suggestThreshold: S,
+      autoThreshold: A,
+      isAutoCompactEnabled: true,
+      compactSuggested: true,
+      turnsSinceCompactSuggestion: 2
+    })
+    assert.equal(r.level, 'critical')
+    assert.equal(r.nextSuggested, true)
+    assert.equal(r.nextTurns, 2)
+  })
 })
 
 describe('resolveClaudeCompactionEnv — CLI compaction wiring', () => {
-  test('1M model sets the window to 1000000 and no pct override', () => {
-    const env = resolveClaudeCompactionEnv(true, 1_000_000)
+  test('1M model sets the window to 1000000 and pct override=75', () => {
+    const env = resolveClaudeCompactionEnv(1_000_000)
     assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '1000000')
-    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, undefined)
+    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 
-  test('200K model sets window=200000 and pct override=80', () => {
-    const env = resolveClaudeCompactionEnv(false, 200_000)
+  test('200K model sets window=200000 and pct override=75', () => {
+    const env = resolveClaudeCompactionEnv(200_000)
     assert.equal(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '200000')
-    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '80')
+    assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '75')
   })
 })
 

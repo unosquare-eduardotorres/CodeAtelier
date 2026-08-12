@@ -17,30 +17,60 @@ import { safeParseJSON } from '../../db/json-utils'
 // ─── Specialist mapRow (pure field mapping, no JSON) ───────────────────
 
 interface SpecialistRow {
-  id: string; agent_id: string; display_name: string; description: string | null
-  icon: string; color: string; prompt: string | null; priority: number
-  is_active: number; source_yaml: string | null; alias: string | null
-  avatar_url: string | null; is_core: number; created_at: string; updated_at: string
+  id: string
+  agent_id: string
+  display_name: string
+  description: string | null
+  icon: string
+  color: string
+  prompt: string | null
+  priority: number
+  is_active: number
+  source_yaml: string | null
+  alias: string | null
+  avatar_url: string | null
+  is_core: number
+  created_at: string
+  updated_at: string
 }
 
 function mapSpecialistRow(row: SpecialistRow) {
   return {
-    id: row.id, agentId: row.agent_id, displayName: row.display_name,
-    description: row.description ?? '', icon: row.icon, color: row.color,
-    prompt: row.prompt ?? '', priority: row.priority,
-    isActive: row.is_active === 1, sourceYaml: row.source_yaml ?? null,
-    alias: row.alias ?? null, avatarUrl: row.avatar_url ?? null,
-    isCore: row.is_core === 1, createdAt: row.created_at, updatedAt: row.updated_at
+    id: row.id,
+    agentId: row.agent_id,
+    displayName: row.display_name,
+    description: row.description ?? '',
+    icon: row.icon,
+    color: row.color,
+    prompt: row.prompt ?? '',
+    priority: row.priority,
+    isActive: row.is_active === 1,
+    sourceYaml: row.source_yaml ?? null,
+    alias: row.alias ?? null,
+    avatarUrl: row.avatar_url ?? null,
+    isCore: row.is_core === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 
 describe('specialist.repository — mapRow', () => {
   const baseRow: SpecialistRow = {
-    id: 's1', agent_id: 'agent-1', display_name: 'Test Specialist',
-    description: 'A test specialist', icon: 'brain', color: '#00f',
-    prompt: 'You are a test specialist.', priority: 1, is_active: 1,
-    source_yaml: 'some.yaml', alias: 'test-alias', avatar_url: 'https://img.com/avatar.png',
-    is_core: 0, created_at: '2024-01-01', updated_at: '2024-01-02'
+    id: 's1',
+    agent_id: 'agent-1',
+    display_name: 'Test Specialist',
+    description: 'A test specialist',
+    icon: 'brain',
+    color: '#00f',
+    prompt: 'You are a test specialist.',
+    priority: 1,
+    is_active: 1,
+    source_yaml: 'some.yaml',
+    alias: 'test-alias',
+    avatar_url: 'https://img.com/avatar.png',
+    is_core: 0,
+    created_at: '2024-01-01',
+    updated_at: '2024-01-02'
   }
 
   test('maps_all_fields_correctly', () => {
@@ -84,25 +114,32 @@ describe('specialist.repository — mapRow', () => {
 
 function mapAuditRunRow(row: any) {
   return {
-    id: row.id, workspaceId: row.workspace_id,
-    mode: row.mode, status: row.status,
+    id: row.id,
+    workspaceId: row.workspace_id,
+    mode: row.mode,
+    status: row.status,
     overallScore: row.overall_score,
     selectedTracks: safeParseJSON<string[]>(row.selected_tracks, []),
     detectedTechs: safeParseJSON<string[]>(row.detected_techs, []),
     selectedSkills: safeParseJSON<Record<string, unknown>>(row.selected_skills, {}),
-    createdAt: row.created_at, updatedAt: row.updated_at
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 
 function mapAuditResultRow(row: any) {
   const coverageStats = safeParseJSON<any>(row.coverage_stats, undefined)
   return {
-    id: row.id, auditRunId: row.audit_run_id,
-    trackId: row.track_id, score: row.score, status: row.status,
+    id: row.id,
+    auditRunId: row.audit_run_id,
+    trackId: row.track_id,
+    score: row.score,
+    status: row.status,
     findings: safeParseJSON<any[]>(row.findings, []),
     summary: row.summary ?? '',
     skillsUsed: safeParseJSON<string[]>(row.skills_used, []),
-    startedAt: row.started_at, completedAt: row.completed_at,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
     coverageStats,
     coverageSufficient: row.coverage_sufficient === null ? undefined : row.coverage_sufficient === 1
   }
@@ -110,10 +147,16 @@ function mapAuditResultRow(row: any) {
 
 describe('audit.repository — mapRunRow', () => {
   const baseRunRow = {
-    id: 'ar-1', workspace_id: 'ws-1', mode: 'full', status: 'completed',
-    overall_score: 72, selected_tracks: '["code","testing"]',
-    detected_techs: '["typescript","react"]', selected_skills: '{"code": "skill-1"}',
-    created_at: '2024-01-01', updated_at: '2024-01-02'
+    id: 'ar-1',
+    workspace_id: 'ws-1',
+    mode: 'full',
+    status: 'completed',
+    overall_score: 72,
+    selected_tracks: '["code","testing"]',
+    detected_techs: '["typescript","react"]',
+    selected_skills: '{"code": "skill-1"}',
+    created_at: '2024-01-01',
+    updated_at: '2024-01-02'
   }
 
   test('parses_selected_tracks_json', () => {
@@ -144,12 +187,18 @@ describe('audit.repository — mapRunRow', () => {
 
 describe('audit.repository — mapResultRow', () => {
   const baseResultRow = {
-    id: 'res-1', audit_run_id: 'ar-1', track_id: 'code',
-    score: 85, status: 'completed',
+    id: 'res-1',
+    audit_run_id: 'ar-1',
+    track_id: 'code',
+    score: 85,
+    status: 'completed',
     findings: '[{"severity":"high","message":"Missing tests"}]',
-    summary: 'Code quality is good', skills_used: '["code-review"]',
-    started_at: '2024-01-01T10:00:00', completed_at: '2024-01-01T10:05:00',
-    coverage_stats: '{"covered":80,"total":100}', coverage_sufficient: 1
+    summary: 'Code quality is good',
+    skills_used: '["code-review"]',
+    started_at: '2024-01-01T10:00:00',
+    completed_at: '2024-01-01T10:05:00',
+    coverage_stats: '{"covered":80,"total":100}',
+    coverage_sufficient: 1
   }
 
   test('parses_findings_json_array', () => {
@@ -194,12 +243,18 @@ describe('audit.repository — mapResultRow', () => {
 function mapMpaRunRow(row: any) {
   const configJson = safeParseJSON<Record<string, unknown>>(row.config_json, {})
   return {
-    id: row.id, workspaceId: row.workspace_id,
-    conversationId: row.conversation_id, grillSessionId: row.grill_session_id,
-    title: row.title, goal: row.goal,
-    goalType: row.goal_type, status: row.status,
-    currentPhase: row.current_phase, configJson,
-    createdAt: row.created_at, completedAt: row.completed_at,
+    id: row.id,
+    workspaceId: row.workspace_id,
+    conversationId: row.conversation_id,
+    grillSessionId: row.grill_session_id,
+    title: row.title,
+    goal: row.goal,
+    goalType: row.goal_type,
+    status: row.status,
+    currentPhase: row.current_phase,
+    configJson,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
     totalTokens: row.total_tokens,
     campaignId: row.campaign_id ?? null,
     orderIndex: row.order_index ?? null,
@@ -210,25 +265,41 @@ function mapMpaRunRow(row: any) {
 
 function mapMpaPhaseRow(row: any) {
   return {
-    id: row.id, runId: row.run_id,
-    phaseType: row.phase_type, iteration: row.iteration,
-    status: row.status, agentRole: row.agent_role,
+    id: row.id,
+    runId: row.run_id,
+    phaseType: row.phase_type,
+    iteration: row.iteration,
+    status: row.status,
+    agentRole: row.agent_role,
     goalCondition: row.goal_condition,
     inputArtifactId: row.input_artifact_id,
     outputArtifactId: row.output_artifact_id,
-    startedAt: row.started_at, completedAt: row.completed_at,
-    tokensUsed: row.tokens_used, streamContent: row.stream_content
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    tokensUsed: row.tokens_used,
+    streamContent: row.stream_content
   }
 }
 
 describe('mpa-run.repository — mapRunRow', () => {
   const baseRow = {
-    id: 'mpa-1', workspace_id: 'ws-1', conversation_id: 'conv-1',
-    grill_session_id: null, title: 'Test Run', goal: 'Build feature',
-    goal_type: 'build', status: 'completed', current_phase: 'verify',
-    config_json: '{"maxIterations":3}', created_at: '2024-01-01',
-    completed_at: '2024-01-02', total_tokens: 5000,
-    campaign_id: null, order_index: null, blueprint_id: null, blueprint_phase_id: null
+    id: 'mpa-1',
+    workspace_id: 'ws-1',
+    conversation_id: 'conv-1',
+    grill_session_id: null,
+    title: 'Test Run',
+    goal: 'Build feature',
+    goal_type: 'build',
+    status: 'completed',
+    current_phase: 'verify',
+    config_json: '{"maxIterations":3}',
+    created_at: '2024-01-01',
+    completed_at: '2024-01-02',
+    total_tokens: 5000,
+    campaign_id: null,
+    order_index: null,
+    blueprint_id: null,
+    blueprint_phase_id: null
   }
 
   test('parses_config_json', () => {
@@ -258,12 +329,19 @@ describe('mpa-run.repository — mapRunRow', () => {
 describe('mpa-run.repository — mapPhaseRow', () => {
   test('maps_all_phase_fields', () => {
     const result = mapMpaPhaseRow({
-      id: 'p-1', run_id: 'mpa-1', phase_type: 'plan', iteration: 1,
-      status: 'completed', agent_role: 'mpa-planner',
+      id: 'p-1',
+      run_id: 'mpa-1',
+      phase_type: 'plan',
+      iteration: 1,
+      status: 'completed',
+      agent_role: 'mpa-planner',
       goal_condition: 'Create implementation plan',
-      input_artifact_id: null, output_artifact_id: 'art-1',
-      started_at: '2024-01-01T10:00:00', completed_at: '2024-01-01T10:05:00',
-      tokens_used: 1500, stream_content: 'Plan content...'
+      input_artifact_id: null,
+      output_artifact_id: 'art-1',
+      started_at: '2024-01-01T10:00:00',
+      completed_at: '2024-01-01T10:05:00',
+      tokens_used: 1500,
+      stream_content: 'Plan content...'
     })
     assert.equal(result.id, 'p-1')
     assert.equal(result.runId, 'mpa-1')
@@ -274,10 +352,19 @@ describe('mpa-run.repository — mapPhaseRow', () => {
 
   test('null_optional_fields_preserved', () => {
     const result = mapMpaPhaseRow({
-      id: 'p-1', run_id: 'mpa-1', phase_type: 'build', iteration: 1,
-      status: 'running', agent_role: 'mpa-builder',
-      goal_condition: null, input_artifact_id: null, output_artifact_id: null,
-      started_at: null, completed_at: null, tokens_used: 0, stream_content: ''
+      id: 'p-1',
+      run_id: 'mpa-1',
+      phase_type: 'build',
+      iteration: 1,
+      status: 'running',
+      agent_role: 'mpa-builder',
+      goal_condition: null,
+      input_artifact_id: null,
+      output_artifact_id: null,
+      started_at: null,
+      completed_at: null,
+      tokens_used: 0,
+      stream_content: ''
     })
     assert.equal(result.goalCondition, null)
     assert.equal(result.inputArtifactId, null)
@@ -289,12 +376,16 @@ describe('mpa-run.repository — mapPhaseRow', () => {
 
 function mapPlanRow(row: any) {
   return {
-    id: row.id, workspaceId: row.workspace_id,
-    source: row.source, sourceId: row.source_id,
-    title: row.title, summary: row.summary ?? '',
+    id: row.id,
+    workspaceId: row.workspace_id,
+    source: row.source,
+    sourceId: row.source_id,
+    title: row.title,
+    summary: row.summary ?? '',
     planType: row.plan_type ?? null,
     structuredPlan: safeParseJSON(row.structured_plan_json, {
-      title: row.title, summary: row.summary ?? ''
+      title: row.title,
+      summary: row.summary ?? ''
     }),
     sourcePlanJson: row.source_plan_json,
     requirementDocument: row.requirement_document,
@@ -302,23 +393,35 @@ function mapPlanRow(row: any) {
     linkedConversationId: row.linked_conversation_id,
     linkedMpaRunId: row.linked_mpa_run_id,
     linkedCouncilSessionId: row.linked_council_session_id,
-    fileCount: row.file_count ?? 0, phaseCount: row.phase_count ?? 0,
+    fileCount: row.file_count ?? 0,
+    phaseCount: row.phase_count ?? 0,
     riskCount: row.risk_count ?? 0,
-    createdAt: row.created_at, updatedAt: row.updated_at
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
   }
 }
 
 describe('plan.repository — mapRow', () => {
   const basePlanRow = {
-    id: 'plan-1', workspace_id: 'ws-1', source: 'conversation',
-    source_id: 'conv-1', title: 'Test Plan', summary: 'A test plan',
+    id: 'plan-1',
+    workspace_id: 'ws-1',
+    source: 'conversation',
+    source_id: 'conv-1',
+    title: 'Test Plan',
+    summary: 'A test plan',
     plan_type: 'implementation',
     structured_plan_json: '{"title":"Test Plan","phases":[]}',
-    source_plan_json: null, requirement_document: null,
-    status: 'active', linked_conversation_id: 'conv-1',
-    linked_mpa_run_id: null, linked_council_session_id: null,
-    file_count: 5, phase_count: 3, risk_count: 2,
-    created_at: '2024-01-01', updated_at: '2024-01-02'
+    source_plan_json: null,
+    requirement_document: null,
+    status: 'active',
+    linked_conversation_id: 'conv-1',
+    linked_mpa_run_id: null,
+    linked_council_session_id: null,
+    file_count: 5,
+    phase_count: 3,
+    risk_count: 2,
+    created_at: '2024-01-01',
+    updated_at: '2024-01-02'
   }
 
   test('parses_structured_plan_json', () => {
@@ -342,7 +445,12 @@ describe('plan.repository — mapRow', () => {
   })
 
   test('null_counts_default_to_zero', () => {
-    const result = mapPlanRow({ ...basePlanRow, file_count: null, phase_count: null, risk_count: null })
+    const result = mapPlanRow({
+      ...basePlanRow,
+      file_count: null,
+      phase_count: null,
+      risk_count: null
+    })
     assert.equal(result.fileCount, 0)
     assert.equal(result.phaseCount, 0)
     assert.equal(result.riskCount, 0)

@@ -16,6 +16,7 @@ import {
 import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import SessionRecoveryBanner from './SessionRecoveryBanner'
 import BlockedByBanner from './BlockedByBanner'
+import PermissionRetryBanner from './PermissionRetryBanner'
 import BudgetCapBanner from './BudgetCapBanner'
 import TurnLimitBanner from './TurnLimitBanner'
 import NewChatPage from './NewChatPage'
@@ -27,11 +28,7 @@ import ContextUsageIndicator from './ContextUsageIndicator'
 import TaskSummaryBadge from './TaskSummaryBadge'
 import ChatExecutionPanel from './ChatExecutionPanel'
 import { usePlanExecutionStore, type PlanExecution } from '@renderer/store/plan-execution.store'
-import {
-  StackDriftBanner,
-  BuildProgressInline,
-  GenerateSpecialistModal
-} from '@renderer/components/specialist'
+import { StackDriftBanner, BuildProgressInline } from '@renderer/components/specialist'
 import type { ConversationMode, ThinkingEffort } from '../../../../shared/types'
 import type { SessionRecoveryPhase } from './SessionRecoveryBanner'
 import { useChatPanelEffects } from './useChatPanelEffects'
@@ -95,23 +92,29 @@ function PanelToggleButton({
   tasksDone: number
   taskTotal: number
   hasContent: boolean
-}): React.JSX.Element | null {
-  // Only show when there's plan/task/todo content
-  if (!hasContent) return null
-
+}): React.JSX.Element {
   return (
     <button
       type="button"
       data-testid="chat-panel-toggle"
+      disabled={!hasContent}
       aria-expanded={panelOpen}
       aria-label={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
-      onClick={onToggle}
+      onClick={hasContent ? onToggle : undefined}
       className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-        panelOpen
-          ? 'bg-accent/15 text-accent border-accent/30'
-          : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
+        !hasContent
+          ? 'opacity-30 cursor-not-allowed text-text-muted border-border-subtle'
+          : panelOpen
+            ? 'bg-accent/15 text-accent border-accent/30'
+            : 'text-text-muted hover:text-text-secondary hover:bg-surface-hover border-border-subtle'
       }`}
-      title={panelOpen ? 'Hide execution panel' : 'Show execution panel'}
+      title={
+        !hasContent
+          ? 'No plan or task content yet'
+          : panelOpen
+            ? 'Hide execution panel'
+            : 'Show execution panel'
+      }
     >
       <Layers size={14} />
       {taskTotal > 0 && (
@@ -159,6 +162,9 @@ function ChatPanelBanners({
   switchToBlockingChat,
   stopBlockingChat,
   dismissBlockedBy,
+  permissionRetry,
+  retryAfterPermission,
+  dismissPermissionRetry,
   turnLimitReached,
   continuePastTurnLimit,
   dismissTurnLimit,
@@ -182,6 +188,9 @@ function ChatPanelBanners({
   switchToBlockingChat: () => void
   stopBlockingChat: () => void
   dismissBlockedBy: () => void
+  permissionRetry: { conversationId: string } | null
+  retryAfterPermission: () => void
+  dismissPermissionRetry: () => void
   turnLimitReached: {
     continuable: boolean
     continuationsUsed: number
@@ -234,6 +243,9 @@ function ChatPanelBanners({
           onStopAndRetry={stopBlockingChat}
           onDismiss={dismissBlockedBy}
         />
+      )}
+      {activeTab === 'chat' && permissionRetry && (
+        <PermissionRetryBanner onRetry={retryAfterPermission} onDismiss={dismissPermissionRetry} />
       )}
       {activeTab === 'chat' && turnLimitReached && (
         <TurnLimitBanner
@@ -333,7 +345,10 @@ function useChatPanelLocalEffects({
   setShowSearch: React.Dispatch<React.SetStateAction<boolean>>
 }): void {
   useEffect(() => {
-    if (conversationId) void loadFiles(conversationId)
+    if (conversationId) {
+      useCodeChangesStore.getState().resetComparison()
+      void loadFiles(conversationId)
+    }
   }, [conversationId, loadFiles])
 
   useEffect(() => {
@@ -372,12 +387,10 @@ function useChatPanelLocalEffects({
 
 function EmptyConversationState({
   showNewChat,
-  generateModal,
   onCreateChat,
   onCreateIdea
 }: {
   showNewChat?: boolean
-  generateModal: React.ReactNode
   onCreateChat: (data: {
     title: string
     description?: string
@@ -386,6 +399,7 @@ function EmptyConversationState({
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
     sourceAuditRunId?: string
@@ -393,22 +407,14 @@ function EmptyConversationState({
   onCreateIdea?: (data: { title: string; description?: string }) => void
 }): React.JSX.Element {
   if (showNewChat) {
-    return (
-      <>
-        {generateModal}
-        <NewChatPage onCreateChat={onCreateChat} onCreateIdea={onCreateIdea} />
-      </>
-    )
+    return <NewChatPage onCreateChat={onCreateChat} onCreateIdea={onCreateIdea} />
   }
   return (
-    <>
-      {generateModal}
-      <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
-        <p className="text-sm text-text-secondary">
-          Select a conversation from the sidebar or start a new one.
-        </p>
-      </div>
-    </>
+    <div className="flex-1 flex flex-col items-center justify-center text-center px-8 bg-surface-raised">
+      <p className="text-sm text-text-secondary">
+        Select a conversation from the sidebar or start a new one.
+      </p>
+    </div>
   )
 }
 
@@ -452,7 +458,7 @@ export default function ChatPanel({
   const latestPlan = usePlanExecutionStore(
     useCallback(
       (s: { latestPlanContent: Record<string, string> }) =>
-        activeConversation ? s.latestPlanContent[activeConversation.id] ?? null : null,
+        activeConversation ? (s.latestPlanContent[activeConversation.id] ?? null) : null,
       [activeConversation?.id]
     )
   )
@@ -509,7 +515,7 @@ export default function ChatPanel({
   }, [panelOpen, panelWidth])
 
   // ── Extracted hooks ──
-  const { projectSpecialist, generateModalOpen, handleDismissGenerate } = useChatPanelEffects()
+  const { projectSpecialist } = useChatPanelEffects()
   const { rateLimitState } = useRateLimitState()
   const { apiRetry } = useApiRetryState()
   const { sessionRecovery } = useSessionRecoveryState()
@@ -525,6 +531,11 @@ export default function ChatPanel({
   const switchToBlockingChat = useChatStore((s) => s.switchToBlockingChat)
   const stopBlockingChat = useChatStore((s) => s.stopBlockingChat)
   const dismissBlockedBy = useChatStore((s) => s.dismissBlockedBy)
+
+  // Retry offer after a permission request died with its turn
+  const permissionRetry = useChatStore((s) => s.permissionRetry)
+  const retryAfterPermission = useChatStore((s) => s.retryAfterPermission)
+  const dismissPermissionRetry = useChatStore((s) => s.dismissPermissionRetry)
 
   // Turn limit banner state
   const turnLimitReached = useChatStore((s) => s.turnLimitReached)
@@ -559,6 +570,7 @@ export default function ChatPanel({
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
     llmProvider?: string
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
@@ -576,7 +588,8 @@ export default function ChatPanel({
       data.communicationTone,
       data.sourceAuditRunId,
       data.branchName,
-      data.autoBranch
+      data.autoBranch,
+      data.takeover
     )
     onNewChatDismiss?.()
     // Send when there is a description OR attachments — an image-only creation
@@ -588,23 +601,11 @@ export default function ChatPanel({
     }
   }
 
-  // Generate-Specialist modal — lifted above early returns so it overlays the
-  // empty state and NewChatPage as well as the main chat render.
-  const generateModal = activeWorkspace ? (
-    <GenerateSpecialistModal
-      open={generateModalOpen}
-      workspaceId={activeWorkspace.id}
-      workspaceName={activeWorkspace.name}
-      onDismiss={handleDismissGenerate}
-    />
-  ) : null
-
   // Workspace selected but no active conversation
   if (!activeConversation) {
     return (
       <EmptyConversationState
         showNewChat={showNewChat}
-        generateModal={generateModal}
         onCreateChat={handleCreateChat}
         onCreateIdea={onCreateIdea}
       />
@@ -613,220 +614,227 @@ export default function ChatPanel({
 
   // Filter messages for search
   const filteredMessages = searchQuery
-    ? messages.filter((m) => !m.hidden && m.contentMd.toLowerCase().includes(searchQuery.toLowerCase()))
+    ? messages.filter(
+        (m) => !m.hidden && m.contentMd.toLowerCase().includes(searchQuery.toLowerCase())
+      )
     : []
 
   return (
-    <>
-      {generateModal}
-      <div
-        data-testid="chat-panel"
-        className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0"
-      >
-        {/* Header — tabs left, persona right */}
-        <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
-          <div className="flex items-center gap-1" role="tablist" aria-label="Chat panel tabs">
-            <ChatTabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')}>
-              Chat
-            </ChatTabButton>
-            <ChatTabButton
-              active={activeTab === 'code-changes'}
-              onClick={() => setActiveTab('code-changes')}
-              badge={pendingChangesCount}
-            >
-              Code Changes
-            </ChatTabButton>
-          </div>
-          {activeTab === 'chat' && (
-            <div className="flex items-center gap-2">
-              {activeConversation && (
-                <ContextUsageIndicator conversationId={activeConversation.id} />
-              )}
-              <ModelConfigPopover
-                snapshot={activeConversation?.modelConfigSnapshot ?? null}
-                providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
-                conversationId={activeConversation?.id}
-                workspaceId={activeWorkspace?.id}
-                onRoutingUpdated={(updated) => {
-                  useChatStore.setState((state) => ({
-                    activeConversation:
-                      state.activeConversation?.id === updated.id
-                        ? updated
-                        : state.activeConversation,
-                    conversations: state.conversations.map((c) =>
-                      c.id === updated.id ? updated : c
-                    )
-                  }))
-                }}
-              />
-              <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
-              <PanelToggleButton
-                panelOpen={panelOpen}
-                onToggle={() => { setPanelOpen(!panelOpen); setAutoOpenedForPlan(false) }}
-                tasksDone={headerTasksDone}
-                taskTotal={headerTaskTotal}
-                hasContent={headerHasContent}
-              />
-            </div>
-          )}
+    <div
+      data-testid="chat-panel"
+      className="flex-1 flex flex-col bg-surface-raised min-w-0 min-h-0"
+    >
+      {/* Header — tabs left, persona right */}
+      <div className="flex items-center justify-between px-6 py-3 border-b border-border-subtle bg-surface-raised">
+        <div className="flex items-center gap-1" role="tablist" aria-label="Chat panel tabs">
+          <ChatTabButton active={activeTab === 'chat'} onClick={() => setActiveTab('chat')}>
+            Chat
+          </ChatTabButton>
+          <ChatTabButton
+            active={activeTab === 'code-changes'}
+            onClick={() => setActiveTab('code-changes')}
+            badge={pendingChangesCount}
+          >
+            Code Changes
+          </ChatTabButton>
         </div>
-
-        {/* Banners */}
-        <ChatPanelBanners
-          activeTab={activeTab}
-          workspaceId={activeWorkspace?.id}
-          rateLimitState={rateLimitState}
-          apiRetry={apiRetry}
-          sessionRecovery={sessionRecovery}
-          budgetCapBanner={budgetCapBanner}
-          continuePastBudgetCap={continuePastBudgetCap}
-          dismissBudgetCap={dismissBudgetCap}
-          blockedByBanner={blockedByBanner}
-          switchToBlockingChat={switchToBlockingChat}
-          stopBlockingChat={stopBlockingChat}
-          dismissBlockedBy={dismissBlockedBy}
-          turnLimitReached={turnLimitReached}
-          continuePastTurnLimit={continuePastTurnLimit}
-          dismissTurnLimit={dismissTurnLimit}
-          streamStalledConversationId={streamStalledConversationId}
-          activeConversationId={activeConversation?.id}
-          isStreaming={isStreaming}
-          dismissStallBanner={dismissStallBanner}
-        />
-
-        {/* Tab content */}
         {activeTab === 'chat' && (
-          <>
-            {/* Search bar */}
-            {showSearch && (
-              <div className="flex items-center gap-2 px-6 py-2 border-b border-border-subtle bg-surface-overlay/60">
-                <Search size={14} className="text-text-muted" />
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search messages..."
-                  className="flex-1 bg-transparent text-sm text-text-body placeholder-text-muted outline-none"
-                  aria-label="Search messages"
-                />
-                {searchQuery && (
-                  <span className="text-xs text-text-secondary">
-                    {filteredMessages.length} result{filteredMessages.length !== 1 ? 's' : ''}
-                  </span>
-                )}
-                <button
-                  onClick={() => {
-                    setShowSearch(false)
-                    setSearchQuery('')
-                  }}
-                  className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
-                  aria-label="Close search"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-
-            <RepoWarningBanner onNavigateToSettings={onNavigateToSettings} />
-
-            <div
-              className="flex-1 flex min-h-0"
-              style={
-                panelOpen
-                  ? { display: 'grid', gridTemplateColumns: `minmax(0,1fr) ${panelWidth}px` }
-                  : undefined
-              }
-            >
-              {/* Column 1: Chat */}
-              <div className="flex-1 flex flex-col min-h-0 min-w-0">
-                {agentStatus === 'starting' ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
-                    <div className="relative mb-6">
-                      <div className="w-16 h-16 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
-                      <div className="w-16 h-16 rounded-full bg-primary-muted border border-primary/40 flex items-center justify-center relative">
-                        <Bot size={28} className="text-primary-text animate-pulse" />
-                      </div>
-                    </div>
-                    <h3 className="text-lg font-medium text-text-primary mb-2">
-                      Initializing AI Agent...
-                    </h3>
-                    <p className="text-sm text-text-secondary max-w-sm">
-                      Setting up the workspace context and initializing the AI agent. This may take a
-                      few seconds.
-                    </p>
-                    <div className="mt-4 flex items-center gap-2">
-                      <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
-                      <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
-                      <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 flex flex-col min-h-0">
-                    <MessageList searchQuery={searchQuery} />
-                  </div>
-                )}
-
-                {/* Floating pill bar — mode pill + MCP pills overlaid above input */}
-                {activeConversation && (
-                  <FloatingPillBar
-                    conversation={activeConversation}
-                    isStreaming={isStreaming}
-                    effortLevel={effortLevels[activeConversation.id] ?? ('medium' as const)}
-                    mcpIntegrations={availableMcpIntegrations}
-                    onCycleMode={() => updateMode(MODE_CYCLE[activeConversation.mode])}
-                    onSetEffort={(effort) => setEffort(activeConversation.id, effort)}
-                    onMcpToggle={handleMcpToggle}
-                  />
-                )}
-
-                {activeConversation && (
-                  <TaskSummaryBadge
-                    conversationId={activeConversation.id}
-                    panelOpen={panelOpen}
-                    onTogglePanel={() => { setPanelOpen(!panelOpen); setAutoOpenedForPlan(false) }}
-                  />
-                )}
-
-                <div className="flex-shrink-0 px-6 pb-4 pt-2">
-                  <AttachmentDropzone
-                    attachments={attachments}
-                    onAttachmentsChange={setAttachments}
-                    conversationId={activeConversation.id}
-                  >
-                    <MessageInput
-                      attachments={attachments}
-                      onClearAttachments={() => setAttachments([])}
-                      onStartGrillMe={onStartGrillMe}
-                    />
-                  </AttachmentDropzone>
-                </div>
-              </div>
-
-              {/* Column 2: Execution Panel (collapsible) */}
-              {panelOpen && activeConversation && (
-                <ChatExecutionPanel
-                  key={activeConversation.id}
-                  conversationId={activeConversation.id}
-                  initialTab={autoOpenedForPlan ? 'plan' : undefined}
-                  onClose={() => { setPanelOpen(false); setAutoOpenedForPlan(false) }}
-                  onResize={(width) => {
-                    setPanelWidth(width)
-                    localStorage.setItem('chat-panel-width', String(width))
-                  }}
-                />
-              )}
-            </div>
-          </>
-        )}
-
-        {activeTab === 'code-changes' && (
-          <CodeChangesPanel
-            conversationId={activeConversation.id}
-            onNavigateToSettings={onNavigateToSettings}
-          />
+          <div className="flex items-center gap-2">
+            {activeConversation && <ContextUsageIndicator conversationId={activeConversation.id} />}
+            <ModelConfigPopover
+              snapshot={activeConversation?.modelConfigSnapshot ?? null}
+              providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
+              conversationId={activeConversation?.id}
+              workspaceId={activeWorkspace?.id}
+              onRoutingUpdated={(updated) => {
+                useChatStore.setState((state) => ({
+                  activeConversation:
+                    state.activeConversation?.id === updated.id
+                      ? updated
+                      : state.activeConversation,
+                  conversations: state.conversations.map((c) => (c.id === updated.id ? updated : c))
+                }))
+              }}
+            />
+            <BuildProgressInline specialistId={projectSpecialist?.id ?? null} />
+            <PanelToggleButton
+              panelOpen={panelOpen}
+              onToggle={() => {
+                setPanelOpen(!panelOpen)
+                setAutoOpenedForPlan(false)
+              }}
+              tasksDone={headerTasksDone}
+              taskTotal={headerTaskTotal}
+              hasContent={headerHasContent}
+            />
+          </div>
         )}
       </div>
-    </>
+
+      {/* Banners */}
+      <ChatPanelBanners
+        activeTab={activeTab}
+        workspaceId={activeWorkspace?.id}
+        rateLimitState={rateLimitState}
+        apiRetry={apiRetry}
+        sessionRecovery={sessionRecovery}
+        budgetCapBanner={budgetCapBanner}
+        continuePastBudgetCap={continuePastBudgetCap}
+        dismissBudgetCap={dismissBudgetCap}
+        blockedByBanner={blockedByBanner}
+        switchToBlockingChat={switchToBlockingChat}
+        stopBlockingChat={stopBlockingChat}
+        dismissBlockedBy={dismissBlockedBy}
+        permissionRetry={permissionRetry}
+        retryAfterPermission={retryAfterPermission}
+        dismissPermissionRetry={dismissPermissionRetry}
+        turnLimitReached={turnLimitReached}
+        continuePastTurnLimit={continuePastTurnLimit}
+        dismissTurnLimit={dismissTurnLimit}
+        streamStalledConversationId={streamStalledConversationId}
+        activeConversationId={activeConversation?.id}
+        isStreaming={isStreaming}
+        dismissStallBanner={dismissStallBanner}
+      />
+
+      {/* Tab content */}
+      {activeTab === 'chat' && (
+        <>
+          {/* Search bar */}
+          {showSearch && (
+            <div className="flex items-center gap-2 px-6 py-2 border-b border-border-subtle bg-surface-overlay/60">
+              <Search size={14} className="text-text-muted" />
+              <input
+                ref={searchInputRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search messages..."
+                className="flex-1 bg-transparent text-sm text-text-body placeholder-text-muted outline-none"
+                aria-label="Search messages"
+              />
+              {searchQuery && (
+                <span className="text-xs text-text-secondary">
+                  {filteredMessages.length} result{filteredMessages.length !== 1 ? 's' : ''}
+                </span>
+              )}
+              <button
+                onClick={() => {
+                  setShowSearch(false)
+                  setSearchQuery('')
+                }}
+                className="p-1 rounded hover:bg-surface-overlay text-text-muted hover:text-text-primary transition-colors"
+                aria-label="Close search"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          <RepoWarningBanner onNavigateToSettings={onNavigateToSettings} />
+
+          <div
+            className="flex-1 flex min-h-0"
+            style={
+              panelOpen
+                ? { display: 'grid', gridTemplateColumns: `minmax(0,1fr) ${panelWidth}px` }
+                : undefined
+            }
+          >
+            {/* Column 1: Chat */}
+            <div className="flex-1 flex flex-col min-h-0 min-w-0">
+              {agentStatus === 'starting' ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center px-8">
+                  <div className="relative mb-6">
+                    <div className="w-16 h-16 rounded-full border-2 border-primary/30 animate-ping absolute inset-0" />
+                    <div className="w-16 h-16 rounded-full bg-primary-muted border border-primary/40 flex items-center justify-center relative">
+                      <Bot size={28} className="text-primary-text animate-pulse" />
+                    </div>
+                  </div>
+                  <h3 className="text-lg font-medium text-text-primary mb-2">
+                    Initializing AI Agent...
+                  </h3>
+                  <p className="text-sm text-text-secondary max-w-sm">
+                    Setting up the workspace context and initializing the AI agent. This may take a
+                    few seconds.
+                  </p>
+                  <div className="mt-4 flex items-center gap-2">
+                    <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
+                    <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
+                    <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex-1 flex flex-col min-h-0">
+                  <MessageList searchQuery={searchQuery} />
+                </div>
+              )}
+
+              {/* Floating pill bar — mode pill + MCP pills overlaid above input */}
+              {activeConversation && (
+                <FloatingPillBar
+                  conversation={activeConversation}
+                  isStreaming={isStreaming}
+                  effortLevel={effortLevels[activeConversation.id] ?? ('medium' as const)}
+                  mcpIntegrations={availableMcpIntegrations}
+                  onCycleMode={() => updateMode(MODE_CYCLE[activeConversation.mode])}
+                  onSetEffort={(effort) => setEffort(activeConversation.id, effort)}
+                  onMcpToggle={handleMcpToggle}
+                />
+              )}
+
+              {activeConversation && (
+                <TaskSummaryBadge
+                  conversationId={activeConversation.id}
+                  panelOpen={panelOpen}
+                  onTogglePanel={() => {
+                    setPanelOpen(!panelOpen)
+                    setAutoOpenedForPlan(false)
+                  }}
+                />
+              )}
+
+              <div className="flex-shrink-0 px-6 pb-4 pt-2">
+                <AttachmentDropzone
+                  attachments={attachments}
+                  onAttachmentsChange={setAttachments}
+                  conversationId={activeConversation.id}
+                >
+                  <MessageInput
+                    attachments={attachments}
+                    onClearAttachments={() => setAttachments([])}
+                    onStartGrillMe={onStartGrillMe}
+                  />
+                </AttachmentDropzone>
+              </div>
+            </div>
+
+            {/* Column 2: Execution Panel (collapsible) */}
+            {panelOpen && activeConversation && (
+              <ChatExecutionPanel
+                key={activeConversation.id}
+                conversationId={activeConversation.id}
+                initialTab={autoOpenedForPlan ? 'plan' : undefined}
+                onClose={() => {
+                  setPanelOpen(false)
+                  setAutoOpenedForPlan(false)
+                }}
+                onResize={(width) => {
+                  setPanelWidth(width)
+                  localStorage.setItem('chat-panel-width', String(width))
+                }}
+              />
+            )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'code-changes' && (
+        <CodeChangesPanel
+          conversationId={activeConversation.id}
+          onNavigateToSettings={onNavigateToSettings}
+        />
+      )}
+    </div>
   )
 }

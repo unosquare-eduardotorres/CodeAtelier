@@ -4,7 +4,10 @@
  *
  * Replaces `memory-feed.service.ts`. Uses the proven `spawnSummarizer` pattern
  * with model from `modelConfigService.getModel(path, 'memoryFeed')`.
- * Serialized single-in-flight queue prevents concurrent Haiku calls.
+ * `enqueue` serializes the jobs that go through it, but Feed Brain calls
+ * `extractFromContent` directly from a concurrent drain pool, so several
+ * summarizer children can be alive at once — per-spawn state must stay local
+ * to the spawn (see `liveAbortControllers`).
  *
  * Retained: `regenerateClaudeMd` for CLAUDE.md generation.
  */
@@ -23,6 +26,7 @@ import { runAgenticClaude, parseSentinelBlock, SENTINELS } from './agentic-claud
 import type {
   MemoryFactCategory,
   MemoryFeedProgress,
+  MemorySourceType,
   DiscoveredAgent,
   DiscoveredSkill
 } from '../../shared/types'
@@ -31,6 +35,81 @@ const log = dbLogger
 
 /** Minimum transcript length to bother extracting from. */
 const MIN_TRANSCRIPT_CHARS = 200
+
+/** Backoff schedule for transient upstream failures. 2s → 4s → 8s. */
+const EXTRACTION_MAX_RETRIES = 3
+const EXTRACTION_RETRY_BASE_MS = 2000
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Backoff that gives up the moment the run is cancelled. Sleeping through a
+ * cancel would spend Claude spawns — and the user's tokens — on a run they have
+ * already stopped, and would delay a pause by the full retry schedule.
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms)
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, ms)
+    signal.addEventListener('abort', finish, { once: true })
+  })
+}
+
+/** Failure shapes already logged — a storm must not repeat the same line 400 times. */
+const loggedFailureShapes = new Set<string>()
+const MAX_LOGGED_FAILURE_SHAPES = 5
+
+/**
+ * Collapse the volatile parts of a failure message (exit codes, pids, timings)
+ * so that retries of the same fault dedupe onto one slot. A single one-shot
+ * boolean was spent by whatever failed first — on a machine without the CLI on
+ * PATH that is `command not found`, and the real 429 then logged nothing.
+ */
+function failureShape(msg: string): string {
+  return msg.replace(/\d+/g, '#').slice(0, 120)
+}
+
+/**
+ * Rate limits and upstream overloads are transient — the same prompt succeeds
+ * a few seconds later. Everything else (missing CLI, bad prompt, timeout) is
+ * not worth retrying.
+ *
+ * Exported for tests: the patterns below are an assumption about what the
+ * Claude CLI prints, and an assumption worth pinning.
+ */
+export function isRetryableExtractionError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err)
+  return /\b(429|503|529)\b|rate.?limit|overloaded|too many requests/i.test(msg)
+}
+
+/** Options accepted by `extractFromContent`. */
+export interface ExtractContentOptions {
+  sourceType?: MemorySourceType
+  tags?: string[]
+  /**
+   * Scope paths applied to facts the model did not scope itself. Rule files
+   * declare the part of the tree they govern in their own frontmatter, so that
+   * is far better than guessing from the source ref.
+   */
+  scopePaths?: string[]
+  /**
+   * When the source stated this — a commit date, a file mtime. Drives recency,
+   * so history-mined facts are not all dated "today".
+   */
+  observedAt?: string | null
+  /**
+   * The caller's cancel signal. Only the retry backoff observes it: an
+   * already-spawned summarizer runs to completion, but a cancelled run stops
+   * paying for further attempts.
+   */
+  signal?: AbortSignal
+}
 
 /** Structured fact from Haiku extraction. */
 interface ExtractedFact {
@@ -44,7 +123,13 @@ interface ExtractedFact {
 type ProgressCallback = (event: MemoryFeedProgress) => void
 
 class MemoryExtractionService {
-  private currentAbortController: AbortController | null = null
+  /**
+   * Every summarizer child currently in flight. A single field cannot work
+   * here: the bootstrap drain runs 3-6 extractions at once, so one spawn's
+   * timeout would abort a different spawn's process, and shutdown would kill
+   * only the most recently started child.
+   */
+  private liveAbortControllers = new Set<AbortController>()
   private isBusy = false
   private queue: Array<() => Promise<void>> = []
   private processing = false
@@ -115,10 +200,13 @@ class MemoryExtractionService {
     // Git changes since session start
     if (workspacePath && startSha) {
       try {
-        const gitLog = execSync(
-          `git log --stat ${startSha}..HEAD 2>/dev/null || true`,
-          { cwd: workspacePath, timeout: 5000, encoding: 'utf-8', maxBuffer: 10_000 }
-        ).trim()
+        const gitLog = execSync(`git log --stat ${startSha}..HEAD 2>/dev/null || true`, {
+          cwd: workspacePath,
+          timeout: 5000,
+          encoding: 'utf-8',
+          maxBuffer: 10_000,
+          windowsHide: true
+        }).trim()
         if (gitLog) {
           parts.push(`## Git Changes Since Session Start\n${gitLog.slice(0, 3000)}`)
         }
@@ -155,7 +243,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Session extraction: ${created} facts from conversation ${conversationId}`)
+        log.info(
+          `[MemoryExtraction] Session extraction: ${created} facts from conversation ${conversationId}`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Session extraction failed:', err)
@@ -175,7 +265,7 @@ class MemoryExtractionService {
     sourceRef: string,
     content: string,
     onProgress?: ProgressCallback,
-    opts?: { sourceType?: import('../../shared/types').MemorySourceType; tags?: string[] }
+    opts?: ExtractContentOptions
   ): Promise<number> {
     const sourceType = opts?.sourceType ?? 'document'
     const emit = (msg: string, status: MemoryFeedProgress['status'] = 'running'): void => {
@@ -189,15 +279,28 @@ class MemoryExtractionService {
 
     emit(`Extracting facts from ${sourceRef}...`)
 
+    const budget = estimateExtractionBudget(content, sourceRef)
     const prompt = buildExtractionPrompt(
-      `## Document: ${sourceRef}\n${content.substring(0, 50000)}`
+      `## Document: ${sourceRef}\n${content.substring(0, 50000)}`,
+      budget
     )
 
-    try {
-      const result = await this.spawnSummarizer(prompt, workspacePath, workspaceId)
-      const facts = parseExtractedFacts(result)
+    let created = 0
+    let writeErrors = 0
+    let factCount = 0
+    let lastWriteError: unknown = null
 
-      let created = 0
+    try {
+      const result = await this.spawnSummarizerWithRetry(
+        prompt,
+        workspacePath,
+        workspaceId,
+        emit,
+        opts?.signal
+      )
+      const facts = parseExtractedFacts(result, budget)
+      factCount = facts.length
+
       for (const fact of facts) {
         try {
           const written = await memoryEngineService.writeFact({
@@ -206,24 +309,52 @@ class MemoryExtractionService {
             title: fact.title,
             content: fact.content,
             tags: [...(fact.tags ?? []), ...(opts?.tags ?? [])],
-            scopePaths: fact.scopePaths ?? [sourceRef],
+            scopePaths: resolveScopePaths(fact.scopePaths, opts?.scopePaths, sourceRef),
             sourceType,
             sourceRef,
+            observedAt: opts?.observedAt ?? null,
             workspacePath
           })
           if (written) created++
         } catch (err) {
+          writeErrors++
+          lastWriteError = err
           log.warn('[MemoryExtraction] Failed to write content fact:', err)
         }
       }
-
-      emit(`Created ${created} facts from ${sourceRef}`, 'done')
-      return created
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       emit(`Extraction failed: ${msg}`, 'error')
-      return 0
+      // The model never answered, so "0 facts" is not a result — it is an
+      // absence of one. Returning 0 is indistinguishable from a clean empty
+      // extraction and would let the bootstrap executor record a doc-state
+      // hash for a file it never actually read, gating it out of every future
+      // scan. Throw so callers can tell a refusal from an empty document.
+      throw err instanceof Error ? err : new Error(msg)
     }
+
+    // Every write threw — that is a systemic fault (schema CHECK violation,
+    // locked DB, embedding provider crash), not "the model found nothing".
+    // Returning 0 here would look identical to a clean empty result and would
+    // let MemoryBootstrapService record a doc-state hash for a file that in
+    // fact produced nothing, permanently gating it out of future scans.
+    // Throw so the caller can tell the two apart.
+    if (writeErrors > 0 && created === 0) {
+      const msg = lastWriteError instanceof Error ? lastWriteError.message : String(lastWriteError)
+      emit(`All ${writeErrors} fact writes failed: ${msg}`, 'error')
+      throw new Error(
+        `[MemoryExtraction] All ${writeErrors} fact write(s) failed for ${sourceRef}: ${msg}`
+      )
+    }
+
+    if (writeErrors > 0) {
+      log.warn(
+        `[MemoryExtraction] ${writeErrors}/${factCount} fact write(s) failed for ${sourceRef} — ${created} succeeded`
+      )
+    }
+
+    emit(`Created ${created} facts from ${sourceRef}`, 'done')
+    return created
   }
 
   /**
@@ -237,7 +368,12 @@ class MemoryExtractionService {
     onProgress?: ProgressCallback
   ): Promise<number> {
     if (!existsSync(filePath)) {
-      onProgress?.({ status: 'error', message: 'File not found', source: 'document', timestamp: Date.now() })
+      onProgress?.({
+        status: 'error',
+        message: 'File not found',
+        source: 'document',
+        timestamp: Date.now()
+      })
       return 0
     }
 
@@ -270,23 +406,31 @@ class MemoryExtractionService {
     const { workspaceId, workspacePath, startSha, endSha } = params
 
     try {
-      const diffStat = execSync(
-        `git diff --stat ${startSha}..${endSha} 2>/dev/null || true`,
-        { cwd: workspacePath, timeout: 5000, encoding: 'utf-8', maxBuffer: 20_000 }
-      ).trim()
+      const diffStat = execSync(`git diff --stat ${startSha}..${endSha} 2>/dev/null || true`, {
+        cwd: workspacePath,
+        timeout: 5000,
+        encoding: 'utf-8',
+        maxBuffer: 20_000,
+        windowsHide: true
+      }).trim()
 
       if (!diffStat || diffStat.length < 20) return
 
-      const logOutput = execSync(
-        `git log --oneline ${startSha}..${endSha} 2>/dev/null || true`,
-        { cwd: workspacePath, timeout: 5000, encoding: 'utf-8', maxBuffer: 10_000 }
-      ).trim()
+      const logOutput = execSync(`git log --oneline ${startSha}..${endSha} 2>/dev/null || true`, {
+        cwd: workspacePath,
+        timeout: 5000,
+        encoding: 'utf-8',
+        maxBuffer: 10_000,
+        windowsHide: true
+      }).trim()
 
       // Extract touched file paths from diff stat
       const touchedPaths = diffStat
         .split('\n')
         .map((line) => line.trim().split(/\s+/)[0])
-        .filter((p) => p && !p.includes('changed') && !p.includes('insertion') && !p.includes('deletion'))
+        .filter(
+          (p) => p && !p.includes('changed') && !p.includes('insertion') && !p.includes('deletion')
+        )
 
       const prompt = buildExtractionPrompt(
         `## Commit Changes (${startSha.slice(0, 7)}..${endSha.slice(0, 7)})\n\n### Commits\n${logOutput.slice(0, 2000)}\n\n### Files Changed\n${diffStat.slice(0, 3000)}`
@@ -316,7 +460,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Commit extraction: ${created} facts from ${startSha.slice(0, 7)}..${endSha.slice(0, 7)}`)
+        log.info(
+          `[MemoryExtraction] Commit extraction: ${created} facts from ${startSha.slice(0, 7)}..${endSha.slice(0, 7)}`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Commit extraction failed:', err)
@@ -340,7 +486,10 @@ class MemoryExtractionService {
     workspacePath: string
     title: string
     status: 'complete' | 'failed'
-    phases: Array<{ phase: string; artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }> }>
+    phases: Array<{
+      phase: string
+      artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }>
+    }>
     tasks: Array<{ taskId: string; description: string; status: string }>
     clarifyQA?: Array<{ question: string; answer: string }>
   }): void {
@@ -355,11 +504,15 @@ class MemoryExtractionService {
     workspacePath: string
     title: string
     status: 'complete' | 'failed'
-    phases: Array<{ phase: string; artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }> }>
+    phases: Array<{
+      phase: string
+      artifacts?: Array<{ type: string; contentMd?: string; contentJson?: any }>
+    }>
     tasks: Array<{ taskId: string; description: string; status: string }>
     clarifyQA?: Array<{ question: string; answer: string }>
   }): Promise<void> {
-    const { blueprintId, workspaceId, workspacePath, title, status, phases, tasks, clarifyQA } = params
+    const { blueprintId, workspaceId, workspacePath, title, status, phases, tasks, clarifyQA } =
+      params
 
     const parts: string[] = []
     parts.push(`## Blueprint: ${title}\nFinal status: ${status}\n`)
@@ -388,7 +541,9 @@ class MemoryExtractionService {
     const completed = tasks.filter((t) => t.status === 'complete')
     const failed = tasks.filter((t) => t.status === 'failed')
     const skipped = tasks.filter((t) => t.status === 'skipped')
-    parts.push(`### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`)
+    parts.push(
+      `### Task Outcomes\nCompleted: ${completed.length}, Failed: ${failed.length}, Skipped: ${skipped.length}`
+    )
     if (failed.length > 0) {
       parts.push('#### Failed Tasks')
       for (const t of failed.slice(0, 10)) {
@@ -424,7 +579,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Blueprint extraction: ${created} facts from "${title}" (${status})`)
+        log.info(
+          `[MemoryExtraction] Blueprint extraction: ${created} facts from "${title}" (${status})`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Blueprint extraction failed:', err)
@@ -476,10 +633,21 @@ class MemoryExtractionService {
     }>
     durationMs: number
   }): Promise<void> {
-    const { workspaceId, workspacePath, conversationId, planTitle, planGoal, status, phases, durationMs } = params
+    const {
+      workspaceId,
+      workspacePath,
+      conversationId,
+      planTitle,
+      planGoal,
+      status,
+      phases,
+      durationMs
+    } = params
 
     const parts: string[] = []
-    parts.push(`## Chat Plan Execution: ${planTitle}\nFinal status: ${status}\nDuration: ${Math.round(durationMs / 1000)}s\n`)
+    parts.push(
+      `## Chat Plan Execution: ${planTitle}\nFinal status: ${status}\nDuration: ${Math.round(durationMs / 1000)}s\n`
+    )
 
     if (planGoal) {
       parts.push(`### Goal\n${planGoal}`)
@@ -488,24 +656,26 @@ class MemoryExtractionService {
     // Phase summary
     parts.push('### Phases')
     for (const phase of phases) {
-      const taskSummary = phase.tasks.length > 0
-        ? phase.tasks.map(t => `  - [${t.status}] ${t.title}`).join('\n')
-        : '  (no tasks)'
-      const filesSummary = phase.touchedFiles.length > 0
-        ? `  Files: ${phase.touchedFiles.join(', ')}`
-        : ''
-      parts.push(`- **${phase.phaseTitle}** (${phase.status})\n${taskSummary}${filesSummary ? '\n' + filesSummary : ''}`)
+      const taskSummary =
+        phase.tasks.length > 0
+          ? phase.tasks.map((t) => `  - [${t.status}] ${t.title}`).join('\n')
+          : '  (no tasks)'
+      const filesSummary =
+        phase.touchedFiles.length > 0 ? `  Files: ${phase.touchedFiles.join(', ')}` : ''
+      parts.push(
+        `- **${phase.phaseTitle}** (${phase.status})\n${taskSummary}${filesSummary ? '\n' + filesSummary : ''}`
+      )
     }
 
     // All touched files (deduped)
-    const allFiles = [...new Set(phases.flatMap(p => p.touchedFiles))]
+    const allFiles = [...new Set(phases.flatMap((p) => p.touchedFiles))]
     if (allFiles.length > 0) {
       parts.push(`### Files Modified\n${allFiles.slice(0, 30).join('\n')}`)
     }
 
     // Failed phases/tasks for gotcha extraction
-    const failedPhases = phases.filter(p => p.status === 'failed')
-    const failedTasks = phases.flatMap(p => p.tasks.filter(t => t.status === 'failed'))
+    const failedPhases = phases.filter((p) => p.status === 'failed')
+    const failedTasks = phases.flatMap((p) => p.tasks.filter((t) => t.status === 'failed'))
     if (failedPhases.length > 0 || failedTasks.length > 0) {
       parts.push('### Failures')
       for (const fp of failedPhases) {
@@ -544,7 +714,9 @@ class MemoryExtractionService {
       }
 
       if (created > 0) {
-        log.info(`[MemoryExtraction] Plan execution extraction: ${created} facts from "${planTitle}" (${status})`)
+        log.info(
+          `[MemoryExtraction] Plan execution extraction: ${created} facts from "${planTitle}" (${status})`
+        )
       }
     } catch (err) {
       log.warn('[MemoryExtraction] Plan execution extraction failed:', err)
@@ -566,9 +738,7 @@ class MemoryExtractionService {
 
     // Try Haiku extraction first
     try {
-      const prompt = buildExtractionPrompt(
-        `## Chat Message\n${messageContent.substring(0, 8000)}`
-      )
+      const prompt = buildExtractionPrompt(`## Chat Message\n${messageContent.substring(0, 8000)}`)
       const result = await this.spawnSummarizer(prompt, workspacePath ?? undefined, workspaceId)
       const facts = parseExtractedFacts(result)
 
@@ -616,7 +786,11 @@ class MemoryExtractionService {
 
     this.isBusy = true
     try {
-      onProgress?.({ source: 'document', status: 'running', message: 'Gathering project sources...' })
+      onProgress?.({
+        source: 'document',
+        status: 'running',
+        message: 'Gathering project sources...'
+      })
 
       const keyFiles = this.readKeyFiles(workspacePath)
       const treeListing = this.getTreeListing(workspacePath)
@@ -634,16 +808,30 @@ class MemoryExtractionService {
       let existingClaudeMd: string | null = null
       try {
         existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
-      } catch { /* none */ }
+      } catch {
+        /* none */
+      }
 
       let schemaContent: string | null = null
       try {
-        schemaContent = readFileSync(join(workspacePath, 'src/main/db/schema.sql'), 'utf-8')?.substring(0, 5000)
-      } catch { /* none */ }
+        schemaContent = readFileSync(
+          join(workspacePath, 'src/main/db/schema.sql'),
+          'utf-8'
+        )?.substring(0, 5000)
+      } catch {
+        /* none */
+      }
 
       onProgress?.({ source: 'document', status: 'running', message: 'Generating CLAUDE.md...' })
 
-      const prompt = buildRegeneratePrompt({ keyFiles, treeListing, agents, skills, existingClaudeMd, schemaContent })
+      const prompt = buildRegeneratePrompt({
+        keyFiles,
+        treeListing,
+        agents,
+        skills,
+        existingClaudeMd,
+        schemaContent
+      })
       // B2: Intentionally passes only workspacePath (no workspaceId) — regenerateClaudeMd
       // always uses the Claude CLI path because CLAUDE.md generation is a large-context task
       // ill-suited to the 10s local one-shot timeout.
@@ -681,22 +869,25 @@ class MemoryExtractionService {
 
     this.isBusy = true
     try {
-      onProgress?.({ source: 'document', status: 'running', message: 'Starting agentic CLAUDE.md generation...' })
+      onProgress?.({
+        source: 'document',
+        status: 'running',
+        message: 'Starting agentic CLAUDE.md generation...'
+      })
 
       // Read existing CLAUDE.md for context
       let existingClaudeMd = ''
       try {
         existingClaudeMd = readFileSync(join(workspacePath, 'CLAUDE.md'), 'utf-8')
-      } catch { /* none */ }
+      } catch {
+        /* none */
+      }
 
       const prompt = buildAgenticClaudeMdPrompt(existingClaudeMd)
 
       onProgress?.({ source: 'document', status: 'running', message: 'Agent exploring project...' })
 
-      const allowedTools = [
-        'Read', 'Grep', 'Glob',
-        ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES
-      ]
+      const allowedTools = ['Read', 'Grep', 'Glob', ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES]
 
       const result = await runAgenticClaude({
         workspaceId,
@@ -709,8 +900,16 @@ class MemoryExtractionService {
         mcpServers: ['code-graph'], // No memory tools for CLAUDE.md gen
         onLine: (line) => {
           // Surface progress to the UI
-          if (line.length > 10 && !line.startsWith(SENTINELS.BEGIN) && !line.startsWith(SENTINELS.END)) {
-            onProgress?.({ source: 'document', status: 'running', message: `Agent: ${line.substring(0, 100)}` })
+          if (
+            line.length > 10 &&
+            !line.startsWith(SENTINELS.BEGIN) &&
+            !line.startsWith(SENTINELS.END)
+          ) {
+            onProgress?.({
+              source: 'document',
+              status: 'running',
+              message: `Agent: ${line.substring(0, 100)}`
+            })
           }
         }
       })
@@ -726,14 +925,19 @@ class MemoryExtractionService {
       const trimmed = result.stdout.trim()
       if (trimmed.length > 50) {
         log.warn('[regenerateClaudeMdAgentic] Sentinels missing — falling back to full stdout')
-        onProgress?.({ source: 'document', status: 'done', message: 'CLAUDE.md generated (no sentinels)' })
+        onProgress?.({
+          source: 'document',
+          status: 'done',
+          message: 'CLAUDE.md generated (no sentinels)'
+        })
         return { success: true, content: trimmed }
       }
 
       // Empty output
-      const errorMsg = result.exitCode !== 0
-        ? `Claude CLI exited with code ${result.exitCode}`
-        : 'Agent produced no output'
+      const errorMsg =
+        result.exitCode !== 0
+          ? `Claude CLI exited with code ${result.exitCode}`
+          : 'Agent produced no output'
       log.error(`[regenerateClaudeMdAgentic] Failed: ${errorMsg}`)
       onProgress?.({ source: 'document', status: 'error', message: errorMsg })
       return { success: false, content: '', error: errorMsg }
@@ -749,13 +953,81 @@ class MemoryExtractionService {
 
   // ── Internals ───────────────────────────────────────────────────────────
 
-  private async spawnSummarizer(prompt: string, workspacePath?: string, workspaceId?: string): Promise<string> {
+  /**
+   * Feed Brain runs several summarizers concurrently, so a 429 is an expected
+   * event rather than an exception. Backing off absorbs the burst; without it
+   * the file fails, its doc-state hash is not written, and the next run redoes
+   * the whole thing at the same concurrency — amplifying the storm instead of
+   * damping it.
+   *
+   * `signal` is the run's cancel/pause signal: retrying (or sleeping) after the
+   * user stopped the run spends tokens on work that will be thrown away.
+   */
+  private async spawnSummarizerWithRetry(
+    prompt: string,
+    workspacePath: string | undefined,
+    workspaceId: string | undefined,
+    emit: (msg: string, status?: MemoryFeedProgress['status']) => void,
+    signal?: AbortSignal
+  ): Promise<string> {
+    let lastErr: unknown
+    for (let attempt = 0; attempt <= EXTRACTION_MAX_RETRIES; attempt++) {
+      try {
+        return await this.spawnSummarizer(prompt, workspacePath, workspaceId)
+      } catch (err) {
+        lastErr = err
+        const retryable = isRetryableExtractionError(err)
+
+        // The classifier matches text the Claude CLI is *assumed* to write on a
+        // 429. Log the raw failure so that assumption can be checked against a
+        // real rate limit instead of trusted blind — if the backoff never fires
+        // during a storm, this line says why. One line per distinct failure
+        // shape, capped, so each *kind* of fault gets recorded exactly once.
+        if (!retryable) {
+          const rawMsg = err instanceof Error ? err.message : String(err)
+          const shape = failureShape(rawMsg)
+          if (
+            !loggedFailureShapes.has(shape) &&
+            loggedFailureShapes.size < MAX_LOGGED_FAILURE_SHAPES
+          ) {
+            loggedFailureShapes.add(shape)
+            log.warn(
+              '[MemoryExtraction] Non-retryable extraction failure — raw text the retry ' +
+                `classifier was matched against (first occurrence of this shape): ${rawMsg.slice(0, 1000)}`
+            )
+          }
+        }
+
+        if (!retryable || attempt === EXTRACTION_MAX_RETRIES || signal?.aborted) break
+        const delayMs = EXTRACTION_RETRY_BASE_MS * 2 ** attempt
+        log.warn(
+          `[MemoryExtraction] Transient extraction failure (attempt ${attempt + 1}/${
+            EXTRACTION_MAX_RETRIES + 1
+          }), retrying in ${delayMs}ms:`,
+          err
+        )
+        emit(`Rate limited — retrying in ${Math.round(delayMs / 1000)}s…`)
+        await abortableSleep(delayMs, signal)
+        if (signal?.aborted) break
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
+  }
+
+  private async spawnSummarizer(
+    prompt: string,
+    workspacePath?: string,
+    workspaceId?: string
+  ): Promise<string> {
     // G5: Gate memoryFeed through resolveAssignment — route to local LLM when assigned
     // A2: Guard workspacePath — null paths fall through to the Claude CLI path below
     if (workspaceId && workspacePath) {
-      const assignment = resolveAssignment({ action: 'memoryFeed', ...buildResolveOpts(workspaceId) })
+      const assignment = resolveAssignment({
+        action: 'memoryFeed',
+        ...buildResolveOpts(workspaceId)
+      })
       if (assignment.provider === 'local-llm') {
-        // A3: Local path does not wire this.currentAbortController — bounded by
+        // A3: Local path does not wire an abort controller — bounded by
         // runOneShotLocal's internal 10s timeout (LOCAL_REQUEST_TIMEOUT_MS).
         const localCfg = modelConfigService.getLocalLLMConfig(workspacePath)
         const result = await runOneShotLocal({
@@ -775,13 +1047,16 @@ class MemoryExtractionService {
     }
 
     return new Promise((resolve, reject) => {
-      this.currentAbortController = new AbortController()
-      const { signal } = this.currentAbortController
+      // Scoped to this spawn, not to the service: concurrent extractions each
+      // need to time out (and be killed) independently.
+      const controller = new AbortController()
+      const { signal } = controller
+      this.liveAbortControllers.add(controller)
 
       const TIMEOUT_MS = 5 * 60 * 1000
       const timer = setTimeout(() => {
         log.warn('Extraction summarizer timed out after 5 minutes')
-        this.currentAbortController?.abort()
+        controller.abort()
       }, TIMEOUT_MS)
 
       const env = buildEnvWithPath()
@@ -791,7 +1066,7 @@ class MemoryExtractionService {
       const child = spawn(
         'claude',
         ['-p', prompt, '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
-        { stdio: ['ignore', 'pipe', 'pipe'], env, signal }
+        { stdio: ['ignore', 'pipe', 'pipe'], env, signal, windowsHide: true }
       )
 
       log.info(`Extraction summarizer spawned (prompt length: ${prompt.length} chars)`)
@@ -801,7 +1076,8 @@ class MemoryExtractionService {
       const MAX_OUTPUT = 2 * 1024 * 1024
 
       child.stdout?.on('data', (data: Buffer) => {
-        if (stdout.length < MAX_OUTPUT) stdout += data.toString().slice(0, MAX_OUTPUT - stdout.length)
+        if (stdout.length < MAX_OUTPUT)
+          stdout += data.toString().slice(0, MAX_OUTPUT - stdout.length)
       })
       child.stderr?.on('data', (data: Buffer) => {
         const chunk = data.toString()
@@ -811,18 +1087,19 @@ class MemoryExtractionService {
 
       child.on('exit', (code) => {
         clearTimeout(timer)
-        this.currentAbortController = null
+        this.liveAbortControllers.delete(controller)
         if (code === 0 && stdout.trim()) {
           resolve(stdout.trim())
         } else {
-          const details = stderr.trim() || (stdout.trim() ? `Unexpected: ${stdout.slice(0, 200)}` : 'No output')
+          const details =
+            stderr.trim() || (stdout.trim() ? `Unexpected: ${stdout.slice(0, 200)}` : 'No output')
           reject(new Error(`Extraction failed (exit ${code}): ${details}`))
         }
       })
 
       child.on('error', (err) => {
         clearTimeout(timer)
-        this.currentAbortController = null
+        this.liveAbortControllers.delete(controller)
         reject(new Error(`Failed to spawn extraction summarizer: ${err.message}`))
       })
     })
@@ -838,19 +1115,36 @@ class MemoryExtractionService {
           const content = readFileSync(filePath, 'utf-8')
           sections.push(`### ${name}\n\`\`\`\n${content.substring(0, 5000)}\n\`\`\``)
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     return sections.join('\n\n')
   }
 
   private getTreeListing(workspacePath: string, depth = 3): string {
     const lines: string[] = []
-    const ignored = new Set(['node_modules', '.git', 'dist', 'out', 'build', '.next', '.cache', 'coverage', '.idea', '.vscode', '__pycache__', '.DS_Store'])
+    const ignored = new Set([
+      'node_modules',
+      '.git',
+      'dist',
+      'out',
+      'build',
+      '.next',
+      '.cache',
+      'coverage',
+      '.idea',
+      '.vscode',
+      '__pycache__',
+      '.DS_Store'
+    ])
 
     const walk = (dir: string, prefix: string, currentDepth: number): void => {
       if (currentDepth > depth) return
       try {
-        const entries = readdirSync(dir).filter((e) => !ignored.has(e)).sort()
+        const entries = readdirSync(dir)
+          .filter((e) => !ignored.has(e))
+          .sort()
         for (const entry of entries) {
           const fullPath = join(dir, entry)
           try {
@@ -861,9 +1155,13 @@ class MemoryExtractionService {
             } else {
               lines.push(`${prefix}${entry}`)
             }
-          } catch { /* skip */ }
+          } catch {
+            /* skip */
+          }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
 
     walk(workspacePath, '', 0)
@@ -871,22 +1169,94 @@ class MemoryExtractionService {
   }
 
   shutdown(): void {
-    if (this.currentAbortController) {
-      this.currentAbortController.abort()
-      this.currentAbortController = null
-    }
+    for (const controller of this.liveAbortControllers) controller.abort()
+    this.liveAbortControllers.clear()
     this.isBusy = false
   }
 }
 
+// ── Scope resolution ──────────────────────────────────────────────────────────
+
+/**
+ * Pick the scope paths for an extracted fact.
+ *
+ * `parseExtractedFacts` always returns an array, empty when the model omitted
+ * the field — so a plain `??` fallback never fired and unscoped facts were
+ * being written with no scope at all. Path-based activation depends on this
+ * column being populated, so an empty array now falls through to the caller's
+ * declared scope and finally to the source reference.
+ */
+function resolveScopePaths(
+  factScopePaths: string[] | undefined,
+  declared: string[] | undefined,
+  sourceRef: string
+): string[] {
+  if (factScopePaths && factScopePaths.length > 0) return factScopePaths
+  if (declared && declared.length > 0) return declared.slice(0, 10)
+  return [sourceRef]
+}
+
 // ── Extraction prompt ─────────────────────────────────────────────────────────
 
-const VALID_CATEGORIES: MemoryFactCategory[] = ['decision', 'convention', 'gotcha', 'preference', 'reference']
+const VALID_CATEGORIES: MemoryFactCategory[] = [
+  'decision',
+  'convention',
+  'gotcha',
+  'preference',
+  'reference'
+]
 
-/** Max facts to accept from a single extraction call. */
-const MAX_EXTRACTED_FACTS = 3
+/** Score content richness to determine extraction budget per chunk. */
+function estimateExtractionBudget(content: string, sourceRef: string): number {
+  let score = 0
 
-function buildExtractionPrompt(source: string): string {
+  // Heading density (more structure = more facts worth capturing)
+  const headingCount = (content.match(/^#{1,4}\s+/gm) || []).length
+  score += Math.min(headingCount, 10)
+
+  // Decision language signals
+  const decisionSignals = [
+    /\bwe chose\b/gi,
+    /\bdecision\b/gi,
+    /\bconvention\b/gi,
+    /\bmust\b/gi,
+    /\bnever\b/gi,
+    /\balways\b/gi,
+    /\barchitecture\b/gi,
+    /\bpattern\b/gi,
+    /\brequired?\b/gi,
+    /\bIMPORTANT\b/g,
+    /\bWARNING\b/g,
+    /\bNOTE\b/g,
+    /\bdo not\b/gi,
+    /\bdon't\b/gi,
+    /\bavoid\b/gi
+  ]
+  for (const signal of decisionSignals) {
+    score += Math.min((content.match(signal) || []).length, 3)
+  }
+
+  // Code blocks (examples = richer context)
+  const codeBlocks = (content.match(/```/g) || []).length / 2
+  score += Math.min(codeBlocks, 5)
+
+  // Length factor
+  if (content.length > 20_000) score += 3
+  else if (content.length > 5_000) score += 1
+
+  // File name signals — rich documentation files get a higher budget
+  const richFilePatterns = /CLAUDE|ARCHITECTURE|CONTRIBUTING|DESIGN|CONVENTIONS|ADR|DECISIONS/i
+  if (richFilePatterns.test(sourceRef)) score += 5
+
+  // Map score to budget: min 2, max 10
+  if (score >= 20) return 10
+  if (score >= 12) return 7
+  if (score >= 6) return 5
+  if (score >= 3) return 3
+  return 2
+}
+
+function buildExtractionPrompt(source: string, maxFacts: number = 3): string {
   return `You are a knowledge extraction engine. Analyze the following source material and extract ONLY the most durable, high-value facts.
 
 For each fact, output a JSON object on its own line:
@@ -903,7 +1273,8 @@ For each fact, output a JSON object on its own line:
 
 Strictness rules:
 - Output ONLY valid JSON objects, one per line. No markdown, no explanation.
-- MAXIMUM 3 facts. Fewer is better — only extract what’s genuinely durable.
+- Extract UP TO ${maxFacts} facts from this content.
+- If the content has fewer than ${maxFacts} worthwhile facts, extract fewer.
 - Skip version numbers, schema versions, dependency versions — these change frequently.
 - Skip things trivially discoverable from a single file read (imports, file structure).
 - Skip facts that restate what the code already says ("X uses Y" when X imports Y).
@@ -916,7 +1287,7 @@ ${source}`
 }
 
 /** Parse Haiku output: one JSON fact per line. */
-function parseExtractedFacts(text: string): ExtractedFact[] {
+function parseExtractedFacts(text: string, maxFacts: number = 3): ExtractedFact[] {
   const facts: ExtractedFact[] = []
   const lines = text.split('\n').filter((l) => l.trim().startsWith('{'))
 
@@ -929,7 +1300,7 @@ function parseExtractedFacts(text: string): ExtractedFact[] {
       facts.push({
         category: data.category,
         title: String(data.title).slice(0, 200),
-        content: String(data.content).slice(0, 2000),
+        content: String(data.content).slice(0, 4000),
         tags: Array.isArray(data.tags) ? data.tags.map(String).slice(0, 10) : [],
         scopePaths: Array.isArray(data.scopePaths) ? data.scopePaths.map(String).slice(0, 10) : []
       })
@@ -938,8 +1309,8 @@ function parseExtractedFacts(text: string): ExtractedFact[] {
     }
   }
 
-  // Enforce cap: take only the first MAX_EXTRACTED_FACTS
-  return facts.slice(0, MAX_EXTRACTED_FACTS)
+  // Enforce cap: take only up to the dynamic budget
+  return facts.slice(0, maxFacts)
 }
 
 // ── CLAUDE.md regeneration prompt (retained from memory-feed.service.ts) ──
@@ -954,13 +1325,22 @@ interface RegenerateSources {
 }
 
 function buildRegeneratePrompt(sources: RegenerateSources): string {
-  const agentLines = sources.agents.length > 0
-    ? sources.agents.map((a) => `- ${a.parsed.name}: ${a.parsed.description || 'no description'} (model: ${a.parsed.model}, skills: ${a.parsed.skills.join(', ') || 'none'})`).join('\n')
-    : '(none deployed)'
+  const agentLines =
+    sources.agents.length > 0
+      ? sources.agents
+          .map(
+            (a) =>
+              `- ${a.parsed.name}: ${a.parsed.description || 'no description'} (model: ${a.parsed.model}, skills: ${a.parsed.skills.join(', ') || 'none'})`
+          )
+          .join('\n')
+      : '(none deployed)'
 
-  const skillLines = sources.skills.length > 0
-    ? sources.skills.map((s) => `- ${s.name}: ${s.frontmatter?.description || 'no description'}`).join('\n')
-    : '(none deployed)'
+  const skillLines =
+    sources.skills.length > 0
+      ? sources.skills
+          .map((s) => `- ${s.name}: ${s.frontmatter?.description || 'no description'}`)
+          .join('\n')
+      : '(none deployed)'
 
   const existingSection = sources.existingClaudeMd
     ? `### Existing CLAUDE.md (for reference)\n${sources.existingClaudeMd.substring(0, 10000)}`

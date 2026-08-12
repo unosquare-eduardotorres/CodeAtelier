@@ -47,7 +47,7 @@ async function collectChunks(
   executor: OpenCodeExecutor,
   events: unknown[]
 ): Promise<Array<StreamChunk>> {
-  const proto = OpenCodeExecutor.prototype as unknown as Record<string, Function>
+  const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
   const processEventStream = proto.processEventStream.bind(executor)
 
   const gen = processEventStream({
@@ -72,10 +72,7 @@ async function collectChunks(
 describe('processEventStream — synthetic SSE integration', () => {
   test('happy path: text → idle produces text chunk then completes', async () => {
     const executor = new OpenCodeExecutor()
-    const chunks = await collectChunks(executor, [
-      textPartEvent('Hello world'),
-      sessionIdleEvent()
-    ])
+    const chunks = await collectChunks(executor, [textPartEvent('Hello world'), sessionIdleEvent()])
 
     const textChunks = chunks.filter((c) => c.type === 'text')
     assert.ok(textChunks.length >= 1, 'Should emit at least one text chunk')
@@ -142,9 +139,7 @@ describe('processEventStream — synthetic SSE integration', () => {
 
   test('string error still works (regression guard)', async () => {
     const executor = new OpenCodeExecutor()
-    const chunks = await collectChunks(executor, [
-      sessionErrorEvent('plain string error')
-    ])
+    const chunks = await collectChunks(executor, [sessionErrorEvent('plain string error')])
 
     const errorChunks = chunks.filter((c) => c.type === 'error')
     assert.ok(errorChunks.length >= 1, 'Should emit error chunk for string error')
@@ -181,7 +176,10 @@ describe('processEventStream — synthetic SSE integration', () => {
       // No sessionIdleEvent — session.error IS the last event
     ])
 
-    assert.ok(Date.now() < deadline, 'DEADLOCK: stream hung on normalizer-classified transient error')
+    assert.ok(
+      Date.now() < deadline,
+      'DEADLOCK: stream hung on normalizer-classified transient error'
+    )
     assert.ok(chunks.length >= 1, 'Should produce chunks and terminate')
   })
 })

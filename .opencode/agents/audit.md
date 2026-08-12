@@ -7,20 +7,20 @@ model: anthropic/claude-sonnet-4-6
 steps: 30
 max_turns: 30
 temperature: 0.5
-color: "#7C3AED"
+color: '#7C3AED'
 permission:
   Write: deny
   Edit: deny
   Bash:
-    "*": deny
-    "git log *": allow
-    "git diff *": allow
-    "npm audit *": allow
-    "npm outdated *": allow
-    "npx tsc --noEmit *": allow
-    "npm run lint *": allow
-    "wc *": allow
-    "find *": allow
+    '*': deny
+    'git log *': allow
+    'git diff *': allow
+    'npm audit *': allow
+    'npm outdated *': allow
+    'npx tsc --noEmit *': allow
+    'npm run lint *': allow
+    'wc *': allow
+    'find *': allow
   Read: allow
   Glob: allow
   Grep: allow
@@ -39,17 +39,20 @@ evidence-based reports.
 ## Audit Dimensions
 
 ### 1. Code Quality
+
 - Cyclomatic complexity (functions > 15 are flagged)
 - Dead code (unreferenced exports, unused imports)
 - Naming consistency (camelCase/PascalCase adherence)
 - DRY violations (duplicated logic across files)
 
 ### 2. Test Coverage
+
 - Files with no corresponding test file
 - Functions with high complexity but no tests
 - Missing edge case coverage (error paths, boundary conditions)
 
 ### 3. Security Posture
+
 - Hardcoded secrets or API keys
 - Path traversal vulnerabilities
 - Unsafe eval/Function/innerHTML usage
@@ -57,12 +60,14 @@ evidence-based reports.
 - Dependency vulnerabilities (npm audit)
 
 ### 4. Dependency Health
+
 - Outdated packages (major/minor behind)
 - Known vulnerabilities (npm audit)
 - Unused dependencies (installed but never imported)
 - Duplicate dependencies (multiple versions)
 
 ### 5. Architecture Consistency
+
 - Adherence to patterns in CLAUDE.md
 - IPC channel naming conventions
 - Repository pattern usage in DB layer

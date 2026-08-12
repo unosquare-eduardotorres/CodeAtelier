@@ -21,9 +21,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Chat Dialogs', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -38,9 +36,7 @@ test.describe('Chat Dialogs', () => {
   }
 
   /** Navigate to chats tab and select a conversation. */
-  async function selectConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasTab) {
@@ -57,12 +53,20 @@ test.describe('Chat Dialogs', () => {
     return true
   }
 
-  test('close dialog appears with confirmation when closing active conversation', async ({ electronPage: page }) => {
+  test('close dialog appears with confirmation when closing active conversation', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Hover over the active chat item and click delete
     const chatItems = page.locator('[data-testid="chat-item"]')
@@ -72,7 +76,10 @@ test.describe('Chat Dialogs', () => {
 
     const deleteBtn = firstItem.locator('[aria-label*="Delete conversation"]').first()
     const hasDelete = await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasDelete) { test.skip(); return }
+    if (!hasDelete) {
+      test.skip()
+      return
+    }
 
     await deleteBtn.click()
     await page.waitForTimeout(800)
@@ -92,17 +99,31 @@ test.describe('Chat Dialogs', () => {
     if (hasCancel) await cancelBtn.click()
   })
 
-  test('rewind dialog appears when reverting to a previous message', async ({ electronPage: page }) => {
+  test('rewind dialog appears when reverting to a previous message', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Look for a rewind button in the chat panel
-    const rewindBtn = page.locator('[aria-label*="rewind" i], [title*="rewind" i], button').filter({ hasText: /rewind/i }).first()
+    const rewindBtn = page
+      .locator('[aria-label*="rewind" i], [title*="rewind" i], button')
+      .filter({ hasText: /rewind/i })
+      .first()
     const hasRewind = await rewindBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRewind) { test.skip(); return }
+    if (!hasRewind) {
+      test.skip()
+      return
+    }
 
     await rewindBtn.click()
     await page.waitForTimeout(800)
@@ -126,10 +147,16 @@ test.describe('Chat Dialogs', () => {
 
   test('complete dialog shows when marking a task complete', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Look for a "Complete" button in the chat header or actions
     const completeBtn = page.locator('[aria-label*="complete" i], [title*="complete" i]').first()
@@ -139,7 +166,10 @@ test.describe('Chat Dialogs', () => {
     if (!hasComplete) {
       const textBtn = page.getByRole('button', { name: /complete/i }).first()
       const hasTextBtn = await textBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-      if (!hasTextBtn) { test.skip(); return }
+      if (!hasTextBtn) {
+        test.skip()
+        return
+      }
       await textBtn.click()
     } else {
       await completeBtn.click()
@@ -166,9 +196,14 @@ test.describe('Chat Dialogs', () => {
     expect(true).toBeTruthy()
   })
 
-  test('session recovery banner appears after connection recovery', async ({ electronPage: page }) => {
+  test('session recovery banner appears after connection recovery', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Session recovery banner is state-dependent — it only appears when
     // recovering from a connection loss. We verify the component structure
@@ -187,9 +222,14 @@ test.describe('Chat Dialogs', () => {
     expect(true).toBeTruthy()
   })
 
-  test('budget cap banner appears when token budget is near limit', async ({ electronPage: page }) => {
+  test('budget cap banner appears when token budget is near limit', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Budget cap banner is state-dependent — it only appears when
     // the per-turn cost cap is reached. We verify it renders correctly

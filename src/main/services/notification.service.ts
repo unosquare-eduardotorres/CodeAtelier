@@ -14,7 +14,12 @@
  * macOS system sounds are used — no custom audio files required.
  */
 
-import { Notification, app, type BrowserWindow, type NotificationConstructorOptions } from 'electron'
+import {
+  Notification,
+  app,
+  type BrowserWindow,
+  type NotificationConstructorOptions
+} from 'electron'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { safeWindowSend } from '../ipc/safe-send'
@@ -36,7 +41,8 @@ const GROUP_MAP: Record<string, string> = {
   audit: 'code-atelier-audit',
   mpa: 'code-atelier-mpa',
   blueprint: 'code-atelier-blueprint',
-  council: 'code-atelier-council'
+  council: 'code-atelier-council',
+  memory: 'code-atelier-memory'
 }
 
 // ── Service Labels ────────────────────────────────────────────────────────

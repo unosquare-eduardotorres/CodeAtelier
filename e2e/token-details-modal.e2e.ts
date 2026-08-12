@@ -13,9 +13,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Token Details Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -29,9 +27,7 @@ test.describe('Token Details Modal', () => {
     return true
   }
 
-  async function openTokenDetailsModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openTokenDetailsModal(page: import('@playwright/test').Page): Promise<boolean> {
     const tokenIndicator = page.locator('[data-testid="token-indicator"]')
     let hasIndicator = await tokenIndicator.isVisible({ timeout: 3_000 }).catch(() => false)
     if (!hasIndicator) {
@@ -45,13 +41,22 @@ test.describe('Token Details Modal', () => {
       await tokenIndicator.click()
       await page.waitForTimeout(500)
     }
-    return page.locator('[data-testid="token-details-modal"]').isVisible({ timeout: 3_000 }).catch(() => false)
+    return page
+      .locator('[data-testid="token-details-modal"]')
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
   }
 
   test('modal opens with live counters', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="token-details-modal"]')
     await expect(modal).toBeVisible()
@@ -63,8 +68,14 @@ test.describe('Token Details Modal', () => {
 
   test('feature breakdown table shows usage', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const featureTable = page.locator('[data-testid="token-feature-table"]')
     const hasTable = await featureTable.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -78,8 +89,14 @@ test.describe('Token Details Modal', () => {
 
   test('close button and Escape key dismiss', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="token-details-modal"]')
     const closeBtn = page.locator('[data-testid="token-close-btn"]')
@@ -98,8 +115,14 @@ test.describe('Token Details Modal', () => {
 
   test('modal header shows descriptive title', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="token-details-modal"]')
     await expect(modal).toBeVisible()
@@ -111,12 +134,21 @@ test.describe('Token Details Modal', () => {
 
   test('context window section shows formatted token counts', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const liveCounters = page.locator('[data-testid="token-live-counters"]')
     const hasCounters = await liveCounters.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCounters) { test.skip(); return }
+    if (!hasCounters) {
+      test.skip()
+      return
+    }
 
     // Should contain elements with tabular-nums class for numeric formatting
     const tabularNums = liveCounters.locator('.tabular-nums')
@@ -125,8 +157,14 @@ test.describe('Token Details Modal', () => {
 
   test('re-opening modal after close works correctly', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="token-details-modal"]')
     await expect(modal).toBeVisible()
@@ -134,7 +172,10 @@ test.describe('Token Details Modal', () => {
     // Close via button
     const closeBtn = page.locator('[data-testid="token-close-btn"]')
     const hasClose = await closeBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasClose) { test.skip(); return }
+    if (!hasClose) {
+      test.skip()
+      return
+    }
 
     await closeBtn.click()
     await page.waitForTimeout(500)
@@ -148,8 +189,14 @@ test.describe('Token Details Modal', () => {
 
   test('empty state when no usage recorded', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
-    if (!(await openTokenDetailsModal(page))) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
+    if (!(await openTokenDetailsModal(page))) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="token-details-modal"]')
     await expect(modal).toBeVisible()

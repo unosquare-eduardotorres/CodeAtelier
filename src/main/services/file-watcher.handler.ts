@@ -4,6 +4,8 @@ import { fileWatcherService, type FilesChangedEvent } from './file-watcher.servi
 import { codeGraphService } from './code-graph.service'
 import { vectorSearchService } from './vector-search.service'
 import { convertTagsToChunks } from './tag-to-chunk-adapter'
+import { isExcludedPath, matchesSkipPattern } from './code-graph-exclusions'
+import { loadAllIgnorePatterns } from './workspace-ignore'
 import { workspaceRepository } from '../db/repositories'
 
 /**
@@ -22,7 +24,9 @@ export function initFileWatcherHandler(): void {
         // Bootstrap: no persisted index yet — run a full tree-sitter parse.
         // Cheap for small/medium repos; subsequent changes take the incremental path.
         try {
-          log.info(`[FileWatcher] Code graph bootstrap: running full indexWorkspace for ${workspaceId}`)
+          log.info(
+            `[FileWatcher] Code graph bootstrap: running full indexWorkspace for ${workspaceId}`
+          )
           await codeGraphService.indexWorkspace(workspaceId, workspacePath)
         } catch (err) {
           log.error('[FileWatcher] Code graph bootstrap failed:', err)
@@ -53,6 +57,15 @@ async function reindexSemanticSearch(
   workspacePath: string,
   changedFiles: string[]
 ): Promise<void> {
+  // Apply the same exclusions as full indexing. Without this, a `pod install`
+  // or `npm install` re-introduces every vendored file the pruning walker
+  // deliberately skipped.
+  const ignorePatterns = loadAllIgnorePatterns(workspacePath)
+  const indexable = changedFiles.filter(
+    (rel) => !isExcludedPath(rel) && !matchesSkipPattern(rel, ignorePatterns)
+  )
+  if (indexable.length === 0) return
+
   const { getTags, initParser } =
     (await import('repomap-mcp/dist/tags.js')) as typeof import('repomap-mcp/dist/tags.js')
   await initParser()
@@ -66,7 +79,7 @@ async function reindexSemanticSearch(
     kind: 'def' | 'ref'
   }> = []
 
-  for (const relPath of changedFiles) {
+  for (const relPath of indexable) {
     const absPath = join(workspacePath, relPath)
     try {
       const tags = await getTags(absPath, relPath, null, false)
@@ -90,10 +103,11 @@ async function reindexSemanticSearch(
   // Re-index only the changed chunks (upsert semantics)
   await vectorSearchService.reindexFiles(workspaceId, workspacePath, chunks, fileContents, {
     generateDescriptions: !!settings.semanticSearchDescriptions,
-    descriptionModel: settings.descriptionModel || 'claude-haiku-4-5-20251001'
+    descriptionModel: settings.descriptionModel || 'claude-haiku-4-5-20251001',
+    skipPatterns: ignorePatterns
   })
 
   log.info(
-    `[FileWatcher] Semantic search updated: ${chunks.length} chunks from ${changedFiles.length} files`
+    `[FileWatcher] Semantic search updated: ${chunks.length} chunks from ${indexable.length} files`
   )
 }

@@ -140,7 +140,6 @@ export abstract class MpaBaseAdapter extends BaseRoleAdapter {
     /* no-op */
   }
 
-
   override onSessionStop(): void {
     this.systemPrompt = null
     this.goalCondition = null

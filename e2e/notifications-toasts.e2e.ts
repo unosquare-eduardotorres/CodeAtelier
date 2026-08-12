@@ -12,9 +12,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Notifications & Toasts', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -30,22 +28,41 @@ test.describe('Notifications & Toasts', () => {
 
   test('notification stack renders toast messages', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const stack = page.locator('[data-testid="notification-stack"]')
     const hasStack = await stack.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStack) { test.skip(); return }
+    if (!hasStack) {
+      test.skip()
+      return
+    }
 
-    const toasts = stack.locator('[data-testid="permission-approval-modal"], [data-testid="completion-toast"]')
+    const toasts = stack.locator(
+      '[data-testid="permission-approval-modal"], [data-testid="completion-toast"]'
+    )
     expect(await toasts.count()).toBeGreaterThan(0)
   })
 
   test('permission modal shows accept button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const permissionModal = page.locator('[data-testid="permission-approval-modal"]')
-    if (!(await permissionModal.first().isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (
+      !(await permissionModal
+        .first()
+        .isVisible({ timeout: 5_000 })
+        .catch(() => false))
+    ) {
+      test.skip()
+      return
+    }
 
     const text = await permissionModal.first().textContent()
     expect(text?.length).toBeGreaterThan(0)
@@ -61,10 +78,21 @@ test.describe('Notifications & Toasts', () => {
 
   test('completion toast shows success feedback', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const completionToast = page.locator('[data-testid="completion-toast"]')
-    if (!(await completionToast.first().isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (
+      !(await completionToast
+        .first()
+        .isVisible({ timeout: 5_000 })
+        .catch(() => false))
+    ) {
+      test.skip()
+      return
+    }
 
     const text = await completionToast.first().textContent()
     expect(text?.length).toBeGreaterThan(0)
@@ -73,13 +101,24 @@ test.describe('Notifications & Toasts', () => {
 
   test('multiple toasts stack without overlap', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const stack = page.locator('[data-testid="notification-stack"]')
-    if (!(await stack.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await stack.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
-    const toasts = stack.locator('[data-testid="permission-approval-modal"], [data-testid="completion-toast"]')
-    if ((await toasts.count()) < 2) { test.skip(); return }
+    const toasts = stack.locator(
+      '[data-testid="permission-approval-modal"], [data-testid="completion-toast"]'
+    )
+    if ((await toasts.count()) < 2) {
+      test.skip()
+      return
+    }
 
     const box1 = await toasts.nth(0).boundingBox()
     const box2 = await toasts.nth(1).boundingBox()
@@ -90,16 +129,27 @@ test.describe('Notifications & Toasts', () => {
 
   test('toast dismiss button removes immediately', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
-    const toasts = page.locator('[data-testid="permission-approval-modal"], [data-testid="completion-toast"]')
+    const toasts = page.locator(
+      '[data-testid="permission-approval-modal"], [data-testid="completion-toast"]'
+    )
     const count = await toasts.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     const firstToast = toasts.first()
     await expect(firstToast).toBeVisible()
     const dismissBtn = firstToast.locator('[aria-label="Dismiss"]')
-    if (!(await dismissBtn.isVisible({ timeout: 2_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await dismissBtn.isVisible({ timeout: 2_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await dismissBtn.click()
     await page.waitForTimeout(500)

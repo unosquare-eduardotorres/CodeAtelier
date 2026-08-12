@@ -16,9 +16,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Compact Context Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -34,10 +32,16 @@ test.describe('Compact Context Modal', () => {
 
   test('modal renders with context usage bar', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="compact-context-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await expect(modal).toBeVisible()
     await expect(page.locator('[data-testid="context-usage-bar"]')).toBeVisible()
@@ -45,10 +49,16 @@ test.describe('Compact Context Modal', () => {
 
   test('category breakdown shows token distribution', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="compact-context-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     const categoryRows = modal.locator('.tabular-nums')
     const count = await categoryRows.count()
@@ -60,13 +70,22 @@ test.describe('Compact Context Modal', () => {
 
   test('MCP tools collapsible shows top tool consumers', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="compact-context-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     const mcpToggle = page.locator('[data-testid="context-mcp-toggle"]')
-    if (!(await mcpToggle.isVisible({ timeout: 2_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await mcpToggle.isVisible({ timeout: 2_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await mcpToggle.click()
     await page.waitForTimeout(300)
@@ -78,10 +97,16 @@ test.describe('Compact Context Modal', () => {
 
   test('Claude mode shows Extract and Quick Compact buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="compact-context-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     const compactBtn = page.locator('[data-testid="context-compact-btn"]')
     const quickCompactBtn = page.locator('[data-testid="context-quick-compact-btn"]')
@@ -97,10 +122,16 @@ test.describe('Compact Context Modal', () => {
 
   test('local mode shows Start New Conversation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="compact-context-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     const newConvoBtn = page.locator('[data-testid="context-new-convo-btn"]')
     const hasNewConvo = await newConvoBtn.isVisible({ timeout: 2_000 }).catch(() => false)
@@ -112,10 +143,16 @@ test.describe('Compact Context Modal', () => {
 
   test('escape key dismisses modal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="compact-context-modal"]')
-    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) { test.skip(); return }
+    if (!(await modal.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await page.keyboard.press('Escape')
     await page.waitForTimeout(500)

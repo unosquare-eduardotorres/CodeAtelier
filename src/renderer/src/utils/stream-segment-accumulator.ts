@@ -65,6 +65,13 @@ export class StreamSegmentAccumulator {
         ...activity
       } as ToolActivity
     } else {
+      // Defence in depth: an elapsed-only heartbeat update must never create a
+      // row. Progress frames carry no startedAt/completedAt, so a row minted
+      // here could only ever sit at 'running' forever if its id doesn't match a
+      // real tool. tool_use / tool_result still create normally.
+      const isProgressOnly =
+        activity.elapsedSeconds !== undefined && !activity.startedAt && !activity.completedAt
+      if (isProgressOnly) return
       this.currentToolActivities = [...this.currentToolActivities, activity as ToolActivity]
     }
 

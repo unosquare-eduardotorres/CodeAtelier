@@ -40,15 +40,14 @@ export default function SectionCard({
   const headerContent = (
     <>
       <div className="flex items-center gap-2">
-        {collapsible && (
-          open
-            ? <ChevronDown size={14} className="text-text-muted shrink-0" />
-            : <ChevronRight size={14} className="text-text-muted shrink-0" />
-        )}
+        {collapsible &&
+          (open ? (
+            <ChevronDown size={14} className="text-text-muted shrink-0" />
+          ) : (
+            <ChevronRight size={14} className="text-text-muted shrink-0" />
+          ))}
         {icon && <span className="text-text-muted shrink-0">{icon}</span>}
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted">
-          {title}
-        </h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-text-muted">{title}</h3>
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </>
@@ -65,15 +64,9 @@ export default function SectionCard({
           {headerContent}
         </button>
       ) : (
-        <div className="flex items-center justify-between px-4 py-2.5">
-          {headerContent}
-        </div>
+        <div className="flex items-center justify-between px-4 py-2.5">{headerContent}</div>
       )}
-      {(!collapsible || open) && (
-        <div className={flush ? '' : 'px-4 py-3'}>
-          {children}
-        </div>
-      )}
+      {(!collapsible || open) && <div className={flush ? '' : 'px-4 py-3'}>{children}</div>}
     </div>
   )
 }

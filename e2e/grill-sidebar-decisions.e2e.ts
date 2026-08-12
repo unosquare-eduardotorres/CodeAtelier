@@ -45,7 +45,10 @@ test.describe('Grill Sidebar & Decisions', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -253,9 +256,7 @@ test.describe('Grill Sidebar & Decisions', () => {
 
   // ── RequirementDocumentPanel ──
 
-  test('Requirement document panel shows Full/Condensed toggle', async ({
-    electronPage: page
-  }) => {
+  test('Requirement document panel shows Full/Condensed toggle', async ({ electronPage: page }) => {
     const onGrill = await navigateToGrill(page)
     if (!onGrill) {
       test.skip()
@@ -288,7 +289,7 @@ test.describe('Grill Sidebar & Decisions', () => {
     const fullBtn = docPanel.getByRole('button', { name: /full/i })
     const condensedBtn = docPanel.getByRole('button', { name: /condensed/i })
 
-    const hasToggle =
+    const _hasToggle =
       (await fullBtn.isVisible({ timeout: 3_000 }).catch(() => false)) ||
       (await condensedBtn.isVisible({ timeout: 3_000 }).catch(() => false))
 

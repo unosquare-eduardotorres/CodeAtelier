@@ -37,7 +37,10 @@ if (!env) {
       codeGraphRankRepository.upsertRanks(wsId, initial)
       assert.equal(codeGraphRankRepository.findByWorkspace(wsId).size, 1)
 
-      const replacement = new Map([['new1.ts', 0.8], ['new2.ts', 0.6]])
+      const replacement = new Map([
+        ['new1.ts', 0.8],
+        ['new2.ts', 0.6]
+      ])
       codeGraphRankRepository.upsertRanks(wsId, replacement)
       const result = codeGraphRankRepository.findByWorkspace(wsId)
       assert.equal(result.size, 2)
@@ -60,7 +63,11 @@ if (!env) {
     // ── countByWorkspace ──
 
     test('countByWorkspace() returns correct count', () => {
-      const ranks = new Map([['a.ts', 0.1], ['b.ts', 0.2], ['c.ts', 0.3]])
+      const ranks = new Map([
+        ['a.ts', 0.1],
+        ['b.ts', 0.2],
+        ['c.ts', 0.3]
+      ])
       codeGraphRankRepository.upsertRanks(wsId, ranks)
       assert.equal(codeGraphRankRepository.countByWorkspace(wsId), 3)
     })
@@ -81,7 +88,11 @@ if (!env) {
     })
 
     test('getTopRanked() respects limit', () => {
-      const ranks = new Map([['a.ts', 0.1], ['b.ts', 0.2], ['c.ts', 0.3]])
+      const ranks = new Map([
+        ['a.ts', 0.1],
+        ['b.ts', 0.2],
+        ['c.ts', 0.3]
+      ])
       codeGraphRankRepository.upsertRanks(wsId, ranks)
       assert.equal(codeGraphRankRepository.getTopRanked(wsId, 1).length, 1)
     })
@@ -89,7 +100,10 @@ if (!env) {
     // ── deleteByWorkspace ──
 
     test('deleteByWorkspace() removes all ranks and returns count', () => {
-      const ranks = new Map([['x.ts', 0.5], ['y.ts', 0.6]])
+      const ranks = new Map([
+        ['x.ts', 0.5],
+        ['y.ts', 0.6]
+      ])
       codeGraphRankRepository.upsertRanks(wsId, ranks)
       const deleted = codeGraphRankRepository.deleteByWorkspace(wsId)
       assert.equal(deleted, 2)

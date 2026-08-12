@@ -23,9 +23,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('Health Detail Panel', () => {
-  async function navigateToHealthPage(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToHealthPage(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -43,9 +41,7 @@ test.describe('Health Detail Panel', () => {
     return true
   }
 
-  async function selectFirstTrack(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectFirstTrack(page: import('@playwright/test').Page): Promise<boolean> {
     // Try to click on a track card (HealthAuditorCard)
     const trackCard = page.locator('[data-testid="health-auditor-card"]').first()
     const hasTrack = await trackCard.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -55,18 +51,25 @@ test.describe('Health Detail Panel', () => {
     return true
   }
 
-  test('health detail panel renders when a track is selected', async ({
-    electronPage: page
-  }) => {
+  test('health detail panel renders when a track is selected', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const selected = await selectFirstTrack(page)
-    if (!selected) { test.skip(); return }
+    if (!selected) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="health-detail-panel"]')
     const isVisible = await panel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(panel).toBeVisible()
   })
@@ -75,14 +78,23 @@ test.describe('Health Detail Panel', () => {
     electronPage: page
   }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const selected = await selectFirstTrack(page)
-    if (!selected) { test.skip(); return }
+    if (!selected) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="health-detail-panel"]')
     const isVisible = await panel.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Panel should show track info — heading or description text
     const panelText = await panel.textContent()
@@ -93,11 +105,12 @@ test.describe('Health Detail Panel', () => {
     expect(hasDescription).toBeTruthy()
   })
 
-  test('completed state shows score hero and findings list', async ({
-    electronPage: page
-  }) => {
+  test('completed state shows score hero and findings list', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for a completed track card (one with a score)
     const trackCards = page.locator('[data-testid="health-auditor-card"]')
@@ -116,20 +129,27 @@ test.describe('Health Detail Panel', () => {
       }
     }
 
-    if (!foundCompleted) { test.skip(); return }
+    if (!foundCompleted) {
+      test.skip()
+      return
+    }
 
     const findingsList = page.locator('[data-testid="completed-findings-list"]')
     const hasFindings = await findingsList.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasFindings) { test.skip(); return }
+    if (!hasFindings) {
+      test.skip()
+      return
+    }
 
     await expect(findingsList).toBeVisible()
   })
 
-  test('severity filter buttons filter findings by level', async ({
-    electronPage: page
-  }) => {
+  test('severity filter buttons filter findings by level', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Find a completed track with findings
     const trackCards = page.locator('[data-testid="health-auditor-card"]')
@@ -147,15 +167,26 @@ test.describe('Health Detail Panel', () => {
       }
     }
 
-    if (!foundCompleted) { test.skip(); return }
+    if (!foundCompleted) {
+      test.skip()
+      return
+    }
 
     const findingsList = page.locator('[data-testid="completed-findings-list"]')
     const hasFindings = await findingsList.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasFindings) { test.skip(); return }
+    if (!hasFindings) {
+      test.skip()
+      return
+    }
 
     // Look for severity filter buttons
-    const filterButtons = findingsList.locator('button').filter({ hasText: /all|critical|high|medium|low|info/i })
-    if ((await filterButtons.count()) === 0) { test.skip(); return }
+    const filterButtons = findingsList
+      .locator('button')
+      .filter({ hasText: /all|critical|high|medium|low|info/i })
+    if ((await filterButtons.count()) === 0) {
+      test.skip()
+      return
+    }
 
     // Click a non-"All" filter
     const nonAllBtn = filterButtons.filter({ hasText: /critical|high|medium/i }).first()
@@ -171,7 +202,10 @@ test.describe('Health Detail Panel', () => {
     electronPage: page
   }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const trackCards = page.locator('[data-testid="health-auditor-card"]')
     const count = await trackCards.count()
@@ -188,11 +222,17 @@ test.describe('Health Detail Panel', () => {
       }
     }
 
-    if (!foundCompleted) { test.skip(); return }
+    if (!foundCompleted) {
+      test.skip()
+      return
+    }
 
     const findingItems = page.locator('[data-testid="finding-item"]')
     const itemCount = await findingItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     const firstFinding = findingItems.first()
     await expect(firstFinding).toBeVisible()
@@ -202,11 +242,12 @@ test.describe('Health Detail Panel', () => {
     expect(findingText?.trim().length).toBeGreaterThan(0)
   })
 
-  test('fix queue section shows actionable items with priority', async ({
-    electronPage: page
-  }) => {
+  test('fix queue section shows actionable items with priority', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const trackCards = page.locator('[data-testid="health-auditor-card"]')
     const count = await trackCards.count()
@@ -223,11 +264,17 @@ test.describe('Health Detail Panel', () => {
       }
     }
 
-    if (!foundCompleted) { test.skip(); return }
+    if (!foundCompleted) {
+      test.skip()
+      return
+    }
 
     const findingsList = page.locator('[data-testid="completed-findings-list"]')
     const hasFindings = await findingsList.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasFindings) { test.skip(); return }
+    if (!hasFindings) {
+      test.skip()
+      return
+    }
 
     // Look for fix queue elements (checkboxes with findings)
     const findingItems = findingsList.locator('[data-testid="finding-item"]')
@@ -242,11 +289,12 @@ test.describe('Health Detail Panel', () => {
     }
   })
 
-  test('re-run button triggers a new audit for the track', async ({
-    electronPage: page
-  }) => {
+  test('re-run button triggers a new audit for the track', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const trackCards = page.locator('[data-testid="health-auditor-card"]')
     const count = await trackCards.count()
@@ -263,12 +311,21 @@ test.describe('Health Detail Panel', () => {
       }
     }
 
-    if (!foundCompleted) { test.skip(); return }
+    if (!foundCompleted) {
+      test.skip()
+      return
+    }
 
     // Look for re-run button
-    const rerunBtn = page.locator('button').filter({ hasText: /Re-run|Rerun/i }).first()
+    const rerunBtn = page
+      .locator('button')
+      .filter({ hasText: /Re-run|Rerun/i })
+      .first()
     const hasRerun = await rerunBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasRerun) { test.skip(); return }
+    if (!hasRerun) {
+      test.skip()
+      return
+    }
 
     await expect(rerunBtn).toBeEnabled()
     // Click re-run (won't actually run the full audit in test, just verifies it's clickable)
@@ -276,8 +333,11 @@ test.describe('Health Detail Panel', () => {
     await page.waitForTimeout(1_000)
 
     // After click, either button shows loading or the page remains stable
-    const pageStable = await page.locator('[data-testid="health-auditor-card"]').first()
-      .isVisible({ timeout: 3_000 }).catch(() => false)
+    const pageStable = await page
+      .locator('[data-testid="health-auditor-card"]')
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(pageStable).toBeTruthy()
   })
 })

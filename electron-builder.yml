@@ -9,11 +9,6 @@ files:
   - out/**
   - resources/**
   - package.json
-extraResources:
-  - from: src/main/hooks
-    to: hooks
-    filter:
-      - '*.sh'
 afterPack: build/afterPack.js
 # ASAR disabled — app loads from loose files in Resources/app/.
 # Required because node_modules are copied via afterPack (not through
@@ -40,7 +35,7 @@ mac:
   notarize: false
 dmg:
   artifactName: ${name}-${version}.${ext}
-  title: "${productName}"
+  title: '${productName}'
   background: build/background.png
   iconSize: 120
   iconTextSize: 13
@@ -64,6 +59,11 @@ linux:
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
+# PINNED: 43.3.0's ffmpeg.dll (afb4f083...086df) has no Defender cloud reputation and is
+# blocked by ASR rule c1db55ab-c21a-4637-bb3f-a12568109d35 ("advanced protection against
+# ransomware") on managed Windows machines -> renderer crash-loop, blank window.
+# 43.2.0's ffmpeg.dll (d17c2a0e...a34e) is known-good. Do not bump without either code
+# signing or verifying the new ffmpeg.dll isn't blocked.
 electronVersion: 43.2.0
 publish:
   provider: github

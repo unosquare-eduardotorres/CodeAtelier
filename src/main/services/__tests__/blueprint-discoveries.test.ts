@@ -123,8 +123,14 @@ describe('formatArtifacts — discoveries rendering (consolidated)', () => {
         }
       }
     ]
-    const prompt = buildPhaseSystemPrompt('build', makePhaseContext({ previousArtifacts: artifacts }))
-    assert.ok(prompt.includes('### Discoveries (consolidated)'), 'Should have consolidated discoveries heading')
+    const prompt = buildPhaseSystemPrompt(
+      'build',
+      makePhaseContext({ previousArtifacts: artifacts })
+    )
+    assert.ok(
+      prompt.includes('### Discoveries (consolidated)'),
+      'Should have consolidated discoveries heading'
+    )
     assert.ok(prompt.includes('- Auth in session.ts'), 'Should render first entry as bullet')
     assert.ok(prompt.includes('- DB re-exports from index'), 'Should render second entry as bullet')
   })
@@ -141,13 +147,22 @@ describe('formatArtifacts — discoveries rendering (consolidated)', () => {
       },
       { type: 'plan', contentMd: '# Plan content' }
     ]
-    const prompt = buildPhaseSystemPrompt('build', makePhaseContext({ previousArtifacts: artifacts }))
+    const prompt = buildPhaseSystemPrompt(
+      'build',
+      makePhaseContext({ previousArtifacts: artifacts })
+    )
     assert.ok(prompt.includes('### Artifact: spec'), 'Should render spec artifact normally')
     assert.ok(prompt.includes('### Artifact: plan'), 'Should render plan artifact normally')
-    assert.ok(prompt.includes('### Discoveries (consolidated)'), 'Should render discoveries consolidated')
+    assert.ok(
+      prompt.includes('### Discoveries (consolidated)'),
+      'Should render discoveries consolidated'
+    )
     assert.ok(prompt.includes('- Found entry point in main.ts'), 'Should have bullet entry')
     // Discoveries should NOT have "### Artifact: discoveries"
-    assert.ok(!prompt.includes('### Artifact: discoveries'), 'Should NOT use generic artifact heading')
+    assert.ok(
+      !prompt.includes('### Artifact: discoveries'),
+      'Should NOT use generic artifact heading'
+    )
   })
 
   test('empty discoveries are filtered out', () => {
@@ -158,7 +173,10 @@ describe('formatArtifacts — discoveries rendering (consolidated)', () => {
         contentJson: { phase: 'plan', entries: [] }
       }
     ]
-    const prompt = buildPhaseSystemPrompt('build', makePhaseContext({ previousArtifacts: artifacts }))
+    const prompt = buildPhaseSystemPrompt(
+      'build',
+      makePhaseContext({ previousArtifacts: artifacts })
+    )
     assert.ok(!prompt.includes('### Discoveries'), 'Should filter out empty discoveries')
     assert.ok(prompt.includes('### Artifact: spec'), 'Should keep other artifacts')
   })

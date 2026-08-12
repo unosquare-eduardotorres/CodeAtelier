@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Build Summary Card', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,7 +40,10 @@ test.describe('Build Summary Card', () => {
     page: import('@playwright/test').Page
   ): Promise<import('@playwright/test').Locator | null> {
     const card = page.locator('[data-testid="build-summary-card"]')
-    const hasCard = await card.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasCard = await card
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     return hasCard ? card.first() : null
   }
 
@@ -50,10 +51,16 @@ test.describe('Build Summary Card', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = await findBuildSummaryCard(page)
-    if (!card) { test.skip(); return }
+    if (!card) {
+      test.skip()
+      return
+    }
 
     // Card should be visible with structural elements
     await expect(card).toBeVisible()
@@ -67,15 +74,24 @@ test.describe('Build Summary Card', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = await findBuildSummaryCard(page)
-    if (!card) { test.skip(); return }
+    if (!card) {
+      test.skip()
+      return
+    }
 
     const text = await card.textContent()
     const isSuccess = text?.includes('Build Complete')
 
-    if (!isSuccess) { test.skip(); return }
+    if (!isSuccess) {
+      test.skip()
+      return
+    }
 
     // Should contain "Build Complete" text
     const successText = card.locator('text=Build Complete')
@@ -90,15 +106,24 @@ test.describe('Build Summary Card', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = await findBuildSummaryCard(page)
-    if (!card) { test.skip(); return }
+    if (!card) {
+      test.skip()
+      return
+    }
 
     const text = await card.textContent()
     const hasErrors = text?.includes('Build Finished with Errors')
 
-    if (!hasErrors) { test.skip(); return }
+    if (!hasErrors) {
+      test.skip()
+      return
+    }
 
     // Should contain the error header text
     const errorText = card.locator('text=Build Finished with Errors')
@@ -113,16 +138,25 @@ test.describe('Build Summary Card', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = await findBuildSummaryCard(page)
-    if (!card) { test.skip(); return }
+    if (!card) {
+      test.skip()
+      return
+    }
 
     // Task rows should exist
     const taskRows = card.locator('[data-testid="build-summary-task"]')
     const count = await taskRows.count()
 
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     expect(count).toBeGreaterThan(0)
 
@@ -130,26 +164,31 @@ test.describe('Build Summary Card', () => {
     const firstRow = taskRows.first()
     const rowText = await firstRow.textContent()
     const hasStatus =
-      rowText?.includes('completed') ||
-      rowText?.includes('failed') ||
-      rowText?.includes('skipped')
+      rowText?.includes('completed') || rowText?.includes('failed') || rowText?.includes('skipped')
     expect(hasStatus).toBeTruthy()
   })
 
-  test('files changed section shows unique file paths', async ({
-    electronPage: page
-  }) => {
+  test('files changed section shows unique file paths', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = await findBuildSummaryCard(page)
-    if (!card) { test.skip(); return }
+    if (!card) {
+      test.skip()
+      return
+    }
 
     // Look for "Files Changed" section
     const filesSection = card.locator('text=Files Changed')
     const hasFilesSection = await filesSection.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasFilesSection) { test.skip(); return }
+    if (!hasFilesSection) {
+      test.skip()
+      return
+    }
 
     await expect(filesSection).toBeVisible()
 
@@ -159,14 +198,18 @@ test.describe('Build Summary Card', () => {
     expect(badgeCount).toBeGreaterThan(0)
   })
 
-  test('duration display shows human-readable time format', async ({
-    electronPage: page
-  }) => {
+  test('duration display shows human-readable time format', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = await findBuildSummaryCard(page)
-    if (!card) { test.skip(); return }
+    if (!card) {
+      test.skip()
+      return
+    }
 
     // The header subtitle contains duration info (e.g., "3 completed · 1m 23s")
     const text = await card.textContent()

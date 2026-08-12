@@ -152,7 +152,13 @@ describe('task-execution-tracking › updateTask logic', () => {
   function applyTaskUpdate(
     phases: Array<{
       phaseId: number
-      tasks: Array<{ taskId: string; title: string; status: string; startedAt?: number; completedAt?: number }>
+      tasks: Array<{
+        taskId: string
+        title: string
+        status: string
+        startedAt?: number
+        completedAt?: number
+      }>
     }>,
     update: { phaseId: number; taskId: string; title: string; status: string }
   ): typeof phases {
@@ -165,33 +171,48 @@ describe('task-execution-tracking › updateTask logic', () => {
           ...tasks[idx],
           title: update.title,
           status: update.status,
-          startedAt: update.status === 'running' ? (tasks[idx].startedAt ?? Date.now()) : tasks[idx].startedAt,
-          completedAt: update.status === 'complete' || update.status === 'failed' ? Date.now() : tasks[idx].completedAt
+          startedAt:
+            update.status === 'running'
+              ? (tasks[idx].startedAt ?? Date.now())
+              : tasks[idx].startedAt,
+          completedAt:
+            update.status === 'complete' || update.status === 'failed'
+              ? Date.now()
+              : tasks[idx].completedAt
         }
       } else {
-        tasks = [...tasks, {
-          taskId: update.taskId,
-          title: update.title,
-          status: update.status,
-          startedAt: update.status === 'running' ? Date.now() : undefined,
-          completedAt: update.status === 'complete' || update.status === 'failed' ? Date.now() : undefined
-        }]
+        tasks = [
+          ...tasks,
+          {
+            taskId: update.taskId,
+            title: update.title,
+            status: update.status,
+            startedAt: update.status === 'running' ? Date.now() : undefined,
+            completedAt:
+              update.status === 'complete' || update.status === 'failed' ? Date.now() : undefined
+          }
+        ]
       }
       return { ...p, tasks }
     })
   }
 
   test('updates existing task status', () => {
-    const phases = [{
-      phaseId: 1,
-      tasks: [
-        { taskId: '1-0', title: 'Setup', status: 'pending' },
-        { taskId: '1-1', title: 'Implement', status: 'pending' }
-      ]
-    }]
+    const phases = [
+      {
+        phaseId: 1,
+        tasks: [
+          { taskId: '1-0', title: 'Setup', status: 'pending' },
+          { taskId: '1-1', title: 'Implement', status: 'pending' }
+        ]
+      }
+    ]
 
     const result = applyTaskUpdate(phases, {
-      phaseId: 1, taskId: '1-0', title: 'Setup', status: 'running'
+      phaseId: 1,
+      taskId: '1-0',
+      title: 'Setup',
+      status: 'running'
     })
 
     assert.equal(result[0].tasks[0].status, 'running')
@@ -200,13 +221,18 @@ describe('task-execution-tracking › updateTask logic', () => {
   })
 
   test('appends new task if not found', () => {
-    const phases = [{
-      phaseId: 1,
-      tasks: [{ taskId: '1-0', title: 'Setup', status: 'complete' }]
-    }]
+    const phases = [
+      {
+        phaseId: 1,
+        tasks: [{ taskId: '1-0', title: 'Setup', status: 'complete' }]
+      }
+    ]
 
     const result = applyTaskUpdate(phases, {
-      phaseId: 1, taskId: '1-1', title: 'New task', status: 'running'
+      phaseId: 1,
+      taskId: '1-1',
+      title: 'New task',
+      status: 'running'
     })
 
     assert.equal(result[0].tasks.length, 2)
@@ -221,7 +247,10 @@ describe('task-execution-tracking › updateTask logic', () => {
     ]
 
     const result = applyTaskUpdate(phases, {
-      phaseId: 2, taskId: '2-0', title: 'Build', status: 'running'
+      phaseId: 2,
+      taskId: '2-0',
+      title: 'Build',
+      status: 'running'
     })
 
     assert.equal(result[0].tasks[0].status, 'pending')
@@ -229,13 +258,18 @@ describe('task-execution-tracking › updateTask logic', () => {
   })
 
   test('sets completedAt on complete/failed', () => {
-    const phases = [{
-      phaseId: 1,
-      tasks: [{ taskId: '1-0', title: 'Setup', status: 'running', startedAt: Date.now() }]
-    }]
+    const phases = [
+      {
+        phaseId: 1,
+        tasks: [{ taskId: '1-0', title: 'Setup', status: 'running', startedAt: Date.now() }]
+      }
+    ]
 
     const result = applyTaskUpdate(phases, {
-      phaseId: 1, taskId: '1-0', title: 'Setup', status: 'complete'
+      phaseId: 1,
+      taskId: '1-0',
+      title: 'Setup',
+      status: 'complete'
     })
 
     assert.equal(result[0].tasks[0].status, 'complete')
@@ -244,13 +278,18 @@ describe('task-execution-tracking › updateTask logic', () => {
 
   test('preserves startedAt on status transitions', () => {
     const startTime = Date.now() - 5000
-    const phases = [{
-      phaseId: 1,
-      tasks: [{ taskId: '1-0', title: 'Setup', status: 'running', startedAt: startTime }]
-    }]
+    const phases = [
+      {
+        phaseId: 1,
+        tasks: [{ taskId: '1-0', title: 'Setup', status: 'running', startedAt: startTime }]
+      }
+    ]
 
     const result = applyTaskUpdate(phases, {
-      phaseId: 1, taskId: '1-0', title: 'Setup', status: 'complete'
+      phaseId: 1,
+      taskId: '1-0',
+      title: 'Setup',
+      status: 'complete'
     })
 
     assert.equal(result[0].tasks[0].startedAt, startTime)

@@ -21,9 +21,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Council Landing Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,13 +35,11 @@ test.describe('Council Landing Deep', () => {
     return true
   }
 
-  async function navigateToCouncil(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToCouncil(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
     await page.waitForTimeout(800)
 
     // Either landing, active view, or filter bar should be visible
@@ -60,9 +56,15 @@ test.describe('Council Landing Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToCouncil(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Either empty state landing OR history list should be visible
     const landing = page.locator('[data-testid="council-landing"]')
@@ -78,13 +80,22 @@ test.describe('Council Landing Deep', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToCouncil(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const landing = page.locator('[data-testid="council-landing"]')
     const hasLanding = await landing.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasLanding) { test.skip(); return }
+    if (!hasLanding) {
+      test.skip()
+      return
+    }
 
     // Should show "Your Council" header
     const header = landing.getByText('Your Council')
@@ -101,9 +112,15 @@ test.describe('Council Landing Deep', () => {
 
   test('"New Council" button opens StartCouncilModal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToCouncil(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Find a "New Council" or "Start" button (empty state or filter bar)
     const startBtn = page.locator('[data-testid="council-start-btn"]')
@@ -118,7 +135,10 @@ test.describe('Council Landing Deep', () => {
       clicked = true
     }
 
-    if (!clicked) { test.skip(); return }
+    if (!clicked) {
+      test.skip()
+      return
+    }
     await page.waitForTimeout(800)
 
     // Modal should appear with a textarea for content input
@@ -134,17 +154,24 @@ test.describe('Council Landing Deep', () => {
     await page.waitForTimeout(500)
   })
 
-  test('history list shows past sessions with status badges', async ({
-    electronPage: page
-  }) => {
+  test('history list shows past sessions with status badges', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToCouncil(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const sessionCards = page.locator('[data-testid="council-session-card"]')
     const count = await sessionCards.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Each session card should have a status badge
     const firstCard = sessionCards.first()
@@ -155,13 +182,16 @@ test.describe('Council Landing Deep', () => {
 
   test('loading skeleton appears during data fetch', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate fresh to council to catch the loading skeleton
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
 
     // Check for skeleton loaders (may be very brief)
     const skeleton = page.locator('.animate-pulse, [class*="skeleton"]').first()
@@ -181,13 +211,22 @@ test.describe('Council Landing Deep', () => {
 
   test('session cards in history are clickable', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToCouncil(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const sessionCards = page.locator('[data-testid="council-session-card"]')
     const count = await sessionCards.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // Each card should have a View button
     const firstCard = sessionCards.first()

@@ -24,7 +24,12 @@ const PAGE_NAV_MAP: Record<string, { sidebarView: 'chat' | 'settings'; settingsT
   audit: { sidebarView: 'settings', settingsTab: 'health' },
   mpa: { sidebarView: 'settings', settingsTab: 'goals' },
   council: { sidebarView: 'settings', settingsTab: 'council' },
-  blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' }
+  blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' },
+  // Singular alias: every current dispatch site sends 'blueprints', but the
+  // service name is 'blueprint', so a targetPage fallback to `service` would
+  // silently miss. One line of insurance against a dead-end click.
+  blueprint: { sidebarView: 'settings', settingsTab: 'blueprints' },
+  memory: { sidebarView: 'settings', settingsTab: 'memory' }
 }
 
 export interface NotificationStackProps {
@@ -45,18 +50,33 @@ export default function NotificationStack({
   const dismissTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
 
   // Clear all pending auto-dismiss timers on unmount
-  useEffect(() => () => {
-    dismissTimersRef.current.forEach(clearTimeout)
-  }, [])
+  useEffect(
+    () => () => {
+      dismissTimersRef.current.forEach(clearTimeout)
+    },
+    []
+  )
 
-  // Listen for OS notification click → navigate to workspace + target page
+  // Listen for OS notification click → navigate to workspace + target page.
+  // The switch must complete BEFORE navigating: openWorkspace is async and can
+  // reject (workspace.ipc throws when the row is gone), while navigation used
+  // to fire synchronously — landing the user on the target page of the *old*
+  // workspace with no indication anything failed.
   useEffect(() => {
     const unsub = window.api.onNotificationNavigate((data) => {
-      openWorkspace(data.workspaceId)
-      const nav = PAGE_NAV_MAP[data.targetPage]
-      if (nav && onNavigateToPage) {
-        onNavigateToPage(nav.sidebarView, nav.settingsTab)
-      }
+      void openWorkspace(data.workspaceId)
+        .then(() => {
+          const nav = PAGE_NAV_MAP[data.targetPage]
+          if (nav && onNavigateToPage) {
+            onNavigateToPage(nav.sidebarView, nav.settingsTab)
+          }
+        })
+        .catch((err) => {
+          console.error(
+            `[NotificationStack] Failed to open workspace ${data.workspaceId}; navigation skipped`,
+            err
+          )
+        })
     })
     return unsub
   }, [openWorkspace, onNavigateToPage])
@@ -83,12 +103,13 @@ export default function NotificationStack({
     return unsub
   }, [activeWorkspaceId])
 
-  // Show toasts for NON-active workspaces, plus toolPermission for the active workspace
-  // (askQuestion/elicitation have inline chat handlers; toolPermission does not)
+  // Show toasts for NON-active workspaces, plus toolPermission for the active
+  // workspace. Every permission now reaches this store — the modal is the only
+  // place a tool permission can be decided. A request for the conversation on
+  // screen also leaves a read-only receipt in the transcript, but that card has
+  // no buttons, so this is not a second decision surface.
   const visiblePermissions = permissions.filter(
-    (p) =>
-      (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') &&
-      !p.badgeFallback
+    (p) => (p.workspaceId !== activeWorkspaceId || p.type === 'toolPermission') && !p.badgeFallback
   )
 
   const handlePermissionRespond = useCallback(
@@ -112,7 +133,9 @@ export default function NotificationStack({
   const handlePermissionView = useCallback(
     (permission: PendingPermission) => {
       // Switch to the workspace that needs attention
-      openWorkspace(permission.workspaceId)
+      void openWorkspace(permission.workspaceId).catch((err) => {
+        console.error(`[NotificationStack] Failed to open workspace ${permission.workspaceId}`, err)
+      })
       removePermission(permission.id)
     },
     [openWorkspace, removePermission]
@@ -138,12 +161,22 @@ export default function NotificationStack({
 
   const handleCompletionView = useCallback(
     (notification: CompletionNotification & { id: string }) => {
-      openWorkspace(notification.workspaceId)
-      const targetPage = notification.targetPage ?? notification.service
-      const nav = PAGE_NAV_MAP[targetPage]
-      if (nav && onNavigateToPage) {
-        onNavigateToPage(nav.sidebarView, nav.settingsTab)
-      }
+      // Same ordering contract as the OS-notification path above: only navigate
+      // once the workspace switch has actually landed.
+      void openWorkspace(notification.workspaceId)
+        .then(() => {
+          const targetPage = notification.targetPage ?? notification.service
+          const nav = PAGE_NAV_MAP[targetPage]
+          if (nav && onNavigateToPage) {
+            onNavigateToPage(nav.sidebarView, nav.settingsTab)
+          }
+        })
+        .catch((err) => {
+          console.error(
+            `[NotificationStack] Failed to open workspace ${notification.workspaceId}; navigation skipped`,
+            err
+          )
+        })
       setCompletions((prev) => prev.filter((c) => c.id !== notification.id))
     },
     [openWorkspace, onNavigateToPage]

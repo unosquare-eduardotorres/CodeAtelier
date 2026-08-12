@@ -105,11 +105,7 @@ if (vectorLoaded) {
 
     test('upsert_adds_entries', () => {
       const col = new InMemoryCollection()
-      col.upsert(
-        ['id-1'],
-        [[1, 0, 0]],
-        [makeChunk('file.ts', 'function foo() {}')]
-      )
+      col.upsert(['id-1'], [[1, 0, 0]], [makeChunk('file.ts', 'function foo() {}')])
       assert.equal(col.size, 1)
     })
 
@@ -126,12 +122,12 @@ if (vectorLoaded) {
       const col = new InMemoryCollection()
       col.upsert(
         ['id-1', 'id-2', 'id-3'],
-        [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
         [
-          makeChunk('a.ts', 'func a'),
-          makeChunk('b.ts', 'func b'),
-          makeChunk('c.ts', 'func c')
-        ]
+          [1, 0, 0],
+          [0, 1, 0],
+          [0, 0, 1]
+        ],
+        [makeChunk('a.ts', 'func a'), makeChunk('b.ts', 'func b'), makeChunk('c.ts', 'func c')]
       )
       assert.equal(col.size, 3)
     })
@@ -140,7 +136,11 @@ if (vectorLoaded) {
       const col = new InMemoryCollection()
       col.upsert(
         ['id-1', 'id-2', 'id-3'],
-        [[1, 0, 0], [0.9, 0.1, 0], [0, 1, 0]],
+        [
+          [1, 0, 0],
+          [0.9, 0.1, 0],
+          [0, 1, 0]
+        ],
         [
           makeChunk('exact.ts', 'exact match'),
           makeChunk('close.ts', 'close match'),
@@ -158,11 +158,11 @@ if (vectorLoaded) {
       const col = new InMemoryCollection()
       col.upsert(
         ['id-1', 'id-2'],
-        [[1, 0, 0], [1, 0, 0]],
         [
-          makeChunk('a.ts', 'match'),
-          makeChunk('b.ts', 'match')
-        ]
+          [1, 0, 0],
+          [1, 0, 0]
+        ],
+        [makeChunk('a.ts', 'match'), makeChunk('b.ts', 'match')]
       )
 
       const results = col.query([1, 0, 0], 10, { filePath: 'a.ts' })
@@ -188,7 +188,10 @@ if (vectorLoaded) {
       const col = new InMemoryCollection()
       col.upsert(
         ['id-1', 'id-2'],
-        [[1, 0], [0, 1]],
+        [
+          [1, 0],
+          [0, 1]
+        ],
         [makeChunk('a.ts', 'a'), makeChunk('b.ts', 'b')]
       )
       const entries = col.getEntries()
@@ -200,11 +203,7 @@ if (vectorLoaded) {
 
     test('query_result_has_expected_fields', () => {
       const col = new InMemoryCollection()
-      col.upsert(
-        ['id-1'],
-        [[1, 0, 0]],
-        [makeChunk('file.ts', 'content', 'MyFunc')]
-      )
+      col.upsert(['id-1'], [[1, 0, 0]], [makeChunk('file.ts', 'content', 'MyFunc')])
       const results = col.query([1, 0, 0], 1)
       assert.equal(results.length, 1)
       assert.ok('filePath' in results[0])
@@ -219,17 +218,19 @@ if (vectorLoaded) {
       const col = new InMemoryCollection()
       col.upsert(
         ['far', 'close', 'exact'],
-        [[0, 0, 1], [0.8, 0.2, 0], [1, 0, 0]],
         [
-          makeChunk('far.ts', 'far'),
-          makeChunk('close.ts', 'close'),
-          makeChunk('exact.ts', 'exact')
-        ]
+          [0, 0, 1],
+          [0.8, 0.2, 0],
+          [1, 0, 0]
+        ],
+        [makeChunk('far.ts', 'far'), makeChunk('close.ts', 'close'), makeChunk('exact.ts', 'exact')]
       )
       const results = col.query([1, 0, 0], 3)
       for (let i = 1; i < results.length; i++) {
-        assert.ok(results[i - 1].score >= results[i].score,
-          `scores should be descending: ${results[i-1].score} >= ${results[i].score}`)
+        assert.ok(
+          results[i - 1].score >= results[i].score,
+          `scores should be descending: ${results[i - 1].score} >= ${results[i].score}`
+        )
       }
     })
   })

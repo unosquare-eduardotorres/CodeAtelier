@@ -1,5 +1,6 @@
 import { Download, RefreshCw, X, AlertCircle, CheckCircle2 } from 'lucide-react'
 import { useUpdateStore } from '@renderer/store'
+import { isBannerMuted } from '@renderer/store/update-store-utils'
 
 export default function UpdateBanner(): React.JSX.Element | null {
   const {
@@ -7,8 +8,10 @@ export default function UpdateBanner(): React.JSX.Element | null {
     availableVersion,
     downloadProgress,
     errorMessage,
-    downloadUpdate,
-    installUpdate,
+    showModal,
+    snoozedVersion,
+    snoozeUntil,
+    openModal,
     dismiss
   } = useUpdateStore()
 
@@ -16,9 +19,24 @@ export default function UpdateBanner(): React.JSX.Element | null {
     return null
   }
 
+  // The modal already renders this state in full — showing both meant the same
+  // download had two progress indicators and two buttons.
+  if (showModal) {
+    return null
+  }
+
+  // ✕ means "not now" everywhere, not just in the modal — without this the next
+  // hourly check put the banner straight back.
+  if (isBannerMuted(status, availableVersion, snoozedVersion, snoozeUntil)) {
+    return null
+  }
+
   if (status === 'error') {
     return (
-      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-danger-muted border-b border-danger/50 text-sm">
+      <div
+        data-testid="update-banner"
+        className="flex items-center gap-3 px-4 py-2.5 bg-danger-muted border-b border-danger/50 text-sm"
+      >
         <AlertCircle size={14} className="text-danger shrink-0" />
         <span className="text-danger flex-1">Update error: {errorMessage ?? 'Unknown error'}</span>
         <button
@@ -34,13 +52,16 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'available') {
     return (
-      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm">
+      <div
+        data-testid="update-banner"
+        className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm"
+      >
         <Download size={14} className="text-info shrink-0" />
         <span className="text-info flex-1">
           Update <span className="font-semibold">v{availableVersion}</span> is available!
         </span>
         <button
-          onClick={downloadUpdate}
+          onClick={openModal}
           className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors"
         >
           <Download size={12} />
@@ -59,7 +80,10 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'downloading') {
     return (
-      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm">
+      <div
+        data-testid="update-banner"
+        className="flex items-center gap-3 px-4 py-2.5 bg-info-muted border-b border-info/50 text-sm"
+      >
         <RefreshCw size={14} className="text-info shrink-0 animate-spin" />
         <span className="text-info flex-1">
           Downloading update... {Math.round(downloadProgress)}%
@@ -76,13 +100,16 @@ export default function UpdateBanner(): React.JSX.Element | null {
 
   if (status === 'ready') {
     return (
-      <div data-testid="update-banner" className="flex items-center gap-3 px-4 py-2.5 bg-success-muted border-b border-success/50 text-sm">
+      <div
+        data-testid="update-banner"
+        className="flex items-center gap-3 px-4 py-2.5 bg-success-muted border-b border-success/50 text-sm"
+      >
         <CheckCircle2 size={14} className="text-success shrink-0" />
         <span className="text-success flex-1">
           Update <span className="font-semibold">v{availableVersion}</span> is ready to install!
         </span>
         <button
-          onClick={installUpdate}
+          onClick={openModal}
           className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-success hover:bg-success text-white text-xs font-medium transition-colors"
         >
           <RefreshCw size={12} />

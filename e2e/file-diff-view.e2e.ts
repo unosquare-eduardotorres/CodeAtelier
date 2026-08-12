@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('File Diff View', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,7 +40,10 @@ test.describe('File Diff View', () => {
     page: import('@playwright/test').Page
   ): Promise<import('@playwright/test').Locator | null> {
     const diffView = page.locator('[data-testid="file-diff-view"]')
-    const hasDiffView = await diffView.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasDiffView = await diffView
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     return hasDiffView ? diffView.first() : null
   }
 
@@ -50,10 +51,16 @@ test.describe('File Diff View', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const diffView = await findFileDiffView(page)
-    if (!diffView) { test.skip(); return }
+    if (!diffView) {
+      test.skip()
+      return
+    }
 
     // Diff view should be visible with proper structure
     await expect(diffView).toBeVisible()
@@ -63,14 +70,18 @@ test.describe('File Diff View', () => {
     await expect(header).toBeVisible()
   })
 
-  test('file path header displays the changed file name', async ({
-    electronPage: page
-  }) => {
+  test('file path header displays the changed file name', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const diffView = await findFileDiffView(page)
-    if (!diffView) { test.skip(); return }
+    if (!diffView) {
+      test.skip()
+      return
+    }
 
     const header = diffView.locator('[data-testid="file-diff-header"]')
     await expect(header).toBeVisible()
@@ -88,14 +99,28 @@ test.describe('File Diff View', () => {
     expect(hasFilePath).toBeTruthy()
   })
 
-  test('side-by-side panels show old and new content', async ({
-    electronPage: page
-  }) => {
+  test('side-by-side panels show old and new content', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const diffView = await findFileDiffView(page)
-    if (!diffView) { test.skip(); return }
+    if (!diffView) {
+      test.skip()
+      return
+    }
+
+    // When both sides match, FileDiffView renders an explicit empty state INSTEAD of
+    // ReactDiffViewer — that's correct behaviour, not a failure.
+    const identical = diffView.locator('[data-testid="file-diff-identical"]')
+    if (await identical.isVisible({ timeout: 1_000 }).catch(() => false)) {
+      // The pane always names its cause — either the generic wording or a concrete
+      // reason (mode change, rename, stale list).
+      await expect(identical).toContainText(/no differences|file mode|was moved|no longer differs/i)
+      return
+    }
 
     // ReactDiffViewer renders in split view — look for left/right titles
     const leftTitle = diffView.locator('text=Previous (HEAD)')
@@ -113,14 +138,18 @@ test.describe('File Diff View', () => {
     expect(rowCount).toBeGreaterThan(0)
   })
 
-  test('added lines have green background highlighting', async ({
-    electronPage: page
-  }) => {
+  test('added lines have green background highlighting', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const diffView = await findFileDiffView(page)
-    if (!diffView) { test.skip(); return }
+    if (!diffView) {
+      test.skip()
+      return
+    }
 
     // Look for added line markers (+ indicators or green-styled elements)
     const addedStats = diffView.locator('[data-testid="file-diff-header"] .text-success')
@@ -136,14 +165,18 @@ test.describe('File Diff View', () => {
     }
   })
 
-  test('removed lines have red background highlighting', async ({
-    electronPage: page
-  }) => {
+  test('removed lines have red background highlighting', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const diffView = await findFileDiffView(page)
-    if (!diffView) { test.skip(); return }
+    if (!diffView) {
+      test.skip()
+      return
+    }
 
     // Look for removed line markers (- indicators or red-styled elements)
     const removedStats = diffView.locator('[data-testid="file-diff-header"] .text-danger')
@@ -159,11 +192,12 @@ test.describe('File Diff View', () => {
     }
   })
 
-  test('loading state shows spinner while diff loads', async ({
-    electronPage: page
-  }) => {
+  test('loading state shows spinner while diff loads', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Loading state is transient — look for the spinner element
     const spinner = page.locator('[data-testid="file-diff-view"] .animate-spin')
@@ -176,7 +210,10 @@ test.describe('File Diff View', () => {
       const hasDiff = await diffView.isVisible({ timeout: 2_000 }).catch(() => false)
       const hasEmpty = await emptyState.isVisible({ timeout: 2_000 }).catch(() => false)
 
-      if (!hasDiff && !hasEmpty) { test.skip(); return }
+      if (!hasDiff && !hasEmpty) {
+        test.skip()
+        return
+      }
 
       // Either the diff is loaded (no spinner needed) or empty state is shown
       expect(hasDiff || hasEmpty).toBeTruthy()

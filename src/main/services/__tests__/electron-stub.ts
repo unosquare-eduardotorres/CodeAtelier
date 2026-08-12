@@ -16,6 +16,9 @@
 import Module from 'node:module'
 import path from 'node:path'
 
+/** Generic handler function shape used throughout this stub's captured-handler maps. */
+type AnyFn = (...args: any[]) => any
+
 // ── Resolved paths to CJS mock files ────────────────────────────────────────
 
 const electronMockPath = path.resolve(__dirname, '__electron_mock.cjs')
@@ -33,7 +36,7 @@ function getMock(): any {
 }
 
 /** All handlers registered via `ipcMain.handle(channel, fn)` */
-export function getHandlers(): Map<string, Function> {
+export function getHandlers(): Map<string, AnyFn> {
   return getMock().__capturedHandlers
 }
 
@@ -42,10 +45,10 @@ export function getHandlers(): Map<string, Function> {
  * After setupElectronStub() is called, this delegates to the CJS mock's map.
  */
 export const capturedHandlers = {
-  get(channel: string): Function | undefined {
+  get(channel: string): AnyFn | undefined {
     return getHandlers().get(channel)
   },
-  set(channel: string, handler: Function): Map<string, Function> {
+  set(channel: string, handler: AnyFn): Map<string, AnyFn> {
     return getHandlers().set(channel, handler)
   },
   has(channel: string): boolean {
@@ -54,10 +57,10 @@ export const capturedHandlers = {
   keys(): IterableIterator<string> {
     return getHandlers().keys()
   },
-  entries(): IterableIterator<[string, Function]> {
+  entries(): IterableIterator<[string, AnyFn]> {
     return getHandlers().entries()
   },
-  values(): IterableIterator<Function> {
+  values(): IterableIterator<AnyFn> {
     return getHandlers().values()
   },
   get size(): number {
@@ -66,16 +69,21 @@ export const capturedHandlers = {
   clear(): void {
     getHandlers().clear()
   },
-  forEach(fn: (value: Function, key: string) => void): void {
+  forEach(fn: (value: AnyFn, key: string) => void): void {
     getHandlers().forEach(fn)
   },
-  [Symbol.iterator](): IterableIterator<[string, Function]> {
+  [Symbol.iterator](): IterableIterator<[string, AnyFn]> {
     return getHandlers().entries()
-  },
-} as unknown as Map<string, Function>
+  }
+} as unknown as Map<string, AnyFn>
 
 /** Events sent via BrowserWindow.webContents.send */
 export const sentEvents: Array<{ channel: string; data: unknown }> = []
+
+/** Paths passed to `shell.showItemInFolder`, newest last. */
+export function getRevealedPaths(): string[] {
+  return getMock().__shellRevealed
+}
 
 /** Mock event that passes validateSender */
 export const mockEvent = {
@@ -91,7 +99,7 @@ export const mockMainWindow = {
     on: () => {},
     removeListener: () => {},
     removeAllListeners: () => {},
-    id: 1,
+    id: 1
   },
   on: () => {},
   removeListener: () => {},
@@ -100,7 +108,7 @@ export const mockMainWindow = {
   show: () => {},
   hide: () => {},
   close: () => {},
-  focus: () => {},
+  focus: () => {}
 } as unknown as Electron.BrowserWindow
 
 /** Reset all captured state */
@@ -108,6 +116,7 @@ export function resetStub(): void {
   getHandlers().clear()
   getMock().__capturedOnHandlers.clear()
   getMock().__sentEvents.length = 0
+  getMock().__shellRevealed.length = 0
   sentEvents.length = 0
 }
 
@@ -165,10 +174,7 @@ export function setupElectronStub(): void {
  * Invoke a captured IPC handler with mock event and args.
  * Returns the handler result or throws the handler error.
  */
-export async function invokeHandler(
-  channel: string,
-  args?: unknown
-): Promise<unknown> {
+export async function invokeHandler(channel: string, args?: unknown): Promise<unknown> {
   const handlers = getHandlers()
   const handler = handlers.get(channel)
   if (!handler) {

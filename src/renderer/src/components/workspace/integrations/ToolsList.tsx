@@ -13,9 +13,10 @@ export default function ToolsList({
     <div className="space-y-1">
       <button
         onClick={() => setShowTools(!showTools)}
+        aria-expanded={showTools}
         className="flex items-center gap-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
       >
-        {showTools ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        {showTools ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
         <span>
           {integration.toolCount} tools ({integration.planModeToolNames.length} available in plan
           mode)
@@ -35,12 +36,12 @@ export default function ToolsList({
                     {shortName}
                   </code>
                   {isPlanMode && (
-                    <span className="text-[9px] px-1 py-0.5 rounded bg-mode-plan-muted text-mode-plan-text">
+                    <span className="text-[11px] px-1 py-0.5 rounded bg-mode-plan-muted text-mode-plan-text">
                       plan
                     </span>
                   )}
                   {!isPlanMode && (
-                    <span className="text-[9px] px-1 py-0.5 rounded bg-mode-build-muted text-mode-build-text">
+                    <span className="text-[11px] px-1 py-0.5 rounded bg-mode-build-muted text-mode-build-text">
                       build only
                     </span>
                   )}

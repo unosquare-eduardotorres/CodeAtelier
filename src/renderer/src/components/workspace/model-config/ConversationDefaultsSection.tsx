@@ -48,9 +48,7 @@ export default function ConversationDefaultsSection({
         <div className="flex items-center gap-2 mb-3">
           <MessageSquare size={14} className="text-primary-text" />
           <h4 className="text-sm font-medium text-text-primary">Communication Tone</h4>
-          <span className="text-xs text-text-muted ml-auto">
-            Applies to all providers
-          </span>
+          <span className="text-xs text-text-muted ml-auto">Applies to all providers</span>
         </div>
 
         {/* Compact pill row */}

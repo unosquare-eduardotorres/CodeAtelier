@@ -10,7 +10,7 @@ import AuditProvenanceBanner from './AuditProvenanceBanner'
 import { useAutoScroll } from './useAutoScroll'
 import { useMessageVirtualizer } from './useMessageVirtualizer'
 import { useThinkingIdentity } from './useThinkingIdentity'
-import { PLAN_BLOCK_RE, PLAN_BLOCK_CAPTURE_RE, BUILD_SUMMARY_RE } from './plan-detection'
+import { findPlanBlock, hasPlanBlock, hasBuildSummaryBlock } from './plan-detection'
 import { usePlanExecutionStore } from '@renderer/store/plan-execution.store'
 
 interface MessageListProps {
@@ -51,7 +51,12 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const latestPlanMessageId = useMemo(() => {
     for (let i = allMessages.length - 1; i >= 0; i--) {
       const msg = allMessages[i]
-      if (msg.role !== 'user' && msg.contentMd && PLAN_BLOCK_RE.test(msg.contentMd) && !BUILD_SUMMARY_RE.test(msg.contentMd)) {
+      if (
+        msg.role !== 'user' &&
+        msg.contentMd &&
+        hasPlanBlock(msg.contentMd) &&
+        !hasBuildSummaryBlock(msg.contentMd)
+      ) {
         return msg.id
       }
     }
@@ -63,9 +68,9 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
     if (!latestPlanMessageId || !activeConversationId) return
     const msg = allMessages.find((m) => m.id === latestPlanMessageId)
     if (!msg?.contentMd) return
-    const match = PLAN_BLOCK_CAPTURE_RE.exec(msg.contentMd)
-    if (match?.[1]) {
-      usePlanExecutionStore.getState().setLatestPlanContent(activeConversationId, match[1])
+    const block = findPlanBlock(msg.contentMd)
+    if (block?.content) {
+      usePlanExecutionStore.getState().setLatestPlanContent(activeConversationId, block.content)
     }
   }, [latestPlanMessageId, messages, activeConversationId])
 
@@ -103,7 +108,6 @@ export default function MessageList({ searchQuery }: MessageListProps): React.JS
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
   const { virtualizer, measureElement } = useMessageVirtualizer(messages.length, scrollRef)
-
 
   // ── Scroll position preservation on plan supersession ──
   // When latestPlanMessageId changes, an old plan card collapses from ~400px to ~50px.

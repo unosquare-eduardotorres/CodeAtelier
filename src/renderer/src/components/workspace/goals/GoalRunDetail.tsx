@@ -45,8 +45,7 @@ export default function GoalRunDetail({
   // Campaign goal spec carries the goal's own success criteria.
   const goalSpecArtifact = artifacts.find((a) => a.artifactType === 'goal_spec')
   const goalSpec = goalSpecArtifact?.contentJson as
-    | { outcome?: string; successCriteria?: string[] }
-    | undefined
+    { outcome?: string; successCriteria?: string[] } | undefined
   const successCriteria = Array.isArray(goalSpec?.successCriteria) ? goalSpec.successCriteria : []
 
   return (

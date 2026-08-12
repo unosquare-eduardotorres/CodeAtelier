@@ -24,9 +24,7 @@ import { AppChrome } from './pages/app-chrome'
 import { ChatPage } from './pages/chat-page'
 
 test.describe('SlashCommandDropdown', () => {
-  async function navigateToMessageInput(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToMessageInput(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -48,7 +46,10 @@ test.describe('SlashCommandDropdown', () => {
 
   test('typing slash in message input shows command dropdown', async ({ electronPage: page }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await expect(messageInput).toBeVisible()
@@ -73,7 +74,10 @@ test.describe('SlashCommandDropdown', () => {
 
   test('dropdown displays list of available commands', async ({ electronPage: page }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await messageInput.focus()
@@ -82,7 +86,10 @@ test.describe('SlashCommandDropdown', () => {
 
     const dropdown = page.locator('[data-testid="slash-command-dropdown"]')
     const hasDropdown = await dropdown.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDropdown) { test.skip(); return }
+    if (!hasDropdown) {
+      test.skip()
+      return
+    }
 
     // Should have command buttons
     const commandButtons = dropdown.locator('button')
@@ -91,7 +98,10 @@ test.describe('SlashCommandDropdown', () => {
 
     // Each command should have an icon and description
     const firstCmd = commandButtons.first()
-    const hasSvg = await firstCmd.locator('svg').isVisible().catch(() => false)
+    const hasSvg = await firstCmd
+      .locator('svg')
+      .isVisible()
+      .catch(() => false)
     expect(hasSvg).toBe(true)
 
     // Clean up
@@ -101,7 +111,10 @@ test.describe('SlashCommandDropdown', () => {
 
   test('clicking a command option inserts it into input', async ({ electronPage: page }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await messageInput.focus()
@@ -110,15 +123,21 @@ test.describe('SlashCommandDropdown', () => {
 
     const dropdown = page.locator('[data-testid="slash-command-dropdown"]')
     const hasDropdown = await dropdown.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDropdown) { test.skip(); return }
+    if (!hasDropdown) {
+      test.skip()
+      return
+    }
 
     // Click the first command
     const commands = dropdown.locator('button')
     const cmdCount = await commands.count()
-    if (cmdCount === 0) { test.skip(); return }
+    if (cmdCount === 0) {
+      test.skip()
+      return
+    }
 
     // Get command text before clicking
-    const firstCmdText = await commands.first().locator('.font-mono').textContent() ?? ''
+    const firstCmdText = (await commands.first().locator('.font-mono').textContent()) ?? ''
 
     await commands.first().click()
     await page.waitForTimeout(500)
@@ -136,7 +155,10 @@ test.describe('SlashCommandDropdown', () => {
 
   test('arrow key navigation highlights commands sequentially', async ({ electronPage: page }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await messageInput.focus()
@@ -145,14 +167,20 @@ test.describe('SlashCommandDropdown', () => {
 
     const dropdown = page.locator('[data-testid="slash-command-dropdown"]')
     const hasDropdown = await dropdown.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDropdown) { test.skip(); return }
+    if (!hasDropdown) {
+      test.skip()
+      return
+    }
 
     const commands = dropdown.locator('button')
     const cmdCount = await commands.count()
-    if (cmdCount < 2) { test.skip(); return }
+    if (cmdCount < 2) {
+      test.skip()
+      return
+    }
 
     // First command should have selected styling (bg-surface-overlay)
-    const firstClasses = await commands.first().getAttribute('class') ?? ''
+    const firstClasses = (await commands.first().getAttribute('class')) ?? ''
     const isFirstSelected = firstClasses.includes('bg-surface-overlay')
 
     // Press ArrowDown to move to second command
@@ -160,7 +188,7 @@ test.describe('SlashCommandDropdown', () => {
     await page.waitForTimeout(200)
 
     // Second command should now have selected styling
-    const secondClasses = await commands.nth(1).getAttribute('class') ?? ''
+    const secondClasses = (await commands.nth(1).getAttribute('class')) ?? ''
     const isSecondSelected = secondClasses.includes('bg-surface-overlay')
 
     // At least verify keyboard navigation didn't break
@@ -173,7 +201,10 @@ test.describe('SlashCommandDropdown', () => {
 
   test('enter key selects the currently highlighted command', async ({ electronPage: page }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await messageInput.focus()
@@ -182,7 +213,10 @@ test.describe('SlashCommandDropdown', () => {
 
     const dropdown = page.locator('[data-testid="slash-command-dropdown"]')
     const hasDropdown = await dropdown.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDropdown) { test.skip(); return }
+    if (!hasDropdown) {
+      test.skip()
+      return
+    }
 
     // Press Enter to select the first (default) command
     await page.keyboard.press('Enter')
@@ -198,7 +232,10 @@ test.describe('SlashCommandDropdown', () => {
 
   test('escape key dismisses the dropdown menu', async ({ electronPage: page }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await messageInput.focus()
@@ -207,7 +244,10 @@ test.describe('SlashCommandDropdown', () => {
 
     const dropdown = page.locator('[data-testid="slash-command-dropdown"]')
     const hasDropdown = await dropdown.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDropdown) { test.skip(); return }
+    if (!hasDropdown) {
+      test.skip()
+      return
+    }
 
     // Press Escape to dismiss
     await page.keyboard.press('Escape')
@@ -221,9 +261,14 @@ test.describe('SlashCommandDropdown', () => {
     await messageInput.fill('')
   })
 
-  test('backspace after slash removes dropdown and slash character', async ({ electronPage: page }) => {
+  test('backspace after slash removes dropdown and slash character', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToMessageInput(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const messageInput = page.locator('[data-testid="message-input"]')
     await messageInput.focus()

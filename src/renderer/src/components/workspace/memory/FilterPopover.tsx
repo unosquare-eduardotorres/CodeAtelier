@@ -65,25 +65,36 @@ export default function FilterPopover({
           {/* Categories */}
           <div>
             <p className="font-medium text-text-primary mb-1.5">Categories</p>
-            {(['decision', 'convention', 'gotcha', 'preference', 'reference'] as const).map((cat) => (
-              <label key={cat} className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={filterCategories.has(cat)}
-                  onChange={() => onToggleCategory(cat)}
-                  className="rounded border-border-default accent-primary"
-                />
-                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: `var(${CATEGORY_COLOR_VAR[cat]})` }} />
-                <span className="flex-1">{cat}</span>
-                <span className="text-text-muted">{categoryCounts[cat] ?? 0}</span>
-              </label>
-            ))}
+            {(['decision', 'convention', 'gotcha', 'preference', 'reference'] as const).map(
+              (cat) => (
+                <label
+                  key={cat}
+                  className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={filterCategories.has(cat)}
+                    onChange={() => onToggleCategory(cat)}
+                    className="rounded border-border-default accent-primary"
+                  />
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: `var(${CATEGORY_COLOR_VAR[cat]})` }}
+                  />
+                  <span className="flex-1">{cat}</span>
+                  <span className="text-text-muted">{categoryCounts[cat] ?? 0}</span>
+                </label>
+              )
+            )}
           </div>
           {/* Tiers */}
           <div>
             <p className="font-medium text-text-primary mb-1.5">Tiers</p>
             {ALL_TIERS.map((t) => (
-              <label key={t} className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer">
+              <label
+                key={t}
+                className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer"
+              >
                 <input
                   type="checkbox"
                   checked={filterTiers.has(t)}
@@ -98,8 +109,11 @@ export default function FilterPopover({
           {/* Edge kinds */}
           <div>
             <p className="font-medium text-text-primary mb-1.5">Edge types</p>
-            {(['similarity', 'superseded', 'contradiction'] as const).map((kind) => (
-              <label key={kind} className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer">
+            {(['similarity', 'superseded', 'contradiction', 'derived'] as const).map((kind) => (
+              <label
+                key={kind}
+                className="flex items-center gap-2 py-0.5 text-text-secondary cursor-pointer"
+              >
                 <input
                   type="checkbox"
                   checked={filterEdges.has(kind)}

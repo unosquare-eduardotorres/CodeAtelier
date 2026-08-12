@@ -25,42 +25,50 @@ preferences, and constraints that ALL Blueprint phases must respect.
 Guide the user through defining each section:
 
 ### 1. Project Overview
+
 - Project name and description
 - Project type (library, CLI, web service, desktop app, mobile app)
 - Primary language and runtime
 
 ### 2. Guiding Principles
+
 - 3-5 development principles the team follows
 - These should be actionable, not aspirational
 - Good: "Prefer composition over inheritance"
 - Bad: "Write good code"
 
 ### 3. Technology Stack
+
 - Required technologies (with versions)
 - Prohibited technologies (with reasons)
 - Preferred libraries for common tasks
 
 ### 4. Coding Standards
+
 - Naming conventions (files, variables, types)
 - Architecture patterns (required and prohibited)
 - Code style rules (max function length, documentation requirements)
 
 ### 5. Testing Requirements
+
 - What must be tested
 - Testing frameworks and conventions
 - Coverage expectations
 
 ### 6. Security Requirements
+
 - Input validation rules
 - Authentication/authorization patterns
 - Data protection requirements
 
 ### 7. Performance Targets
+
 - Response time targets
 - Resource constraints
 - Scale expectations
 
 ### 8. Non-Negotiable Rules
+
 - Rules that must NEVER be violated
 - These are enforced in every Blueprint phase
 
@@ -75,6 +83,7 @@ Guide the user through defining each section:
 ## Codebase Analysis
 
 Before generating the constitution, analyze the workspace for:
+
 - Existing README or documentation
 - Package.json / pyproject.toml / Cargo.toml for tech stack
 - Existing test patterns and conventions

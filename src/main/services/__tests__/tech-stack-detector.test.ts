@@ -69,8 +69,9 @@ describe('tech-stack-detector', () => {
       )
       writeFile(root, 'frontend/tsconfig.json', '{}')
       writeFile(root, 'frontend/vite.config.ts', 'export default {}')
-      // Backend .NET — .slnx + .csproj two levels deep
-      writeFile(root, 'backend/Conectdah.slnx', '<Solution></Solution>')
+      // Backend .NET — ONLY the nested .csproj. Deliberately no top-level
+      // solution file: with a depth-0 glob scan this shape detects nothing,
+      // which is exactly the bug that made large C# repos look docker-only.
       writeFile(root, 'backend/src/Api/Api.csproj', '<Project></Project>')
 
       const result = detectTechStack(root)
@@ -93,6 +94,55 @@ describe('tech-stack-detector', () => {
       assert.ok(
         result.detectedTechs.includes('docker'),
         `expected docker, got ${result.detectedTechs.join(',')}`
+      )
+    } finally {
+      cleanup(root)
+    }
+  })
+
+  test('dotnet_framework_48_non_convention_dir', () => {
+    const root = makeTmpWorkspace()
+    try {
+      // Classic ASP.NET shape: solution-named dir that is NOT in CONVENTION_DIRS,
+      // no SDK-style project file at the root, no package.json anywhere.
+      writeFile(root, 'Mulligan.Web/packages.config', '<packages></packages>')
+      writeFile(root, 'Mulligan.Web/web.config', '<configuration></configuration>')
+      writeFile(root, 'Mulligan.Web/Mulligan.Web.csproj', '<Project></Project>')
+      writeFile(root, 'Mulligan.Web/Controllers/HomeController.cs', 'class HomeController {}')
+      writeFile(root, 'Mulligan.Data/Scripts/schema.sqlproj', '<Project></Project>')
+
+      const result = detectTechStack(root)
+      assert.ok(
+        result.detectedTechs.includes('dotnet'),
+        `expected dotnet, got ${result.detectedTechs.join(',')}`
+      )
+      assert.ok(
+        result.detectedTechs.includes('csharp'),
+        `expected csharp, got ${result.detectedTechs.join(',')}`
+      )
+      assert.ok(
+        result.detectedTechs.includes('sql'),
+        `expected sql, got ${result.detectedTechs.join(',')}`
+      )
+      assert.ok(
+        result.recommendedSkills.includes('dotnet-architect'),
+        `expected dotnet-architect skill, got ${result.recommendedSkills.join(',')}`
+      )
+    } finally {
+      cleanup(root)
+    }
+  })
+
+  test('glob_depth_is_bounded', () => {
+    const root = makeTmpWorkspace()
+    try {
+      // 5 levels below root — beyond MAX_GLOB_DEPTH (3), so it must NOT match.
+      writeFile(root, 'a/b/c/d/e/Deep.csproj', '<Project></Project>')
+
+      const result = detectTechStack(root)
+      assert.ok(
+        !result.detectedTechs.includes('dotnet'),
+        `depth-5 marker should be out of range, got ${result.detectedTechs.join(',')}`
       )
     } finally {
       cleanup(root)

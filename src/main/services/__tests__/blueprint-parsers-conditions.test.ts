@@ -77,7 +77,7 @@ describe('parsePhaseCompletionBlock — verify-style fallback', () => {
       '```blueprint-phase-complete\n{"phase":"review","status":"complete"}\n```\n```json\n{"overallStatus":"passed"}\n```'
     const result = parsePhaseCompletionBlock(text)
     assert.ok(result)
-    assert.equal(result.phase, 'review')  // primary wins, not verify fallback
+    assert.equal(result.phase, 'review') // primary wins, not verify fallback
   })
 
   test('returns null for malformed JSON in verify-style block', () => {
@@ -182,14 +182,16 @@ describe('parsePhaseCompletionBlock — robustness', () => {
   })
 
   test('extracts first JSON object, not cross-block match', () => {
-    const text = '{"phase":"specify","status":"complete"}\nsome text\n{"phase":"verify","status":"complete"}'
+    const text =
+      '{"phase":"specify","status":"complete"}\nsome text\n{"phase":"verify","status":"complete"}'
     const result = parsePhaseCompletionBlock(text)
     assert.ok(result)
     assert.equal(result.phase, 'specify') // first block wins
   })
 
   test('handles nested JSON in verify-style fallback', () => {
-    const text = '```json\n{"overallStatus":"gaps_found","artifacts":{"missing":2,"stub":1},"keyLinks":{"broken":1}}\n```'
+    const text =
+      '```json\n{"overallStatus":"gaps_found","artifacts":{"missing":2,"stub":1},"keyLinks":{"broken":1}}\n```'
     const result = parsePhaseCompletionBlock(text, 'verify')
     assert.ok(result)
     assert.equal((result as Record<string, unknown>).overallStatus, 'gaps_found')
@@ -208,8 +210,7 @@ describe('parsePhaseCompletionBlock — robustness', () => {
   test('stray LLM status cannot override pinned status in Fallback 2', () => {
     // LLM emits stray "status" key alongside overallStatus (but no "phase" key,
     // so Fallback 1 is skipped and Fallback 2 handles it)
-    const text =
-      '```json\n{"overallStatus":"gaps_found","status":"in_progress","findings":[]}\n```'
+    const text = '```json\n{"overallStatus":"gaps_found","status":"in_progress","findings":[]}\n```'
     const result = parsePhaseCompletionBlock(text, 'verify')
     assert.ok(result)
     assert.equal(result.status, 'complete', 'status must be pinned to complete')
@@ -220,8 +221,7 @@ describe('parsePhaseCompletionBlock — robustness', () => {
   test('stray LLM phase cannot override pinned phase in Fallback 2', () => {
     // LLM emits stray "phase" key alongside overallStatus (but no "status" key,
     // so Fallback 1 is skipped and Fallback 2 handles it)
-    const text =
-      '```json\n{"overallStatus":"passed","phase":"build","findings":[]}\n```'
+    const text = '```json\n{"overallStatus":"passed","phase":"build","findings":[]}\n```'
     const result = parsePhaseCompletionBlock(text, 'verify')
     assert.ok(result)
     assert.equal(result.phase, 'verify', 'phase must be pinned to expectedPhase')

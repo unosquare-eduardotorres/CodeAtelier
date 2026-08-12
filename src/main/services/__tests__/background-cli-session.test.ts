@@ -52,8 +52,16 @@ function createFakeProcess(): {
   stdin: { written: string[] }
   emitExit: (code?: number, signal?: string) => void
 } {
-  const stdout = new Readable({ read() {} })
-  const stderr = new Readable({ read() {} })
+  const stdout = new Readable({
+    read() {
+      /* no-op: data is pushed manually by the test */
+    }
+  })
+  const stderr = new Readable({
+    read() {
+      /* no-op: data is pushed manually by the test */
+    }
+  })
   const stdinWrites: string[] = []
   const stdin = new Writable({
     write(chunk, _enc, cb) {
@@ -108,12 +116,11 @@ function createTestSession(): {
 }
 
 /** Small delay to let async operations progress */
-const tick = (ms = 20) => new Promise(r => setTimeout(r, ms))
+const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms))
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
 describe('BackgroundCliSession', () => {
-
   describe('run — basic flow', () => {
     test('spawns process, sends message, reads result', async () => {
       const { session, fake } = createTestSession()
@@ -128,9 +135,12 @@ describe('BackgroundCliSession', () => {
         await tick()
         fake.stdout.push(systemInitEvent())
         await tick()
-        fake.stdout.push(resultEvent('```optimized-prompt\nHello world improved\n```', {
-          input: 200, output: 100
-        }))
+        fake.stdout.push(
+          resultEvent('```optimized-prompt\nHello world improved\n```', {
+            input: 200,
+            output: 100
+          })
+        )
 
         const result = await runPromise
 
@@ -152,9 +162,14 @@ describe('BackgroundCliSession', () => {
         await tick()
         fake.stdout.push(systemInitEvent())
         await tick()
-        fake.stdout.push(resultEvent('Response text', {
-          input: 500, output: 200, cacheRead: 50, cacheCreation: 10
-        }))
+        fake.stdout.push(
+          resultEvent('Response text', {
+            input: 500,
+            output: 200,
+            cacheRead: 50,
+            cacheCreation: 10
+          })
+        )
 
         const result = await runPromise
         assert.equal(result.usage.input, 500)
@@ -396,7 +411,10 @@ describe('BackgroundCliSession', () => {
       let capturedEnv: Record<string, string | undefined> | null = null
       const session = new BackgroundCliSession()
       const fake = createFakeProcess()
-      ;(session as unknown as AnySession)._spawner = (_args: string[], opts: { env: NodeJS.ProcessEnv }) => {
+      ;(session as unknown as AnySession)._spawner = (
+        _args: string[],
+        opts: { env: NodeJS.ProcessEnv }
+      ) => {
         capturedEnv = opts.env as Record<string, string | undefined>
         return fake.proc
       }
@@ -419,7 +437,11 @@ describe('BackgroundCliSession', () => {
         assert.ok(capturedEnv, 'Spawner should have been called')
         const env = capturedEnv as Record<string, string | undefined>
         assert.equal(env.CLAUDECODE, undefined, 'CLAUDECODE should be removed')
-        assert.equal(env.CLAUDE_CODE_ENTRYPOINT, undefined, 'CLAUDE_CODE_ENTRYPOINT should be removed')
+        assert.equal(
+          env.CLAUDE_CODE_ENTRYPOINT,
+          undefined,
+          'CLAUDE_CODE_ENTRYPOINT should be removed'
+        )
       } finally {
         // Restore original env
         if (origClaudeCode !== undefined) process.env.CLAUDECODE = origClaudeCode
@@ -505,7 +527,6 @@ describe('BackgroundCliSession', () => {
       }
     })
   })
-
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

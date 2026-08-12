@@ -25,11 +25,11 @@ import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Workflow Deep', () => {
   // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
-  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+  test.beforeEach(async ({ electronPage }) => {
+    await pinSequentialBuild(electronPage)
+  })
 
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -43,13 +43,11 @@ test.describe('Blueprint Workflow Deep', () => {
     return true
   }
 
-  async function navigateToBlueprints(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToBlueprints(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('blueprints')
+    await settingsNav.navigateToSettingsTab('blueprints')
     await page.waitForTimeout(800)
 
     // Check for blueprint page or timeline
@@ -60,13 +58,17 @@ test.describe('Blueprint Workflow Deep', () => {
     return hasPage || hasTimeline
   }
 
-  test('phase timeline renders with ordered phases', async ({
-    electronPage: page
-  }) => {
+  test('phase timeline renders with ordered phases', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     // Look for the phase timeline
     const timeline = page.locator('[data-testid="blueprint-phase-timeline"]')
@@ -86,7 +88,10 @@ test.describe('Blueprint Workflow Deep', () => {
 
     const timelineRetry = page.locator('[data-testid="blueprint-phase-timeline"]')
     const hasTimelineRetry = await timelineRetry.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTimelineRetry) { test.skip(); return }
+    if (!hasTimelineRetry) {
+      test.skip()
+      return
+    }
 
     // Pipeline heading should be visible
     const pipelineHeader = timelineRetry.getByText('Pipeline')
@@ -104,13 +109,22 @@ test.describe('Blueprint Workflow Deep', () => {
 
   test('active phase shows animated spinner icon', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     const timeline = page.locator('[data-testid="blueprint-phase-timeline"]')
     const hasTimeline = await timeline.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTimeline) { test.skip(); return }
+    if (!hasTimeline) {
+      test.skip()
+      return
+    }
 
     // Active phase has an animate-spin class and "running" badge
     const runningBadge = timeline.getByText('running').first()
@@ -129,13 +143,22 @@ test.describe('Blueprint Workflow Deep', () => {
 
   test('completed phases show green checkmark icon', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     const timeline = page.locator('[data-testid="blueprint-phase-timeline"]')
     const hasTimeline = await timeline.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTimeline) { test.skip(); return }
+    if (!hasTimeline) {
+      test.skip()
+      return
+    }
 
     // Completed phases use the success color class (text-success)
     const completedIcons = timeline.locator('.text-success')
@@ -150,17 +173,24 @@ test.describe('Blueprint Workflow Deep', () => {
     }
   })
 
-  test('approval gate shows "Approval Gate" heading', async ({
-    electronPage: page
-  }) => {
+  test('approval gate shows "Approval Gate" heading', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     const timeline = page.locator('[data-testid="blueprint-phase-timeline"]')
     const hasTimeline = await timeline.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTimeline) { test.skip(); return }
+    if (!hasTimeline) {
+      test.skip()
+      return
+    }
 
     // Approval gate entry in the timeline
     const approvalGate = timeline.getByText('Approval Gate')
@@ -180,9 +210,15 @@ test.describe('Blueprint Workflow Deep', () => {
 
   test('approve button has success styling', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     // Look for an approve button (visible when blueprint is awaiting approval)
     const approveBtn = page.getByRole('button', { name: /approve/i }).first()
@@ -200,9 +236,15 @@ test.describe('Blueprint Workflow Deep', () => {
 
   test('reject reveals feedback textarea', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     // Look for a reject button
     const rejectBtn = page.getByRole('button', { name: /reject|send feedback/i }).first()
@@ -225,18 +267,25 @@ test.describe('Blueprint Workflow Deep', () => {
     }
   })
 
-  test('wave progress bar shows percentage completion', async ({
-    electronPage: page
-  }) => {
+  test('wave progress bar shows percentage completion', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasBlueprints = await navigateToBlueprints(page)
-    if (!hasBlueprints) { test.skip(); return }
+    if (!hasBlueprints) {
+      test.skip()
+      return
+    }
 
     // Look for a progress bar or completion percentage
-    const progressBar = page.locator('[role="progressbar"], .bg-success, .bg-primary').filter({
-      has: page.locator('[style*="width"]')
-    }).first()
+    const progressBar = page
+      .locator('[role="progressbar"], .bg-success, .bg-primary')
+      .filter({
+        has: page.locator('[style*="width"]')
+      })
+      .first()
     const hasProgress = await progressBar.isVisible({ timeout: 5_000 }).catch(() => false)
 
     if (!hasProgress) {

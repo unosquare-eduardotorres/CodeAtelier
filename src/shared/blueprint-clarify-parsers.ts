@@ -96,27 +96,89 @@ const QuestionsBlockSchema = z.object({
 
 // ── Regex for fenced blocks ──
 
-const FINDINGS_REGEX = /```blueprint-clarify-findings\s*\n([\s\S]*?)```/g
-const QUESTIONS_REGEX = /```blueprint-clarify-questions\s*\n([\s\S]*?)```/g
-const COMPLETION_REGEX = /```blueprint-phase-complete\s*\n([\s\S]*?)```/g
+/** Info strings the pipeline treats as structured blocks rather than prose. */
+const BLOCK_INFO_STRING =
+  '(?:blueprint-[\\w-]+|council-verdict|grill-evaluation|goal-verify-[\\w-]+)'
+
+/**
+ * MERGED-FENCE-FIX: split a run of 6+ backticks that is glued to a block's info
+ * string back into a closing fence and a separate opening fence.
+ *
+ * The clarify agent re-emits its findings every round, and when it puts the
+ * closing fence of one block and the opening fence of the next on the SAME line
+ * the two runs merge:
+ *
+ *     }
+ *     ``````blueprint-clarify-findings
+ *
+ * Six backticks is never a legal single fence here — it is always close(3) +
+ * open(3). Left alone it defeated `stripBlueprintBlocks`: the first block's
+ * greedy `{3,} close swallowed all six, so the SECOND block lost its opening
+ * backticks entirely and its label + JSON rendered as plain chat text, while its
+ * real closing fence was left dangling as an empty code block.
+ *
+ * Runs of 4–5 are deliberately left alone — those are a legitimate wider fence
+ * (as used by the prompt's own examples), not a merge.
+ */
+export function normalizeFenceRuns(text: string): string {
+  return text.replace(new RegExp('`{6,}(?=[ \\t]*' + BLOCK_INFO_STRING + ')', 'g'), '```\n```')
+}
+
+// Openers and closers both accept 3-or-more backticks. Keeping the parser and
+// the stripper on the SAME fence grammar is what prevents a block from being
+// parsed but not stripped (or vice versa).
+const FINDINGS_REGEX = /`{3,}[ \t]*blueprint-clarify-findings[ \t]*\r?\n([\s\S]*?)`{3,}/g
+const QUESTIONS_REGEX = /`{3,}[ \t]*blueprint-clarify-questions[ \t]*\r?\n([\s\S]*?)`{3,}/g
+const COMPLETION_REGEX = /`{3,}[ \t]*blueprint-phase-complete[ \t]*\r?\n([\s\S]*?)`{3,}/g
 
 // ── Parsers ──
 
 /**
- * Extract and parse the last blueprint-clarify-findings block from text.
- * Returns null if no block found or parsing fails entirely.
+ * LAST-MATCH-FIX: walk the emitted blocks newest → oldest and return the first
+ * one that actually parses, instead of betting everything on the final match.
+ *
+ * The clarify agent re-emits its blocks every round, so a turn's text normally
+ * carries several copies. The previous "take `matches[length - 1]`, return null
+ * on any throw" shape meant ONE malformed emission discarded every good block
+ * that came before it — the whole turn then logged as "zero parsed blocks" and
+ * degraded to the free-text panel even though a well-formed block was present.
+ *
+ * Truncated tails and stray label lines are exactly the kind of damage that
+ * lands on the LAST block (it is the one still streaming, or the one whose
+ * opening fence a merged run swallowed), which is why the newest match is the
+ * least trustworthy one to bet the turn on.
+ *
+ * Preserves "most recent re-emission wins" — it just no longer treats a single
+ * bad block as fatal.
+ */
+function parseNewestParsableBlock<T>(
+  text: string,
+  regex: RegExp,
+  transform: (raw: unknown) => T | null
+): T | null {
+  const matches = [...normalizeFenceRuns(text).matchAll(regex)]
+
+  for (let i = matches.length - 1; i >= 0; i--) {
+    let raw: unknown
+    try {
+      raw = JSON.parse(matches[i][1].trim())
+    } catch {
+      continue // malformed emission — fall back to the previous one
+    }
+    const result = transform(raw)
+    if (result !== null) return result
+  }
+
+  return null
+}
+
+/**
+ * Extract and parse the newest parsable blueprint-clarify-findings block.
+ * Returns null only if no block found or every block fails to parse.
  * Tolerant: unknown categories coerced to 'missing_requirements', missing ids generated.
  */
 export function parseClarifyFindings(text: string): ClarifyFindingsBlock | null {
-  const matches = [...text.matchAll(FINDINGS_REGEX)]
-  if (matches.length === 0) return null
-
-  // Use the last match (most recent re-emission)
-  const lastMatch = matches[matches.length - 1]
-  const jsonStr = lastMatch[1].trim()
-
-  try {
-    const raw = JSON.parse(jsonStr)
+  return parseNewestParsableBlock(text, FINDINGS_REGEX, (raw) => {
     const parsed = FindingsBlockSchema.safeParse(raw)
     if (!parsed.success) return null
 
@@ -136,25 +198,16 @@ export function parseClarifyFindings(text: string): ClarifyFindingsBlock | null 
     }))
 
     return { findings, summary: block.summary }
-  } catch {
-    return null
-  }
+  })
 }
 
 /**
- * Extract and parse the last blueprint-clarify-questions block from text.
- * Returns null if no block found or parsing fails entirely.
+ * Extract and parse the newest parsable blueprint-clarify-questions block.
+ * Returns null only if no block found or every block fails to parse.
  * Tolerant: missing ids generated.
  */
 export function parseClarifyQuestions(text: string): ClarifyQuestionsBlock | null {
-  const matches = [...text.matchAll(QUESTIONS_REGEX)]
-  if (matches.length === 0) return null
-
-  const lastMatch = matches[matches.length - 1]
-  const jsonStr = lastMatch[1].trim()
-
-  try {
-    const raw = JSON.parse(jsonStr)
+  return parseNewestParsableBlock(text, QUESTIONS_REGEX, (raw) => {
     const parsed = QuestionsBlockSchema.safeParse(raw)
     if (!parsed.success) return null
 
@@ -172,9 +225,7 @@ export function parseClarifyQuestions(text: string): ClarifyQuestionsBlock | nul
     }))
 
     return { questions }
-  } catch {
-    return null
-  }
+  })
 }
 
 /**
@@ -183,21 +234,13 @@ export function parseClarifyQuestions(text: string): ClarifyQuestionsBlock | nul
 export function parseClarifyCompletion(
   text: string
 ): { phase: string; status: string; questionsAsked?: number; questionsAnswered?: number } | null {
-  const matches = [...text.matchAll(COMPLETION_REGEX)]
-  if (matches.length === 0) return null
-
-  const lastMatch = matches[matches.length - 1]
-  const jsonStr = lastMatch[1].trim()
-
-  try {
-    const raw = JSON.parse(jsonStr)
-    if (raw?.phase === 'clarify' && raw?.status === 'complete') {
-      return raw
+  return parseNewestParsableBlock(text, COMPLETION_REGEX, (raw) => {
+    const block = raw as { phase?: string; status?: string } | null
+    if (block?.phase === 'clarify' && block?.status === 'complete') {
+      return raw as { phase: string; status: string }
     }
     return null
-  } catch {
-    return null
-  }
+  })
 }
 
 /**
@@ -268,17 +311,27 @@ export function formatClarifyAnswerMessage(
 }
 
 /**
- * Deduplicate questions: remove any question whose id+text match one already asked.
- * Returns only genuinely new questions.
+ * Stable identity for a clarify question: id + exact text, so a genuinely
+ * reworded follow-up counts as new while a verbatim re-emission does not.
+ */
+export function clarifyQuestionKey(q: ClarifyQuestion): string {
+  return `${q.id}::${q.question}`
+}
+
+/**
+ * Deduplicate questions: remove any question whose id+text match one in
+ * `previouslyAsked`. Returns only genuinely new questions.
+ *
+ * NOTE: callers should pass the questions the user has already ANSWERED, not
+ * every question ever displayed — the clarify prompt instructs the model to
+ * re-emit still-unanswered questions, and those must survive dedupe.
  */
 export function deduplicateClarifyQuestions(
   incoming: ClarifyQuestion[],
   previouslyAsked: ClarifyQuestion[]
 ): ClarifyQuestion[] {
-  const askedSet = new Set(
-    previouslyAsked.map((q) => `${q.id}::${q.question}`)
-  )
-  return incoming.filter((q) => !askedSet.has(`${q.id}::${q.question}`))
+  const askedSet = new Set(previouslyAsked.map(clarifyQuestionKey))
+  return incoming.filter((q) => !askedSet.has(clarifyQuestionKey(q)))
 }
 
 // ── ask_user → ClarifyQuestion bridge ──
@@ -306,14 +359,20 @@ export function grillQuestionsToClarifyBlock(questions: GrillQuestion[]): Clarif
 // ── Strip helpers ──
 
 export function stripBlueprintBlocks(text: string): string {
-  let cleaned = text
+  // 0. MERGED-FENCE-FIX: un-glue back-to-back blocks before anything else, so a
+  //    greedy close can't eat the next block's opening fence.
+  let cleaned = normalizeFenceRuns(text)
 
   // 1. Standard fenced blocks (3+ backticks on open and close)
   //    Covers: blueprint-*, council-verdict, grill-evaluation, goal-verify-*
-  cleaned = cleaned.replace(/`{3,}\s*(?:blueprint-[\w-]+|council-verdict|grill-evaluation|goal-verify-[\w-]+)\s*\n[\s\S]*?`{3,}/g, '')
+  cleaned = cleaned.replace(
+    new RegExp('`{3,}\\s*' + BLOCK_INFO_STRING + '\\s*\\n[\\s\\S]*?`{3,}', 'g'),
+    ''
+  )
 
-  // 2. Partial fenced blocks (opening fence present, no closing fence yet — mid-stream)
-  cleaned = cleaned.replace(/`{3,}\s*(?:blueprint-[\w-]+|council-verdict|grill-evaluation|goal-verify-[\w-]+)[\s\S]*$/g, '')
+  // 2. Partial fenced blocks (opening fence present, no closing fence yet — mid-stream).
+  //    `[\s\S]*` is greedy, so it already runs to end-of-string — no anchor needed.
+  cleaned = cleaned.replace(new RegExp('`{3,}\\s*' + BLOCK_INFO_STRING + '[\\s\\S]*', 'g'), '')
 
   return cleaned.replace(/\n{3,}/g, '\n\n').trim()
 }

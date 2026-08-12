@@ -12,6 +12,7 @@
 **File:** `package.json` (overrides section)
 
 Bumped the undici override from `^7.28.0` to `^7.29.0`, resolving:
+
 - CVE-2026-13697 — Cookie header injection (HIGH 7.4)
 - CVE-2026-16729 — Cookie attribute injection via semicolons
 - CVE-2026-16728 — Content-Length mismatch on retry
@@ -25,10 +26,12 @@ Bumped the undici override from `^7.28.0` to `^7.29.0`, resolving:
 **File:** `src/main/mcp-servers/process-manager-server.ts`
 
 Added two cross-platform helper functions:
+
 - `killProcessTree(pid, signal)` — Uses `taskkill /PID <pid> /T [/F]` on Windows, `process.kill(-pid, signal)` on Unix
 - `isProcessAlive(pid)` — Uses `tasklist /FI "PID eq <pid>"` on Windows, `process.kill(-pid, 0)` on Unix
 
 Replaced all 5 `process.kill(-pid, ...)` calls in `stop_process` with helper calls. This fixes:
+
 - Silent ESRCH errors on Windows (negative PIDs unsupported)
 - Orphaned child processes when stopping dev servers
 - False "stopped" reports when process is actually still running
@@ -51,24 +54,24 @@ Added documentation explaining the intentional scope of the first-token allowlis
 
 ## Verification Results
 
-| Check | Result |
-|-------|--------|
-| TypeScript typecheck | ✅ Clean (node + web) |
-| Unit tests | ✅ 4,589 passed, 0 failed |
-| Repository tests | ✅ 397 passed, 1 pre-existing failure (schema version) |
-| Production audit | ✅ 0 vulnerabilities |
-| undici version | ✅ 7.29.0 |
+| Check                | Result                                                 |
+| -------------------- | ------------------------------------------------------ |
+| TypeScript typecheck | ✅ Clean (node + web)                                  |
+| Unit tests           | ✅ 4,589 passed, 0 failed                              |
+| Repository tests     | ✅ 397 passed, 1 pre-existing failure (schema version) |
+| Production audit     | ✅ 0 vulnerabilities                                   |
+| undici version       | ✅ 7.29.0                                              |
 
 ---
 
 ## Items Not Requiring Code Changes
 
-| # | Item | Status |
-|---|------|--------|
-| Node.js 24.18.1 CVEs | ⏳ Awaiting Electron 43.3.0 — very low exposure (no http2/permission model usage) |
+| #                         | Item                                                                              | Status |
+| ------------------------- | --------------------------------------------------------------------------------- | ------ |
+| Node.js 24.18.1 CVEs      | ⏳ Awaiting Electron 43.3.0 — very low exposure (no http2/permission model usage) |
 | Windows GPU sandbox crash | ⏳ Workaround ready if user reports surface (conditional `--disable-gpu-sandbox`) |
-| react-router RSC CSRF | ✅ Not affected — client-side Electron SPA, no RSC mode |
-| Electron security config | ✅ Comprehensive audit passed all 18 checks |
+| react-router RSC CSRF     | ✅ Not affected — client-side Electron SPA, no RSC mode                           |
+| Electron security config  | ✅ Comprehensive audit passed all 18 checks                                       |
 
 ---
 

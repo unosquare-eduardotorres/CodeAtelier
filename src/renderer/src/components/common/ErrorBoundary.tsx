@@ -3,6 +3,14 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 interface Props {
   children: ReactNode
   fallback?: ReactNode
+  /**
+   * Escape hatch for persistent bad state. "Try Again" only clears `hasError`,
+   * so if the render throws deterministically (e.g. a malformed record being
+   * hydrated) the boundary re-throws instantly and the user is stuck. Supplying
+   * this renders a second action that navigates away from whatever is broken
+   * before clearing the error.
+   */
+  onReset?: () => void
 }
 
 interface State {
@@ -63,16 +71,33 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         this.props.fallback ?? (
-          <div data-testid="error-boundary-fallback" className="flex items-center justify-center h-full p-8 text-center">
+          <div
+            data-testid="error-boundary-fallback"
+            className="flex items-center justify-center h-full p-8 text-center"
+          >
             <div>
               <h2 className="text-lg font-semibold text-danger mb-2">Something went wrong</h2>
               <p className="text-text-secondary text-sm mb-4">{this.state.error?.message}</p>
-              <button
-                onClick={() => this.setState({ hasError: false, error: null })}
-                className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover text-sm transition-colors"
-              >
-                Try Again
-              </button>
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  onClick={() => this.setState({ hasError: false, error: null })}
+                  className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-hover text-sm transition-colors"
+                >
+                  Try Again
+                </button>
+                {this.props.onReset && (
+                  <button
+                    data-testid="error-boundary-reset"
+                    onClick={() => {
+                      this.props.onReset?.()
+                      this.setState({ hasError: false, error: null })
+                    }}
+                    className="px-4 py-2 bg-surface-raised text-text-primary border border-border rounded-lg hover:bg-surface-hover text-sm transition-colors"
+                  >
+                    Back to Chat
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )

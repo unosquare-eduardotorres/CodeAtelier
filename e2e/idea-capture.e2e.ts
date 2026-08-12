@@ -20,9 +20,7 @@ import { ChatPage } from './pages/chat-page'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Idea Capture', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage | null> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<ChatPage | null> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -41,13 +39,11 @@ test.describe('Idea Capture', () => {
     return new ChatPage(page)
   }
 
-  async function openIdeaPopover(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openIdeaPopover(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for the idea/lightbulb button in the chat toolbar
-    const ideaBtn = page.locator(
-      'button[aria-label*="dea"], button[title*="dea"], button:has(svg.lucide-lightbulb)'
-    ).first()
+    const ideaBtn = page
+      .locator('button[aria-label*="dea"], button[title*="dea"], button:has(svg.lucide-lightbulb)')
+      .first()
     const hasBtn = await ideaBtn.isVisible({ timeout: 5_000 }).catch(() => false)
 
     if (!hasBtn) return false
@@ -59,14 +55,18 @@ test.describe('Idea Capture', () => {
     return popover.isVisible({ timeout: 3_000 }).catch(() => false)
   }
 
-  test('idea popover renders with "Capture an Idea" header', async ({
-    electronPage: page
-  }) => {
+  test('idea popover renders with "Capture an Idea" header', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasPopover = await openIdeaPopover(page)
-    if (!hasPopover) { test.skip(); return }
+    if (!hasPopover) {
+      test.skip()
+      return
+    }
 
     const popover = page.locator('[data-testid="idea-popover"]')
     await expect(popover).toBeVisible()
@@ -80,21 +80,28 @@ test.describe('Idea Capture', () => {
     await expect(icon).toBeVisible()
   })
 
-  test('title input accepts text and is required for save', async ({
-    electronPage: page
-  }) => {
+  test('title input accepts text and is required for save', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasPopover = await openIdeaPopover(page)
-    if (!hasPopover) { test.skip(); return }
+    if (!hasPopover) {
+      test.skip()
+      return
+    }
 
     const popover = page.locator('[data-testid="idea-popover"]')
 
     // Find title input
     const titleInput = popover.locator('input[type="text"]')
     const hasTitleInput = await titleInput.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasTitleInput) { test.skip(); return }
+    if (!hasTitleInput) {
+      test.skip()
+      return
+    }
 
     // Input should be empty initially (or have prefilled text)
     await expect(titleInput).toBeVisible()
@@ -107,10 +114,16 @@ test.describe('Idea Capture', () => {
 
   test('description textarea is optional', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasPopover = await openIdeaPopover(page)
-    if (!hasPopover) { test.skip(); return }
+    if (!hasPopover) {
+      test.skip()
+      return
+    }
 
     const popover = page.locator('[data-testid="idea-popover"]')
 
@@ -118,7 +131,10 @@ test.describe('Idea Capture', () => {
     const textarea = popover.locator('textarea')
     const hasTextarea = await textarea.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasTextarea) { test.skip(); return }
+    if (!hasTextarea) {
+      test.skip()
+      return
+    }
 
     // Textarea should have placeholder indicating it's optional
     const placeholder = await textarea.getAttribute('placeholder')
@@ -132,15 +148,24 @@ test.describe('Idea Capture', () => {
 
   test('save button disabled when title is empty', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasPopover = await openIdeaPopover(page)
-    if (!hasPopover) { test.skip(); return }
+    if (!hasPopover) {
+      test.skip()
+      return
+    }
 
     const saveBtn = page.locator('[data-testid="idea-popover-save"]')
     const hasSave = await saveBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasSave) { test.skip(); return }
+    if (!hasSave) {
+      test.skip()
+      return
+    }
 
     // Clear title to ensure it's empty
     const popover = page.locator('[data-testid="idea-popover"]')
@@ -159,10 +184,16 @@ test.describe('Idea Capture', () => {
 
   test('escape key closes the idea popover', async ({ electronPage: page }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasPopover = await openIdeaPopover(page)
-    if (!hasPopover) { test.skip(); return }
+    if (!hasPopover) {
+      test.skip()
+      return
+    }
 
     const popover = page.locator('[data-testid="idea-popover"]')
     await expect(popover).toBeVisible()
@@ -179,10 +210,16 @@ test.describe('Idea Capture', () => {
     electronPage: page
   }) => {
     const chat = await ensureChatReady(page)
-    if (!chat) { test.skip(); return }
+    if (!chat) {
+      test.skip()
+      return
+    }
 
     const hasPopover = await openIdeaPopover(page)
-    if (!hasPopover) { test.skip(); return }
+    if (!hasPopover) {
+      test.skip()
+      return
+    }
 
     const popover = page.locator('[data-testid="idea-popover"]')
 
@@ -194,7 +231,10 @@ test.describe('Idea Capture', () => {
     // Click save
     const saveBtn = page.locator('[data-testid="idea-popover-save"]')
     const hasSave = await saveBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasSave) { test.skip(); return }
+    if (!hasSave) {
+      test.skip()
+      return
+    }
 
     await saveBtn.click()
     await page.waitForTimeout(1_000)

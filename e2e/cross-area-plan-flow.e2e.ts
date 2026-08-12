@@ -43,7 +43,10 @@ test.describe('Cross-Area Plan Flows', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -87,9 +90,7 @@ test.describe('Cross-Area Plan Flows', () => {
 
   // ── 1. Grill → Plan → Chat ─────────────────────────────────────────
 
-  test('Grill → Plan → Chat: grill-sourced plan opens in chat', async ({
-    electronPage: page
-  }) => {
+  test('Grill → Plan → Chat: grill-sourced plan opens in chat', async ({ electronPage: page }) => {
     await navigateToPlans(page)
     await selectFilter(page, 'all')
 
@@ -181,12 +182,8 @@ test.describe('Cross-Area Plan Flows', () => {
     await page.waitForTimeout(2_000)
 
     // Verify navigation to Goals/MPA page
-    const goalsIndicator = page
-      .getByText(/goal|campaign|multi-phase|decompos/i)
-      .first()
-    const hasGoalsPage = await goalsIndicator
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const goalsIndicator = page.getByText(/goal|campaign|multi-phase|decompos/i).first()
+    const hasGoalsPage = await goalsIndicator.isVisible({ timeout: 10_000 }).catch(() => false)
 
     expect(hasGoalsPage).toBeTruthy()
   })
@@ -241,9 +238,7 @@ test.describe('Cross-Area Plan Flows', () => {
 
   // ── 4. Chat → Plan → Goal ──────────────────────────────────────────
 
-  test('Chat → Plan → Goal: chat-sourced plan starts goal', async ({
-    electronPage: page
-  }) => {
+  test('Chat → Plan → Goal: chat-sourced plan starts goal', async ({ electronPage: page }) => {
     await navigateToPlans(page)
     await selectFilter(page, 'saved')
 
@@ -283,12 +278,8 @@ test.describe('Cross-Area Plan Flows', () => {
     await page.waitForTimeout(2_000)
 
     // Verify navigation to Goals/MPA page
-    const goalsIndicator = page
-      .getByText(/goal|campaign|multi-phase|decompos/i)
-      .first()
-    const hasGoalsPage = await goalsIndicator
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const goalsIndicator = page.getByText(/goal|campaign|multi-phase|decompos/i).first()
+    const hasGoalsPage = await goalsIndicator.isVisible({ timeout: 10_000 }).catch(() => false)
 
     expect(hasGoalsPage).toBeTruthy()
   })
@@ -331,7 +322,10 @@ test.describe('Cross-Area Plan Flows', () => {
     }
 
     // Get plan title for later verification
-    const planTitle = await targetCard.locator('.font-semibold, .font-medium').first().textContent()
+    const _planTitle = await targetCard
+      .locator('.font-semibold, .font-medium')
+      .first()
+      .textContent()
 
     // Click "Start Goal"
     const startGoalBtn = targetCard
@@ -342,12 +336,8 @@ test.describe('Cross-Area Plan Flows', () => {
     await page.waitForTimeout(2_000)
 
     // Verify Goals page loaded with plan content
-    const goalsArea = page
-      .getByText(/goal|campaign|multi-phase|decompos|describe/i)
-      .first()
-    const hasGoalsArea = await goalsArea
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const goalsArea = page.getByText(/goal|campaign|multi-phase|decompos|describe/i).first()
+    const hasGoalsArea = await goalsArea.isVisible({ timeout: 10_000 }).catch(() => false)
     expect(hasGoalsArea).toBeTruthy()
 
     // Verify plan content was preloaded into the goal description

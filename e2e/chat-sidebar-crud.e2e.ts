@@ -332,8 +332,7 @@ test.describe('Chat Sidebar — CRUD Operations', () => {
     const newSecondTitle = await conversations.nth(1).textContent()
 
     // Either the order flipped or drag was handled (order tracking is best-effort)
-    const orderChanged =
-      newFirstTitle !== firstTitle || newSecondTitle !== secondTitle
+    const orderChanged = newFirstTitle !== firstTitle || newSecondTitle !== secondTitle
 
     // Drag may not always reorder due to timing — just verify no crash
     expect(count).toBeGreaterThanOrEqual(2)
@@ -346,10 +345,8 @@ test.describe('Chat Sidebar — CRUD Operations', () => {
 
   // ── 5. New chat button creates a conversation ──
 
-  test('new chat button creates a new conversation in sidebar', async ({
-    electronPage: page
-  }) => {
-    const { chat } = await ensureChatVisible(page)
+  test('new chat button creates a new conversation in sidebar', async ({ electronPage: page }) => {
+    await ensureChatVisible(page)
     await ensureSidebarExpanded(page)
 
     const beforeCount = await getConversationCount(page)

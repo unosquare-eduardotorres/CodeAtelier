@@ -15,7 +15,7 @@
  * Rules are ADDITIVE to the hardcoded defaults in code-graph-exclusions.ts.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import log from 'electron-log/main'
 import { matchesSkipPattern } from './code-graph-exclusions'
@@ -25,7 +25,8 @@ export const ATELIERIGNORE_FILENAME = '.atelierignore'
 /** Template written into the docs / shown in the UI for new workspaces. */
 export const ATELIERIGNORE_TEMPLATE = `# Code Atelier index exclusions.
 # Gitignore-style syntax. Additive to Code Atelier's built-in defaults
-# (node_modules, bin, obj, packages, BuildSystem, Tools, ThirdParty, ...).
+# (node_modules, bin, obj, packages, BuildSystem, Tools, ThirdParty,
+#  Pods, Carthage, DerivedData, Binaries, Intermediate, ...).
 #
 # Exclude vendored dependency trees — duplicate copies of a library multiply
 # every symbol's edge count and are the #1 cause of index bloat.
@@ -173,6 +174,38 @@ export function isDirIgnoredByWorkspace(workspacePath: string, relDirPath: strin
   // Match the directory itself and a representative child, so `**/foo/**`
   // style rules prune the tree rather than only matching files inside it.
   return matchesSkipPattern(relDirPath, patterns) || matchesSkipPattern(`${relDirPath}/.`, patterns)
+}
+
+/**
+ * Append exclusion rules to the workspace's `.atelierignore`, creating the file
+ * from the template if it does not exist yet. Rules already present (verbatim)
+ * are skipped so repeated preflight runs don't duplicate lines.
+ *
+ * Returns the rules that were actually written.
+ */
+export function appendIgnoreRules(
+  workspacePath: string,
+  rules: string[],
+  headerComment: string
+): string[] {
+  const filePath = path.join(workspacePath, ATELIERIGNORE_FILENAME)
+
+  const existingText = existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null
+  const existingLines = new Set(
+    (existingText ?? '').split(/\r?\n/).map((l) => l.trim().replace(/^\//, ''))
+  )
+
+  const toWrite = rules
+    .map((r) => r.trim())
+    .filter((r) => r && !r.startsWith('#'))
+    .filter((r) => !existingLines.has(r.replace(/^\//, '')))
+  if (toWrite.length === 0) return []
+
+  const body = `${existingText === null ? ATELIERIGNORE_TEMPLATE : ''}\n# ${headerComment}\n${toWrite.join('\n')}\n`
+  appendFileSync(filePath, body, 'utf-8')
+  invalidateIgnoreCache(workspacePath)
+  log.info(`[WorkspaceIgnore] Appended ${toWrite.length} rule(s) to ${ATELIERIGNORE_FILENAME}`)
+  return toWrite
 }
 
 /** Drop cached rules for a workspace (called by the file watcher). */

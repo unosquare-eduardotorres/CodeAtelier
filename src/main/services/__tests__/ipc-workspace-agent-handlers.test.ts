@@ -6,7 +6,12 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { setupElectronStub, capturedHandlers, tryInvokeHandler, mockMainWindow } from './electron-stub'
+import {
+  setupElectronStub,
+  capturedHandlers,
+  tryInvokeHandler,
+  mockMainWindow
+} from './electron-stub'
 
 setupElectronStub()
 
@@ -18,19 +23,34 @@ let lifecycleRegistered = false
 let permRegistered = false
 let cpRegistered = false
 
-try { require('../../ipc/workspace.ipc').registerWorkspaceIpc(); wsRegistered = true } catch (err) {
+try {
+  require('../../ipc/workspace.ipc').registerWorkspaceIpc()
+  wsRegistered = true
+} catch (err) {
   console.log(`⚠ workspace.ipc.ts load failed: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/agent.ipc').registerAgentIpc(mockMainWindow); agentRegistered = true } catch (err) {
+try {
+  require('../../ipc/agent.ipc').registerAgentIpc(mockMainWindow)
+  agentRegistered = true
+} catch (err) {
   console.log(`⚠ agent.ipc.ts load failed: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/agent-lifecycle.ipc').registerAgentLifecycleIpc(mockMainWindow); lifecycleRegistered = true } catch (err) {
+try {
+  require('../../ipc/agent-lifecycle.ipc').registerAgentLifecycleIpc(mockMainWindow)
+  lifecycleRegistered = true
+} catch (err) {
   console.log(`⚠ agent-lifecycle.ipc.ts load failed: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/permission.ipc').registerPermissionIpc(); permRegistered = true } catch (err) {
+try {
+  require('../../ipc/permission.ipc').registerPermissionIpc()
+  permRegistered = true
+} catch (err) {
   console.log(`⚠ permission.ipc.ts load failed: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/checkpoint.ipc').registerCheckpointIpc(); cpRegistered = true } catch (err) {
+try {
+  require('../../ipc/checkpoint.ipc').registerCheckpointIpc()
+  cpRegistered = true
+} catch (err) {
   console.log(`⚠ checkpoint.ipc.ts load failed: ${(err as Error).message?.split('\n')[0]}`)
 }
 
@@ -40,10 +60,20 @@ try { require('../../ipc/checkpoint.ipc').registerCheckpointIpc(); cpRegistered 
 
 if (wsRegistered) {
   describe('workspace.ipc — channel registration', () => {
-    for (const ch of ['workspace:list', 'workspace:create', 'workspace:open', 'workspace:delete',
-      'workspace:get-settings', 'workspace:update-settings', 'workspace:update-auth',
-      'workspace:check-external-mcp', 'dialog:selectDirectory']) {
-      test(`registers ${ch}`, () => { assert.ok(capturedHandlers.has(ch)) })
+    for (const ch of [
+      'workspace:list',
+      'workspace:create',
+      'workspace:open',
+      'workspace:delete',
+      'workspace:get-settings',
+      'workspace:update-settings',
+      'workspace:update-auth',
+      'workspace:check-external-mcp',
+      'dialog:selectDirectory'
+    ]) {
+      test(`registers ${ch}`, () => {
+        assert.ok(capturedHandlers.has(ch))
+      })
     }
   })
 
@@ -107,7 +137,9 @@ if (wsRegistered) {
 if (agentRegistered) {
   describe('agent.ipc — channel registration', () => {
     for (const ch of ['agent:getStatuses', 'agent:stopAll', 'agent:cacheEfficiency']) {
-      test(`registers ${ch}`, () => { assert.ok(capturedHandlers.has(ch)) })
+      test(`registers ${ch}`, () => {
+        assert.ok(capturedHandlers.has(ch))
+      })
     }
   })
 
@@ -136,8 +168,12 @@ if (agentRegistered) {
 
 if (lifecycleRegistered) {
   describe('agent-lifecycle.ipc — channel registration', () => {
-    test('registers agent:start', () => { assert.ok(capturedHandlers.has('agent:start')) })
-    test('registers workspace:all-statuses', () => { assert.ok(capturedHandlers.has('workspace:all-statuses')) })
+    test('registers agent:start', () => {
+      assert.ok(capturedHandlers.has('agent:start'))
+    })
+    test('registers workspace:all-statuses', () => {
+      assert.ok(capturedHandlers.has('workspace:all-statuses'))
+    })
   })
 
   describe('agent-lifecycle.ipc — validation', () => {
@@ -169,7 +205,9 @@ if (lifecycleRegistered) {
 
 if (permRegistered) {
   describe('permission.ipc — channel registration', () => {
-    test('registers permission:response', () => { assert.ok(capturedHandlers.has('permission:response')) })
+    test('registers permission:response', () => {
+      assert.ok(capturedHandlers.has('permission:response'))
+    })
   })
 
   describe('permission.ipc — validation', () => {
@@ -189,7 +227,10 @@ if (permRegistered) {
     })
 
     test('permission:response rejects invalid type', async () => {
-      const r = await tryInvokeHandler('permission:response', { workspaceId: 'ws-1', type: 'invalid' })
+      const r = await tryInvokeHandler('permission:response', {
+        workspaceId: 'ws-1',
+        type: 'invalid'
+      })
       assert.equal(r.ok, false)
     })
   })
@@ -201,8 +242,15 @@ if (permRegistered) {
 
 if (cpRegistered) {
   describe('checkpoint.ipc — channel registration', () => {
-    for (const ch of ['checkpoint:list', 'checkpoint:restore', 'checkpoint:rewind', 'checkpoint:approvalResponse']) {
-      test(`registers ${ch}`, () => { assert.ok(capturedHandlers.has(ch)) })
+    for (const ch of [
+      'checkpoint:list',
+      'checkpoint:restore',
+      'checkpoint:rewind',
+      'checkpoint:approvalResponse'
+    ]) {
+      test(`registers ${ch}`, () => {
+        assert.ok(capturedHandlers.has(ch))
+      })
     }
   })
 
@@ -236,11 +284,31 @@ if (cpRegistered) {
 
 // ── Skip blocks ──────────────────────────────────────────────────────────
 
-if (!wsRegistered) { describe('workspace.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!agentRegistered) { describe('agent.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!lifecycleRegistered) { describe('agent-lifecycle.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!permRegistered) { describe('permission.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!cpRegistered) { describe('checkpoint.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
+if (!wsRegistered) {
+  describe('workspace.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!agentRegistered) {
+  describe('agent.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!lifecycleRegistered) {
+  describe('agent-lifecycle.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!permRegistered) {
+  describe('permission.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!cpRegistered) {
+  describe('checkpoint.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()

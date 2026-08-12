@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Loader2, AlertTriangle, Copy, Check, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useAppTheme } from '@renderer/store'
 import { sanitizeMermaid } from '../../../../shared/mermaid-sanitizers'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 interface MermaidDiagramProps {
   definition: string
@@ -30,7 +31,7 @@ function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
       mainBkg: '#f8f9fa',
       nodeBorder: '#94a3b8',
       fontFamily: "'Inter', sans-serif",
-      fontSize: '13px',
+      fontSize: '13px'
     }
   }
 
@@ -65,7 +66,7 @@ function buildMermaidThemeVars(isLight: boolean): Record<string, string> {
     labelBoxBkgColor: 'transparent',
     labelTextColor: textSecondary,
     fontFamily: "'Inter', 'JetBrains Mono', sans-serif",
-    fontSize: '13px',
+    fontSize: '13px'
   }
 }
 
@@ -108,7 +109,7 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
         curve: 'basis',
         padding: 16,
         nodeSpacing: 30,
-        rankSpacing: 50,
+        rankSpacing: 50
       }
     })
 
@@ -116,8 +117,8 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
     m.registerIconPacks([
       {
         name: 'lucide',
-        loader: () => import('@iconify-json/lucide').then((module) => module.icons),
-      },
+        loader: () => import('@iconify-json/lucide').then((module) => module.icons)
+      }
     ])
 
     mermaidInstance = m
@@ -128,12 +129,11 @@ function getMermaid(themeId: string): Promise<typeof import('mermaid').default> 
   return mermaidReady
 }
 
-
-
 let renderCounter = 0
 
 const MIN_SCALE = 0.25
 const MAX_SCALE = 4
+const MIN_FIT_SCALE = 0.35
 const ZOOM_STEP_CLICK = 0.1
 const ZOOM_STEP_WHEEL = 0.05
 const FIT_PADDING = 16
@@ -170,11 +170,21 @@ export default function MermaidDiagram({
 
     if (sw === 0 || sh === 0) return
 
-    const fitScale = Math.min(1, vw / sw, vh / sh)
+    // Width is the primary constraint in narrow containers (side panels).
+    // Height is secondary — the user can pan vertically.
+    const widthFit = vw > 0 && sw > 0 ? vw / sw : 1
+    const heightFit = vh > 0 && sh > 0 ? vh / sh : 1
+    const fitScale = Math.max(MIN_FIT_SCALE, Math.min(1, widthFit, heightFit))
     setScale(fitScale)
+
+    // When the scale is clamped to MIN_FIT_SCALE, align to top-left
+    // instead of centering — avoids hiding content off-screen.
+    const fitsHorizontally = sw * fitScale <= vw + FIT_PADDING * 2
+    const fitsVertically = sh * fitScale <= vh + FIT_PADDING * 2
+
     setTranslate({
-      x: (vw + FIT_PADDING * 2 - sw * fitScale) / 2,
-      y: (vh + FIT_PADDING * 2 - sh * fitScale) / 2
+      x: fitsHorizontally ? (vw + FIT_PADDING * 2 - sw * fitScale) / 2 : FIT_PADDING,
+      y: fitsVertically ? (vh + FIT_PADDING * 2 - sh * fitScale) / 2 : FIT_PADDING
     })
   }, [])
 
@@ -318,26 +328,10 @@ export default function MermaidDiagram({
   }, [])
 
   const handleCopy = useCallback(async (): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(definition)
+    const ok = await copyTextToClipboard(definition)
+    if (ok) {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (err) {
-      // Fallback: textarea + execCommand for restricted Electron contexts
-      try {
-        const textarea = document.createElement('textarea')
-        textarea.value = definition
-        textarea.style.position = 'fixed'
-        textarea.style.opacity = '0'
-        document.body.appendChild(textarea)
-        textarea.select()
-        document.execCommand('copy')
-        document.body.removeChild(textarea)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      } catch (fallbackErr) {
-        console.error('MermaidDiagram: clipboard copy failed', err, fallbackErr)
-      }
     }
   }, [definition])
 
@@ -375,10 +369,20 @@ export default function MermaidDiagram({
         <span className="text-[10px] font-mono text-text-secondary min-w-[36px] text-center select-none">
           {Math.round(scale * 100)}%
         </span>
-        <button data-testid="mermaid-zoom-in" onClick={handleZoomIn} className={toolbarBtnClass} title="Zoom in">
+        <button
+          data-testid="mermaid-zoom-in"
+          onClick={handleZoomIn}
+          className={toolbarBtnClass}
+          title="Zoom in"
+        >
           <ZoomIn size={12} />
         </button>
-        <button data-testid="mermaid-fullscreen" onClick={fitToView} className={toolbarBtnClass} title="Fit to view">
+        <button
+          data-testid="mermaid-fullscreen"
+          onClick={fitToView}
+          className={toolbarBtnClass}
+          title="Fit to view"
+        >
           <Maximize2 size={12} />
         </button>
         <div className="w-px h-4 bg-border-subtle mx-0.5" />
@@ -408,7 +412,8 @@ export default function MermaidDiagram({
         style={{
           cursor: isDragging ? 'grabbing' : 'grab',
           minHeight: '200px',
-          backgroundColor: 'var(--color-surface-base)',
+          maxHeight: '60vh',
+          backgroundColor: 'var(--color-surface-base)'
         }}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}

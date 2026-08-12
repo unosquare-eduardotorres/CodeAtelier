@@ -32,8 +32,7 @@ interface WorkspaceState {
 
 // Preserve Zustand state across HMR (dev only)
 const previousWorkspaceState = import.meta.hot?.data?.workspaceStoreState as
-  | Partial<WorkspaceState>
-  | undefined
+  Partial<WorkspaceState> | undefined
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: previousWorkspaceState?.workspaces ?? [],

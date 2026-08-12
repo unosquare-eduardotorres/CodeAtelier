@@ -10,6 +10,7 @@ import {
   useAppPreferenceActions
 } from '@renderer/store'
 import type { ConversationPhase, ContextUsageLevel, ToolActivity } from '../../../shared/types'
+import { COMPACTION_RATIOS } from '../../../shared/constants'
 import { rendererLog } from '@renderer/utils/logger'
 import { useTodoStore } from '@renderer/store/todo.store'
 import { useDiagnosticsStore } from '@renderer/store/diagnostics.store'
@@ -17,13 +18,13 @@ import { useHookLifecycleStore } from '@renderer/store/hook-lifecycle.store'
 import { usePlanExecutionStore } from '@renderer/store/plan-execution.store'
 import { streamingInternals } from '@renderer/store/chat-streaming.actions'
 import { ChunkConsumer } from './useChunkConsumer'
+import { isActiveConversationEvent, resolveCompletionWorkspace } from './stream-routing'
 
 // ─── Type Aliases ─────────────────────────────────────────
 
 type ChatActions = ReturnType<typeof useChatActions>
 
 // ─── Pure Helpers ─────────────────────────────────────────
-
 
 /** Remove a conversation from the streaming tracking set (shared by complete + state-change). */
 function removeStreamingConversation(conversationId: string): void {
@@ -146,15 +147,14 @@ function processContextUsageUpdate(
 ): void {
   // Use the same algorithm as resolveContextLevel (context-usage-level.ts)
   const pct = update.percentage
-  const isSmallWindow = update.contextWindowSize <= 200_000
-  const warnPct = isSmallWindow ? 48 : 56
-  const suggestPct = isSmallWindow ? 60 : 70
-  const autoPct = isSmallWindow ? 75 : 85
   const level: ContextUsageLevel =
-    pct >= autoPct ? 'critical'
-    : pct >= suggestPct ? 'red'
-    : pct >= warnPct ? 'yellow'
-    : 'green'
+    pct >= COMPACTION_RATIOS.auto * 100
+      ? 'critical'
+      : pct >= COMPACTION_RATIOS.suggest * 100
+        ? 'red'
+        : pct >= COMPACTION_RATIOS.warn * 100
+          ? 'yellow'
+          : 'green'
 
   useChatStore.setState((state) => ({
     contextUsages: {
@@ -177,10 +177,7 @@ function processContextUsageUpdate(
 /** Process a single message chunk from the IPC stream. */
 type MessageChunkPayload = Parameters<Parameters<Window['api']['onMessageChunk']>[0]>[0]
 
-function handleMessageChunk(
-  data: MessageChunkPayload,
-  actions: ChatActions
-): void {
+function handleMessageChunk(data: MessageChunkPayload, actions: ChatActions): void {
   if (data.keepalive) {
     // IMP-R5-1: Pass conversationId so the CORRECT conversation's safety timer
     // is reset, not the currently active one (which may differ after a conv switch).
@@ -189,7 +186,7 @@ function handleMessageChunk(
   }
 
   const activeConvId = useChatStore.getState().activeConversation?.id
-  const isActive = data.conversationId === activeConvId
+  const isActive = isActiveConversationEvent(data.conversationId, activeConvId)
 
   // Cross-store updates: conversation-scoped in separate stores,
   // processed regardless of which conversation is active.
@@ -242,11 +239,7 @@ function handleMessageChunk(
     )
   }
   if (!data.chunk && data.role && isActive) {
-    actions.updateStreamingIdentity(
-      data.role as 'specialist',
-      data.taskId,
-      data.specialist
-    )
+    actions.updateStreamingIdentity(data.role as 'specialist', data.taskId, data.specialist)
   }
 
   // PER-CONV-ACCUM: Tool activities for the active conversation go through the
@@ -270,9 +263,18 @@ function handleMessageChunk(
       // Background tool activity — route through per-conv accumulator directly
       streamingInternals
         .getOrCreateAccumulatorFor(data.conversationId)
-        .handleToolActivity(data.toolActivity as { id: string; toolName: string } & Record<string, unknown>)
+        .handleToolActivity(
+          data.toolActivity as { id: string; toolName: string } & Record<string, unknown>
+        )
       streamingInternals.recordChunkActivity(data.conversationId)
     }
+  }
+
+  // BACKGROUND-CHAT-02: contextUsages is keyed per conversation, so a background
+  // stream's usage must be recorded too — otherwise the context bar shows stale
+  // numbers when the user switches back to it.
+  if (data.contextUsageUpdate && data.conversationId) {
+    processContextUsageUpdate(data.conversationId, data.contextUsageUpdate)
   }
 
   // Non-streaming payloads still require active-conv guard
@@ -305,13 +307,6 @@ function handleMessageChunk(
   if (data.turnLimit) {
     useChatStore.setState({ turnLimitReached: data.turnLimit })
   }
-
-  if (data.contextUsageUpdate) {
-    const convId = data.conversationId
-    if (convId) {
-      processContextUsageUpdate(convId, data.contextUsageUpdate)
-    }
-  }
 }
 
 /** Handle stream completion — clean up tracking and finalize UI. */
@@ -324,7 +319,7 @@ function handleMessageComplete(
   }
 
   const activeConvId = useChatStore.getState().activeConversation?.id
-  const isActive = data.conversationId === activeConvId
+  const isActive = isActiveConversationEvent(data.conversationId, activeConvId)
 
   // STALL-DETECT-06: Clear orphaned stall timer for the completed conversation.
   if (!data.taskId) {
@@ -357,31 +352,43 @@ function handleMessageComplete(
       // savePlan never ran for this turn (e.g. emit_plan fired without a
       // resolvable workspace/conversation), so its phase/task data has no
       // durable backing and would record unverifiable counts into memory.
-      const workspace = useWorkspaceStore.getState().activeWorkspace
+      // BACKGROUND-CHAT-02: a background stream can complete long after the user
+      // switched workspaces — see resolveCompletionWorkspace for the rule.
+      const wsState = useWorkspaceStore.getState()
+      const workspace = resolveCompletionWorkspace(data.workspaceId, isActive, {
+        all: wsState.workspaces,
+        active: wsState.activeWorkspace
+      })
+      if (!workspace && !isActive) {
+        rendererLog.warn(
+          `[PlanMemory] Skipping extraction for background conversation ${data.conversationId} — ` +
+            `could not resolve owning workspace (workspaceId=${data.workspaceId ?? 'none'})`
+        )
+      }
       if (workspace?.id && workspace.repoPath && exec.planId) {
-        const failedCount = exec.phases.filter(p => p.status === 'failed').length
+        const failedCount = exec.phases.filter((p) => p.status === 'failed').length
         const overallStatus: 'completed' | 'partial' | 'failed' =
-          failedCount === exec.phases.length ? 'failed'
-            : failedCount > 0 ? 'partial'
-            : 'completed'
+          failedCount === exec.phases.length ? 'failed' : failedCount > 0 ? 'partial' : 'completed'
 
-        window.api.memorySavePlanExecution({
-          workspaceId: workspace.id,
-          workspacePath: workspace.repoPath,
-          conversationId: data.conversationId,
-          planTitle: exec.planTitle,
-          planGoal: exec.planGoal,
-          status: overallStatus,
-          phases: exec.phases.map(p => ({
-            phaseTitle: p.phaseTitle,
-            status: p.status,
-            touchedFiles: p.touchedFiles,
-            tasks: p.tasks.map(t => ({ title: t.title, status: t.status }))
-          })),
-          durationMs: Date.now() - exec.startedAt
-        }).catch(err => {
-          rendererLog.warn('[PlanMemory] Failed to enqueue plan memory extraction:', err)
-        })
+        window.api
+          .memorySavePlanExecution({
+            workspaceId: workspace.id,
+            workspacePath: workspace.repoPath,
+            conversationId: data.conversationId,
+            planTitle: exec.planTitle,
+            planGoal: exec.planGoal,
+            status: overallStatus,
+            phases: exec.phases.map((p) => ({
+              phaseTitle: p.phaseTitle,
+              status: p.status,
+              touchedFiles: p.touchedFiles,
+              tasks: p.tasks.map((t) => ({ title: t.title, status: t.status }))
+            })),
+            durationMs: Date.now() - exec.startedAt
+          })
+          .catch((err) => {
+            rendererLog.warn('[PlanMemory] Failed to enqueue plan memory extraction:', err)
+          })
       }
 
       // Transition to read-only after 30s
@@ -420,7 +427,9 @@ function handleStateChange(
 
       return {
         streamingConversationIds: newStreamingIds,
-        isStreaming: state.activeConversation?.id ? newStreamingIds.has(state.activeConversation.id) : false,
+        isStreaming: state.activeConversation?.id
+          ? newStreamingIds.has(state.activeConversation.id)
+          : false,
         conversationStreams: streams
       }
     })
@@ -460,6 +469,7 @@ export function useAppIpcListeners(): void {
   const updateStatus = useAgentStore((s) => s.updateStatus)
   const setAvailable = useUpdateStore((s) => s.setAvailable)
   const setNotAvailable = useUpdateStore((s) => s.setNotAvailable)
+  const setStaging = useUpdateStore((s) => s.setStaging)
   const setDownloaded = useUpdateStore((s) => s.setDownloaded)
   const setProgress = useUpdateStore((s) => s.setProgress)
   const setError = useUpdateStore((s) => s.setError)
@@ -471,6 +481,10 @@ export function useAppIpcListeners(): void {
     loadProfile()
     loadWorkspaces()
     loadPreferences()
+    // BOOT-REHYDRATE: main survives a renderer-only reload (crash auto-reload,
+    // RewindDialog's window.location.reload), so streams may already be running
+    // before the first chunk of this renderer session arrives.
+    void chatActions.rehydrateStreamingState()
 
     // IPC-BACKPRESSURE: Frame-aligned chunk consumer batches IPC messages
     // and processes them once per animation frame (~16ms at 60fps).
@@ -478,9 +492,7 @@ export function useAppIpcListeners(): void {
     const consumer = new ChunkConsumer((batch) => {
       for (const data of batch) handleMessageChunk(data as MessageChunkPayload, chatActions)
     })
-    const unsubChunk = window.api.onMessageChunk((data) =>
-      consumer.push(data)
-    )
+    const unsubChunk = window.api.onMessageChunk((data) => consumer.push(data))
     const unsubComplete = window.api.onMessageComplete((data) =>
       handleMessageComplete(data, chatActions.finalizeStream)
     )
@@ -508,12 +520,7 @@ export function useAppIpcListeners(): void {
         agentId: data.agentId,
         agentType: data.agentType,
         status: data.status as
-          | 'idle'
-          | 'thinking'
-          | 'writing'
-          | 'reviewing'
-          | 'completed'
-          | 'failed',
+          'idle' | 'thinking' | 'writing' | 'reviewing' | 'completed' | 'failed',
         currentTask: data.currentTask,
         elapsedMs: data.elapsedMs,
         tokenUsage: data.tokenUsage,
@@ -528,12 +535,15 @@ export function useAppIpcListeners(): void {
     const unsubUpdateAvailable = window.api.onUpdateAvailable((info) =>
       setAvailable(info.version, info.releaseNotes, info.releaseDate)
     )
-    const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable(() => setNotAvailable())
+    const unsubUpdateNotAvailable = window.api.onUpdateNotAvailable((info) =>
+      setNotAvailable(info.currentVersion)
+    )
+    const unsubUpdateStaging = window.api.onUpdateStaging((info) => setStaging(info.version))
     const unsubUpdateDownloaded = window.api.onUpdateDownloaded((info) =>
       setDownloaded(info.version)
     )
     const unsubUpdateProgress = window.api.onUpdateProgress((progress) =>
-      setProgress(progress.percent)
+      setProgress(progress.percent, progress.bytesPerSecond, progress.transferred, progress.total)
     )
     const unsubUpdateError = window.api.onUpdateError((message) => setError(message))
     const unsubMemoryFeed = window.api.onMemoryFeedProgress((progress) =>
@@ -560,6 +570,7 @@ export function useAppIpcListeners(): void {
       unsubAgent()
       unsubUpdateAvailable()
       unsubUpdateNotAvailable()
+      unsubUpdateStaging()
       unsubUpdateDownloaded()
       unsubUpdateProgress()
       unsubUpdateError()
@@ -577,6 +588,7 @@ export function useAppIpcListeners(): void {
     setAgentReady,
     setAvailable,
     setNotAvailable,
+    setStaging,
     setDownloaded,
     setProgress,
     setError,

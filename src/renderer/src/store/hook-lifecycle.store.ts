@@ -20,8 +20,7 @@ interface HookLifecycleState {
 
 // Preserve Zustand state across HMR (dev only)
 const previousState = import.meta.hot?.data?.hookLifecycleStoreState as
-  | Partial<HookLifecycleState>
-  | undefined
+  Partial<HookLifecycleState> | undefined
 
 export const useHookLifecycleStore = create<HookLifecycleState>((set) => ({
   activeHooks: previousState?.activeHooks ?? new Map(),

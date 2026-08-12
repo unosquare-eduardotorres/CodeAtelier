@@ -16,18 +16,38 @@ const redactionLog = log.scope('handoff-redaction')
 
 /** API key patterns — precise enough to avoid false positives like `sk_color` */
 const SECRET_PATTERNS: Array<{ name: string; regex: RegExp; replacement: string }> = [
-  { name: 'anthropic-key', regex: /sk-ant-[a-zA-Z0-9_-]{20,}/g, replacement: '[REDACTED:anthropic-key]' },
+  {
+    name: 'anthropic-key',
+    regex: /sk-ant-[a-zA-Z0-9_-]{20,}/g,
+    replacement: '[REDACTED:anthropic-key]'
+  },
   { name: 'openai-key', regex: /sk-[a-zA-Z0-9]{20,}/g, replacement: '[REDACTED:openai-key]' },
   { name: 'github-token', regex: /ghp_[a-zA-Z0-9]{36,}/g, replacement: '[REDACTED:github-token]' },
-  { name: 'github-token-fine', regex: /github_pat_[a-zA-Z0-9_]{22,}/g, replacement: '[REDACTED:github-pat]' },
-  { name: 'bearer-token', regex: /Bearer\s+[a-zA-Z0-9._\-/+=]{20,}/g, replacement: 'Bearer [REDACTED]' },
-  { name: 'env-api-key', regex: /(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|API_KEY)\s*=\s*["']?[^\s"']+/g, replacement: '[REDACTED:env-key]' },
+  {
+    name: 'github-token-fine',
+    regex: /github_pat_[a-zA-Z0-9_]{22,}/g,
+    replacement: '[REDACTED:github-pat]'
+  },
+  {
+    name: 'bearer-token',
+    regex: /Bearer\s+[a-zA-Z0-9._\-/+=]{20,}/g,
+    replacement: 'Bearer [REDACTED]'
+  },
+  {
+    name: 'env-api-key',
+    regex: /(?:ANTHROPIC_API_KEY|OPENAI_API_KEY|API_KEY)\s*=\s*["']?[^\s"']+/g,
+    replacement: '[REDACTED:env-key]'
+  }
 ]
 
 /** PII patterns */
 const PII_PATTERNS: Array<{ name: string; regex: RegExp; replacement: string }> = [
-  { name: 'email', regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, replacement: '[REDACTED:email]' },
-  { name: 'phone', regex: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, replacement: '[REDACTED:phone]' },
+  {
+    name: 'email',
+    regex: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    replacement: '[REDACTED:email]'
+  },
+  { name: 'phone', regex: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g, replacement: '[REDACTED:phone]' }
 ]
 
 /** Absolute path pattern — /Users/*, /home/*, C:\Users\* */
@@ -35,7 +55,10 @@ const ABS_PATH_RE = /(?:\/(?:Users|home)\/[^\s/]+|[A-Z]:\\Users\\[^\s\\]+)/g
 
 // ── Redaction Functions ──────────────────────────────────────────────
 
-function redactString(input: string, patterns: Array<{ name: string; regex: RegExp; replacement: string }>): { output: string; redactedCount: number } {
+function redactString(
+  input: string,
+  patterns: Array<{ name: string; regex: RegExp; replacement: string }>
+): { output: string; redactedCount: number } {
   let output = input
   let redactedCount = 0
   for (const { regex, replacement } of patterns) {
@@ -107,38 +130,38 @@ export function redactEnvelope(envelope: HandoffEnvelope): HandoffEnvelope {
       ...step,
       title: redactTextField(step.title),
       outcome: redactTextField(step.outcome),
-      filesModified: step.filesModified?.map(normalizePaths),
+      filesModified: step.filesModified?.map(normalizePaths)
     })),
 
     remainingWork: envelope.remainingWork.map((step) => ({
       ...step,
       title: redactTextField(step.title),
-      description: redactTextField(step.description),
+      description: redactTextField(step.description)
     })),
 
     decisions: envelope.decisions.map((d) => ({
       ...d,
       what: redactTextField(d.what),
       why: redactTextField(d.why),
-      alternatives: d.alternatives?.map(redactTextField),
+      alternatives: d.alternatives?.map(redactTextField)
     })),
 
     risks: envelope.risks.map((r) => ({
       ...r,
       risk: redactTextField(r.risk),
-      mitigation: r.mitigation ? redactTextField(r.mitigation) : undefined,
+      mitigation: r.mitigation ? redactTextField(r.mitigation) : undefined
     })),
 
     artifacts: envelope.artifacts.map((a) => ({
       ...a,
       path: normalizePaths(a.path),
-      description: redactTextField(a.description),
+      description: redactTextField(a.description)
     })),
 
     codeAnchors: envelope.codeAnchors?.map((anchor) => ({
       ...anchor,
       file: normalizePaths(anchor.file),
-      title: redactTextField(anchor.title),
+      title: redactTextField(anchor.title)
     })),
 
     filesToReadFirst: envelope.filesToReadFirst.map(normalizePaths),
@@ -150,8 +173,8 @@ export function redactEnvelope(envelope: HandoffEnvelope): HandoffEnvelope {
 
     // Extensions — deep-redact string values
     extensions: envelope.extensions
-      ? redactExtensions(envelope.extensions) as Record<string, unknown>
-      : undefined,
+      ? (redactExtensions(envelope.extensions) as Record<string, unknown>)
+      : undefined
   }
 }
 

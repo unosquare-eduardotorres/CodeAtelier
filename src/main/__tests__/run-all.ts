@@ -22,11 +22,31 @@
  * scripts in package.json.
  */
 import { setupElectronStub } from '../services/__tests__/electron-stub'
-import { summaryAsync } from '../services/__tests__/test-harness'
+import { summaryAsync, drainPending } from '../services/__tests__/test-harness'
+import { restoreFullMock } from '../services/__tests__/setup-full-mock'
 
 // Install the shared electron/electron-log stubs ONCE before any test file
 // loads. See run-tests.ts for rationale.
 setupElectronStub()
+
+// Some registered test files call an async service method (e.g.
+// `service.stop()`, `service.assemblePhaseContext()`) inside a *synchronous*
+// try/catch without awaiting it — the try/catch only guards the synchronous
+// call expression, not the returned promise. If that promise later rejects
+// (often well after the originating test has already reported pass/fail,
+// once mocks it depended on have been reset by unrelated later tests), it
+// surfaces as an unhandled rejection that crashes the whole unified run —
+// discovered while investigating R018, where this truncated coverage output
+// (and silently skipped writing coverage/coverage-summary.json) twice, from
+// two different offending test files. A single bad `await`-less test call
+// should not invalidate ~488 files' worth of measurement, so log and
+// continue rather than let Node's default handler kill the process.
+process.on('unhandledRejection', (reason) => {
+  console.error(
+    '\n[run-all] unhandled promise rejection (a test likely called an async method without awaiting it):',
+    reason
+  )
+})
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Service tests (mirrors src/main/services/__tests__/run-tests.ts)
@@ -39,6 +59,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/preprocessing.test',
   '../services/__tests__/description-cache.test',
   '../services/__tests__/code-graph-logic.test',
+  '../services/__tests__/code-graph-typed-edges.test',
+  '../services/__tests__/code-graph-typed-tags-smoke.test',
+  '../services/__tests__/code-graph-query-pack.test',
+  '../services/__tests__/rationale-miner.test',
   '../services/__tests__/vector-search.test',
   '../services/__tests__/code-graph-db.test',
   '../services/__tests__/mcp-tool-wiring.test',
@@ -67,6 +91,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/project-specialist-adapter.test',
   '../services/__tests__/stack-drift-detector.test',
   '../services/__tests__/tech-stack-detector.test',
+  '../services/__tests__/specialist-ingestion-gate.test',
   '../services/__tests__/specialist-builder-meta-prompt.test',
   // Run 6d — Phase 4 cleanup
   '../services/__tests__/layer2-rename-migration.test',
@@ -152,6 +177,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/one-shot-claude.test',
   // ─── Run 26: Plan-mode UX — ask_user registry (no-timeout) + before-plan guard ───
   '../mcp-servers/__tests__/ask-user-registry.test',
+  '../mcp-servers/__tests__/permission-result.test',
   '../services/__tests__/ask-user-guard.test',
   // ─── Run 27: Executor family + audit/parsing pipeline ───
   '../services/__tests__/tool-tracker.test',
@@ -166,6 +192,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/workspace-deploy-parsing.test',
   // ─── Run 28: ChatStreamService decomposition (lifecycle method extraction) ───
   '../services/__tests__/chat-stream-lifecycle.test',
+  '../services/__tests__/stream-wedge-recovery.test',
   // ─── Run 29: Prompt/Skill assembly + executor telemetry + listener cleanup + sandbox ───
   '../services/__tests__/telemetry-recorder.test',
   '../ipc/__tests__/listener-cleanup.test',
@@ -201,6 +228,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-build-adapter.test',
   '../services/__tests__/blueprint-verify-adapter.test',
   '../services/__tests__/repo-service-pure.test',
+  '../services/__tests__/repo-service-git.test',
+  '../services/__tests__/track.service.test',
+  '../services/__tests__/worktree-isolation-default.test',
+  '../../renderer/src/store/__tests__/code-changes-errors.test',
+  '../services/__tests__/file-diff-state.test',
+  '../services/__tests__/file-change-list-state.test',
   '../services/__tests__/opencode-config-writer-logic.test',
   '../services/__tests__/opencode-config-schema.test',
   '../services/__tests__/opencode-cli-check.test',
@@ -236,6 +269,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-spec-helpers.test',
   '../services/__tests__/plan-registry-helpers.test',
   '../services/__tests__/zero-coverage-services.test',
+  '../services/__tests__/update-feed-server.test',
+  '../services/__tests__/feed-manifest-patch.test',
+  '../services/__tests__/auto-update-helpers.test',
+  '../services/__tests__/auto-update-service.test',
   // ─── Phase 15: Coverage Mega-Push — pure function tests ───
   '../services/__tests__/default-prompts-constants.test',
   '../services/__tests__/preprocessing-pure.test',
@@ -280,11 +317,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/prompt-optimizer.test',
   // ─── Pipeline Stabilization Round 2 — phase watchdog + registry sync guard ───
   '../services/__tests__/blueprint-phase-watchdog.test',
-  '../services/__tests__/cli-executor-kill.test',
+  '../services/__tests__/blueprint-gate-launch.test',
   // ─── Memory Engine (knowledge-aware) ───
   '../services/__tests__/memory-engine.test',
   '../services/__tests__/memory-retrieval.test',
   '../services/__tests__/memory-extraction.test',
+  '../services/__tests__/memory-extraction-cancel.test',
   '../services/__tests__/memory-doc-watcher.test',
   // ─── Memory Consolidation (cluster merge, idle job) ───
   '../services/__tests__/memory-consolidation.test',
@@ -304,8 +342,11 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/adapter-completion-round2.test',
   '../services/__tests__/coverage-mega-push-phase18.test',
   '../services/__tests__/coverage-push-phase18b.test',
+  '../services/__tests__/ipc-bridge-tcp.test',
   // ─── Blueprint clarify ask_user bridge ───
   '../services/__tests__/blueprint-clarify-askuser.test',
+  // ─── Blueprint clarify question re-surfacing + findings-only nudge ───
+  '../services/__tests__/blueprint-clarify-resurface.test',
   // ─── Memory Capture Expansion (blueprint/grill/document hooks) ───
   '../services/__tests__/memory-extraction-content.test',
   '../services/__tests__/blueprint-memory-hooks.test',
@@ -317,6 +358,17 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/document-reader.test',
   '../services/__tests__/memory-ingestion.test',
   '../services/__tests__/memory-bootstrap.test',
+  '../services/__tests__/memory-bootstrap-doc-state.test',
+  '../services/__tests__/memory-bootstrap-queue.test',
+  '../services/__tests__/memory-bootstrap-control.test',
+  '../services/__tests__/memory-bootstrap-throughput.test',
+  '../services/__tests__/instruction-sources.test',
+  '../services/__tests__/scope-matcher.test',
+  '../services/__tests__/memory-scope-activation.test',
+  '../services/__tests__/memory-projection.test',
+  '../services/__tests__/memory-retrieval-fusion.test',
+  '../services/__tests__/memory-reflection.test',
+  '../services/__tests__/memory-retrieval-tier-reinject.test',
   // ─── Local-LLM hermeticity fixes (FK guard + recovery gating) ───
   '../services/__tests__/local-plan-state-fk-guard.test',
   // ─── Phase 19 deep coverage ───
@@ -328,6 +380,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/mcp-servers-deep.test',
   // ─── Phase 20A: Coverage Mega-Push VI — giant services deep ───
   '../services/__tests__/agent-session-body-deep.test',
+  // Read-after-send contract: response text must survive MEMLEAK-01 teardown
+  '../services/__tests__/session-last-turn-text.test',
   '../services/__tests__/chat-stream-body-deep.test',
   '../services/__tests__/code-analysis-handlers.test',
   '../services/__tests__/blueprint-spec-deep.test',
@@ -342,6 +396,13 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/ipc-workspace-agent-handlers.test',
   '../services/__tests__/ipc-grill-audit-council-handlers.test',
   '../services/__tests__/ipc-remaining-handlers.test',
+  '../services/__tests__/ipc-track-handlers.test',
+  '../services/__tests__/mcp-config-worktree.test',
+  '../services/__tests__/blueprint-track.test',
+  '../services/__tests__/landing.service.test',
+  '../services/__tests__/track-claims.test',
+  '../services/__tests__/lent-branch.test',
+  '../services/__tests__/branch-options.test',
   // ─── Blueprint Environment Preflight ───
   '../services/__tests__/blueprint-preflight.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
@@ -370,6 +431,259 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/task-execution-tracking.test',
   // ─── Windows stability: isExcludedPath path-separator handling ───
   '../services/__tests__/is-excluded-path.test',
+  // ─── Index exclusion preflight (Pods/vendored-tree confirmation) ───
+  '../services/__tests__/index-exclusion-preflight.test',
+  // ─── Phase 24: IPC Coverage Blitz — 20 new IPC test files ───
+  '../ipc/__tests__/ipc-bug-idea-events.test',
+  '../ipc/__tests__/ipc-specialist-skill.test',
+  '../ipc/__tests__/ipc-code-graph-indexing.test',
+  '../ipc/__tests__/ipc-ollama-embedding.test',
+  '../ipc/__tests__/ipc-docs-repo-github.test',
+  '../ipc/__tests__/ipc-cost-token-log.test',
+  '../ipc/__tests__/ipc-app-preference-zoom.test',
+  '../ipc/__tests__/ipc-shell-sync-hooks.test',
+  '../ipc/__tests__/ipc-core-agent-alias-prompt.test',
+  '../ipc/__tests__/ipc-chat-lifecycle-shared.test',
+  '../ipc/__tests__/ipc-checkpoint-permission.test',
+  '../ipc/__tests__/ipc-workspace-project-session.test',
+  '../ipc/__tests__/ipc-chat-completion-mode.test',
+  '../ipc/__tests__/ipc-plan-sdk-handoff.test',
+  '../ipc/__tests__/ipc-workspace-deploy-testing.test',
+  '../ipc/__tests__/ipc-memory-deep.test',
+  '../ipc/__tests__/ipc-blueprint-deep.test',
+  '../ipc/__tests__/ipc-audit-deep.test',
+  '../ipc/__tests__/ipc-grill-mpa-council-deep.test',
+  '../ipc/__tests__/ipc-conversation-crud-deep.test',
+  // ─── Phase 24: MCP Server Coverage ───
+  '../mcp-servers/__tests__/code-graph-server.test',
+  '../mcp-servers/__tests__/git-context-server.test',
+  '../mcp-servers/__tests__/control-actions-server.test',
+  // ─── Phase 24: Zero-Coverage Services ───
+  '../services/__tests__/subscription-auto-update.test',
+  '../services/__tests__/docs-mermaid-filewatcher.test',
+  // ─── Phase 24: Deep Tests for Low/Medium-Coverage Services ───
+  '../services/__tests__/low-coverage-services-deep-phase24.test',
+  '../services/__tests__/medium-coverage-augment-phase24.test',
+  // ─── Phase 25: Wave 1 — Giant Services Deep Body Coverage ───
+  '../services/__tests__/blueprint-build-deep-phase25.test',
+  '../services/__tests__/agent-session-deep-phase25.test',
+  '../services/__tests__/turn-poison.test',
+  '../services/__tests__/chat-stream-deep-phase25.test',
+  '../services/__tests__/opencode-executor-deep-phase25.test',
+  '../services/__tests__/vector-search-deep-phase25.test',
+  '../services/__tests__/blueprint-spec-deep-phase25.test',
+  '../services/__tests__/blueprint-service-deep-phase25.test',
+  '../services/__tests__/code-graph-deep-phase25.test',
+  '../services/__tests__/blueprint-verify-deep-phase25.test',
+  '../services/__tests__/memory-extraction-deep-phase25.test',
+  // ─── Phase 25: Wave 2 — Pipeline Services Deep Coverage ───
+  '../services/__tests__/mpa-orchestration-deep-phase25.test',
+  '../services/__tests__/cli-executor-deep-phase25.test',
+  '../services/__tests__/council-deep-phase25.test',
+  '../services/__tests__/memory-engine-deep-phase25.test',
+  '../services/__tests__/memory-bootstrap-deep-phase25.test',
+  '../services/__tests__/audit-agent-deep-phase25.test',
+  '../services/__tests__/workspace-deploy-deep-phase25.test',
+  '../services/__tests__/grill-persistence-deep-phase25.test',
+  // ─── Phase 25: Wave 3 — IPC Handler Body Deep Coverage ───
+  '../ipc/__tests__/ipc-blueprint-body-deep.test',
+  '../ipc/__tests__/ipc-audit-body-deep.test',
+  '../ipc/__tests__/ipc-mpa-council-body-deep.test',
+  '../ipc/__tests__/ipc-chat-completion-body.test',
+  '../ipc/__tests__/ipc-remaining-body-deep.test',
+  // ─── Phase 25: Wave 4 — Medium Services + MCP ───
+  '../services/__tests__/wave4-services-deep-phase25.test',
+  '../mcp-servers/__tests__/code-analysis-deep-phase25.test',
+  // ─── Phase 25: Wave 5 — E2E Testing Infrastructure ───
+  '../services/__tests__/e2e-assertions-deep-phase25.test',
+  '../services/__tests__/e2e-runner-deep-phase25.test',
+  '../services/__tests__/e2e-service-runners-phase25.test',
+  // ─── Phase 25: Wave 6 — Remaining Repos & Adapters ───
+  '../services/__tests__/wave6-repos-adapters-phase25.test',
+  // ─── Phase 26: Wave 1 — Giant Service Bodies (Module-Mock Deep Body) ───
+  '../services/__tests__/blueprint-build-body-p26.test',
+  '../services/__tests__/agent-session-body-p26.test',
+  '../services/__tests__/chat-stream-body-p26.test',
+  '../services/__tests__/vector-search-body-p26.test',
+  '../services/__tests__/opencode-exec-body-p26.test',
+  '../services/__tests__/blueprint-spec-body-p26.test',
+  '../services/__tests__/blueprint-svc-body-p26.test',
+  '../services/__tests__/memory-extract-body-p26.test',
+  '../services/__tests__/blueprint-verify-body-p26.test',
+  '../services/__tests__/blueprint-ipc-body-p26.test',
+  '../services/__tests__/memory-engine-body-p26.test',
+  // ─── Phase 26: Wave 2 — IPC Handler Deep Body ───
+  '../services/__tests__/audit-ipc-body-p26.test',
+  '../services/__tests__/grill-ipc-body-p26.test',
+  '../services/__tests__/convo-crud-ipc-body-p26.test',
+  '../services/__tests__/mpa-ipc-body-p26.test',
+  '../services/__tests__/chat-ipc-body-p26.test',
+  '../services/__tests__/memory-ipc-body-p26.test',
+  '../services/__tests__/workspace-ipc-body-p26.test',
+  '../services/__tests__/remaining-ipc-body-p26.test',
+  // ─── Phase 26: Wave 3 — Pipeline Service Method Bodies ───
+  '../services/__tests__/memory-engine-pipeline-p26.test',
+  '../services/__tests__/mpa-orch-body-p26.test',
+  '../services/__tests__/memory-boot-body-p26.test',
+  '../services/__tests__/cli-executor-body-p26.test',
+  '../services/__tests__/council-body-p26.test',
+  '../services/__tests__/audit-agent-body-p26.test',
+  '../services/__tests__/workspace-deploy-body-p26.test',
+  '../services/__tests__/grill-persist-body-p26.test',
+  // ─── Phase 26: Wave 4 — Repository Deep Coverage ───
+  '../services/__tests__/memory-fact-repo-deep-p26.test',
+  '../services/__tests__/blueprint-repo-deep-p26.test',
+  '../services/__tests__/audit-repo-deep-p26.test',
+  '../services/__tests__/agent-session-repo-p26.test',
+  '../services/__tests__/remaining-repos-p26.test',
+  // ─── Phase 26: Wave 5 — Medium Services + MCP ───
+  '../services/__tests__/code-analysis-mcp-p26.test',
+  '../services/__tests__/preflight-body-p26.test',
+  '../services/__tests__/skill-specialist-body-p26.test',
+  '../services/__tests__/agent-sync-preprocessing-p26.test',
+  '../services/__tests__/e2e-assertions-body-p26.test',
+  // ─── Phase 26: Wave 6 — Adapters + Edge Cases ───
+  '../services/__tests__/role-adapters-body-p26.test',
+  '../services/__tests__/chat-agent-body-p26.test',
+  '../services/__tests__/medium-services-batch-p26.test',
+  '../services/__tests__/db-index-migrations-p26.test',
+  // ─── Phase 27: Coverage Push — Pure Functions + Zero-Coverage Services ───
+  '../services/__tests__/compaction-policy-p27.test',
+  '../services/__tests__/handoff-redaction-p27.test',
+  '../services/__tests__/mpa-prompts-p27.test',
+  '../services/__tests__/audit-discovery-p27.test',
+  '../services/__tests__/agent-executor-factory-p27.test',
+  '../services/__tests__/handoff-adapters-p27.test',
+  '../services/__tests__/one-shot-local-p27.test',
+  // ─── Phase 27: IPC handler tests ───
+  '../ipc/__tests__/ipc-code-changes-p27.test',
+  '../services/__tests__/parsing-utils-p27.test',
+  '../services/__tests__/structured-output-repair-p27.test',
+  '../services/__tests__/github-service-p27.test',
+  '../services/__tests__/event-logger-deep-p27.test',
+  '../services/__tests__/opencode-config-writer-p27.test',
+  // memory-feed-p27.test removed: targeted a memory-feed.service.ts module
+  // that was never created — pure load failure, invalidated every unified
+  // coverage run per FR-001 (discovered while investigating R018).
+  '../services/__tests__/grill-persistence-deep-p27.test',
+  '../services/__tests__/specialist-builder-deep-p27.test',
+  // ─── R006: Close the gap to 65% — service-runners, handoff-adapters, mcp-servers ───
+  // Real behavioural coverage of the deterministic (no-LLM) E2E service
+  // runners — replaces the coverage-theatre assertions previously in
+  // e2e-service-runners-phase25.test.ts (kept below as a registry/type-drift
+  // guard instead).
+  '../services/__tests__/e2e-runner-deterministic.test',
+  // toEnvelope() end-to-end coverage for handoff-adapters/base.adapter.ts —
+  // truncation boundary, TTL math, size guard, redaction pipeline applied.
+  '../services/__tests__/handoff-base-adapter-envelope.test',
+  // ─── R006: Previously-orphaned mcp-servers tests found via discovery diff ───
+  // Both existed on disk with real, guarded (self-runnable) assertions but
+  // were never added to this registry, so they contributed zero coverage.
+  '../mcp-servers/__tests__/mcp-tool-error-handling.test',
+  '../mcp-servers/__tests__/native-module-smoke.test',
+  // ─── R009: Orphan sweep (FR-031/SC-009) — 81 on-disk test files found via
+  // comm -23 against this registry that were never registered and therefore
+  // contributed zero coverage. All verified to either call summary()/
+  // summaryAsync() behind a self-run guard (safe to import from a unified
+  // runner) or never call it directly. Two additional on-disk files
+  // (opencode-executor-integration.test.ts, opencode-session-diagnostic.test.ts)
+  // are deliberately NOT registered here — they require a real `opencode` CLI
+  // and a live oMLX server and are excluded via the DENY_LIST in
+  // scripts/check-test-orphans.mjs with justification comments there.
+  '../ipc/__tests__/audit-ipc-handlers.test',
+  '../ipc/__tests__/blueprint-ipc-handlers.test',
+  '../ipc/__tests__/config-ipc-validation.test',
+  '../ipc/__tests__/conversation-crud-handlers.test',
+  '../ipc/__tests__/crud-ipc-validation.test',
+  '../ipc/__tests__/grill-ipc-handlers.test',
+  '../ipc/__tests__/ipc-utilities.test',
+  '../ipc/__tests__/mpa-ipc-handlers.test',
+  '../ipc/__tests__/workspace-ipc-handlers.test',
+  '../services/__tests__/agent-session-handlers.test',
+  '../services/__tests__/agentic-claude-runner.test',
+  '../services/__tests__/auth-provider.test',
+  '../services/__tests__/autofix-pr.test',
+  '../services/__tests__/base-adapter.test',
+  '../services/__tests__/blueprint-prompt-loader.test',
+  '../services/__tests__/blueprint-task-verification.test',
+  '../services/__tests__/blueprint-task-user-skip.test',
+  '../services/__tests__/btw.test',
+  '../services/__tests__/budget-exceeded-error.test',
+  '../services/__tests__/budget-preflight.test',
+  '../services/__tests__/chat-stream-handlers.test',
+  '../services/__tests__/claude-md-generator-formatters.test',
+  '../services/__tests__/cli-mcp-config-builders.test',
+  '../services/__tests__/code-graph-enhancements.test',
+  '../services/__tests__/cost-tracker-pricing.test',
+  '../services/__tests__/description-cache-handlers.test',
+  '../services/__tests__/description-cache-makekey.test',
+  '../services/__tests__/event-logger-formatters.test',
+  '../services/__tests__/event-logger-sequence.test',
+  '../services/__tests__/event-logger.service.test',
+  '../services/__tests__/file-service-utils.test',
+  '../services/__tests__/github-service-checks.test',
+  '../services/__tests__/grill-prompt-blocks.test',
+  '../services/__tests__/grill-prompt-builders.test',
+  '../services/__tests__/handoff.service.test',
+  '../services/__tests__/heuristic-description-batch.test',
+  '../services/__tests__/json-utils.test',
+  '../services/__tests__/language-detector.test',
+  '../services/__tests__/local-context-reconstructor.test',
+  '../services/__tests__/local-plan-state-maprow.test',
+  '../services/__tests__/mcp-tool-consistency.test',
+  '../services/__tests__/mermaid-sanitizers.test',
+  '../services/__tests__/model-config-utils.test',
+  '../services/__tests__/notification.service.test',
+  '../services/__tests__/opencode-agent-writer-builders.test',
+  '../services/__tests__/opencode-config-data-registry.test',
+  '../services/__tests__/opencode-config-writer-builders.test',
+  '../services/__tests__/opencode-executor-event-stream.test',
+  '../services/__tests__/opencode-executor-logic.test',
+  '../services/__tests__/plan-tasks.test',
+  '../services/__tests__/preprocessing-pipeline.test',
+  '../services/__tests__/process-manager.test',
+  '../services/__tests__/recall-server.test',
+  '../services/__tests__/background-task-watcher.test',
+  '../ipc/__tests__/process-ipc.test',
+  // ─── Jira MCP integration (credentials, connection test, bundled server) ───
+  '../services/__tests__/integration-credentials.test',
+  '../services/__tests__/jira-connection-test.test',
+  '../services/__tests__/external-mcp-mount.test',
+  '../services/__tests__/ipc-integrations-handlers.test',
+  '../mcp-servers/__tests__/jira-server.test',
+  '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
+  '../../renderer/src/store/__tests__/workspace-switch-streams.test',
+  '../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
+  '../../renderer/src/hooks/__tests__/background-stream-routing.test',
+  '../../renderer/src/store/__tests__/update-snooze.test',
+  '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
+  '../../renderer/src/lib/__tests__/permission-routing.test',
+  '../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
+  '../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',
+  '../../renderer/src/components/workspace/memory/bootstrap/__tests__/scene-mode.test',
+  '../../renderer/src/components/workspace/memory/facts/__tests__/facts-model.test',
+  '../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
+  '../../renderer/src/components/workspace/integrations/__tests__/integration-readiness.test',
+  '../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
+  '../../renderer/src/components/chat/__tests__/message-identity.test',
+  '../services/__tests__/prompt-builder-extractors.test',
+  '../services/__tests__/prompt-builder-local.test',
+  '../services/__tests__/repo-service-utils.test',
+  '../services/__tests__/scope-guard.test',
+  '../services/__tests__/skill-enrichment-builders.test',
+  '../services/__tests__/skill-tier-parser.test',
+  '../services/__tests__/specialist-builder-handlers.test',
+  '../services/__tests__/specialist-builder-logic.test',
+  '../services/__tests__/tool-result-timeout.test',
+  '../services/__tests__/usage-tracker-helpers.test',
+  '../services/__tests__/workspace-mcp-config-builder.test',
+  // ─── Stale-turn incident: heartbeat tool ids, pending-tool leak, DB timestamps ───
+  '../services/executor-utils/__tests__/tool-progress-heartbeat.test',
+  '../services/executor-utils/__tests__/tool-tracker-leak.test',
+  '../ipc/__tests__/tool-chunk-progress.test',
+  '../../shared/__tests__/db-time.test',
+  // ─── Truncated plan block: nested fence inside a JSON string value ───
+  '../../shared/__tests__/fenced-block.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -398,6 +712,10 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/remaining-repos.test',
   '../db/repositories/__tests__/code-graph-repos.test',
   '../db/repositories/__tests__/migration-suite.test',
+  '../db/repositories/__tests__/memory-source-type-guard.test',
+  '../db/repositories/__tests__/memory-facts-fts.test',
+  '../db/repositories/__tests__/memory-bitemporal.test',
+  '../db/repositories/__tests__/memory-edges.test',
   // ─── Phase 16: Track 1 + Track 6 ───
   '../db/repositories/__tests__/migration-replay.test',
   '../db/repositories/__tests__/repo-branch-coverage.test',
@@ -407,6 +725,28 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/e2e-test-repos.test',
   // ─── Windows stability: upsertEdgesBatched batching + edge cases ───
   '../db/repositories/__tests__/upsert-edges-batched.test',
+  // ─── Phase 24: Zero-coverage repository tests ───
+  '../db/repositories/__tests__/zero-coverage-repos-phase24.test',
+  '../db/repositories/__tests__/memory-bootstrap.repository.test',
+  // ─── R009: Orphan sweep (FR-031/SC-009) — 16 on-disk repository tests
+  // never registered here (see full explanation in SERVICE_TEST_FILES above).
+  '../db/repositories/__tests__/agent-session.repository.test',
+  '../db/repositories/__tests__/app-preference.repository.test',
+  '../db/repositories/__tests__/audit-plan.repository.test',
+  '../db/repositories/__tests__/base-repository.test',
+  '../db/repositories/__tests__/checkpoint.repository.test',
+  '../db/repositories/__tests__/chunk-embedding.repository.test',
+  '../db/repositories/__tests__/code-chunk.repository.test',
+  '../db/repositories/__tests__/code-graph-edge.repository.test',
+  '../db/repositories/__tests__/code-graph-rank.repository.test',
+  '../db/repositories/__tests__/code-graph-tag.repository.test',
+  '../db/repositories/__tests__/conversation-specialist.repository.test',
+  '../db/repositories/__tests__/core-agent-alias.repository.test',
+  '../db/repositories/__tests__/core-agent-prompt.repository.test',
+  '../db/repositories/__tests__/mpa-artifact.repository.test',
+  '../db/repositories/__tests__/turn-usage.repository.test',
+  '../db/repositories/__tests__/user-profile.repository.test',
+  '../db/repositories/__tests__/track.repository.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───
@@ -419,9 +759,22 @@ void (async () => {
   for (const file of ALL_TEST_FILES) {
     try {
       await import(file)
+      // Let this file's async tests finish before the next file loads — see the
+      // drainPending() note in test-harness.ts. Also means async bodies still
+      // see this file's mocks when restoreFullMock() runs below.
+      await drainPending()
     } catch (err) {
       console.error(`\n[run-all] FAILED to load ${file}:`, err)
       loadFailures++
+    } finally {
+      // Undo setupFullMock()'s Module._load patch (if this file installed it)
+      // before the next file loads. Every module-level `require()` in a
+      // full-mock test file runs synchronously during `await import(file)`
+      // above — deferred/async test bodies only reuse those already-captured
+      // references — so restoring here scopes the interception to exactly
+      // this file and prevents it from silently mocking real modules
+      // (e.g. db/repositories/*.repository.ts) for every file loaded after.
+      restoreFullMock()
     }
   }
 
@@ -429,7 +782,9 @@ void (async () => {
     console.error(`\n[run-all] ${loadFailures} file(s) failed to load`)
     process.exitCode = 1
   }
-  console.log(`[run-all] all ${ALL_TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`)
+  console.log(
+    `[run-all] all ${ALL_TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`
+  )
 
   // Single summary at the end — awaits all pending async tests, prints totals,
   // and exits with code 1 on any failure.

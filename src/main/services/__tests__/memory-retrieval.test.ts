@@ -36,7 +36,7 @@ test('retrieval: tokenization strips short tokens', () => {
 test('retrieval: keyword overlap scoring', () => {
   const queryTokens = ['jwt', 'auth', 'pattern']
   const factText = 'jwt authentication pattern for secure API access'
-  
+
   let hits = 0
   for (const token of queryTokens) {
     if (factText.toLowerCase().includes(token)) hits++
@@ -49,7 +49,7 @@ test('retrieval: keyword overlap scoring', () => {
 test('retrieval: partial keyword overlap', () => {
   const queryTokens = ['jwt', 'auth', 'database']
   const factText = 'jwt authentication for secure access'
-  
+
   let hits = 0
   for (const token of queryTokens) {
     if (factText.toLowerCase().includes(token)) hits++
@@ -62,7 +62,7 @@ test('retrieval: partial keyword overlap', () => {
 test('retrieval: zero overlap', () => {
   const queryTokens = ['database', 'migration', 'schema']
   const factText = 'jwt authentication for secure access'
-  
+
   let hits = 0
   for (const token of queryTokens) {
     if (factText.toLowerCase().includes(token)) hits++
@@ -74,17 +74,17 @@ test('retrieval: zero overlap', () => {
 
 test('retrieval: recency scoring decays over time', () => {
   const now = Date.now()
-  
+
   // 1 day old
   const oneDayAgo = now - 1 * 24 * 60 * 60 * 1000
   const age1 = (now - oneDayAgo) / (1000 * 60 * 60 * 24)
   const score1 = Math.max(0, 1 - age1 / 400)
-  
+
   // 30 days old
   const thirtyDaysAgo = now - 30 * 24 * 60 * 60 * 1000
   const age30 = (now - thirtyDaysAgo) / (1000 * 60 * 60 * 24)
   const score30 = Math.max(0, 1 - age30 / 400)
-  
+
   // 365 days old
   const yearAgo = now - 365 * 24 * 60 * 60 * 1000
   const age365 = (now - yearAgo) / (1000 * 60 * 60 * 24)

@@ -1,65 +1,40 @@
 import { useMemo } from 'react'
-import { FileCode, Loader2 } from 'lucide-react'
+import { AlertTriangle, FileCode, FileQuestion, Loader2 } from 'lucide-react'
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
+import { codeAtelierDiffStyles } from './diff-theme'
+import { describeIdenticalReason, resolveDiffState } from './file-diff-state'
+import type { FileDiffResult } from '../../../../shared/types'
 
 interface FileDiffViewProps {
   filePath: string | null
-  diff: { oldContent: string; newContent: string; language: string } | null
+  diff: FileDiffResult | null
   isLoading: boolean
-}
-
-/** Custom theme matching Code Atelier's dark palette */
-const codeAtelierDiffStyles = {
-  variables: {
-    dark: {
-      diffViewerBackground: '#1a1b26',
-      diffViewerColor: '#c0caf5',
-      addedBackground: 'rgba(46, 160, 67, 0.15)',
-      addedColor: '#c0caf5',
-      removedBackground: 'rgba(248, 81, 73, 0.15)',
-      removedColor: '#c0caf5',
-      wordAddedBackground: 'rgba(46, 160, 67, 0.40)',
-      wordRemovedBackground: 'rgba(248, 81, 73, 0.40)',
-      addedGutterBackground: 'rgba(46, 160, 67, 0.20)',
-      removedGutterBackground: 'rgba(248, 81, 73, 0.20)',
-      gutterBackground: '#16161e',
-      gutterColor: '#565f89',
-      codeFoldBackground: '#1e1f2e',
-      codeFoldGutterBackground: '#1e1f2e',
-      codeFoldContentColor: '#565f89',
-      emptyLineBackground: '#1a1b26'
-    }
-  },
-  line: {
-    padding: '2px 10px',
-    fontSize: '12px',
-    lineHeight: '1.6'
-  },
-  gutter: {
-    padding: '0 8px',
-    minWidth: '40px'
-  },
-  contentText: {
-    fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace',
-    fontSize: '12px',
-    lineHeight: '1.6'
-  }
+  leftLabel?: string
+  rightLabel?: string
 }
 
 export default function FileDiffView({
   filePath,
   diff,
-  isLoading
+  isLoading,
+  leftLabel = 'Previous (HEAD)',
+  rightLabel = 'Current (Working Tree)'
 }: FileDiffViewProps): React.JSX.Element {
-  // Compute line stats
+  // Compute line stats — count lines present in one version but not the other
   const stats = useMemo(() => {
     if (!diff) return null
     const oldLines = diff.oldContent.split('\n')
     const newLines = diff.newContent.split('\n')
-    const added = Math.max(0, newLines.length - oldLines.length)
-    const removed = Math.max(0, oldLines.length - newLines.length)
-    return { added, removed }
+    const oldSet = new Set(oldLines)
+    const newSet = new Set(newLines)
+    const added = newLines.filter((l) => !oldSet.has(l)).length
+    const removed = oldLines.filter((l) => !newSet.has(l)).length
+    return { added, removed, totalLines: oldLines.length + newLines.length }
   }, [diff])
+
+  // Small files read better with full context; only collapse unchanged
+  // regions once the file is large enough for it to matter.
+  const isLargeFile = (stats?.totalLines ?? 0) > 400
 
   if (!filePath) {
     return (
@@ -89,11 +64,27 @@ export default function FileDiffView({
     )
   }
 
+  const diffState = resolveDiffState(diff)
+  const identicalReason = describeIdenticalReason(diff)
+
   return (
     <div data-testid="file-diff-view" className="flex-1 flex flex-col min-h-0 min-w-0">
       {/* Diff header */}
-      <div data-testid="file-diff-header" className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-surface-overlay/50 shrink-0">
+      <div
+        data-testid="file-diff-header"
+        className="flex items-center justify-between px-4 py-2 border-b border-border-subtle bg-surface-overlay/50 shrink-0"
+      >
         <span className="text-xs font-medium text-text-primary truncate">{filePath}</span>
+        {/* The exact commit both sides are measured from — answers "what actually ships". */}
+        {diff.baseSha && (
+          <span
+            data-testid="file-diff-base"
+            title={`Comparison base: ${leftLabel} @ ${diff.baseSha}`}
+            className="text-[10px] font-mono text-text-muted truncate mx-3 shrink-0"
+          >
+            {leftLabel} @ {diff.baseSha}
+          </span>
+        )}
         {stats && (
           <div className="flex items-center gap-2 shrink-0">
             {stats.added > 0 && (
@@ -106,19 +97,58 @@ export default function FileDiffView({
         )}
       </div>
 
-      {/* Diff viewer */}
-      <div className="flex-1 overflow-auto">
-        <ReactDiffViewer
-          oldValue={diff.oldContent}
-          newValue={diff.newContent}
-          splitView={true}
-          useDarkTheme={true}
-          compareMethod={DiffMethod.WORDS}
-          leftTitle="Previous (HEAD)"
-          rightTitle="Current (Working Tree)"
-          styles={codeAtelierDiffStyles}
-        />
-      </div>
+      {/* Non-fatal git problem — one side of the diff may be wrong or empty */}
+      {diff.warning && (
+        <div
+          data-testid="file-diff-warning"
+          className="flex items-start gap-2 px-4 py-2 border-b border-warning/30 bg-warning/10 shrink-0"
+        >
+          <AlertTriangle size={14} className="text-warning mt-px shrink-0" />
+          <span className="text-[11px] text-text-secondary break-words">
+            Could not load one side of the diff — {diff.warning}
+          </span>
+        </div>
+      )}
+
+      {/* Explicit states — ReactDiffViewer renders nothing when both sides match,
+          which is indistinguishable from a broken pane. */}
+      {diffState === 'binary' ? (
+        <div
+          data-testid="file-diff-binary"
+          className="flex-1 flex flex-col items-center justify-center text-center px-8"
+        >
+          <FileCode size={32} className="text-text-muted/30 mb-3" />
+          <p className="text-sm text-text-secondary">Binary file — diff not available</p>
+        </div>
+      ) : diffState === 'identical' ? (
+        <div
+          data-testid="file-diff-identical"
+          className="flex-1 flex flex-col items-center justify-center text-center px-8"
+        >
+          <FileQuestion size={32} className="text-text-muted/30 mb-3" />
+          <p className="text-sm text-text-secondary">
+            {identicalReason?.title ?? `No differences between ${leftLabel} and ${rightLabel}`}
+          </p>
+          <p className="text-xs text-text-muted mt-1 max-w-md">
+            {identicalReason?.detail ??
+              'This file changed relative to the comparison base, but the two sides shown are identical.'}
+          </p>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-auto">
+          <ReactDiffViewer
+            oldValue={diff.oldContent}
+            newValue={diff.newContent}
+            splitView={true}
+            useDarkTheme={true}
+            compareMethod={DiffMethod.WORDS}
+            leftTitle={leftLabel}
+            rightTitle={rightLabel}
+            showDiffOnly={isLargeFile}
+            styles={codeAtelierDiffStyles}
+          />
+        </div>
+      )}
     </div>
   )
 }

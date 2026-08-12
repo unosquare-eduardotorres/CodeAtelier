@@ -49,13 +49,8 @@ export function registerChatModeIpc(): void {
     // When switching to build mode, mark any linked plan as in_progress
     if (mode === 'build') {
       try {
-        const plans = planRepository.getForWorkspace(
-          updated.workspaceId,
-          { status: 'saved' }
-        )
-        const linkedPlan = plans.find(
-          (p) => p.linkedConversationId === conversationId
-        )
+        const plans = planRepository.getForWorkspace(updated.workspaceId, { status: 'saved' })
+        const linkedPlan = plans.find((p) => p.linkedConversationId === conversationId)
         if (linkedPlan) {
           planRepository.markInProgress(linkedPlan.id)
           log.info(`Plan ${linkedPlan.id} marked in_progress (build mode activated)`)

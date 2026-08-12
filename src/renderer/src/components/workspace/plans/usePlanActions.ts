@@ -4,6 +4,7 @@ import { useCouncilStore } from '@renderer/store/council.store'
 import { useMpaStore } from '@renderer/store/mpa.store'
 import { usePlanStore } from '@renderer/store/plan.store'
 import type { PlanRecord } from '../../../../../shared/types'
+import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
 interface PlanNavigation {
   onNavigateToChat: () => void
@@ -86,11 +87,7 @@ export function usePlanActions(
     const content =
       plan.requirementDocument ||
       `# ${plan.title}\n\n${plan.summary}\n\n${JSON.stringify(plan.structuredPlan, null, 2)}`
-    try {
-      await navigator.clipboard.writeText(content)
-    } catch {
-      // Fallback: no-op in restricted contexts
-    }
+    await copyTextToClipboard(content)
   }, [])
 
   const handleArchive = useCallback(

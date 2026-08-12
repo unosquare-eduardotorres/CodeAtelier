@@ -36,7 +36,10 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" data-testid="ultraplan-approval-dialog">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+      data-testid="ultraplan-approval-dialog"
+    >
       <div className="w-full max-w-lg mx-4 rounded-xl border border-border bg-surface-primary shadow-2xl">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
@@ -54,7 +57,10 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
         {/* Plan preview */}
         {planContent && (
           <div className="px-5 py-3 border-b border-border">
-            <div className="max-h-48 overflow-y-auto rounded-lg bg-surface-secondary p-3 text-xs text-secondary font-mono whitespace-pre-wrap" data-testid="ultraplan-plan-preview">
+            <div
+              className="max-h-48 overflow-y-auto rounded-lg bg-surface-secondary p-3 text-xs text-secondary font-mono whitespace-pre-wrap"
+              data-testid="ultraplan-plan-preview"
+            >
               {planContent.length > 500 ? planContent.slice(0, 500) + '…' : planContent}
             </div>
           </div>

@@ -1,17 +1,27 @@
 /**
- * IngestDocuments — UI for batch document ingestion into the memory system.
+ * IngestDocuments — the single entry point for getting documents into memory.
  *
  * Features:
- * - "Select Files…" (multi) + "Select Folder…" buttons
+ * - One drop zone with "Select Files… / Select Folder…" and the single-document
+ *   extractor that used to live in a separate card several hundred pixels away
  * - Folder discovery with file count confirmation
  * - Per-doc progress (queued → extracting chunk i/M → done — N facts)
  * - Overall progress bar + Cancel button
- * - Drag-drop zone
  */
 
 import { useState, useCallback, useRef, type DragEvent } from 'react'
-import { FolderOpen, FileUp, X, Loader2, CheckCircle, AlertTriangle, SkipForward } from 'lucide-react'
+import {
+  FolderOpen,
+  FileUp,
+  Upload,
+  X,
+  Loader2,
+  CheckCircle,
+  AlertTriangle,
+  SkipForward
+} from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
+import { Button, PanelHeader } from '@renderer/components/common/ui'
 import type { IngestionProgress } from '../../../../../shared/types'
 
 // ── Status icon mapping ──
@@ -19,9 +29,9 @@ import type { IngestionProgress } from '../../../../../shared/types'
 function DocStatusIcon({ status }: { status: IngestionProgress['docStatus'] }): React.JSX.Element {
   switch (status) {
     case 'done':
-      return <CheckCircle className="w-3.5 h-3.5 text-green-400" />
+      return <CheckCircle className="w-3.5 h-3.5 text-success" />
     case 'error':
-      return <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+      return <AlertTriangle className="w-3.5 h-3.5 text-danger" />
     case 'skipped':
       return <SkipForward className="w-3.5 h-3.5 text-text-muted" />
     case 'reading':
@@ -33,7 +43,20 @@ function DocStatusIcon({ status }: { status: IngestionProgress['docStatus'] }): 
   }
 }
 
-export default function IngestDocuments(): React.JSX.Element {
+interface IngestDocumentsProps {
+  /** Single-document extractor — a different pipeline to the batch ingester. */
+  onFeedDocument?: () => void
+  feedStatus?: 'idle' | 'running' | 'completed' | 'error'
+  feedMessage?: string | null
+  feedError?: string | null
+}
+
+export default function IngestDocuments({
+  onFeedDocument,
+  feedStatus = 'idle',
+  feedMessage,
+  feedError
+}: IngestDocumentsProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const { ingestion, startIngestion, cancelIngestion, dismissIngestion } = useMemoryStore()
   const [pendingFiles, setPendingFiles] = useState<string[]>([])
@@ -119,18 +142,17 @@ export default function IngestDocuments(): React.JSX.Element {
   }, [])
 
   const isRunning = ingestion?.jobStatus === 'running'
-  const isDone = ingestion?.jobStatus === 'done' || ingestion?.jobStatus === 'cancelled' || ingestion?.jobStatus === 'error'
+  const isDone =
+    ingestion?.jobStatus === 'done' ||
+    ingestion?.jobStatus === 'cancelled' ||
+    ingestion?.jobStatus === 'error'
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-medium text-text-primary">Ingest Documents</h3>
-          <p className="text-xs text-text-muted mt-0.5">
-            Extract memories from files — markdown, code, PDF, DOCX. Unchanged files are skipped on re-ingest.
-          </p>
-        </div>
-      </div>
+      <PanelHeader
+        title="Ingest Documents"
+        description="Extract memories from files — markdown, code, PDF, DOCX. Unchanged files are skipped on re-ingest."
+      />
 
       {/* ── Active Ingestion Progress ── */}
       {ingestion && (
@@ -153,9 +175,9 @@ export default function IngestDocuments(): React.JSX.Element {
             <div
               className={`h-full rounded-full transition-all duration-300 ${
                 ingestion.jobStatus === 'error'
-                  ? 'bg-red-500'
+                  ? 'bg-danger'
                   : ingestion.jobStatus === 'done'
-                    ? 'bg-green-500'
+                    ? 'bg-success'
                     : 'bg-teal'
               }`}
               style={{
@@ -185,21 +207,15 @@ export default function IngestDocuments(): React.JSX.Element {
           {/* Action buttons */}
           <div className="flex justify-end gap-2 pt-1">
             {isRunning && (
-              <button
-                onClick={handleCancel}
-                className="flex items-center gap-1 px-2.5 py-1 text-xs bg-red-500/10 text-red-400 rounded hover:bg-red-500/20"
-              >
+              <Button variant="danger" onClick={handleCancel}>
                 <X className="w-3 h-3" />
                 Cancel
-              </button>
+              </Button>
             )}
             {isDone && (
-              <button
-                onClick={handleDismiss}
-                className="px-2.5 py-1 text-xs text-text-secondary hover:text-text-primary rounded hover:bg-surface-overlay"
-              >
+              <Button variant="ghost" onClick={handleDismiss}>
                 Dismiss
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -217,28 +233,43 @@ export default function IngestDocuments(): React.JSX.Element {
             className={`rounded-lg border-2 border-dashed p-4 text-center transition-colors ${
               isDragOver
                 ? 'border-teal bg-teal/5'
-                : 'border-border-default hover:border-border-active'
+                : 'border-border-default hover:border-border-strong'
             }`}
           >
-            <div className="flex items-center justify-center gap-3 mb-2">
-              <button
-                onClick={handleSelectFiles}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20"
-              >
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Button variant="primary" size="md" onClick={handleSelectFiles}>
                 <FileUp className="w-4 h-4" />
                 Select Files…
-              </button>
-              <button
-                onClick={handleSelectFolder}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-primary-muted text-primary-text border border-border-default rounded-md hover:bg-primary/20"
-              >
+              </Button>
+              <Button variant="secondary" size="md" onClick={handleSelectFolder}>
                 <FolderOpen className="w-4 h-4" />
                 Select Folder…
-              </button>
+              </Button>
             </div>
-            <p className="text-xs text-text-muted">
-              or drag and drop files here
-            </p>
+            <p className="text-xs text-text-muted">or drag and drop files here</p>
+
+            {/* Single-document extractor — same concern, so it lives in the
+                same card instead of a second "Feed Document" button elsewhere */}
+            {onFeedDocument && (
+              <div className="mt-3 pt-3 border-t border-border-subtle flex items-center justify-center gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={onFeedDocument}
+                  disabled={feedStatus === 'running'}
+                  title="Extract memories from one document without queueing a batch"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Feed a single document
+                </Button>
+                {feedStatus === 'running' && (
+                  <span className="text-xs text-info">{feedMessage}</span>
+                )}
+                {feedStatus === 'error' && <span className="text-xs text-danger">{feedError}</span>}
+                {feedStatus === 'completed' && (
+                  <span className="text-xs text-success">{feedMessage}</span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Folder discovery summary */}
@@ -247,7 +278,7 @@ export default function IngestDocuments(): React.JSX.Element {
               <div className="text-xs text-text-secondary">
                 Found <strong>{pendingFiles.length}</strong> files
                 {folderDiscovery.truncated && (
-                  <span className="text-amber-400 ml-1">(capped at 200)</span>
+                  <span className="text-warning ml-1">(capped at 200)</span>
                 )}
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -278,9 +309,7 @@ export default function IngestDocuments(): React.JSX.Element {
                 </div>
               ))}
               {pendingFiles.length > 10 && (
-                <div className="text-xs text-text-muted">
-                  …and {pendingFiles.length - 10} more
-                </div>
+                <div className="text-xs text-text-muted">…and {pendingFiles.length - 10} more</div>
               )}
             </div>
           )}
@@ -288,20 +317,18 @@ export default function IngestDocuments(): React.JSX.Element {
           {/* Start / Clear buttons */}
           {pendingFiles.length > 0 && (
             <div className="flex gap-2">
-              <button
+              <Button
+                variant="primary"
+                size="md"
                 onClick={handleStartIngestion}
                 disabled={!workspaceId || !workspacePath}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-teal text-white rounded-md hover:bg-teal/80 disabled:opacity-50"
               >
                 <Loader2 className="w-4 h-4" />
                 Ingest {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''}
-              </button>
-              <button
-                onClick={handleClearPending}
-                className="px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary rounded-md hover:bg-surface-overlay"
-              >
+              </Button>
+              <Button variant="ghost" size="md" onClick={handleClearPending}>
                 Clear
-              </button>
+              </Button>
             </div>
           )}
         </>

@@ -40,17 +40,20 @@ test.describe('StartIndexingModal', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('code-intelligence')
+    await settingsNav.navigateToSettingsTab('code-intelligence')
     await page.waitForTimeout(1_000)
     return true
   }
 
-  async function openStartIndexingModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openStartIndexingModal(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for Start Indexing or Re-index button
-    const indexBtn = page.locator('button:has-text("Start Indexing"), button:has-text("Re-index"), button:has-text("Index")')
-    const hasBtn = await indexBtn.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const indexBtn = page.locator(
+      'button:has-text("Start Indexing"), button:has-text("Re-index"), button:has-text("Index")'
+    )
+    const hasBtn = await indexBtn
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     if (!hasBtn) return false
 
     await indexBtn.first().click()
@@ -60,14 +63,23 @@ test.describe('StartIndexingModal', () => {
 
   test('modal renders with "Start Indexing" header', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openStartIndexingModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="start-indexing-modal"]')
     const isVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(modal).toBeVisible()
 
@@ -78,14 +90,23 @@ test.describe('StartIndexingModal', () => {
 
   test('symbol count displays formatted number', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openStartIndexingModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="start-indexing-modal"]')
     const isVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Should mention "symbols" with a number
     const symbolText = modal.locator('text=/\\d+.*symbols/')
@@ -103,16 +124,27 @@ test.describe('StartIndexingModal', () => {
     await page.keyboard.press('Escape')
   })
 
-  test('phase time estimates show preprocessing/embedding/total', async ({ electronPage: page }) => {
+  test('phase time estimates show preprocessing/embedding/total', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openStartIndexingModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="start-indexing-modal"]')
     const isVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Should show phase estimates
     await expect(modal.locator('text=Preprocessing')).toBeVisible()
@@ -130,14 +162,23 @@ test.describe('StartIndexingModal', () => {
 
   test('AI descriptions phase shown when enabled', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openStartIndexingModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="start-indexing-modal"]')
     const isVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // AI Descriptions row may or may not be visible depending on settings
     const aiDescRow = modal.locator('text=AI Descriptions')
@@ -157,14 +198,23 @@ test.describe('StartIndexingModal', () => {
 
   test('reassurance text shows background operation info', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openStartIndexingModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="start-indexing-modal"]')
     const isVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Reassurance checkmarks should be visible
     await expect(modal.locator('text=keep using the app normally')).toBeVisible()
@@ -177,14 +227,23 @@ test.describe('StartIndexingModal', () => {
 
   test('start indexing button triggers confirm callback', async ({ electronPage: page }) => {
     const ready = await navigateToCodeIntelligence(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openStartIndexingModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="start-indexing-modal"]')
     const isVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Start Indexing button should be visible
     const startBtn = modal.locator('[data-testid="start-indexing-confirm"]')

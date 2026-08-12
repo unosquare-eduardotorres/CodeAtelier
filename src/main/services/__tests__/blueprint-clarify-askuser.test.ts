@@ -18,6 +18,7 @@ import {
   deduplicateClarifyQuestions
 } from '../../../shared/blueprint-clarify-parsers'
 import type { GrillQuestion } from '../../../shared/types'
+import { ManualClock } from './manual-clock'
 import { CLARIFY_CORRECTION_MESSAGE } from '../blueprint-spec.service'
 import { PhaseActivityWatchdog } from '../blueprint-phase-watchdog'
 
@@ -137,10 +138,7 @@ describe('grillQuestionsToClarifyBlock', () => {
         question: 'Deployment target?',
         header: 'Infrastructure',
         multiSelect: true,
-        options: [
-          { label: 'AWS', recommended: true },
-          { label: 'GCP' }
-        ]
+        options: [{ label: 'AWS', recommended: true }, { label: 'GCP' }]
       }
     ]
 
@@ -179,9 +177,7 @@ describe('grillQuestionsToClarifyBlock', () => {
   })
 
   test('handles empty options array', () => {
-    const block = grillQuestionsToClarifyBlock([
-      { id: 'q1', question: 'Free text?', options: [] }
-    ])
+    const block = grillQuestionsToClarifyBlock([{ id: 'q1', question: 'Free text?', options: [] }])
     assert.equal(block.questions[0].options.length, 0)
   })
 
@@ -191,8 +187,8 @@ describe('grillQuestionsToClarifyBlock', () => {
     ]
 
     const grillQuestions: GrillQuestion[] = [
-      { id: 'q1', question: 'Which auth?', options: [] },  // duplicate
-      { id: 'q2', question: 'Which DB?', options: [] }     // new
+      { id: 'q1', question: 'Which auth?', options: [] }, // duplicate
+      { id: 'q2', question: 'Which DB?', options: [] } // new
     ]
 
     const block = grillQuestionsToClarifyBlock(grillQuestions)
@@ -207,33 +203,43 @@ describe('grillQuestionsToClarifyBlock', () => {
 
 describe('PhaseActivityWatchdog pause/resume', () => {
   test('pause() stops the timer from firing', async () => {
-    const watchdog = new PhaseActivityWatchdog(100, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(100, 'TEST', clock)
     let rejected = false
 
     // Access promise to start timer
-    const p = watchdog.promise.catch(() => { rejected = true })
+    void watchdog.promise.catch(() => {
+      rejected = true
+    })
 
     // Touch once, then pause
     watchdog.touch()
     watchdog.pause()
 
     assert.equal(watchdog.paused, true)
+    assert.equal(clock.pendingCount, 0, 'pause() should have cleared the timer')
 
-    // Wait longer than the timeout — should NOT fire
-    await new Promise((r) => setTimeout(r, 200))
+    // Advance well past the threshold — should NOT fire
+    clock.advance(1000)
+    await Promise.resolve()
     assert.equal(rejected, false, 'Paused watchdog should not reject')
     assert.equal(watchdog.stalled, false)
 
-    // Clean up
+    // Clean up. Do NOT await `p`: the watchdog promise only ever settles by
+    // rejecting on stall, and dispose() drops the reject fn without settling it
+    // (by design — it is consumed via Promise.race). Awaiting it here hangs the
+    // test forever, and the runner then reports it as never having run.
     watchdog.dispose()
-    await p.catch(() => {}) // suppress any rejection
   })
 
   test('resume() restarts the timer', async () => {
-    const watchdog = new PhaseActivityWatchdog(80, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(80, 'TEST', clock)
     let rejected = false
 
-    const p = watchdog.promise.catch(() => { rejected = true })
+    const p = watchdog.promise.catch(() => {
+      rejected = true
+    })
 
     watchdog.pause()
     assert.equal(watchdog.paused, true)
@@ -242,33 +248,43 @@ describe('PhaseActivityWatchdog pause/resume', () => {
     watchdog.resume()
     assert.equal(watchdog.paused, false)
 
-    // Wait for timeout
-    await new Promise((r) => setTimeout(r, 150))
+    // Not yet due at 79ms — proves resume() restarted a full interval
+    clock.advance(79)
+    await Promise.resolve()
+    assert.equal(rejected, false, 'Should not reject before the threshold')
+
+    clock.advance(1)
+    await p
     assert.equal(rejected, true, 'Resumed watchdog should reject after timeout')
     assert.equal(watchdog.stalled, true)
 
     watchdog.dispose()
-    await p.catch(() => {})
   })
 
   test('touch() is no-op while paused', async () => {
-    const watchdog = new PhaseActivityWatchdog(80, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(80, 'TEST', clock)
     let rejected = false
 
-    const p = watchdog.promise.catch(() => { rejected = true })
+    void watchdog.promise.catch(() => {
+      rejected = true
+    })
 
     watchdog.pause()
     watchdog.touch() // should be no-op
+    assert.equal(clock.pendingCount, 0, 'touch() while paused must not arm a timer')
 
-    await new Promise((r) => setTimeout(r, 150))
+    clock.advance(1000)
+    await Promise.resolve()
     assert.equal(rejected, false, 'Touch while paused should not restart timer')
 
+    // See the note above — `p` must not be awaited after dispose().
     watchdog.dispose()
-    await p.catch(() => {})
   })
 
   test('pause() is idempotent', () => {
-    const watchdog = new PhaseActivityWatchdog(1000, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(1000, 'TEST', clock)
     watchdog.promise.catch(() => {})
 
     watchdog.pause()
@@ -279,12 +295,14 @@ describe('PhaseActivityWatchdog pause/resume', () => {
   })
 
   test('resume() without prior pause is no-op', () => {
-    const watchdog = new PhaseActivityWatchdog(1000, 'TEST')
+    const clock = new ManualClock()
+    const watchdog = new PhaseActivityWatchdog(1000, 'TEST', clock)
     watchdog.promise.catch(() => {})
 
     watchdog.resume() // should not throw
     assert.equal(watchdog.paused, false)
 
     watchdog.dispose()
+    assert.equal(clock.pendingCount, 0, 'dispose() should leave no timer behind')
   })
 })

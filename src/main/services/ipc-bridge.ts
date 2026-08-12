@@ -1,9 +1,18 @@
 /**
- * IPC Bridge — Unix domain socket server for MCP server ↔ Electron communication.
+ * IPC Bridge — socket server for MCP server ↔ Electron communication.
  *
  * When using the CLI executor, MCP servers run as external stdio processes (spawned
  * by Claude CLI). They can't directly call Electron IPC. This bridge provides a
- * Unix domain socket that externalized MCP servers connect to for event delivery.
+ * socket that externalized MCP servers connect to for event delivery.
+ *
+ * Transport strategy:
+ *   1. Unix domain socket (fast, no port allocation — works on macOS/Linux/most Windows)
+ *   2. TCP loopback fallback (127.0.0.1 ephemeral port — for managed Windows where
+ *      endpoint security blocks AF_UNIX socket file creation with EACCES)
+ *
+ * The address is passed to MCP servers via the IPC_SOCKET_PATH env var:
+ *   - Unix socket: "/tmp/code-atelier-ipc-abc.sock"
+ *   - TCP loopback: "tcp:127.0.0.1:49152"
  *
  * Events:
  *   plan     → control-actions server emitted a structured plan
@@ -38,6 +47,8 @@ export interface IpcBridgeEvent {
     | 'fileEdited'
     | 'memoryResponse'
     | 'phaseProgress'
+    | 'heartbeat'
+    | 'modeChange'
   payload: unknown
   /** For request-response patterns: correlates response to request. */
   requestId?: string
@@ -45,8 +56,8 @@ export interface IpcBridgeEvent {
 }
 
 /**
- * IPC Bridge server — listens on a Unix domain socket for events from
- * externalized MCP servers.
+ * IPC Bridge server — listens on a Unix domain socket (or TCP loopback
+ * fallback) for events from externalized MCP servers.
  *
  * Usage:
  *   const bridge = new IpcBridge()
@@ -61,78 +72,61 @@ export class IpcBridge extends EventEmitter {
   private socketPath: string | null = null
   private clients: Set<Socket> = new Set()
   private _isListening = false
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
   /**
-   * Start the Unix domain socket server.
-   * Returns the socket path for passing to MCP servers.
+   * Start the IPC bridge server.
+   * Tries a Unix domain socket first; falls back to TCP loopback if the OS
+   * denies socket file creation (EACCES on managed Windows).
+   * Returns the address string for passing to MCP servers as IPC_SOCKET_PATH.
    */
   async start(): Promise<string> {
     if (this._isListening && this.socketPath) {
       return this.socketPath
     }
 
-    // Generate unique socket path in temp directory
+    // Try Unix domain socket first (fast, no port allocation, works on macOS/Linux)
     const id = randomUUID().slice(0, 8)
-    this.socketPath = join(tmpdir(), `code-atelier-ipc-${id}.sock`)
+    const unixPath = join(tmpdir(), `code-atelier-ipc-${id}.sock`)
 
     // Clean up any stale socket file
-    if (existsSync(this.socketPath)) {
+    if (existsSync(unixPath)) {
       try {
-        unlinkSync(this.socketPath)
+        unlinkSync(unixPath)
       } catch {
-        // Non-fatal — socket may be in use
+        /* non-fatal */
       }
     }
 
-    return new Promise<string>((resolve, reject) => {
-      this.server = createServer((client: Socket) => {
-        this.clients.add(client)
-        bridgeLog.info(`[ipc-bridge] Client connected (total: ${this.clients.size})`)
+    try {
+      await this.listenOn(unixPath)
+      this.socketPath = unixPath
+      bridgeLog.info(`[ipc-bridge] Listening on Unix socket: ${this.socketPath}`)
+      this.startHeartbeat()
+      return this.socketPath
+    } catch (err) {
+      bridgeLog.warn(
+        `[ipc-bridge] Unix socket failed (${(err as NodeJS.ErrnoException).code ?? err}) — falling back to TCP loopback`
+      )
+      // Close the failed server to prevent orphaned error handlers / GC delay
+      if (this.server) {
+        this.server.removeAllListeners()
+        this.server.close()
+        this.server = null
+      }
+    }
 
-        let buffer = ''
-
-        client.on('data', (data: Buffer) => {
-          buffer += data.toString('utf-8')
-
-          // Process complete NDJSON lines
-          let newlineIdx: number
-          while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, newlineIdx).trim()
-            buffer = buffer.slice(newlineIdx + 1)
-
-            if (!line) continue
-
-            try {
-              const event = JSON.parse(line) as IpcBridgeEvent
-              this.handleEvent(event)
-            } catch {
-              bridgeLog.warn(`[ipc-bridge] Malformed event: ${line.slice(0, 120)}`)
-            }
-          }
-        })
-
-        client.on('close', () => {
-          this.clients.delete(client)
-          bridgeLog.info(`[ipc-bridge] Client disconnected (total: ${this.clients.size})`)
-        })
-
-        client.on('error', (err) => {
-          bridgeLog.warn(`[ipc-bridge] Client error: ${err.message}`)
-          this.clients.delete(client)
-        })
-      })
-
-      this.server.on('error', (err) => {
-        bridgeLog.error(`[ipc-bridge] Server error: ${err.message}`)
-        reject(err)
-      })
-
-      this.server.listen(this.socketPath!, () => {
-        this._isListening = true
-        bridgeLog.info(`[ipc-bridge] Listening on ${this.socketPath}`)
-        resolve(this.socketPath!)
-      })
-    })
+    // Fallback: TCP loopback with OS-assigned port
+    try {
+      const port = await this.listenOnTcp()
+      this.socketPath = `tcp:127.0.0.1:${port}`
+      bridgeLog.info(`[ipc-bridge] Listening on TCP loopback: ${this.socketPath}`)
+      this.startHeartbeat()
+      return this.socketPath
+    } catch (err) {
+      bridgeLog.error(`[ipc-bridge] TCP fallback also failed: ${(err as Error).message}`)
+      throw err
+    }
   }
 
   /**
@@ -147,6 +141,16 @@ export class IpcBridge extends EventEmitter {
    */
   isListening(): boolean {
     return this._isListening
+  }
+
+  /**
+   * The transport type currently in use.
+   * Returns 'unix' for Unix domain sockets, 'tcp' for TCP loopback, or null if not started.
+   * Useful for telemetry — track what % of users hit the TCP fallback.
+   */
+  get transportType(): 'unix' | 'tcp' | null {
+    if (!this.socketPath) return null
+    return this.socketPath.startsWith('tcp:') ? 'tcp' : 'unix'
   }
 
   /**
@@ -218,6 +222,23 @@ export class IpcBridge extends EventEmitter {
   }
 
   /**
+   * Push a mode change to the externalized MCP servers.
+   *
+   * Their CONVERSATION_MODE is frozen at spawn, so a Plan → Build switch would
+   * otherwise leave the control-actions auto-approver on the old policy for the
+   * life of the CLI child. `conversationId` scopes the broadcast — one bridge
+   * serves every conversation in the workspace.
+   */
+  sendModeChange(mode: string, conversationId?: string): void {
+    this.sendToClients({
+      type: 'modeChange',
+      payload: { mode, conversationId },
+      timestamp: Date.now()
+    })
+    bridgeLog.info(`[ipc-bridge] Sent modeChange mode=${mode} conv=${conversationId ?? 'none'}`)
+  }
+
+  /**
    * Stop the socket server and clean up.
    */
   async stop(): Promise<void> {
@@ -229,12 +250,14 @@ export class IpcBridge extends EventEmitter {
     }
     this.clients.clear()
 
+    this.stopHeartbeat()
+
     return new Promise<void>((resolve) => {
       this.server!.close(() => {
         this._isListening = false
 
-        // Clean up socket file
-        if (this.socketPath && existsSync(this.socketPath)) {
+        // Clean up socket file (skip for TCP transport)
+        if (this.socketPath && !this.socketPath.startsWith('tcp:') && existsSync(this.socketPath)) {
           try {
             unlinkSync(this.socketPath)
           } catch {
@@ -251,11 +274,118 @@ export class IpcBridge extends EventEmitter {
 
   // ── Private ──
 
+  /** Create the net.Server with the shared NDJSON client handler. */
+  private createBridgeServer(): NetServer {
+    return createServer((client: Socket) => {
+      this.clients.add(client)
+      // Prevent idle TCP connection drops on Windows (endpoint security, firewalls)
+      client.setKeepAlive(true, 30_000)
+      bridgeLog.info(`[ipc-bridge] Client connected (total: ${this.clients.size})`)
+
+      let buffer = ''
+
+      client.on('data', (data: Buffer) => {
+        buffer += data.toString('utf-8')
+
+        // Process complete NDJSON lines
+        let newlineIdx: number
+        while ((newlineIdx = buffer.indexOf('\n')) !== -1) {
+          const line = buffer.slice(0, newlineIdx).trim()
+          buffer = buffer.slice(newlineIdx + 1)
+
+          if (!line) continue
+
+          try {
+            const event = JSON.parse(line) as IpcBridgeEvent
+            this.handleEvent(event)
+          } catch {
+            bridgeLog.warn(`[ipc-bridge] Malformed event: ${line.slice(0, 120)}`)
+          }
+        }
+      })
+
+      client.on('close', () => {
+        this.clients.delete(client)
+        bridgeLog.info(`[ipc-bridge] Client disconnected (total: ${this.clients.size})`)
+      })
+
+      client.on('error', (err) => {
+        bridgeLog.warn(`[ipc-bridge] Client error: ${err.message}`)
+        this.clients.delete(client)
+      })
+    })
+  }
+
+  /**
+   * Attempt to listen on a Unix domain socket path.
+   * Rejects if the OS denies socket creation (EACCES on managed Windows).
+   */
+  private listenOn(socketPath: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      this.server = this.createBridgeServer()
+      this.server.on('error', (err) => {
+        bridgeLog.error(`[ipc-bridge] Server error: ${err.message}`)
+        reject(err)
+      })
+      this.server.listen(socketPath, () => {
+        this._isListening = true
+        resolve()
+      })
+    })
+  }
+
+  /**
+   * Listen on TCP 127.0.0.1 with an OS-assigned ephemeral port.
+   * Returns the assigned port number.
+   */
+  private listenOnTcp(): Promise<number> {
+    return new Promise<number>((resolve, reject) => {
+      this.server = this.createBridgeServer()
+      this.server.on('error', (err) => {
+        bridgeLog.error(`[ipc-bridge] TCP server error: ${err.message}`)
+        reject(err)
+      })
+      this.server.listen(0, '127.0.0.1', () => {
+        this._isListening = true
+        const addr = this.server!.address()
+        if (addr && typeof addr === 'object') {
+          resolve(addr.port)
+        } else {
+          reject(new Error('Failed to get TCP server address'))
+        }
+      })
+    })
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat()
+    this.heartbeatTimer = setInterval(() => {
+      if (this.clients.size > 0) {
+        this.sendToClients({
+          type: 'heartbeat',
+          payload: null,
+          timestamp: Date.now()
+        })
+      }
+    }, 30_000) // 30 seconds — well under most firewall idle timeouts
+    this.heartbeatTimer.unref() // Don't prevent process exit
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
+
   private handleEvent(event: IpcBridgeEvent): void {
     bridgeLog.info(`[ipc-bridge] Event: ${event.type}`)
 
     switch (event.type) {
       case 'plan':
+        bridgeLog.info(
+          `[ipc-bridge] Plan event received — payload keys: ${Object.keys((event.payload as Record<string, unknown>) ?? {}).join(',')}`
+        )
         this.emit('plan', event.payload)
         break
       case 'askUser':
@@ -286,6 +416,9 @@ export class IpcBridge extends EventEmitter {
       case 'phaseProgress':
         // Plan phase progress from control-actions server
         this.emit('phaseProgress', event.payload)
+        break
+      case 'heartbeat':
+        // Application-level keepalive — no action needed, data flow prevents idle drop
         break
       default:
         bridgeLog.warn(`[ipc-bridge] Unknown event type: ${event.type}`)

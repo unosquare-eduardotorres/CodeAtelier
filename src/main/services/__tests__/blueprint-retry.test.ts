@@ -12,14 +12,29 @@ import { test, describe, summaryAsync } from './test-harness'
 // ── Replicated retry logic from BlueprintService ──
 
 const BLUEPRINT_PHASE_ORDER = [
-  'specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify'
+  'specify',
+  'clarify',
+  'plan',
+  'tasks',
+  'review',
+  'build',
+  'verify'
 ] as const
 
 type BlueprintPhaseType = (typeof BLUEPRINT_PHASE_ORDER)[number]
 
 type BlueprintStatus =
-  | 'draft' | 'specifying' | 'clarifying' | 'planning' | 'tasking'
-  | 'reviewing' | 'building' | 'verifying' | 'complete' | 'failed' | 'cancelled'
+  | 'draft'
+  | 'specifying'
+  | 'clarifying'
+  | 'planning'
+  | 'tasking'
+  | 'reviewing'
+  | 'building'
+  | 'verifying'
+  | 'complete'
+  | 'failed'
+  | 'cancelled'
 
 const PHASE_TO_STATUS: Record<BlueprintPhaseType, BlueprintStatus> = {
   specify: 'specifying',
@@ -48,7 +63,13 @@ interface MockBlueprint {
 
 // BP-ORPHAN-01: Mid-pipeline statuses that can be retried when pipeline is idle.
 const MID_PIPELINE_STATUSES = new Set<BlueprintStatus>([
-  'specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying'
+  'specifying',
+  'clarifying',
+  'planning',
+  'tasking',
+  'reviewing',
+  'building',
+  'verifying'
 ])
 
 /**
@@ -57,7 +78,10 @@ const MID_PIPELINE_STATUSES = new Set<BlueprintStatus>([
  * Accepts 'failed', 'cancelled', or orphaned in-progress status (when pipeline is idle).
  * Phase resolution order: first failed > currentPhase (pending or active) > first pending.
  */
-function retryPhase(blueprint: MockBlueprint, pipelineRunning = false): {
+function retryPhase(
+  blueprint: MockBlueprint,
+  pipelineRunning = false
+): {
   phase: BlueprintPhaseType
   workspaceId: string
   resetPhaseId: string
@@ -67,15 +91,17 @@ function retryPhase(blueprint: MockBlueprint, pipelineRunning = false): {
   const isOrphaned = MID_PIPELINE_STATUSES.has(blueprint.status) && !pipelineRunning
 
   // BP-COMPLETE-RETRY: Allow retrying 'complete' blueprints with gaps_found
-  const isCompletedWithGaps = blueprint.status === 'complete' && (() => {
-    const verifyPhaseRec = blueprint.phases.find((p) => p.phase === 'verify')
-    if (!verifyPhaseRec) return false
-    const verifyArt = verifyPhaseRec.artifactsJson?.findLast(
-      (a) => a.type === 'verify' || a.type === 'verification'
-    )
-    const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
-    return overall === 'gaps_found'
-  })()
+  const isCompletedWithGaps =
+    blueprint.status === 'complete' &&
+    (() => {
+      const verifyPhaseRec = blueprint.phases.find((p) => p.phase === 'verify')
+      if (!verifyPhaseRec) return false
+      const verifyArt = verifyPhaseRec.artifactsJson?.findLast(
+        (a) => a.type === 'verify' || a.type === 'verification'
+      )
+      const overall = (verifyArt?.contentJson as Record<string, unknown>)?.overallStatus
+      return overall === 'gaps_found'
+    })()
 
   if (!isRetryable && !isOrphaned && !isCompletedWithGaps) {
     if (MID_PIPELINE_STATUSES.has(blueprint.status) && pipelineRunning) {
@@ -91,7 +117,9 @@ function retryPhase(blueprint: MockBlueprint, pipelineRunning = false): {
   // Phase resolution: failed > currentPhase (if pending or active) > first pending
   let targetPhase =
     blueprint.phases.find((p) => p.status === 'failed') ??
-    blueprint.phases.find((p) => p.phase === blueprint.currentPhase && (p.status === 'pending' || p.status === 'active')) ??
+    blueprint.phases.find(
+      (p) => p.phase === blueprint.currentPhase && (p.status === 'pending' || p.status === 'active')
+    ) ??
     blueprint.phases.find((p) => p.status === 'pending')
 
   // BP-COMPLETE-RETRY: For completed blueprints with gaps, the verify phase
@@ -264,10 +292,7 @@ describe('retryPhase — error cases', () => {
       // No artifactsJson with gaps_found → not retryable
     }
 
-    assert.throws(
-      () => retryPhase(bp),
-      { message: /status is 'complete'/ }
-    )
+    assert.throws(() => retryPhase(bp), { message: /status is 'complete'/ })
   })
 
   test('allows_retry_when_complete_with_gaps_found', () => {
@@ -276,12 +301,14 @@ describe('retryPhase — error cases', () => {
       workspaceId: 'ws-gaps',
       status: 'complete',
       currentPhase: 'verify',
-      phases: [{
-        id: 'ph-v',
-        phase: 'verify',
-        status: 'complete',
-        artifactsJson: [{ type: 'verify', contentJson: { overallStatus: 'gaps_found' } }]
-      }]
+      phases: [
+        {
+          id: 'ph-v',
+          phase: 'verify',
+          status: 'complete',
+          artifactsJson: [{ type: 'verify', contentJson: { overallStatus: 'gaps_found' } }]
+        }
+      ]
     }
 
     const result = retryPhase(bp)
@@ -297,18 +324,17 @@ describe('retryPhase — error cases', () => {
       workspaceId: 'ws-hn',
       status: 'complete',
       currentPhase: 'verify',
-      phases: [{
-        id: 'ph-v',
-        phase: 'verify',
-        status: 'complete',
-        artifactsJson: [{ type: 'verify', contentJson: { overallStatus: 'human_needed' } }]
-      }]
+      phases: [
+        {
+          id: 'ph-v',
+          phase: 'verify',
+          status: 'complete',
+          artifactsJson: [{ type: 'verify', contentJson: { overallStatus: 'human_needed' } }]
+        }
+      ]
     }
 
-    assert.throws(
-      () => retryPhase(bp),
-      { message: /status is 'complete'/ }
-    )
+    assert.throws(() => retryPhase(bp), { message: /status is 'complete'/ })
   })
 
   test('throws_if_no_retryable_phase_found', () => {
@@ -323,10 +349,7 @@ describe('retryPhase — error cases', () => {
       ]
     }
 
-    assert.throws(
-      () => retryPhase(bp),
-      { message: /No retryable phase found/ }
-    )
+    assert.throws(() => retryPhase(bp), { message: /No retryable phase found/ })
   })
 
   test('throws_if_blueprint_status_is_draft', () => {
@@ -338,10 +361,7 @@ describe('retryPhase — error cases', () => {
       phases: [{ id: 'ph-1', phase: 'specify', status: 'pending' }]
     }
 
-    assert.throws(
-      () => retryPhase(bp),
-      { message: /status is 'draft'/ }
-    )
+    assert.throws(() => retryPhase(bp), { message: /status is 'draft'/ })
   })
 })
 
@@ -388,15 +408,10 @@ describe('retryPhase — orphan recovery (BP-ORPHAN-01)', () => {
       workspaceId: 'ws-o3',
       status: 'specifying',
       currentPhase: 'specify',
-      phases: [
-        { id: 'ph-1', phase: 'specify', status: 'active' }
-      ]
+      phases: [{ id: 'ph-1', phase: 'specify', status: 'active' }]
     }
 
-    assert.throws(
-      () => retryPhase(bp, true),
-      { message: /pipeline is currently active/ }
-    )
+    assert.throws(() => retryPhase(bp, true), { message: /pipeline is currently active/ })
   })
 
   test('resolves_active_currentPhase_row_as_target', () => {
@@ -444,10 +459,7 @@ describe('retryPhase — orphan recovery (BP-ORPHAN-01)', () => {
 describe('PHASE_TO_STATUS mapping', () => {
   test('all_phases_have_corresponding_status', () => {
     for (const phase of BLUEPRINT_PHASE_ORDER) {
-      assert.ok(
-        PHASE_TO_STATUS[phase],
-        `Missing status mapping for phase '${phase}'`
-      )
+      assert.ok(PHASE_TO_STATUS[phase], `Missing status mapping for phase '${phase}'`)
     }
   })
 
@@ -545,7 +557,7 @@ describe('retryPhase — build retry skips completed tasks (BP-RETRY-TASKS-01)',
     ]
     const wave2Tasks: MockTask[] = [
       { id: 't3', taskId: 'T003', status: 'pending', wave: 2 }, // was failed, reset
-      { id: 't4', taskId: 'T004', status: 'pending', wave: 2 }  // was skipped, reset
+      { id: 't4', taskId: 'T004', status: 'pending', wave: 2 } // was skipped, reset
     ]
 
     const w1 = executeWaveSkipLogic(wave1Tasks)
@@ -609,7 +621,7 @@ describe('BlueprintPhaseCompletePayload error field', () => {
       workspaceId: 'ws-2',
       phase: 'specify' as const,
       status: 'failed' as const,
-      error: 'CLI failed to start (exit code 1) — error: unknown option \'--goal\''
+      error: "CLI failed to start (exit code 1) — error: unknown option '--goal'"
     }
     assert.equal(failPayload.status, 'failed')
     assert.ok(failPayload.error.includes('--goal'))
@@ -705,7 +717,8 @@ function generateFallbackRemediationTasks(
   if (tasks.length === 0 && text.length > 100) {
     tasks.push({
       taskId: `R${String(seq++).padStart(3, '0')}`,
-      description: 'Fix all gaps identified in the verification report. Review the verify phase output and implement missing or incomplete functionality.',
+      description:
+        'Fix all gaps identified in the verification report. Review the verify phase output and implement missing or incomplete functionality.',
       files: []
     })
   }
@@ -732,7 +745,10 @@ describe('generateFallbackRemediationTasks', () => {
   })
 
   test('strategy_1_extracts_from_artifact_counts', () => {
-    const completion = { overallStatus: 'gaps_found', artifacts: { missing: 2, stub: 1, orphaned: 0 } }
+    const completion = {
+      overallStatus: 'gaps_found',
+      artifacts: { missing: 2, stub: 1, orphaned: 0 }
+    }
     const tasks = generateFallbackRemediationTasks(completion, '', 0)
     assert.equal(tasks.length, 1)
     assert.match(tasks[0].description, /2 missing, 1 stub, 0 orphaned/)
@@ -827,22 +843,21 @@ describe('retryPhase — findLast artifact resolution', () => {
       workspaceId: 'ws-rem',
       status: 'complete',
       currentPhase: 'verify',
-      phases: [{
-        id: 'ph-v',
-        phase: 'verify',
-        status: 'complete',
-        artifactsJson: [
-          { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
-          { type: 'verify', contentJson: { overallStatus: 'passed' } }
-        ]
-      }]
+      phases: [
+        {
+          id: 'ph-v',
+          phase: 'verify',
+          status: 'complete',
+          artifactsJson: [
+            { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
+            { type: 'verify', contentJson: { overallStatus: 'passed' } }
+          ]
+        }
+      ]
     }
 
     // Should throw — latest artifact says 'passed', not 'gaps_found'
-    assert.throws(
-      () => retryPhase(bp),
-      { message: /status is 'complete'/ }
-    )
+    assert.throws(() => retryPhase(bp), { message: /status is 'complete'/ })
   })
 
   test('findLast_still_finds_gaps_when_latest_is_gaps_found', () => {
@@ -852,15 +867,17 @@ describe('retryPhase — findLast artifact resolution', () => {
       workspaceId: 'ws-sg',
       status: 'complete',
       currentPhase: 'verify',
-      phases: [{
-        id: 'ph-v',
-        phase: 'verify',
-        status: 'complete',
-        artifactsJson: [
-          { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
-          { type: 'verify', contentJson: { overallStatus: 'gaps_found' } }
-        ]
-      }]
+      phases: [
+        {
+          id: 'ph-v',
+          phase: 'verify',
+          status: 'complete',
+          artifactsJson: [
+            { type: 'verify', contentJson: { overallStatus: 'gaps_found' } },
+            { type: 'verify', contentJson: { overallStatus: 'gaps_found' } }
+          ]
+        }
+      ]
     }
 
     const result = retryPhase(bp)
@@ -874,9 +891,7 @@ describe('getOutcomeStats — findLast verify artifact', () => {
   function getVerifyStatus(
     artifactsJson: Array<{ type: string; contentJson?: Record<string, unknown> }> | undefined
   ): string | null {
-    const verify = artifactsJson?.findLast(
-      (a) => a.type === 'verify' || a.type === 'verification'
-    )
+    const verify = artifactsJson?.findLast((a) => a.type === 'verify' || a.type === 'verification')
     if (!verify?.contentJson) return null
     return (verify.contentJson.overallStatus as string) ?? 'unknown'
   }
@@ -898,16 +913,12 @@ describe('getOutcomeStats — findLast verify artifact', () => {
   })
 
   test('returns_status_for_single_artifact', () => {
-    const artifacts = [
-      { type: 'verify', contentJson: { overallStatus: 'passed' } }
-    ]
+    const artifacts = [{ type: 'verify', contentJson: { overallStatus: 'passed' } }]
     assert.equal(getVerifyStatus(artifacts), 'passed')
   })
 
   test('returns_null_for_no_verify_artifact', () => {
-    const artifacts = [
-      { type: 'build', contentJson: { filesCreated: [] } }
-    ]
+    const artifacts = [{ type: 'build', contentJson: { filesCreated: [] } }]
     assert.equal(getVerifyStatus(artifacts), null)
   })
 
@@ -938,7 +949,7 @@ describe('appendTasks — remediation batch validation', () => {
     // Replicate the Fix D validation logic
     const parsedTasks = [
       { taskId: 'R001', description: 'Fix A', dependsOn: ['T003', 'R002'] },
-      { taskId: 'R002', description: 'Fix B', dependsOn: ['R001'] }  // cycle: R001 → R002 → R001
+      { taskId: 'R002', description: 'Fix B', dependsOn: ['R001'] } // cycle: R001 → R002 → R001
     ]
     const batchTaskIds = new Set(parsedTasks.map((t) => t.taskId))
     const internalDeps = parsedTasks.map((t) => ({
@@ -976,10 +987,10 @@ describe('appendTasks — remediation batch validation', () => {
     const parsedTasks = [
       { taskId: 'R001', description: 'Fix A' },
       { taskId: 'R002', description: 'Fix B' },
-      { taskId: 'R001', description: 'Fix A copy' }  // duplicate
+      { taskId: 'R001', description: 'Fix A copy' } // duplicate
     ]
-    const duplicates = parsedTasks.filter((t, i) =>
-      parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
+    const duplicates = parsedTasks.filter(
+      (t, i) => parsedTasks.findIndex((x) => x.taskId === t.taskId) !== i
     )
     assert.equal(duplicates.length, 1)
     assert.equal(duplicates[0].taskId, 'R001')
@@ -991,10 +1002,10 @@ describe('BuildResult — tasksResumed tracking', () => {
     // Simulate wave execution with resumed + new tasks
     const result = { tasksCompleted: 0, tasksResumed: 0 }
     const tasks = [
-      { id: '1', status: 'complete' },  // resumed
-      { id: '2', status: 'complete' },  // resumed
-      { id: '3', status: 'pending' },   // will execute
-      { id: '4', status: 'pending' }    // will execute
+      { id: '1', status: 'complete' }, // resumed
+      { id: '2', status: 'complete' }, // resumed
+      { id: '3', status: 'pending' }, // will execute
+      { id: '4', status: 'pending' } // will execute
     ]
     for (const task of tasks) {
       if (task.status === 'complete') {
@@ -1043,7 +1054,9 @@ describe('verify findings context seeding', () => {
     const findings = contentJson.findings as Array<Record<string, unknown>>
     for (const f of (findings ?? []).slice(0, 10)) {
       const desc = String(f.description ?? f.issue ?? 'Unknown gap')
-      const files = Array.isArray(f.files) ? ` [${(f.files as string[]).slice(0, 5).join(', ')}]` : ''
+      const files = Array.isArray(f.files)
+        ? ` [${(f.files as string[]).slice(0, 5).join(', ')}]`
+        : ''
       parts.push(`${desc}${files}`)
     }
 
@@ -1084,9 +1097,7 @@ describe('verify findings context seeding', () => {
     const contentMd = preamble + findings
 
     // Strategy 2: slice from END (not beginning)
-    const summary = contentMd.length > 1500
-      ? '…' + contentMd.slice(-1500)
-      : contentMd
+    const summary = contentMd.length > 1500 ? '…' + contentMd.slice(-1500) : contentMd
 
     assert.ok(summary.includes('Gaps Found'))
     assert.ok(summary.includes('src/auth.ts'))
@@ -1139,7 +1150,7 @@ describe('remediation deferred dispatch (RC-1 regression)', () => {
     try {
       // Error before remediation branch
       throw new Error('VERIFY phase timeout')
-      pendingRemediation = { blueprintId: 'bp-1' } // eslint-disable-line
+      pendingRemediation = { blueprintId: 'bp-1' }
     } catch {
       // Error handler
     } finally {
@@ -1161,7 +1172,9 @@ describe('remediation deferred dispatch (RC-1 regression)', () => {
     let timerId: ReturnType<typeof setTimeout> | undefined
 
     try {
-      timerId = setTimeout(() => { timerFired = true }, 5000)
+      timerId = setTimeout(() => {
+        timerFired = true
+      }, 5000)
     } finally {
       if (timerId) clearTimeout(timerId)
     }
@@ -1194,45 +1207,27 @@ describe('dispatch guard same-blueprint check (RC-4 regression)', () => {
   }
 
   test('dispatches_when_pipeline_idle', () => {
-    assert.equal(
-      remediationDispatchGuard(false, null, 'bp-1', 'building'),
-      'dispatch'
-    )
+    assert.equal(remediationDispatchGuard(false, null, 'bp-1', 'building'), 'dispatch')
   })
 
   test('skips_when_same_blueprint_running', () => {
-    assert.equal(
-      remediationDispatchGuard(true, 'bp-1', 'bp-1', 'building'),
-      'skip-same'
-    )
+    assert.equal(remediationDispatchGuard(true, 'bp-1', 'bp-1', 'building'), 'skip-same')
   })
 
   test('fails_when_different_blueprint_running', () => {
-    assert.equal(
-      remediationDispatchGuard(true, 'bp-other', 'bp-1', 'building'),
-      'fail-other'
-    )
+    assert.equal(remediationDispatchGuard(true, 'bp-other', 'bp-1', 'building'), 'fail-other')
   })
 
   test('skips_when_blueprint_cancelled', () => {
-    assert.equal(
-      remediationDispatchGuard(false, null, 'bp-1', 'cancelled'),
-      'skip-terminal'
-    )
+    assert.equal(remediationDispatchGuard(false, null, 'bp-1', 'cancelled'), 'skip-terminal')
   })
 
   test('skips_when_blueprint_failed', () => {
-    assert.equal(
-      remediationDispatchGuard(false, null, 'bp-1', 'failed'),
-      'skip-terminal'
-    )
+    assert.equal(remediationDispatchGuard(false, null, 'bp-1', 'failed'), 'skip-terminal')
   })
 
   test('skips_when_blueprint_missing', () => {
-    assert.equal(
-      remediationDispatchGuard(false, null, 'bp-1', null),
-      'skip-terminal'
-    )
+    assert.equal(remediationDispatchGuard(false, null, 'bp-1', null), 'skip-terminal')
   })
 })
 
@@ -1263,7 +1258,9 @@ describe('phaseComplete payload remediationTriggered flag (RC-3 regression)', ()
       phase: 'verify' as const,
       status: 'complete' as const,
       remediationTriggered: true,
-      completion: completion ? { ...(completion as Record<string, unknown>), _remediationTriggered: true } : undefined
+      completion: completion
+        ? { ...(completion as Record<string, unknown>), _remediationTriggered: true }
+        : undefined
     }
 
     // Top-level flag is present even though completion is undefined
@@ -1293,26 +1290,34 @@ describe('phaseComplete payload remediationTriggered flag (RC-3 regression)', ()
     }
 
     // Case 1: Both flags
-    assert.ok(detectRemediation({
-      remediationTriggered: true,
-      completion: { _remediationTriggered: true }
-    }))
+    assert.ok(
+      detectRemediation({
+        remediationTriggered: true,
+        completion: { _remediationTriggered: true }
+      })
+    )
 
     // Case 2: Only top-level (null completion)
-    assert.ok(detectRemediation({
-      remediationTriggered: true,
-      completion: undefined
-    }))
+    assert.ok(
+      detectRemediation({
+        remediationTriggered: true,
+        completion: undefined
+      })
+    )
 
     // Case 3: Only inner flag (backward compat)
-    assert.ok(detectRemediation({
-      completion: { _remediationTriggered: true }
-    }))
+    assert.ok(
+      detectRemediation({
+        completion: { _remediationTriggered: true }
+      })
+    )
 
     // Case 4: No flags
-    assert.ok(!detectRemediation({
-      completion: { overallStatus: 'passed' }
-    }))
+    assert.ok(
+      !detectRemediation({
+        completion: { overallStatus: 'passed' }
+      })
+    )
 
     // Case 5: No completion at all
     assert.ok(!detectRemediation({}))

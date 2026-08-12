@@ -78,10 +78,7 @@ if (loaded) {
       // it should return the raw message or an enriched message
       assert.ok(typeof result === 'string', 'should return a string')
       // It either returns enriched (with ## Previous Context) or raw message
-      assert.ok(
-        result.includes('test message'),
-        'should include the original message'
-      )
+      assert.ok(result.includes('test message'), 'should include the original message')
     })
 
     test('returns_raw_message_on_error', () => {
@@ -218,7 +215,11 @@ if (loaded) {
 
       // Without real openCodeConfigWriter, this will hit the catch and warn
       await write({
-        providerConfig: { providerId: 'ollama', modelId: 'qwen2.5', baseUrl: 'http://localhost:11434' },
+        providerConfig: {
+          providerId: 'ollama',
+          modelId: 'qwen2.5',
+          baseUrl: 'http://localhost:11434'
+        },
         systemPrompt: 'test system prompt',
         llmProvider: 'local-llm'
       })
@@ -335,12 +336,11 @@ if (loaded) {
       const session = new AgentSessionService(adapter as any)
       let called = false
       ;(session as any).streamProcessor = {
-        processMetaChunk: async () => { called = true }
+        processMetaChunk: async () => {
+          called = true
+        }
       }
-      await (session as any).processMetaChunk(
-        { result: 'success' },
-        { conversationId: 'conv-1' }
-      )
+      await (session as any).processMetaChunk({ result: 'success' }, { conversationId: 'conv-1' })
       assert.ok(called, 'should delegate to streamProcessor')
     })
 
@@ -439,7 +439,10 @@ if (loaded) {
       const extract = (session as any).extractPromptContent.bind(session)
 
       async function* gen() {
-        yield { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'extracted' }] } }
+        yield {
+          type: 'user',
+          message: { role: 'user', content: [{ type: 'text', text: 'extracted' }] }
+        }
       }
       const result = await extract(gen())
       // Result can be string or the collected content — just verify it completes
@@ -456,7 +459,7 @@ if (loaded) {
       const resolve = (session as any).resolveExecutorBackend.bind(session)
       // Any non-claude provider → opencode (derivation rule)
       assert.equal(resolve('local-llm'), 'opencode')
-      assert.equal(resolve('opencode'), 'opencode')  // hypothetical future provider
+      assert.equal(resolve('opencode'), 'opencode') // hypothetical future provider
     })
 
     test('claude_returns_cli', () => {
@@ -483,7 +486,10 @@ if (loaded) {
       const resolve = (session as any).resolveExecutorBackend.bind(session)
       for (const provider of ['claude', 'local-llm', undefined]) {
         const result = resolve(provider)
-        assert.ok(result === 'cli' || result === 'opencode', `Should be valid backend for ${provider}`)
+        assert.ok(
+          result === 'cli' || result === 'opencode',
+          `Should be valid backend for ${provider}`
+        )
       }
     })
   })
@@ -491,17 +497,16 @@ if (loaded) {
   // ── buildStreamTimeout ──────────────────────────────────────────────
 
   describe('AgentSessionService — buildStreamTimeout', () => {
-    test('returns_timer_and_timeoutMs', () => {
+    test('returns_budget_and_control_handles', () => {
       const adapter = createMockAdapter()
       const session = new AgentSessionService(adapter as any)
       const build = (session as any).buildStreamTimeout.bind(session)
 
-      const result = build('conv-1', new AbortController(), false)
-      assert.ok('timeoutMs' in result, 'should have timeoutMs')
-      assert.ok('timer' in result, 'should have timer')
+      const result = build(undefined, new AbortController(), 'conv-1')
       assert.ok(typeof result.timeoutMs === 'number')
-      // Clean up timer
-      if (result.timer) clearTimeout(result.timer)
+      assert.equal(typeof result.notifyActivity, 'function')
+      assert.equal(typeof result.cancel, 'function')
+      result.cancel()
     })
 
     test('uses_extended_timeout_for_external_mcp', () => {
@@ -509,15 +514,51 @@ if (loaded) {
       const session = new AgentSessionService(adapter as any)
       const build = (session as any).buildStreamTimeout.bind(session)
 
-      const normal = build('conv-1', new AbortController(), false)
-      const external = build('conv-1', new AbortController(), true)
+      const normal = build(undefined, new AbortController(), 'conv-1')
+      const external = build({ maestro: {} }, new AbortController(), 'conv-1')
 
       // External MCP should use 30min (1800000ms), normal is 10min (600000ms)
       assert.ok(external.timeoutMs >= normal.timeoutMs, 'external MCP should have longer timeout')
 
-      // Clean up
-      if (normal.timer) clearTimeout(normal.timer)
-      if (external.timer) clearTimeout(external.timer)
+      normal.cancel()
+      external.cancel()
+    })
+
+    test('activity_resets_the_idle_budget_instead_of_aborting', async () => {
+      // Regression: the budget used to be a fixed wall-clock deadline, so a
+      // healthy long-running turn was aborted mid-flight. Activity must extend it.
+      const adapter = createMockAdapter({ interactionTimeoutMs: 120 })
+      const session = new AgentSessionService(adapter as any)
+      const build = (session as any).buildStreamTimeout.bind(session)
+
+      const ac = new AbortController()
+      const { notifyActivity, cancel } = build(undefined, ac, 'conv-1')
+
+      // Keep it busy for ~3x the budget with steady activity.
+      for (let i = 0; i < 12; i++) {
+        await new Promise((r) => setTimeout(r, 30))
+        notifyActivity()
+      }
+      assert.equal(ac.signal.aborted, false, 'active stream must not be aborted')
+
+      // Now go quiet — the budget should expire.
+      await new Promise((r) => setTimeout(r, 250))
+      assert.equal(ac.signal.aborted, true, 'idle stream must abort once silent')
+      cancel()
+    })
+
+    test('cancel_prevents_abort_and_makes_notifyActivity_inert', async () => {
+      const adapter = createMockAdapter({ interactionTimeoutMs: 60 })
+      const session = new AgentSessionService(adapter as any)
+      const build = (session as any).buildStreamTimeout.bind(session)
+
+      const ac = new AbortController()
+      const { notifyActivity, cancel } = build(undefined, ac, 'conv-1')
+      cancel()
+      notifyActivity()
+
+      await new Promise((r) => setTimeout(r, 150))
+      assert.equal(ac.signal.aborted, false, 'cancelled timer must never fire')
     })
   })
 
@@ -809,8 +850,12 @@ if (loaded) {
         // Return a timestamp 10 days ago
         const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString()
         repoMod.messageRepository.getLastMessageTimestamp = () => tenDaysAgo
-        repoMod.conversationRepository.updateSessionId = () => { updateSessionIdCalled = true }
-        repoMod.conversationRepository.updateSummary = () => { updateSummaryCalled = true }
+        repoMod.conversationRepository.updateSessionId = () => {
+          updateSessionIdCalled = true
+        }
+        repoMod.conversationRepository.updateSummary = () => {
+          updateSummaryCalled = true
+        }
 
         const adapter = createMockAdapter()
         const session = new AgentSessionService(adapter as any)
@@ -870,7 +915,11 @@ if (loaded) {
         ;(session as any).sessionMap.set('conv-empty', 'valid-empty-session-12345')
 
         const resolved = (session as any).resolveSession('conv-empty')
-        assert.equal(resolved, 'valid-empty-session-12345', 'session with no messages should be preserved')
+        assert.equal(
+          resolved,
+          'valid-empty-session-12345',
+          'session with no messages should be preserved'
+        )
       } finally {
         repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
       }
@@ -890,7 +939,11 @@ if (loaded) {
 
         const resolved = (session as any).resolveSession('conv-bad-ts')
         // NaN guard should skip staleness — session preserved
-        assert.equal(resolved, 'valid-badts-session-12345', 'malformed timestamp should not expire session')
+        assert.equal(
+          resolved,
+          'valid-badts-session-12345',
+          'malformed timestamp should not expire session'
+        )
       } finally {
         repoMod.messageRepository.getLastMessageTimestamp = originalGetLastTimestamp
       }
@@ -938,7 +991,9 @@ if (loaded) {
       // even though the UI conversation was in Build mode.
       const switchCalls: string[] = []
       const adapter = createMockAdapter({
-        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+        onConversationSwitch: (id: string) => {
+          switchCalls.push(id)
+        }
       })
       const session = new AgentSessionService(adapter as any)
 
@@ -956,17 +1011,15 @@ if (loaded) {
         'build',
         'switchMode must apply when currentConversationId is null (was silently dropped)'
       )
-      assert.equal(
-        switchCalls.length,
-        1,
-        'adapter.onConversationSwitch should have been called'
-      )
+      assert.equal(switchCalls.length, 1, 'adapter.onConversationSwitch should have been called')
     })
 
     test('switchMode_noop_when_already_in_target_mode', async () => {
       const switchCalls: string[] = []
       const adapter = createMockAdapter({
-        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+        onConversationSwitch: (id: string) => {
+          switchCalls.push(id)
+        }
       })
       const session = new AgentSessionService(adapter as any)
       ;(session as any).workspacePath = '/tmp/test-ws'
@@ -984,7 +1037,9 @@ if (loaded) {
       // the send-lock path (MODE-SWITCH-NOLOCK-01).
       const switchCalls: string[] = []
       const adapter = createMockAdapter({
-        onConversationSwitch: (id: string) => { switchCalls.push(id) }
+        onConversationSwitch: (id: string) => {
+          switchCalls.push(id)
+        }
       })
       const session = new AgentSessionService(adapter as any)
       ;(session as any).workspacePath = '/tmp/test-ws'

@@ -76,13 +76,13 @@ class GrillHandoffAdapter extends HandoffSourceAdapter<GrillAdapterInput> {
 
     steps.push({
       title: 'Grill evaluation completed',
-      outcome: `Evaluated across ${input.session.trackScores.length} tracks, ${input.session.iterationCount} iterations`,
+      outcome: `Evaluated across ${input.session.trackScores.length} tracks, ${input.session.iterationCount} iterations`
     })
 
     if (input.plan) {
       steps.push({
         title: 'Structured plan generated',
-        outcome: `${input.plan.items.length} implementation items identified`,
+        outcome: `${input.plan.items.length} implementation items identified`
       })
     }
 
@@ -96,7 +96,10 @@ class GrillHandoffAdapter extends HandoffSourceAdapter<GrillAdapterInput> {
       title: item.title,
       description: item.description,
       priority: 'medium' as const,
-      estimatedComplexity: Math.min(10, Math.max(1, (item.files?.length ?? 0) + (item.dependsOn?.length ?? 0))),
+      estimatedComplexity: Math.min(
+        10,
+        Math.max(1, (item.files?.length ?? 0) + (item.dependsOn?.length ?? 0))
+      )
     }))
   }
 
@@ -106,7 +109,7 @@ class GrillHandoffAdapter extends HandoffSourceAdapter<GrillAdapterInput> {
     return input.plan.decisions.flatMap((track) =>
       track.items.map((d) => ({
         what: `[${track.trackName}] ${d.question} → ${d.answer}`,
-        why: d.rationale,
+        why: d.rationale
       }))
     )
   }
@@ -119,7 +122,7 @@ class GrillHandoffAdapter extends HandoffSourceAdapter<GrillAdapterInput> {
     if (!input.plan?.risks) return []
     return input.plan.risks.map((r) => ({
       risk: r,
-      severity: 'medium' as const,
+      severity: 'medium' as const
     }))
   }
 
@@ -129,7 +132,7 @@ class GrillHandoffAdapter extends HandoffSourceAdapter<GrillAdapterInput> {
       refs.push({
         type: 'plan',
         path: `grill-session:${input.session.id}`,
-        description: `Grill plan: ${input.plan.title}`,
+        description: `Grill plan: ${input.plan.title}`
       })
     }
     return refs
@@ -148,7 +151,7 @@ class GrillHandoffAdapter extends HandoffSourceAdapter<GrillAdapterInput> {
     return {
       grillSessionId: input.session.id,
       trackScores: input.session.trackScores,
-      goalType: input.plan?.goalType,
+      goalType: input.plan?.goalType
     }
   }
 }

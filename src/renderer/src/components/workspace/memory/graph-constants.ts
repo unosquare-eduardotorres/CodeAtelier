@@ -17,7 +17,8 @@ export const CATEGORY_COLOR_VAR: Record<MemoryFactCategory, string> = {
 export const EDGE_COLOR_VAR = {
   similarity: '--graph-link',
   superseded: '--graph-edge-superseded',
-  contradiction: '--graph-edge-contradiction'
+  contradiction: '--graph-edge-contradiction',
+  derived: '--graph-edge-derived'
 } as const
 
 /** Human-readable tier labels */

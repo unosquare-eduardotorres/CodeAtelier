@@ -108,7 +108,13 @@ describe('BlueprintService — findOrphanedBlueprint logic', () => {
   // Test the logic extracted from findOrphanedBlueprint as pure functions
 
   const MID_PIPELINE_STATUSES = new Set([
-    'specifying', 'clarifying', 'planning', 'tasking', 'reviewing', 'building', 'verifying'
+    'specifying',
+    'clarifying',
+    'planning',
+    'tasking',
+    'reviewing',
+    'building',
+    'verifying'
   ])
 
   test('mid-pipeline status is detected as orphan candidate', () => {
@@ -187,10 +193,14 @@ describe('Pipeline status enrichment — orphan detection', () => {
 
   test('when not running and orphan exists, attached to response', () => {
     const status = { running: false, blueprintId: null, currentPhase: null }
-    const orphan = { blueprintId: 'bp-1', title: 'Test', currentPhase: 'building', tasksCompleted: 3, totalTasks: 5 }
-    const enriched = !status.running && orphan
-      ? { ...status, orphanedBlueprint: orphan }
-      : status
+    const orphan = {
+      blueprintId: 'bp-1',
+      title: 'Test',
+      currentPhase: 'building',
+      tasksCompleted: 3,
+      totalTasks: 5
+    }
+    const enriched = !status.running && orphan ? { ...status, orphanedBlueprint: orphan } : status
     assert.ok('orphanedBlueprint' in enriched)
     assert.deepEqual((enriched as any).orphanedBlueprint, orphan)
   })
@@ -198,9 +208,7 @@ describe('Pipeline status enrichment — orphan detection', () => {
   test('when not running and no orphan, response unchanged', () => {
     const status = { running: false, blueprintId: null, currentPhase: null }
     const orphan = null
-    const enriched = !status.running && orphan
-      ? { ...status, orphanedBlueprint: orphan }
-      : status
+    const enriched = !status.running && orphan ? { ...status, orphanedBlueprint: orphan } : status
     assert.equal('orphanedBlueprint' in enriched, false)
   })
 })

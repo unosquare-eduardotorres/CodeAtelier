@@ -56,7 +56,11 @@ export function useWorkspaceModelInfo(workspaceId: string | undefined): {
         if (backend === 'omlx') {
           const host = (s.localHost as string) ?? '127.0.0.1'
           const port = (s.localPort as number) ?? 8000
-          window.api.omlxCheckStatus({ baseUrl: `http://${host}:${port}`, apiKey: (s.localApiKey as string) || undefined })
+          window.api
+            .omlxCheckStatus({
+              baseUrl: `http://${host}:${port}`,
+              apiKey: (s.localApiKey as string) || undefined
+            })
             .then((status) => {
               if (!cancelled && status.running) {
                 // Filter out embedding/reranker models by name heuristic
@@ -64,7 +68,9 @@ export function useWorkspaceModelInfo(workspaceId: string | undefined): {
                 setOmlxModels(chatModels)
               }
             })
-            .catch(() => { /* silent — oMLX may not be running */ })
+            .catch(() => {
+              /* silent — oMLX may not be running */
+            })
         }
       })
       .catch((err) => {
@@ -78,7 +84,9 @@ export function useWorkspaceModelInfo(workspaceId: string | undefined): {
       .catch((err) => {
         console.warn('[useWorkspaceModelInfo] Failed to load platform info:', err)
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [workspaceId])
 
   // Derive provider from routing — reads plan action's provider from modelRoles

@@ -139,10 +139,7 @@ function matchesFilter(
   }
 }
 
-function matchesSearch(
-  scenario: E2EScenarioSummary,
-  query: string
-): boolean {
+function matchesSearch(scenario: E2EScenarioSummary, query: string): boolean {
   if (!query) return true
   const q = query.toLowerCase()
   return (
@@ -156,7 +153,14 @@ function getFilterCounts(
   scenarios: E2EScenarioSummary[],
   results: Map<string, E2EResultSummary>
 ): Record<FilterMode, number> {
-  const counts: Record<FilterMode, number> = { all: 0, failed: 0, passed: 0, not_run: 0, planned: 0, flagged: 0 }
+  const counts: Record<FilterMode, number> = {
+    all: 0,
+    failed: 0,
+    passed: 0,
+    not_run: 0,
+    planned: 0,
+    flagged: 0
+  }
   for (const s of scenarios) {
     counts.all++
     const r = results.get(s.id)
@@ -210,9 +214,7 @@ function StatusChip({ status }: { status: E2EResultStatus | 'planned' | null }):
         </span>
       )
     case 'planned':
-      return (
-        <span className="text-xs text-text-muted italic">Planned</span>
-      )
+      return <span className="text-xs text-text-muted italic">Planned</span>
     default:
       return <span className="text-xs text-text-muted">&mdash;</span>
   }
@@ -223,19 +225,28 @@ function DeltaBadge({ delta }: { delta: ScenarioDelta }): React.JSX.Element | nu
   switch (delta) {
     case 'fixed':
       return (
-        <span className="flex items-center gap-0.5 text-xs text-success" title="Fixed — was failing, now passes">
+        <span
+          className="flex items-center gap-0.5 text-xs text-success"
+          title="Fixed — was failing, now passes"
+        >
           <ArrowUpCircle size={12} /> fixed
         </span>
       )
     case 'regressed':
       return (
-        <span className="flex items-center gap-0.5 text-xs text-danger" title="Regressed — was passing, now fails">
+        <span
+          className="flex items-center gap-0.5 text-xs text-danger"
+          title="Regressed — was passing, now fails"
+        >
           <ArrowDownCircle size={12} /> regressed
         </span>
       )
     case 'still_failing':
       return (
-        <span className="flex items-center gap-0.5 text-xs text-text-muted" title="Still failing across runs">
+        <span
+          className="flex items-center gap-0.5 text-xs text-text-muted"
+          title="Still failing across runs"
+        >
           <CircleMinus size={12} /> still failing
         </span>
       )
@@ -334,7 +345,10 @@ export default function ScenarioCatalog({
 
             {/* Search input */}
             <div className="relative ml-auto">
-              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted" />
+              <Search
+                size={12}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-text-muted"
+              />
               <input
                 type="text"
                 value={searchQuery}
@@ -394,7 +408,9 @@ export default function ScenarioCatalog({
                     {categoryRan - categoryPassed > 0 && (
                       <div
                         className="bg-danger"
-                        style={{ width: `${((categoryRan - categoryPassed) / categoryRan) * 100}%` }}
+                        style={{
+                          width: `${((categoryRan - categoryPassed) / categoryRan) * 100}%`
+                        }}
                       />
                     )}
                   </div>
@@ -430,7 +446,7 @@ export default function ScenarioCatalog({
                   const isPlanned = scenario.status === 'planned'
                   const resultStatus: E2EResultStatus | 'planned' | null = isPlanned
                     ? 'planned'
-                    : result?.status ?? null
+                    : (result?.status ?? null)
                   const delta = deltaMap.get(scenario.id) ?? null
                   const hasResult = result && !isPlanned
 
@@ -493,28 +509,31 @@ export default function ScenarioCatalog({
                       </div>
 
                       <div className="flex items-center gap-3 ml-4 shrink-0">
-                        {result?.durationMs != null && result.durationMs > 0 && (() => {
-                          const dur = (result.durationMs / 1000).toFixed(1)
-                          const baseline = baselineResults.get(scenario.id)
-                          const baselineDur = baseline?.durationMs
-                          let deltaStr: string | null = null
-                          let deltaClass = ''
-                          if (baselineDur != null && baselineDur > 0) {
-                            const diffS = (result.durationMs - baselineDur) / 1000
-                            if (Math.abs(diffS) >= 0.1) {
-                              deltaStr = diffS > 0 ? `+${diffS.toFixed(1)}s` : `${diffS.toFixed(1)}s`
-                              deltaClass = diffS > 0 ? 'text-danger/70' : 'text-success/70'
+                        {result?.durationMs != null &&
+                          result.durationMs > 0 &&
+                          (() => {
+                            const dur = (result.durationMs / 1000).toFixed(1)
+                            const baseline = baselineResults.get(scenario.id)
+                            const baselineDur = baseline?.durationMs
+                            let deltaStr: string | null = null
+                            let deltaClass = ''
+                            if (baselineDur != null && baselineDur > 0) {
+                              const diffS = (result.durationMs - baselineDur) / 1000
+                              if (Math.abs(diffS) >= 0.1) {
+                                deltaStr =
+                                  diffS > 0 ? `+${diffS.toFixed(1)}s` : `${diffS.toFixed(1)}s`
+                                deltaClass = diffS > 0 ? 'text-danger/70' : 'text-success/70'
+                              }
                             }
-                          }
-                          return (
-                            <span className="flex items-center gap-1 text-xs text-text-muted">
-                              <Clock size={10} /> {dur}s
-                              {deltaStr && (
-                                <span className={`text-[10px] ${deltaClass}`}>({deltaStr})</span>
-                              )}
-                            </span>
-                          )
-                        })()}
+                            return (
+                              <span className="flex items-center gap-1 text-xs text-text-muted">
+                                <Clock size={10} /> {dur}s
+                                {deltaStr && (
+                                  <span className={`text-[10px] ${deltaClass}`}>({deltaStr})</span>
+                                )}
+                              </span>
+                            )
+                          })()}
                         <DeltaBadge delta={delta} />
                         <StatusChip status={resultStatus} />
                         {!isPlanned && (

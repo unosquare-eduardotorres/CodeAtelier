@@ -21,9 +21,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Core Prompt Editor', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,13 +35,11 @@ test.describe('Core Prompt Editor', () => {
     return true
   }
 
-  async function navigateToPromptEditor(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToPromptEditor(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('specialist')
+    await settingsNav.navigateToSettingsTab('specialist')
     await page.waitForTimeout(800)
 
     // Look for the core prompt editor section
@@ -62,9 +58,15 @@ test.describe('Core Prompt Editor', () => {
 
   test('editor renders with mode tabs (Plan, Build)', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasEditor = await navigateToPromptEditor(page)
-    if (!hasEditor) { test.skip(); return }
+    if (!hasEditor) {
+      test.skip()
+      return
+    }
 
     const editor = page.locator('[data-testid="core-prompt-editor"]')
     await expect(editor).toBeVisible()
@@ -77,13 +79,17 @@ test.describe('Core Prompt Editor', () => {
     await expect(buildTab).toBeVisible()
   })
 
-  test('switching tab loads the corresponding prompt text', async ({
-    electronPage: page
-  }) => {
+  test('switching tab loads the corresponding prompt text', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasEditor = await navigateToPromptEditor(page)
-    if (!hasEditor) { test.skip(); return }
+    if (!hasEditor) {
+      test.skip()
+      return
+    }
 
     const editor = page.locator('[data-testid="core-prompt-editor"]')
 
@@ -109,9 +115,15 @@ test.describe('Core Prompt Editor', () => {
 
   test('textarea shows editable prompt content', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasEditor = await navigateToPromptEditor(page)
-    if (!hasEditor) { test.skip(); return }
+    if (!hasEditor) {
+      test.skip()
+      return
+    }
 
     const editor = page.locator('[data-testid="core-prompt-editor"]')
 
@@ -128,13 +140,17 @@ test.describe('Core Prompt Editor', () => {
     expect(hasCharCount).toBeTruthy()
   })
 
-  test('save button triggers with success feedback indicator', async ({
-    electronPage: page
-  }) => {
+  test('save button triggers with success feedback indicator', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasEditor = await navigateToPromptEditor(page)
-    if (!hasEditor) { test.skip(); return }
+    if (!hasEditor) {
+      test.skip()
+      return
+    }
 
     const editor = page.locator('[data-testid="core-prompt-editor"]')
 
@@ -149,9 +165,15 @@ test.describe('Core Prompt Editor', () => {
 
   test('reset button shows confirmation dialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasEditor = await navigateToPromptEditor(page)
-    if (!hasEditor) { test.skip(); return }
+    if (!hasEditor) {
+      test.skip()
+      return
+    }
 
     const editor = page.locator('[data-testid="core-prompt-editor"]')
 
@@ -185,13 +207,17 @@ test.describe('Core Prompt Editor', () => {
     }
   })
 
-  test('edit tracking shows dirty state when content changes', async ({
-    electronPage: page
-  }) => {
+  test('edit tracking shows dirty state when content changes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasEditor = await navigateToPromptEditor(page)
-    if (!hasEditor) { test.skip(); return }
+    if (!hasEditor) {
+      test.skip()
+      return
+    }
 
     const editor = page.locator('[data-testid="core-prompt-editor"]')
     const textarea = editor.locator('textarea').first()

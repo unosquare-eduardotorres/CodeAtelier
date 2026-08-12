@@ -101,8 +101,18 @@ if (!env) {
 
     test('findActive() returns only active skills', () => {
       skillRepository.deleteAll()
-      skillRepository.create({ name: 'Active', filename: 'act.md', filePath: '/act.md', isActive: true })
-      skillRepository.create({ name: 'Inactive', filename: 'inact.md', filePath: '/inact.md', isActive: false })
+      skillRepository.create({
+        name: 'Active',
+        filename: 'act.md',
+        filePath: '/act.md',
+        isActive: true
+      })
+      skillRepository.create({
+        name: 'Inactive',
+        filename: 'inact.md',
+        filePath: '/inact.md',
+        isActive: false
+      })
       const active = skillRepository.findActive()
       assert.equal(active.length, 1)
       assert.equal(active[0].name, 'Active')

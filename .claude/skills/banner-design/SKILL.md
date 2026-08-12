@@ -82,12 +82,13 @@ For each art direction option:
    ```
 
    **When to use which model:**
-   | Use Case | Model | Quality |
-   |----------|-------|---------|
-   | Backgrounds, gradients, patterns | Standard (Flash) | 2K, fast |
-   | Hero illustrations, product shots | Pro | 4K, detailed |
-   | Photorealistic scenes, complex art | Pro | 4K, best quality |
-   | Quick iterations, A/B variants | Standard (Flash) | 2K, fast |
+
+   | Use Case                           | Model            | Quality          |
+   | ---------------------------------- | ---------------- | ---------------- |
+   | Backgrounds, gradients, patterns   | Standard (Flash) | 2K, fast         |
+   | Hero illustrations, product shots  | Pro              | 4K, detailed     |
+   | Photorealistic scenes, complex art | Pro              | 4K, best quality |
+   | Quick iterations, A/B variants     | Standard (Flash) | 2K, fast         |
 
    **Aspect ratios:** `1:1`, `16:9`, `9:16`, `3:4`, `4:3`, `2:3`, `3:2`
    Match to platform - e.g., Twitter header = `3:1` (use `3:2` closest), Instagram story = `9:16`

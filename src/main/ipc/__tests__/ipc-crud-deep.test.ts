@@ -13,11 +13,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import { IPC_CHANNELS, VALID_COMMUNICATION_TONES } from '../../../shared/constants'
-import {
-  requireObject,
-  requireString,
-  optionalString
-} from '../validate-args'
+import { requireObject, requireString, optionalString } from '../validate-args'
 
 // ── §1: Conversation CRUD patterns ───────────────────────────────────────
 
@@ -31,11 +27,14 @@ describe('Conversation CRUD IPC — validation', () => {
 
   test('CHAT_CREATE_CONVERSATION_full_validation', () => {
     const ch = IPC_CHANNELS.CHAT_CREATE_CONVERSATION
-    const args = requireObject({
-      workspaceId: 'ws-1',
-      title: 'New Chat',
-      mode: 'plan'
-    }, ch)
+    const args = requireObject(
+      {
+        workspaceId: 'ws-1',
+        title: 'New Chat',
+        mode: 'plan'
+      },
+      ch
+    )
     requireString(args, 'workspaceId', ch)
     const title = optionalString(args, 'title', ch)
     const mode = optionalString(args, 'mode', ch)
@@ -63,7 +62,6 @@ describe('Conversation CRUD IPC — validation', () => {
     assert.ok(VALID_COMMUNICATION_TONES.length >= 3)
     assert.ok(!VALID_COMMUNICATION_TONES.includes('invalid-tone' as any))
   })
-
 })
 
 // ── §4: Council IPC patterns ────────────────────────────────────────────
@@ -74,7 +72,6 @@ describe('Council IPC — validation', () => {
     assert.ok(IPC_CHANNELS.COUNCIL_CANCEL)
     assert.ok(IPC_CHANNELS.COUNCIL_GET_SESSION)
   })
-
 })
 
 // ── §5: Checkpoint IPC patterns ─────────────────────────────────────────
@@ -84,7 +81,6 @@ describe('Checkpoint IPC — validation', () => {
     assert.ok(IPC_CHANNELS.CHECKPOINT_LIST)
     assert.ok(IPC_CHANNELS.CHECKPOINT_RESTORE)
   })
-
 })
 
 // ── §6: Idea IPC patterns ───────────────────────────────────────────────
@@ -96,7 +92,6 @@ describe('Idea IPC — validation', () => {
     assert.ok(IPC_CHANNELS.IDEA_DELETE)
     assert.ok(IPC_CHANNELS.IDEA_UPDATE)
   })
-
 })
 
 // ── §7: Plan IPC patterns ───────────────────────────────────────────────
@@ -107,7 +102,6 @@ describe('Plan IPC — validation', () => {
     assert.ok(IPC_CHANNELS.PLAN_GET_BY_ID)
     assert.ok(IPC_CHANNELS.PLAN_DELETE)
   })
-
 })
 
 // ── §8: Permission IPC patterns ─────────────────────────────────────────
@@ -120,10 +114,13 @@ describe('Permission IPC — validation', () => {
 
   test('PERMISSION_RESPOND_validation', () => {
     const ch = IPC_CHANNELS.PERMISSION_RESPONSE
-    const args = requireObject({
-      permissionId: 'perm-1',
-      granted: true
-    }, ch)
+    const args = requireObject(
+      {
+        permissionId: 'perm-1',
+        granted: true
+      },
+      ch
+    )
     requireString(args, 'permissionId', ch)
     assert.equal(args.granted, true)
   })
@@ -136,7 +133,6 @@ describe('SDK-control IPC — validation', () => {
     assert.ok(IPC_CHANNELS.SDK_AUTH_STATUS)
     assert.ok(IPC_CHANNELS.SDK_SESSION_STATE)
   })
-
 })
 
 // ── §10: Session IPC patterns ───────────────────────────────────────────
@@ -147,7 +143,6 @@ describe('Session IPC — validation', () => {
     assert.ok(IPC_CHANNELS.SESSION_GET_INFO)
     assert.ok(IPC_CHANNELS.SESSION_GET_MESSAGES)
   })
-
 })
 
 // ── §11: Project IPC patterns ───────────────────────────────────────────
@@ -158,7 +153,6 @@ describe('Project IPC — validation', () => {
     assert.ok(IPC_CHANNELS.PROJECT_SPECIALIST_BUILD)
     assert.ok(IPC_CHANNELS.PROJECT_CREATE)
   })
-
 })
 
 // ── §11B: CHAT_UPDATE_ROUTING (per-chat model switching) ─────────────
@@ -171,10 +165,13 @@ describe('CHAT_UPDATE_ROUTING IPC — validation', () => {
 
   test('requires_conversationId_and_workspaceId', () => {
     const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
-    const args = requireObject({
-      conversationId: 'conv-123',
-      workspaceId: 'ws-456'
-    }, ch)
+    const args = requireObject(
+      {
+        conversationId: 'conv-123',
+        workspaceId: 'ws-456'
+      },
+      ch
+    )
     const convId = requireString(args, 'conversationId', ch)
     const wsId = requireString(args, 'workspaceId', ch)
     assert.equal(convId, 'conv-123')
@@ -183,24 +180,30 @@ describe('CHAT_UPDATE_ROUTING IPC — validation', () => {
 
   test('accepts_optional_llmProvider', () => {
     const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
-    const args = requireObject({
-      conversationId: 'conv-1',
-      workspaceId: 'ws-1',
-      llmProvider: 'local-llm'
-    }, ch)
+    const args = requireObject(
+      {
+        conversationId: 'conv-1',
+        workspaceId: 'ws-1',
+        llmProvider: 'local-llm'
+      },
+      ch
+    )
     const provider = optionalString(args, 'llmProvider', ch)
     assert.equal(provider, 'local-llm')
   })
 
   test('accepts_optional_routingOverrides', () => {
     const ch = IPC_CHANNELS.CHAT_UPDATE_ROUTING
-    const args = requireObject({
-      conversationId: 'conv-1',
-      workspaceId: 'ws-1',
-      routingOverrides: {
-        'specialist:plan': { provider: 'claude', modelId: 'claude-opus-4-8' }
-      }
-    }, ch)
+    const args = requireObject(
+      {
+        conversationId: 'conv-1',
+        workspaceId: 'ws-1',
+        routingOverrides: {
+          'specialist:plan': { provider: 'claude', modelId: 'claude-opus-4-8' }
+        }
+      },
+      ch
+    )
     assert.ok(args.routingOverrides)
     assert.equal(
       (args.routingOverrides as Record<string, { modelId: string }>)['specialist:plan']?.modelId,

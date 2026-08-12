@@ -48,7 +48,7 @@ interface PlanStateRow {
   updated_at: string
 }
 
-function mapRow(row: PlanStateRow): LocalPlanState {
+export function mapRow(row: PlanStateRow): LocalPlanState {
   let discoveredContext: DiscoveredContext
   try {
     discoveredContext = JSON.parse(row.discovered_context) as DiscoveredContext
@@ -92,7 +92,9 @@ export class LocalPlanStateService {
     // would violate the FOREIGN KEY constraint on local_plan_state.conversation_id.
     const convExists = db.prepare('SELECT 1 FROM conversations WHERE id = ?').get(conversationId)
     if (!convExists) {
-      log.debug(`[plan-state] conversation ${conversationId} not persisted — skipping plan-state save`)
+      log.debug(
+        `[plan-state] conversation ${conversationId} not persisted — skipping plan-state save`
+      )
       return
     }
 

@@ -28,7 +28,7 @@ interface PendingCheckpointApproval {
 }
 
 /**
- * Shape of a checkpoint's saved state as read by checkpoint-context.tool.ts.
+ * Shape of a checkpoint's saved state.
  * Checkpoints are now produced by the destructive-action confirmation flow only —
  * the old pre-execution multi-specialist snapshot path was removed.
  */
@@ -42,9 +42,10 @@ interface CheckpointState {
 
 /**
  * Checkpoint service — exposes read-only access to previously-saved checkpoint
- * snapshots (see checkpoint-context.tool.ts) and a destructive `restoreGitState`
- * action driven from the UI. Write-path checkpoint creation lives with the
- * callers that still need it (currently: none in the live code path).
+ * snapshots and a destructive `restoreGitState` action driven from the UI.
+ * Reached via checkpoint.ipc.ts — there is no MCP tool surface for checkpoints.
+ * Write-path checkpoint creation lives with the callers that still need it
+ * (currently: none in the live code path).
  */
 class CheckpointService {
   private pendingApprovals = new Map<string, PendingCheckpointApproval>()
@@ -194,7 +195,8 @@ class CheckpointService {
       const statusResult = spawnSync('git', ['status', '--porcelain'], {
         cwd: workspacePath,
         encoding: 'utf-8',
-        timeout: 5000
+        timeout: 5000,
+        windowsHide: true
       })
       const status = statusResult.stdout?.trim() ?? ''
 
@@ -203,7 +205,7 @@ class CheckpointService {
         const stashResult = spawnSync(
           'git',
           ['stash', 'push', '-m', 'checkpoint-restore-auto-stash'],
-          { cwd: workspacePath, encoding: 'utf-8', timeout: 10000 }
+          { cwd: workspacePath, encoding: 'utf-8', timeout: 10000, windowsHide: true }
         )
         if (stashResult.status !== 0) {
           throw new Error(stashResult.stderr || 'git stash failed')
@@ -214,7 +216,8 @@ class CheckpointService {
       const resetResult = spawnSync('git', ['reset', '--hard', checkpoint.gitCommitSha], {
         cwd: workspacePath,
         encoding: 'utf-8',
-        timeout: 10000
+        timeout: 10000,
+        windowsHide: true
       })
       if (resetResult.status !== 0) {
         throw new Error(resetResult.stderr || `git reset failed with code ${resetResult.status}`)

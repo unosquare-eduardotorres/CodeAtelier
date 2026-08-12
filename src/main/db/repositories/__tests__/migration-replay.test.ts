@@ -19,6 +19,7 @@ interface MigrationEnv {
   Database: typeof import('better-sqlite3')
   migrations: import('../../index').Migration[]
   SCHEMA_SQL: string
+  CURRENT_SCHEMA_VERSION: number
 }
 
 function trySetup(): MigrationEnv | null {
@@ -26,12 +27,10 @@ function trySetup(): MigrationEnv | null {
     process.env.NODE_ENV = 'test'
     const Database = require('better-sqlite3')
     new Database(':memory:').close()
-    const { migrations, SCHEMA_SQL } = require('../../index')
-    return { Database, migrations, SCHEMA_SQL }
+    const { migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION } = require('../../index')
+    return { Database, migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION }
   } catch (err) {
-    console.log(
-      `\n⚠ better-sqlite3 native module not available — migration-replay tests skipped.`
-    )
+    console.log(`\n⚠ better-sqlite3 native module not available — migration-replay tests skipped.`)
     console.log(`  (${(err as Error).message.split('\n')[0]})`)
     return null
   }
@@ -44,7 +43,7 @@ if (!env) {
     test('skipped', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { Database, migrations, SCHEMA_SQL } = env
+  const { Database, migrations, SCHEMA_SQL, CURRENT_SCHEMA_VERSION } = env
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -59,7 +58,9 @@ if (!env) {
 
   function getTableNames(db: InstanceType<typeof import('better-sqlite3')>): string[] {
     const rows = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+      )
       .all() as Array<{ name: string }>
     return rows.map((r) => r.name)
   }
@@ -139,14 +140,36 @@ if (!env) {
 
         const tables = getTableNames(db)
         const required = [
-          'workspaces', 'conversations', 'messages', 'specialists', 'skills',
-          'agent_sessions', 'turn_usage', 'events', 'ideas',
-          'checkpoints', 'grill_sessions', 'app_preferences',
-          'audit_runs', 'audit_results', 'mpa_runs', 'mpa_phases', 'mpa_artifacts',
-          'council_sessions', 'blueprints', 'blueprint_phases', 'blueprint_tasks',
-          'plans', 'usage_log', 'llm_presets', 'library_docs', 'library_docs_fts',
+          'workspaces',
+          'conversations',
+          'messages',
+          'specialists',
+          'skills',
+          'agent_sessions',
+          'turn_usage',
+          'events',
+          'ideas',
+          'checkpoints',
+          'grill_sessions',
+          'app_preferences',
+          'audit_runs',
+          'audit_results',
+          'mpa_runs',
+          'mpa_phases',
+          'mpa_artifacts',
+          'council_sessions',
+          'blueprints',
+          'blueprint_phases',
+          'blueprint_tasks',
+          'plans',
+          'usage_log',
+          'llm_presets',
+          'library_docs',
+          'library_docs_fts',
           'mpa_campaigns',
-          'memory_facts', 'memory_contradictions', 'memory_doc_state'
+          'memory_facts',
+          'memory_contradictions',
+          'memory_doc_state'
         ]
         for (const table of required) {
           assert.ok(tables.includes(table), `Table "${table}" should exist after full replay`)
@@ -433,7 +456,10 @@ if (!env) {
 
         // Verify indexes
         const bpIdx = getIndexNames(db, 'blueprints')
-        assert.ok(bpIdx.some((n) => n.includes('workspace')), 'blueprint workspace index')
+        assert.ok(
+          bpIdx.some((n) => n.includes('workspace')),
+          'blueprint workspace index'
+        )
       } finally {
         db.close()
       }
@@ -497,24 +523,134 @@ if (!env) {
         db.transaction(() => migration.up(db))()
 
         // Should be able to insert a task with 'skipped' status
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 'test', '/tmp')
-        `).run()
-        db.prepare(`
+        `
+        ).run()
+        db.prepare(
+          `
           INSERT INTO blueprints (id, workspace_id, title, status) VALUES ('bp-1', 'ws-1', 'BP', 'draft')
-        `).run()
-        db.prepare(`
+        `
+        ).run()
+        db.prepare(
+          `
           INSERT INTO blueprint_phases (id, blueprint_id, phase, status)
           VALUES ('ph-1', 'bp-1', 'plan', 'pending')
-        `).run()
-        db.prepare(`
+        `
+        ).run()
+        db.prepare(
+          `
           INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description, status)
           VALUES ('t-1', 'bp-1', 'task-1', 'Test Task', 'skipped')
-        `).run()
+        `
+        ).run()
         const row = db.prepare('SELECT status FROM blueprint_tasks WHERE id = ?').get('t-1') as {
           status: string
         }
         assert.equal(row.status, 'skipped')
+      } finally {
+        db.close()
+      }
+    })
+
+    test('v141_moves_every_chat_worktree_row_into_work_tracks', () => {
+      const migration = migrations.find((m) => m.version === 141)
+      assert.ok(migration)
+
+      const db = createSchemaDb()
+      try {
+        // Stop one short of 141 so chat_worktrees still exists and can be seeded.
+        runBatch(db, 1, 140)
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 't', '/tmp')`
+        ).run()
+        db.prepare(
+          `INSERT INTO conversations (id, workspace_id, title, mode) VALUES ('c-1', 'ws-1', 'Live', 'plan')`
+        ).run()
+        db.prepare(
+          `INSERT INTO chat_worktrees (id, workspace_id, conversation_id, branch_name, path, base_branch, status)
+           VALUES ('w-1', 'ws-1', 'c-1', 'feat/live', '/tmp/wt/live', 'main', 'active')`
+        ).run()
+        // A retained tree: its chat is already gone, and this is exactly the row
+        // an unguarded rebuild would silently drop.
+        db.prepare(
+          `INSERT INTO chat_worktrees (id, workspace_id, conversation_id, branch_name, path, base_branch, status)
+           VALUES ('w-2', 'ws-1', NULL, 'feat/parked', '/tmp/wt/parked', 'main', 'retained')`
+        ).run()
+
+        db.transaction(() => migration.up(db))()
+
+        const tables = getTableNames(db)
+        assert.ok(tables.includes('work_tracks'))
+        assert.equal(tables.includes('chat_worktrees'), false, 'old table is dropped')
+
+        const rows = db.prepare('SELECT * FROM work_tracks ORDER BY branch_name').all() as Array<
+          Record<string, unknown>
+        >
+        assert.equal(rows.length, 2, 'no row may be lost in the rename')
+
+        assert.equal(rows[0].branch_name, 'feat/live')
+        assert.equal(rows[0].owner_kind, 'chat', 'every pre-existing tree was a chat tree')
+        assert.equal(rows[0].owner_id, 'c-1')
+        assert.equal(rows[0].path, '/tmp/wt/live')
+        assert.equal(rows[0].landing_mode, null)
+
+        assert.equal(rows[1].branch_name, 'feat/parked')
+        assert.equal(rows[1].owner_id, null, 'retained work stays ownerless')
+        assert.equal(rows[1].status, 'retained')
+      } finally {
+        db.close()
+      }
+    })
+
+    test('v142_keys_track_file_claims_by_track_and_path_and_cascades', () => {
+      const migration = migrations.find((m) => m.version === 142)
+      assert.ok(migration)
+
+      const db = createSchemaDb()
+      try {
+        // 141 creates work_tracks, which 142's foreign key points at.
+        runBatch(db, 1, 141)
+        assert.equal(
+          getTableNames(db).includes('track_file_claims'),
+          false,
+          '142 is what creates the table'
+        )
+
+        db.transaction(() => migration.up(db))()
+        assert.ok(getTableNames(db).includes('track_file_claims'))
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 't', '/tmp')`
+        ).run()
+        db.prepare(
+          `INSERT INTO work_tracks (id, workspace_id, owner_kind, owner_id, branch_name, path, base_branch, status)
+           VALUES ('tr-1', 'ws-1', 'chat', 'c-1', 'feat/a', '/tmp/wt/a', 'main', 'active')`
+        ).run()
+
+        const claim = db.prepare(
+          `INSERT INTO track_file_claims (track_id, file_path) VALUES (?, ?)`
+        )
+        claim.run('tr-1', 'src/app.ts')
+
+        // The PK is composite. A plain re-insert has to collide, which is what
+        // makes re-recording a turn an upsert rather than unbounded growth —
+        // and is why first_seen_at can answer "who touched this first".
+        assert.throws(() => claim.run('tr-1', 'src/app.ts'), /UNIQUE constraint failed/)
+
+        // ...but a second file under the same track must NOT collide. A PK of
+        // track_id alone would pass every assertion above and lose this.
+        claim.run('tr-1', 'src/other.ts')
+        const count = (): number =>
+          (db.prepare('SELECT COUNT(*) AS n FROM track_file_claims').get() as { n: number }).n
+        assert.equal(count(), 2)
+
+        // Claims die with their track. Orphaned rows would keep predicting
+        // collisions against work that no longer exists.
+        db.prepare(`DELETE FROM work_tracks WHERE id = 'tr-1'`).run()
+        assert.equal(count(), 0, 'ON DELETE CASCADE fired')
       } finally {
         db.close()
       }
@@ -527,14 +663,18 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO usage_log (feature, workspace_id, input_tokens, output_tokens, cost_cents)
           VALUES (?, ?, ?, ?, ?)
-        `).run('chat', 'ws-test', 500, 200, 15)
+        `
+        ).run('chat', 'ws-test', 500, 200, 15)
 
-        const row = db.prepare(
-          'SELECT feature, input_tokens, output_tokens, cost_cents, id, created_at FROM usage_log'
-        ).get() as Record<string, unknown>
+        const row = db
+          .prepare(
+            'SELECT feature, input_tokens, output_tokens, cost_cents, id, created_at FROM usage_log'
+          )
+          .get() as Record<string, unknown>
         assert.equal(row.feature, 'chat')
         assert.equal(row.input_tokens, 500)
         assert.ok(row.id, 'auto-generated id')
@@ -549,15 +689,19 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path)
           VALUES ('ws-1', 'test', '/tmp/test')
-        `).run()
+        `
+        ).run()
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO blueprints (id, workspace_id, title, status)
           VALUES ('bp-1', 'ws-1', 'Test Blueprint', 'draft')
-        `).run()
+        `
+        ).run()
 
         const row = db.prepare('SELECT * FROM blueprints WHERE id = ?').get('bp-1') as Record<
           string,
@@ -575,15 +719,19 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path)
           VALUES ('ws-1', 'test', '/tmp/test')
-        `).run()
+        `
+        ).run()
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO council_sessions (id, workspace_id, input_type, input_content, status, phase)
           VALUES ('cs-1', 'ws-1', 'plan', 'Test Topic', 'running', 'framing')
-        `).run()
+        `
+        ).run()
 
         const row = db.prepare('SELECT * FROM council_sessions WHERE id = ?').get('cs-1') as Record<
           string,
@@ -601,15 +749,19 @@ if (!env) {
       try {
         runBatch(db, 1, 116)
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO workspaces (id, name, repo_path)
           VALUES ('ws-1', 'test', '/tmp/test')
-        `).run()
+        `
+        ).run()
 
-        db.prepare(`
+        db.prepare(
+          `
           INSERT INTO llm_presets (id, workspace_id, name, is_built_in, action_config_json)
           VALUES ('p-1', 'ws-1', 'Test Preset', 0, '{"model":"test"}')
-        `).run()
+        `
+        ).run()
 
         const row = db.prepare('SELECT * FROM llm_presets WHERE id = ?').get('p-1') as Record<
           string,
@@ -623,10 +775,57 @@ if (!env) {
     })
   })
 
+  describe('Migration Replay — v143 blueprint task user skip', () => {
+    test('adds_skipped_by_user_at_leaving_existing_rows_null', () => {
+      const db = createSchemaDb()
+      try {
+        // Stop one migration short, seed a task, then apply v143 to it — the
+        // upgrade path a user with existing blueprints actually takes.
+        runBatch(db, 1, 142)
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 'test', '/tmp/test')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title) VALUES ('bp-1', 'ws-1', 'BP')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description)
+           VALUES ('t-1', 'bp-1', 'T001', 'pre-existing task')`
+        ).run()
+
+        runBatch(db, 143, 143)
+
+        const cols = getColumnNames(db, 'blueprint_tasks')
+        assert.ok(cols.includes('skipped_by_user_at'), 'column added')
+
+        const row = db.prepare(`SELECT * FROM blueprint_tasks WHERE id = 't-1'`).get() as Record<
+          string,
+          unknown
+        >
+        assert.equal(row.skipped_by_user_at, null, 'existing rows are not retroactively skipped')
+        assert.equal(row.status, 'pending', 'status untouched by the migration')
+
+        // Cascade still intact after the ALTER.
+        db.prepare(`DELETE FROM blueprints WHERE id = 'bp-1'`).run()
+        const remaining = db
+          .prepare(`SELECT COUNT(*) as n FROM blueprint_tasks WHERE blueprint_id = 'bp-1'`)
+          .get() as { n: number }
+        assert.equal(remaining.n, 0, 'blueprint delete still cascades to tasks')
+      } finally {
+        db.close()
+      }
+    })
+  })
+
   describe('Migration Replay — invariants', () => {
     test('all_migration_versions_are_sequential', () => {
       for (let i = 0; i < migrations.length; i++) {
-        assert.equal(migrations[i].version, i + 1, `Migration at index ${i} should be version ${i + 1}`)
+        assert.equal(
+          migrations[i].version,
+          i + 1,
+          `Migration at index ${i} should be version ${i + 1}`
+        )
       }
     })
 
@@ -643,7 +842,10 @@ if (!env) {
     })
 
     test('migration_count_matches_schema_version', () => {
-      assert.equal(migrations.length, 123)
+      // Compared against the declared version rather than a literal: the literal
+      // went stale on every migration, and the point of the invariant is that
+      // CURRENT_SCHEMA_VERSION was bumped together with a real migration entry.
+      assert.equal(migrations.length, CURRENT_SCHEMA_VERSION)
     })
   })
 }

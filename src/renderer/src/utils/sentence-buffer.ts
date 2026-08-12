@@ -131,10 +131,8 @@ export class SentenceBuffer {
         // Skip URLs (protocol-prefixed)
         if (line.slice(Math.max(0, match.index - 10), match.index).includes('://')) continue
         // Skip bare domains (e.g. example.com, docs.dev)
-        if (
-          line[match.index] === '.' &&
-          COMMON_TLDS.test(line.slice(match.index, match.index + 6))
-        ) continue
+        if (line[match.index] === '.' && COMMON_TLDS.test(line.slice(match.index, match.index + 6)))
+          continue
 
         lastBoundary = lineStart + match.index + match[0].length
         stateAtBoundary = localInCodeBlock

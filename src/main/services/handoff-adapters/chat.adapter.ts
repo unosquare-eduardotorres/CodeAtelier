@@ -99,7 +99,7 @@ class ChatHandoffAdapter extends HandoffSourceAdapter<ChatAdapterInput> {
       steps.push({
         title: 'Plan created',
         outcome: `${input.plan.title}: ${input.plan.phases.length} phases defined`,
-        filesModified: input.plan.files,
+        filesModified: input.plan.files
       })
     }
 
@@ -112,8 +112,8 @@ class ChatHandoffAdapter extends HandoffSourceAdapter<ChatAdapterInput> {
     return input.plan.phases.map((phase) => ({
       title: phase.title,
       description: phase.description,
-      priority: phase.risk === 'high' ? 'high' as const : 'medium' as const,
-      estimatedComplexity: phase.complexity,
+      priority: phase.risk === 'high' ? ('high' as const) : ('medium' as const),
+      estimatedComplexity: phase.complexity
     }))
   }
 
@@ -122,7 +122,7 @@ class ChatHandoffAdapter extends HandoffSourceAdapter<ChatAdapterInput> {
     if (!input.plan?.decisions) return []
     return input.plan.decisions.map((d) => ({
       what: d.what,
-      why: d.why,
+      why: d.why
     }))
   }
 
@@ -135,7 +135,7 @@ class ChatHandoffAdapter extends HandoffSourceAdapter<ChatAdapterInput> {
     return input.plan.risks.map((r) => ({
       risk: r.risk,
       severity: r.severity,
-      mitigation: r.mitigation,
+      mitigation: r.mitigation
     }))
   }
 
@@ -145,7 +145,7 @@ class ChatHandoffAdapter extends HandoffSourceAdapter<ChatAdapterInput> {
     refs.push({
       type: 'plan',
       path: `conversation:${input.conversation.id}`,
-      description: `Chat: ${input.conversation.title}`,
+      description: `Chat: ${input.conversation.title}`
     })
     return refs
   }
@@ -172,7 +172,7 @@ class ChatHandoffAdapter extends HandoffSourceAdapter<ChatAdapterInput> {
       conversationId: input.conversation.id,
       conversationMode: input.conversation.mode,
       messageCount: input.recentMessages.length,
-      hasPlan: !!input.plan,
+      hasPlan: !!input.plan
     }
   }
 }

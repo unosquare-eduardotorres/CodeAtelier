@@ -18,7 +18,10 @@ if (!env) {
 
   // Seed a run for FK
   const run = mpaRunRepository.createRun({
-    workspaceId: wsId, title: 'Artifact Test', goal: 'X', goalType: 'feature'
+    workspaceId: wsId,
+    title: 'Artifact Test',
+    goal: 'X',
+    goalType: 'feature'
   })
 
   describe('MpaArtifactRepository', () => {
@@ -39,12 +42,18 @@ if (!env) {
 
     test('create() accepts optional fields', () => {
       const phase = mpaRunRepository.createPhase({
-        runId: run.id, phaseType: 'planning', iteration: 1, agentRole: 'planner'
+        runId: run.id,
+        phaseType: 'planning',
+        iteration: 1,
+        agentRole: 'planner'
       })
       const artifact = mpaArtifactRepository.create({
-        runId: run.id, phaseId: phase.id,
-        artifactType: 'code', contentJson: { files: ['a.ts'] },
-        contentMd: '## Code Output\n...', version: 2
+        runId: run.id,
+        phaseId: phase.id,
+        artifactType: 'code',
+        contentJson: { files: ['a.ts'] },
+        contentMd: '## Code Output\n...',
+        version: 2
       })
       assert.equal(artifact.phaseId, phase.id)
       assert.equal(artifact.contentMd, '## Code Output\n...')
@@ -53,7 +62,9 @@ if (!env) {
 
     test('findById() round-trip', () => {
       const created = mpaArtifactRepository.create({
-        runId: run.id, artifactType: 'plan', contentJson: { x: 1 }
+        runId: run.id,
+        artifactType: 'plan',
+        contentJson: { x: 1 }
       })
       const found = mpaArtifactRepository.findById(created.id)
       assert.ok(found)
@@ -67,7 +78,10 @@ if (!env) {
 
     test('findByRun() returns artifacts ordered by creation', () => {
       const run2 = mpaRunRepository.createRun({
-        workspaceId: wsId, title: 'Multi Artifacts', goal: 'Y', goalType: 'feature'
+        workspaceId: wsId,
+        title: 'Multi Artifacts',
+        goal: 'Y',
+        goalType: 'feature'
       })
       mpaArtifactRepository.create({ runId: run2.id, artifactType: 'plan', contentJson: { v: 1 } })
       mpaArtifactRepository.create({ runId: run2.id, artifactType: 'code', contentJson: { v: 2 } })

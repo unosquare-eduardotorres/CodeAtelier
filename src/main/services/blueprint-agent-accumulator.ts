@@ -47,7 +47,14 @@ export interface AccumulatorInstance {
   /** Flush + delete ALL accumulator entries for a given blueprintId */
   flushAllForBlueprint(blueprintId: string): void
   /** Handle a phaseProgress event (text or tool chunk) */
-  handleChunk(blueprintId: string, phase: string, kind: string | undefined, text?: string, toolActivity?: Record<string, unknown>, taskId?: string): void
+  handleChunk(
+    blueprintId: string,
+    phase: string,
+    kind: string | undefined,
+    text?: string,
+    toolActivity?: Record<string, unknown>,
+    taskId?: string
+  ): void
 }
 
 /** Extended interface exposing internals for tests only */

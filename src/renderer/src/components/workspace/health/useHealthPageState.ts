@@ -6,14 +6,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAuditStore } from '@renderer/store'
 import { AUDIT_TRACKS } from '../../../../../shared/constants'
-import type {
-  AuditMode,
-  AuditTrackId,
-  AuditFinding,
-  AuditRun,
-  AuditSelectedSkills,
-  LLMProvider
-} from '../../../../../shared/types'
+import type { AuditMode, AuditTrackId } from '../../../../../shared/types'
 import { useHealthPlanActions } from './useHealthPlanActions'
 import { useAuditViewNavigation } from './useAuditViewNavigation'
 import { useAuditActionCallbacks } from './useAuditActionCallbacks'
@@ -30,13 +23,32 @@ interface HealthPageCallbacks {
 }
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-export function useHealthPageState(workspaceId: string | undefined, callbacks: HealthPageCallbacks) {
+export function useHealthPageState(
+  workspaceId: string | undefined,
+  callbacks: HealthPageCallbacks
+) {
   const {
-    currentRun, isRunning, isPaused, rerunningTrackId, selectedFindings,
-    loadLatest, openRun, startAudit, cancelAudit, pauseAudit, resumeAudit,
-    rerunTrack, toggleFinding, clearSelectedFindings, setPendingFixContext,
+    currentRun,
+    isRunning,
+    isPaused,
+    rerunningTrackId,
+    selectedFindings,
+    loadLatest,
+    openRun,
+    startAudit,
+    cancelAudit,
+    pauseAudit,
+    resumeAudit,
+    rerunTrack,
+    toggleFinding,
+    clearSelectedFindings,
+    setPendingFixContext,
     reset,
-    handleProgress, handleResult, handleComplete, handleStreamChunk, handleIntermediate
+    handleProgress,
+    handleResult,
+    handleComplete,
+    handleStreamChunk,
+    handleIntermediate
   } = useAuditStore()
 
   const [mode, setMode] = useState<AuditMode>('light')
@@ -58,8 +70,11 @@ export function useHealthPageState(workspaceId: string | undefined, callbacks: H
     const cleanupStream = window.api.onAuditStreamChunk(handleStreamChunk)
     const cleanupIntermediate = window.api.onAuditIntermediate(handleIntermediate)
     return () => {
-      cleanupProgress(); cleanupResult(); cleanupComplete()
-      cleanupStream(); cleanupIntermediate()
+      cleanupProgress()
+      cleanupResult()
+      cleanupComplete()
+      cleanupStream()
+      cleanupIntermediate()
     }
   }, [handleProgress, handleResult, handleComplete, handleStreamChunk, handleIntermediate])
 
@@ -108,8 +123,12 @@ export function useHealthPageState(workspaceId: string | undefined, callbacks: H
   // ── View navigation callbacks (extracted hook) ──
 
   const {
-    handleStart, handleConfigureRun, handleNewAudit,
-    handleOpenRun, handleRerunRun, handleBackToHistory
+    handleStart,
+    handleConfigureRun,
+    handleNewAudit,
+    handleOpenRun,
+    handleRerunRun,
+    handleBackToHistory
   } = useAuditViewNavigation({
     workspaceId,
     setView,
@@ -126,8 +145,12 @@ export function useHealthPageState(workspaceId: string | undefined, callbacks: H
   // ── Action callbacks (extracted hook) ──
 
   const {
-    handleConvert, handleRerunTrack, handleExport,
-    handleExportPlan, handleAutoFix, handleResume
+    handleConvert,
+    handleRerunTrack,
+    handleExport,
+    handleExportPlan,
+    handleAutoFix,
+    handleResume
   } = useAuditActionCallbacks({
     workspaceId,
     mode,
@@ -143,9 +166,15 @@ export function useHealthPageState(workspaceId: string | undefined, callbacks: H
   // ── Plan actions (extracted hook) ──
 
   const {
-    currentPlan, planDoc, planTitle,
-    handleBuildPlan, handleSendPlanToChat, handleSendPlanToCouncil,
-    handleSendPlanToGoals, handleSendPlanToGrill, handleBackToResults
+    currentPlan,
+    planDoc,
+    planTitle,
+    handleBuildPlan,
+    handleSendPlanToChat,
+    handleSendPlanToCouncil,
+    handleSendPlanToGoals,
+    handleSendPlanToGrill,
+    handleBackToResults
   } = useHealthPlanActions(workspaceId, callbacks, setView)
 
   // ── Computed values ──
@@ -155,36 +184,75 @@ export function useHealthPageState(workspaceId: string | undefined, callbacks: H
   const percentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
   const hasRunningTrack = currentRun?.results.some((r) => r.status === 'running') ?? false
   const effectivelyRunning = isRunning || !!rerunningTrackId || hasRunningTrack
-  const incompleteTrackCount = currentRun?.results.filter(
-    (r) => r.status === 'cancelled' || r.status === 'pending' || r.status === 'failed'
-  ).length ?? 0
-  const canResume = !effectivelyRunning && currentRun != null &&
-    (currentRun.status === 'partial' || currentRun.status === 'cancelled') && incompleteTrackCount > 0
+  const incompleteTrackCount =
+    currentRun?.results.filter(
+      (r) => r.status === 'cancelled' || r.status === 'pending' || r.status === 'failed'
+    ).length ?? 0
+  const canResume =
+    !effectivelyRunning &&
+    currentRun != null &&
+    (currentRun.status === 'partial' || currentRun.status === 'cancelled') &&
+    incompleteTrackCount > 0
   const selectedIds = new Set(selectedFindings.map((f) => f.id))
-  const auditorCount = currentRun?.results.filter((r) => r.findings.some((f) => selectedIds.has(f.id))).length ?? 0
+  const auditorCount =
+    currentRun?.results.filter((r) => r.findings.some((f) => selectedIds.has(f.id))).length ?? 0
   const showTray = !effectivelyRunning && selectedFindings.length > 0
 
   return {
     // State
-    mode, setMode, selectedTracks, activeTrackId, view,
+    mode,
+    setMode,
+    selectedTracks,
+    activeTrackId,
+    view,
     // Store values
-    currentRun, isRunning, isPaused, rerunningTrackId,
-    selectedFindings, currentPlan,
+    currentRun,
+    isRunning,
+    isPaused,
+    rerunningTrackId,
+    selectedFindings,
+    currentPlan,
     // Track callbacks
-    allSelected, handleToggleAll, handleToggleTrack, handleSelectTrack,
+    allSelected,
+    handleToggleAll,
+    handleToggleTrack,
+    handleSelectTrack,
     // View callbacks
-    handleStart, handleConfigureRun, handleNewAudit, handleOpenRun,
-    handleRerunRun, handleBackToHistory,
+    handleStart,
+    handleConfigureRun,
+    handleNewAudit,
+    handleOpenRun,
+    handleRerunRun,
+    handleBackToHistory,
     // Action callbacks
-    handleConvert, handleRerunTrack, handleExport, handleExportPlan,
-    handleAutoFix, handleResume,
+    handleConvert,
+    handleRerunTrack,
+    handleExport,
+    handleExportPlan,
+    handleAutoFix,
+    handleResume,
     // Plan callbacks
-    handleBuildPlan, handleSendPlanToChat, handleSendPlanToCouncil,
-    handleSendPlanToGoals, handleSendPlanToGrill, handleBackToResults,
+    handleBuildPlan,
+    handleSendPlanToChat,
+    handleSendPlanToCouncil,
+    handleSendPlanToGoals,
+    handleSendPlanToGrill,
+    handleBackToResults,
     // Store actions (passthrough)
-    cancelAudit, pauseAudit, toggleFinding, clearSelectedFindings,
+    cancelAudit,
+    pauseAudit,
+    toggleFinding,
+    clearSelectedFindings,
     // Computed
-    effectivelyRunning, completedCount, totalCount, percentage,
-    canResume, incompleteTrackCount, showTray, auditorCount, planDoc, planTitle
+    effectivelyRunning,
+    completedCount,
+    totalCount,
+    percentage,
+    canResume,
+    incompleteTrackCount,
+    showTray,
+    auditorCount,
+    planDoc,
+    planTitle
   }
 }

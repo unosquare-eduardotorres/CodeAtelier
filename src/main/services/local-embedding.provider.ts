@@ -55,15 +55,11 @@ class LocalEmbeddingProvider extends EventEmitter {
   // ── Getters ──
 
   get isReady(): boolean {
-    return this.backend === 'omlx'
-      ? omlxEmbeddingProvider.isReady
-      : this._ollamaReady
+    return this.backend === 'omlx' ? omlxEmbeddingProvider.isReady : this._ollamaReady
   }
 
   get activeModelName(): string {
-    return this.backend === 'omlx'
-      ? omlxEmbeddingProvider.activeModelName
-      : this.ollamaModel
+    return this.backend === 'omlx' ? omlxEmbeddingProvider.activeModelName : this.ollamaModel
   }
 
   // ── Configuration ──
@@ -83,7 +79,9 @@ class LocalEmbeddingProvider extends EventEmitter {
    */
   setOllamaEmbeddingModel(model: string): void {
     if (model && model !== this.ollamaModel) {
-      embLog.info(`[setOllamaModel] Embedding model changed: ${this.ollamaModel || '(none)'} → ${model}`)
+      embLog.info(
+        `[setOllamaModel] Embedding model changed: ${this.ollamaModel || '(none)'} → ${model}`
+      )
       this.ollamaModel = model
       // Mark not-ready so next call triggers re-initialization
       this._ollamaReady = false
@@ -175,7 +173,8 @@ class LocalEmbeddingProvider extends EventEmitter {
     if (this._ollamaReady) return
 
     if (!this.ollamaModel) {
-      const msg = 'No Ollama embedding model configured. Select one in Model Configuration → Local Models.'
+      const msg =
+        'No Ollama embedding model configured. Select one in Model Configuration → Local Models.'
       embLog.warn(`[initOllama] ${msg}`)
       this.emit('modelError', msg)
       throw new Error(msg)
@@ -191,8 +190,8 @@ class LocalEmbeddingProvider extends EventEmitter {
       }
 
       // Check if model is available
-      const modelAvailable = status.models.some((m) =>
-        m === this.ollamaModel || m.startsWith(`${this.ollamaModel}:`)
+      const modelAvailable = status.models.some(
+        (m) => m === this.ollamaModel || m.startsWith(`${this.ollamaModel}:`)
       )
       if (!modelAvailable) {
         const msg = `Embedding model '${this.ollamaModel}' not found in Ollama. Pull it with: ollama pull ${this.ollamaModel}`
@@ -228,7 +227,11 @@ class LocalEmbeddingProvider extends EventEmitter {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       // Detect connection loss
-      if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('TimeoutError')) {
+      if (
+        msg.includes('fetch failed') ||
+        msg.includes('ECONNREFUSED') ||
+        msg.includes('TimeoutError')
+      ) {
         this._ollamaReady = false
         this.emit('modelError', 'Ollama connection lost. Will attempt to reconnect on next use.')
       }

@@ -17,11 +17,13 @@ if (!env) {
 
   // Helper to insert a checkpoint (no create() method on repo — uses SQL directly)
   function insertCheckpoint(conversationId: string, label: string, stateJson = '{}') {
-    return db.prepare(
-      `INSERT INTO checkpoints (conversation_id, workspace_id, label, state_json, active_task_ids)
+    return db
+      .prepare(
+        `INSERT INTO checkpoints (conversation_id, workspace_id, label, state_json, active_task_ids)
        VALUES (?, ?, ?, ?, '[]')
        RETURNING *`
-    ).get(conversationId, wsId, label, stateJson) as { id: string }
+      )
+      .get(conversationId, wsId, label, stateJson) as { id: string }
   }
 
   describe('CheckpointRepository', () => {

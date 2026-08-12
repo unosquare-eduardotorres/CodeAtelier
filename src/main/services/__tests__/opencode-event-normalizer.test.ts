@@ -631,12 +631,7 @@ describe('normalizeOpenCodeEvent — state persistence (R6-A1)', () => {
     state.emittedToolUse = new Set(['call-1', 'call-2'])
     state.emittedToolResult = new Set(['call-1'])
 
-    normalizeOpenCodeEvent(
-      { type: 'session.idle', properties: {} },
-      SID,
-      freshUsage(),
-      state
-    )
+    normalizeOpenCodeEvent({ type: 'session.idle', properties: {} }, SID, freshUsage(), state)
 
     assert.equal(state.emittedToolUse!.size, 0, 'emittedToolUse should be cleared on idle')
     assert.equal(state.emittedToolResult!.size, 0, 'emittedToolResult should be cleared on idle')
@@ -1154,7 +1149,10 @@ describe('normalizeOpenCodeEvent — session.next.* handlers', () => {
 
   test('session.next.agent.switched handles object agent property', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'session.next.agent.switched', properties: { agent: { name: 'DaVinci', id: 'dav-1' } } },
+      {
+        type: 'session.next.agent.switched',
+        properties: { agent: { name: 'DaVinci', id: 'dav-1' } }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -1164,7 +1162,10 @@ describe('normalizeOpenCodeEvent — session.next.* handlers', () => {
 
   test('session.next.model.switched handles object model property', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'session.next.model.switched', properties: { model: { id: 'claude-sonnet-4', provider: 'anthropic' } } },
+      {
+        type: 'session.next.model.switched',
+        properties: { model: { id: 'claude-sonnet-4', provider: 'anthropic' } }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -1298,7 +1299,10 @@ describe('normalizeOpenCodeEvent — control signal filtering in text deltas', (
 
   test('control signal with whitespace padding is still dropped', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'message.part.delta', properties: { field: 'text', delta: '  { "type" : "busy" }  ' } },
+      {
+        type: 'message.part.delta',
+        properties: { field: 'text', delta: '  { "type" : "busy" }  ' }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -1332,7 +1336,10 @@ describe('normalizeOpenCodeEvent — control signal filtering in text deltas', (
 describe('normalizeOpenCodeEvent — control signal filtering in text parts', () => {
   test('message.part.updated text with {"type":"busy"} is dropped', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'message.part.updated', properties: { part: { type: 'text', content: '{"type":"busy"}' } } },
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'text', content: '{"type":"busy"}' } }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -1342,7 +1349,10 @@ describe('normalizeOpenCodeEvent — control signal filtering in text parts', ()
 
   test('message.part.updated text with {"type":"idle"} is dropped', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'message.part.updated', properties: { part: { type: 'text', content: '{"type":"idle"}' } } },
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'text', content: '{"type":"idle"}' } }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -1352,7 +1362,10 @@ describe('normalizeOpenCodeEvent — control signal filtering in text parts', ()
 
   test('legitimate text in part.updated is NOT dropped', () => {
     const out = normalizeOpenCodeEvent(
-      { type: 'message.part.updated', properties: { part: { type: 'text', content: 'Hello, how can I help?' } } },
+      {
+        type: 'message.part.updated',
+        properties: { part: { type: 'text', content: 'Hello, how can I help?' } }
+      },
       SID,
       freshUsage(),
       freshState()
@@ -1696,7 +1709,10 @@ describe('normalizeOpenCodeEvent — inline <think> tag routing (R7)', () => {
     const out = normalizeOpenCodeEvent(
       {
         type: 'message.part.delta',
-        properties: { field: 'text', delta: '<think>Let me reason about this</think>The answer is 4' }
+        properties: {
+          field: 'text',
+          delta: '<think>Let me reason about this</think>The answer is 4'
+        }
       },
       SID,
       freshUsage(),

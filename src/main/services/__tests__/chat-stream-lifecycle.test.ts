@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync, beforeEach, createSpy, runExclusive } from './test-harness'
 import { conversationStateMachine } from '../conversation-state-machine'
-import { lifecycleRegistry, type ConversationLifecycle } from '../conversation-lifecycle'
+import { lifecycleRegistry, ConversationLifecycle } from '../conversation-lifecycle'
 import { chatAgentService } from '../chat-agent.service'
 import type { ConversationPhase } from '../../../shared/types'
 
@@ -24,6 +24,7 @@ interface StreamContext {
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
   readonly workspacePath: string | undefined
+  readonly workspaceId?: string | null
   streamedContent: string
   planInjected: boolean
 }
@@ -33,6 +34,7 @@ interface ChatStreamServiceInternal {
   streamingLocks: Set<string>
   stoppedConversations: Set<string>
   activeRequestIds: Map<string, string>
+  lockAcquiredAt: Map<string, number>
   currentStreamingRole: 'specialist'
   keepaliveTimers: Map<string, ReturnType<typeof setInterval>>
   safetyTimerResets: Map<string, () => void>
@@ -65,6 +67,13 @@ interface ChatStreamServiceInternal {
   finalizeStreamMessage(ctx: StreamContext, lifecycle: ConversationLifecycle): Promise<void>
   enqueueMemoryExtraction(ctx: StreamContext): void
   forceResetIfStuck(): void
+  // Consolidated busy-state authority — acquireStreamLock and both stall
+  // watchdogs route through these, so the double must carry them.
+  describeBusy(conversationId: string): string | null
+  isConversationBusy(conversationId: string): boolean
+  releaseConversation(conversationId: string, reason: string, requestId?: string): boolean
+  sweepOrphanedConversations(): string[]
+  resolveConversationWorkspaceId(conversationId: string): string | undefined
 }
 
 // ── Test doubles ──
@@ -96,6 +105,7 @@ function createTestService(overrides?: {
     streamingLocks: new Set(),
     stoppedConversations: new Set(),
     activeRequestIds: new Map(),
+    lockAcquiredAt: new Map(),
     currentStreamingRole: 'specialist',
     keepaliveTimers: new Map(),
     safetyTimerResets: new Map(),
@@ -108,8 +118,16 @@ function createTestService(overrides?: {
     setupStreamTimers: undefined as unknown as ChatStreamServiceInternal['setupStreamTimers'],
     finalizeStreamMessage:
       undefined as unknown as ChatStreamServiceInternal['finalizeStreamMessage'],
-    enqueueMemoryExtraction: undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
-    forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck']
+    enqueueMemoryExtraction:
+      undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
+    forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck'],
+    describeBusy: undefined as unknown as ChatStreamServiceInternal['describeBusy'],
+    isConversationBusy: undefined as unknown as ChatStreamServiceInternal['isConversationBusy'],
+    releaseConversation: undefined as unknown as ChatStreamServiceInternal['releaseConversation'],
+    sweepOrphanedConversations:
+      undefined as unknown as ChatStreamServiceInternal['sweepOrphanedConversations'],
+    resolveConversationWorkspaceId:
+      undefined as unknown as ChatStreamServiceInternal['resolveConversationWorkspaceId']
   }
 
   // Bind the real private methods from the class prototype onto our test double.
@@ -127,6 +145,11 @@ function createTestService(overrides?: {
   svc.finalizeStreamMessage = proto.finalizeStreamMessage.bind(svc)
   svc.enqueueMemoryExtraction = proto.enqueueMemoryExtraction.bind(svc)
   svc.forceResetIfStuck = proto.forceResetIfStuck.bind(svc)
+  svc.describeBusy = proto.describeBusy.bind(svc)
+  svc.isConversationBusy = proto.isConversationBusy.bind(svc)
+  svc.releaseConversation = proto.releaseConversation.bind(svc)
+  svc.sweepOrphanedConversations = proto.sweepOrphanedConversations.bind(svc)
+  svc.resolveConversationWorkspaceId = proto.resolveConversationWorkspaceId.bind(svc)
 
   return svc
 }
@@ -148,7 +171,11 @@ describe('acquireStreamLock', () => {
       const svc = createTestService()
       const result = svc.acquireStreamLock('conv-1')
 
-      assert.equal(svc.streamingLocks.has('conv-1'), true, 'streamingLock should be held for conv-1')
+      assert.equal(
+        svc.streamingLocks.has('conv-1'),
+        true,
+        'streamingLock should be held for conv-1'
+      )
       assert.equal(
         conversationStateMachine.getState('conv-1'),
         'chat-agent-streaming',
@@ -180,30 +207,37 @@ describe('acquireStreamLock', () => {
       lifecycleRegistry.abort('conv-1', 'test-cleanup')
     }))
 
-  // A1: Cross-conversation concurrency gate — rejects while MAX_CONCURRENT_STREAMS=1
-  test('rejects cross-conversation stream while another conversation is streaming (A1 gate)', () =>
+  // Phase 2: Cross-conversation streams are now ALLOWED (up to MAX_CONCURRENT_STREAMS=3)
+  test('allows cross-conversation stream alongside another conversation (Phase 2)', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
       svc.acquireStreamLock('conv-A')
 
-      assert.throws(
-        () => svc.acquireStreamLock('conv-B'),
-        /Another chat is still processing/,
-        'should reject cross-conversation stream while gate=1'
-      )
+      // Should succeed — Phase 2 allows concurrent streams for different conversations
+      const resultB = svc.acquireStreamLock('conv-B')
+      assert.ok(resultB.requestId, 'conv-B lock acquired alongside conv-A')
 
-      // conv-A should still be streaming, conv-B should NOT be locked
+      // Both should be streaming
       assert.equal(svc.streamingLocks.has('conv-A'), true, 'A lock still held')
-      assert.equal(svc.streamingLocks.has('conv-B'), false, 'B lock never acquired')
-      assert.equal(conversationStateMachine.getState('conv-B'), 'idle', 'B state machine still idle')
+      assert.equal(svc.streamingLocks.has('conv-B'), true, 'B lock acquired')
 
       lifecycleRegistry.abortAll('test-cleanup')
     }))
 
-  // Phase 2 twin: will pass when MAX_CONCURRENT_STREAMS is raised
-  // Uncomment/unskip when Phase 2 per-conversation isolation lands.
-  // test('allows concurrent streams for DIFFERENT conversations (Phase 2)', () => { ... })
+  // Phase 2: Per-conversation execution isolation is now in place
+  test('allows concurrent streams for DIFFERENT conversations (Phase 2)', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      svc.acquireStreamLock('conv-1')
+      // Should NOT throw — different conversation
+      svc.acquireStreamLock('conv-2')
+      assert.equal(lifecycleRegistry.active().length, 2, 'two streams active')
+      assert.equal(svc.streamingLocks.has('conv-1'), true, 'conv-1 lock held')
+      assert.equal(svc.streamingLocks.has('conv-2'), true, 'conv-2 lock held')
+      lifecycleRegistry.abortAll('test-cleanup')
+    }))
 
   test('resets stoppedConversations for the conversation', () =>
     runExclusive(async () => {
@@ -211,7 +245,11 @@ describe('acquireStreamLock', () => {
       const svc = createTestService()
       svc.stoppedConversations.add('conv-1')
       svc.acquireStreamLock('conv-1')
-      assert.equal(svc.stoppedConversations.has('conv-1'), false, 'stoppedConversations should be cleared')
+      assert.equal(
+        svc.stoppedConversations.has('conv-1'),
+        false,
+        'stoppedConversations should be cleared'
+      )
 
       lifecycleRegistry.abort('conv-1', 'test-cleanup')
     }))
@@ -264,8 +302,16 @@ describe('acquireStreamLock', () => {
       assert.equal(svc.streamingLocks.has('conv-x'), true, 'lock should be held')
       lifecycleRegistry.abort('conv-x', 'userStop')
 
-      assert.equal(svc.streamingLocks.has('conv-x'), false, 'streamingLock must be released by abort')
-      assert.equal(svc.activeRequestIds.has('conv-x'), false, 'activeRequestId must be cleared by abort')
+      assert.equal(
+        svc.streamingLocks.has('conv-x'),
+        false,
+        'streamingLock must be released by abort'
+      )
+      assert.equal(
+        svc.activeRequestIds.has('conv-x'),
+        false,
+        'activeRequestId must be cleared by abort'
+      )
 
       // A subsequent acquireStreamLock must succeed — no permanent lockout.
       conversationStateMachine.forceReset('conv-x')
@@ -381,7 +427,11 @@ describe('setupStreamTimers', () => {
 
       // Cleanup — lifecycle dispose should clear timers
       lifecycle.complete()
-      assert.equal(svc.keepaliveTimers.has('conv-timer'), false, 'keepaliveTimer cleared on dispose')
+      assert.equal(
+        svc.keepaliveTimers.has('conv-timer'),
+        false,
+        'keepaliveTimer cleared on dispose'
+      )
     }))
 
   test('dispose clears both timers without firing callbacks', () =>
@@ -471,6 +521,7 @@ describe('finalizeStreamMessage', () => {
         specialistMeta: undefined,
         adapterAgentId: 'specialist',
         workspacePath: undefined,
+        workspaceId: 'ws-owner',
         streamedContent: 'Hello world',
         planInjected: false
       }
@@ -489,8 +540,21 @@ describe('finalizeStreamMessage', () => {
       const completeMsg = mainWindow.sentMessages.find((m) => m.channel === 'chat:messageComplete')
       assert.ok(completeMsg, 'CHAT_MESSAGE_COMPLETE should be sent')
 
+      // BACKGROUND-CHAT-02: the completion must name the workspace that owns the
+      // stream. The renderer uses it to attribute plan-execution memory, and a
+      // background stream can complete after the user switched workspaces.
+      assert.equal(
+        (completeMsg!.data as { workspaceId?: string }).workspaceId,
+        'ws-owner',
+        'completion should carry ctx.workspaceId'
+      )
+
       // Assert: state machine transitioned to idle
-      assert.equal(conversationStateMachine.getState('conv-finalize'), 'idle', 'state machine should be idle')
+      assert.equal(
+        conversationStateMachine.getState('conv-finalize'),
+        'idle',
+        'state machine should be idle'
+      )
     }))
 
   test('sends error chunk when streamedContent is empty', () =>
@@ -521,7 +585,11 @@ describe('finalizeStreamMessage', () => {
       restoreRepo()
 
       // Should still transition to idle
-      assert.equal(conversationStateMachine.getState('conv-finalize'), 'idle', 'state machine should be idle')
+      assert.equal(
+        conversationStateMachine.getState('conv-finalize'),
+        'idle',
+        'state machine should be idle'
+      )
 
       // Should have sent an error text chunk (channel is 'chat:messageChunk')
       const errorChunk = mainWindow.sentMessages.find(
@@ -630,18 +698,19 @@ describe('finalizeStreamMessage', () => {
 })
 
 // ══════════════════════════════════════════════════════════════════════════════
-// E. forceResetIfStuck (guards against B1 regression) — now registry-aware
+// E. forceResetIfStuck (guards against B1 regression) — orphan-only
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('forceResetIfStuck', () => {
-  test('aborts all lifecycles when streams are active', () =>
+  test('BACKGROUND-CHAT-01: live streams survive a workspace switch', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
 
-      // Simulate two streams in progress
+      // Simulate two healthy streams in progress
       svc.streamingLocks.add('conv-A')
       svc.streamingLocks.add('conv-B')
+      svc.activeRequestIds.set('conv-A', 'req-A')
       conversationStateMachine.transition('sendMessage', 'conv-A')
       conversationStateMachine.transition('sendMessage', 'conv-B')
       const lcA = lifecycleRegistry.begin('conv-A')
@@ -653,9 +722,30 @@ describe('forceResetIfStuck', () => {
 
       svc.forceResetIfStuck()
 
-      assert.equal(svc.streamingLocks.size, 0, 'all streaming locks should be released')
-      assert.equal(conversationStateMachine.isIdle(), true, 'state machine should be idle')
-      assert.equal(lifecycleRegistry.active().length, 0, 'no active lifecycles')
+      assert.equal(svc.streamingLocks.size, 2, 'live streams keep their locks')
+      assert.equal(svc.activeRequestIds.get('conv-A'), 'req-A', 'requestId is preserved')
+      assert.equal(lifecycleRegistry.active().length, 2, 'both lifecycles still active')
+      assert.equal(
+        conversationStateMachine.getState('conv-A'),
+        'chat-agent-streaming',
+        'conv-A stays streaming'
+      )
+      assert.equal(conversationStateMachine.getState('conv-B'), 'chat-agent-streaming')
+    }))
+
+  test('releases a lock with no lifecycle behind it', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // conv-orphan: lock + SM entry but no lifecycle — nothing will ever finish it
+      svc.streamingLocks.add('conv-orphan')
+      conversationStateMachine.transition('sendMessage', 'conv-orphan')
+
+      svc.forceResetIfStuck()
+
+      assert.equal(svc.streamingLocks.has('conv-orphan'), false, 'orphaned lock released')
+      assert.equal(conversationStateMachine.getState('conv-orphan'), 'idle')
     }))
 
   test('no-op when nothing is stuck', () =>
@@ -685,7 +775,8 @@ describe('enqueueMemoryExtraction', () => {
       specialistMeta: undefined,
       adapterAgentId: 'specialist',
       workspacePath: undefined,
-      streamedContent: 'some content that is definitely longer than 200 characters to pass the length guard in enqueueMemoryExtraction which checks ctx.streamedContent.length > 200 before calling the service so we need to have enough text here to exceed that threshold',
+      streamedContent:
+        'some content that is definitely longer than 200 characters to pass the length guard in enqueueMemoryExtraction which checks ctx.streamedContent.length > 200 before calling the service so we need to have enough text here to exceed that threshold',
       planInjected: false
     }
 
@@ -740,26 +831,19 @@ describe('StreamContext mutable state', () => {
 // H. Concurrent streaming — A1 gate enforcement + per-conversation isolation
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe('Concurrent streaming — A1 gate enforcement', () => {
-  test('cross-conversation lock rejected while gate=1', () =>
+describe('Concurrent streaming — resource limit gate', () => {
+  test('cross-conversation lock ALLOWED with Phase 2 isolation (MAX=3)', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
       svc.acquireStreamLock('conv-A')
 
-      // With MAX_CONCURRENT_STREAMS=1, conv-B should be rejected
-      assert.throws(
-        () => svc.acquireStreamLock('conv-B'),
-        /Another chat is still processing/,
-        'cross-conversation lock should be rejected'
-      )
-
-      // Stopping conv-A should then allow conv-B
-      lifecycleRegistry.abort('conv-A', 'userStop')
+      // Phase 2: conv-B should succeed — different conversation, under the limit
       const resultB = svc.acquireStreamLock('conv-B')
-      assert.ok(resultB.requestId, 'conv-B should acquire lock after A stopped')
+      assert.ok(resultB.requestId, 'conv-B should acquire lock alongside conv-A')
+      assert.equal(lifecycleRegistry.active().length, 2, 'two streams active')
 
-      lifecycleRegistry.abort('conv-B', 'test-cleanup')
+      lifecycleRegistry.abortAll('test-cleanup')
     }))
 
   test('same-conversation supersede still works under the gate', () =>
@@ -877,7 +961,11 @@ describe('forceResetIfStuck — A9 SM stuck with empty registry', () => {
       svc.forceResetIfStuck()
 
       assert.equal(conversationStateMachine.isIdle(), true, 'SM should be idle after force reset')
-      assert.equal(conversationStateMachine.getState('conv-stuck'), 'idle', 'conv-stuck should be idle')
+      assert.equal(
+        conversationStateMachine.getState('conv-stuck'),
+        'idle',
+        'conv-stuck should be idle'
+      )
     }))
 })
 
@@ -886,7 +974,7 @@ describe('forceResetIfStuck — A9 SM stuck with empty registry', () => {
 // ══════════════════════════════════════════════════════════════════════════════
 
 describe('forceResetIfStuck — F2 mixed SM/registry state', () => {
-  test('clears SM entries that have no matching registry lifecycle', () =>
+  test('clears SM entries with no lifecycle while leaving the live one alone', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
@@ -910,23 +998,24 @@ describe('forceResetIfStuck — F2 mixed SM/registry state', () => {
 
       svc.forceResetIfStuck()
 
-      // F2 guarantees: both SM entries cleared, registry empty
-      assert.equal(conversationStateMachine.isIdle(), true, 'SM should be globally idle after F2 reset')
-      assert.equal(conversationStateMachine.getState('conv-A'), 'idle', 'conv-A SM idle')
+      // Only the wedged conversation is released; the live one keeps streaming.
+      assert.equal(
+        conversationStateMachine.getState('conv-A'),
+        'chat-agent-streaming',
+        'conv-A is live — untouched'
+      )
       assert.equal(conversationStateMachine.getState('conv-B'), 'idle', 'conv-B SM idle')
-      assert.equal(lifecycleRegistry.active().length, 0, 'registry should be empty')
-      assert.equal(svc.streamingLocks.size, 0, 'all locks cleared')
+      assert.equal(lifecycleRegistry.active().length, 1, 'conv-A lifecycle still active')
+      assert.equal(svc.streamingLocks.has('conv-A'), true, 'conv-A keeps its lock')
     }))
 
-  test('unconditional re-check fires global forceReset when SM stuck after abortAll', () =>
+  test('releases an SM-only entry with no registry lifecycle at all', () =>
     runExclusive(async () => {
       resetGlobals()
       const svc = createTestService()
 
-      // Only an SM entry — no registry entry at all.
-      // The old narrow condition (smStuck && activeStreams.length === 0) would
-      // only reset if there were ZERO active streams. The F2 fix re-checks
-      // unconditionally after abortAll.
+      // Only an SM entry — no registry entry at all. Nothing is going to
+      // produce another chunk, so the sweep must release it.
       conversationStateMachine.transition('sendMessage', 'conv-orphan')
       assert.equal(conversationStateMachine.isIdle(), false)
       assert.equal(lifecycleRegistry.active().length, 0)
@@ -949,7 +1038,11 @@ describe('forceReset — F1(3) suppresses idle→idle emission', () => {
 
       // Attach a stateChange listener to count emissions
       const emissions: Array<{ from: string; to: string; conversationId: string | null }> = []
-      const listener = (payload: { from: string; to: string; conversationId: string | null }): void => {
+      const listener = (payload: {
+        from: string
+        to: string
+        conversationId: string | null
+      }): void => {
         emissions.push(payload)
       }
       conversationStateMachine.on('stateChange', listener)
@@ -969,7 +1062,11 @@ describe('forceReset — F1(3) suppresses idle→idle emission', () => {
       resetGlobals()
 
       const emissions: Array<{ from: string; to: string; conversationId: string | null }> = []
-      const listener = (payload: { from: string; to: string; conversationId: string | null }): void => {
+      const listener = (payload: {
+        from: string
+        to: string
+        conversationId: string | null
+      }): void => {
         emissions.push(payload)
       }
       conversationStateMachine.on('stateChange', listener)
@@ -1008,7 +1105,9 @@ describe('setupStreamTimers — activity-based safety timer', () => {
       // Track cancelCurrentQuery calls
       const origCancel = chatAgentService.cancelCurrentQuery
       let cancelCalled = 0
-      chatAgentService.cancelCurrentQuery = () => { cancelCalled++ }
+      chatAgentService.cancelCurrentQuery = () => {
+        cancelCalled++
+      }
 
       try {
         const rejectDone = createSpy<[Error], void>()
@@ -1016,7 +1115,11 @@ describe('setupStreamTimers — activity-based safety timer', () => {
 
         // Register the disposer that calls cancelCurrentQuery (mirrors registerStreamDisposers)
         lifecycle.onDispose(() => {
-          try { chatAgentService.cancelCurrentQuery() } catch { /* */ }
+          try {
+            chatAgentService.cancelCurrentQuery('conv-kill')
+          } catch {
+            /* */
+          }
         })
 
         // Simulate safety timeout by aborting the lifecycle
@@ -1169,6 +1272,109 @@ describe('onChunk → safetyTimerResets integration', () => {
       assert.ok(svc.safetyTimerResets.has('conv-B'), 'B entry unaffected')
 
       lifecycleRegistry.abort('conv-B', 'test-cleanup')
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// P. setupStreamTimers — stale-lifecycle guards (ghost safety-timer regression)
+//
+// A turn aborted while stage 2/2.5 was still awaiting used to arm its timers
+// anyway. Five minutes later the safety timer fired and released whatever
+// lifecycle the conversation had by then — killing a healthy, unrelated stream.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('setupStreamTimers — stale lifecycle guards', () => {
+  test('arming on an already-aborted lifecycle registers nothing', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = lifecycleRegistry.begin('conv-ghost')
+      const requestId = lifecycle.requestId!
+
+      // Abort lands while stage 2 (`ensureStarted`) is still awaiting.
+      lifecycleRegistry.abort('conv-ghost', 'userStop')
+
+      const rejectDone = createSpy<[Error], void>()
+      svc.setupStreamTimers('conv-ghost', requestId, lifecycle, rejectDone)
+
+      assert.equal(svc.keepaliveTimers.has('conv-ghost'), false, 'no keepalive for a dead request')
+      assert.equal(
+        svc.safetyTimerResets.has('conv-ghost'),
+        false,
+        'no safety-timer reset for a dead request'
+      )
+      assert.equal(rejectDone.callCount, 0)
+    }))
+
+  test("a superseded stream's disposer leaves the newer stream's timers intact", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // Two overlapping streams on the same conversation. Registry supersede is
+      // ordered, so build them directly to reproduce the interleaving where #1's
+      // disposer runs *after* #2 has already claimed the map entries.
+      const lc1 = new ConversationLifecycle()
+      lc1.begin('conv-own')
+      const lc2 = new ConversationLifecycle()
+      lc2.begin('conv-own')
+
+      svc.setupStreamTimers('conv-own', lc1.requestId!, lc1, createSpy<[Error], void>())
+      const keepalive1 = svc.keepaliveTimers.get('conv-own')
+      svc.setupStreamTimers('conv-own', lc2.requestId!, lc2, createSpy<[Error], void>())
+      const keepalive2 = svc.keepaliveTimers.get('conv-own')
+      const reset2 = svc.safetyTimerResets.get('conv-own')
+      assert.notEqual(keepalive1, keepalive2, 'stream #2 owns the map entries')
+
+      lc1.abort('superseded')
+
+      assert.equal(
+        svc.keepaliveTimers.get('conv-own'),
+        keepalive2,
+        "#1's disposer must not evict #2's keepalive"
+      )
+      assert.equal(
+        svc.safetyTimerResets.get('conv-own'),
+        reset2,
+        "#1's disposer must not evict #2's safety reset"
+      )
+
+      lc2.complete()
+      assert.equal(svc.keepaliveTimers.has('conv-own'), false, 'owner cleans up its own entries')
+      assert.equal(svc.safetyTimerResets.has('conv-own'), false)
+    }))
+
+  test('a reset function captured from a finished stream does not re-arm a timer', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = lifecycleRegistry.begin('conv-stale-reset')
+
+      svc.setupStreamTimers(
+        'conv-stale-reset',
+        lifecycle.requestId!,
+        lifecycle,
+        createSpy<[Error], void>()
+      )
+      const staleReset = svc.safetyTimerResets.get('conv-stale-reset')!
+
+      lifecycleRegistry.abort('conv-stale-reset', 'userStop')
+
+      // A keepalive tick or a chunk from the *new* stream must not restart the
+      // old stream's 5-minute watchdog.
+      const origSetTimeout = globalThis.setTimeout
+      let armed = 0
+      globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+        armed++
+        return origSetTimeout(fn, ms, ...(rest as []))
+      }) as typeof globalThis.setTimeout
+      try {
+        staleReset()
+      } finally {
+        globalThis.setTimeout = origSetTimeout
+      }
+
+      assert.equal(armed, 0, 'stale reset must be a no-op')
     }))
 })
 

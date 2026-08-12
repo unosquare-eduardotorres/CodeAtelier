@@ -14,9 +14,7 @@ import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Help System & Keyboard Shortcuts', () => {
-  async function ensureAppReady(
-    page: import('@playwright/test').Page
-  ): Promise<AppChrome> {
+  async function ensureAppReady(page: import('@playwright/test').Page): Promise<AppChrome> {
     const welcomePage = new WelcomePage(page)
     const chrome = new AppChrome(page)
 
@@ -51,7 +49,9 @@ test.describe('Help System & Keyboard Shortcuts', () => {
       expect(sectionCount).toBeGreaterThanOrEqual(5) // At least 5 help sections
     } else {
       // Alternative: check for section headings
-      const headings = page.locator('h2, h3').filter({ hasText: /getting|workspace|chat|agent|model/i })
+      const headings = page
+        .locator('h2, h3')
+        .filter({ hasText: /getting|workspace|chat|agent|model/i })
       const headingCount = await headings.count()
       expect(headingCount).toBeGreaterThan(0)
     }
@@ -82,7 +82,7 @@ test.describe('Help System & Keyboard Shortcuts', () => {
   })
 
   test('keyboard shortcut Cmd+N opens new chat modal', async ({ electronPage: page }) => {
-    const chrome = await ensureAppReady(page)
+    const _chrome = await ensureAppReady(page)
 
     // Open a workspace first
     const welcomePage = new WelcomePage(page)
@@ -118,7 +118,7 @@ test.describe('Help System & Keyboard Shortcuts', () => {
   })
 
   test('keyboard shortcut Cmd+B toggles sidebar', async ({ electronPage: page }) => {
-    const chrome = await ensureAppReady(page)
+    const _chrome = await ensureAppReady(page)
 
     // Open a workspace
     const welcomePage = new WelcomePage(page)
@@ -135,7 +135,7 @@ test.describe('Help System & Keyboard Shortcuts', () => {
 
     // Get initial sidebar state
     const sidebar = page.locator('[class*="sidebar"], nav').first()
-    const initialVisible = await sidebar.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _initialVisible = await sidebar.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Press Cmd+B to toggle
     await page.keyboard.press('Meta+b')
@@ -143,7 +143,7 @@ test.describe('Help System & Keyboard Shortcuts', () => {
 
     // Sidebar visibility should change (or width should change)
     // Just verify the shortcut doesn't crash
-    const afterToggle = await sidebar.isVisible({ timeout: 3_000 }).catch(() => false)
+    const _afterToggle = await sidebar.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Toggle back
     await page.keyboard.press('Meta+b')

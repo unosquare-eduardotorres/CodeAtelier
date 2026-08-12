@@ -40,13 +40,13 @@ flowchart LR
 
 ## Fact Categories
 
-| Category       | Example                                                          |
-| -------------- | ---------------------------------------------------------------- |
-| **Decision**   | "We chose PostgreSQL over MongoDB for ACID compliance"           |
-| **Convention** | "All API endpoints follow REST naming conventions"               |
-| **Gotcha**     | "The test DB must be reset before running integration tests"     |
-| **Preference** | "User prefers concise code over verbose comments"               |
-| **Reference**  | "The auth flow is documented in docs/auth-architecture.md"       |
+| Category       | Example                                                      |
+| -------------- | ------------------------------------------------------------ |
+| **Decision**   | "We chose PostgreSQL over MongoDB for ACID compliance"       |
+| **Convention** | "All API endpoints follow REST naming conventions"           |
+| **Gotcha**     | "The test DB must be reset before running integration tests" |
+| **Preference** | "User prefers concise code over verbose comments"            |
+| **Reference**  | "The auth flow is documented in docs/auth-architecture.md"   |
 
 ---
 

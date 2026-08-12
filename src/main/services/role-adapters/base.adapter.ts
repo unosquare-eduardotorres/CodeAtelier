@@ -34,15 +34,14 @@ import type {
 } from '../agent-session.types'
 import type { ControlActionCallbacks } from '../control-actions.tool'
 import { intentDetector } from '../intent-detector'
-import {
-  conversationRepository,
-  workspaceRepository
-} from '../../db/repositories'
+import { conversationRepository, workspaceRepository } from '../../db/repositories'
 import { githubService } from '../github.service'
 import { chatAgentLogger } from '../../logger'
 import { buildWorkspaceMcpConfig } from '../workspace-mcp-config'
 import { buildReadOnlyToolConfig, buildNoToolsConfig } from './evaluation-mcp-config'
 import { modelConfigService } from '../model-config.service'
+import { codeGraphService } from '../code-graph.service'
+import { vectorSearchService } from '../vector-search.service'
 import { TOOL_PRIORITY_DIRECTIVE } from '../default-prompts'
 import { appendMcpToolGuidance, type PromptFeatureFlags } from '../prompt-assembly-helpers'
 
@@ -89,6 +88,18 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
 
   private cachedTone: CommunicationTone | null = null
   private cachedToneConversationId: string | null = null
+
+  // ── Index-state cache ─────────────────────────────────────────────
+  // Resolved per prompt build rather than snapshotted at session start:
+  // indexing can finish mid-session, and a start-of-session snapshot would keep
+  // telling the model "not indexed" for the rest of the conversation.
+
+  private indexStateCache: {
+    workspaceId: string
+    at: number
+    graph: boolean
+    vectors: boolean
+  } | null = null
 
   // ── Lifecycle (overridable, sensible defaults) ──────────────────────
 
@@ -255,14 +266,47 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
    * Override in subclasses that need variations (e.g., includeGitContext).
    */
   protected buildPromptFeatureFlags(): PromptFeatureFlags {
+    const indexState = this.resolveIndexState(this.resolveWorkspaceId())
     return {
       repomapEnabled: this.repomapEnabled,
       semanticSearchEnabled: this.semanticSearchEnabled,
+      repomapIndexed: indexState.graph,
+      semanticSearchIndexed: indexState.vectors,
       githubConfigured: this.githubConfigured,
       includeGitContext: this.getIncludeGitContext(),
-      includeCheckpoint: false,
       codeAnalysisEnabled: this.codeAnalysisEnabled,
       processManagerEnabled: this.processManagerEnabled
+    }
+  }
+
+  /**
+   * Whether the workspace actually has persisted code-graph / embedding indexes.
+   * Memoized for 60s per workspace so this stays a cheap `SELECT … LIMIT 1`.
+   *
+   * Fails OPEN (reports indexed) on error — suppressing guidance because a DB
+   * probe threw is the worse failure of the two.
+   */
+  protected resolveIndexState(workspaceId: string | null): { graph: boolean; vectors: boolean } {
+    if (!workspaceId) return { graph: true, vectors: true }
+    const now = Date.now()
+    const cached = this.indexStateCache
+    if (cached && cached.workspaceId === workspaceId && now - cached.at < 60_000) {
+      return { graph: cached.graph, vectors: cached.vectors }
+    }
+    try {
+      const { graph, vectors } = this.probeIndexState(workspaceId)
+      this.indexStateCache = { workspaceId, at: now, graph, vectors }
+      return { graph, vectors }
+    } catch {
+      return { graph: true, vectors: true }
+    }
+  }
+
+  /** The actual DB probe. Separate method so tests can substitute it. */
+  protected probeIndexState(workspaceId: string): { graph: boolean; vectors: boolean } {
+    return {
+      graph: codeGraphService.hasPersistedIndex(workspaceId),
+      vectors: vectorSearchService.hasPersistedIndex(workspaceId)
     }
   }
 
@@ -273,10 +317,7 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
    * Returns undefined for local LLM providers (local models don't use
    * prompt verbosity — they get condensed prompts unconditionally).
    */
-  protected resolveModel(
-    workspacePath: string,
-    action: ModelAction
-  ): string | undefined {
+  protected resolveModel(workspacePath: string, action: ModelAction): string | undefined {
     const isLocal = modelConfigService.isLocalProvider(workspacePath)
     return isLocal ? undefined : modelConfigService.getModel(workspacePath, action)
   }

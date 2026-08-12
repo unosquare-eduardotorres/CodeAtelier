@@ -82,7 +82,13 @@ export default function PlanCard({
           </>
         )}
         <span>·</span>
-        <span title={plan.completedAt && (plan.status === 'completed' || plan.status === 'archived') ? plan.completedAt : plan.createdAt}>
+        <span
+          title={
+            plan.completedAt && (plan.status === 'completed' || plan.status === 'archived')
+              ? plan.completedAt
+              : plan.createdAt
+          }
+        >
           {plan.completedAt && (plan.status === 'completed' || plan.status === 'archived')
             ? `${plan.status === 'archived' ? 'Archived' : 'Completed'} ${formatRelativeDate(plan.completedAt)}`
             : formatRelativeDate(plan.createdAt)}
@@ -99,23 +105,22 @@ export default function PlanCard({
       </div>
 
       {/* Action buttons — config-driven (stop click propagation so card onClick isn't triggered) */}
-      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
       <div onClick={(e) => e.stopPropagation()}>
-      <PlanCardActions
-        status={plan.status}
-        hasLinkedConversation={!!plan.linkedConversationId}
-        handlers={{
-          onOpenInChat: () => onOpenInChat(plan),
-          onStartGoal: () => onStartGoal(plan),
-          onCouncilReview: () => onCouncilReview(plan),
-          onCopyPlan: () => onCopyPlan(plan),
-          onArchive: () => onArchive(plan),
-          onRestore: () => onRestore(plan),
-          onDelete: () => onDelete(plan),
-          onOpenConversation: () =>
-            plan.linkedConversationId && onOpenConversation(plan.linkedConversationId)
-        }}
-      />
+        <PlanCardActions
+          status={plan.status}
+          hasLinkedConversation={!!plan.linkedConversationId}
+          handlers={{
+            onOpenInChat: () => onOpenInChat(plan),
+            onStartGoal: () => onStartGoal(plan),
+            onCouncilReview: () => onCouncilReview(plan),
+            onCopyPlan: () => onCopyPlan(plan),
+            onArchive: () => onArchive(plan),
+            onRestore: () => onRestore(plan),
+            onDelete: () => onDelete(plan),
+            onOpenConversation: () =>
+              plan.linkedConversationId && onOpenConversation(plan.linkedConversationId)
+          }}
+        />
       </div>
     </div>
   )

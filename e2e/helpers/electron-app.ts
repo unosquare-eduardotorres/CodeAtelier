@@ -61,12 +61,18 @@ export async function waitForSelector(page: Page, selector: string, timeout = 50
  * Call this in blueprint e2e test setup before triggering build operations.
  */
 export async function pinSequentialBuild(page: Page): Promise<void> {
-  await page.evaluate(() =>
-    (window as unknown as { api: { setAppPreference: (args: { key: string; value: string }) => Promise<void> } }).api.setAppPreference({
-      key: 'parallel_build_agents',
-      value: '1'
+  await page
+    .evaluate(() =>
+      (
+        window as unknown as {
+          api: { setAppPreference: (args: { key: string; value: string }) => Promise<void> }
+        }
+      ).api.setAppPreference({
+        key: 'parallel_build_agents',
+        value: '1'
+      })
+    )
+    .catch(() => {
+      // Swallow if preload API not yet available (page not fully loaded)
     })
-  ).catch(() => {
-    // Swallow if preload API not yet available (page not fully loaded)
-  })
 }

@@ -126,7 +126,10 @@ if (engineLoaded) {
         b[i] = Math.sin(i)
       }
       const sim = cosineSimilarity(a, b)
-      assert.ok(Math.abs(sim - 1.0) < 1e-5, `Identical 384-dim vectors should have sim=1.0, got ${sim}`)
+      assert.ok(
+        Math.abs(sim - 1.0) < 1e-5,
+        `Identical 384-dim vectors should have sim=1.0, got ${sim}`
+      )
     })
 
     test('scaled vectors still produce 1.0 similarity', () => {
@@ -206,7 +209,7 @@ if (engineLoaded) {
         makeConfirm('tool', 2),
         makeConfirm('extraction', 0)
       ]
-      assert.equal(computePromotionTierPure(2, 0.90, confirms), 3)
+      assert.equal(computePromotionTierPure(2, 0.9, confirms), 3)
     })
 
     test('mixed auto_dedup + real confirms: only real confirms count for daySpan', () => {
@@ -217,7 +220,7 @@ if (engineLoaded) {
         makeConfirm('tool', 0),
         makeConfirm('auto_dedup', 30),
         makeConfirm('auto_dedup', 20),
-        makeConfirm('auto_dedup', 15),
+        makeConfirm('auto_dedup', 15)
       ]
       assert.equal(computePromotionTierPure(0, 0.5, confirms), 0)
     })
@@ -229,7 +232,7 @@ if (engineLoaded) {
         makeConfirm('tool', 20, 0.5),
         makeConfirm('extraction', 15, 0.5),
         makeConfirm('tool', 10, 0.5),
-        makeConfirm('extraction', 5, 0.5),
+        makeConfirm('extraction', 5, 0.5)
       ]
       // Weighted sum = 1+1+0.5+0.5+0.5+0.5 = 4.0 → not enough (needs 8)
       assert.equal(computePromotionTierPure(2, 0.95, confirms), 2)
@@ -250,23 +253,25 @@ if (engineLoaded) {
   // ── VOLATILE_PATTERNS edge cases ──
   describe('VOLATILE_PATTERNS — deep edge cases', () => {
     test('detects generic version: pattern', () => {
-      assert.ok(VOLATILE_PATTERNS.some(p => p.test('version: 42')))
-      assert.ok(VOLATILE_PATTERNS.some(p => p.test('Version: 100')))
+      assert.ok(VOLATILE_PATTERNS.some((p) => p.test('version: 42')))
+      assert.ok(VOLATILE_PATTERNS.some((p) => p.test('Version: 100')))
     })
 
     test('detects build.electronVersion', () => {
-      assert.ok(VOLATILE_PATTERNS.some(p => p.test('build.electronVersion: 42.4.1')))
+      assert.ok(VOLATILE_PATTERNS.some((p) => p.test('build.electronVersion: 42.4.1')))
     })
 
     test('does not match generic prose', () => {
-      assert.ok(!VOLATILE_PATTERNS.some(p => p.test('The project uses TypeScript for type safety')))
-      assert.ok(!VOLATILE_PATTERNS.some(p => p.test('Electron-based desktop application')))
+      assert.ok(
+        !VOLATILE_PATTERNS.some((p) => p.test('The project uses TypeScript for type safety'))
+      )
+      assert.ok(!VOLATILE_PATTERNS.some((p) => p.test('Electron-based desktop application')))
     })
 
     test('detects semver in various contexts', () => {
-      assert.ok(VOLATILE_PATTERNS.some(p => p.test('upgraded to v1.0.0')))
-      assert.ok(VOLATILE_PATTERNS.some(p => p.test('Playwright v1.61.1')))
-      assert.ok(VOLATILE_PATTERNS.some(p => p.test('using v42.7.0 for builds')))
+      assert.ok(VOLATILE_PATTERNS.some((p) => p.test('upgraded to v1.0.0')))
+      assert.ok(VOLATILE_PATTERNS.some((p) => p.test('Playwright v1.61.1')))
+      assert.ok(VOLATILE_PATTERNS.some((p) => p.test('using v42.7.0 for builds')))
     })
   })
 
@@ -317,7 +322,9 @@ if (engineLoaded) {
     })
 
     test('sourceTypeToConfirmationType maps all source types', () => {
-      const map = (memoryEngineService as any).sourceTypeToConfirmationType.bind(memoryEngineService)
+      const map = (memoryEngineService as any).sourceTypeToConfirmationType.bind(
+        memoryEngineService
+      )
       assert.equal(map('manual'), 'human')
       assert.equal(map('tool'), 'tool')
       assert.equal(map('session'), 'extraction')
@@ -342,7 +349,11 @@ if (engineLoaded) {
       const increment = (memoryEngineService as any).incrementCaptureCap.bind(memoryEngineService)
 
       // Fill session cap
-      const params = { sourceType: 'session', sourceRef: 'test-session-deep', workspaceId: 'ws-deep' }
+      const params = {
+        sourceType: 'session',
+        sourceRef: 'test-session-deep',
+        workspaceId: 'ws-deep'
+      }
       for (let i = 0; i < CAPTURE_CAPS.MAX_FACTS_PER_SESSION; i++) {
         increment(params)
       }
@@ -363,7 +374,11 @@ if (engineLoaded) {
     test('checkCaptureCap bypasses for bootstrap/blueprint/grill/tool writes', () => {
       const check = (memoryEngineService as any).checkCaptureCap.bind(memoryEngineService)
       for (const sourceType of ['bootstrap', 'blueprint', 'grill', 'tool']) {
-        assert.equal(check({ sourceType, workspaceId: 'test-ws' }), true, `${sourceType} should bypass caps`)
+        assert.equal(
+          check({ sourceType, workspaceId: 'test-ws' }),
+          true,
+          `${sourceType} should bypass caps`
+        )
       }
     })
 
@@ -419,7 +434,10 @@ if (extractionLoaded) {
 
     test('prompt instructs JSON output per line', () => {
       assert.ok(extractionSource.includes('one per line'))
-      assert.ok(extractionSource.includes('MAXIMUM 3 facts'))
+      assert.ok(
+        extractionSource.includes('Extract UP TO'),
+        'Prompt should instruct dynamic extraction budget'
+      )
     })
 
     test('prompt lists all 5 valid categories', () => {
@@ -435,11 +453,22 @@ if (extractionLoaded) {
 
   describe('MemoryExtractionService — parseExtractedFacts logic', () => {
     // Replicate parseExtractedFacts from source for hermetic testing
-    const VALID_CATEGORIES = ['decision', 'convention', 'gotcha', 'preference', 'reference'] as const
-    const MAX_EXTRACTED_FACTS = 3
-
-    function parseExtractedFacts(text: string): Array<{
-      category: string; title: string; content: string; tags: string[]; scopePaths: string[]
+    const VALID_CATEGORIES = [
+      'decision',
+      'convention',
+      'gotcha',
+      'preference',
+      'reference'
+    ] as const
+    function parseExtractedFacts(
+      text: string,
+      maxFacts: number = 3
+    ): Array<{
+      category: string
+      title: string
+      content: string
+      tags: string[]
+      scopePaths: string[]
     }> {
       const facts: any[] = []
       const lines = text.split('\n').filter((l: string) => l.trim().startsWith('{'))
@@ -453,19 +482,22 @@ if (extractionLoaded) {
           facts.push({
             category: data.category,
             title: String(data.title).slice(0, 200),
-            content: String(data.content).slice(0, 2000),
+            content: String(data.content).slice(0, 4000),
             tags: Array.isArray(data.tags) ? data.tags.map(String).slice(0, 10) : [],
-            scopePaths: Array.isArray(data.scopePaths) ? data.scopePaths.map(String).slice(0, 10) : []
+            scopePaths: Array.isArray(data.scopePaths)
+              ? data.scopePaths.map(String).slice(0, 10)
+              : []
           })
         } catch {
           // skip malformed
         }
       }
-      return facts.slice(0, MAX_EXTRACTED_FACTS)
+      return facts.slice(0, maxFacts)
     }
 
     test('parses single valid JSON line', () => {
-      const input = '{"category":"decision","title":"Use SQLite","content":"Chose SQLite for embedded use case.","tags":["db"]}'
+      const input =
+        '{"category":"decision","title":"Use SQLite","content":"Chose SQLite for embedded use case.","tags":["db"]}'
       const result = parseExtractedFacts(input)
       assert.equal(result.length, 1)
       assert.equal(result[0].category, 'decision')
@@ -487,12 +519,22 @@ if (extractionLoaded) {
       assert.equal(result[1].category, 'gotcha')
     })
 
-    test('caps at MAX_EXTRACTED_FACTS (3)', () => {
-      const input = Array.from({ length: 5 }, (_, i) =>
-        `{"category":"decision","title":"Fact ${i}","content":"Content ${i}"}`
+    test('caps at default maxFacts (3)', () => {
+      const input = Array.from(
+        { length: 5 },
+        (_, i) => `{"category":"decision","title":"Fact ${i}","content":"Content ${i}"}`
       ).join('\n')
       const result = parseExtractedFacts(input)
       assert.equal(result.length, 3)
+    })
+
+    test('caps at custom maxFacts when passed', () => {
+      const input = Array.from(
+        { length: 12 },
+        (_, i) => `{"category":"decision","title":"Fact ${i}","content":"Content ${i}"}`
+      ).join('\n')
+      const result = parseExtractedFacts(input, 7)
+      assert.equal(result.length, 7)
     })
 
     test('truncates long titles to 200 chars', () => {
@@ -501,10 +543,10 @@ if (extractionLoaded) {
       assert.equal(result[0].title.length, 200)
     })
 
-    test('truncates long content to 2000 chars', () => {
-      const input = `{"category":"decision","title":"Title","content":"${'B'.repeat(3000)}"}`
+    test('truncates long content to 4000 chars', () => {
+      const input = `{"category":"decision","title":"Title","content":"${'B'.repeat(5000)}"}`
       const result = parseExtractedFacts(input)
-      assert.equal(result[0].content.length, 2000)
+      assert.equal(result[0].content.length, 4000)
     })
 
     test('handles missing tags/scopePaths gracefully', () => {
@@ -534,9 +576,28 @@ if (extractionLoaded) {
     })
 
     test('only processes lines starting with {', () => {
-      const input = '  some preamble text\n  {"category":"decision","title":"T","content":"C"}\n  trailing text'
+      const input =
+        '  some preamble text\n  {"category":"decision","title":"T","content":"C"}\n  trailing text'
       const result = parseExtractedFacts(input)
       assert.equal(result.length, 1)
+    })
+  })
+
+  describe('estimateExtractionBudget scoring', () => {
+    test('estimateExtractionBudget is defined in source', () => {
+      assert.ok(extractionSource.includes('function estimateExtractionBudget('))
+    })
+
+    test('source contains richFilePatterns check for CLAUDE/ARCHITECTURE', () => {
+      assert.ok(extractionSource.includes('CLAUDE|ARCHITECTURE'))
+    })
+
+    test('source maps score to budget tiers (2, 3, 5, 7, 10)', () => {
+      assert.ok(extractionSource.includes('return 10'))
+      assert.ok(extractionSource.includes('return 7'))
+      assert.ok(extractionSource.includes('return 5'))
+      assert.ok(extractionSource.includes('return 3'))
+      assert.ok(extractionSource.includes('return 2'))
     })
   })
 
@@ -627,10 +688,10 @@ if (extractionLoaded) {
 
 if (retrievalLoaded) {
   // Replicate internal scoring helpers for hermetic testing
-  const WEIGHT_COSINE = 0.50
+  const WEIGHT_COSINE = 0.5
   const WEIGHT_KEYWORD = 0.25
-  const WEIGHT_TIER = 0.10
-  const WEIGHT_RECENCY = 0.10
+  const WEIGHT_TIER = 0.1
+  const WEIGHT_RECENCY = 0.1
   const WEIGHT_SCOPE = 0.05
 
   function tokenize(text: string): string[] {
@@ -641,7 +702,10 @@ if (retrievalLoaded) {
       .filter((t: string) => t.length > 2)
   }
 
-  function computeKeywordOverlap(queryTokens: string[], fact: { title: string; content: string; tags: string[] }): number {
+  function computeKeywordOverlap(
+    queryTokens: string[],
+    fact: { title: string; content: string; tags: string[] }
+  ): number {
     if (queryTokens.length === 0) return 0
     const factText = `${fact.title} ${fact.content} ${fact.tags.join(' ')}`.toLowerCase()
     let hits = 0
@@ -651,7 +715,10 @@ if (retrievalLoaded) {
     return hits / queryTokens.length
   }
 
-  function computeRecency(fact: { lastAccessedAt?: string; updatedAt?: string; createdAt: string }, now: number): number {
+  function computeRecency(
+    fact: { lastAccessedAt?: string; updatedAt?: string; createdAt: string },
+    now: number
+  ): number {
     const dateStr = fact.lastAccessedAt || fact.updatedAt || fact.createdAt
     if (!dateStr) return 0.5
     const age = now - new Date(dateStr).getTime()
@@ -693,13 +760,13 @@ if (retrievalLoaded) {
 
     test('preserves file path segments', () => {
       const tokens = tokenize('src/main/services/memory-engine.service.ts')
-      assert.ok(tokens.some(t => t.includes('src/main/services')))
+      assert.ok(tokens.some((t) => t.includes('src/main/services')))
     })
 
     test('preserves underscores and hyphens', () => {
       const tokens = tokenize('snake_case and kebab-case')
-      assert.ok(tokens.some(t => t.includes('snake_case')))
-      assert.ok(tokens.some(t => t.includes('kebab-case')))
+      assert.ok(tokens.some((t) => t.includes('snake_case')))
+      assert.ok(tokens.some((t) => t.includes('kebab-case')))
     })
 
     test('empty string returns empty array', () => {
@@ -718,7 +785,7 @@ if (retrievalLoaded) {
       const tokens = ['jwt', 'auth', 'database']
       const fact = { title: 'JWT auth', content: 'authentication flow', tags: [] }
       const score = computeKeywordOverlap(tokens, fact)
-      assert.ok(Math.abs(score - 2/3) < 0.01)
+      assert.ok(Math.abs(score - 2 / 3) < 0.01)
     })
 
     test('no overlap returns 0', () => {
@@ -734,7 +801,11 @@ if (retrievalLoaded) {
 
     test('tags contribute to overlap', () => {
       const tokens = ['sqlite', 'database']
-      const fact = { title: 'Storage', content: 'Uses embedded storage', tags: ['sqlite', 'database'] }
+      const fact = {
+        title: 'Storage',
+        content: 'Uses embedded storage',
+        tags: ['sqlite', 'database']
+      }
       assert.equal(computeKeywordOverlap(tokens, fact), 1.0)
     })
   })
@@ -827,22 +898,24 @@ if (retrievalLoaded) {
     })
 
     test('formats a single result correctly', () => {
-      const results = [{
-        fact: {
-          id: 'f-1',
-          title: 'Use TypeScript',
-          category: 'convention',
-          tier: 2,
-          confidence: 0.85,
-          content: 'All new files must use TypeScript.',
-          scopePaths: ['src/'],
-          sourceType: 'extraction',
-          sourceRef: 'session-123',
-          tags: []
-        },
-        score: 0.75,
-        matchType: 'hybrid'
-      }]
+      const results = [
+        {
+          fact: {
+            id: 'f-1',
+            title: 'Use TypeScript',
+            category: 'convention',
+            tier: 2,
+            confidence: 0.85,
+            content: 'All new files must use TypeScript.',
+            scopePaths: ['src/'],
+            sourceType: 'extraction',
+            sourceRef: 'session-123',
+            tags: []
+          },
+          score: 0.75,
+          matchType: 'hybrid'
+        }
+      ]
       const formatted = memoryRetrievalService.formatForToolResponse(results)
       assert.ok(formatted.includes('## Use TypeScript'))
       assert.ok(formatted.includes('convention'))
@@ -856,12 +929,36 @@ if (retrievalLoaded) {
     test('separates multiple results with ---', () => {
       const results = [
         {
-          fact: { id: 'f-1', title: 'A', category: 'decision', tier: 0, confidence: 0.5, content: 'C1', scopePaths: [], sourceType: 'session', sourceRef: '', tags: [] },
-          score: 0.8, matchType: 'keyword'
+          fact: {
+            id: 'f-1',
+            title: 'A',
+            category: 'decision',
+            tier: 0,
+            confidence: 0.5,
+            content: 'C1',
+            scopePaths: [],
+            sourceType: 'session',
+            sourceRef: '',
+            tags: []
+          },
+          score: 0.8,
+          matchType: 'keyword'
         },
         {
-          fact: { id: 'f-2', title: 'B', category: 'gotcha', tier: 1, confidence: 0.6, content: 'C2', scopePaths: [], sourceType: 'tool', sourceRef: '', tags: [] },
-          score: 0.6, matchType: 'cosine'
+          fact: {
+            id: 'f-2',
+            title: 'B',
+            category: 'gotcha',
+            tier: 1,
+            confidence: 0.6,
+            content: 'C2',
+            scopePaths: [],
+            sourceType: 'tool',
+            sourceRef: '',
+            tags: []
+          },
+          score: 0.6,
+          matchType: 'cosine'
         }
       ]
       const formatted = memoryRetrievalService.formatForToolResponse(results)
@@ -871,11 +968,30 @@ if (retrievalLoaded) {
     })
 
     test('tier label mapping: 0=Observed, 1=Confirmed, 2=Established, 3=Wisdom', () => {
-      for (const [tier, label] of [[0, 'Observed'], [1, 'Confirmed'], [2, 'Established'], [3, 'Wisdom']]) {
-        const results = [{
-          fact: { id: `f-${tier}`, title: `Tier ${tier}`, category: 'decision', tier, confidence: 0.5, content: 'C', scopePaths: [], sourceType: 'tool', sourceRef: '', tags: [] },
-          score: 0.5, matchType: 'keyword'
-        }]
+      for (const [tier, label] of [
+        [0, 'Observed'],
+        [1, 'Confirmed'],
+        [2, 'Established'],
+        [3, 'Wisdom']
+      ]) {
+        const results = [
+          {
+            fact: {
+              id: `f-${tier}`,
+              title: `Tier ${tier}`,
+              category: 'decision',
+              tier,
+              confidence: 0.5,
+              content: 'C',
+              scopePaths: [],
+              sourceType: 'tool',
+              sourceRef: '',
+              tags: []
+            },
+            score: 0.5,
+            matchType: 'keyword'
+          }
+        ]
         const formatted = memoryRetrievalService.formatForToolResponse(results)
         assert.ok(formatted.includes(label as string), `Tier ${tier} should show label "${label}"`)
       }
@@ -904,10 +1020,15 @@ if (consolidationLoaded) {
   describe('selectStaleT0Facts — deep edge cases', () => {
     const wsId = 'ws-stale-test'
 
-    function makeFact(overrides: Partial<{
-      id: string; tier: number; lastAccessedAt: string | null;
-      workspaceId: string; createdAt: string
-    }> = {}) {
+    function makeFact(
+      overrides: Partial<{
+        id: string
+        tier: number
+        lastAccessedAt: string | null
+        workspaceId: string
+        createdAt: string
+      }> = {}
+    ) {
       const thirtyOneDaysAgo = new Date()
       thirtyOneDaysAgo.setDate(thirtyOneDaysAgo.getDate() - 31)
       return {
@@ -964,16 +1085,19 @@ if (consolidationLoaded) {
         makeFact({ id: 'other-ws', workspaceId: 'other' }),
         makeFact({ id: 'recent', createdAt: new Date().toISOString() }),
         makeFact({ id: 'has-ev' }),
-        makeFact({ id: 'stale-ok-2' }),
+        makeFact({ id: 'stale-ok-2' })
       ]
       const result = selectStaleT0Facts(facts, wsId, (id) => id === 'has-ev')
       assert.equal(result.length, 2)
-      assert.ok(result.some(f => f.id === 'stale-ok'))
-      assert.ok(result.some(f => f.id === 'stale-ok-2'))
+      assert.ok(result.some((f) => f.id === 'stale-ok'))
+      assert.ok(result.some((f) => f.id === 'stale-ok-2'))
     })
 
     test('empty facts array returns empty', () => {
-      assert.deepEqual(selectStaleT0Facts([], wsId, () => false), [])
+      assert.deepEqual(
+        selectStaleT0Facts([], wsId, () => false),
+        []
+      )
     })
   })
 
@@ -1035,14 +1159,18 @@ if (consolidationLoaded) {
       const confirmations = [
         { sourceType: 'auto_dedup' },
         { sourceType: 'auto_dedup' },
-        { sourceType: 'bootstrap' },
+        { sourceType: 'bootstrap' }
       ]
       assert.equal(hasRealEvidencePure(confirmations), true)
     })
 
     test('all valid source types count as evidence', () => {
       for (const type of ['human', 'tool', 'extraction', 'bootstrap']) {
-        assert.equal(hasRealEvidencePure([{ sourceType: type }]), true, `${type} should be real evidence`)
+        assert.equal(
+          hasRealEvidencePure([{ sourceType: type }]),
+          true,
+          `${type} should be real evidence`
+        )
       }
     })
   })

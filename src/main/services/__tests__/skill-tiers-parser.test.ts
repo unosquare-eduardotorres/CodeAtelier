@@ -34,7 +34,8 @@ describe('parseSkillTiers', () => {
   // ── Keyword extraction from headings ──
 
   test('extracts_keywords_from_headings', () => {
-    const content = '# Title\n\n## Authentication Setup\n\nSome instructions.\n\n## Database Config\n\nMore.'
+    const content =
+      '# Title\n\n## Authentication Setup\n\nSome instructions.\n\n## Database Config\n\nMore.'
     const result = parseSkillTiers('test', 'desc', content)
     const parsed = JSON.parse(result.tier1Json)
     assert.ok(parsed.keywords.includes('authentication'))
@@ -110,7 +111,10 @@ describe('parseSkillTiers', () => {
 
   test('keyword_cap_at_30', () => {
     // Generate 50 unique keywords from headings
-    const headings = Array.from({ length: 50 }, (_, i) => `## keyword${String(i).padStart(3, '0')} section`).join('\n\n')
+    const headings = Array.from(
+      { length: 50 },
+      (_, i) => `## keyword${String(i).padStart(3, '0')} section`
+    ).join('\n\n')
     const content = `# Title\n\n${headings}`
     const result = parseSkillTiers('test', 'desc', content)
     const parsed = JSON.parse(result.tier1Json)
@@ -160,7 +164,8 @@ describe('parseSkillTiers', () => {
   })
 
   test('special_characters_in_content_no_crash', () => {
-    const content = '# Title\n\n## Règles spéciales\n\n**café** with `regex: /[^a-z]/g`\n\n$special & <tags>'
+    const content =
+      '# Title\n\n## Règles spéciales\n\n**café** with `regex: /[^a-z]/g`\n\n$special & <tags>'
     const result = parseSkillTiers('test', 'desc', content)
     assert.ok(result.tier1Json)
     assert.ok(result.tier2Instructions)

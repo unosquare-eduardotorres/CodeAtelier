@@ -9,7 +9,7 @@
 
 import type { BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { PendingPermission } from '../../shared/types'
+import type { PendingPermission, PermissionResolved } from '../../shared/types'
 
 export interface TaggedEvent {
   workspaceId: string
@@ -54,6 +54,15 @@ export class SessionEventRouter {
     this.send(IPC_CHANNELS.PERMISSION_REQUEST, {
       ...permission
     })
+  }
+
+  /**
+   * Tell the renderer a permission request reached a terminal state, so the
+   * modal/toast/inline card clears even when the outcome did not come from a
+   * click here (turn torn down, CLI child died, auto-deny).
+   */
+  sendPermissionResolved(resolution: PermissionResolved): void {
+    this.send(IPC_CHANNELS.PERMISSION_RESOLVED, { ...resolution })
   }
 }
 

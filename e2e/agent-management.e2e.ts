@@ -24,9 +24,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Agent Management', () => {
-  async function navigateToTeamTab(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToTeamTab(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -41,20 +39,24 @@ test.describe('Agent Management', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('team')
+    await settingsNav.navigateToSettingsTab('team')
     await page.waitForTimeout(1_000)
     return true
   }
 
-  test('agent management section renders with agent cards', async ({
-    electronPage: page
-  }) => {
+  test('agent management section renders with agent cards', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(section).toBeVisible()
 
@@ -66,18 +68,25 @@ test.describe('Agent Management', () => {
     expect(cardCount > 0 || (await heading.count()) > 0).toBeTruthy()
   })
 
-  test('agent card shows avatar, name, role, and icon', async ({
-    electronPage: page
-  }) => {
+  test('agent card shows avatar, name, role, and icon', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const cards = section.locator('[data-testid="agent-management-card"]')
-    if ((await cards.count()) === 0) { test.skip(); return }
+    if ((await cards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     const firstCard = cards.first()
     await expect(firstCard).toBeVisible()
@@ -87,23 +96,31 @@ test.describe('Agent Management', () => {
     expect(text?.trim().length).toBeGreaterThan(0)
 
     // Card should have an emoji icon or avatar element
-    const hasIcon = (text?.match(/[\u{1F000}-\u{1FFFF}]/u) !== null) ||
+    const hasIcon =
+      text?.match(/[\u{1F000}-\u{1FFFF}]/u) !== null ||
       (await firstCard.locator('span').first().isVisible())
     expect(hasIcon).toBeTruthy()
   })
 
-  test('clicking an agent card expands the detail panel', async ({
-    electronPage: page
-  }) => {
+  test('clicking an agent card expands the detail panel', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const cards = section.locator('[data-testid="agent-management-card"]')
-    if ((await cards.count()) === 0) { test.skip(); return }
+    if ((await cards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     // Click the first agent card
     await cards.first().click()
@@ -119,21 +136,33 @@ test.describe('Agent Management', () => {
     electronPage: page
   }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const cards = section.locator('[data-testid="agent-management-card"]')
-    if ((await cards.count()) === 0) { test.skip(); return }
+    if ((await cards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await cards.first().click()
     await page.waitForTimeout(500)
 
     const detailPanel = page.locator('[data-testid="agent-detail-panel"]')
     const panelVisible = await detailPanel.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!panelVisible) { test.skip(); return }
+    if (!panelVisible) {
+      test.skip()
+      return
+    }
 
     // Panel should have text content (agent details)
     const panelText = await detailPanel.textContent()
@@ -146,72 +175,108 @@ test.describe('Agent Management', () => {
     }
   })
 
-  test('active/inactive toggle switches agent state', async ({
-    electronPage: page
-  }) => {
+  test('active/inactive toggle switches agent state', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const cards = section.locator('[data-testid="agent-management-card"]')
-    if ((await cards.count()) === 0) { test.skip(); return }
+    if ((await cards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await cards.first().click()
     await page.waitForTimeout(500)
 
     const detailPanel = page.locator('[data-testid="agent-detail-panel"]')
     const panelVisible = await detailPanel.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!panelVisible) { test.skip(); return }
+    if (!panelVisible) {
+      test.skip()
+      return
+    }
 
     // Look for the activate/deactivate toggle button
     const toggleBtn = detailPanel.locator('button').filter({
       hasText: /Deactivate|Activate/i
     })
-    if ((await toggleBtn.count()) === 0) { test.skip(); return }
+    if ((await toggleBtn.count()) === 0) {
+      test.skip()
+      return
+    }
 
     const initialText = await toggleBtn.first().textContent()
     await toggleBtn.first().click()
     await page.waitForTimeout(1_000)
 
     // Text should change (Activate <-> Deactivate)
-    const newText = await toggleBtn.first().textContent().catch(() => initialText)
+    const newText = await toggleBtn
+      .first()
+      .textContent()
+      .catch(() => initialText)
     // Either text changed or button shows loading state
     expect(newText !== null).toBeTruthy()
   })
 
-  test('delete button shows confirmation dialog', async ({
-    electronPage: page
-  }) => {
+  test('delete button shows confirmation dialog', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const cards = section.locator('[data-testid="agent-management-card"]')
-    if ((await cards.count()) === 0) { test.skip(); return }
+    if ((await cards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await cards.first().click()
     await page.waitForTimeout(500)
 
     const detailPanel = page.locator('[data-testid="agent-detail-panel"]')
     const panelVisible = await detailPanel.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!panelVisible) { test.skip(); return }
+    if (!panelVisible) {
+      test.skip()
+      return
+    }
 
     // Look for delete button (Trash icon button)
-    const deleteBtn = detailPanel.locator('button[aria-label*="delete" i], button:has(svg.lucide-trash-2)').first()
-    if (!(await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false))) { test.skip(); return }
+    const deleteBtn = detailPanel
+      .locator('button[aria-label*="delete" i], button:has(svg.lucide-trash-2)')
+      .first()
+    if (!(await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     await deleteBtn.click()
     await page.waitForTimeout(500)
 
     // Confirmation dialog should appear
-    const dialog = page.locator('[data-testid="confirm-dialog"], [role="alertdialog"], [role="dialog"]')
-    const dialogVisible = await dialog.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const dialog = page.locator(
+      '[data-testid="confirm-dialog"], [role="alertdialog"], [role="dialog"]'
+    )
+    const dialogVisible = await dialog
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(dialogVisible).toBeTruthy()
 
     // Dismiss dialog
@@ -221,29 +286,44 @@ test.describe('Agent Management', () => {
     }
   })
 
-  test('agent sync button triggers YAML re-scan', async ({
-    electronPage: page
-  }) => {
+  test('agent sync button triggers YAML re-scan', async ({ electronPage: page }) => {
     const ready = await navigateToTeamTab(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const section = page.locator('[data-testid="agent-management-section"]')
     const isVisible = await section.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const cards = section.locator('[data-testid="agent-management-card"]')
-    if ((await cards.count()) === 0) { test.skip(); return }
+    if ((await cards.count()) === 0) {
+      test.skip()
+      return
+    }
 
     await cards.first().click()
     await page.waitForTimeout(500)
 
     const detailPanel = page.locator('[data-testid="agent-detail-panel"]')
     const panelVisible = await detailPanel.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!panelVisible) { test.skip(); return }
+    if (!panelVisible) {
+      test.skip()
+      return
+    }
 
     // Look for sync/refresh button
-    const syncBtn = detailPanel.locator('button[aria-label*="sync" i], button:has(svg.lucide-refresh-cw)').first()
-    if (!(await syncBtn.isVisible({ timeout: 2_000 }).catch(() => false))) { test.skip(); return }
+    const syncBtn = detailPanel
+      .locator('button[aria-label*="sync" i], button:has(svg.lucide-refresh-cw)')
+      .first()
+    if (!(await syncBtn.isVisible({ timeout: 2_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
 
     // Button should be clickable
     await expect(syncBtn).toBeEnabled()

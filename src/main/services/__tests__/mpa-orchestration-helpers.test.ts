@@ -9,7 +9,11 @@ import { test, describe, summaryAsync } from './test-harness'
 
 // ── Import actual pure functions where available ──
 
-import { buildPlannerGoalCondition, buildBuilderGoalCondition, buildVerifierGoalCondition } from '../mpa-goal-conditions'
+import {
+  buildPlannerGoalCondition,
+  buildBuilderGoalCondition,
+  buildVerifierGoalCondition
+} from '../mpa-goal-conditions'
 import { hasFailingCriteria } from '../mpa-artifact-parsers'
 
 // ── Replicated constants ──
@@ -44,9 +48,12 @@ function computeRunStatus(params: {
  */
 function resolvePhaseRole(phaseType: MpaPhaseType): string {
   switch (phaseType) {
-    case 'plan': return 'mpa-planner'
-    case 'execute': return 'mpa-builder'
-    case 'verify': return 'mpa-verifier'
+    case 'plan':
+      return 'mpa-planner'
+    case 'execute':
+      return 'mpa-builder'
+    case 'verify':
+      return 'mpa-verifier'
   }
 }
 
@@ -64,9 +71,7 @@ function shouldContinueVerifyLoop(
 /**
  * Replicated token accumulation pattern.
  */
-function accumulatePhaseTokens(
-  phases: Array<{ tokens: number }>
-): number {
+function accumulatePhaseTokens(phases: Array<{ tokens: number }>): number {
   return phases.reduce((sum, p) => sum + p.tokens, 0)
 }
 
@@ -172,7 +177,9 @@ describe('Goal condition extraction — expanded', () => {
   })
 
   test('builder_goal_requires_tests', () => {
-    const plan = { items: [{ id: 'item-1', title: 'Task', description: '', files: [], scope: '', dependsOn: [] }] }
+    const plan = {
+      items: [{ id: 'item-1', title: 'Task', description: '', files: [], scope: '', dependsOn: [] }]
+    }
     const condition = buildBuilderGoalCondition(plan as any)
     assert.ok(condition.includes('Tests written'))
   })
@@ -193,11 +200,7 @@ describe('Goal condition extraction — expanded', () => {
 
 describe('Token accumulation', () => {
   test('phases_add_to_total_tokens', () => {
-    const total = accumulatePhaseTokens([
-      { tokens: 5000 },
-      { tokens: 10000 },
-      { tokens: 3000 }
-    ])
+    const total = accumulatePhaseTokens([{ tokens: 5000 }, { tokens: 10000 }, { tokens: 3000 }])
     assert.equal(total, 18000)
   })
 
@@ -236,23 +239,27 @@ describe('hasFailingCriteria — expanded', () => {
   })
 
   test('all_pass_returns_false', () => {
-    assert.ok(!hasFailingCriteria({
-      allComplete: true,
-      criteriaResults: [
-        { status: 'pass', criterion: 'Tests pass' },
-        { status: 'pass', criterion: 'Lint clean' }
-      ]
-    } as any))
+    assert.ok(
+      !hasFailingCriteria({
+        allComplete: true,
+        criteriaResults: [
+          { status: 'pass', criterion: 'Tests pass' },
+          { status: 'pass', criterion: 'Lint clean' }
+        ]
+      } as any)
+    )
   })
 
   test('one_fail_returns_true', () => {
-    assert.ok(hasFailingCriteria({
-      allComplete: false,
-      criteriaResults: [
-        { status: 'pass', criterion: 'Tests pass' },
-        { status: 'fail', criterion: 'Lint clean' }
-      ]
-    } as any))
+    assert.ok(
+      hasFailingCriteria({
+        allComplete: false,
+        criteriaResults: [
+          { status: 'pass', criterion: 'Tests pass' },
+          { status: 'fail', criterion: 'Lint clean' }
+        ]
+      } as any)
+    )
   })
 
   test('null_report_returns_false', () => {

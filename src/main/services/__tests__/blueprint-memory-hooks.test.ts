@@ -76,9 +76,25 @@ describe('blueprint approval fact', () => {
 describe('reference doc extraction at specify phase', () => {
   test('binary docs are filtered out before extraction', () => {
     const BINARY_EXTS = new Set([
-      '.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp',
-      '.pdf', '.doc', '.docx',
-      '.zip', '.tar', '.gz', '.dmg', '.exe', '.mp3', '.mp4', '.wav'
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.gif',
+      '.webp',
+      '.svg',
+      '.ico',
+      '.bmp',
+      '.pdf',
+      '.doc',
+      '.docx',
+      '.zip',
+      '.tar',
+      '.gz',
+      '.dmg',
+      '.exe',
+      '.mp3',
+      '.mp4',
+      '.wav'
     ])
 
     const docs = [

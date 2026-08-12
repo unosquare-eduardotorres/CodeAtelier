@@ -8,6 +8,8 @@
  * Specify session  → minimal spec + blueprint-phase-complete (specify)
  * Clarify turn 1   → findings + questions (q1–q3 with options)
  * Clarify turn 2   → reads answer, emits resolved findings + blueprint-phase-complete (clarify)
+ * Slow chat        → plain chat turn dripped out over ~15s (E2E_SLOW_STREAM marker),
+ *                    so a test can act while the stream is still live
  *
  * Designed to be placed on PATH ahead of the real `claude` CLI.
  *
@@ -24,13 +26,20 @@ const readline = require('readline')
 // ── Marker file (test can assert shim was used, not real CLI) ──
 
 const markerDir = process.env.CLAUDE_SHIM_MARKER_DIR || path.join(__dirname, '.markers')
-try { fs.mkdirSync(markerDir, { recursive: true }) } catch { /* ignore */ }
+try {
+  fs.mkdirSync(markerDir, { recursive: true })
+} catch {
+  /* ignore */
+}
 const spawnId = `shim-${Date.now()}-${process.pid}`
-fs.writeFileSync(path.join(markerDir, spawnId), JSON.stringify({
-  pid: process.pid,
-  args: process.argv.slice(2),
-  timestamp: new Date().toISOString()
-}))
+fs.writeFileSync(
+  path.join(markerDir, spawnId),
+  JSON.stringify({
+    pid: process.pid,
+    args: process.argv.slice(2),
+    timestamp: new Date().toISOString()
+  })
+)
 
 // ── NDJSON helpers ──
 
@@ -47,7 +56,7 @@ function emitInit() {
   })
 }
 
-function emitTextDelta(text) {
+function emitTextBlockStart() {
   emit({
     type: 'stream_event',
     event: {
@@ -55,7 +64,9 @@ function emitTextDelta(text) {
       content_block: { type: 'text' }
     }
   })
-  // Emit in one chunk for simplicity
+}
+
+function emitDelta(text) {
   emit({
     type: 'stream_event',
     event: {
@@ -63,6 +74,12 @@ function emitTextDelta(text) {
       delta: { type: 'text_delta', text }
     }
   })
+}
+
+function emitTextDelta(text) {
+  emitTextBlockStart()
+  // Emit in one chunk for simplicity
+  emitDelta(text)
 }
 
 function emitMessageStart() {
@@ -123,7 +140,8 @@ const CLARIFY_FINDINGS = {
       severity: 'high',
       status: 'outstanding',
       title: 'Response format unspecified',
-      description: 'The spec does not define whether the greeting endpoint should return plain text or JSON.',
+      description:
+        'The spec does not define whether the greeting endpoint should return plain text or JSON.',
       specRefs: ['section 1.1'],
       recommendation: 'Define the response content type and structure.'
     },
@@ -210,7 +228,7 @@ ${questionsJson}
 
 function buildClarifyTurn2Response() {
   const resolvedFindings = {
-    findings: CLARIFY_FINDINGS.findings.map(f => ({
+    findings: CLARIFY_FINDINGS.findings.map((f) => ({
       ...f,
       status: 'resolved'
     })),
@@ -231,11 +249,54 @@ All gaps have been addressed. The specification is now complete and ready for pl
 \`\`\``
 }
 
+// ── Slow chat (workspace-switch streaming tests) ──
+
+/** A chat prompt containing this marker gets a deliberately slow stream. */
+const SLOW_STREAM_MARKER = 'E2E_SLOW_STREAM'
+/** Emitted in the last delta — proves the tail of the stream survived. */
+const SLOW_STREAM_SENTINEL = 'E2E-STREAM-SENTINEL'
+const SLOW_STREAM_DELTAS = Number(process.env.CLAUDE_SHIM_SLOW_DELTAS || 30)
+const SLOW_STREAM_DELAY_MS = Number(process.env.CLAUDE_SHIM_SLOW_DELAY_MS || 1000)
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+/** Append a truncated copy of each user turn — makes shim-gated E2E failures diagnosable. */
+function recordTurn(turn, content) {
+  try {
+    fs.appendFileSync(
+      path.join(markerDir, `${spawnId}.turns.log`),
+      `--- turn ${turn} ---\n${content.slice(0, 400)}\n`
+    )
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Drip a plain-text answer out over SLOW_STREAM_DELTAS × SLOW_STREAM_DELAY_MS.
+ * The window is what makes "switch workspaces mid-stream" testable at all.
+ */
+async function handleSlowChatTurn() {
+  emitMessageStart()
+  emitTextBlockStart()
+
+  let full = ''
+  for (let i = 1; i <= SLOW_STREAM_DELTAS; i++) {
+    const piece = i === SLOW_STREAM_DELTAS ? `${SLOW_STREAM_SENTINEL}\n` : `slow chunk ${i}\n`
+    full += piece
+    emitDelta(piece)
+    await sleep(SLOW_STREAM_DELAY_MS)
+  }
+
+  emitResult(full)
+}
+
 // ── State machine ──
 
 let turnCount = 0
 let isSpecify = false
 let isClarify = false
+let isSlowChat = false
 
 // ── Main loop ──
 
@@ -267,14 +328,26 @@ async function main() {
 
     const content = extractUserText(msg)
     turnCount++
+    recordTurn(turnCount, content)
+
+    // Slow-chat is detected on ANY turn: the app may send a preamble user
+    // message before the operator's actual prompt, so gating this on turn 1
+    // would silently fall through to the specify default.
+    if (content.includes(SLOW_STREAM_MARKER)) {
+      isSlowChat = true
+    }
 
     // Phase detection on first user message
-    if (turnCount === 1) {
-      if (content.includes('Generate a detailed specification') ||
-          content.includes('specification') && content.includes('description')) {
+    if (turnCount === 1 && !isSlowChat) {
+      if (
+        content.includes('Generate a detailed specification') ||
+        (content.includes('specification') && content.includes('description'))
+      ) {
         isSpecify = true
-      } else if (content.includes('Analyze the specification') ||
-                 content.includes('gap analysis')) {
+      } else if (
+        content.includes('Analyze the specification') ||
+        content.includes('gap analysis')
+      ) {
         isClarify = true
       } else {
         // Default: treat as specify for robustness
@@ -283,7 +356,10 @@ async function main() {
     }
 
     // Route to the appropriate handler
-    if (isSpecify) {
+    if (isSlowChat) {
+      await handleSlowChatTurn()
+      break // One slow turn is all the test needs
+    } else if (isSpecify) {
       handleSpecifyTurn(content)
       break // Specify is one-shot
     } else if (isClarify) {
@@ -293,7 +369,7 @@ async function main() {
   }
 
   // Give a moment for stdout to flush, then exit cleanly
-  await new Promise(r => setTimeout(r, 100))
+  await new Promise((r) => setTimeout(r, 100))
   process.exit(0)
 }
 
@@ -303,8 +379,8 @@ function extractUserText(msg) {
   if (typeof message.content === 'string') return message.content
   if (Array.isArray(message.content)) {
     return message.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
+      .filter((b) => b.type === 'text')
+      .map((b) => b.text)
       .join('\n')
   }
   return ''
@@ -346,7 +422,7 @@ function handleClarifyTurn(content, turn) {
   }
 }
 
-main().catch(err => {
+main().catch((err) => {
   process.stderr.write(`[claude-shim] Fatal error: ${err.message}\n`)
   process.exit(1)
 })

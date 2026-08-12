@@ -114,7 +114,6 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     return this.llmProvider !== 'local-llm'
   }
 
-
   override onSessionStop(): void {
     this.systemPrompt = null
     this.repomapEnabled = true

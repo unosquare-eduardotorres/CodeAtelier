@@ -14,14 +14,14 @@ export const ICON_ALIASES: Record<string, string> = {
   'alert-triangle': 'triangle-alert',
   'alert-circle': 'circle-alert',
   'alert-octagon': 'octagon-alert',
-  'edit': 'square-pen',
+  edit: 'square-pen',
   'edit-2': 'pencil',
   'edit-3': 'pencil',
-  'home': 'house',
-  'layout': 'layout-grid',
-  'send': 'send-horizontal',
+  home: 'house',
+  layout: 'layout-grid',
+  send: 'send-horizontal',
   'trash-2': 'trash',
-  'external-link': 'square-arrow-out-up-right',
+  'external-link': 'square-arrow-out-up-right'
 }
 
 /**
@@ -33,19 +33,13 @@ export function splitIconNodeLines(definition: string): string {
   // Case 1: }NodeId@{  (no separator — direct concatenation)
   // Case 2: } NodeId@{ (space only — also invalid for mermaid)
   // [\w-]+ matches hyphenated node IDs like my-node, step-1
-  let result = definition.replace(
-    /\}([ \t]*)([\w-]+@\{)/g,
-    '}\n  $2'
-  )
+  let result = definition.replace(/\}([ \t]*)([\w-]+@\{)/g, '}\n  $2')
 
   // Case 3: @{...} --> NodeId  or  @{...} --> NodeId@{...}
   // Any --, ==, or -. immediately after a @{} block is always a link arrow
   // in Mermaid, never valid label text. Handles plain arrows (-->), thick
   // arrows (==>), dotted arrows (-.->), and labeled edges (--text-->).
-  result = result.replace(
-    /(@\{[^}]*\})([ \t]*)(--|==|-\.|<-|~~)/g,
-    '$1\n  $3'
-  )
+  result = result.replace(/(@\{[^}]*\})([ \t]*)(--|==|-\.|<-|~~)/g, '$1\n  $3')
 
   return result
 }
@@ -100,13 +94,10 @@ export function fixIconSyntax(definition: string): string {
  * Matches both single and double-quoted icon names, always outputs double quotes.
  */
 export function fixIconNames(definition: string): string {
-  return definition.replace(
-    /icon:\s*["']lucide:([^"']+)["']/g,
-    (_match, iconName: string) => {
-      const resolved = ICON_ALIASES[iconName] ?? iconName
-      return `icon: "lucide:${resolved}"`
-    }
-  )
+  return definition.replace(/icon:\s*["']lucide:([^"']+)["']/g, (_match, iconName: string) => {
+    const resolved = ICON_ALIASES[iconName] ?? iconName
+    return `icon: "lucide:${resolved}"`
+  })
 }
 
 /**

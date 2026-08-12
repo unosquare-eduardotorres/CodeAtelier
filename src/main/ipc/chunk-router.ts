@@ -6,7 +6,12 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode, ConversationPhase, ToolActivity, PlanRecord } from '../../shared/types'
+import type {
+  ConversationMode,
+  ConversationPhase,
+  ToolActivity,
+  PlanRecord
+} from '../../shared/types'
 import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './chat-protocol'
 import { processToolChunk } from './tool-chunk-processor'
 import { TextDeltaBatcher } from './text-delta-batcher'
@@ -74,6 +79,44 @@ export function recordExternalToolActivity(
 }
 
 /**
+ * Whole-message budget for inline edit diffs. tool-chunk-processor caps each
+ * ACTIVITY at 16KB, but a build turn with 40 Edit calls would still put ~640KB
+ * of JSON into a single `messages` row, re-parsed on every conversation open.
+ */
+export const MAX_MESSAGE_EDIT_DIFF_CHARS = 128_000
+
+/**
+ * Enforce the per-message editDiffs budget. Walks newest-first so the most
+ * recent edits (the ones the user is actually looking at) are kept, and strips
+ * diffs off older activities once the budget is spent — the activity itself and
+ * its `editDiffsOmitted` count survive, so the UI still shows what was dropped.
+ */
+export function capEditDiffBudget(
+  activities: ToolActivity[],
+  budget: number = MAX_MESSAGE_EDIT_DIFF_CHARS
+): ToolActivity[] {
+  const out = [...activities]
+  let used = 0
+
+  for (let i = out.length - 1; i >= 0; i--) {
+    const activity = out[i]
+    const diffs = activity.editDiffs
+    if (!diffs || diffs.length === 0) continue
+
+    const size = diffs.reduce((n, d) => n + d.oldString.length + d.newString.length, 0)
+    if (used + size <= budget) {
+      used += size
+      continue
+    }
+
+    const { editDiffs: _dropped, ...rest } = activity
+    out[i] = { ...rest, editDiffsOmitted: (activity.editDiffsOmitted ?? 0) + diffs.length }
+  }
+
+  return out
+}
+
+/**
  * Retrieve and clear accumulated tool activities for a conversation.
  * Called during finalize to persist tool activities to the DB.
  * Returns all activities including 'running' ones (e.g. subagents interrupted mid-execution).
@@ -86,7 +129,7 @@ export function getAndClearToolActivities(conversationId: string): ToolActivity[
   const convMap = toolActivityStore.get(conversationId)
   toolActivityStore.delete(conversationId)
   if (!convMap) return []
-  return [...convMap.values()]
+  return capEditDiffBudget([...convMap.values()])
 }
 
 // ── Shared context passed to all handlers ──
@@ -122,7 +165,15 @@ export interface ChunkRouterContext {
  *   timeout       — Safety timeout fired before LLM responded
  *   max-lifetime  — Stream exceeded absolute hard cap (MAX_STREAM_LIFETIME_MS)
  */
-type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout' | 'aborted' | 'completed' | 'swapped' | 'max-lifetime'
+type StreamOutcome =
+  | 'complete'
+  | 'stopped'
+  | 'error'
+  | 'timeout'
+  | 'aborted'
+  | 'completed'
+  | 'swapped'
+  | 'max-lifetime'
 
 interface StreamMetrics {
   startedAt: number
@@ -165,9 +216,10 @@ export class StreamMetricsAggregator {
    */
   get completionRate(): number {
     if (this.records.length === 0) return 1
-    return this.records.filter(
-      (r) => r.outcome === 'complete' || r.outcome === 'completed'
-    ).length / this.records.length
+    return (
+      this.records.filter((r) => r.outcome === 'complete' || r.outcome === 'completed').length /
+      this.records.length
+    )
   }
 
   /** TTFT at the given percentile (0–1). Returns null when no TTFT data exists. */
@@ -192,7 +244,16 @@ export class StreamMetricsAggregator {
 
   /** Distribution of outcomes in the current window. */
   get outcomeCounts(): Record<StreamOutcome, number> {
-    const counts: Record<StreamOutcome, number> = { complete: 0, stopped: 0, error: 0, timeout: 0, completed: 0, aborted: 0, swapped: 0, 'max-lifetime': 0 }
+    const counts: Record<StreamOutcome, number> = {
+      complete: 0,
+      stopped: 0,
+      error: 0,
+      timeout: 0,
+      completed: 0,
+      aborted: 0,
+      swapped: 0,
+      'max-lifetime': 0
+    }
     for (const r of this.records) counts[r.outcome]++
     return counts
   }
@@ -230,10 +291,7 @@ export function startStreamMetrics(conversationId: string): void {
  * Log final stream metrics, record into the sliding-window aggregator, and clean up.
  * @param outcome - How the stream ended: 'complete' | 'stopped' | 'error' | 'timeout'
  */
-export function completeStreamMetrics(
-  conversationId: string,
-  outcome: StreamOutcome
-): void {
+export function completeStreamMetrics(conversationId: string, outcome: StreamOutcome): void {
   const metrics = streamMetricsStore.get(conversationId)
   streamMetricsStore.delete(conversationId)
   if (!metrics) return
@@ -245,7 +303,7 @@ export function completeStreamMetrics(
   streamAggregator.record(outcome, ttft, duration)
 
   // IPC-BACKPRESSURE: Collect backpressure metrics for this stream
-  const bp = chunkAckTracker.getMetrics('__global__')
+  const bp = chunkAckTracker.getMetrics(conversationId)
 
   chatIpcLogger.info(
     `[METRIC:STREAM_COMPLETE] ` +
@@ -261,8 +319,8 @@ export function completeStreamMetrics(
   )
 
   // Clean up backpressure tracking for this stream
-  chunkAckTracker.cleanup('__global__')
-  chunkAckTracker.clearMetrics('__global__')
+  chunkAckTracker.cleanup(conversationId)
+  chunkAckTracker.clearMetrics(conversationId)
 }
 
 /** Expose the aggregator for diagnostic IPC or health checks. */
@@ -284,16 +342,21 @@ function pushText(ctx: ChunkRouterContext, text: string): void {
   // IPC-BACKPRESSURE: Pass the adaptive interval to the batcher. When the
   // renderer is under pressure (pending > HWM), the interval widens from
   // 33ms (~30fps) to 100ms (~10fps), giving React more breathing room.
-  const interval = chunkAckTracker.getRecommendedInterval('__global__')
-  textBatcher.push(ctx.conversationId, text, (buffer) => {
-    safeSend(
-      ctx,
-      IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-      createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
-    )
-    // Record send for backpressure tracking
-    chunkAckTracker.recordSend('__global__')
-  }, interval)
+  const interval = chunkAckTracker.getRecommendedInterval(ctx.conversationId)
+  textBatcher.push(
+    ctx.conversationId,
+    text,
+    (buffer) => {
+      safeSend(
+        ctx,
+        IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+        createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
+      )
+      // Record send for backpressure tracking
+      chunkAckTracker.recordSend(ctx.conversationId)
+    },
+    interval
+  )
 }
 
 /**
@@ -392,7 +455,8 @@ function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 
 function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before tool activity (tool_use and tool_result start/end a visual block)
-  if (chunk.type === 'tool_use' || chunk.type === 'tool_result') textBatcher.flush(ctx.conversationId)
+  if (chunk.type === 'tool_use' || chunk.type === 'tool_result')
+    textBatcher.flush(ctx.conversationId)
 
   const result = processToolChunk(chunk, {
     workspacePath: ctx.workspacePath,
@@ -577,19 +641,15 @@ function handleError(ctx: ChunkRouterContext, chunk: StreamChunk): void {
  *   writing               handleSessionStatus() → statusMap
  *   failed                handleSessionStatus() → statusMap
  */
-const SUPPRESSED_STATUS_PREFIXES = [
-  'agent_switched:',
-  'model_switched:',
-  'finishReason:',
-] as const
+const SUPPRESSED_STATUS_PREFIXES = ['agent_switched:', 'model_switched:', 'finishReason:'] as const
 
 const SUPPRESSED_STATUS_VALUES: ReadonlySet<string> = new Set([
   'idle',
-  'busy',     // local LLM backend status signal
+  'busy', // local LLM backend status signal
   'thinking',
   'reviewing',
   'writing',
-  'failed',
+  'failed'
 ])
 
 function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
@@ -1008,7 +1068,7 @@ export function registerStreamDiagnosticsIpc(): void {
     return {
       completionRate: streamAggregator.completionRate,
       connectionResetRate: streamAggregator.connectionResetRate,
-      ttftP50: streamAggregator.ttftPercentile(0.50),
+      ttftP50: streamAggregator.ttftPercentile(0.5),
       ttftP95: streamAggregator.ttftP95,
       ttftP99: streamAggregator.ttftPercentile(0.99),
       sampleSize: streamAggregator.sampleSize,
@@ -1018,9 +1078,21 @@ export function registerStreamDiagnosticsIpc(): void {
 
   // IPC-BACKPRESSURE: Renderer sends ACK after processing a batch of chunks.
   // This feeds the adaptive batcher interval adjustment.
-  ipcMain.on(IPC_CHANNELS.CHAT_CHUNK_ACK, (_event, data: { processed: number; timestamp: number }) => {
-    // The ACK doesn't specify a conversationId — distribute across all pending.
-    // In practice with MAX_CONCURRENT_STREAMS=1, there's only ever one active.
-    chunkAckTracker.recordAck('__global__', data.processed)
-  })
+  ipcMain.on(
+    IPC_CHANNELS.CHAT_CHUNK_ACK,
+    (
+      _event,
+      data: { processed: number; timestamp: number; perConversation?: Record<string, number> }
+    ) => {
+      if (data.perConversation) {
+        // Phase-2: Per-conversation ACK routing — backpressure tracked independently
+        for (const [convId, count] of Object.entries(data.perConversation)) {
+          chunkAckTracker.recordAck(convId, count)
+        }
+      } else {
+        // Backward compat fallback for old renderers
+        chunkAckTracker.recordAck('__global__', data.processed)
+      }
+    }
+  )
 }

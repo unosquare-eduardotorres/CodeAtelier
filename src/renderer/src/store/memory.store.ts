@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { rendererLog } from '@renderer/utils/logger'
+import { useWorkspaceStore } from './workspace.store'
+import { bootstrapSnapshotPatch } from './memory-store-utils'
 import type {
   MemoryFact,
   MemoryContradiction,
@@ -11,6 +13,10 @@ import type {
   IngestionProgress,
   BootstrapProgress,
   BootstrapMode,
+  BootstrapScope,
+  BootstrapItemStatus,
+  BootstrapItemView,
+  BootstrapRunSummary,
   ContradictionStatus
 } from '../../../shared/types'
 
@@ -26,6 +32,13 @@ interface BackfillProgress {
 interface MemoryState {
   // Fact state
   facts: MemoryFact[]
+  /**
+   * True while a facts fetch is in flight. Starts `true` so the list never
+   * renders "no memories match" during the first round-trip — serialising a
+   * few thousand facts over IPC is not instant, and the empty state read as
+   * "your brain was wiped".
+   */
+  factsLoading: boolean
   contradictions: MemoryContradiction[]
   contradictionsPage: number
   contradictionsTotal: number
@@ -35,7 +48,6 @@ interface MemoryState {
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
-  bootstrapWorkspaceId: string | null
 
   // CLAUDE.md state
   claudeMdContent: string | null
@@ -56,7 +68,13 @@ interface MemoryState {
   deleteFact: (id: string) => Promise<void>
   updateFact: (
     id: string,
-    params: { title?: string; content?: string; tags?: string[]; scopePaths?: string[]; category?: MemoryFactCategory }
+    params: {
+      title?: string
+      content?: string
+      tags?: string[]
+      scopePaths?: string[]
+      category?: MemoryFactCategory
+    }
   ) => Promise<void>
 
   // Scope toggle
@@ -64,15 +82,26 @@ interface MemoryState {
 
   // Contradiction actions
   loadContradictions: (status?: ContradictionStatus, page?: number) => Promise<void>
-  resolveContradiction: (id: string, resolution: string, keepFactId: string, archiveFactId?: string) => Promise<void>
-  autoResolveDuplicates: (workspaceId: string, minCosine?: number) => Promise<{ resolvedCount: number }>
+  resolveContradiction: (
+    id: string,
+    resolution: string,
+    keepFactId: string,
+    archiveFactId?: string
+  ) => Promise<void>
+  autoResolveDuplicates: (
+    workspaceId: string,
+    minCosine?: number
+  ) => Promise<{ resolvedCount: number }>
 
   // CLAUDE.md actions
   loadClaudeMd: (workspacePath: string) => Promise<void>
 
   // Capture settings
   loadCaptureSettings: (workspaceId: string) => Promise<void>
-  updateCaptureSettings: (workspaceId: string, settings: Partial<MemoryCaptureSettings>) => Promise<void>
+  updateCaptureSettings: (
+    workspaceId: string,
+    settings: Partial<MemoryCaptureSettings>
+  ) => Promise<void>
 
   // Embedding actions
   loadEmbeddingStatus: (workspaceId: string) => Promise<void>
@@ -81,7 +110,9 @@ interface MemoryState {
 
   // Dedup & Consolidation
   scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
-  runConsolidation: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
+  runConsolidation: (
+    workspaceId: string
+  ) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
 
   // Search
   setSearchQuery: (query: string) => void
@@ -102,15 +133,37 @@ interface MemoryState {
 
   // Bootstrap state
   bootstrap: BootstrapProgress | null
-  bootstrapCleanup: (() => void) | null
-  startBootstrap: (workspaceId: string, workspacePath: string, mode?: BootstrapMode) => Promise<void>
+  /** Live progress for every workspace, so the status bar sees background runs. */
+  bootstrapByWorkspace: Record<string, BootstrapProgress>
+  bootstrapLatestRun: BootstrapRunSummary | null
+  bootstrapResumableRunId: string | null
+  bootstrapItems: BootstrapItemView[]
+  bootstrapItemsTotal: number
+  bootstrapItemFilter: BootstrapItemStatus | 'all'
+  startBootstrap: (
+    workspaceId: string,
+    workspacePath: string,
+    mode?: BootstrapMode,
+    force?: boolean,
+    scope?: BootstrapScope
+  ) => Promise<void>
+  pauseBootstrap: (workspaceId: string) => Promise<void>
+  resumeBootstrap: (runId: string, workspacePath: string) => Promise<void>
   cancelBootstrap: () => void
-  dismissBootstrap: () => void
+  dismissBootstrap: (workspaceId?: string) => void
   onBootstrapProgress: (progress: BootstrapProgress) => void
+  seedBootstrapProgress: (progress: BootstrapProgress) => void
+  loadBootstrapSnapshot: (workspaceId: string) => Promise<void>
+  loadBootstrapItems: (
+    runId: string,
+    options?: { status?: BootstrapItemStatus | 'all'; offset?: number; limit?: number }
+  ) => Promise<void>
+  setBootstrapItemFilter: (filter: BootstrapItemStatus | 'all') => void
 }
 
 export const useMemoryStore = create<MemoryState>((set) => ({
   facts: [],
+  factsLoading: true,
   contradictions: [],
   contradictionsPage: 0,
   contradictionsTotal: 0,
@@ -120,7 +173,6 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
-  bootstrapWorkspaceId: null,
   claudeMdContent: null,
   claudeMdPath: null,
   claudeMdLoading: false,
@@ -131,25 +183,36 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   ingestion: null,
   ingestionCleanup: null,
   bootstrap: null,
-  bootstrapCleanup: null,
+  bootstrapByWorkspace: {},
+  bootstrapLatestRun: null,
+  bootstrapResumableRunId: null,
+  bootstrapItems: [],
+  bootstrapItemsTotal: 0,
+  bootstrapItemFilter: 'all',
 
   // ── Fact actions ──
 
   loadFacts: async (workspaceId) => {
+    set({ factsLoading: true })
     try {
       const facts = await window.api.memoryFactsList({ workspaceId })
       set({ facts })
     } catch (error) {
       rendererLog.error('Failed to load facts:', error)
+    } finally {
+      set({ factsLoading: false })
     }
   },
 
   searchFacts: async (workspaceId, query, category) => {
+    set({ factsLoading: true })
     try {
       const facts = await window.api.memoryFactsSearch({ workspaceId, query, category })
       set({ facts, searchQuery: query })
     } catch (error) {
       rendererLog.error('Failed to search facts:', error)
+    } finally {
+      set({ factsLoading: false })
     }
   },
 
@@ -234,10 +297,18 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   resolveContradiction: async (id, resolution, keepFactId, archiveFactId) => {
     try {
       await window.api.memoryContradictionsResolve({ id, resolution, keepFactId, archiveFactId })
-      set((state) => ({
-        contradictions: state.contradictions.filter((c) => c.id !== id),
-        contradictionsTotal: Math.max(0, state.contradictionsTotal - 1)
-      }))
+      set((state) => {
+        // `pendingCount` is only ever written by loadContradictions, so without
+        // this the "N pending" readout stayed at N after triaging all N.
+        const wasPending = state.contradictions.find((c) => c.id === id)?.status === 'pending'
+        return {
+          contradictions: state.contradictions.filter((c) => c.id !== id),
+          contradictionsTotal: Math.max(0, state.contradictionsTotal - 1),
+          contradictionsPendingCount: wasPending
+            ? Math.max(0, state.contradictionsPendingCount - 1)
+            : state.contradictionsPendingCount
+        }
+      })
     } catch (error) {
       rendererLog.error('Failed to resolve contradiction:', error)
     }
@@ -280,9 +351,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     try {
       await window.api.memoryCaptureSettingsSet({ workspaceId, settings })
       set((state) => ({
-        captureSettings: state.captureSettings
-          ? { ...state.captureSettings, ...settings }
-          : null
+        captureSettings: state.captureSettings ? { ...state.captureSettings, ...settings } : null
       }))
     } catch (error) {
       rendererLog.error('Failed to update capture settings:', error)
@@ -380,7 +449,11 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     if (progress.status === 'error') {
       set({ feedStatus: 'error', feedError: progress.message })
     } else if (progress.status === 'done') {
-      set({ feedStatus: 'completed', feedMessage: progress.message, feedSource: progress.source as FeedSource })
+      set({
+        feedStatus: 'completed',
+        feedMessage: progress.message,
+        feedSource: progress.source as FeedSource
+      })
     } else {
       set({ feedMessage: progress.message })
     }
@@ -416,7 +489,11 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   onIngestionProgress: (progress) => {
     set({ ingestion: progress })
-    if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
+    if (
+      progress.jobStatus === 'done' ||
+      progress.jobStatus === 'cancelled' ||
+      progress.jobStatus === 'error'
+    ) {
       // Clean up listener after job completes
       const { ingestionCleanup } = useMemoryStore.getState()
       ingestionCleanup?.()
@@ -441,15 +518,16 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 
   // ── Project Knowledge Bootstrap ──
 
-  startBootstrap: async (workspaceId, workspacePath, mode = 'full') => {
-    // Subscribe to progress events
-    const cleanup = window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
-      useMemoryStore.getState().onBootstrapProgress(progress)
-    })
-    set({ bootstrapCleanup: cleanup, bootstrapWorkspaceId: workspaceId })
-
+  startBootstrap: async (workspaceId, workspacePath, mode = 'full', force = false, scope) => {
     try {
-      await window.api.memoryBootstrapStart({ workspaceId, workspacePath, mode })
+      const { runId } = await window.api.memoryBootstrapStart({
+        workspaceId,
+        workspacePath,
+        mode,
+        force,
+        scope
+      })
+      await useMemoryStore.getState().loadBootstrapItems(runId)
     } catch (error) {
       rendererLog.error('Bootstrap failed:', error)
     }
@@ -458,33 +536,150 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     await useMemoryStore.getState().loadFacts(workspaceId)
   },
 
-  onBootstrapProgress: (progress) => {
-    set({ bootstrap: progress })
-    if (progress.jobStatus === 'done' || progress.jobStatus === 'cancelled' || progress.jobStatus === 'error') {
-      const { bootstrapCleanup, bootstrapWorkspaceId } = useMemoryStore.getState()
-      bootstrapCleanup?.()
-      set({ bootstrapCleanup: null })
+  pauseBootstrap: async (workspaceId) => {
+    try {
+      await window.api.memoryBootstrapPause({ workspaceId })
+    } catch (error) {
+      rendererLog.error('Pause bootstrap failed:', error)
+    }
+  },
 
-      // Reload facts so the tab count updates immediately
-      if (progress.jobStatus === 'done' && bootstrapWorkspaceId) {
-        useMemoryStore.getState().loadFacts(bootstrapWorkspaceId)
+  resumeBootstrap: async (runId, workspacePath) => {
+    try {
+      await window.api.memoryBootstrapResume({ runId, workspacePath })
+    } catch (error) {
+      rendererLog.error('Resume bootstrap failed:', error)
+    }
+    const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id
+    if (viewedWsId) await useMemoryStore.getState().loadFacts(viewedWsId)
+  },
+
+  onBootstrapProgress: (progress) => {
+    const { bootstrapByWorkspace } = useMemoryStore.getState()
+
+    set({
+      bootstrapByWorkspace: { ...bootstrapByWorkspace, [progress.workspaceId]: progress }
+    })
+
+    // Only drive the page-level view with the workspace the user is looking at;
+    // background workspaces still update bootstrapByWorkspace for the status bar.
+    // Scoped off the active workspace rather than "wherever Start was last
+    // clicked" — the latter is null until the user starts a run in this session
+    // (letting any workspace's events drive the page) and goes stale the moment
+    // they switch workspaces.
+    const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id ?? null
+    if (progress.workspaceId === viewedWsId) {
+      set({ bootstrap: progress })
+    }
+
+    const terminal =
+      progress.jobStatus === 'done' ||
+      progress.jobStatus === 'cancelled' ||
+      progress.jobStatus === 'error' ||
+      progress.jobStatus === 'paused'
+
+    if (terminal) {
+      useMemoryStore.getState().loadBootstrapSnapshot(progress.workspaceId)
+      useMemoryStore.getState().loadBootstrapItems(progress.runId)
+
+      if (progress.jobStatus === 'done') {
+        useMemoryStore.getState().loadFacts(progress.workspaceId)
         useMemoryStore.getState().loadContradictions()
       }
     }
   },
 
+  loadBootstrapSnapshot: async (workspaceId) => {
+    try {
+      const snap = await window.api.memoryBootstrapSnapshot({ workspaceId })
+
+      if (snap.progress) {
+        const { bootstrapByWorkspace } = useMemoryStore.getState()
+        set({
+          bootstrapByWorkspace: { ...bootstrapByWorkspace, [workspaceId]: snap.progress }
+        })
+      }
+
+      // The page-level fields only ever describe the workspace on screen, and
+      // `bootstrap` is cleared when that workspace has no live run — see
+      // bootstrapSnapshotPatch.
+      const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id ?? null
+      const patch = bootstrapSnapshotPatch(snap, workspaceId, viewedWsId)
+      if (patch) set(patch)
+    } catch (error) {
+      rendererLog.error('Load bootstrap snapshot failed:', error)
+    }
+  },
+
+  loadBootstrapItems: async (runId, options = {}) => {
+    try {
+      const filter = options.status ?? useMemoryStore.getState().bootstrapItemFilter
+      const { items, total } = await window.api.memoryBootstrapListItems({
+        runId,
+        status: filter === 'all' ? undefined : filter,
+        limit: options.limit ?? 200,
+        offset: options.offset ?? 0
+      })
+      set({ bootstrapItems: items, bootstrapItemsTotal: total })
+    } catch (error) {
+      rendererLog.error('Load bootstrap items failed:', error)
+    }
+  },
+
+  setBootstrapItemFilter: (filter) => {
+    set({ bootstrapItemFilter: filter })
+    const { bootstrap, bootstrapLatestRun } = useMemoryStore.getState()
+    const runId = bootstrap?.runId ?? bootstrapLatestRun?.id
+    if (runId) useMemoryStore.getState().loadBootstrapItems(runId, { status: filter })
+  },
+
   cancelBootstrap: () => {
-    const { bootstrap, bootstrapCleanup } = useMemoryStore.getState()
+    const { bootstrap } = useMemoryStore.getState()
     if (bootstrap?.jobId) {
       window.api.memoryBootstrapCancel({ jobId: bootstrap.jobId }).catch(() => {})
     }
-    bootstrapCleanup?.()
-    set({ bootstrap: null, bootstrapCleanup: null })
   },
 
-  dismissBootstrap: () => {
-    const { bootstrapCleanup } = useMemoryStore.getState()
-    bootstrapCleanup?.()
-    set({ bootstrap: null, bootstrapCleanup: null })
+  /**
+   * Seed a workspace's live state from a snapshot, for runs that were already
+   * in flight before anything subscribed. Live events always win, so this never
+   * overwrites an entry that the progress channel is already driving.
+   */
+  seedBootstrapProgress: (progress) => {
+    const { bootstrapByWorkspace } = useMemoryStore.getState()
+    if (bootstrapByWorkspace[progress.workspaceId]) return
+    set({
+      bootstrapByWorkspace: { ...bootstrapByWorkspace, [progress.workspaceId]: progress }
+    })
+  },
+
+  dismissBootstrap: (workspaceId) => {
+    const { bootstrap, bootstrapByWorkspace } = useMemoryStore.getState()
+    const id = workspaceId ?? bootstrap?.workspaceId
+    if (!id) {
+      set({ bootstrap: null })
+      return
+    }
+    // Clearing only `bootstrap` left the entry in the per-workspace map, so a
+    // failed run kept the status-bar Brain indicator red until the next app
+    // restart. Dismiss has to drop both.
+    const next = { ...bootstrapByWorkspace }
+    delete next[id]
+    set({ bootstrap: null, bootstrapByWorkspace: next })
   }
 }))
+
+/**
+ * Module-level progress subscription.
+ *
+ * Deliberately NOT created inside `startBootstrap`. Subscribing there meant a
+ * run was only observable while the user sat on the page that started it —
+ * navigating away made an in-flight ingestion invisible, and a run started in
+ * another workspace was never seen at all. One subscription for the app's
+ * lifetime is what lets the status bar report background runs.
+ */
+if (typeof window !== 'undefined' && window.api?.onMemoryBootstrapProgress) {
+  window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
+    useMemoryStore.getState().onBootstrapProgress(progress)
+  })
+}

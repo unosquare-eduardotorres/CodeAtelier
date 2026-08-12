@@ -1,30 +1,14 @@
 /**
- * Unit tests for parsePlanPayload — module-level pure function in agent-session.service.ts.
+ * Unit tests for parsePlanPayload — canonical implementation in agent-session-handlers.ts.
  *
- * Since the function is not exported, we replicate its logic here and test
- * the exact same algorithm. The function is 15 lines of pure data transformation.
+ * These tests import the shared implementation directly, ensuring any logic
+ * changes propagate to all consumers. Covers: string payloads, object payloads,
+ * direct StructuredPlan shapes (type+phases and title+phases), JSON string
+ * fallback, null/undefined, and edge cases.
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import type { PlanDetectedEvent } from '../../../shared/types'
-
-// ── Replicated pure logic (identical to agent-session.service.ts line 111) ──
-
-function parsePlanPayload(payload: unknown, beforePlan: string): PlanDetectedEvent {
-  const raw = typeof payload === 'string' ? payload : JSON.stringify(payload)
-  const obj =
-    typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {}
-  return {
-    rawContent: raw,
-    structuredPlan:
-      (obj.structuredPlan as PlanDetectedEvent['structuredPlan']) ??
-      (obj.type !== undefined && obj.phases !== undefined
-        ? (payload as PlanDetectedEvent['structuredPlan'])
-        : null),
-    beforePlan,
-    afterPlan: ''
-  }
-}
+import { parsePlanPayload } from '../agent-session-handlers'
 
 describe('parsePlanPayload', () => {
   // ── String payload ──
@@ -55,10 +39,42 @@ describe('parsePlanPayload', () => {
 
   // ── Direct StructuredPlan shape (has type + phases) ──
 
-  test('direct_structured_plan_object_detected', () => {
+  test('direct_structured_plan_object_with_type_and_phases_detected', () => {
     const directPlan = { type: 'implementation', phases: [{ name: 'Phase 1', items: [] }] }
     const result = parsePlanPayload(directPlan, 'before')
     assert.deepEqual(result.structuredPlan, directPlan)
+  })
+
+  // ── Direct StructuredPlan shape (has title + phases, no type — MCP emit_plan path) ──
+
+  test('direct_structured_plan_object_with_title_and_phases_detected', () => {
+    const mcpPlan = {
+      title: 'Fix auth',
+      summary: 'Fix the auth bug',
+      phases: [{ id: 1, title: 'Audit' }]
+    }
+    const result = parsePlanPayload(mcpPlan, 'before')
+    assert.ok(result.structuredPlan !== null, 'title+phases should be detected as structuredPlan')
+    assert.equal((result.structuredPlan as unknown as Record<string, unknown>).title, 'Fix auth')
+  })
+
+  // ── JSON string fallback ──
+
+  test('json_string_containing_plan_parsed_via_fallback', () => {
+    const plan = { title: 'Deploy', phases: [{ id: 1, title: 'Build' }] }
+    const result = parsePlanPayload(JSON.stringify(plan), 'ctx')
+    assert.ok(result.structuredPlan !== null, 'JSON string with title+phases should be parsed')
+    assert.equal((result.structuredPlan as unknown as Record<string, unknown>).title, 'Deploy')
+  })
+
+  test('json_string_without_plan_fields_stays_null', () => {
+    const result = parsePlanPayload(JSON.stringify({ foo: 'bar' }), '')
+    assert.equal(result.structuredPlan, null)
+  })
+
+  test('non_json_string_stays_null', () => {
+    const result = parsePlanPayload('just plain text, not JSON', '')
+    assert.equal(result.structuredPlan, null)
   })
 
   // ── Object without plan fields ──
@@ -109,9 +125,7 @@ describe('parsePlanPayload', () => {
   test('deeply_nested_plan_preserves_structure', () => {
     const nestedPlan = {
       type: 'complex',
-      phases: [
-        { name: 'Phase 1', items: [{ task: 'subtask-a', nested: { deep: true } }] }
-      ]
+      phases: [{ name: 'Phase 1', items: [{ task: 'subtask-a', nested: { deep: true } }] }]
     }
     const result = parsePlanPayload(nestedPlan, '')
     assert.deepEqual(result.structuredPlan, nestedPlan)

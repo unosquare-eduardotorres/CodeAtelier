@@ -36,7 +36,11 @@ describe('MpaCampaignService — instance tests', () => {
     assert.ok(instance, 'instance created')
     assert.equal(typeof instance.on, 'function', 'has EventEmitter .on()')
     assert.equal(typeof instance.emit, 'function', 'has EventEmitter .emit()')
-    assert.equal(typeof instance.removeAllListeners, 'function', 'has EventEmitter .removeAllListeners()')
+    assert.equal(
+      typeof instance.removeAllListeners,
+      'function',
+      'has EventEmitter .removeAllListeners()'
+    )
   })
 
   test('singleton export exists', async () => {
@@ -90,8 +94,9 @@ describe('MemoryEngineService — instance tests', () => {
   test('singleton export exists and has expected methods', async () => {
     const mod = await import('../memory-engine.service')
     assert.ok(mod.memoryEngineService, 'singleton exported')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.memoryEngineService))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.memoryEngineService)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length > 0, `has ${methods.length} methods: ${methods.join(', ')}`)
   })
 })
@@ -104,8 +109,9 @@ describe('DescriptionCacheService — instance tests', () => {
   test('singleton export exists', async () => {
     const mod = await import('../description-cache.service')
     assert.ok(mod.descriptionCache, 'singleton exported')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.descriptionCache))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.descriptionCache)).filter(
+      (m) => m !== 'constructor'
+    )
     assert.ok(methods.length > 0, `has ${methods.length} methods`)
   })
 })
@@ -190,8 +196,9 @@ describe('OpenCodeAgentWriter — instance tests', () => {
     // Just verify the module imports without error — the interface is type-only
     // but the class that uses it is runtime code
     const mod = await import('../opencode-agent-writer')
-    const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.openCodeAgentWriter))
-      .filter((m) => m !== 'constructor')
+    const proto = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.openCodeAgentWriter)).filter(
+      (m) => m !== 'constructor'
+    )
     assert.ok(proto.length > 0, `has ${proto.length} methods: ${proto.join(', ')}`)
   })
 })
@@ -211,8 +218,9 @@ describe('SpecialistBuilderService — instance tests', () => {
   test('singleton export exists', async () => {
     const mod = await import('../specialist-builder.service')
     assert.ok(mod.specialistBuilderService, 'singleton exported')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.specialistBuilderService))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.specialistBuilderService)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length > 0, `has ${methods.length} methods: ${methods.join(', ')}`)
   })
 
@@ -238,8 +246,9 @@ describe('PrimingContextGatherer — instance tests', () => {
   test('singleton export exists', async () => {
     const mod = await import('../priming-context-gatherer')
     assert.ok(mod.primingContextGatherer, 'singleton exported')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.primingContextGatherer))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.primingContextGatherer)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length > 0, `has ${methods.length} methods: ${methods.join(', ')}`)
   })
 })
@@ -259,10 +268,10 @@ describe('AgentRecoveryManager — class tests', () => {
         workspaceId: 'ws-1',
         conversationId: 'conv-1',
         sessionId: 'sess-1',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-sonnet-4-6'
       },
       emit: () => {},
-      on: () => {},
+      on: () => {}
     }
 
     try {
@@ -297,7 +306,9 @@ describe('Service EventEmitter patterns', () => {
     const instance = new MpaCampaignService()
 
     let received = false
-    instance.on('test-event', () => { received = true })
+    instance.on('test-event', () => {
+      received = true
+    })
     instance.emit('test-event')
     assert.ok(received, 'event received')
 
@@ -312,7 +323,9 @@ describe('Service EventEmitter patterns', () => {
     const instance = new GrillAgentService()
 
     let eventData: unknown = null
-    instance.on('status', (data: unknown) => { eventData = data })
+    instance.on('status', (data: unknown) => {
+      eventData = data
+    })
     instance.emit('status', { running: false })
     assert.deepEqual(eventData, { running: false })
 

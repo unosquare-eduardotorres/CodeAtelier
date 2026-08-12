@@ -5,6 +5,7 @@ import { ChatItem, NewConversationModal } from '@renderer/components/chat'
 import { ConfirmDialog } from '@renderer/components/common'
 import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import type { CommunicationTone, ConversationMode, LLMProvider } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 
 interface ChatSidebarProps {
   isCollapsed?: boolean
@@ -61,6 +62,7 @@ export default function ChatSidebar({
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
   }): Promise<void> => {
@@ -76,7 +78,8 @@ export default function ChatSidebar({
       data.communicationTone,
       undefined, // sourceAuditRunId
       data.branchName,
-      data.autoBranch
+      data.autoBranch,
+      data.takeover
     )
     setShowNewChatModal(false)
     // Send when there is a description OR attachments — an image-only creation
@@ -105,7 +108,7 @@ export default function ChatSidebar({
       const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER
       const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER
       if (aOrder !== bOrder) return aOrder - bOrder
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      return parseDbTimestamp(b.createdAt).getTime() - parseDbTimestamp(a.createdAt).getTime()
     })
 
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
@@ -199,7 +202,10 @@ export default function ChatSidebar({
 
   return (
     <>
-      <div data-testid="chat-sidebar" className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle">
+      <div
+        data-testid="chat-sidebar"
+        className="flex flex-col w-64 h-full bg-surface-raised border-r border-border-subtle"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border-subtle">
           <div className="flex items-center gap-2 min-w-0">

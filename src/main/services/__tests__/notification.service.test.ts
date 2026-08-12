@@ -16,12 +16,11 @@ import { test, describe, summaryAsync } from './test-harness'
 setupElectronStub()
 
 // Access the notification mock state from the electron mock
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+
 const electronMock = require('./__electron_mock.cjs')
 
 // ── Import the service under test (after stub is active) ────────────────────
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { NotificationService } = require('../notification.service') as {
   NotificationService: new () => {
     setMainWindow: (win: unknown) => void
@@ -41,10 +40,12 @@ const { NotificationService } = require('../notification.service') as {
 
 // ── Mock Window Factory ─────────────────────────────────────────────────────
 
-function createMockWindow(opts: {
-  visible?: boolean
-  focused?: boolean
-} = {}): {
+function createMockWindow(
+  opts: {
+    visible?: boolean
+    focused?: boolean
+  } = {}
+): {
   isVisible: () => boolean
   isFocused: () => boolean
   isMinimized: () => boolean
@@ -277,7 +278,10 @@ describe('NotificationService', () => {
 
     // Simulate OS notification failure (common in unsigned dev builds)
     const failedHandlers = lastCreated._listeners['failed']
-    assert.ok(failedHandlers && failedHandlers.length > 0, 'should have registered a failed handler')
+    assert.ok(
+      failedHandlers && failedHandlers.length > 0,
+      'should have registered a failed handler'
+    )
     failedHandlers[0](null, 'Notification failed: unsigned build')
 
     // Should have sent in-app fallback

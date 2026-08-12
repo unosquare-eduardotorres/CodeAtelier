@@ -198,7 +198,13 @@ if (elicitationLoaded) {
     test('resolveElicitation calls resolve callback', () => {
       const svc = new ElicitationService()
       let resolved: any = null
-      svc.register('r1', (result: any) => { resolved = result }, 'server-a')
+      svc.register(
+        'r1',
+        (result: any) => {
+          resolved = result
+        },
+        'server-a'
+      )
       svc.resolveElicitation('r1', { action: 'accept', content: { answer: 42 } })
       assert.ok(resolved)
       assert.equal(resolved.action, 'accept')
@@ -209,7 +215,13 @@ if (elicitationLoaded) {
     test('resolveElicitation with decline action', () => {
       const svc = new ElicitationService()
       let resolved: any = null
-      svc.register('r1', (result: any) => { resolved = result }, 'server-a')
+      svc.register(
+        'r1',
+        (result: any) => {
+          resolved = result
+        },
+        'server-a'
+      )
       svc.resolveElicitation('r1', { action: 'decline' })
       assert.equal(resolved.action, 'decline')
     })
@@ -228,7 +240,7 @@ if (elicitationLoaded) {
       svc.register('r3', (r: any) => results.push(r), 'server-c')
       svc.resolveAll()
       assert.equal(results.length, 3)
-      assert.ok(results.every(r => r.action === 'cancel'))
+      assert.ok(results.every((r) => r.action === 'cancel'))
       assert.equal(svc.size, 0)
     })
 
@@ -241,7 +253,13 @@ if (elicitationLoaded) {
     test('register overwrites existing requestId', () => {
       const svc = new ElicitationService()
       let firstCalled = false
-      svc.register('r1', () => { firstCalled = true }, 'server-a')
+      svc.register(
+        'r1',
+        () => {
+          firstCalled = true
+        },
+        'server-a'
+      )
       svc.register('r1', () => {}, 'server-b')
       assert.equal(svc.size, 1)
       svc.resolveElicitation('r1', { action: 'accept' })
@@ -759,8 +777,9 @@ if (promptBuilderLoaded) {
     })
 
     test('getGeneralistBudgetTierForTurn returns correct tiers', () => {
-      const fn = (promptBuilder as any).getGeneralistBudgetTierForTurn?.bind(promptBuilder)
-        ?? (PromptBuilder.prototype as any).getGeneralistBudgetTierForTurn
+      const fn =
+        (promptBuilder as any).getGeneralistBudgetTierForTurn?.bind(promptBuilder) ??
+        (PromptBuilder.prototype as any).getGeneralistBudgetTierForTurn
       if (fn) {
         // First turn should be 'full'
         assert.equal(fn(0), 'full')
@@ -777,8 +796,9 @@ if (promptBuilderLoaded) {
     })
 
     test('estimateTokens approximates correctly', () => {
-      const fn = (promptBuilder as any).estimateTokens?.bind(promptBuilder)
-        ?? (PromptBuilder.prototype as any).estimateTokens
+      const fn =
+        (promptBuilder as any).estimateTokens?.bind(promptBuilder) ??
+        (PromptBuilder.prototype as any).estimateTokens
       if (fn) {
         assert.equal(fn(''), 0)
         const fourChars = fn('abcd')

@@ -161,11 +161,9 @@ describe('Council Persistence — transcript formatting', () => {
 
 describe('Council Persistence — transcript content assembly', () => {
   test('includes_header_and_metadata', () => {
-    const content = buildTranscriptContent(
-      'council-abc',
-      '2024-01-15T10:30:00Z',
-      ['## CONTRARIAN\nContent here']
-    )
+    const content = buildTranscriptContent('council-abc', '2024-01-15T10:30:00Z', [
+      '## CONTRARIAN\nContent here'
+    ])
     assert.ok(content.includes('# LLM Council Transcript'))
     assert.ok(content.includes('**Date:** 2024-01-15T10:30:00Z'))
     assert.ok(content.includes('**Session:** council-abc'))
@@ -174,11 +172,7 @@ describe('Council Persistence — transcript content assembly', () => {
   })
 
   test('includes_multiple_transcript_parts', () => {
-    const content = buildTranscriptContent(
-      'sess-1',
-      '2024-01-01',
-      ['Part 1', 'Part 2', 'Part 3']
-    )
+    const content = buildTranscriptContent('sess-1', '2024-01-01', ['Part 1', 'Part 2', 'Part 3'])
     assert.ok(content.includes('Part 1'))
     assert.ok(content.includes('Part 2'))
     assert.ok(content.includes('Part 3'))

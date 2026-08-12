@@ -260,8 +260,22 @@ describe('Code Analysis — summarizeDiagnostics logic', () => {
 
   test('aggregates_error_and_warning_counts', () => {
     const diagnostics = [
-      { errorCount: 3, warningCount: 2, filePath: 'a.ts', messages: [], fixableErrorCount: 0, fixableWarningCount: 0 },
-      { errorCount: 1, warningCount: 5, filePath: 'b.ts', messages: [], fixableErrorCount: 0, fixableWarningCount: 0 }
+      {
+        errorCount: 3,
+        warningCount: 2,
+        filePath: 'a.ts',
+        messages: [],
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
+      },
+      {
+        errorCount: 1,
+        warningCount: 5,
+        filePath: 'b.ts',
+        messages: [],
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
+      }
     ]
     const totalErrors = diagnostics.reduce((s, d) => s + d.errorCount, 0)
     const totalWarnings = diagnostics.reduce((s, d) => s + d.warningCount, 0)
@@ -271,10 +285,24 @@ describe('Code Analysis — summarizeDiagnostics logic', () => {
 
   test('filters_files_with_issues', () => {
     const diagnostics = [
-      { errorCount: 0, warningCount: 0, filePath: 'clean.ts', messages: [], fixableErrorCount: 0, fixableWarningCount: 0 },
-      { errorCount: 1, warningCount: 0, filePath: 'broken.ts', messages: [], fixableErrorCount: 0, fixableWarningCount: 0 }
+      {
+        errorCount: 0,
+        warningCount: 0,
+        filePath: 'clean.ts',
+        messages: [],
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
+      },
+      {
+        errorCount: 1,
+        warningCount: 0,
+        filePath: 'broken.ts',
+        messages: [],
+        fixableErrorCount: 0,
+        fixableWarningCount: 0
+      }
     ]
-    const filesWithIssues = diagnostics.filter(d => d.errorCount + d.warningCount > 0)
+    const filesWithIssues = diagnostics.filter((d) => d.errorCount + d.warningCount > 0)
     assert.equal(filesWithIssues.length, 1)
     assert.equal(filesWithIssues[0].filePath, 'broken.ts')
   })
@@ -304,18 +332,22 @@ describe('Code Analysis — summarizeDiagnostics logic', () => {
       ['rule-b', { errors: 5, warnings: 3 }],
       ['rule-c', { errors: 2, warnings: 1 }]
     ])
-    const sorted = [...ruleCounts.entries()]
-      .sort((a, b) => (b[1].errors + b[1].warnings) - (a[1].errors + a[1].warnings))
+    const sorted = [...ruleCounts.entries()].sort(
+      (a, b) => b[1].errors + b[1].warnings - (a[1].errors + a[1].warnings)
+    )
     assert.equal(sorted[0][0], 'rule-b')
     assert.equal(sorted[1][0], 'rule-c')
     assert.equal(sorted[2][0], 'rule-a')
   })
 
   test('caps_top_rules_at_10', () => {
-    const entries = Array.from({ length: 20 }, (_, i) => [`rule-${i}`, { errors: i, warnings: 0 }] as const)
+    const entries = Array.from(
+      { length: 20 },
+      (_, i) => [`rule-${i}`, { errors: i, warnings: 0 }] as const
+    )
     const ruleCounts = new Map(entries)
     const topRules = [...ruleCounts.entries()]
-      .sort((a, b) => (b[1].errors + b[1].warnings) - (a[1].errors + a[1].warnings))
+      .sort((a, b) => b[1].errors + b[1].warnings - (a[1].errors + a[1].warnings))
       .slice(0, 10)
     assert.equal(topRules.length, 10)
   })
@@ -335,7 +367,13 @@ describe('Code Analysis — formatFullDiagnostics logic', () => {
   })
 
   test('formats_line_column_message', () => {
-    const msg = { severity: 2, line: 42, column: 5, message: 'Unused variable', ruleId: 'no-unused-vars' }
+    const msg = {
+      severity: 2,
+      line: 42,
+      column: 5,
+      message: 'Unused variable',
+      ruleId: 'no-unused-vars'
+    }
     const sev = msg.severity === 2 ? '❌' : '⚠️'
     const formatted = `- ${sev} L${msg.line}:${msg.column} — ${msg.message} (${msg.ruleId ?? 'unknown'})`
     assert.ok(formatted.includes('L42:5'))
@@ -437,24 +475,34 @@ describe('Code Analysis — git changed files filtering', () => {
       'src/helper.mjs',
       'README.md'
     ]
-    const filtered = allFiles.filter(f => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
+    const filtered = allFiles.filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
     assert.deepEqual(filtered, ['src/app.ts', 'src/utils.tsx', 'src/helper.mjs'])
   })
 
   test('deduplicates_files', () => {
     const combined = 'src/a.ts\nsrc/b.ts\nsrc/a.ts\nsrc/c.ts'
-    const unique = [...new Set(
-      combined.split('\n').map(f => f.trim()).filter(f => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
-    )]
+    const unique = [
+      ...new Set(
+        combined
+          .split('\n')
+          .map((f) => f.trim())
+          .filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
+      )
+    ]
     assert.equal(unique.length, 3)
     assert.deepEqual(unique, ['src/a.ts', 'src/b.ts', 'src/c.ts'])
   })
 
   test('handles_empty_output', () => {
     const combined = ''
-    const unique = [...new Set(
-      combined.split('\n').map(f => f.trim()).filter(f => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
-    )]
+    const unique = [
+      ...new Set(
+        combined
+          .split('\n')
+          .map((f) => f.trim())
+          .filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f))
+      )
+    ]
     assert.equal(unique.length, 0)
   })
 })

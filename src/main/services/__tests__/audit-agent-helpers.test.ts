@@ -61,21 +61,14 @@ function summarizePreviousFindings(
   if (findings.length === 0) return 'No findings yet.'
   return findings
     .slice(-10)
-    .map(
-      (f) =>
-        `- [${f.severity.toUpperCase()}] ${f.title}${f.filePath ? ` (${f.filePath})` : ''}`
-    )
+    .map((f) => `- [${f.severity.toUpperCase()}] ${f.title}${f.filePath ? ` (${f.filePath})` : ''}`)
     .join('\n')
 }
 
 /**
  * Replicated from AuditAgentService.hasAdequateCoverage (audit-agent.service.ts:786-796).
  */
-function hasAdequateCoverage(
-  findingCount: number,
-  fileCount: number,
-  totalFiles: number
-): boolean {
+function hasAdequateCoverage(findingCount: number, fileCount: number, totalFiles: number): boolean {
   const coveragePercent = totalFiles > 0 ? fileCount / totalFiles : 0
   const hasEnoughFindings = findingCount >= 8
   const hasEnoughCoverage = coveragePercent >= 0.6
@@ -89,9 +82,7 @@ function calculateOverallScore(
   results: Array<{ status: string; score: number; coverageSufficient: boolean; trackId: string }>,
   tracks: Record<string, { weight: number }>
 ): number | null {
-  const eligible = results.filter(
-    (r) => r.status === 'completed' && r.coverageSufficient !== false
-  )
+  const eligible = results.filter((r) => r.status === 'completed' && r.coverageSufficient !== false)
   if (eligible.length === 0) return null
 
   let weightedSum = 0
@@ -111,9 +102,7 @@ function calculateOverallScore(
  */
 type AuditStatus = 'pending' | 'running' | 'scored' | 'failed'
 
-function computeAuditStatus(
-  trackStatuses: AuditStatus[]
-): AuditStatus {
+function computeAuditStatus(trackStatuses: AuditStatus[]): AuditStatus {
   if (trackStatuses.every((s) => s === 'scored')) return 'scored'
   if (trackStatuses.some((s) => s === 'running')) return 'running'
   if (trackStatuses.every((s) => s === 'failed')) return 'failed'
@@ -234,9 +223,7 @@ describe('Audit — summarizePreviousFindings', () => {
   })
 
   test('findings_without_filePath_omit_parenthetical', () => {
-    const result = summarizePreviousFindings([
-      { severity: 'info', title: 'General observation' }
-    ])
+    const result = summarizePreviousFindings([{ severity: 'info', title: 'General observation' }])
     assert.ok(!result.includes('('))
     assert.ok(result.includes('- [INFO] General observation'))
   })
@@ -287,9 +274,7 @@ describe('Audit — calculateOverallScore', () => {
   })
 
   test('all_insufficient_returns_null', () => {
-    const results = [
-      { status: 'completed', score: 50, coverageSufficient: false, trackId: 'a' }
-    ]
+    const results = [{ status: 'completed', score: 50, coverageSufficient: false, trackId: 'a' }]
     assert.equal(calculateOverallScore(results, { a: { weight: 1 } }), null)
   })
 

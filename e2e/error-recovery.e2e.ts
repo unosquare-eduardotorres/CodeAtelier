@@ -86,7 +86,10 @@ test.describe('Error Recovery', () => {
     const spinner = banner.locator('.animate-spin')
     const warningIcon = banner.locator('svg')
     const hasSpinner = await spinner.isVisible({ timeout: 1_000 }).catch(() => false)
-    const hasIcon = await warningIcon.first().isVisible({ timeout: 1_000 }).catch(() => false)
+    const hasIcon = await warningIcon
+      .first()
+      .isVisible({ timeout: 1_000 })
+      .catch(() => false)
 
     expect(hasSpinner || hasIcon).toBeTruthy()
   })
@@ -136,7 +139,7 @@ test.describe('Error Recovery', () => {
   test('BudgetWarningBanner renders with cost info and dismiss button', async ({
     electronPage: page
   }) => {
-    const chat = await ensureWorkspaceOpen(page)
+    const _chat = await ensureWorkspaceOpen(page)
 
     // BudgetWarningBanner appears when daily spend limit is approaching or exceeded
     const banner = page.locator('[data-testid="budget-warning-banner"]')
@@ -171,7 +174,7 @@ test.describe('Error Recovery', () => {
   test('RateLimitBanner renders with utilization bar and dismiss button', async ({
     electronPage: page
   }) => {
-    const chat = await ensureWorkspaceOpen(page)
+    const _chat = await ensureWorkspaceOpen(page)
 
     const banner = page.locator('[data-testid="rate-limit-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -246,7 +249,7 @@ test.describe('Error Recovery', () => {
     await page.waitForTimeout(1_000)
 
     // Either fallback disappears or it re-renders (persistent error)
-    const stillVisible = await fallback.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _stillVisible = await fallback.isVisible({ timeout: 2_000 }).catch(() => false)
     // Just verify the button was clickable
     expect(true).toBeTruthy()
   })
@@ -320,7 +323,7 @@ test.describe('Error Recovery', () => {
     const newConversation = modal.locator('[data-testid="compact-new-conversation"]')
 
     const hasExtract = await extractNuance.isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasQuick = await quickCompact.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _hasQuick = await quickCompact.isVisible({ timeout: 2_000 }).catch(() => false)
     const hasNewConv = await newConversation.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // Either Cloud mode (extract + quick) or Local mode (new conversation) buttons

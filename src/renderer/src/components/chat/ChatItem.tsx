@@ -1,6 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
-import { Trash2, Pencil, GripVertical, Compass, Hammer, ShieldAlert, ShieldCheck } from 'lucide-react'
+import {
+  Trash2,
+  Pencil,
+  GripVertical,
+  Compass,
+  Hammer,
+  ShieldAlert,
+  ShieldCheck
+} from 'lucide-react'
 import type { Conversation, ConversationMode, ContextUsage } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 import ContextBadge from './ContextBadge'
 
 interface ChatItemProps {
@@ -21,13 +30,16 @@ interface ChatItemProps {
 
 // ── Data-driven mode styles ──
 
-const MODE_STYLES: Record<ConversationMode, {
-  iconBgActive: string
-  iconBgDefault: string
-  pillClass: string
-  pillLabel: string
-  Icon: typeof Compass
-}> = {
+const MODE_STYLES: Record<
+  ConversationMode,
+  {
+    iconBgActive: string
+    iconBgDefault: string
+    pillClass: string
+    pillLabel: string
+    Icon: typeof Compass
+  }
+> = {
   plan: {
     iconBgActive: 'bg-mode-plan/20 text-mode-plan-text',
     iconBgDefault: 'bg-mode-plan-muted text-mode-plan-text',
@@ -52,7 +64,7 @@ const MODE_STYLES: Record<ConversationMode, {
 }
 
 function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseDbTimestamp(dateStr)
   const now = new Date()
   const diffMs = now.getTime() - date.getTime()
   const diffMins = Math.floor(diffMs / 60000)

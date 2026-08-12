@@ -26,9 +26,19 @@ try {
     repo.getBool = (_key: string, _def?: boolean) => _def ?? false
   } else {
     require.cache[appPrefRepoPath] = {
-      id: appPrefRepoPath, filename: appPrefRepoPath, loaded: true,
-      exports: { appPreferenceRepository: { get: () => null, set: () => {}, getBool: (_k: string, d?: boolean) => d ?? false } },
-      children: [], paths: [], path: ''
+      id: appPrefRepoPath,
+      filename: appPrefRepoPath,
+      loaded: true,
+      exports: {
+        appPreferenceRepository: {
+          get: () => null,
+          set: () => {},
+          getBool: (_k: string, d?: boolean) => d ?? false
+        }
+      },
+      children: [],
+      paths: [],
+      path: ''
     } as unknown as NodeModule
   }
 } catch {
@@ -36,11 +46,11 @@ try {
 }
 
 // Now dynamically import
-let OpenCodeConfigWriter: typeof import('../opencode-config-writer').OpenCodeConfigWriter | null = null
+let OpenCodeConfigWriter: typeof import('../opencode-config-writer').OpenCodeConfigWriter | null =
+  null
 let importError: Error | null = null
 
 try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const mod = require('../opencode-config-writer')
   OpenCodeConfigWriter = mod.OpenCodeConfigWriter
 } catch (err) {
@@ -184,7 +194,11 @@ describe('OpenCodeConfigWriter private methods', () => {
     // Context limits live inside `models[modelId].limit` (requires contextWindowConfident=true).
 
     test('local_true_timeout_600000', () => {
-      const provider = { providerId: 'ollama', modelId: 'llama3', baseUrl: 'http://localhost:11434' }
+      const provider = {
+        providerId: 'ollama',
+        modelId: 'llama3',
+        baseUrl: 'http://localhost:11434'
+      }
       const config = w.buildProviderConfig(provider, true)
       const entry = config[provider.providerId]
       assert.equal(entry.options.timeout, 600_000)
@@ -207,7 +221,12 @@ describe('OpenCodeConfigWriter private methods', () => {
     })
 
     test('with_baseUrl_and_apiKey_includes_them', () => {
-      const provider = { providerId: 'openai', modelId: 'gpt-4', baseUrl: 'https://api.openai.com', apiKey: 'sk-abc' }
+      const provider = {
+        providerId: 'openai',
+        modelId: 'gpt-4',
+        baseUrl: 'https://api.openai.com',
+        apiKey: 'sk-abc'
+      }
       const config = w.buildProviderConfig(provider, false)
       const entry = config['openai']
       assert.equal(entry.options.baseURL, 'https://api.openai.com')

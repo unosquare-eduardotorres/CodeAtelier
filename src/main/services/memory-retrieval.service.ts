@@ -11,28 +11,77 @@ import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { localEmbeddingProvider } from './local-embedding.provider'
 import { sanitizePromptInput } from './sanitize-prompt-input'
 import { cosineSimilarity } from './memory-engine.service'
-import type {
-  MemoryFact,
-  MemoryFactCategory,
-  MemoryRetrievalResult
-} from '../../shared/types'
+import { anyPathInScope, normalizePath } from './scope-matcher'
+import type { MemoryFact, MemoryFactCategory, MemoryRetrievalResult } from '../../shared/types'
 
 const log = dbLogger
 
 // ── Retrieval configuration ─────────────────────────────────────────────────
 
 /** Minimum combined score to include in results. */
-const RELEVANCE_FLOOR = 0.40
+const RELEVANCE_FLOOR = 0.4
 
 /** Cosine similarity floor — below this, cosine doesn't count. */
 const COSINE_FLOOR = 0.55
 
 /** Score weights */
-const WEIGHT_COSINE = 0.50
+const WEIGHT_COSINE = 0.5
 const WEIGHT_KEYWORD = 0.25
-const WEIGHT_TIER = 0.10
-const WEIGHT_RECENCY = 0.10
+const WEIGHT_TIER = 0.1
+const WEIGHT_RECENCY = 0.1
 const WEIGHT_SCOPE = 0.05
+
+/**
+ * Rank multiplier for a fact whose `scope_paths` cover a file the turn is
+ * touching. Scope was 5% of an additive score, which could never lift a
+ * genuinely relevant convention past the relevance floor on its own.
+ */
+const SCOPE_ACTIVATION_MULTIPLIER = 1.5
+
+/**
+ * RRF damping constant. 60 is the value from the original Cormack et al.
+ * result and the one every mainstream implementation uses; it makes the top
+ * few ranks matter without letting rank 1 dominate outright.
+ */
+const RRF_K = 60
+
+/** Candidates taken from each arm before fusion. */
+const ARM_LIMIT = 50
+
+/** Pool retrieved per turn, from which MMR selects. */
+const MMR_CANDIDATE_POOL = 30
+
+/** Facts handed to the budget formatter after diversification. */
+const MMR_SELECTION_SIZE = 10
+
+/**
+ * MMR trade-off. 0.7 keeps relevance dominant — diversity is a tie-breaker
+ * among comparably relevant facts, not a reason to inject a worse one.
+ */
+const MMR_LAMBDA = 0.7
+
+/**
+ * Minimum share of query tokens a keyword-only candidate must contain.
+ * BM25 ORs the terms, so without this a single common word pulls in the corpus.
+ */
+const KEYWORD_GATE = 0.5
+
+export type RetrievalScorer = 'rrf' | 'legacy'
+
+/** Scorer selection, overridable for A/B comparison on the eval set. */
+function defaultScorer(): RetrievalScorer {
+  return process.env.MEMORY_RETRIEVAL_SCORER === 'legacy' ? 'legacy' : 'rrf'
+}
+
+/** Established facts are worth more, but tier must not outrank relevance. */
+function tierMultiplier(fact: MemoryFact): number {
+  return 1 + fact.tier * 0.1
+}
+
+/** Recent facts edge out stale ones without ever suppressing them. */
+function recencyMultiplier(fact: MemoryFact, now: number): number {
+  return 0.8 + 0.4 * computeRecency(fact, now)
+}
 
 /** Tier-aware character budgets for per-turn injection. */
 const TIER_BUDGETS = {
@@ -43,7 +92,93 @@ const TIER_BUDGETS = {
 
 type ContextTier = keyof typeof TIER_BUDGETS
 
+/** Facts at or above this tier bypass per-session injection dedupe. */
+const RE_INJECTABLE_TIER = 2
+
+/**
+ * Workspaces whose embedding matrix is held in memory at once.
+ *
+ * Each matrix is the whole active corpus with its vectors — order 10MB on a
+ * mature workspace — so this is deliberately small. Two covers the realistic
+ * case of alternating between a project and a scratch workspace.
+ */
+const EMBEDDING_CACHE_MAX_WORKSPACES = 2
+
+/** A workspace's active facts and their vectors, as of a known mutation point. */
+interface EmbeddingMatrix {
+  /** `getLastMutationAt` value this snapshot was built from. */
+  mutationAt: number
+  entries: Array<{ fact: MemoryFact; embedding: Float32Array }>
+  byId: Map<string, Float32Array>
+}
+
 class MemoryRetrievalService {
+  /**
+   * Cached embedding matrices, keyed by workspace.
+   *
+   * `rankByVector` ran `findWithEmbeddings` on every single turn, which reads
+   * every active fact *with its BLOB* out of SQLite before computing one
+   * cosine per fact. The read is the expensive half and the corpus rarely
+   * changes between turns, so it is snapshotted and reused until something
+   * actually mutates a fact.
+   *
+   * `getLastMutationAt` reads MAX(updated_at), which `touchFacts` does not
+   * bump — so ordinary retrieval, the thing that runs every turn, does not
+   * invalidate the snapshot it just used.
+   */
+  private embeddingCache = new Map<string, EmbeddingMatrix>()
+
+  /**
+   * The workspace's embedding matrix, rebuilt only when a fact has changed.
+   *
+   * Only ever holds the *current* view. A point-in-time (`asOf`) query asks a
+   * different question and is rare, so it reads through to the database rather
+   * than polluting this with per-timestamp snapshots.
+   */
+  private getEmbeddingMatrix(workspaceId: string): EmbeddingMatrix {
+    let mutationAt: number
+    try {
+      mutationAt = memoryFactRepository.getLastMutationAt(workspaceId)
+    } catch {
+      // Without a liveness signal a cached matrix cannot be trusted.
+      return this.buildEmbeddingMatrix(workspaceId, -1, false)
+    }
+
+    const cached = this.embeddingCache.get(workspaceId)
+    if (cached && cached.mutationAt === mutationAt) return cached
+
+    return this.buildEmbeddingMatrix(workspaceId, mutationAt, true)
+  }
+
+  private buildEmbeddingMatrix(
+    workspaceId: string,
+    mutationAt: number,
+    store: boolean
+  ): EmbeddingMatrix {
+    const entries = memoryFactRepository.findWithEmbeddings(workspaceId)
+    const byId = new Map(entries.map((e) => [e.fact.id, e.embedding]))
+    const matrix: EmbeddingMatrix = { mutationAt, entries, byId }
+
+    if (!store) return matrix
+
+    // Evict by insertion order before growing past the cap. These snapshots are
+    // large enough that an unbounded map is a leak, not a cache.
+    if (
+      !this.embeddingCache.has(workspaceId) &&
+      this.embeddingCache.size >= EMBEDDING_CACHE_MAX_WORKSPACES
+    ) {
+      const oldest = this.embeddingCache.keys().next().value
+      if (oldest !== undefined) this.embeddingCache.delete(oldest)
+    }
+    this.embeddingCache.set(workspaceId, matrix)
+    return matrix
+  }
+
+  /** Drop cached vectors. Exposed for tests and for memory-pressure handling. */
+  clearEmbeddingCache(workspaceId?: string): void {
+    if (workspaceId) this.embeddingCache.delete(workspaceId)
+    else this.embeddingCache.clear()
+  }
   // ── Per-turn injection ──────────────────────────────────────────────────
 
   /**
@@ -54,38 +189,59 @@ class MemoryRetrievalService {
    * @param promptText — the user's prompt to match against
    * @param contextTier — controls character budget
    * @param injectedIds — set of fact IDs already injected this session (mutated in place)
+   * @param activePaths — files the turn is actually working on. Retrieval used to
+   *   see only the prompt text, so opening `src/billing/Invoice.java` and saying
+   *   "fix this bug" surfaced nothing: no billing token appears in the message.
    */
   async getContextForTurn(
     workspaceId: string,
     promptText: string,
     contextTier: ContextTier = 'medium',
-    injectedIds?: Set<string>
+    injectedIds?: Set<string>,
+    activePaths: string[] = []
   ): Promise<string> {
     try {
-      const results = await this.retrieve(workspaceId, promptText, 10)
+      // Retrieve a pool rather than exactly what fits: MMR needs alternatives
+      // to choose between, and the budget cap below decides the final count.
+      const results = await this.retrieve(
+        workspaceId,
+        promptText,
+        MMR_CANDIDATE_POOL,
+        undefined,
+        activePaths
+      )
       if (results.length === 0) return ''
 
-      // Filter out already-injected facts (session dedupe)
+      // Filter out already-injected facts (session dedupe).
+      // Knowledge/Wisdom facts (tier >= 2) are exempt: injectedIds grows
+      // monotonically for the whole session, so once history compacts away
+      // the original injection the fact would be lost for good. These are
+      // precisely the facts worth repeating.
       const fresh = injectedIds
-        ? results.filter((r) => !injectedIds.has(r.fact.id))
+        ? results.filter((r) => r.fact.tier >= RE_INJECTABLE_TIER || !injectedIds.has(r.fact.id))
         : results
 
       if (fresh.length === 0) return ''
 
+      // Diversify. Ranking by one blended score reliably returns ten
+      // paraphrases of the same convention, which wastes the whole budget
+      // saying one thing.
+      const selected = this.diversify(fresh, MMR_SELECTION_SIZE, workspaceId)
+
       // Budget-cap the output
       const budget = TIER_BUDGETS[contextTier]
-      const formatted = this.formatForInjection(fresh, budget)
+      const formatted = this.formatForInjection(selected, budget)
       if (!formatted) return ''
 
       // Track which facts were injected
       if (injectedIds) {
-        for (const r of fresh) {
+        for (const r of selected) {
           injectedIds.add(r.fact.id)
         }
       }
 
       // Touch accessed facts
-      memoryFactRepository.touchFacts(fresh.map((r) => r.fact.id))
+      memoryFactRepository.touchFacts(selected.map((r) => r.fact.id))
 
       return formatted
     } catch (err) {
@@ -97,35 +253,274 @@ class MemoryRetrievalService {
   // ── Hybrid retrieval ────────────────────────────────────────────────────
 
   /**
-   * Retrieve facts by hybrid scoring: cosine + keyword + tier + recency + scope.
-   * Falls back to keyword-only when embeddings are offline.
+   * Retrieve facts, fusing a vector arm and a BM25 arm.
+   *
+   * Defaults to Reciprocal Rank Fusion. The previous weighted-sum scorer is
+   * still reachable via `scorer: 'legacy'` (or MEMORY_RETRIEVAL_SCORER=legacy)
+   * so the two can be compared on the eval set rather than argued about.
    */
   async retrieve(
     workspaceId: string,
     query: string,
     limit = 20,
-    category?: MemoryFactCategory
+    category?: MemoryFactCategory,
+    activePaths: string[] = [],
+    opts?: { scorer?: RetrievalScorer; asOf?: string }
   ): Promise<MemoryRetrievalResult[]> {
     const queryTokens = tokenize(query)
-    if (queryTokens.length === 0) return []
+    // Paths named in the message count as active even when the caller passed
+    // none — "why does src/db/index.ts do this?" is a scope signal.
+    const paths = mergePaths(activePaths, extractPathTokens(query))
+    if (queryTokens.length === 0 && paths.length === 0) return []
 
-    const { candidateMap, queryVec } = await this.gatherCandidates(
-      workspaceId,
-      query,
-      category
-    )
+    const scorer = opts?.scorer ?? defaultScorer()
+
+    if (scorer === 'legacy' && opts?.asOf) {
+      // The legacy scorer has no validity-window predicate anywhere in its
+      // candidate gathering. Answering a point-in-time question with today's
+      // facts and no signal is worse than answering it slowly, so say so.
+      log.warn(
+        `[MemoryRetrieval] asOf=${opts.asOf} ignored: the legacy scorer cannot ` +
+          `answer point-in-time queries. Results reflect current facts.`
+      )
+    }
+
+    return scorer === 'legacy'
+      ? this.retrieveLegacy(workspaceId, query, queryTokens, limit, category, paths)
+      : this.retrieveRrf(workspaceId, query, queryTokens, limit, category, paths, opts?.asOf)
+  }
+
+  // ── Diversity ──────────────────────────────────────────────────────
+
+  /**
+   * Maximal Marginal Relevance re-ranking.
+   *
+   * Greedily picks the fact maximising
+   *   λ·relevance − (1−λ)·max_similarity_to_already_picked
+   * so the second slot goes to the best fact that says something *different*
+   * from the first, rather than to its closest paraphrase.
+   *
+   * Facts without an embedding cannot be compared, so they are treated as
+   * maximally distinct — which is the safe direction: a fact we cannot prove
+   * is redundant should not be dropped for redundancy.
+   */
+  private diversify(
+    results: MemoryRetrievalResult[],
+    count: number,
+    workspaceId?: string
+  ): MemoryRetrievalResult[] {
+    if (results.length <= 1 || count <= 1) return results.slice(0, count)
+
+    let embeddings: Map<string, Float32Array>
+    try {
+      // The vector arm has just loaded every one of these vectors. Re-reading
+      // the same ~30 rows out of SQLite to re-rank them was pure duplicate IO.
+      const cached = workspaceId ? this.getEmbeddingMatrix(workspaceId).byId : null
+      const missing = cached
+        ? results.filter((r) => !cached.has(r.fact.id)).map((r) => r.fact.id)
+        : results.map((r) => r.fact.id)
+
+      if (cached && missing.length === 0) {
+        embeddings = cached
+      } else {
+        // Facts the snapshot does not cover (an `asOf` result, or one written
+        // since it was built) still need a read.
+        const fetched = memoryFactRepository.findEmbeddingsByIds(missing)
+        embeddings = cached ? new Map([...cached, ...fetched]) : fetched
+      }
+    } catch (err) {
+      log.debug('[MemoryRetrieval] Embedding lookup for MMR failed:', err)
+      return results.slice(0, count)
+    }
+    if (embeddings.size === 0) return results.slice(0, count)
+
+    const maxScore = Math.max(...results.map((r) => r.score)) || 1
+    const remaining = [...results]
+    const selected: MemoryRetrievalResult[] = []
+
+    // The top-ranked fact is always kept: it is the best answer available, and
+    // there is nothing yet for it to be redundant against.
+    selected.push(remaining.shift()!)
+
+    while (selected.length < count && remaining.length > 0) {
+      let bestIndex = 0
+      let bestValue = -Infinity
+
+      for (let i = 0; i < remaining.length; i++) {
+        const candidate = remaining[i]
+        const relevance = candidate.score / maxScore
+        const candidateVec = embeddings.get(candidate.fact.id)
+
+        let maxSim = 0
+        if (candidateVec) {
+          for (const chosen of selected) {
+            const chosenVec = embeddings.get(chosen.fact.id)
+            if (!chosenVec) continue
+            const sim = cosineSimilarity(candidateVec, chosenVec)
+            if (sim > maxSim) maxSim = sim
+          }
+        }
+
+        const value = MMR_LAMBDA * relevance - (1 - MMR_LAMBDA) * maxSim
+        if (value > bestValue) {
+          bestValue = value
+          bestIndex = i
+        }
+      }
+
+      selected.push(remaining.splice(bestIndex, 1)[0])
+    }
+
+    return selected
+  }
+
+  // ── Rank fusion (default) ────────────────────────────────────────────
+
+  /**
+   * Reciprocal Rank Fusion over the vector list and the BM25 list.
+   *
+   * The weighted sum this replaces needed cosine and keyword-overlap scores to
+   * be calibrated against each other, and that calibration drifts as the corpus
+   * grows. RRF only reads *positions*, so it is scale-free: a fact ranked first
+   * by either arm scores 1/(k+0), whatever the underlying units were.
+   *
+   * Tier, recency and scope stop being co-equal additive terms and become
+   * multipliers applied after fusion — they say how much to trust a fact, not
+   * how well it matches the query.
+   */
+  private async retrieveRrf(
+    workspaceId: string,
+    query: string,
+    queryTokens: string[],
+    limit: number,
+    category: MemoryFactCategory | undefined,
+    activePaths: string[],
+    asOf?: string
+  ): Promise<MemoryRetrievalResult[]> {
+    const queryVec = await this.embedQuery(query)
+
+    const vectorArm = this.rankByVector(workspaceId, queryVec, category, asOf)
+    const keywordArm = this.rankByKeyword(workspaceId, query, category, asOf)
+    if (vectorArm.length === 0 && keywordArm.length === 0) return []
+
+    // Fuse by position.
+    const fused = new Map<
+      string,
+      { fact: MemoryFact; score: number; inVector: boolean; inKeyword: boolean }
+    >()
+
+    const contribute = (ranked: MemoryFact[], arm: 'inVector' | 'inKeyword'): void => {
+      ranked.forEach((fact, rank) => {
+        const entry = fused.get(fact.id) ?? {
+          fact,
+          score: 0,
+          inVector: false,
+          inKeyword: false
+        }
+        entry.score += 1 / (RRF_K + rank)
+        entry[arm] = true
+        fused.set(fact.id, entry)
+      })
+    }
+
+    contribute(vectorArm, 'inVector')
+    contribute(keywordArm, 'inKeyword')
+
+    // Precision gate. Both arms are recall-oriented — BM25 ORs the query terms,
+    // so a single common word drags in unrelated facts. Applied to the fused
+    // candidates only (at most a few hundred), never to the whole corpus.
+    const now = Date.now()
+    const results: MemoryRetrievalResult[] = []
+
+    for (const entry of fused.values()) {
+      const activated = anyPathInScope(activePaths, entry.fact.scopePaths)
+      const keywordScore = computeKeywordOverlap(queryTokens, entry.fact)
+
+      if (!activated && !entry.inVector && keywordScore < KEYWORD_GATE) continue
+
+      const multiplier =
+        tierMultiplier(entry.fact) *
+        recencyMultiplier(entry.fact, now) *
+        (activated ? SCOPE_ACTIVATION_MULTIPLIER : 1)
+
+      results.push({
+        fact: entry.fact,
+        score: entry.score * multiplier,
+        matchType: resolveMatchType(entry.inVector ? 1 : 0, keywordScore)
+      })
+    }
+
+    results.sort((a, b) => b.score - a.score)
+    return results.slice(0, limit)
+  }
+
+  /** Facts ordered by cosine similarity, best first. */
+  private rankByVector(
+    workspaceId: string,
+    queryVec: Float32Array | null,
+    category?: MemoryFactCategory,
+    asOf?: string
+  ): MemoryFact[] {
+    if (!queryVec) return []
+
+    // `asOf` reads through: it is a different result set and a rare query.
+    const source = asOf
+      ? memoryFactRepository.findWithEmbeddings(workspaceId, asOf)
+      : this.getEmbeddingMatrix(workspaceId).entries
+
+    const scored: Array<{ fact: MemoryFact; cosine: number }> = []
+    for (const { fact, embedding } of source) {
+      if (category && fact.category !== category) continue
+      const cosine = cosineSimilarity(queryVec, embedding)
+      if (cosine >= COSINE_FLOOR) scored.push({ fact, cosine })
+    }
+
+    scored.sort((a, b) => b.cosine - a.cosine)
+    return scored.slice(0, ARM_LIMIT).map((s) => s.fact)
+  }
+
+  /** Facts ordered by BM25, best first. */
+  private rankByKeyword(
+    workspaceId: string,
+    query: string,
+    category?: MemoryFactCategory,
+    asOf?: string
+  ): MemoryFact[] {
+    return memoryFactRepository
+      .searchFts(workspaceId, query, ARM_LIMIT, asOf)
+      .map((r) => r.fact)
+      .filter((fact) => !category || fact.category === category)
+  }
+
+  // ── Legacy weighted-sum scorer (kept for comparison) ────────────────────
+
+  private async retrieveLegacy(
+    workspaceId: string,
+    query: string,
+    queryTokens: string[],
+    limit: number,
+    category: MemoryFactCategory | undefined,
+    activePaths: string[]
+  ): Promise<MemoryRetrievalResult[]> {
+    const { candidateMap, queryVec } = await this.gatherCandidates(workspaceId, query, category)
     if (candidateMap.size === 0) return []
 
-    // Score each candidate
     const now = Date.now()
     const scored: MemoryRetrievalResult[] = []
 
     for (const { fact, embeddingVec } of candidateMap.values()) {
-      const result = scoreCandidate(fact, embeddingVec, queryVec, queryTokens, query, now)
+      const result = scoreCandidate(
+        fact,
+        embeddingVec,
+        queryVec,
+        queryTokens,
+        query,
+        now,
+        activePaths
+      )
       if (result) scored.push(result)
     }
 
-    // Sort by score descending, take top N
     scored.sort((a, b) => b.score - a.score)
     return scored.slice(0, limit)
   }
@@ -165,9 +560,7 @@ class MemoryRetrievalService {
     const queryVec = await this.embedQuery(query)
 
     // Get candidate facts
-    const allWithEmbeddings = queryVec
-      ? memoryFactRepository.findWithEmbeddings(workspaceId)
-      : []
+    const allWithEmbeddings = queryVec ? memoryFactRepository.findWithEmbeddings(workspaceId) : []
     const keywordCandidates = memoryFactRepository.search(workspaceId, query, 50)
 
     // Merge candidates by ID (union of both sets)
@@ -240,30 +633,72 @@ function scoreCandidate(
   queryVec: Float32Array | null,
   queryTokens: string[],
   query: string,
-  now: number
+  now: number,
+  activePaths: string[] = []
 ): MemoryRetrievalResult | null {
-  const cosineScore =
-    queryVec && embeddingVec ? cosineSimilarity(queryVec, embeddingVec) : 0
+  const cosineScore = queryVec && embeddingVec ? cosineSimilarity(queryVec, embeddingVec) : 0
   const cosineContrib = cosineScore >= COSINE_FLOOR ? cosineScore : 0
   const keywordScore = computeKeywordOverlap(queryTokens, fact)
   const tierBonus = fact.tier / 3
   const recencyScore = computeRecency(fact, now)
-  const scopeBonus = computeScopeBoost(query, fact.scopePaths)
 
-  const finalScore =
+  // Hard activation: a fact whose declared scope covers a file this turn is
+  // touching is on-topic by construction, whatever the wording of the message.
+  // It bypasses the relevance floor and is ranked above merely-similar facts.
+  const activated = anyPathInScope(activePaths, fact.scopePaths)
+  const scopeBonus = activated ? 1 : computeScopeBoost(query, fact.scopePaths)
+
+  const baseScore =
     cosineContrib * WEIGHT_COSINE +
     keywordScore * WEIGHT_KEYWORD +
     tierBonus * WEIGHT_TIER +
     recencyScore * WEIGHT_RECENCY +
     scopeBonus * WEIGHT_SCOPE
 
-  // Inclusion gate: combined score, cosine alone, or keyword alone
-  if (finalScore < RELEVANCE_FLOOR && cosineScore < COSINE_FLOOR && keywordScore <= 0.5) {
+  const finalScore = activated ? baseScore * SCOPE_ACTIVATION_MULTIPLIER : baseScore
+
+  // Inclusion gate: scope activation, combined score, cosine alone, or keyword alone
+  if (
+    !activated &&
+    finalScore < RELEVANCE_FLOOR &&
+    cosineScore < COSINE_FLOOR &&
+    keywordScore <= 0.5
+  ) {
     return null
   }
 
   const matchType = resolveMatchType(cosineContrib, keywordScore)
   return { fact, score: finalScore, matchType }
+}
+
+/**
+ * Paths mentioned in free text.
+ *
+ * Two shapes count: anything with a separator (`src/db/index.ts`, `src/db/`)
+ * and a bare filename with a source-code extension (`Invoice.java`). Prose
+ * words and decimals must not qualify, or every fact would activate.
+ */
+export function extractPathTokens(text: string): string[] {
+  const out: string[] = []
+
+  const withSeparator = /[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.-]+)+/g
+  for (const m of text.matchAll(withSeparator)) out.push(m[0])
+
+  const bareFile =
+    /\b[A-Za-z0-9_.-]+\.(?:tsx?|jsx?|mjs|cjs|java|py|go|rb|cs|php|rs|swift|kt|scala|c|cc|cpp|h|hpp|sql|md|mdx|ya?ml|json|toml|ini|sh|ps1|xml|gradle|proto)\b/g
+  for (const m of text.matchAll(bareFile)) out.push(m[0])
+
+  return [...new Set(out.map((p) => normalizePath(p.replace(/[.,;:)\]]+$/, ''))))].filter(Boolean)
+}
+
+/** Union two path lists, normalised and deduplicated. */
+function mergePaths(a: string[], b: string[]): string[] {
+  const out = new Set<string>()
+  for (const p of [...a, ...b]) {
+    const normalized = normalizePath(p)
+    if (normalized) out.add(normalized)
+  }
+  return [...out]
 }
 
 /** Determine how a candidate matched (cosine, keyword, or hybrid). */
@@ -297,9 +732,16 @@ function computeKeywordOverlap(queryTokens: string[], fact: MemoryFact): number 
   return hits / queryTokens.length
 }
 
-/** Compute recency score (0–1): more recent = higher score. */
+/**
+ * Compute recency score (0–1): more recent = higher score.
+ *
+ * Reads `observedAt` — when the source stated the fact — in preference to
+ * `updatedAt`. A dedup merge or a tier promotion bumps `updated_at`, which made
+ * an ancient convention score as though it had just been written; and a fact
+ * mined from a 2011 commit should rank as 2011, not as its ingestion date.
+ */
 function computeRecency(fact: MemoryFact, now: number): number {
-  const dateStr = fact.lastAccessedAt || fact.updatedAt || fact.createdAt
+  const dateStr = fact.lastAccessedAt || fact.observedAt || fact.updatedAt || fact.createdAt
   if (!dateStr) return 0.5
 
   const age = now - new Date(dateStr).getTime()

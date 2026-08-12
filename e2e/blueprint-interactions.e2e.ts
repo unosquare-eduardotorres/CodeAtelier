@@ -49,7 +49,10 @@ test.describe('Blueprint Interactions', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -191,9 +194,7 @@ test.describe('Blueprint Interactions', () => {
     await page.waitForTimeout(300)
   })
 
-  test('BlueprintFilterBar tab switching updates active state', async ({
-    electronPage: page
-  }) => {
+  test('BlueprintFilterBar tab switching updates active state', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     const filterBar = page.locator('[data-testid="blueprint-filter-bar"]')
@@ -272,15 +273,16 @@ test.describe('Blueprint Interactions', () => {
 
     // Progress bar should be present
     const progressBar = waveProgress.locator('[class*="bg-emerald"]')
-    const hasProgress = await progressBar.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasProgress = await progressBar
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasProgress).toBeTruthy()
   })
 
   // ── Detail view ──
 
-  test('BlueprintDetailView renders with expandable phases', async ({
-    electronPage: page
-  }) => {
+  test('BlueprintDetailView renders with expandable phases', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     // Click a blueprint from history to open detail view
@@ -462,9 +464,7 @@ test.describe('Blueprint Interactions', () => {
 
   // ── Phase timeline clicking ──
 
-  test('clicking completed phase in timeline shows its output', async ({
-    electronPage: page
-  }) => {
+  test('clicking completed phase in timeline shows its output', async ({ electronPage: page }) => {
     await navigateToBlueprints(page)
 
     const timeline = page.locator('[data-testid="blueprint-timeline"]')

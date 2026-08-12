@@ -12,7 +12,6 @@ import { getDatabase } from '../index'
 import { safeParseJSON } from '../json-utils'
 import type Database from 'better-sqlite3'
 
-
 // ── Types ──
 
 export type BlueprintEventType = 'system' | 'agent' | 'user' | 'findings' | 'qa' | 'plan' | 'tasks'
@@ -90,9 +89,7 @@ export class BlueprintEventRepository {
    */
   findByBlueprintAfterSeq(blueprintId: string, afterSeq: number): BlueprintEvent[] {
     const rows = this.db()
-      .prepare(
-        'SELECT * FROM blueprint_events WHERE blueprint_id = ? AND seq > ? ORDER BY seq ASC'
-      )
+      .prepare('SELECT * FROM blueprint_events WHERE blueprint_id = ? AND seq > ? ORDER BY seq ASC')
       .all(blueprintId, afterSeq) as BlueprintEventRow[]
 
     return rows.map((row) => this.mapRow(row))

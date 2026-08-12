@@ -1,6 +1,6 @@
 {
   "name": "code-atelier",
-  "version": "1.0.59",
+  "version": "1.0.74",
   "description": "Code Atelier — Where Craft Meets Code",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -10,30 +10,34 @@
     "lint": "eslint --cache .",
     "typecheck:node": "node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.node.json --composite false",
     "typecheck:web": "node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.web.json --composite false",
+    "typecheck:e2e": "node_modules/typescript-native/bin/tsc --noEmit -p tsconfig.e2e.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "dev:restart": "pkill -f 'electron-vite' 2>/dev/null; pkill -f 'Electron' 2>/dev/null; sleep 1 && electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run typecheck && electron-vite build && node scripts/verify-build-assets.mjs",
     "postinstall": "echo 'N-API: no native rebuild needed'",
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "bash scripts/build-win.sh",
     "build:mac": "bash scripts/build-mac.sh",
-    "build:linux": "electron-vite build && electron-builder --linux",
+    "build:linux": "electron-vite build && node scripts/verify-build-assets.mjs && electron-builder --linux",
     "test:unit": "tsx src/main/services/__tests__/run-tests.ts",
     "test:repo": "tsx src/main/db/repositories/__tests__/run-tests.ts",
     "test:all": "npm run test:unit && npm run test:repo",
     "test:cov": "c8 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:html": "c8 --reporter=html --reporter=text node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
-    "test:cov:check": "c8 --check-coverage --lines 33 --functions 50 --branches 75 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
-    "test:cov:full": "bash scripts/coverage-full.sh"
+    "test:cov:check": "c8 --check-coverage --lines 65 --functions 77 --branches 76 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
+    "test:cov:full": "bash scripts/coverage-full.sh",
+    "coverage:rank": "node scripts/coverage-rank.mjs",
+    "test:cov:report": "npm run test:cov && npm run coverage:rank",
+    "test:check-orphans": "node scripts/check-test-orphans.mjs"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
     "@iconify-json/lucide": "^1.2.117",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@opencode-ai/sdk": "^1.15.3",
-    "better-sqlite3": "13.0.2",
+    "better-sqlite3": "13.0.3",
     "d3-force": "^3.0.0",
     "echarts": "^6.1.0",
     "electron-log": "^5.4.4",
@@ -87,7 +91,7 @@
     "react": "^19.2.1",
     "react-diff-viewer-continued": "^4.4.0",
     "react-dom": "^19.2.1",
-    "react-dropzone": "^15.0.0",
+    "react-dropzone": "^19.3.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.1",
     "react-simple-code-editor": "^0.14.1",
@@ -107,6 +111,8 @@
   "overrides": {
     "hono": "^4.12.25",
     "js-yaml": "^4.2.0",
-    "undici": "^7.29.0"
+    "undici": "^7.29.0",
+    "fast-uri": "^3.1.5",
+    "ip-address": "^10.4.0"
   }
 }

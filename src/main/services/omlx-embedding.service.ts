@@ -62,9 +62,7 @@ class OmlxEmbeddingProvider extends EventEmitter {
       }
 
       // 2. Find a loaded embedding model
-      const embeddingModel = status.allModels?.find(
-        (m) => m.loaded && m.modelType === 'embedding'
-      )
+      const embeddingModel = status.allModels?.find((m) => m.loaded && m.modelType === 'embedding')
       if (!embeddingModel) {
         throw new Error(
           'No embedding model loaded in oMLX. Please download and load an embedding model ' +
@@ -163,7 +161,11 @@ class OmlxEmbeddingProvider extends EventEmitter {
       }
       // Detect connection loss — mark not-ready so next call re-initializes
       const msg = (error as Error).message ?? ''
-      if (msg.includes('fetch failed') || msg.includes('ECONNREFUSED') || msg.includes('TimeoutError')) {
+      if (
+        msg.includes('fetch failed') ||
+        msg.includes('ECONNREFUSED') ||
+        msg.includes('TimeoutError')
+      ) {
         log.warn('[OmlxEmbedding] Connection lost — marking not ready for re-initialization')
         this._isReady = false
         this.initPromise = null
@@ -208,9 +210,7 @@ class OmlxEmbeddingProvider extends EventEmitter {
       }
 
       // 3. Find an embedding model
-      const embeddingModel = status.allModels?.find(
-        (m) => m.modelType === 'embedding'
-      )
+      const embeddingModel = status.allModels?.find((m) => m.modelType === 'embedding')
       if (!embeddingModel) {
         // No embedding model downloaded at all
         return false

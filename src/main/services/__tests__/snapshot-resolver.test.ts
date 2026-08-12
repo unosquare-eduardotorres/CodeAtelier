@@ -15,7 +15,13 @@ import { BLUEPRINT_CONV_RE, resolveOpenCodeProviderFromSnapshot } from '../snaps
 import type { OpenCodeProviderConfig } from '../snapshot-model-resolver'
 import { DEFAULT_MODEL_CONFIG } from '../../../shared/constants'
 import { buildMemoryFeedFallbackArgs } from '../one-shot-local'
-import type { ModelRoleMap, ModelOverrides, ModelRoleAssignment, ConversationModelSnapshot, ResolvedAssignment } from '../../../shared/types'
+import type {
+  ModelRoleMap,
+  ModelOverrides,
+  ModelRoleAssignment,
+  ConversationModelSnapshot,
+  ResolvedAssignment
+} from '../../../shared/types'
 
 // ── buildConversationModelSnapshot ──────────────────────────────────────
 
@@ -57,7 +63,6 @@ describe('buildConversationModelSnapshot (via resolveAssignment)', () => {
 // ── Blueprint synthetic ID regex ────────────────────────────────────────
 
 describe('Blueprint synthetic conversation ID regex', () => {
-
   test('matches_all_7_phases', () => {
     const phases = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify'] as const
     for (const phase of phases) {
@@ -99,7 +104,7 @@ describe('G1 regression: handleAssign override cleanup', () => {
     // Simulate the handleAssign logic from ModelRolesSection
     const modelRoles: ModelRoleMap = {}
     const claudeModelOverrides: ModelOverrides = {
-      'specialist:plan': 'claude-opus-4-8'  // pre-existing Claude override
+      'specialist:plan': 'claude-opus-4-8' // pre-existing Claude override
     }
 
     const assignment: ModelRoleAssignment = {
@@ -125,8 +130,11 @@ describe('G1 regression: handleAssign override cleanup', () => {
     }
 
     // After assigning local, the legacy override should be cleared
-    assert.equal(updatedOverrides['specialist:plan'], undefined,
-      'Stale Claude override should be deleted when assigning local')
+    assert.equal(
+      updatedOverrides['specialist:plan'],
+      undefined,
+      'Stale Claude override should be deleted when assigning local'
+    )
     assert.equal(updated['specialist:plan']?.provider, 'local-llm')
     assert.equal(updated['specialist:plan']?.modelId, 'gemma-3')
   })
@@ -154,8 +162,11 @@ describe('G1 regression: handleAssign override cleanup', () => {
       }
     }
 
-    assert.equal(updatedOverrides['specialist:build'], 'claude-sonnet-4-6',
-      'Claude assignment should write to legacy override')
+    assert.equal(
+      updatedOverrides['specialist:build'],
+      'claude-sonnet-4-6',
+      'Claude assignment should write to legacy override'
+    )
     assert.equal(updated['specialist:build']?.provider, 'claude')
   })
 
@@ -187,9 +198,17 @@ describe('Blueprint snapshot resolution', () => {
   test('snapshot_hit_returns_frozen_model', () => {
     // Simulate what resolveModelFromSnapshot does for blueprint IDs
     const snapshot = {
-      specify: { provider: 'claude' as const, modelId: 'claude-opus-4-8', source: 'roles' as const },
+      specify: {
+        provider: 'claude' as const,
+        modelId: 'claude-opus-4-8',
+        source: 'roles' as const
+      },
       build: { provider: 'local-llm' as const, modelId: 'gemma-3', source: 'roles' as const },
-      plan: { provider: 'claude' as const, modelId: 'claude-sonnet-4-6', source: 'default' as const }
+      plan: {
+        provider: 'claude' as const,
+        modelId: 'claude-sonnet-4-6',
+        source: 'default' as const
+      }
     }
 
     // Blueprint phase 'specify' → should return the frozen model
@@ -205,8 +224,11 @@ describe('Blueprint snapshot resolution', () => {
 
     const phase = 'build'
     const snapRecord = snapshot as Record<string, { modelId: string } | undefined>
-    assert.equal(snapRecord[phase]?.modelId, undefined,
-      'Missing phase should return undefined, triggering live fallback')
+    assert.equal(
+      snapRecord[phase]?.modelId,
+      undefined,
+      'Missing phase should return undefined, triggering live fallback'
+    )
   })
 })
 
@@ -221,8 +243,11 @@ describe('A1 regression: Claude fallback args include --model', () => {
     const args = buildMemoryFeedFallbackArgs('test prompt')
     const modelIdx = args.indexOf('--model')
     assert.ok(modelIdx >= 0, 'claudeFallbackArgs must include --model flag')
-    assert.equal(args[modelIdx + 1], DEFAULT_MODEL_CONFIG.memoryFeed,
-      '--model value must match DEFAULT_MODEL_CONFIG.memoryFeed')
+    assert.equal(
+      args[modelIdx + 1],
+      DEFAULT_MODEL_CONFIG.memoryFeed,
+      '--model value must match DEFAULT_MODEL_CONFIG.memoryFeed'
+    )
   })
 
   test('fallback_model_is_haiku', () => {
@@ -340,12 +365,12 @@ describe('resolveOpenCodeProviderFromSnapshot', () => {
     }
 
     // Plan mode should use plan assignment
-    const planAssignment = false ? snapshot.build : snapshot.plan
+    const planAssignment = snapshot.plan
     assert.equal(planAssignment.modelId, 'claude-opus-4-8')
     assert.equal(planAssignment.provider, 'claude')
 
     // Build mode should use build assignment
-    const buildAssignment = true ? snapshot.build : snapshot.plan
+    const buildAssignment = snapshot.build
     assert.equal(buildAssignment.modelId, 'gemma-3')
     assert.equal(buildAssignment.provider, 'local-llm')
     assert.equal(buildAssignment.localBackend, 'omlx')
@@ -365,17 +390,19 @@ describe('resolveOpenCodeProviderFromSnapshot', () => {
     // Replicate the mode → isBuildMode mapping from agent-session.service.ts
     const modes = ['plan', 'build', 'danger'] as const
     for (const mode of modes) {
-      const isBuildMode = mode !== 'plan'  // F3 fix: was `mode === 'build'`, now `mode !== 'plan'`
+      const isBuildMode = mode !== 'plan' // F3 fix: was `mode === 'build'`, now `mode !== 'plan'`
       const assignment = isBuildMode ? snapshot.build : snapshot.plan
 
       if (mode === 'plan') {
-        assert.equal(assignment.modelId, 'claude-sonnet-4-6',
-          `plan mode should select plan assignment`)
+        assert.equal(
+          assignment.modelId,
+          'claude-sonnet-4-6',
+          `plan mode should select plan assignment`
+        )
         assert.equal(assignment.provider, 'claude')
       } else {
         // Both 'build' and 'danger' must select the build assignment
-        assert.equal(assignment.modelId, 'gemma-3',
-          `${mode} mode should select build assignment`)
+        assert.equal(assignment.modelId, 'gemma-3', `${mode} mode should select build assignment`)
         assert.equal(assignment.provider, 'local-llm')
         assert.equal(assignment.localBackend, 'omlx')
       }
@@ -427,13 +454,19 @@ describe('F5 seeding: seed + override merge semantics', () => {
     const seeded = buildSeedFromSnapshot(existingSnapshot)
 
     assert.deepEqual(seeded['specialist:plan'], {
-      provider: 'claude', modelId: 'claude-opus-4-8', localBackend: undefined
+      provider: 'claude',
+      modelId: 'claude-opus-4-8',
+      localBackend: undefined
     })
     assert.deepEqual(seeded['specialist:build'], {
-      provider: 'local-llm', modelId: 'gemma-3', localBackend: 'omlx'
+      provider: 'local-llm',
+      modelId: 'gemma-3',
+      localBackend: 'omlx'
     })
     assert.deepEqual(seeded['haiku'], {
-      provider: 'claude', modelId: 'claude-haiku-4-5', localBackend: undefined
+      provider: 'claude',
+      modelId: 'claude-haiku-4-5',
+      localBackend: undefined
     })
   })
 

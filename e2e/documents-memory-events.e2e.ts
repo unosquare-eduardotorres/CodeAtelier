@@ -119,10 +119,15 @@ test.describe('Documents, Memory & Events', () => {
     const searchInput = page.locator('[data-testid="memory-search-input"]')
     await expect(searchInput).toBeVisible()
 
-    // Memory type filter badges visible
-    const filterBadges = page.getByRole('button').filter({ hasText: /User|Feedback|Project|Reference/i })
-    const badgeCount = await filterBadges.count()
-    expect(badgeCount).toBeGreaterThanOrEqual(1)
+    // Category filtering now lives behind a dropdown rather than a permanent
+    // chip row, so the options only exist once the menu is open.
+    await page.getByRole('button', { name: /Category/i }).first().click()
+
+    const categoryOptions = page
+      .getByRole('menuitemcheckbox')
+      .filter({ hasText: /Decision|Convention|Gotcha|Preference|Reference/i })
+    await expect(categoryOptions.first()).toBeVisible({ timeout: 3_000 })
+    expect(await categoryOptions.count()).toBeGreaterThanOrEqual(1)
   })
 
   test('memory search filters memories', async ({ electronPage: page }) => {

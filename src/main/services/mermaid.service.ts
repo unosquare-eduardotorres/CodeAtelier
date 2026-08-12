@@ -50,7 +50,7 @@ class MermaidService {
         mainBkg: '#0d1117',
         nodeBorder: '#73daca',
         fontFamily: "'Inter', sans-serif",
-        fontSize: '13px',
+        fontSize: '13px'
       }
     })
 
@@ -58,8 +58,8 @@ class MermaidService {
     this.mermaid.registerIconPacks([
       {
         name: 'lucide',
-        loader: () => import('@iconify-json/lucide').then((module) => module.icons),
-      },
+        loader: () => import('@iconify-json/lucide').then((module) => module.icons)
+      }
     ])
 
     this.initialized = true

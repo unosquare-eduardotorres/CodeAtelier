@@ -3,7 +3,16 @@
  * mode gating, and persistence (manifest / reconnection).
  */
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, unlinkSync, readdirSync, appendFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  unlinkSync,
+  readdirSync,
+  appendFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { test, describe } from './test-harness'
 import { RingBuffer } from '../../mcp-servers/process-manager-server'
@@ -88,8 +97,8 @@ describe('PROCESS_MANAGER MCP_TOOLS', () => {
     assert.equal(MCP_TOOLS.PROCESS_MANAGER._PREFIX, 'mcp__process-manager__')
   })
 
-  test('exports 4 tools', () => {
-    assert.equal(MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES.length, 4)
+  test('exports 5 tools', () => {
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES.length, 5)
   })
 
   test('run_background tool name follows convention', () => {
@@ -109,10 +118,7 @@ describe('PROCESS_MANAGER MCP_TOOLS', () => {
   })
 
   test('stop_process tool name follows convention', () => {
-    assert.equal(
-      MCP_TOOLS.PROCESS_MANAGER.STOP_PROCESS.name,
-      'mcp__process-manager__stop_process'
-    )
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.STOP_PROCESS.name, 'mcp__process-manager__stop_process')
   })
 
   test('list_processes tool name follows convention', () => {
@@ -122,12 +128,18 @@ describe('PROCESS_MANAGER MCP_TOOLS', () => {
     )
   })
 
+  test('wait_process tool name follows convention', () => {
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.WAIT_PROCESS.name, 'mcp__process-manager__wait_process')
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.WAIT_PROCESS.tool, 'wait_process')
+  })
+
   test('all tool names are in ALL_NAMES', () => {
     const names = MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES
     assert.ok(names.includes('mcp__process-manager__run_background'))
     assert.ok(names.includes('mcp__process-manager__check_process'))
     assert.ok(names.includes('mcp__process-manager__stop_process'))
     assert.ok(names.includes('mcp__process-manager__list_processes'))
+    assert.ok(names.includes('mcp__process-manager__wait_process'))
   })
 })
 
@@ -139,7 +151,7 @@ describe('Process Manager mode gating', () => {
     // The process-manager tools should NOT appear in the allowedTools for plan mode.
     // We verify the MCP_TOOLS entry exists so the wiring can reference it.
     const allNames = MCP_TOOLS.PROCESS_MANAGER._ALL_NAMES
-    assert.ok(allNames.length === 4, 'Should have exactly 4 process-manager tools')
+    assert.ok(allNames.length === 5, 'Should have exactly 5 process-manager tools')
   })
 
   test('display names follow "Process · tool_name" convention', () => {
@@ -147,6 +159,7 @@ describe('Process Manager mode gating', () => {
     assert.equal(MCP_TOOLS.PROCESS_MANAGER.CHECK_PROCESS.displayName, 'Process · check_process')
     assert.equal(MCP_TOOLS.PROCESS_MANAGER.STOP_PROCESS.displayName, 'Process · stop_process')
     assert.equal(MCP_TOOLS.PROCESS_MANAGER.LIST_PROCESSES.displayName, 'Process · list_processes')
+    assert.equal(MCP_TOOLS.PROCESS_MANAGER.WAIT_PROCESS.displayName, 'Process · wait_process')
   })
 })
 
@@ -159,6 +172,12 @@ describe('Process Manager prompt guidance', () => {
     assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('## Background Processes'))
     assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('run_background'))
     assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('NEVER use Bash'))
+  })
+
+  test('prompt forbids shell-based sleeping on every platform', async () => {
+    const mod = await import('../default-prompts')
+    assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('Start-Sleep'))
+    assert.ok(mod.PROCESS_MANAGER_GUIDANCE_PROMPT.includes('timeout /t'))
   })
 
   test('prompt mentions persistence across sessions', async () => {
@@ -390,14 +409,26 @@ describe('PID liveness check', () => {
 
 describe('Process group kill (-pid)', () => {
   test('negative PID kills the entire process group', async () => {
+    // process.kill(-pid) is a POSIX process-group concept; on Windows the
+    // equivalent path is killProcessTree()'s `taskkill /T`, covered elsewhere.
+    if (process.platform === 'win32') return
+
     const { spawn } = require('node:child_process')
 
-    // Spawn a shell that starts two background sleeps — all in one process group
-    const child = spawn('sleep 999 & sleep 999 & wait', {
-      shell: true,
-      detached: true,
-      stdio: 'ignore'
-    })
+    // Spawn a real subprocess (no shell, no external `sleep` binary) that stays
+    // alive on an idle timer, plus a child of its own so the group has 2 members.
+    const child = spawn(
+      process.execPath,
+      [
+        '-e',
+        "require('node:child_process').spawn(process.execPath,['-e','setInterval(()=>{},1<<30)'],{stdio:'ignore'});setInterval(()=>{},1<<30)"
+      ],
+      {
+        stdio: 'ignore',
+        detached: true, // POSIX only — needed for PGID == PID
+        windowsHide: true
+      }
+    )
     child.unref()
 
     const pid = child.pid
@@ -411,22 +442,31 @@ describe('Process group kill (-pid)', () => {
     try {
       process.kill(pid, 0)
       alive = true
-    } catch { /* dead */ }
+    } catch {
+      /* dead */
+    }
     assert.ok(alive, 'Process group leader should be alive')
 
     // Kill the entire process group
     try {
       process.kill(-pid, 'SIGKILL')
-    } catch { /* already dead */ }
+    } catch {
+      /* already dead */
+    }
 
-    await new Promise((r) => setTimeout(r, 200))
-
-    // Verify the group leader is dead
-    let stillAlive = false
-    try {
-      process.kill(pid, 0)
-      stillAlive = true
-    } catch { /* dead */ }
+    // Poll rather than sleeping a fixed 200ms: reaping is the OS's business and
+    // on a loaded machine it can take noticeably longer than one fixed wait.
+    let stillAlive = true
+    const deadline = Date.now() + 5_000
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0)
+      } catch {
+        stillAlive = false
+        break
+      }
+      await new Promise((r) => setTimeout(r, 50))
+    }
     assert.ok(!stillAlive, 'Process group leader should be dead after -pid kill')
   })
 })
@@ -436,11 +476,50 @@ describe('Process group kill (-pid)', () => {
 describe('Dead process auto-reap in list_processes', () => {
   test('dead processes are removed from map and reaped count is returned', () => {
     // Simulate the list_processes logic with a local map
-    const localMap = new Map<number, { pid: number; label: string; command: string; exited: boolean; exitCode: number | null; startedAt: number; reconnected: boolean; logFile: string }>()
+    const localMap = new Map<
+      number,
+      {
+        pid: number
+        label: string
+        command: string
+        exited: boolean
+        exitCode: number | null
+        startedAt: number
+        reconnected: boolean
+        logFile: string
+      }
+    >()
 
-    localMap.set(100, { pid: 100, label: 'alive-proc', command: 'node server.js', exited: false, exitCode: null, startedAt: Date.now(), reconnected: false, logFile: 'alive.log' })
-    localMap.set(200, { pid: 200, label: 'dead-proc-1', command: 'npm run dev', exited: true, exitCode: 1, startedAt: Date.now() - 5000, reconnected: false, logFile: 'dead1.log' })
-    localMap.set(300, { pid: 300, label: 'dead-proc-2', command: 'webpack', exited: true, exitCode: 0, startedAt: Date.now() - 10000, reconnected: true, logFile: 'dead2.log' })
+    localMap.set(100, {
+      pid: 100,
+      label: 'alive-proc',
+      command: 'node server.js',
+      exited: false,
+      exitCode: null,
+      startedAt: Date.now(),
+      reconnected: false,
+      logFile: 'alive.log'
+    })
+    localMap.set(200, {
+      pid: 200,
+      label: 'dead-proc-1',
+      command: 'npm run dev',
+      exited: true,
+      exitCode: 1,
+      startedAt: Date.now() - 5000,
+      reconnected: false,
+      logFile: 'dead1.log'
+    })
+    localMap.set(300, {
+      pid: 300,
+      label: 'dead-proc-2',
+      command: 'webpack',
+      exited: true,
+      exitCode: 0,
+      startedAt: Date.now() - 10000,
+      reconnected: true,
+      logFile: 'dead2.log'
+    })
 
     const deadPids: number[] = []
     const processes = [...localMap.values()].map((p) => {
@@ -481,7 +560,11 @@ describe('Orphan log file sweep', () => {
   const logsDir = join(tmpDir, 'logs')
 
   function cleanup(): void {
-    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* */ }
+    try {
+      rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      /* */
+    }
   }
 
   test('sweeps orphan log files not referenced by tracked processes', () => {
@@ -504,7 +587,9 @@ describe('Orphan log file sweep', () => {
         try {
           unlinkSync(join(logsDir, file))
           swept++
-        } catch { /* */ }
+        } catch {
+          /* */
+        }
       }
     }
 
@@ -543,7 +628,11 @@ describe('gitignore patch caching', () => {
   const tmpDir = join(process.cwd(), '.pm-state-gitignore-test-' + process.pid)
 
   function cleanup(): void {
-    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* */ }
+    try {
+      rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      /* */
+    }
   }
 
   test('.gitignore is only patched once even when ensureStateDir is called multiple times', () => {
@@ -648,7 +737,11 @@ describe('Final output capture in stop_process', () => {
   const logsDir = join(tmpDir, 'logs')
 
   function cleanup(): void {
-    try { rmSync(tmpDir, { recursive: true, force: true }) } catch { /* */ }
+    try {
+      rmSync(tmpDir, { recursive: true, force: true })
+    } catch {
+      /* */
+    }
   }
 
   test('refreshOutputFromLog + getRecent captures output before log deletion', () => {
@@ -671,7 +764,10 @@ describe('Final output capture in stop_process', () => {
     // Verify we got the last 30 lines
     assert.ok(finalOutput.includes('output-line-49'), 'Should include last line')
     assert.ok(finalOutput.includes('output-line-20'), 'Should include line 20')
-    assert.ok(!finalOutput.includes('output-line-19'), 'Should NOT include line 19 (outside last 30)')
+    assert.ok(
+      !finalOutput.includes('output-line-19'),
+      'Should NOT include line 19 (outside last 30)'
+    )
 
     // Now delete the log (simulating stop_process cleanup)
     unlinkSync(logPath)

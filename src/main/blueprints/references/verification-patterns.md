@@ -3,11 +3,13 @@
 ## Common Verification Commands
 
 ### File Existence
+
 ```bash
 [ -f "path/to/file" ] && echo "FOUND" || echo "MISSING"
 ```
 
 ### Line Count Check (substantive vs stub)
+
 ```bash
 wc -l path/to/file
 # < 10 lines for a component = likely stub
@@ -15,6 +17,7 @@ wc -l path/to/file
 ```
 
 ### Import/Usage Check
+
 ```bash
 # Who imports this file?
 grep -r "import.*ModuleName" src/ --include="*.ts" --include="*.tsx" | wc -l
@@ -24,6 +27,7 @@ grep -r "ModuleName" src/ --include="*.ts" --include="*.tsx" | grep -v "import" 
 ```
 
 ### Stub Pattern Detection
+
 ```bash
 # Empty returns
 grep -n "return null\|return {}\|return \[\]\|return undefined" path/to/file
@@ -37,6 +41,7 @@ grep -n "function.*{$" path/to/file
 ```
 
 ### Test Validity Check
+
 ```bash
 # Tests that always pass (no assertions)
 grep -L "assert\|expect\|should\|toBe\|toEqual\|toHave" tests/**/*.test.ts
@@ -47,19 +52,20 @@ grep -c "expect\|assert" tests/**/*.test.ts
 
 ## Verification Thresholds
 
-| Artifact Type | Min Lines | Must Import | Must Be Imported |
-|---------------|-----------|-------------|------------------|
-| React Component | 15 | React | Yes (by page/parent) |
-| API Route | 10 | Service/Handler | Yes (by router) |
-| Service | 20 | Repository/DB | Yes (by route/handler) |
-| Repository | 15 | DB client | Yes (by service) |
-| Type/Interface | 5 | - | Yes (by implementation) |
-| Test File | 10 | Module under test | No |
-| Config File | 3 | - | Yes (by app entry) |
+| Artifact Type   | Min Lines | Must Import       | Must Be Imported        |
+| --------------- | --------- | ----------------- | ----------------------- |
+| React Component | 15        | React             | Yes (by page/parent)    |
+| API Route       | 10        | Service/Handler   | Yes (by router)         |
+| Service         | 20        | Repository/DB     | Yes (by route/handler)  |
+| Repository      | 15        | DB client         | Yes (by service)        |
+| Type/Interface  | 5         | -                 | Yes (by implementation) |
+| Test File       | 10        | Module under test | No                      |
+| Config File     | 3         | -                 | Yes (by app entry)      |
 
 ## Data Flow Patterns
 
 ### Backend Data Flow
+
 ```
 Client Request → Route → Controller → Service → Repository → Database
                                                               ↓
@@ -67,6 +73,7 @@ Client Response ← Route ← Controller ← Service ← Repository ← Query Re
 ```
 
 ### Frontend Data Flow
+
 ```
 User Action → Event Handler → API Call → State Update → Re-render
                                                           ↓
@@ -74,6 +81,7 @@ User Action → Event Handler → API Call → State Update → Re-render
 ```
 
 ### Full Stack Trace
+
 ```
 User clicks button
   → onClick handler fires

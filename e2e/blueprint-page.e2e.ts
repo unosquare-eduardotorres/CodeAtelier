@@ -23,11 +23,11 @@ import { pinSequentialBuild } from './helpers/electron-app'
 
 test.describe('Blueprint Page', () => {
   // H3 FIX: Pin parallel_build_agents=1 to prevent nondeterministic scheduling
-  test.beforeEach(async ({ electronPage }) => { await pinSequentialBuild(electronPage) })
+  test.beforeEach(async ({ electronPage }) => {
+    await pinSequentialBuild(electronPage)
+  })
 
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -48,7 +48,10 @@ test.describe('Blueprint Page', () => {
     await chrome.navigateToTab('settings')
     await page.waitForTimeout(500)
 
-    const blueprintTab = page.locator('button').filter({ hasText: /blueprint/i }).first()
+    const blueprintTab = page
+      .locator('button')
+      .filter({ hasText: /blueprint/i })
+      .first()
     const hasBlueprintTab = await blueprintTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasBlueprintTab) {
       await blueprintTab.click()
@@ -61,9 +64,15 @@ test.describe('Blueprint Page', () => {
 
   test('blueprint page renders with phase timeline', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToBlueprints(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     await expect(page.locator('[data-testid="blueprint-page"]')).toBeVisible()
 
@@ -73,15 +82,24 @@ test.describe('Blueprint Page', () => {
 
     // Experimental badge
     const badge = page.getByText('Experimental')
-    const hasBadge = await badge.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasBadge = await badge
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     expect(hasBadge).toBeTruthy()
   })
 
   test('phase list shows plan/execute/verify steps', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToBlueprints(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // If a blueprint is running, check the phase timeline
     const timeline = page.locator('[data-testid="blueprint-phase-timeline"]')
@@ -101,28 +119,48 @@ test.describe('Blueprint Page', () => {
 
   test('active phase displays live stream output', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToBlueprints(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const timeline = page.locator('[data-testid="blueprint-phase-timeline"]')
     const hasTimeline = await timeline.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasTimeline) { test.skip(); return }
+    if (!hasTimeline) {
+      test.skip()
+      return
+    }
 
     // Stream output area should be visible alongside timeline
     const streamArea = timeline.locator('.overflow-y-auto, pre, [class*="mono"]')
-    const hasStream = await streamArea.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasStream = await streamArea
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(typeof hasStream).toBe('boolean')
   })
 
   test('artifact viewer renders plan content', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToBlueprints(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Check for any blueprint artifacts / history items
-    const historyItems = page.locator('[class*="cursor-pointer"]').filter({ hasText: /completed|running|failed/i })
+    const historyItems = page
+      .locator('[class*="cursor-pointer"]')
+      .filter({ hasText: /completed|running|failed/i })
     const count = await historyItems.count()
 
     if (count > 0) {
@@ -132,7 +170,10 @@ test.describe('Blueprint Page', () => {
 
       // Detail view should show content
       const detailContent = page.locator('.prose, [class*="markdown"]')
-      const hasContent = await detailContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasContent = await detailContent
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
       expect(typeof hasContent).toBe('boolean')
     } else {
       // No history — OK
@@ -142,13 +183,22 @@ test.describe('Blueprint Page', () => {
 
   test('approval gate shows approve/reject buttons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToBlueprints(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const approvalGate = page.locator('[data-testid="blueprint-approval-gate"]')
     const hasApproval = await approvalGate.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasApproval) { test.skip(); return }
+    if (!hasApproval) {
+      test.skip()
+      return
+    }
 
     // Should have approve and reject buttons
     const approveBtn = approvalGate.getByRole('button', { name: /approve/i })
@@ -159,9 +209,15 @@ test.describe('Blueprint Page', () => {
 
   test('cancel button stops blueprint execution', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const navigated = await navigateToBlueprints(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const cancelBtn = page.locator('[data-testid="blueprint-cancel-btn"]')
     const hasCancel = await cancelBtn.isVisible({ timeout: 5_000 }).catch(() => false)

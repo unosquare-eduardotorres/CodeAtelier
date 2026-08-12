@@ -61,13 +61,32 @@ if (!env) {
 
   // Seed code_chunks rows for FK satisfaction
   const seedChunk = (id: string) => {
-    db.prepare(`INSERT OR IGNORE INTO code_chunks
+    db.prepare(
+      `INSERT OR IGNORE INTO code_chunks
       (id, workspace_id, file_path, file_name, directory, symbol_name, symbol_kind,
        signature, start_line, end_line, language, body, embed_text, is_public,
        is_async, has_docstring, line_count, file_mtime)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, wsId, 'src/x.ts', 'x.ts', 'src', 'fn', 'function',
-        'fn(): void', 1, 3, 'typescript', 'fn() {}', 'fn', 1, 0, 0, 3, 1000)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      wsId,
+      'src/x.ts',
+      'x.ts',
+      'src',
+      'fn',
+      'function',
+      'fn(): void',
+      1,
+      3,
+      'typescript',
+      'fn() {}',
+      'fn',
+      1,
+      0,
+      0,
+      3,
+      1000
+    )
   }
 
   describe('ChunkEmbeddingRepository', () => {
@@ -96,7 +115,8 @@ if (!env) {
     })
 
     test('hasEmbeddings() returns false for empty workspace', () => {
-      const row = db.prepare(`INSERT INTO workspaces (name, repo_path) VALUES (?, ?) RETURNING id`)
+      const row = db
+        .prepare(`INSERT INTO workspaces (name, repo_path) VALUES (?, ?) RETURNING id`)
         .get('EmptyWS', '/tmp/empty') as { id: string }
       assert.equal(chunkEmbeddingRepository.hasEmbeddings(row.id), false)
     })
@@ -107,9 +127,7 @@ if (!env) {
     })
 
     test('upsertEmbeddings() replaces existing (INSERT OR REPLACE)', () => {
-      const updated = [
-        { chunkId: 'emb-chunk-1', embedding: [0.9, 0.8, 0.7], model: 'new-model' }
-      ]
+      const updated = [{ chunkId: 'emb-chunk-1', embedding: [0.9, 0.8, 0.7], model: 'new-model' }]
       chunkEmbeddingRepository.upsertEmbeddings(wsId, updated)
       const loaded = chunkEmbeddingRepository.loadAllForWorkspace(wsId)
       const first = loaded.find((e: any) => e.chunkId === 'emb-chunk-1')

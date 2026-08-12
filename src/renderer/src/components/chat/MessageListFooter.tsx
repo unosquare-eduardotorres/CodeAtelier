@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useChatStore, useChatActions } from '@renderer/store'
-import { GrillQuestionCard, MessageBubble } from '@renderer/components/chat'
+import { GrillQuestionCard, MessageBubble, ToolPermissionCard } from '@renderer/components/chat'
 import IdeaPopover from './IdeaPopover'
 import { CompactContextModal } from '@renderer/components/common'
 import { ThinkingIndicator } from '@renderer/components/streaming'
@@ -34,6 +34,7 @@ export default function MessageListFooter({
   const contextUsages = useChatStore((s) => s.contextUsages)
   const pendingQuestions = useChatStore((s) => s.pendingQuestions)
   const hasPendingQuestions = (pendingQuestions?.length ?? 0) > 0
+  const pendingToolPermission = useChatStore((s) => s.pendingToolPermission)
   const activeConversationId = useChatStore((s) => s.activeConversation?.id ?? null)
   const activeConversationWorkspaceId = useChatStore(
     (s) => s.activeConversation?.workspaceId ?? null
@@ -69,12 +70,15 @@ export default function MessageListFooter({
   )
 
   // Stable identity ref — avoids busting React.memo on MessageBubble when thinkingIdentity hasn't changed
-  const liveIdentity = useMemo(() => ({
-    displayName: thinkingIdentity.name,
-    subtitle: null as string | null,
-    avatarKey: thinkingIdentity.avatarKey,
-    accentColor: thinkingIdentity.accentColor
-  }), [thinkingIdentity.name, thinkingIdentity.avatarKey, thinkingIdentity.accentColor])
+  const liveIdentity = useMemo(
+    () => ({
+      displayName: thinkingIdentity.name,
+      subtitle: null as string | null,
+      avatarKey: thinkingIdentity.avatarKey,
+      accentColor: thinkingIdentity.accentColor
+    }),
+    [thinkingIdentity.name, thinkingIdentity.avatarKey, thinkingIdentity.accentColor]
+  )
 
   return (
     <div data-testid="message-list-footer">
@@ -177,9 +181,20 @@ export default function MessageListFooter({
         </div>
       )}
 
+      {/* Inline tool permission card — deliberately does NOT suppress the live
+          narration below it: the agent really is mid-turn and blocked. */}
+      {pendingToolPermission && (
+        <div className="flex justify-start px-4">
+          <div className="max-w-[85%]">
+            <ToolPermissionCard pending={pendingToolPermission} />
+          </div>
+        </div>
+      )}
+
       {/* Live narration bubble (sentence-buffered) or thinking indicator */}
-      {isStreaming && !hasPendingQuestions && (
-        hasLiveContent ? (
+      {isStreaming &&
+        !hasPendingQuestions &&
+        (hasLiveContent ? (
           <div data-testid="live-narration-bubble">
             <MessageBubble
               message={liveMessage}
@@ -198,8 +213,7 @@ export default function MessageListFooter({
             toolActivities={allStreamingTools}
             showHookIndicator
           />
-        )
-      )}
+        ))}
     </div>
   )
 }

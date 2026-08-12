@@ -106,7 +106,10 @@ describe('idea.ipc validation contracts', () => {
 
   test('IDEA_CREATE requires workspaceId and title, description optional', () => {
     const ch = 'idea:create'
-    const args = requireObject({ workspaceId: 'ws-1', title: 'My Idea', description: 'Details' }, ch)
+    const args = requireObject(
+      { workspaceId: 'ws-1', title: 'My Idea', description: 'Details' },
+      ch
+    )
     assert.equal(requireString(args, 'workspaceId', ch), 'ws-1')
     assert.equal(requireString(args, 'title', ch), 'My Idea')
     assert.equal(optionalString(args, 'description', ch), 'Details')
@@ -181,11 +184,14 @@ describe('checkpoint.ipc validation contracts', () => {
 describe('bug.ipc validation contracts', () => {
   test('BUG_REPORT requires errorMessage, process, appVersion', () => {
     const ch = 'bug:report'
-    const args = requireObject({
-      errorMessage: 'crash!',
-      process: 'main',
-      appVersion: '1.0.0'
-    }, ch)
+    const args = requireObject(
+      {
+        errorMessage: 'crash!',
+        process: 'main',
+        appVersion: '1.0.0'
+      },
+      ch
+    )
     assert.equal(requireString(args, 'errorMessage', ch), 'crash!')
     assert.equal(requireString(args, 'process', ch), 'main')
     assert.equal(requireString(args, 'appVersion', ch), '1.0.0')

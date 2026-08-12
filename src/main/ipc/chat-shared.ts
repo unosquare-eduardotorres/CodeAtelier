@@ -29,7 +29,9 @@ export function notifyChunkTaps(requestId: string | undefined, chunk: StreamChun
   for (const cb of chunkTapListeners.values()) {
     try {
       cb(requestId, chunk)
-    } catch { /* tap errors must not break streaming */ }
+    } catch {
+      /* tap errors must not break streaming */
+    }
   }
 }
 
@@ -54,7 +56,9 @@ export function forwardChunkToRenderer(
     for (const cb of chunkTapListeners.values()) {
       try {
         cb(requestId, chunk)
-      } catch { /* tap errors must not break streaming */ }
+      } catch {
+        /* tap errors must not break streaming */
+      }
     }
   }
 

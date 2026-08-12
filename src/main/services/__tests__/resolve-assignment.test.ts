@@ -53,7 +53,7 @@ describe('resolveAssignment', () => {
   })
 
   test('modelOverrides_with_local_workspace_sets_local_provider', () => {
-    const modelOverrides: ModelOverrides = { 'haiku': 'local-model-x' }
+    const modelOverrides: ModelOverrides = { haiku: 'local-model-x' }
     const result = resolveAssignment({
       action: 'haiku',
       modelOverrides,
@@ -69,7 +69,7 @@ describe('resolveAssignment', () => {
 
   test('specialist_plan_default', () => {
     const result = resolveAssignment({
-      action: 'specialist:plan',
+      action: 'specialist:plan'
     })
     assert.equal(result.modelId, 'claude-opus-5') // specialist:plan default
     assert.equal(result.source, 'default')
@@ -77,7 +77,7 @@ describe('resolveAssignment', () => {
 
   test('specialist_plan_default_without_specialist', () => {
     const result = resolveAssignment({
-      action: 'specialist:plan',
+      action: 'specialist:plan'
     })
     assert.equal(result.modelId, 'claude-opus-5') // specialist:plan default
     assert.equal(result.source, 'default')
@@ -87,7 +87,7 @@ describe('resolveAssignment', () => {
 
   test('default_config_for_known_action', () => {
     const result = resolveAssignment({ action: 'specialist:build' })
-    assert.equal(result.modelId, 'claude-sonnet-5')
+    assert.equal(result.modelId, 'claude-opus-5')
     assert.equal(result.source, 'default')
     assert.equal(result.provider, 'claude')
   })
@@ -135,7 +135,7 @@ describe('resolveAssignment', () => {
   })
 
   test('modelOverrides_takes_priority_over_defaults', () => {
-    const modelOverrides: ModelOverrides = { 'haiku': 'claude-sonnet-4-6' }
+    const modelOverrides: ModelOverrides = { haiku: 'claude-sonnet-4-6' }
     const result = resolveAssignment({ action: 'haiku', modelOverrides })
     assert.equal(result.modelId, 'claude-sonnet-4-6')
     assert.equal(result.source, 'override')
@@ -221,7 +221,11 @@ describe('resolveModelAction', () => {
     const phases = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify'] as const
     for (const phase of phases) {
       const result = resolveModelAction(`blueprint-${phase}` as any, false)
-      assert.equal(result, `blueprint:${phase}`, `blueprint-${phase} should map to blueprint:${phase}`)
+      assert.equal(
+        result,
+        `blueprint:${phase}`,
+        `blueprint-${phase} should map to blueprint:${phase}`
+      )
     }
   })
 })

@@ -68,9 +68,7 @@ const TYPE_BADGE_CLASSES: Record<string, { label: string; classes: string }> = {
 function ModelTypeBadge({ modelType }: { modelType?: string }): React.JSX.Element {
   const config = TYPE_BADGE_CLASSES[modelType ?? 'llm'] ?? TYPE_BADGE_CLASSES.llm
   return (
-    <span
-      className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}
-    >
+    <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}>
       {config.label}
     </span>
   )
@@ -286,9 +284,7 @@ function ServerModelRow({
           </span>
         )}
 
-        {model.pinned && (
-          <Star size={10} className="text-amber-400 shrink-0" />
-        )}
+        {model.pinned && <Star size={10} className="text-amber-400 shrink-0" />}
         {(model.modelType ?? 'llm') === 'embedding' && model.loaded && (
           <span className="text-xs px-1.5 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-medium shrink-0">
             Used for Semantic Search
@@ -322,11 +318,7 @@ function ServerModelRow({
               className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
               title={`Unload ${model.id} from memory`}
             >
-              {isLoading ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <PowerOff size={12} />
-              )}
+              {isLoading ? <Loader2 size={12} className="animate-spin" /> : <PowerOff size={12} />}
             </button>
           </>
         ) : (
@@ -443,8 +435,8 @@ export default function LocalModelSelector({
         <div>
           <label className="text-xs font-medium text-text-secondary">Server Models</label>
           <p className="text-xs text-text-muted mt-0.5 mb-3">
-            {downloadedModels!.length} model{downloadedModels!.length !== 1 ? 's' : ''} on server
-            — {downloadedModels!.filter((m) => m.loaded).length} loaded into memory
+            {downloadedModels!.length} model{downloadedModels!.length !== 1 ? 's' : ''} on server —{' '}
+            {downloadedModels!.filter((m) => m.loaded).length} loaded into memory
           </p>
 
           <div className="space-y-4">

@@ -36,7 +36,10 @@ export default function DiagnosticsPanel({
       .join(', ') || `${diagnostics.length} diagnostic${diagnostics.length > 1 ? 's' : ''}`
 
   return (
-    <div data-testid="diagnostics-panel" className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden">
+    <div
+      data-testid="diagnostics-panel"
+      className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden"
+    >
       {/* Collapsed header */}
       <button
         onClick={toggleExpanded}
@@ -59,7 +62,10 @@ export default function DiagnosticsPanel({
 
       {/* Expanded diagnostics list */}
       {expanded && (
-        <div data-testid="diagnostics-list" className="border-t border-border-subtle px-2 py-1 max-h-48 overflow-y-auto">
+        <div
+          data-testid="diagnostics-list"
+          className="border-t border-border-subtle px-2 py-1 max-h-48 overflow-y-auto"
+        >
           {diagnostics.map((diag, i) => {
             const config = SEVERITY_CONFIG[diag.severity]
             const Icon = config.icon

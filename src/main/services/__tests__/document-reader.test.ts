@@ -77,12 +77,19 @@ describe('readDocument', () => {
   })
 
   afterEach(() => {
-    try { rmSync(testDir, { recursive: true, force: true }) } catch { /* best-effort */ }
+    try {
+      rmSync(testDir, { recursive: true, force: true })
+    } catch {
+      /* best-effort */
+    }
   })
 
   test('reads markdown files', async () => {
     const filePath = join(testDir, 'test.md')
-    writeFileSync(filePath, '# Hello World\n\nThis is a markdown test file with enough content to pass the minimum check.')
+    writeFileSync(
+      filePath,
+      '# Hello World\n\nThis is a markdown test file with enough content to pass the minimum check.'
+    )
     const result = await readDocument(filePath)
     assert.equal(result.ok, true)
     if (result.ok) {
@@ -94,7 +101,10 @@ describe('readDocument', () => {
 
   test('reads TypeScript files', async () => {
     const filePath = join(testDir, 'test.ts')
-    writeFileSync(filePath, 'export function hello(): string { return "world" }\n// more content to pass minimum')
+    writeFileSync(
+      filePath,
+      'export function hello(): string { return "world" }\n// more content to pass minimum'
+    )
     const result = await readDocument(filePath)
     assert.equal(result.ok, true)
     if (result.ok) {
@@ -165,7 +175,10 @@ describe('readDocument', () => {
 
   test('tries to read unknown extensions as text', async () => {
     const filePath = join(testDir, 'data.custom')
-    writeFileSync(filePath, 'This is some content in a file with an unknown extension, long enough to pass.')
+    writeFileSync(
+      filePath,
+      'This is some content in a file with an unknown extension, long enough to pass.'
+    )
     const result = await readDocument(filePath)
     assert.equal(result.ok, true)
     if (result.ok) {

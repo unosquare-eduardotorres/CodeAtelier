@@ -11,10 +11,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { Zap, Layers, ChevronDown, CheckCircle2, Circle, XCircle } from 'lucide-react'
-import {
-  usePlanExecutionStore,
-  type PlanExecution
-} from '@renderer/store/plan-execution.store'
+import { usePlanExecutionStore, type PlanExecution } from '@renderer/store/plan-execution.store'
 import { useTodoStore, type TodoItem } from '@renderer/store/todo.store'
 import { statusDotColor } from './plan-status-icons'
 
@@ -85,7 +82,10 @@ export default function TaskSummaryBadge({
     const allFailed =
       execution.phases.length > 0 && execution.phases.every((p) => p.status === 'failed')
     return (
-      <div data-testid="task-summary-badge" className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden">
+      <div
+        data-testid="task-summary-badge"
+        className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden"
+      >
         <div className="flex items-center w-full px-4 py-2 text-sm">
           <div className="flex items-center gap-2 flex-1 min-w-0">
             {allFailed ? (
@@ -122,7 +122,10 @@ export default function TaskSummaryBadge({
   }
 
   return (
-    <div data-testid="task-summary-badge" className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden">
+    <div
+      data-testid="task-summary-badge"
+      className="mx-6 mb-2 rounded-lg border border-border-subtle bg-surface-overlay/60 backdrop-blur-sm overflow-hidden"
+    >
       {/* Compact single-line header */}
       <div className="flex items-center w-full px-4 py-2 text-sm">
         {/* Left: clickable status text — expands inline detail */}
@@ -132,7 +135,10 @@ export default function TaskSummaryBadge({
           onClick={() => setInlineExpanded(!inlineExpanded)}
           className="flex items-center gap-2 flex-1 min-w-0 text-left transition-colors hover:bg-surface-overlay/40 -ml-1 pl-1 rounded"
         >
-          <Zap size={14} className={allComplete ? 'text-success flex-shrink-0' : 'text-accent flex-shrink-0'} />
+          <Zap
+            size={14}
+            className={allComplete ? 'text-success flex-shrink-0' : 'text-accent flex-shrink-0'}
+          />
           {hasExecution && (
             <>
               <span className="font-medium text-text-body">
@@ -153,9 +159,7 @@ export default function TaskSummaryBadge({
               {hasExecution ? '· ' : ''}Todos {completedTodos}/{totalTodos}
             </span>
           )}
-          {allComplete && (
-            <span className="text-success text-xs font-medium ml-1">✓</span>
-          )}
+          {allComplete && <span className="text-success text-xs font-medium ml-1">✓</span>}
           <ChevronDown
             size={12}
             className={`text-text-muted transition-transform duration-200 flex-shrink-0 ${inlineExpanded ? 'rotate-180' : ''}`}
@@ -225,9 +229,7 @@ export default function TaskSummaryBadge({
             return (
               <div className="flex items-center gap-2 text-sm">
                 <Circle size={10} className="text-text-muted flex-shrink-0" />
-                <span className="text-text-muted truncate">
-                  Next: {nextPending.title}
-                </span>
+                <span className="text-text-muted truncate">Next: {nextPending.title}</span>
               </div>
             )
           })()}

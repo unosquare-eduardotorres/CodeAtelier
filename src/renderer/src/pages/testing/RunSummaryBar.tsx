@@ -37,7 +37,14 @@ function relativeLabel(dateStr: string): string {
   return `${days}d ago`
 }
 
-export default function RunSummaryBar({ run, delta, runs, selectedRunId, baselineRunId, onBaselineChange }: RunSummaryBarProps): React.JSX.Element {
+export default function RunSummaryBar({
+  run,
+  delta,
+  runs,
+  selectedRunId,
+  baselineRunId,
+  onBaselineChange
+}: RunSummaryBarProps): React.JSX.Element {
   const total = run.totalPassed + run.totalFailed + run.totalSkipped + run.totalError
   const passRate = total > 0 ? Math.round((run.totalPassed / total) * 100) : 0
 
@@ -164,13 +171,23 @@ export default function RunSummaryBar({ run, delta, runs, selectedRunId, baselin
                 .filter((r) => r.id !== selectedRunId)
                 .map((r) => (
                   <option key={r.id} value={r.id}>
-                    {relativeLabel(r.startedAt)} — {Math.round(
-                      ((r.totalPassed) / Math.max(r.totalPassed + r.totalFailed + r.totalSkipped + r.totalError, 1)) * 100
-                    )}%
+                    {relativeLabel(r.startedAt)} —{' '}
+                    {Math.round(
+                      (r.totalPassed /
+                        Math.max(
+                          r.totalPassed + r.totalFailed + r.totalSkipped + r.totalError,
+                          1
+                        )) *
+                        100
+                    )}
+                    %
                   </option>
                 ))}
             </select>
-            <ChevronDown size={10} className="absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted" />
+            <ChevronDown
+              size={10}
+              className="absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none text-text-muted"
+            />
           </span>
         </div>
       )}

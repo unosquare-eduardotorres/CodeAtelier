@@ -104,17 +104,19 @@ function processAttachments(
 }
 
 /**
- * Replicated from ChatStreamService.forceResetIfStuck (chat-stream.service.ts:1151-1160).
+ * Replicated from ChatStreamService.forceResetIfStuck, which delegates to
+ * sweepOrphanedConversations: a busy conversation is released ONLY when no
+ * lifecycle is active behind it. A live stream survives a workspace switch.
  */
 function forceResetIfStuck(
   streamingLock: boolean,
   isIdle: boolean,
-  abort: (reason: string) => void
+  hasActiveLifecycle: boolean,
+  release: (reason: string) => void
 ): boolean {
-  const lockStuck = streamingLock
-  const smStuck = !isIdle
-  if (lockStuck || smStuck) {
-    abort('workspace-switch')
+  const busy = streamingLock || !isIdle
+  if (busy && !hasActiveLifecycle) {
+    release('orphan-sweep')
     return true
   }
   return false
@@ -269,7 +271,9 @@ describe('processAttachments', () => {
     const errorOps = {
       ...mockFileOps,
       isImageFile: () => false,
-      readFileContent: () => { throw new Error('Permission denied') }
+      readFileContent: () => {
+        throw new Error('Permission denied')
+      }
     }
     const result = processAttachments(['/path/secret.txt'], errorOps)
     assert.ok(result.textContent.includes('Failed to read'))
@@ -278,10 +282,7 @@ describe('processAttachments', () => {
   })
 
   test('multiple_attachments_all_processed', () => {
-    const result = processAttachments(
-      ['/path/a.png', '/path/b.ts', '/path/c.jpg'],
-      mockFileOps
-    )
+    const result = processAttachments(['/path/a.png', '/path/b.ts', '/path/c.jpg'], mockFileOps)
     assert.equal(result.images.length, 2) // two images
     assert.ok(result.textContent.includes('b.ts'))
   })
@@ -294,32 +295,49 @@ describe('processAttachments', () => {
 })
 
 describe('forceResetIfStuck', () => {
-  test('lock_false_sm_idle_no_abort', () => {
-    let aborted = false
-    const didReset = forceResetIfStuck(false, true, () => { aborted = true })
-    assert.ok(!aborted)
+  test('lock_false_sm_idle_no_release', () => {
+    let released = false
+    const didReset = forceResetIfStuck(false, true, false, () => {
+      released = true
+    })
+    assert.ok(!released)
     assert.ok(!didReset)
   })
 
-  test('lock_true_triggers_abort', () => {
-    let abortReason = ''
-    const didReset = forceResetIfStuck(true, true, (r) => { abortReason = r })
+  test('orphaned_lock_triggers_release', () => {
+    let releaseReason = ''
+    const didReset = forceResetIfStuck(true, true, false, (r) => {
+      releaseReason = r
+    })
     assert.ok(didReset)
-    assert.equal(abortReason, 'workspace-switch')
+    assert.equal(releaseReason, 'orphan-sweep')
   })
 
-  test('sm_not_idle_triggers_abort', () => {
-    let aborted = false
-    const didReset = forceResetIfStuck(false, false, () => { aborted = true })
-    assert.ok(aborted)
+  test('sm_not_idle_triggers_release', () => {
+    let released = false
+    const didReset = forceResetIfStuck(false, false, false, () => {
+      released = true
+    })
+    assert.ok(released)
     assert.ok(didReset)
   })
 
-  test('both_stuck_triggers_abort', () => {
-    let aborted = false
-    const didReset = forceResetIfStuck(true, false, () => { aborted = true })
-    assert.ok(aborted)
+  test('both_stuck_triggers_release', () => {
+    let released = false
+    const didReset = forceResetIfStuck(true, false, false, () => {
+      released = true
+    })
+    assert.ok(released)
     assert.ok(didReset)
+  })
+
+  test('live_stream_survives_workspace_switch', () => {
+    let released = false
+    const didReset = forceResetIfStuck(true, false, true, () => {
+      released = true
+    })
+    assert.ok(!released, 'a conversation with an active lifecycle must not be released')
+    assert.ok(!didReset)
   })
 })
 

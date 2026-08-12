@@ -137,17 +137,18 @@
    island so neon pops regardless of surrounding light UI.
    ═══════════════════════════════════════════════════════════════════════════ */
 :root {
-  --graph-bg: #010208;                     /* near-true-black — stars pop hard */
-  --graph-node-decision:   #7ab8d4;        /* pale blue star — class B/A      */
-  --graph-node-convention: #c4a96a;        /* warm gold — class G sun-like    */
-  --graph-node-gotcha:     #c77260;        /* burnt sienna — red giant        */
-  --graph-node-preference: #8e7db5;        /* muted lavender — nebula violet  */
-  --graph-node-reference:  #8a9bb0;        /* cool slate — white dwarf        */
-  --graph-link:            rgba(70, 110, 170, 0.22);
-  --graph-glow:            0.35;           /* glow strength multiplier        */
-  --graph-text:            #dbe4f4;        /* light label ink for dark canvas  */
-  --graph-edge-superseded:    #b89050;     /* muted amber                     */
-  --graph-edge-contradiction: #b85048;     /* muted brick red                 */
+  --graph-bg: #010208; /* near-true-black — stars pop hard */
+  --graph-node-decision: #7ab8d4; /* pale blue star — class B/A      */
+  --graph-node-convention: #c4a96a; /* warm gold — class G sun-like    */
+  --graph-node-gotcha: #c77260; /* burnt sienna — red giant        */
+  --graph-node-preference: #8e7db5; /* muted lavender — nebula violet  */
+  --graph-node-reference: #8a9bb0; /* cool slate — white dwarf        */
+  --graph-link: #3f8391; /* teal — similarity links, distinct from stars */
+  --graph-glow: 0.35; /* glow strength multiplier        */
+  --graph-text: #dbe4f4; /* light label ink for dark canvas  */
+  --graph-edge-superseded: #b89050; /* muted amber                     */
+  --graph-edge-contradiction: #b85048; /* muted brick red                 */
+  --graph-edge-derived: #6a8fb8; /* muted blue — synthesis links    */
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -869,8 +870,12 @@ body::after {
 
 /* Backdrop fade-in */
 @keyframes permission-backdrop-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 .permission-modal-enter {
   animation: permission-backdrop-in 0.2s ease-out both;
@@ -893,8 +898,13 @@ body::after {
 
 /* Icon breathing pulse */
 @keyframes permission-icon-pulse {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.08); }
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
 }
 .permission-icon-pulse {
   animation: permission-icon-pulse 2.5s ease-in-out infinite;
@@ -902,8 +912,14 @@ body::after {
 
 /* Radiating ring expansion */
 @keyframes permission-ring-expand {
-  0%   { transform: scale(0.7); opacity: 0.5; }
-  100% { transform: scale(2.5); opacity: 0; }
+  0% {
+    transform: scale(0.7);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
 }
 .permission-ring {
   position: absolute;
@@ -914,59 +930,157 @@ body::after {
   opacity: 0;
   animation: permission-ring-expand 3s ease-out infinite;
 }
-.permission-ring-1 { animation-delay: 0s; }
-.permission-ring-2 { animation-delay: 1s; }
-.permission-ring-3 { animation-delay: 2s; }
+.permission-ring-1 {
+  animation-delay: 0s;
+}
+.permission-ring-2 {
+  animation-delay: 1s;
+}
+.permission-ring-3 {
+  animation-delay: 2s;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Update Modal — aurora hero, breathing glyph, radiating rings, check draw
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Slow gradient drift behind the hero header */
+@keyframes update-aurora {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+.update-aurora {
+  background-size: 220% 220%;
+  animation: update-aurora 12s ease-in-out infinite;
+}
+
+/* Card entrance — also used for the version line and arrow, with a delay */
+@keyframes update-card-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+.update-card-enter {
+  animation: update-card-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.update-arrow-enter {
+  animation: update-card-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+}
+
+/* Hero glyph breathing pulse */
+@keyframes update-icon-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+.update-icon-pulse {
+  animation: update-icon-pulse 2.8s ease-in-out infinite;
+}
+
+/* Radiating rings around the hero glyph */
+@keyframes update-ring-expand {
+  0% {
+    transform: scale(0.75);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+.update-ring {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border-radius: 9999px;
+  border: 1.5px solid currentColor;
+  opacity: 0;
+  animation: update-ring-expand 3s ease-out infinite;
+}
+.update-ring-1 {
+  animation-delay: 0s;
+}
+.update-ring-2 {
+  animation-delay: 1.5s;
+}
+
+/* Checkmark stroke draw — pairs with the completed progress ring */
+@keyframes update-check-draw {
+  from {
+    stroke-dashoffset: 32;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.update-check-draw {
+  stroke-dasharray: 32;
+  animation: update-check-draw 0.5s ease-out 0.1s both;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Mermaid Diagram Overrides — polished dark aesthetic
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* Node shapes: thinner borders, subtle rounded corners */
-[data-testid="mermaid-diagram"] .node rect,
-[data-testid="mermaid-diagram"] .node polygon,
-[data-testid="mermaid-diagram"] .node circle,
-[data-testid="mermaid-diagram"] .node ellipse,
-[data-testid="mermaid-diagram"] .node path {
+[data-testid='mermaid-diagram'] .node rect,
+[data-testid='mermaid-diagram'] .node polygon,
+[data-testid='mermaid-diagram'] .node circle,
+[data-testid='mermaid-diagram'] .node ellipse,
+[data-testid='mermaid-diagram'] .node path {
   stroke-width: 1.5px !important;
 }
 
 /* Edge paths: crisp teal lines */
-[data-testid="mermaid-diagram"] .edgePath .path {
+[data-testid='mermaid-diagram'] .edgePath .path {
   stroke-width: 1.5px !important;
 }
 
 /* Edge labels: transparent background, subtle text */
-[data-testid="mermaid-diagram"] .edgeLabel {
+[data-testid='mermaid-diagram'] .edgeLabel {
   background-color: transparent !important;
 }
-[data-testid="mermaid-diagram"] .edgeLabel rect {
+[data-testid='mermaid-diagram'] .edgeLabel rect {
   fill: transparent !important;
   stroke: none !important;
 }
 
 /* Arrowheads: match teal line color */
-[data-testid="mermaid-diagram"] .marker {
+[data-testid='mermaid-diagram'] .marker {
   fill: var(--color-teal, #73daca) !important;
   stroke: var(--color-teal, #73daca) !important;
 }
 
 /* Subgraph clusters: subtle borders */
-[data-testid="mermaid-diagram"] .cluster rect {
+[data-testid='mermaid-diagram'] .cluster rect {
   stroke-width: 1px !important;
   rx: 8px;
   ry: 8px;
 }
 
 /* Text inside nodes: clean sans-serif */
-[data-testid="mermaid-diagram"] .nodeLabel,
-[data-testid="mermaid-diagram"] .label {
+[data-testid='mermaid-diagram'] .nodeLabel,
+[data-testid='mermaid-diagram'] .label {
   font-family: 'Inter', sans-serif !important;
   font-weight: 500 !important;
   text-align: center !important;
 }
 
 /* Icon shapes: proper sizing */
-[data-testid="mermaid-diagram"] .icon-shape {
+[data-testid='mermaid-diagram'] .icon-shape {
   opacity: 0.9;
 }

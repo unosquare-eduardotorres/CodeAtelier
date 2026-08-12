@@ -22,9 +22,7 @@ import { AppChrome } from './pages/app-chrome'
 import { ChatPage } from './pages/chat-page'
 
 test.describe('StreamingEdgeCases', () => {
-  async function navigateToChat(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToChat(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -46,7 +44,10 @@ test.describe('StreamingEdgeCases', () => {
 
   test('stop button re-enables message input after stream halt', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const chatPage = new ChatPage(page)
     const isStreaming = await chatPage.isStreaming()
@@ -68,13 +69,24 @@ test.describe('StreamingEdgeCases', () => {
 
   test('streaming transcript auto-scrolls as content appears', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Check for message list (streaming-transcript or message-list)
-    const messageList = page.locator('[data-testid="streaming-transcript"], [data-testid="message-list"]')
-    const hasMessageList = await messageList.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const messageList = page.locator(
+      '[data-testid="streaming-transcript"], [data-testid="message-list"]'
+    )
+    const hasMessageList = await messageList
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
-    if (!hasMessageList) { test.skip(); return }
+    if (!hasMessageList) {
+      test.skip()
+      return
+    }
 
     // Get scroll position
     const scrollTop = await messageList.first().evaluate((el) => el.scrollTop)
@@ -93,9 +105,14 @@ test.describe('StreamingEdgeCases', () => {
     expect(scrollHeight >= 0).toBe(true)
   })
 
-  test('code block renders with syntax highlighting during stream', async ({ electronPage: page }) => {
+  test('code block renders with syntax highlighting during stream', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for code blocks in any existing messages
     const codeBlocks = page.locator('pre code, [data-testid="message-bubble"] pre')
@@ -118,9 +135,14 @@ test.describe('StreamingEdgeCases', () => {
     await expect(chatPanel).toBeVisible()
   })
 
-  test('thinking indicator shows during agent response generation', async ({ electronPage: page }) => {
+  test('thinking indicator shows during agent response generation', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const chatPage = new ChatPage(page)
     const isStreaming = await chatPage.isStreaming()
@@ -143,7 +165,10 @@ test.describe('StreamingEdgeCases', () => {
 
   test('message content length increases during active stream', async ({ electronPage: page }) => {
     const ready = await navigateToChat(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const chatPage = new ChatPage(page)
     const isStreaming = await chatPage.isStreaming()
@@ -159,7 +184,7 @@ test.describe('StreamingEdgeCases', () => {
       // Messages should still be visible (content may have grown)
       const laterCount = await messages.count()
       const lastMessage = messages.last()
-      const lastText = await lastMessage.textContent().catch(() => '') ?? ''
+      const lastText = (await lastMessage.textContent().catch(() => '')) ?? ''
 
       // Either new messages appeared or existing message grew
       expect(laterCount >= initialCount || lastText.length > 0).toBe(true)
@@ -167,7 +192,10 @@ test.describe('StreamingEdgeCases', () => {
 
     // If not streaming, verify message list is functional
     const messageList = page.locator('[data-testid="message-list"], [data-testid="message-bubble"]')
-    const hasMessages = await messageList.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasMessages = await messageList
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasMessages || true).toBe(true)
   })
 })

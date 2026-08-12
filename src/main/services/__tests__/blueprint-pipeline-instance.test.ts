@@ -44,7 +44,9 @@ describe('BlueprintSpecService — instance + EventEmitter', () => {
     const { BlueprintSpecService } = await import('../blueprint-spec.service')
     const svc = new BlueprintSpecService()
     let received = false
-    svc.on('progress', () => { received = true })
+    svc.on('progress', () => {
+      received = true
+    })
     svc.emit('progress', { step: 'test' })
     assert.ok(received)
     svc.removeAllListeners()
@@ -178,9 +180,13 @@ describe('BlueprintService — instance + EventEmitter', () => {
 
   test('prototype has expected methods', async () => {
     const { BlueprintService } = await import('../blueprint.service')
-    const proto = Object.getOwnPropertyNames(BlueprintService.prototype)
-      .filter((m) => m !== 'constructor')
-    assert.ok(proto.length >= 3, `Expected at least 3 methods, got ${proto.length}: ${proto.join(', ')}`)
+    const proto = Object.getOwnPropertyNames(BlueprintService.prototype).filter(
+      (m) => m !== 'constructor'
+    )
+    assert.ok(
+      proto.length >= 3,
+      `Expected at least 3 methods, got ${proto.length}: ${proto.join(', ')}`
+    )
   })
 })
 
@@ -218,7 +224,7 @@ describe('Blueprint pipeline — EventEmitter lifecycle', () => {
       (await import('../blueprint-plan.service')).blueprintPlanService,
       (await import('../blueprint-verify.service')).blueprintVerifyService,
       (await import('../blueprint-review.service')).blueprintReviewService,
-      (await import('../blueprint.service')).blueprintService,
+      (await import('../blueprint.service')).blueprintService
     ]
 
     for (const svc of services) {
@@ -227,7 +233,9 @@ describe('Blueprint pipeline — EventEmitter lifecycle', () => {
       assert.equal(typeof svc.removeAllListeners, 'function')
 
       let received = false
-      svc.on('test-lifecycle', () => { received = true })
+      svc.on('test-lifecycle', () => {
+        received = true
+      })
       svc.emit('test-lifecycle')
       assert.ok(received, `${svc.constructor.name} received event`)
       svc.removeAllListeners('test-lifecycle')
@@ -242,12 +250,11 @@ describe('Blueprint pipeline — EventEmitter lifecycle', () => {
       (await import('../blueprint-plan.service')).BlueprintPlanService,
       (await import('../blueprint-verify.service')).BlueprintVerifyService,
       (await import('../blueprint-review.service')).BlueprintReviewService,
-      (await import('../blueprint.service')).BlueprintService,
+      (await import('../blueprint.service')).BlueprintService
     ]
 
     for (const cls of classes) {
-      const proto = Object.getOwnPropertyNames(cls.prototype)
-        .filter((m) => m !== 'constructor')
+      const proto = Object.getOwnPropertyNames(cls.prototype).filter((m) => m !== 'constructor')
       assert.ok(proto.length >= 1, `${cls.name} has ${proto.length} methods`)
     }
   })

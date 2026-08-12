@@ -116,7 +116,10 @@ test.describe('Project Specialist Lifecycle', () => {
     // Prompt content should be visible — look for a code block or text area
     const panel = page.getByRole('dialog', { name: /Specialist settings/i })
     const content = panel.locator('pre, code, textarea, [class*="mono"]')
-    const hasContent = await content.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasContent = await content
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Even if prompt is empty, the tab panel should render
     const tabPanel = panel.locator('[role="tabpanel"]')

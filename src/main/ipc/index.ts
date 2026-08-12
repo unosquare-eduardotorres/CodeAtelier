@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron'
 import { registerWorkspaceIpc } from './workspace.ipc'
+import { registerIntegrationsIpc } from './integrations.ipc'
 import { registerChatIpc } from './chat.ipc'
 import { registerAgentIpc } from './agent.ipc'
 import { registerAgentLifecycleIpc } from './agent-lifecycle.ipc'
@@ -51,12 +52,15 @@ import { initSessionEventRouter } from '../services/session-event-router'
 import { registerStreamDiagnosticsIpc } from './chunk-router'
 import { registerTestingIpc } from './testing.ipc'
 import { registerHandoffIpc } from './handoff.ipc'
+import { registerProcessIpc } from './process.ipc'
+import { registerTrackIpc } from './track.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   // Initialize session event router FIRST — other IPC handlers may need it
   initSessionEventRouter(mainWindow)
 
   registerWorkspaceIpc()
+  registerIntegrationsIpc()
   registerChatIpc(mainWindow)
   registerAgentIpc(mainWindow)
   registerAgentLifecycleIpc(mainWindow)
@@ -107,4 +111,6 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerStreamDiagnosticsIpc()
   registerTestingIpc(mainWindow)
   registerHandoffIpc()
+  registerProcessIpc()
+  registerTrackIpc()
 }

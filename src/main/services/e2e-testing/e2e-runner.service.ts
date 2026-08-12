@@ -17,7 +17,11 @@ import type {
 } from '../../../shared/types'
 import { IPC_CHANNELS, OMLX_DEFAULT_PORT } from '../../../shared/constants'
 import { e2eTestRunRepository, e2eTestResultRepository } from '../../db/repositories'
-import { conversationRepository, workspaceRepository, conversationSpecialistRepository } from '../../db/repositories'
+import {
+  conversationRepository,
+  workspaceRepository,
+  conversationSpecialistRepository
+} from '../../db/repositories'
 import { join } from 'path'
 import { chatStreamService } from '../chat-stream.service'
 import { chatAgentService } from '../chat-agent.service'
@@ -43,7 +47,11 @@ import {
   scenarioRequiresVision
 } from './scenario-catalog'
 import { runAssertions } from './e2e-assertions'
-import { streamPrompt as _streamPromptHelper, chunkToTranscriptEntry, generateFillerWithNeedle } from './stream-helper'
+import {
+  streamPrompt as _streamPromptHelper,
+  chunkToTranscriptEntry,
+  generateFillerWithNeedle
+} from './stream-helper'
 import { SERVICE_RUNNERS, createStreamPromptHelper } from './service-runners/index'
 import type { E2EScenario } from './scenario-catalog'
 import type { StreamChunk } from '../index'
@@ -59,7 +67,8 @@ const CHUNK_TAP_KEY = 'e2e-runner'
 const PREFERRED_MODEL = 'qwen3.6:35b-a3b-coding-nvfp4'
 
 /** Name-based heuristic for filtering out embedding models from /v1/models list */
-const EMBEDDING_PATTERN = /\b(bge|e5[-_]|gte[-_]|ember|embedding|nomic[-_]embed|mxbai[-_]embed|snowflake|modernbert)/i
+const EMBEDDING_PATTERN =
+  /\b(bge|e5[-_]|gte[-_]|ember|embedding|nomic[-_]embed|mxbai[-_]embed|snowflake|modernbert)/i
 
 /**
  * Resolve the decrypted API key for the local LLM backend.
@@ -128,7 +137,10 @@ function resolveApiKey(workspaceId?: string): string | undefined {
  * Uses `modelType` from allModels (admin API) when available,
  * falls back to EMBEDDING_PATTERN name heuristic on the flat models list.
  */
-function pickChatModel(status: { models: string[]; allModels?: { id: string; modelType: string; loaded: boolean }[] }): string | undefined {
+function pickChatModel(status: {
+  models: string[]
+  allModels?: { id: string; modelType: string; loaded: boolean }[]
+}): string | undefined {
   // 1. Check for preferred model first
   if (status.allModels?.length) {
     const preferred = status.allModels.find((m) => m.id === PREFERRED_MODEL)
@@ -143,9 +155,7 @@ function pickChatModel(status: { models: string[]; allModels?: { id: string; mod
 
   // 2. Prefer allModels (has modelType from admin API)
   if (status.allModels?.length) {
-    const chatModels = status.allModels.filter(
-      (m) => m.modelType !== 'embedding' && m.loaded
-    )
+    const chatModels = status.allModels.filter((m) => m.modelType !== 'embedding' && m.loaded)
     if (chatModels.length > 0) return chatModels[0].id
     // All loaded models are embeddings — check unloaded LLMs
     const unloadedChat = status.allModels.filter((m) => m.modelType !== 'embedding')
@@ -212,21 +222,28 @@ export async function preflight(workspaceId?: string): Promise<E2EPreflightResul
         const probeBody = {
           model: modelId,
           messages: [
-            { role: 'system', content: 'You must use the calculator tool to answer. Do not respond with text.' },
+            {
+              role: 'system',
+              content: 'You must use the calculator tool to answer. Do not respond with text.'
+            },
             { role: 'user', content: 'What is 2+2? Use the calculator tool.' }
           ],
-          tools: [{
-            type: 'function' as const,
-            function: {
-              name: 'calculator',
-              description: 'A simple calculator that evaluates math expressions',
-              parameters: {
-                type: 'object',
-                properties: { expression: { type: 'string', description: 'Math expression to evaluate' } },
-                required: ['expression']
+          tools: [
+            {
+              type: 'function' as const,
+              function: {
+                name: 'calculator',
+                description: 'A simple calculator that evaluates math expressions',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    expression: { type: 'string', description: 'Math expression to evaluate' }
+                  },
+                  required: ['expression']
+                }
               }
             }
-          }],
+          ],
           tool_choice: 'auto',
           max_tokens: 1024,
           temperature: 0
@@ -241,23 +258,37 @@ export async function preflight(workspaceId?: string): Promise<E2EPreflightResul
 
         if (probeRes.ok) {
           const rawBody = await probeRes.text()
-          log.info(`[preflight] Tool probe attempt ${attempt} raw response (truncated):`, rawBody.slice(0, 500))
+          log.info(
+            `[preflight] Tool probe attempt ${attempt} raw response (truncated):`,
+            rawBody.slice(0, 500)
+          )
           let probeJson: { choices?: { message?: { tool_calls?: unknown[] } }[] }
-          try { probeJson = JSON.parse(rawBody) } catch { probeJson = {} }
+          try {
+            probeJson = JSON.parse(rawBody)
+          } catch {
+            probeJson = {}
+          }
           const toolCalls = probeJson.choices?.[0]?.message?.tool_calls
           supportsTools = Array.isArray(toolCalls) && toolCalls.length > 0
-          log.info(`[preflight] Tool probe attempt ${attempt}: supportsTools=${supportsTools}`, toolCalls ? `(${toolCalls.length} calls)` : '(none)')
+          log.info(
+            `[preflight] Tool probe attempt ${attempt}: supportsTools=${supportsTools}`,
+            toolCalls ? `(${toolCalls.length} calls)` : '(none)'
+          )
 
           if (supportsTools) break // Definitive positive — no need to retry
 
           // Definitive negative on last attempt — accept the result
           if (attempt < MAX_PROBE_ATTEMPTS) {
-            log.info(`[preflight] Tool probe returned false on attempt ${attempt} — retrying in ${PROBE_RETRY_DELAY_MS}ms`)
+            log.info(
+              `[preflight] Tool probe returned false on attempt ${attempt} — retrying in ${PROBE_RETRY_DELAY_MS}ms`
+            )
             await new Promise((r) => setTimeout(r, PROBE_RETRY_DELAY_MS))
             continue
           }
         } else {
-          log.warn(`[preflight] Tool probe HTTP ${probeRes.status} (attempt ${attempt}) — assuming tools supported (optimistic)`)
+          log.warn(
+            `[preflight] Tool probe HTTP ${probeRes.status} (attempt ${attempt}) — assuming tools supported (optimistic)`
+          )
           break // HTTP error — don't retry, assume optimistic
         }
       } catch (err) {
@@ -284,16 +315,19 @@ export async function preflight(workspaceId?: string): Promise<E2EPreflightResul
         if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
 
         // Tiny 1x1 red PNG (base64, 68 bytes)
-        const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=='
+        const tinyPng =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=='
         const visionBody = {
           model: modelId,
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: 'What color is this pixel?' },
-              { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } }
-            ]
-          }],
+          messages: [
+            {
+              role: 'user',
+              content: [
+                { type: 'text', text: 'What color is this pixel?' },
+                { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } }
+              ]
+            }
+          ],
           max_tokens: 32,
           temperature: 0
         }
@@ -313,7 +347,10 @@ export async function preflight(workspaceId?: string): Promise<E2EPreflightResul
           // Definitive image-related errors → text-only
           const isImageError = /image|vision|multimodal|unsupported.*content/i.test(errText)
           supportsVision = !isImageError
-          log.info(`[preflight] Vision probe HTTP ${visionRes.status}: supportsVision=${supportsVision}`, errText.slice(0, 200))
+          log.info(
+            `[preflight] Vision probe HTTP ${visionRes.status}: supportsVision=${supportsVision}`,
+            errText.slice(0, 200)
+          )
         }
       } catch (err) {
         // Timeout / network — optimistically assume no vision (safer: don't send images to text-only)
@@ -322,7 +359,9 @@ export async function preflight(workspaceId?: string): Promise<E2EPreflightResul
       }
     }
 
-    log.info(`[preflight] OK — model: ${modelId}, supportsTools: ${supportsTools}, supportsVision: ${supportsVision}, total models: ${status.models.length}`)
+    log.info(
+      `[preflight] OK — model: ${modelId}, supportsTools: ${supportsTools}, supportsVision: ${supportsVision}, total models: ${status.models.length}`
+    )
     return { ok: true, modelId, supportsTools, supportsVision }
   } catch (err) {
     const msg = (err as Error).message
@@ -377,7 +416,10 @@ export class E2ERunnerService {
       const isolatedDataHome = join(tmpdir(), 'agentstudio-opencode-xdg')
       for (const base of [isolatedDataHome, join(homedir(), '.local', 'share')]) {
         const dir = join(base, 'opencode')
-        if (existsSync(dir)) { rmSync(dir, { recursive: true, force: true }); log.info(`[run] Cleared OpenCode data dir: ${dir}`) }
+        if (existsSync(dir)) {
+          rmSync(dir, { recursive: true, force: true })
+          log.info(`[run] Cleared OpenCode data dir: ${dir}`)
+        }
       }
     } catch (err) {
       log.warn('[run] Failed to clear OpenCode data dir (non-fatal):', (err as Error).message)
@@ -444,13 +486,18 @@ export class E2ERunnerService {
     // R7: forceTools overrides the auto-skip gate — when true, always treat tools as supported.
     const effectiveSupportsTools = opts?.forceTools ? true : (pf.supportsTools ?? false)
     const effectiveSupportsVision = pf.supportsVision ?? false
-    this.executeQueue(run.id, scenarios, results.map((r) => r.id), workspace.id, effectiveSupportsTools, effectiveSupportsVision).catch(
-      (err) => {
-        log.error('Run queue failed:', err)
-        e2eTestRunRepository.updateStatus(run.id, 'completed')
-        this.running = false
-      }
-    )
+    this.executeQueue(
+      run.id,
+      scenarios,
+      results.map((r) => r.id),
+      workspace.id,
+      effectiveSupportsTools,
+      effectiveSupportsVision
+    ).catch((err) => {
+      log.error('Run queue failed:', err)
+      e2eTestRunRepository.updateStatus(run.id, 'completed')
+      this.running = false
+    })
 
     return run.id
   }
@@ -530,7 +577,11 @@ export class E2ERunnerService {
           for (let j = i; j < scenarios.length; j++) {
             const currentStatus = e2eTestResultRepository.findById(resultIds[j])
             // Mark running scenarios as skipped (cancel path)
-            if (!currentStatus || currentStatus.status === 'queued' || currentStatus.status === 'running') {
+            if (
+              !currentStatus ||
+              currentStatus.status === 'queued' ||
+              currentStatus.status === 'running'
+            ) {
               e2eTestResultRepository.updateStatus(resultIds[j], 'skipped')
             }
           }
@@ -542,7 +593,9 @@ export class E2ERunnerService {
 
         // Auto-skip tool-dependent scenarios when the model doesn't support structured tool_calls
         if (!supportsTools && scenarioRequiresTools(scenario)) {
-          log.info(`[executeQueue] Skipping tool-dependent scenario ${scenario.id} — model does not emit structured tool_calls`)
+          log.info(
+            `[executeQueue] Skipping tool-dependent scenario ${scenario.id} — model does not emit structured tool_calls`
+          )
           e2eTestResultRepository.updateStatus(resultId, 'skipped', {
             durationMs: 0,
             failureReason: 'Auto-skipped: model/backend does not emit structured tool_calls'
@@ -568,19 +621,19 @@ export class E2ERunnerService {
       // Compute totals and finalize run
       const counts = e2eTestResultRepository.countByStatus(runId)
       const finalStatus = this.cancelled ? 'cancelled' : 'completed'
-      e2eTestRunRepository.updateStatus(
-        runId,
-        finalStatus,
-        {
-          passed: counts.passed,
-          failed: counts.failed,
-          skipped: counts.skipped,
-          error: counts.error
-        }
-      )
+      e2eTestRunRepository.updateStatus(runId, finalStatus, {
+        passed: counts.passed,
+        failed: counts.failed,
+        skipped: counts.skipped,
+        error: counts.error
+      })
 
       // Emit terminal progress event so the UI knows the run is finished (M10)
-      this.emitProgress(runId, '__run_complete__', finalStatus === 'cancelled' ? 'skipped' : 'passed')
+      this.emitProgress(
+        runId,
+        '__run_complete__',
+        finalStatus === 'cancelled' ? 'skipped' : 'passed'
+      )
 
       this.running = false
       this.cancelled = false
@@ -649,7 +702,7 @@ export class E2ERunnerService {
         const ctx = {
           workspaceId,
           workspacePath: fixturePath,
-          modelId: wsSettings.localModel as string ?? 'unknown',
+          modelId: (wsSettings.localModel as string) ?? 'unknown',
           conversationId,
           signal: abortController.signal,
           streamPrompt: createStreamPromptHelper(conversationId, scenario.timeoutMs)
@@ -658,7 +711,14 @@ export class E2ERunnerService {
         const fullTranscript = await runner(ctx)
         this.currentAbort = null
 
-        return this.finalizeScenario(runId, scenario, resultId, startTime, fullTranscript, conversationId)
+        return this.finalizeScenario(
+          runId,
+          scenario,
+          resultId,
+          startTime,
+          fullTranscript,
+          conversationId
+        )
       }
 
       // ── Chat-Based Scenario Execution ──
@@ -691,7 +751,9 @@ export class E2ERunnerService {
           if (messageId) {
             try {
               await chatAgentService.resumeAt(messageId)
-              log.info(`[executeScenario] Resumed at step ${resumeAtStepIdx} (messageId: ${messageId})`)
+              log.info(
+                `[executeScenario] Resumed at step ${resumeAtStepIdx} (messageId: ${messageId})`
+              )
             } catch (err) {
               log.warn(`[executeScenario] resumeAt failed:`, (err as Error).message)
             }
@@ -720,9 +782,10 @@ export class E2ERunnerService {
         }
 
         // Resolve attachment paths
-        const attachments = attachmentRels.length > 0
-          ? attachmentRels.map((rel) => join(fixturePath, rel))
-          : undefined
+        const attachments =
+          attachmentRels.length > 0
+            ? attachmentRels.map((rel) => join(fixturePath, rel))
+            : undefined
 
         const transcript = await this.streamPrompt(
           conversationId,
@@ -742,14 +805,31 @@ export class E2ERunnerService {
         if (compactAfter) {
           try {
             await chatAgentService.compact(false)
-            fullTranscript.push({ role: 'system', type: 'status', content: 'compaction: ok', timestamp: Date.now() })
+            fullTranscript.push({
+              role: 'system',
+              type: 'status',
+              content: 'compaction: ok',
+              timestamp: Date.now()
+            })
           } catch (err) {
-            fullTranscript.push({ role: 'system', type: 'status', content: `compaction: failed — ${(err as Error).message}`, timestamp: Date.now() })
+            fullTranscript.push({
+              role: 'system',
+              type: 'status',
+              content: `compaction: failed — ${(err as Error).message}`,
+              timestamp: Date.now()
+            })
           }
         }
       }
 
-      return this.finalizeScenario(runId, scenario, resultId, startTime, fullTranscript, conversationId)
+      return this.finalizeScenario(
+        runId,
+        scenario,
+        resultId,
+        startTime,
+        fullTranscript,
+        conversationId
+      )
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err)
       log.error(`Scenario ${scenario.id} error:`, errMsg)
@@ -800,7 +880,9 @@ export class E2ERunnerService {
 
     // Known-issue fallback
     if (status === 'failed' && scenario.knownIssue) {
-      log.info(`[finalizeScenario] Known issue — recording as skipped: ${scenario.id} (${scenario.knownIssue})`)
+      log.info(
+        `[finalizeScenario] Known issue — recording as skipped: ${scenario.id} (${scenario.knownIssue})`
+      )
       status = 'skipped'
       failureReason = `Known issue: ${scenario.knownIssue} — ${failureReason}`
     }

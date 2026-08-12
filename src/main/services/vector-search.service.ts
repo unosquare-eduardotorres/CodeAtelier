@@ -241,7 +241,11 @@ class VectorSearchService extends EventEmitter {
     // Skip model-change check if embedding provider hasn't initialized yet —
     // we can't know the actual model name until the user's oMLX server is queried.
     // The check will happen later in initializeEmbeddingModel() → reindexFiles().
-    if (currentModelName && modelRow?.embedding_model && modelRow.embedding_model !== currentModelName) {
+    if (
+      currentModelName &&
+      modelRow?.embedding_model &&
+      modelRow.embedding_model !== currentModelName
+    ) {
       log.info(
         `[VectorSearch] Model changed (${modelRow.embedding_model} → ${currentModelName}), ` +
           `invalidating persisted index for ${workspaceId}`

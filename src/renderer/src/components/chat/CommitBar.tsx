@@ -5,16 +5,28 @@ import {
   GitCommitHorizontal,
   Upload,
   GitPullRequest,
-  GitBranch
+  GitBranch,
+  GitCompareArrows
 } from 'lucide-react'
 import { useCodeChangesStore } from '@renderer/store'
 import CreatePrModal from './CreatePrModal'
+import type { DiffComparisonMode } from '../../../../shared/types'
 
 interface CommitBarProps {
   conversationId: string
+  comparisonMode?: DiffComparisonMode
+  currentBranch?: string
+  targetBranch?: string
+  fileCount?: number
 }
 
-export default function CommitBar({ conversationId }: CommitBarProps): React.JSX.Element {
+export default function CommitBar({
+  conversationId,
+  comparisonMode = 'uncommitted',
+  currentBranch = '',
+  targetBranch = '',
+  fileCount = 0
+}: CommitBarProps): React.JSX.Element {
   const [showPrModal, setShowPrModal] = useState(false)
   const files = useCodeChangesStore((s) => s.files)
   const checkedFiles = useCodeChangesStore((s) => s.checkedFiles)
@@ -24,6 +36,7 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
   const isPushing = useCodeChangesStore((s) => s.isPushing)
   const pushStatus = useCodeChangesStore((s) => s.pushStatus)
   const error = useCodeChangesStore((s) => s.error)
+  const filesError = useCodeChangesStore((s) => s.filesError)
 
   const { setCommitMessage, generateCommitMessage, commitSelected, commitAll, push } =
     useCodeChangesStore.getState()
@@ -32,17 +45,39 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
   const hasChecked = checkedFiles.size > 0
   const hasMessage = commitMessage.trim().length > 0
   const showPushState = !hasFiles && pushStatus && pushStatus.commitsAhead > 0
+  // A listing failure that kept its stale rows (REF_NOT_FOUND) never reaches the
+  // left pane's empty state — surface it here or it is invisible.
+  const shownError = error ?? filesError
 
   return (
     <>
-      <div data-testid="commit-bar" className="shrink-0 border-t border-border-subtle bg-surface-float/80 backdrop-blur-sm px-4 py-3">
-        {error && (
+      <div
+        data-testid="commit-bar"
+        className="shrink-0 border-t border-border-subtle bg-surface-float/80 backdrop-blur-sm px-4 py-3"
+      >
+        {shownError && (
           <div className="mb-2 px-3 py-1.5 rounded-md bg-danger/10 border border-danger/20 text-xs text-danger">
-            {error}
+            {shownError}
           </div>
         )}
 
-        {showPushState ? (
+        {comparisonMode !== 'uncommitted' ? (
+          /* Branch comparison mode — read-only info bar */
+          <div className="text-xs text-text-muted text-center py-1 flex items-center justify-center gap-2">
+            <GitCompareArrows size={14} />
+            <span>
+              Showing differences:{' '}
+              <span className="font-medium text-text-secondary">{currentBranch || 'HEAD'}</span>
+              {' → '}
+              <span className="font-medium text-text-secondary">{targetBranch}</span>
+              {fileCount > 0 && (
+                <span className="text-text-muted ml-1">
+                  · {fileCount} file{fileCount !== 1 ? 's' : ''} changed
+                </span>
+              )}
+            </span>
+          </div>
+        ) : showPushState ? (
           /* State 2: All changes committed — show push/PR options */
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-text-secondary">
@@ -84,6 +119,7 @@ export default function CommitBar({ conversationId }: CommitBarProps): React.JSX
             {/* Auto-generate button */}
             <button
               type="button"
+              data-testid="commit-generate-btn"
               onClick={() => void generateCommitMessage(conversationId)}
               disabled={isGeneratingMessage || isCommitting}
               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium border border-border-default bg-surface-float text-text-secondary hover:text-text-primary hover:bg-surface-overlay disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"

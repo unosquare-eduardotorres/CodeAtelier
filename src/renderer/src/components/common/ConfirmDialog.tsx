@@ -60,7 +60,10 @@ export default function ConfirmDialog({
       />
 
       {/* Dialog */}
-      <div data-testid="confirm-dialog" className="relative bg-surface-float border border-border-default rounded shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95">
+      <div
+        data-testid="confirm-dialog"
+        className="relative bg-surface-float border border-border-default rounded shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95"
+      >
         <div className="flex items-start gap-3 mb-4">
           {variant === 'danger' && (
             <div className="flex-shrink-0 w-10 h-10 rounded-full bg-danger-muted flex items-center justify-center">

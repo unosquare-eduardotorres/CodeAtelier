@@ -14,6 +14,8 @@ export { AgentSessionRepository, agentSessionRepository } from './agent-session.
 export type { AgentSession, TokenSummary } from './agent-session.repository'
 export { IdeaRepository, ideaRepository } from './idea.repository'
 export { MemoryFactRepository, memoryFactRepository } from './memory-fact.repository'
+export { MemoryBootstrapRepository, memoryBootstrapRepository } from './memory-bootstrap.repository'
+export type { PlannedItem, CreateRunInput } from './memory-bootstrap.repository'
 export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
 export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'
 export {
@@ -75,3 +77,8 @@ export { E2ETestResultRepository, e2eTestResultRepository } from './e2e-test-res
 export type { E2ETestResultRecord } from './e2e-test-result.repository'
 
 export { HandoffRepository, handoffRepository } from './handoff.repository'
+
+export { TrackRepository, trackRepository } from './track.repository'
+export type { CreateTrackInput } from './track.repository'
+export { TrackFileClaimRepository, trackFileClaimRepository } from './track-file-claim.repository'
+export type { TrackFileClaim, TrackFileOverlap } from './track-file-claim.repository'

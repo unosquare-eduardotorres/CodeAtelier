@@ -19,7 +19,7 @@ describe('Lean Mode Blocks', () => {
   test('lean plan is shorter than full plan', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.length < PLAN_MODE_SECTION.length)
     assert.ok(
-      PLAN_MODE_SECTION_LEAN.length < PLAN_MODE_SECTION.length * 0.90,
+      PLAN_MODE_SECTION_LEAN.length < PLAN_MODE_SECTION.length * 0.9,
       `Lean plan (${PLAN_MODE_SECTION_LEAN.length}) should be <90% of full (${PLAN_MODE_SECTION.length})`
     )
   })
@@ -56,7 +56,10 @@ describe('Lean Mode Blocks', () => {
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('Destructive'), 'Missing Destructive command rule')
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('approval'), 'Missing approval requirement')
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('Tool Errors'), 'Missing Tool Errors section')
-    assert.ok(BUILD_MODE_SECTION_LEAN.includes('typecheck'), 'Missing typecheck requirement')
+    assert.ok(
+      BUILD_MODE_SECTION_LEAN.includes('Finalization Checklist'),
+      'Missing Finalization Checklist reference'
+    )
     assert.ok(BUILD_MODE_SECTION_LEAN.includes('ask_user'), 'Missing ask_user for ambiguity')
   })
 
@@ -77,10 +80,10 @@ describe('Lean Mode Blocks', () => {
     )
   })
 
-  test('full plan forbids Write/Edit for authoring a plan', () => {
+  test('full plan forbids Write/Edit/ExitPlanMode for authoring a plan', () => {
     assert.ok(
-      /never\s+call\s+write\s+or\s+edit/i.test(PLAN_MODE_SECTION),
-      'Full plan should forbid Write/Edit for authoring a plan'
+      /never\s+call\s+write,\s+edit,\s+or\s+exitplanmode/i.test(PLAN_MODE_SECTION),
+      'Full plan should forbid Write/Edit/ExitPlanMode for authoring a plan'
     )
     assert.ok(
       PLAN_MODE_SECTION.includes('emit_plan'),
@@ -88,10 +91,10 @@ describe('Lean Mode Blocks', () => {
     )
   })
 
-  test('lean plan forbids Write/Edit for a plan', () => {
+  test('lean plan forbids Write/Edit/ExitPlanMode for a plan', () => {
     assert.ok(
-      /write\/edit/i.test(PLAN_MODE_SECTION_LEAN),
-      'Lean plan should mention Write/Edit are blocked for plans'
+      /write\/edit\/exitplanmode/i.test(PLAN_MODE_SECTION_LEAN),
+      'Lean plan should mention Write/Edit/ExitPlanMode are blocked for plans'
     )
     assert.ok(PLAN_MODE_SECTION_LEAN.includes('emit_plan'), 'Lean plan should point to emit_plan')
   })

@@ -36,7 +36,9 @@ function StatChip({
   colorClass?: string
 }): JSX.Element {
   return (
-    <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-inset border border-border-subtle text-xs font-medium ${colorClass}`}>
+    <div
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-surface-inset border border-border-subtle text-xs font-medium ${colorClass}`}
+    >
       <Icon size={13} className="flex-shrink-0" />
       {label}
     </div>
@@ -47,25 +49,37 @@ export function OutcomeSummary({ stats }: OutcomeSummaryProps): JSX.Element {
   const humanAcknowledged = stats.verifyStatus === 'human_needed' && stats.humanReviewAcknowledged
 
   const verifyIcon =
-    stats.verifyStatus === 'passed' ? CheckCircle2 :
-    humanAcknowledged ? CheckCircle2 :
-    stats.verifyStatus === 'human_needed' ? AlertTriangle :
-    stats.verifyStatus === 'gaps_found' ? XCircle :
-    CheckCircle2
+    stats.verifyStatus === 'passed'
+      ? CheckCircle2
+      : humanAcknowledged
+        ? CheckCircle2
+        : stats.verifyStatus === 'human_needed'
+          ? AlertTriangle
+          : stats.verifyStatus === 'gaps_found'
+            ? XCircle
+            : CheckCircle2
 
   const verifyColor =
-    stats.verifyStatus === 'passed' ? 'text-success' :
-    humanAcknowledged ? 'text-success' :
-    stats.verifyStatus === 'human_needed' ? 'text-accent' :
-    stats.verifyStatus === 'gaps_found' ? 'text-danger' :
-    'text-text-secondary'
+    stats.verifyStatus === 'passed'
+      ? 'text-success'
+      : humanAcknowledged
+        ? 'text-success'
+        : stats.verifyStatus === 'human_needed'
+          ? 'text-accent'
+          : stats.verifyStatus === 'gaps_found'
+            ? 'text-danger'
+            : 'text-text-secondary'
 
   const verifyLabel =
-    stats.verifyStatus === 'passed' ? 'Passed ✓' :
-    humanAcknowledged ? 'Human Verified ✓' :
-    stats.verifyStatus === 'human_needed' ? 'Human Review' :
-    stats.verifyStatus === 'gaps_found' ? 'Gaps Found' :
-    stats.verifyStatus ?? 'N/A'
+    stats.verifyStatus === 'passed'
+      ? 'Passed ✓'
+      : humanAcknowledged
+        ? 'Human Verified ✓'
+        : stats.verifyStatus === 'human_needed'
+          ? 'Human Review'
+          : stats.verifyStatus === 'gaps_found'
+            ? 'Gaps Found'
+            : (stats.verifyStatus ?? 'N/A')
 
   return (
     <div className="bg-surface-raised rounded-xl border border-border-subtle p-3">
@@ -73,32 +87,42 @@ export function OutcomeSummary({ stats }: OutcomeSummaryProps): JSX.Element {
         <StatChip
           icon={ListChecks}
           label={`${stats.completedTasks}/${stats.totalTasks} tasks`}
-          colorClass={stats.completedTasks === stats.totalTasks ? 'text-success' : 'text-text-secondary'}
+          colorClass={
+            stats.completedTasks === stats.totalTasks ? 'text-success' : 'text-text-secondary'
+          }
         />
 
-        {stats.totalWaves > 0 && (
-          <StatChip icon={Layers} label={`${stats.totalWaves} waves`} />
-        )}
+        {stats.totalWaves > 0 && <StatChip icon={Layers} label={`${stats.totalWaves} waves`} />}
 
         {stats.filesCreated > 0 && (
-          <StatChip icon={FilePlus} label={`${stats.filesCreated} files created`} colorClass="text-success" />
+          <StatChip
+            icon={FilePlus}
+            label={`${stats.filesCreated} files created`}
+            colorClass="text-success"
+          />
         )}
 
         {stats.filesModified > 0 && (
-          <StatChip icon={FileEdit} label={`${stats.filesModified} modified`} colorClass="text-info" />
+          <StatChip
+            icon={FileEdit}
+            label={`${stats.filesModified} modified`}
+            colorClass="text-info"
+          />
         )}
 
         {stats.remediationCount > 0 && (
-          <StatChip icon={Wrench} label={`${stats.remediationCount} remediations`} colorClass="text-warning" />
+          <StatChip
+            icon={Wrench}
+            label={`${stats.remediationCount} remediations`}
+            colorClass="text-warning"
+          />
         )}
 
         {stats.verifyStatus && (
           <StatChip icon={verifyIcon} label={`Verify: ${verifyLabel}`} colorClass={verifyColor} />
         )}
 
-        {stats.totalDuration && (
-          <StatChip icon={Clock} label={`Total: ${stats.totalDuration}`} />
-        )}
+        {stats.totalDuration && <StatChip icon={Clock} label={`Total: ${stats.totalDuration}`} />}
       </div>
     </div>
   )

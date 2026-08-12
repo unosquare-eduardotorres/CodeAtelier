@@ -24,9 +24,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Orphaned TestID Coverage', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -44,18 +42,24 @@ test.describe('Orphaned TestID Coverage', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to code intelligence settings
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('code-intelligence')
+    await settingsNav.navigateToSettingsTab('code-intelligence')
     await page.waitForTimeout(1_000)
 
     const embeddingStatus = page.locator('[data-testid="embedding-status"]')
     const isVisible = await embeddingStatus.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(embeddingStatus).toBeVisible()
 
@@ -64,11 +68,12 @@ test.describe('Orphaned TestID Coverage', () => {
     expect(statusText?.trim().length).toBeGreaterThan(0)
   })
 
-  test('error boundary fallback renders when component crashes', async ({
-    electronPage: page
-  }) => {
+  test('error boundary fallback renders when component crashes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Error boundary is not visible in normal operation — check it exists in DOM
     // but may not be visible. We verify it's properly placed.
@@ -92,7 +97,10 @@ test.describe('Orphaned TestID Coverage', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // The markdown edit toggle appears in contexts with editable markdown
     // (e.g., memory editing, specialist description editing)
@@ -104,12 +112,15 @@ test.describe('Orphaned TestID Coverage', () => {
       const chrome = new AppChrome(page)
       await chrome.navigateToTab('settings')
       const settingsNav = new SettingsNav(page)
-      await settingsNav.selectTab('specialist')
+      await settingsNav.navigateToSettingsTab('specialist')
       await page.waitForTimeout(1_000)
 
       const toggleRetry = page.locator('[data-testid="markdown-edit-toggle"]')
       const retryVisible = await toggleRetry.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!retryVisible) { test.skip(); return }
+      if (!retryVisible) {
+        test.skip()
+        return
+      }
     }
 
     const toggleEl = page.locator('[data-testid="markdown-edit-toggle"]').first()
@@ -123,11 +134,12 @@ test.describe('Orphaned TestID Coverage', () => {
     await expect(toggleEl).toBeVisible()
   })
 
-  test('slash command dropdown renders in message input', async ({
-    electronPage: page
-  }) => {
+  test('slash command dropdown renders in message input', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to chat view
     const chrome = new AppChrome(page)
@@ -135,9 +147,14 @@ test.describe('Orphaned TestID Coverage', () => {
     await page.waitForTimeout(1_000)
 
     // Look for message input
-    const input = page.locator('[data-testid="message-input"], textarea[placeholder*="message" i], textarea').first()
+    const input = page
+      .locator('[data-testid="message-input"], textarea[placeholder*="message" i], textarea')
+      .first()
     const hasInput = await input.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasInput) { test.skip(); return }
+    if (!hasInput) {
+      test.skip()
+      return
+    }
 
     // Type "/" to trigger slash command dropdown
     await input.focus()
@@ -146,7 +163,10 @@ test.describe('Orphaned TestID Coverage', () => {
 
     const dropdown = page.locator('[data-testid="slash-command-dropdown"]')
     const isVisible = await dropdown.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(dropdown).toBeVisible()
 
@@ -158,15 +178,19 @@ test.describe('Orphaned TestID Coverage', () => {
     await input.fill('')
   })
 
-  test('sidebar collapse button toggles sidebar visibility', async ({
-    electronPage: page
-  }) => {
+  test('sidebar collapse button toggles sidebar visibility', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const collapseBtn = page.locator('[data-testid="sidebar-collapse-btn"]')
     const isVisible = await collapseBtn.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(collapseBtn).toBeVisible()
 
@@ -181,7 +205,7 @@ test.describe('Orphaned TestID Coverage', () => {
     // Sidebar visibility should change (collapsed/expanded)
     if (sidebarVisibleBefore) {
       // After collapse, sidebar might be hidden or narrowed
-      const sidebarAfter = await sidebar.isVisible({ timeout: 2_000 }).catch(() => false)
+      const _sidebarAfter = await sidebar.isVisible({ timeout: 2_000 }).catch(() => false)
       // Either hidden or CSS class changed
       expect(true).toBeTruthy() // The button click succeeded
     }
@@ -198,7 +222,10 @@ test.describe('Orphaned TestID Coverage', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Navigate to chat
     const chrome = new AppChrome(page)

@@ -220,12 +220,7 @@ describe('Plan Registry — metrics computation', () => {
 
   test('counts_high_risk_items', () => {
     const metrics = computePlanMetrics({
-      items: [
-        { risk: 'high' },
-        { risk: 'low' },
-        { risk: 'critical' },
-        { risk: 'medium' }
-      ]
+      items: [{ risk: 'high' }, { risk: 'low' }, { risk: 'critical' }, { risk: 'medium' }]
     })
     assert.equal(metrics.riskItems, 2)
   })

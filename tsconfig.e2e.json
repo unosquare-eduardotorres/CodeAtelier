@@ -1,0 +1,20 @@
+{
+  "extends": "@electron-toolkit/tsconfig/tsconfig.node.json",
+  "include": ["e2e/**/*", "playwright.config.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "types": ["node"],
+    "lib": ["ES2022", "DOM"],
+    "noEmit": true,
+    // Playwright specs run through its own transform, never through our build,
+    // so nothing here is emitted. The point of this project is only to stop
+    // specs referencing helpers or selectors that no longer exist.
+    "strict": true,
+    "noImplicitAny": true,
+    // Relaxed relative to the app projects: these two would fail broadly across
+    // 186 pre-existing spec files and neither catches the class of breakage
+    // this project exists to catch. Tighten in a follow-up.
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  }
+}

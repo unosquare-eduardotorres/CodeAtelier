@@ -190,16 +190,18 @@ Some analysis text here but no fenced JSON.`
       // Simulates the B1-FIX store logic:
       // clarifyFindings: (incomingFindings ?? existingFindings)
       const existingFindings = {
-        findings: [{
-          id: 'f1',
-          category: 'security_gaps' as const,
-          severity: 'high' as const,
-          status: 'resolved' as const,
-          title: 'Auth',
-          description: 'D',
-          specRefs: [],
-          recommendation: 'R'
-        }],
+        findings: [
+          {
+            id: 'f1',
+            category: 'security_gaps' as const,
+            severity: 'high' as const,
+            status: 'resolved' as const,
+            title: 'Auth',
+            description: 'D',
+            specRefs: [],
+            recommendation: 'R'
+          }
+        ],
         summary: 'All resolved'
       }
 

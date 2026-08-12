@@ -8,6 +8,7 @@ Stubs are the #1 cause of "it builds but doesn't work" failures.
 ## Stub Categories
 
 ### 1. Empty Returns
+
 ```typescript
 // STUB — returns nothing useful
 function getUser(id: string): User | null {
@@ -26,6 +27,7 @@ function getConfig(): Config {
 ```
 
 ### 2. Hardcoded Data
+
 ```typescript
 // STUB — always returns same data regardless of input
 function getUser(id: string): User {
@@ -40,6 +42,7 @@ const products = [
 ```
 
 ### 3. Console-Only Logic
+
 ```typescript
 // STUB — logs instead of doing real work
 function saveOrder(order: Order): void {
@@ -53,6 +56,7 @@ function handleError(error: Error): void {
 ```
 
 ### 4. Commented-Out Implementation
+
 ```typescript
 function processPayment(amount: number): PaymentResult {
   // TODO: Implement Stripe integration
@@ -63,6 +67,7 @@ function processPayment(amount: number): PaymentResult {
 ```
 
 ### 5. UI Stubs
+
 ```tsx
 // STUB — renders nothing meaningful
 function UserProfile() {
@@ -90,6 +95,7 @@ function ProductList() {
 ```
 
 ### 6. Partial Implementation
+
 ```typescript
 // STUB — handles happy path only
 async function createUser(data: CreateUserInput): Promise<User> {

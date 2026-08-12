@@ -91,8 +91,7 @@ export default function BugTrackerPage({ onBack }: BugTrackerPageProps): React.J
   }
 
   // Select-all checkbox state (based on filteredBugs)
-  const allSelected =
-    filteredBugs.length > 0 && filteredBugs.every((b) => selectedBugIds.has(b.id))
+  const allSelected = filteredBugs.length > 0 && filteredBugs.every((b) => selectedBugIds.has(b.id))
   const someSelected = selectedBugIds.size > 0 && !allSelected
 
   const selectFilteredBugs = useCallback(

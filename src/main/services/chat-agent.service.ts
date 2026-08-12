@@ -15,7 +15,13 @@
  */
 
 import { EventEmitter } from 'node:events'
-import type { AgentRole, AgentStatus, ConversationMode, ImageAttachment } from '../../shared/types'
+import type {
+  AgentRole,
+  AgentStatus,
+  ControlToolState,
+  ConversationMode,
+  ImageAttachment
+} from '../../shared/types'
 import { chatAgentLogger } from '../logger'
 import { AgentSessionService } from './agent-session.service'
 import { ProjectSpecialistRoleAdapter } from './role-adapters/project-specialist.adapter'
@@ -34,6 +40,7 @@ const FORWARDED_EVENTS = [
   'plan',
   'askQuestion',
   'permissionRequest',
+  'permissionResolved',
   'promptSuggestion',
   'compactNeeded',
   'elicitation',
@@ -67,9 +74,7 @@ export class ChatAgentService extends EventEmitter {
     // catch-all is only hit from sdk-control.ipc which always targets the active UI.
     this.on('elicitationResponse', (payload: unknown) => {
       const wsId = (payload as Record<string, unknown> | null)?.workspaceId as string | undefined
-      const session = wsId
-        ? this.getSessionForWorkspace(wsId)
-        : this.getActiveSession()
+      const session = wsId ? this.getSessionForWorkspace(wsId) : this.getActiveSession()
       if (session) {
         session.emit('elicitationResponse', payload)
       } else {
@@ -138,7 +143,7 @@ export class ChatAgentService extends EventEmitter {
     // dead-session ghost entries that block future startForWorkspace calls.
     this.wireSessionForwarders(workspaceId, entry)
     try {
-      await session.start(workspacePath, mode, resumeSessionId)
+      await session.start(workspacePath, mode, { resumeSessionId })
     } catch (err) {
       // Cleanup on failure — don't leave partial forwarders
       this.teardownSessionForwarders(entry)
@@ -341,8 +346,8 @@ export class ChatAgentService extends EventEmitter {
     }
   }
 
-  cancelCurrentQuery(): void {
-    this.getActiveSession()?.cancelCurrentQuery()
+  cancelCurrentQuery(conversationId?: string): void {
+    this.getActiveSession()?.cancelCurrentQuery(conversationId)
   }
 
   async switchMode(mode: ConversationMode): Promise<void> {
@@ -465,8 +470,25 @@ export class ChatAgentService extends EventEmitter {
   /**
    * Route respondToPermission to a specific workspace (for cross-workspace permission flow).
    */
-  respondToPermissionForWorkspace(workspaceId: string, requestId: string, approved: boolean): void {
-    this.sessions.get(workspaceId)?.session.respondToPermission(requestId, approved)
+  respondToPermissionForWorkspace(
+    workspaceId: string,
+    requestId: string,
+    approved: boolean,
+    input?: unknown
+  ): void {
+    this.sessions.get(workspaceId)?.session.respondToPermission(requestId, approved, input)
+  }
+
+  /**
+   * Whether any session is waiting on a human permission decision.
+   * Used by the stream watchdogs to distinguish "waiting on a person" from
+   * "zombie stream" — the two are indistinguishable from chunk activity alone.
+   */
+  hasPendingHumanDecision(): boolean {
+    for (const entry of this.sessions.values()) {
+      if (entry.session.hasHumanDecisionPending()) return true
+    }
+    return false
   }
 
   getWorkspacePath(): string | null {
@@ -477,8 +499,13 @@ export class ChatAgentService extends EventEmitter {
     return this.getActiveSession()?.getCurrentConversationId() ?? null
   }
 
-  getStreamedContent(): string {
-    return this.getActiveSession()?.getStreamedContent() ?? ''
+  getStreamedContent(conversationId?: string): string {
+    return this.getActiveSession()?.getStreamedContent(conversationId) ?? ''
+  }
+
+  /** In-flight stream text only — empty once the turn has finished. */
+  getLiveStreamedContent(conversationId?: string): string {
+    return this.getActiveSession()?.getLiveStreamedContent(conversationId) ?? ''
   }
 
   getMode(): ConversationMode {
@@ -509,6 +536,15 @@ export class ChatAgentService extends EventEmitter {
    */
   clearConversationPendingState(conversationId: string): void {
     this.getActiveAdapter()?.clearConversation?.(conversationId)
+  }
+
+  /**
+   * Read-only access to the active session's control tool state.
+   * Used by chat-stream.service for late plan injection when the plan event
+   * arrives via IPC socket after the stream complete event via stdout.
+   */
+  getControlToolState(): ControlToolState | null {
+    return this.getActiveSession()?.getControlToolState() ?? null
   }
 
   /** Which executor backend is active for the current workspace (cli | local-direct | unknown). */

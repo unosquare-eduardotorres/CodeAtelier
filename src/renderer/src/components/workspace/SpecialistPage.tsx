@@ -22,9 +22,7 @@ type RebuildState = 'idle' | 'building' | 'success' | 'failed'
 // ── Hooks ─────────────────────────────────────────────────────────────────
 
 /** Track rebuild lifecycle from build-progress events. */
-function useRebuildState(
-  buildProgress: { phase: string; message?: string } | null | undefined
-): {
+function useRebuildState(buildProgress: { phase: string; message?: string } | null | undefined): {
   rebuildState: RebuildState
   rebuildError: string | null
   setRebuildState: (s: RebuildState) => void
@@ -73,8 +71,15 @@ function useSkillActions(opts: {
   refreshingRecs: boolean
 } {
   const {
-    specialist, workspaceId, toggleSkill, attachSkill, detachSkill,
-    refreshRecommendations, importSkill, loadForWorkspace, addToast
+    specialist,
+    workspaceId,
+    toggleSkill,
+    attachSkill,
+    detachSkill,
+    refreshRecommendations,
+    importSkill,
+    loadForWorkspace,
+    addToast
   } = opts
   const [isImporting, setIsImporting] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -294,11 +299,18 @@ export default function SpecialistPage(): React.JSX.Element {
 
   const mannequinKey = getWorkspaceMannequin(activeWorkspace?.id ?? '', workspaces)
 
+  const handleGoToIngestion = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('navigate-to-memory'))
+  }, [])
+
   // ── No specialist state ──────────────────────────────────────────────────
 
   if (!specialist) {
     return (
-      <div data-testid="specialist-page" className="flex-1 flex flex-col items-center justify-center p-12 text-center">
+      <div
+        data-testid="specialist-page"
+        className="flex-1 flex flex-col items-center justify-center p-12 text-center"
+      >
         <div className="w-16 h-16 rounded-2xl bg-surface-overlay border border-border-subtle flex items-center justify-center mb-4">
           <Bot size={28} className="text-text-muted" />
         </div>
@@ -319,6 +331,8 @@ export default function SpecialistPage(): React.JSX.Element {
         displayName={specialist.displayName}
         buildStatus={specialist.buildStatus}
         lastBuiltAt={specialist.lastBuiltAt}
+        buildMethod={specialist.buildMethod}
+        ingestion={specialist.ingestion}
         color={specialist.color}
         mannequinKey={mannequinKey}
         rebuildState={rebuildState}
@@ -327,21 +341,28 @@ export default function SpecialistPage(): React.JSX.Element {
         storeError={storeError}
         onRebuild={handleRebuild}
         onClearError={clearError}
+        onGoToIngestion={handleGoToIngestion}
       />
 
       {/* ── Detected Stack ──────────────────────────────────────────── */}
-      {specialist.detectedTechs.length > 0 && (
-        <section>
-          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Detected Stack
-          </h4>
+      {/* Rendered unconditionally: silently hiding the section made "detected
+          nothing" indistinguishable from "this section doesn't exist". */}
+      <section data-testid="specialist-detected-stack">
+        <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider mb-3">
+          Detected Stack
+        </h4>
+        {specialist.detectedTechs.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {specialist.detectedTechs.map((tech) => (
               <TechBadge key={tech} tech={tech} />
             ))}
           </div>
-        </section>
-      )}
+        ) : (
+          <p className="text-xs text-text-secondary">
+            No stack detected — run Deep Ingestion, then rebuild.
+          </p>
+        )}
+      </section>
 
       <SkillMarketSection
         recommendedSkills={recommendedSkills}

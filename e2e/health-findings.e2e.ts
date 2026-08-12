@@ -11,7 +11,6 @@
  * Uses CDP fixture (Electron 41+ compatible).
  */
 import { test, expect } from './helpers/electron-fixture'
-import { AppChrome } from './pages/app-chrome'
 import { WelcomePage } from './pages/welcome-page'
 import { WorkspaceSettings } from './pages/workspace-settings'
 import { HealthPage } from './pages/health-page'
@@ -81,7 +80,9 @@ test.describe('Health Findings Detail', () => {
     }
 
     // Should show score hero with numeric score
-    const scoreElement = completedPanel.locator('[class*="font-bold"], [class*="text-2xl"], [class*="text-3xl"]')
+    const scoreElement = completedPanel.locator(
+      '[class*="font-bold"], [class*="text-2xl"], [class*="text-3xl"]'
+    )
     const scoreCount = await scoreElement.count()
     expect(scoreCount).toBeGreaterThanOrEqual(0) // Score may or may not render depending on data
   })
@@ -171,7 +172,9 @@ test.describe('Health Findings Detail', () => {
     expect(text?.length).toBeGreaterThan(0)
   })
 
-  test('Re-run track button triggers single-track re-evaluation', async ({ electronPage: page }) => {
+  test('Re-run track button triggers single-track re-evaluation', async ({
+    electronPage: page
+  }) => {
     await navigateToHealth(page)
 
     const completedPanel = page.locator('[data-testid="health-detail-completed"]')
@@ -184,7 +187,10 @@ test.describe('Health Findings Detail', () => {
 
     // Find re-run button
     const rerunBtn = page.locator('button', { hasText: /re-run/i })
-    const rerunVisible = await rerunBtn.first().isVisible().catch(() => false)
+    const rerunVisible = await rerunBtn
+      .first()
+      .isVisible()
+      .catch(() => false)
 
     if (!rerunVisible) {
       test.skip()

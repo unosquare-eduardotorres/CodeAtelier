@@ -242,8 +242,36 @@ export interface PendingPermission {
   toolInput?: Record<string, unknown>
   /** Conversation title for context (e.g., "Implement auth system") */
   conversationTitle?: string
+  /** Conversation that raised the request — routes the inline card to the right transcript. */
+  conversationId?: string
   /** Conversation mode for context badge */
   mode?: ConversationMode
+}
+
+/**
+ * How a permission request ended.
+ *
+ * `cancelled` covers every path where the request can never be answered: the
+ * turn finalized, the CLI child died, the user hit Stop, or the app tore the
+ * session down. `timedout` is reserved for an auto-deny backstop.
+ */
+export type PermissionOutcome = 'approved' | 'denied' | 'timedout' | 'cancelled'
+
+/**
+ * Main → Renderer: a permission request reached a terminal state.
+ *
+ * Without this the renderer only ever learns an outcome from its own click, so
+ * a request that dies with its turn leaves the modal/toast/card frozen on
+ * "waiting for the agent to continue…" forever.
+ */
+export interface PermissionResolved {
+  /** Matches PendingPermission.id (`perm-<requestId>`). */
+  permissionId: string
+  /** Raw control-actions requestId, for correlation in logs. */
+  requestId: string
+  workspaceId: string
+  conversationId?: string
+  outcome: PermissionOutcome
 }
 
 export interface PermissionResponse {
@@ -258,24 +286,58 @@ export interface PermissionResponse {
 export interface CompletionNotification {
   workspaceId: string
   workspaceName: string
-  service: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprint' | 'council'
+  service: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprint' | 'council' | 'memory'
   status: 'completed' | 'failed' | 'needs_input'
   summary: string
   /** Target page for click-to-navigate from OS notification */
-  targetPage?: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprints' | 'council'
+  targetPage?: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprints' | 'council' | 'memory'
   /** Entity ID for deep navigation (blueprintId, sessionId, etc.) */
   entityId?: string
 }
 
+/** A detached background process spawned by the process-manager MCP server. */
+export interface BackgroundProcessInfo {
+  pid: number
+  label: string
+  command: string
+  cwd: string
+  startedAt: number
+  uptimeMs: number
+  alive: boolean
+  workspaceId: string
+  /** True if an auto-resume is armed — the agent will be woken when it exits. */
+  watched: boolean
+}
+
+/**
+ * Result of stopping a background process.
+ *
+ * `reason: 'untracked'` means the PID was not in any workspace manifest, so no
+ * signal was sent — the app only ever signals processes it can prove it spawned.
+ */
+export interface ProcessStopResult {
+  stopped: boolean
+  alreadyExited: boolean
+  reason?: 'untracked'
+}
+
+/** Result of disarming the auto-resume for a background process. */
+export interface ProcessCancelWatchResult {
+  cancelled: boolean
+  reason?: 'untracked'
+}
+
 // ── Tool Activity ──
 export type ToolOperationType =
-  | 'read'
-  | 'write'
-  | 'edit'
-  | 'search'
-  | 'shell'
-  | 'codegraph'
-  | 'other'
+  'read' | 'write' | 'edit' | 'search' | 'shell' | 'codegraph' | 'other'
+
+/** A single before/after segment from an Edit / MultiEdit tool call. */
+export interface ToolEditDiff {
+  oldString: string
+  newString: string
+  /** True when either string was clipped to the per-string storage cap. */
+  truncated?: boolean
+}
 
 export interface ToolActivity {
   id: string
@@ -295,6 +357,10 @@ export interface ToolActivity {
   lineRange?: string
   /** Operation classification */
   operationType?: ToolOperationType
+  /** Per-edit before/after segments — Edit/MultiEdit only. */
+  editDiffs?: ToolEditDiff[]
+  /** Edits dropped to stay within the storage budget. */
+  editDiffsOmitted?: number
 }
 
 // ── Specialist & Skill Models ──
@@ -431,6 +497,8 @@ export interface AppPreferences {
   userAvatarVariant: UserAvatarVariant
   /** Absolute hard cap for stream lifetime in minutes (clamped 10–120). Default: 30. */
   maxStreamLifetimeMin: number
+  /** When true, Blueprint BUILD/VERIFY phases bypass all permission prompts (default: true). */
+  blueprintAutoMode: boolean
 }
 
 // ── Workspace Deploy Models ──
@@ -956,8 +1024,28 @@ export type MemoryFactTier = 0 | 1 | 2 | 3
 /** Lifecycle status — superseded facts are never deleted. */
 export type MemoryFactStatus = 'active' | 'superseded' | 'archived'
 
-/** How the fact was originally captured. */
-export type MemorySourceType = 'session' | 'commit' | 'document' | 'tool' | 'manual' | 'claude-md' | 'blueprint' | 'grill' | 'bootstrap'
+/**
+ * How the fact was originally captured.
+ *
+ * MUST stay in sync with the `source_type` CHECK constraint on `memory_facts`
+ * (see migration 132). A value present here but missing from the CHECK makes
+ * every write of that kind fail at the DB layer — which is exactly how the
+ * whole bootstrap pipeline silently produced zero facts.
+ * `memory-source-type-guard.test.ts` enforces the match.
+ */
+export const MEMORY_SOURCE_TYPES = [
+  'session',
+  'commit',
+  'document',
+  'tool',
+  'manual',
+  'claude-md',
+  'blueprint',
+  'grill',
+  'bootstrap'
+] as const
+
+export type MemorySourceType = (typeof MEMORY_SOURCE_TYPES)[number]
 
 export interface MemoryFact {
   id: string
@@ -981,6 +1069,17 @@ export interface MemoryFact {
   lastAccessedAt: string | null
   createdAt: string
   updatedAt: string
+  /**
+   * Bi-temporal validity (migration 136). `valid*` describe when the fact was
+   * true of the project; `observedAt`/`recordedAt` describe when we learned it.
+   * Null on rows written before the migration backfill ran.
+   */
+  validFrom: string | null
+  /** NULL means the fact is currently true. */
+  validTo: string | null
+  /** When the source stated it — a commit date, not the ingestion time. */
+  observedAt: string | null
+  recordedAt: string | null
   /** Count of non-auto_dedup confirmations (real evidence). Populated by UI-facing queries only. */
   evidenceCount?: number
 }
@@ -998,8 +1097,19 @@ export interface MemoryContradiction {
   resolvedAt: string | null
 }
 
-/** How a confirmation was earned. */
-export type ConfirmationSourceType = 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap'
+/**
+ * How a confirmation was earned.
+ * MUST stay in sync with the `source_type` CHECK on `memory_confirmations`.
+ */
+export const CONFIRMATION_SOURCE_TYPES = [
+  'auto_dedup',
+  'human',
+  'tool',
+  'extraction',
+  'bootstrap'
+] as const
+
+export type ConfirmationSourceType = (typeof CONFIRMATION_SOURCE_TYPES)[number]
 
 /** Individual confirmation event (replaces bare counter for evidence-based promotion). */
 export interface MemoryConfirmation {
@@ -1029,6 +1139,30 @@ export interface MemoryFeedProgress {
   timestamp?: number
 }
 
+/**
+ * Typed relationship between two facts (migration 137).
+ *
+ * Direction is always "from acts on to": A supersedes B, A contradicts B,
+ * A derived_from B (A was synthesised out of B), A relates_to B.
+ */
+export const MEMORY_EDGE_TYPES = [
+  'derived_from',
+  'relates_to',
+  'contradicts',
+  'supersedes'
+] as const
+
+export type MemoryEdgeType = (typeof MEMORY_EDGE_TYPES)[number]
+
+export interface MemoryEdge {
+  id: string
+  fromId: string
+  toId: string
+  edgeType: MemoryEdgeType
+  confidence: number
+  createdAt: string
+}
+
 /** Capture settings stored per workspace (persisted in workspace settings_json). */
 export interface MemoryCaptureSettings {
   sessionCapture: boolean
@@ -1038,7 +1172,44 @@ export interface MemoryCaptureSettings {
   capturePlans: boolean
   captureGrill: boolean
   captureDocumentsOnAttach: boolean
+  /**
+   * Mine `// WHY:` / `// NOTE:` / `// HACK:` / `// GOTCHA:` comments and ADR/RFC
+   * citations into facts while the code graph indexes. Defaults to OFF — unlike
+   * the other sources this one fires on every file change, so it is opt-in.
+   */
+  captureRationales: boolean
   watcherGlobs: string[]
+  /**
+   * Extra globs for agent rule files to load into the prompt alongside
+   * CLAUDE.md — e.g. `packages/*\/AGENTS.md`. The standard locations
+   * (AGENTS.md, .cursor/rules, .github/copilot-instructions.md, .clinerules,
+   * .windsurfrules, nested CLAUDE.md) are discovered automatically; this is for
+   * layouts that put them somewhere else. Empty by default.
+   */
+  instructionSources: string[]
+  /**
+   * Let the idle consolidation pass ask an LLM to synthesise a parent fact from
+   * a cluster of similar ones. Opt-in and capped per run: it is the only part
+   * of consolidation that spends money, and synthesised facts land in a review
+   * queue rather than being promoted unreviewed.
+   */
+  reflectionEnabled: boolean
+  /**
+   * Mirror the fact database to `.agentstudio/memory/*.md` after a Feed Brain
+   * run, so the result is reviewable in a diff rather than only in the app.
+   *
+   * Defaults to OFF because it writes files into the user's working tree. Left
+   * on unconditionally it produces untracked files with no warning, which then
+   * show up in `git status` — and in at least one release PR. Turning it on is
+   * a deliberate choice about whether `.agentstudio/` is committed or ignored.
+   */
+  projectionEnabled: boolean
+  /**
+   * Documents extracted in parallel during Feed Brain. Each one is a Claude CLI
+   * spawn, so raising this is the main throughput lever — and the main way to
+   * hit an API rate limit. Range 1–6, default 3.
+   */
+  bootstrapConcurrency: number
 }
 
 /** Bootstrap mode for project knowledge generation. */
@@ -1055,9 +1226,49 @@ export type BootstrapPhaseLabel =
   | 'agent-exploration'
   | 'finalize'
 
+/**
+ * How much of the workspace a run should re-read.
+ *
+ * `changed` honours the memory_doc_state hash gate (only new/edited files);
+ * the others selectively drop that gate so a phase can be genuinely re-ingested
+ * without the all-or-nothing "force" flag that used to wipe every hash.
+ */
+export type BootstrapScope = 'changed' | 'docs' | 'deep-scan' | 'full'
+
+/** Lifecycle of a durable bootstrap run (memory_bootstrap_runs.status). */
+export type BootstrapRunStatus =
+  'planning' | 'running' | 'paused' | 'completed' | 'cancelled' | 'failed'
+
+/** Lifecycle of a single queued work item (memory_bootstrap_items.status). */
+export type BootstrapItemStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed'
+
+/** What a queued item represents — selects the executor that drains it. */
+export type BootstrapItemKind =
+  'doc' | 'arch-file' | 'manifests' | 'commits' | 'hotspots' | 'cochange' | 'cycles' | 'agent'
+
+/** The item currently being drained, for "what is it doing right now" display. */
+export interface BootstrapCurrentItem {
+  sourceRef: string
+  phase: BootstrapPhaseLabel
+  chunkDone: number
+  chunkTotal: number
+  factsCreated: number
+}
+
+/** Per-phase rollup so the stepper can show real done/total counts. */
+export interface BootstrapPhaseStats {
+  total: number
+  done: number
+  facts: number
+}
+
 /** Progress event for project knowledge bootstrap. */
 export interface BootstrapProgress {
   jobId: string
+  /** Durable run id (memory_bootstrap_runs.id) — survives app restarts */
+  runId: string
+  /** Workspace the run belongs to, so background runs can be attributed */
+  workspaceId: string
   /** Current phase (0-based index) */
   phaseIndex: number
   /** Total phases in this run */
@@ -1069,9 +1280,58 @@ export interface BootstrapProgress {
   /** Message for display */
   message: string
   /** Overall job status */
-  jobStatus: 'running' | 'done' | 'cancelled' | 'error'
+  jobStatus: 'planning' | 'running' | 'paused' | 'done' | 'cancelled' | 'error'
   /** Bootstrap mode */
   mode: BootstrapMode
+  /** Total queued items — known up front because planning precedes draining */
+  itemsTotal: number
+  itemsDone: number
+  itemsSkipped: number
+  itemsFailed: number
+  /** Item being processed right now, or null between items */
+  currentItem: BootstrapCurrentItem | null
+  /** Keyed by BootstrapPhaseLabel */
+  perPhase: Record<string, BootstrapPhaseStats>
+  /** Estimate from active (non-paused) throughput; null until measurable */
+  etaSeconds: number | null
+  itemsPerMinute: number | null
+}
+
+/** A durable run row plus its per-phase breakdown. */
+export interface BootstrapRunSummary {
+  id: string
+  workspaceId: string
+  mode: BootstrapMode
+  scope: BootstrapScope
+  status: BootstrapRunStatus
+  currentPhase: BootstrapPhaseLabel | null
+  itemsTotal: number
+  itemsDone: number
+  itemsSkipped: number
+  itemsFailed: number
+  factsCreated: number
+  activeMs: number
+  error: string | null
+  createdAt: string
+  finishedAt: string | null
+  perPhase: Record<string, BootstrapPhaseStats>
+}
+
+/** A queued item as rendered in the per-document list. */
+export interface BootstrapItemView {
+  id: string
+  runId: string
+  phase: BootstrapPhaseLabel
+  kind: BootstrapItemKind
+  sourceRef: string
+  contentHash: string | null
+  priority: number
+  chunkTotal: number
+  chunkDone: number
+  status: BootstrapItemStatus
+  factsCreated: number
+  error: string | null
+  updatedAt: string
 }
 
 /** Progress event for document ingestion jobs. */
@@ -1108,13 +1368,16 @@ export interface MemoryRetrievalResult {
 export interface MemoryEmbeddingStatus {
   isReady: boolean
   pendingCount: number
+  /** Every fact regardless of status — the denominator for embedding coverage. */
   totalCount: number
+  /** Active facts only — what the Memories list actually shows. */
+  activeCount: number
   modelName: string | null
 }
 
 // ── Knowledge Graph View ──
 
-export type MemoryGraphEdgeKind = 'similarity' | 'superseded' | 'contradiction'
+export type MemoryGraphEdgeKind = 'similarity' | 'superseded' | 'contradiction' | 'derived'
 
 export interface MemoryGraphNode {
   id: string
@@ -1222,6 +1485,38 @@ export interface RepoInfo {
   hasRemote: boolean
   remoteUrl?: string
   currentBranch: string
+}
+
+export type DiffComparisonMode = 'uncommitted' | 'branch-vs-target' | 'all-vs-target'
+
+/**
+ * Why both sides of a diff came back identical. `unexplained` means git reported
+ * differing blobs yet we resolved equal content — an app bug, never a quiet state.
+ */
+export type DiffIdenticalReason =
+  'mode-change' | 'rename-only' | 'empty-file' | 'no-diff-entry' | 'eol-only' | 'unexplained'
+
+export interface FileDiffResult {
+  oldContent: string
+  newContent: string
+  language: string
+  /** True when either side was detected as binary. */
+  isBinary?: boolean
+  /** Non-fatal problem to surface in the UI (e.g. `git show` failed). */
+  warning?: string
+  /** Short SHA of the resolved comparison base, for labelling. */
+  baseSha?: string
+  /** Set only when oldContent === newContent — explains why nothing is shown. */
+  identicalReason?: DiffIdenticalReason
+  /** File-mode transition (e.g. 100644 → 100755) behind a `mode-change` reason. */
+  modeChange?: { from: string; to: string }
+  /**
+   * Line-ending transition (e.g. crlf → lf) detected between the two sides.
+   * Set whenever the styles differ — both when that is the *only* difference
+   * (`identicalReason: 'eol-only'`) and when real changes remain alongside it,
+   * in which case the content was normalized for display.
+   */
+  eolChange?: { from: string; to: string }
 }
 
 // ── AI Subscriptions ──
@@ -1377,6 +1672,46 @@ export interface SemanticSearchResult {
   metadata: Record<string, unknown>
 }
 
+// ── Index exclusion preflight ──
+
+/** How the preflight classified a candidate directory. */
+export type ExclusionVerdict = 'auto-exclude' | 'needs-confirmation' | 'keep'
+
+/**
+ * A directory the exclusion preflight considered excluding from indexing,
+ * with the evidence behind its verdict. Tier-2 names (lib, libs, Library, ...)
+ * are never excluded without confirmation because they are just as often
+ * first-party code.
+ */
+export interface ExclusionCandidate {
+  /** Workspace-relative POSIX path, e.g. "apps/mobile/ios/Pods" */
+  relPath: string
+  dirName: string
+  fileCount: number
+  totalBytes: number
+  /** Top 5 file extensions by count */
+  extensions: Array<{ ext: string; count: number }>
+  gitIgnored: boolean
+  gitTracked: boolean
+  /** LICENSE, *.podspec, Package.swift, *.nuspec, bower.json, CMakeLists.txt */
+  vendorMarkers: string[]
+  /** Signals the directory holds first-party code (tracked source, recent edits) */
+  firstPartyHints: string[]
+  verdict: ExclusionVerdict
+  reason: string
+  /** Whether the UI checkbox should start checked (needs-confirmation only) */
+  defaultChecked: boolean
+  /** The .atelierignore rule that would be written if confirmed */
+  suggestedRule: string
+}
+
+export interface ExclusionPreflightResult {
+  candidates: ExclusionCandidate[]
+  /** True when the walk hit the depth/time budget before finishing */
+  truncated: boolean
+  durationMs: number
+}
+
 // ── Elicitation (MCP server user input requests) ──
 
 /** Bug Tracker record — shared between main and renderer */
@@ -1472,6 +1807,13 @@ export interface WorkspaceSettings {
   memoryEnabled?: boolean
   localMcpActive?: boolean
   gitAutoBranch?: boolean
+  /**
+   * How a track's work gets back to the mainline. Default `independent` — one
+   * PR per track, which is what `/complete` always did. `integration` merges
+   * every track into one cumulative branch instead. Per-track overrides live on
+   * `work_tracks.landing_mode`.
+   */
+  landingMode?: 'independent' | 'integration'
   /** Show Ollama provider option in Settings (default false) */
   showOllamaProvider?: boolean
 
@@ -1526,13 +1868,7 @@ export interface PlatformInfo {
 // ── Workspace Health Audit ──
 
 export type AuditTrackId =
-  | 'database'
-  | 'code'
-  | 'testing'
-  | 'architecture'
-  | 'security'
-  | 'documentation'
-  | 'ui-ux'
+  'database' | 'code' | 'testing' | 'architecture' | 'security' | 'documentation' | 'ui-ux'
 
 export type AuditMode = 'light' | 'deep'
 export type AuditRunStatus = 'pending' | 'running' | 'completed' | 'partial' | 'cancelled'
@@ -1745,11 +2081,7 @@ export interface RecommendedLocalModel {
 
 /** The five council advisor roles — thinking styles with built-in tension */
 export type CouncilAdvisorRole =
-  | 'contrarian'
-  | 'first-principles'
-  | 'expansionist'
-  | 'outsider'
-  | 'executor'
+  'contrarian' | 'first-principles' | 'expansionist' | 'outsider' | 'executor'
 
 /** Council session lifecycle status */
 export type CouncilSessionStatus = 'running' | 'completed' | 'cancelled' | 'failed'

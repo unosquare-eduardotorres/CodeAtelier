@@ -18,6 +18,8 @@
 {{PREVIOUS_PHASE_ARTIFACTS}}
 </previous_artifacts>
 
+_If any artifacts above appear truncated, use `Read` on the file paths listed in each artifact header to access the full content. Artifacts are saved to `{{BLUEPRINT_DIR}}/` as `spec.md`, `plan.md`, `tasks.md`._
+
 {{RETRY_CONTEXT}}
 
 ## Your Task
@@ -30,6 +32,7 @@ and tasks. Identify gaps, inconsistencies, and risks before the BUILD phase begi
 ### 1. Spec ↔ Plan Coverage
 
 For every requirement in spec.md (FR-xxx, user stories, success criteria):
+
 - Is it addressed by at least one plan item?
 - Is the plan item sufficient to satisfy the requirement?
 - Are there plan items with no corresponding requirement? (scope creep)
@@ -37,6 +40,7 @@ For every requirement in spec.md (FR-xxx, user stories, success criteria):
 ### 2. Plan ↔ Tasks Coverage
 
 For every plan item:
+
 - Is it decomposed into at least one task?
 - Do the task files match the plan item files?
 - Are dependencies preserved?
@@ -44,6 +48,7 @@ For every plan item:
 ### 3. Spec ↔ Tasks Traceability
 
 For every user story:
+
 - Can you trace a path from user story → plan item(s) → task(s)?
 - Are acceptance scenarios covered by task descriptions?
 
@@ -63,13 +68,13 @@ Success criteria measurable? Task descriptions specific enough for autonomous ex
 
 Before BUILD begins, establish a quality baseline using code-analysis tools. If a tool is unavailable or returns an error, note it as "tool unavailable — baseline not established" and continue. Do NOT skip the section entirely — record which baselines you could and couldn't establish.
 
-| Check | Tool | Purpose |
-|-------|------|---------|
-| Complexity baseline | `mcp__code-analysis__analyze_complexity` | Flag plan items touching high-complexity areas |
-| Dependency health | `mcp__code-analysis__analyze_dependencies` | Identify coupling risks in planned changes |
-| Existing code smells | `mcp__code-analysis__find_code_smells` | Baseline so new smells aren't blamed on BUILD |
-| Technical debt | `mcp__code-analysis__audit_scan` | Document existing debt in affected areas |
-| Dead code | `mcp__code-graph__find_dead_code` | Identify orphaned code that plan should clean up |
+| Check                | Tool                                       | Purpose                                          |
+| -------------------- | ------------------------------------------ | ------------------------------------------------ |
+| Complexity baseline  | `mcp__code-analysis__analyze_complexity`   | Flag plan items touching high-complexity areas   |
+| Dependency health    | `mcp__code-graph__coupling_analysis`       | Identify coupling risks in planned changes       |
+| Existing code smells | `mcp__code-analysis__audit_scan`           | Baseline so new smells aren't blamed on BUILD    |
+| Technical debt       | `mcp__code-analysis__audit_scan`           | Document existing debt in affected areas         |
+| Dead code            | `mcp__code-graph__find_dead_code`          | Identify orphaned code that plan should clean up |
 
 If tools are unavailable, use `Grep` and `Read` to manually spot-check complexity in files touched by the plan.
 
@@ -82,6 +87,7 @@ Record baseline findings in the review report so VERIFY can compare post-build.
 </workspace_docs>
 
 Verify the plan follows workspace conventions from CLAUDE.md:
+
 - Does the plan use existing design-system components before creating new ones?
 - Do file paths follow naming conventions?
 - Does the tech stack match what's established?
@@ -91,12 +97,12 @@ Use `mcp__memory__memory_search` for additional conventions not in CLAUDE.md.
 
 ## Severity Classification
 
-| Severity | Criteria | Action |
-|----------|----------|--------|
-| **Critical** | Blocks implementation or guarantees failure | Must fix before BUILD |
-| **High** | Significant quality impact | Should fix before BUILD |
-| **Medium** | Improvement opportunity | Fix if time permits |
-| **Low** | Minor suggestion | Optional |
+| Severity     | Criteria                                    | Action                  |
+| ------------ | ------------------------------------------- | ----------------------- |
+| **Critical** | Blocks implementation or guarantees failure | Must fix before BUILD   |
+| **High**     | Significant quality impact                  | Should fix before BUILD |
+| **Medium**   | Improvement opportunity                     | Fix if time permits     |
+| **Low**      | Minor suggestion                            | Optional                |
 
 ## Step 8: Council Review (Optional)
 
@@ -145,20 +151,20 @@ Before your completion block, emit a `blueprint-discoveries` block: a JSON array
 
 **Verify artifacts against the actual codebase using code-intelligence tools — NOT Read/Glob/Grep.**
 
-| Goal | First tool | Fallback |
-|------|-----------|----------|
-| Verify planned files exist | `mcp__code-graph__search_identifiers` | `Glob` |
-| Check a file's public API | `mcp__code-graph__file_outline` | `Read` |
-| Verify wiring (who imports a module) | `mcp__code-graph__file_dependents` | `Grep` |
-| Verify callers/callees | `mcp__code-graph__find_callers` / `find_callees` | `Grep` |
-| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
-| Verify code patterns match plan | `mcp__semantic-search__semantic_search` | `Grep` |
-| Establish complexity baseline | `mcp__code-analysis__analyze_complexity` | — |
-| Check dependency coupling | `mcp__code-analysis__analyze_dependencies` | — |
-| Find existing code smells | `mcp__code-analysis__find_code_smells` | — |
-| Audit technical debt | `mcp__code-analysis__audit_scan` | — |
-| Search workspace knowledge | `mcp__memory__memory_search` | — |
-| Record a review finding | `mcp__memory__memory_record` | — |
+| Goal                                 | First tool                                       | Fallback |
+| ------------------------------------ | ------------------------------------------------ | -------- |
+| Verify planned files exist           | `mcp__code-graph__search_identifiers`            | `Glob`   |
+| Check a file's public API            | `mcp__code-graph__file_outline`                  | `Read`   |
+| Verify wiring (who imports a module) | `mcp__code-graph__file_dependents`               | `Grep`   |
+| Verify callers/callees               | `mcp__code-graph__find_callers` / `find_callees` | `Grep`   |
+| Find all references to a symbol      | `mcp__code-graph__find_references`               | `Grep`   |
+| Verify code patterns match plan      | `mcp__semantic-search__semantic_search`          | `Grep`   |
+| Establish complexity baseline        | `mcp__code-analysis__analyze_complexity`         | —        |
+| Check dependency coupling            | `mcp__code-graph__coupling_analysis`             | —        |
+| Find existing code smells            | `mcp__code-analysis__audit_scan`                 | —        |
+| Audit technical debt                 | `mcp__code-analysis__audit_scan`                 | —        |
+| Search workspace knowledge           | `mcp__memory__memory_search`                     | —        |
+| Record a review finding              | `mcp__memory__memory_record`                     | —        |
 
 **Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly.
 

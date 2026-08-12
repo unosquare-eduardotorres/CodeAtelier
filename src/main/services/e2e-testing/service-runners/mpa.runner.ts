@@ -28,19 +28,32 @@ export async function runMpaPreflight(_ctx: E2EServiceContext): Promise<E2ETrans
 
   try {
     const { classifyGoal } = await import('../../mpa-preflight.service')
-    const result = classifyGoal('Add a dark mode toggle to the settings page with system preference detection')
+    const result = classifyGoal(
+      'Add a dark mode toggle to the settings page with system preference detection'
+    )
 
-    log.info(`[mpa-preflight] Result: goalType=${result.goalType}, phases=${result.phases.length}, isValid=${result.isValid}`)
+    log.info(
+      `[mpa-preflight] Result: goalType=${result.goalType}, phases=${result.phases.length}, isValid=${result.isValid}`
+    )
 
-    transcript.push(textEntry(JSON.stringify({
-      goalType: result.goalType,
-      phases: result.phases,
-      isValid: result.isValid
-    })))
+    transcript.push(
+      textEntry(
+        JSON.stringify({
+          goalType: result.goalType,
+          phases: result.phases,
+          isValid: result.isValid
+        })
+      )
+    )
 
     transcript.push(statusEntry('preflight_complete'))
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -56,16 +69,27 @@ export async function runMpaGoalConditions(_ctx: E2EServiceContext): Promise<E2E
     // Intentionally vague/invalid goal
     const result = classifyGoal('fix stuff')
 
-    log.info(`[mpa-goal-conditions] Result: isValid=${result.isValid}, rejectionReason=${result.rejectionReason}`)
+    log.info(
+      `[mpa-goal-conditions] Result: isValid=${result.isValid}, rejectionReason=${result.rejectionReason}`
+    )
 
-    transcript.push(textEntry(JSON.stringify({
-      isValid: result.isValid,
-      rejectionReason: result.rejectionReason ?? 'Goal too vague'
-    })))
+    transcript.push(
+      textEntry(
+        JSON.stringify({
+          isValid: result.isValid,
+          rejectionReason: result.rejectionReason ?? 'Goal too vague'
+        })
+      )
+    )
 
     transcript.push(statusEntry('goal_conditions_checked'))
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -80,7 +104,9 @@ export async function runMpaOrchestration(ctx: E2EServiceContext): Promise<E2ETr
     const { classifyGoal } = await import('../../mpa-preflight.service')
     const { mpaOrchestrationService } = await import('../../mpa-orchestration.service')
 
-    const classification = classifyGoal('Add input validation to the createTask function in src/tasks.ts')
+    const classification = classifyGoal(
+      'Add input validation to the createTask function in src/tasks.ts'
+    )
     if (!classification.isValid) {
       transcript.push(statusEntry(`preflight_rejected: ${classification.rejectionReason}`))
       return transcript
@@ -89,7 +115,7 @@ export async function runMpaOrchestration(ctx: E2EServiceContext): Promise<E2ETr
     transcript.push(statusEntry('orchestration_starting'))
 
     // Setup gate auto-approver
-    const onApproval = (data: { runId?: string }) => {
+    const onApproval = (data: { runId?: string }): void => {
       if (data.runId) {
         log.info(`[mpa-orchestration] Auto-approving gate for runId=${data.runId}`)
         setTimeout(() => mpaOrchestrationService.respondToGate(data.runId!, true), 500)
@@ -98,10 +124,10 @@ export async function runMpaOrchestration(ctx: E2EServiceContext): Promise<E2ETr
     mpaOrchestrationService.on('approvalNeeded', onApproval)
 
     // Capture phase events
-    const onPhaseStart = (data: { phase?: string }) => {
+    const onPhaseStart = (data: { phase?: string }): void => {
       transcript.push(statusEntry(`phase_start: ${data.phase ?? 'unknown'}`))
     }
-    const onComplete = () => {
+    const onComplete = (): void => {
       transcript.push(statusEntry('pipeline_complete'))
     }
     mpaOrchestrationService.on('phaseStart', onPhaseStart)
@@ -122,7 +148,12 @@ export async function runMpaOrchestration(ctx: E2EServiceContext): Promise<E2ETr
       mpaOrchestrationService.off('pipelineComplete', onComplete)
     }
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return transcript
@@ -147,7 +178,7 @@ export async function runMpaCancellation(ctx: E2EServiceContext): Promise<E2ETra
 
     // Wait for first phase start, then cancel
     const cancelPromise = new Promise<void>((resolve) => {
-      const onPhaseStart = () => {
+      const onPhaseStart = (): void => {
         log.info('[mpa-cancellation] First phase started — cancelling')
         transcript.push(statusEntry('first_phase_started'))
         mpaOrchestrationService.off('phaseStart', onPhaseStart)
@@ -169,16 +200,18 @@ export async function runMpaCancellation(ctx: E2EServiceContext): Promise<E2ETra
     })
 
     // Start orchestration (don't await — we cancel mid-run)
-    mpaOrchestrationService.orchestrate({
-      workspaceId: ctx.workspaceId,
-      workspacePath: ctx.workspacePath,
-      goal: 'Refactor the hello module to use class-based pattern',
-      title: 'E2E MPA Cancel Test',
-      goalType: classification.goalType,
-      phases: classification.phases
-    }).catch(() => {
-      // Expected — orchestration interrupted by cancel
-    })
+    mpaOrchestrationService
+      .orchestrate({
+        workspaceId: ctx.workspaceId,
+        workspacePath: ctx.workspacePath,
+        goal: 'Refactor the hello module to use class-based pattern',
+        title: 'E2E MPA Cancel Test',
+        goalType: classification.goalType,
+        phases: classification.phases
+      })
+      .catch(() => {
+        // Expected — orchestration interrupted by cancel
+      })
 
     await cancelPromise
   } catch (err) {
@@ -194,7 +227,9 @@ export async function runMpaCancellation(ctx: E2EServiceContext): Promise<E2ETra
  * Campaign sequential: 2 tiny goals → assert campaignGoalComplete ×2 + campaignComplete.
  * Heavy — requires LLM.
  */
-export async function runMpaCampaignSequential(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runMpaCampaignSequential(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -227,14 +262,18 @@ export async function runMpaCampaignSequential(ctx: E2EServiceContext): Promise<
     let goalCompleteCount = 0
     let campaignDone = false
 
-    const onGoalComplete = () => { goalCompleteCount++ }
-    const onCampaignComplete = () => { campaignDone = true }
+    const onGoalComplete = (): void => {
+      goalCompleteCount++
+    }
+    const onCampaignComplete = (): void => {
+      campaignDone = true
+    }
     mpaCampaignService.on('goalComplete', onGoalComplete)
     mpaCampaignService.on('campaignComplete', onCampaignComplete)
 
     // Setup gate auto-approver
     const { mpaOrchestrationService } = await import('../../mpa-orchestration.service')
-    const onApproval = (data: { runId?: string }) => {
+    const onApproval = (data: { runId?: string }): void => {
       if (data.runId) {
         setTimeout(() => mpaOrchestrationService.respondToGate(data.runId!, true), 500)
       }
@@ -277,7 +316,9 @@ export async function runMpaCampaignSequential(ctx: E2EServiceContext): Promise<
  * Campaign pause & retry: goal with invalid workspace sub-path forces failure.
  * Heavy — requires LLM.
  */
-export async function runMpaCampaignPauseRetry(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runMpaCampaignPauseRetry(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
@@ -299,7 +340,7 @@ export async function runMpaCampaignPauseRetry(ctx: E2EServiceContext): Promise<
     ]
 
     let paused = false
-    const onPause = () => {
+    const onPause = (): void => {
       paused = true
       transcript.push(statusEntry('campaign_paused'))
       // Auto-resolve with skip after brief delay
@@ -312,7 +353,7 @@ export async function runMpaCampaignPauseRetry(ctx: E2EServiceContext): Promise<
 
     // Auto-approve gates
     const { mpaOrchestrationService } = await import('../../mpa-orchestration.service')
-    const onApproval = (data: { runId?: string }) => {
+    const onApproval = (data: { runId?: string }): void => {
       if (data.runId) {
         setTimeout(() => mpaOrchestrationService.respondToGate(data.runId!, true), 500)
       }
@@ -374,7 +415,7 @@ export async function runMpaCampaignSkip(ctx: E2EServiceContext): Promise<E2ETra
     ]
 
     const { mpaOrchestrationService } = await import('../../mpa-orchestration.service')
-    const onApproval = (data: { runId?: string }) => {
+    const onApproval = (data: { runId?: string }): void => {
       if (data.runId) {
         setTimeout(() => mpaOrchestrationService.respondToGate(data.runId!, true), 500)
       }
@@ -383,7 +424,7 @@ export async function runMpaCampaignSkip(ctx: E2EServiceContext): Promise<E2ETra
 
     // Listen for first phase start, then cancel
     let cancelled = false
-    const onPhaseStart = () => {
+    const onPhaseStart = (): void => {
       mpaOrchestrationService.off('phaseStart', onPhaseStart)
       setTimeout(() => {
         mpaCampaignService.cancel(ctx.workspaceId)
@@ -425,11 +466,14 @@ export async function runMpaCampaignSkip(ctx: E2EServiceContext): Promise<E2ETra
  * Campaign stale reconcile: insert running campaign row → reconcileStale() → assert marked failed.
  * Deterministic — no LLM needed.
  */
-export async function runMpaCampaignReconcile(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runMpaCampaignReconcile(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const transcript: E2ETranscriptEntry[] = []
 
   try {
-    const { mpaCampaignRepository } = await import('../../../db/repositories/mpa-campaign.repository')
+    const { mpaCampaignRepository } =
+      await import('../../../db/repositories/mpa-campaign.repository')
     const { mpaCampaignService } = await import('../../mpa-campaign.service')
 
     // Insert a fake "running" campaign

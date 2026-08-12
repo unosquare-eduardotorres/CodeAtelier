@@ -22,9 +22,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Stack Drift Banner', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -42,12 +40,18 @@ test.describe('Stack Drift Banner', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="stack-drift-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Banner should contain tech stack change messaging
     const text = await banner.textContent()
@@ -58,22 +62,25 @@ test.describe('Stack Drift Banner', () => {
     await expect(svgIcon).toBeVisible()
   })
 
-  test('banner shows added and removed technologies', async ({
-    electronPage: page
-  }) => {
+  test('banner shows added and removed technologies', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="stack-drift-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     const text = await banner.textContent()
 
     // Should show added or removed technologies
-    const hasTechInfo =
-      text?.includes('Added:') || text?.includes('Removed:')
+    const hasTechInfo = text?.includes('Added:') || text?.includes('Removed:')
 
     expect(hasTechInfo).toBeTruthy()
   })
@@ -82,12 +89,18 @@ test.describe('Stack Drift Banner', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="stack-drift-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Rebuild prompt button should be visible
     const rebuildBtn = page.locator('[data-testid="stack-drift-rebuild"]')
@@ -103,18 +116,27 @@ test.describe('Stack Drift Banner', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="stack-drift-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Update skills button should be visible
     const updateBtn = banner.locator('button:has-text("Update skills only")')
     const hasBtn = await updateBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     await expect(updateBtn).toBeVisible()
 
@@ -123,22 +145,29 @@ test.describe('Stack Drift Banner', () => {
     await expect(svgIcon).toBeVisible()
   })
 
-  test('dismiss button hides the banner', async ({
-    electronPage: page
-  }) => {
+  test('dismiss button hides the banner', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="stack-drift-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Dismiss button (X) should be visible
     const dismissBtn = banner.locator('button[aria-label="Dismiss"]')
     const hasDismiss = await dismissBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasDismiss) { test.skip(); return }
+    if (!hasDismiss) {
+      test.skip()
+      return
+    }
 
     await expect(dismissBtn).toBeVisible()
 

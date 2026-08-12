@@ -22,7 +22,8 @@ function claudeExec(args: string[], cwd?: string): unknown {
   const result = execFileSync('claude', [...args, '--output-format', 'json'], {
     encoding: 'utf-8',
     timeout: 10_000,
-    cwd
+    cwd,
+    windowsHide: true
   })
   return JSON.parse(result.trim())
 }

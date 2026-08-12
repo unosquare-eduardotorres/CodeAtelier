@@ -24,10 +24,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { test, describe, summaryAsync, runExclusive } from './test-harness'
 import { OpenCodeExecutor } from '../opencode-executor'
-import {
-  augmentOpenCodeCliPath,
-  resolveOpencodePath
-} from '../../../shared/opencode-cli-path'
+import { augmentOpenCodeCliPath, resolveOpencodePath } from '../../../shared/opencode-cli-path'
 
 // ── Bootstrap: resolve CLI path before any test touches the executor ──
 // Outside Electron, resolveOpencodePath() is never called at startup.
@@ -162,8 +159,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
           `oMLX should be reachable at ${OMLX_BASE_URL}, got HTTP ${statusCode}`
         )
       })
-    })
-  )
+    }))
 
   // ── Step 2: Config generation ──
   test('2. config: generate valid opencode.json', () =>
@@ -192,8 +188,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
           `model=${config.model}, tools.skill=${config.tools.skill}, shell=${config.shell}`
         )
       })
-    })
-  )
+    }))
 
   // ── Step 3: Start server ──
   test('3. server: start OpenCode', () =>
@@ -211,8 +206,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         assert.equal(executor.isRunning(), true, 'Server should be running after start()')
         diag('server-start', `isRunning=${executor.isRunning()}`)
       })
-    })
-  )
+    }))
 
   // ── Step 4: Wait for connected event ──
   test('4. server: wait for connected event', () =>
@@ -238,10 +232,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
                   'server-connected',
                   `event type: ${evt.type ?? JSON.stringify(evt).slice(0, 120)}`
                 )
-                if (
-                  evt.type === 'server.connected' ||
-                  String(evt.type).includes('connect')
-                ) {
+                if (evt.type === 'server.connected' || String(evt.type).includes('connect')) {
                   connected = true
                   break
                 }
@@ -259,8 +250,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         // Don't assert — some configurations don't emit this event; the diagnostic
         // value is in the timing log.
       })
-    })
-  )
+    }))
 
   // ── Step 5: Create session ──
   test('5. session: create', () =>
@@ -281,15 +271,11 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         )
 
         sessionId = session.data?.id ?? ''
-        assert.ok(
-          sessionId,
-          `Session ID should be defined, got: ${JSON.stringify(session.data)}`
-        )
+        assert.ok(sessionId, `Session ID should be defined, got: ${JSON.stringify(session.data)}`)
         assert.equal(typeof sessionId, 'string')
         diag('session-create', `sessionId=${sessionId}`)
       })
-    })
-  )
+    }))
 
   // ── Step 6: file.status() — potential hang point ──
   test('6. sdk: file.status() (potential hang point)', () =>
@@ -308,8 +294,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
           if ((err as Error).message.includes('TIMED OUT')) throw err
         }
       })
-    })
-  )
+    }))
 
   // ── Step 7: event.subscribe() — potential hang point ──
   test('7. sdk: event.subscribe() (potential hang point)', () =>
@@ -318,17 +303,12 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         const client = executor.getClient()
         assert.ok(client, 'Client should be available')
 
-        const events = await withTimeout(
-          client!.event.subscribe(),
-          5_000,
-          'event-subscribe'
-        )
+        const events = await withTimeout(client!.event.subscribe(), 5_000, 'event-subscribe')
 
         diag('event-subscribe', `stream present: ${!!events.stream}`)
         assert.ok(events, 'event.subscribe() should return an object')
       })
-    })
-  )
+    }))
 
   // ── Step 8: session.prompt (noReply) — potential hang point ──
   test('8. sdk: session.prompt (noReply priming)', () =>
@@ -354,8 +334,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
 
         diag('prompt-noReply', 'priming accepted (noReply)')
       })
-    })
-  )
+    }))
 
   // ── Step 9: session.prompt (real) — cold start, up to 2 min ──
   test('9. sdk: session.prompt (real response, up to 2 min)', () =>
@@ -441,15 +420,11 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
 
         await withTimeout(streamReader, 120_000, 'prompt-real')
 
-        diag(
-          'prompt-real',
-          `events received: ${eventCount}, TTFT: ${firstDeltaMs ?? 'none'}ms`
-        )
+        diag('prompt-real', `events received: ${eventCount}, TTFT: ${firstDeltaMs ?? 'none'}ms`)
         diag('prompt-real', `response (first 200 chars): ${responseText.slice(0, 200)}`)
         assert.ok(eventCount > 0, 'Should have received at least one event')
       })
-    })
-  )
+    }))
 
   // ── Step 10: executor.execute() round-trip — full code path ──
   test('10. full: executor.execute() round-trip (up to 3 min)', () =>
@@ -464,8 +439,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
 
         const executeGen = executor.execute({
           prompt: 'Respond with exactly: "executor diagnostic ok"',
-          systemPrompt:
-            'You are a concise assistant. Respond with the exact text requested.',
+          systemPrompt: 'You are a concise assistant. Respond with the exact text requested.',
           provider: {
             providerId: 'omlx',
             modelId: OMLX_MODEL.replace('omlx/', ''),
@@ -508,15 +482,9 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         const chunkSummary = Array.from(chunkTypes.entries())
           .map(([k, v]) => `${k}=${v}`)
           .join(', ')
-        diag(
-          'execute-roundtrip',
-          `total chunks: ${chunkCount} — types: {${chunkSummary}}`
-        )
+        diag('execute-roundtrip', `total chunks: ${chunkCount} — types: {${chunkSummary}}`)
         diag('execute-roundtrip', `TTFT: ${firstTextMs ?? 'none'}ms`)
-        diag(
-          'execute-roundtrip',
-          `response (first 200): ${receivedText.slice(0, 200)}`
-        )
+        diag('execute-roundtrip', `response (first 200): ${receivedText.slice(0, 200)}`)
 
         assert.equal(
           receivedError,
@@ -525,8 +493,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         )
         assert.ok(receivedText.length > 0, 'Should receive text response')
       })
-    })
-  )
+    }))
 
   // ── Step 11: Cleanup ──
   test('11. cleanup: stop server', () =>
@@ -539,8 +506,7 @@ describe('OpenCode Session Diagnostic — step-by-step timing', () => {
         delete process.env.OPENCODE_CONFIG
         diag('cleanup', 'server stopped, temp dir removed')
       })
-    })
-  )
+    }))
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

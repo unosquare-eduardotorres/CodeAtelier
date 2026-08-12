@@ -158,7 +158,12 @@ export class E2ETestResultRepository extends BaseRepository<E2ETestResultRow, E2
       .all(runId) as { status: string; cnt: number }[]
 
     const counts: Record<string, number> = {
-      queued: 0, running: 0, passed: 0, failed: 0, skipped: 0, error: 0
+      queued: 0,
+      running: 0,
+      passed: 0,
+      failed: 0,
+      skipped: 0,
+      error: 0
     }
     for (const r of rows) counts[r.status] = r.cnt
     return counts as Record<E2EResultStatus, number>

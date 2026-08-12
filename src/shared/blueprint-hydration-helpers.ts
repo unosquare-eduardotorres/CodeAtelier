@@ -60,8 +60,6 @@ export function resolveHydrationAction(
  *
  * @param liveCountAfterFetch - chatMessages.length after the fetch
  */
-export function resolvePostFetchAction(
-  liveCountAfterFetch: number
-): 'apply' | 'merge' {
+export function resolvePostFetchAction(liveCountAfterFetch: number): 'apply' | 'merge' {
   return liveCountAfterFetch === 0 ? 'apply' : 'merge'
 }

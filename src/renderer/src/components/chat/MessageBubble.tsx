@@ -13,6 +13,7 @@ import {
 } from './remark-plugins'
 import { CodeBlock } from './CodeBlock'
 import type { Message, ToolActivity, ConversationMode } from '../../../../shared/types'
+import { parseDbTimestamp } from '../../../../shared/db-time'
 import ToolActivityBlock from './ToolActivityBlock'
 import HookActivityIndicator from './HookActivityIndicator'
 import MessageCardRenderer from './MessageCardRenderer'
@@ -47,7 +48,7 @@ interface MessageBubbleProps {
 }
 
 function formatTime(dateStr: string): string {
-  const date = new Date(dateStr)
+  const date = parseDbTimestamp(dateStr)
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 

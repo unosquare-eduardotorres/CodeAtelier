@@ -4,15 +4,7 @@
  */
 
 import type { ComponentType } from 'react'
-import {
-  ClipboardList,
-  HelpCircle,
-  Map,
-  ListTodo,
-  Search,
-  Hammer,
-  ShieldCheck
-} from 'lucide-react'
+import { ClipboardList, HelpCircle, Map, ListTodo, Search, Hammer, ShieldCheck } from 'lucide-react'
 import type { BlueprintPhaseType } from '../../../../../shared/blueprint-types'
 
 export interface PhaseDisplayConfig {

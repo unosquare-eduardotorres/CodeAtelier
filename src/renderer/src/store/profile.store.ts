@@ -19,7 +19,10 @@ interface ProfileState {
     mode: 'plan' | 'build' | 'danger',
     promptText: string
   ) => Promise<void>
-  resetCoreAgentPrompt: (agentRole: 'specialist', mode: 'plan' | 'build' | 'danger') => Promise<void>
+  resetCoreAgentPrompt: (
+    agentRole: 'specialist',
+    mode: 'plan' | 'build' | 'danger'
+  ) => Promise<void>
   getCoreAgentPrompt: (
     agentRole: 'specialist',
     mode: 'plan' | 'build' | 'danger'

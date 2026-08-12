@@ -37,10 +37,10 @@ async function runCouncilToStage(
     transcript.push(statusEntry('council_starting'))
 
     const done = new Promise<void>((resolve) => {
-      const onPhaseChanged = (data: { phase?: string }) => {
+      const onPhaseChanged = (data: { phase?: string }): void => {
         transcript.push(statusEntry(`phase_changed: ${data.phase ?? 'unknown'}`))
       }
-      const onMemberComplete = (_data: unknown) => {
+      const onMemberComplete = (_data: unknown): void => {
         memberCompleteCount++
         transcript.push(statusEntry(`member_complete: ${memberCompleteCount}`))
         if (targetStage === 'member_complete' && memberCompleteCount >= 2) {
@@ -48,7 +48,7 @@ async function runCouncilToStage(
           resolve()
         }
       }
-      const onVerdict = (data: unknown) => {
+      const onVerdict = (data: unknown): void => {
         verdict = data
         transcript.push(statusEntry('verdict'))
         if (targetStage === 'verdict') {
@@ -56,13 +56,13 @@ async function runCouncilToStage(
           resolve()
         }
       }
-      const onComplete = () => {
+      const onComplete = (): void => {
         transcript.push(statusEntry('council_complete'))
         cleanup()
         resolve()
       }
 
-      function cleanup() {
+      function cleanup(): void {
         councilService.off('phase-changed', onPhaseChanged)
         councilService.off('member-complete', onMemberComplete)
         councilService.off('verdict', onVerdict)
@@ -97,7 +97,12 @@ async function runCouncilToStage(
 
     await done
   } catch (err) {
-    transcript.push({ role: 'system', type: 'error', content: (err as Error).message, timestamp: Date.now() })
+    transcript.push({
+      role: 'system',
+      type: 'error',
+      content: (err as Error).message,
+      timestamp: Date.now()
+    })
   }
 
   return { transcript, memberCompleteCount, verdict }
@@ -105,14 +110,18 @@ async function runCouncilToStage(
 
 // ── Council Start Session ──
 
-export async function runCouncilStartSession(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runCouncilStartSession(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const { transcript } = await runCouncilToStage(ctx, 'member_complete')
   return transcript
 }
 
 // ── Council Advisor Opinions ──
 
-export async function runCouncilAdvisorOpinions(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runCouncilAdvisorOpinions(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const { transcript, memberCompleteCount } = await runCouncilToStage(ctx, 'member_complete')
   transcript.push(statusEntry(`advisor_opinions_received: ${memberCompleteCount}`))
   return transcript
@@ -130,7 +139,9 @@ export async function runCouncilSynthesis(ctx: E2EServiceContext): Promise<E2ETr
 
 // ── Council Structured Output ──
 
-export async function runCouncilStructuredOutput(ctx: E2EServiceContext): Promise<E2ETranscriptEntry[]> {
+export async function runCouncilStructuredOutput(
+  ctx: E2EServiceContext
+): Promise<E2ETranscriptEntry[]> {
   const { transcript, verdict } = await runCouncilToStage(ctx, 'complete')
   if (verdict) {
     transcript.push(textEntry(JSON.stringify(verdict)))

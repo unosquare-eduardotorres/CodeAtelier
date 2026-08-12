@@ -21,9 +21,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Council Session Card', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,13 +35,11 @@ test.describe('Council Session Card', () => {
     return true
   }
 
-  async function navigateToCouncilLanding(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToCouncilLanding(page: import('@playwright/test').Page): Promise<boolean> {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('council')
+    await settingsNav.navigateToSettingsTab('council')
     await page.waitForTimeout(800)
 
     // Must have session cards visible (history mode)
@@ -54,9 +50,15 @@ test.describe('Council Session Card', () => {
 
   test('session card renders with status badge', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasCards = await navigateToCouncilLanding(page)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="council-session-card"]').first()
     await expect(card).toBeVisible()
@@ -69,9 +71,15 @@ test.describe('Council Session Card', () => {
 
   test('advisor avatars display for completed advisors', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasCards = await navigateToCouncilLanding(page)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="council-session-card"]').first()
     await expect(card).toBeVisible()
@@ -82,18 +90,25 @@ test.describe('Council Session Card', () => {
     expect(hasCount).toBeTruthy()
   })
 
-  test('clicking a session card navigates to its detail view', async ({
-    electronPage: page
-  }) => {
+  test('clicking a session card navigates to its detail view', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasCards = await navigateToCouncilLanding(page)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="council-session-card"]').first()
     const viewBtn = card.locator('button').filter({ hasText: /view/i }).first()
     const hasView = await viewBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasView) { test.skip(); return }
+    if (!hasView) {
+      test.skip()
+      return
+    }
 
     await viewBtn.click()
     await page.waitForTimeout(1_000)
@@ -104,16 +119,21 @@ test.describe('Council Session Card', () => {
     expect(hasCouncilView).toBeTruthy()
   })
 
-  test('in-progress session shows loading spinner animation', async ({
-    electronPage: page
-  }) => {
+  test('in-progress session shows loading spinner animation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasCards = await navigateToCouncilLanding(page)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     // Look for a running session
-    const runningCard = page.locator('[data-testid="council-session-card"]')
+    const runningCard = page
+      .locator('[data-testid="council-session-card"]')
       .filter({ hasText: /Running/i })
       .first()
     const hasRunning = await runningCard.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -130,21 +150,29 @@ test.describe('Council Session Card', () => {
     expect(hasSpinner).toBeTruthy()
   })
 
-  test('completed session displays verdict score preview', async ({
-    electronPage: page
-  }) => {
+  test('completed session displays verdict score preview', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasCards = await navigateToCouncilLanding(page)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     // Look for a completed session with score
-    const completedCard = page.locator('[data-testid="council-session-card"]')
+    const completedCard = page
+      .locator('[data-testid="council-session-card"]')
       .filter({ hasText: /Completed/i })
       .first()
     const hasCompleted = await completedCard.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCompleted) { test.skip(); return }
+    if (!hasCompleted) {
+      test.skip()
+      return
+    }
 
     // Completed session should show a score badge (e.g., "75/100")
     const scoreBadge = completedCard.getByText(/\d+\/100/).first()
@@ -155,20 +183,27 @@ test.describe('Council Session Card', () => {
     }
   })
 
-  test('delete button shows confirmation dialog before removal', async ({
-    electronPage: page
-  }) => {
+  test('delete button shows confirmation dialog before removal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasCards = await navigateToCouncilLanding(page)
-    if (!hasCards) { test.skip(); return }
+    if (!hasCards) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="council-session-card"]').first()
 
     // Delete button (Trash2 icon)
     const deleteBtn = card.locator('button[aria-label="Delete session"]')
     const hasDelete = await deleteBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasDelete) { test.skip(); return }
+    if (!hasDelete) {
+      test.skip()
+      return
+    }
 
     await deleteBtn.click()
     await page.waitForTimeout(500)

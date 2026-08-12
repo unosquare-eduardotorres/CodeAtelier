@@ -18,12 +18,9 @@
  */
 import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
-import { ChatPage } from './pages/chat-page'
 
 test.describe('New Conversation Modal', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -37,14 +34,15 @@ test.describe('New Conversation Modal', () => {
     return true
   }
 
-  async function openNewConversationModal(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openNewConversationModal(page: import('@playwright/test').Page): Promise<boolean> {
     // Look for the "+" or "New Chat" button in the sidebar/header
     const newChatBtn = page.locator(
       'button:has-text("New Chat"), button[aria-label*="New"], button[aria-label*="new chat"], [data-testid="new-chat-button"]'
     )
-    const hasBtn = await newChatBtn.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasBtn = await newChatBtn
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     if (!hasBtn) return false
     await newChatBtn.first().click()
     await page.waitForTimeout(500)
@@ -55,10 +53,16 @@ test.describe('New Conversation Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     await expect(modal).toBeVisible({ timeout: 5_000 })
@@ -68,18 +72,25 @@ test.describe('New Conversation Modal', () => {
     await expect(heading).toContainText('Create New Chat')
   })
 
-  test('title input accepts text up to 500 characters', async ({
-    electronPage: page
-  }) => {
+  test('title input accepts text up to 500 characters', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Find the title input
     const titleInput = modal.locator('#conv-title, input[type="text"]').first()
@@ -94,18 +105,25 @@ test.describe('New Conversation Modal', () => {
     expect(maxLength).toBe('500')
   })
 
-  test('mode switcher toggles between Plan and Build modes', async ({
-    electronPage: page
-  }) => {
+  test('mode switcher toggles between Plan and Build modes', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Find Plan and Build mode buttons
     const planBtn = modal.locator('button:has-text("Plan")')
@@ -124,18 +142,25 @@ test.describe('New Conversation Modal', () => {
     expect(hasDescription).toBeTruthy()
   })
 
-  test('communication tone selector shows available tones', async ({
-    electronPage: page
-  }) => {
+  test('communication tone selector shows available tones', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Find tone section
     const toneLabel = modal.locator('label:has-text("Tone")')
@@ -146,23 +171,32 @@ test.describe('New Conversation Modal', () => {
     await expect(workspaceDefault).toBeVisible()
 
     // At least one additional tone button should exist
-    const toneButtons = modal.locator('button').filter({ hasText: /Friendly|Direct|Warm|Terse|Bare/ })
+    const toneButtons = modal
+      .locator('button')
+      .filter({ hasText: /Friendly|Direct|Warm|Terse|Bare/ })
     const count = await toneButtons.count()
     expect(count).toBeGreaterThan(0)
   })
 
-  test('attachment dropzone section is visible', async ({
-    electronPage: page
-  }) => {
+  test('attachment dropzone section is visible', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Find attachments section label
     const attachLabel = modal.locator('label:has-text("Attachments")')
@@ -178,14 +212,23 @@ test.describe('New Conversation Modal', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Switch to Build mode first
     const buildBtn = modal.locator('button:has-text("Build")')
@@ -198,18 +241,25 @@ test.describe('New Conversation Modal', () => {
     expect(hasBranchOption).toBeTruthy()
   })
 
-  test('submit button creates the conversation', async ({
-    electronPage: page
-  }) => {
+  test('submit button creates the conversation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const opened = await openNewConversationModal(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="new-conversation-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Submit button should exist
     const submitBtn = page.locator('[data-testid="new-conversation-submit"]')

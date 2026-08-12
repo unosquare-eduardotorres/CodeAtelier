@@ -139,7 +139,12 @@ if (!env) {
         inputContent: 'content'
       })
       const peerReviews = [
-        { reviewerRole: 'security', targetRole: 'architecture', agreement: 'agree', comment: 'Good' }
+        {
+          reviewerRole: 'security',
+          targetRole: 'architecture',
+          agreement: 'agree',
+          comment: 'Good'
+        }
       ]
       councilSessionRepository.savePeerReviews(session.id, peerReviews)
       const found = councilSessionRepository.findById(session.id)

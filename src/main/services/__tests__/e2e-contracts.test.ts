@@ -19,7 +19,14 @@ function readSource(relPath: string): string {
   return readFileSync(join(projectRoot, relPath), 'utf-8')
 }
 
-/** Extract all `server.tool(` registrations from MCP server files */
+/**
+ * Extract all tool registrations from MCP server files.
+ *
+ * Matches `server.tool(` and a bare `tool(` — code-graph-server registers
+ * through a local `tool()` wrapper that appends the shared-index caveat to
+ * every description, and requiring the `server.` prefix dropped all 15 of its
+ * tools from this contract check.
+ */
 function extractMcpToolNames(): string[] {
   const projectRoot = join(__dirname, '..', '..', '..', '..')
   const mcpDir = join(projectRoot, 'src', 'main', 'mcp-servers')
@@ -28,7 +35,7 @@ function extractMcpToolNames(): string[] {
   )
 
   const toolNames: string[] = []
-  const toolCallRegex = /server\.tool\(/g
+  const toolCallRegex = /(?:^|[^.\w])(?:server\.)?tool\(/g
 
   for (const file of files) {
     const source = readFileSync(join(mcpDir, file), 'utf-8')
@@ -64,7 +71,9 @@ function extractSlashCommands(): string[] {
 function extractStreamChunkTypes(): string[] {
   const source = readSource('src/main/services/agent-base.service.ts')
   // Find the StreamChunk interface's `type:` union
-  const interfaceMatch = source.match(/export interface StreamChunk\s*\{[\s\S]*?type:\s*([\s\S]*?)\n\s+\w/)
+  const interfaceMatch = source.match(
+    /export interface StreamChunk\s*\{[\s\S]*?type:\s*([\s\S]*?)\n\s+\w/
+  )
   if (!interfaceMatch) return []
 
   const unionBlock = interfaceMatch[1]
@@ -91,10 +100,21 @@ function extractHandledChunkTypes(): string[] {
 
 // ── SDK-native tools (provided by the Claude/OpenCode SDK, not our MCP servers) ──
 const SDK_NATIVE_TOOLS = new Set([
-  'Read', 'Write', 'Edit', 'Grep', 'Glob', 'Bash',
-  'Task', 'TaskCreate', 'task_create',
-  'emit_plan', 'ask_user',
-  'websearch', 'webfetch', 'web_search', 'web_fetch'
+  'Read',
+  'Write',
+  'Edit',
+  'Grep',
+  'Glob',
+  'Bash',
+  'Task',
+  'TaskCreate',
+  'task_create',
+  'emit_plan',
+  'ask_user',
+  'websearch',
+  'webfetch',
+  'web_search',
+  'web_fetch'
 ])
 
 // Tool name aliases in the catalog that don't exactly match MCP server registration names
@@ -129,18 +149,20 @@ describe('E2EContracts', () => {
         // anyToolCalled([tool1, tool2, ...]) — strip the square brackets first
         const anyToolMatch = assertion.name.match(/^anyToolCalled\(\[(.+)\]\)$/)
         if (anyToolMatch) {
-          anyToolMatch[1].split(',').map((t) => t.trim()).forEach((t) => referencedTools.add(t))
+          anyToolMatch[1]
+            .split(',')
+            .map((t) => t.trim())
+            .forEach((t) => referencedTools.add(t))
         }
       }
     }
 
     const unknownTools: string[] = []
     for (const tool of referencedTools) {
-      // Tool name matching: MCP tools use contains-match (e.g. 'checkpoint_list'
-      // matches 'checkpoint-context_checkpoint_list')
-      const inMcp = [...mcpToolNames].some(
-        (mcpName) => mcpName === tool || mcpName.includes(tool) || tool.includes(mcpName)
-      )
+      // Exact match only. The previous contains-match existed to paper over
+      // registry drift (catalog said 'checkpoint_list', registry said
+      // 'list_checkpoints') and would silently accept a ghost tool name again.
+      const inMcp = mcpToolNames.has(tool)
       const isAlias = tool in CATALOG_TOOL_ALIASES
       if (!inMcp && !SDK_NATIVE_TOOLS.has(tool) && !isAlias) {
         unknownTools.push(tool)
@@ -162,10 +184,22 @@ describe('E2EContracts', () => {
 
     // Types intentionally handled by the `default` case in chunkToTranscriptEntry
     const defaultBucketAllowlist = new Set([
-      'tool_progress', 'subagent_start', 'subagent_progress', 'subagent_complete',
-      'rate_limit', 'api_retry', 'prompt_suggestion', 'files_persisted',
-      'hook_lifecycle', 'session_state', 'auth_status', 'tool_use_summary',
-      'session_recovery', 'structured_output', 'lsp_diagnostics', 'turn_limit'
+      'tool_progress',
+      'subagent_start',
+      'subagent_progress',
+      'subagent_complete',
+      'rate_limit',
+      'api_retry',
+      'prompt_suggestion',
+      'files_persisted',
+      'hook_lifecycle',
+      'session_state',
+      'auth_status',
+      'tool_use_summary',
+      'session_recovery',
+      'structured_output',
+      'lsp_diagnostics',
+      'turn_limit'
     ])
 
     const uncovered: string[] = []
@@ -179,7 +213,7 @@ describe('E2EContracts', () => {
       uncovered,
       [],
       `StreamChunk types with no explicit case or default-bucket entry: ${uncovered.join(', ')}. ` +
-      `Add a case in stream-helper.ts chunkToTranscriptEntry or add to defaultBucketAllowlist.`
+        `Add a case in stream-helper.ts chunkToTranscriptEntry or add to defaultBucketAllowlist.`
     )
   })
 
@@ -199,8 +233,9 @@ describe('E2EContracts', () => {
       // Only check that the command exists as a real slash command OR has explicit description noting backend coverage
       const slashCmd = `/${cmdName}`
       const isRealCommand = realCommands.has(slashCmd)
-      const isBackendCovered = scenario.description.includes('Backend coverage:') ||
-                               scenario.description.includes('backend coverage')
+      const isBackendCovered =
+        scenario.description.includes('Backend coverage:') ||
+        scenario.description.includes('backend coverage')
       const isAuditStyle = scenario.id === 'commands.audit' // audit prompt, not /audit command
 
       if (!isRealCommand && !isBackendCovered && !isAuditStyle) {
@@ -250,12 +285,29 @@ describe('E2EContracts', () => {
       // Instead of hard-failing, emit a status so we know which runners need registration
       // Hard-fail only on runners from existing waves (wave 1-4)
       const existingRunners = new Set([
-        'blueprint-create', 'blueprint-phase-management', 'blueprint-progress-tracking', 'blueprint-task-execution',
-        'mpa-preflight', 'mpa-goal-conditions', 'mpa-orchestration', 'mpa-cancellation',
-        'code-intel-code-graph-index', 'code-intel-embedding-generation', 'code-intel-semantic-search',
-        'grill-evaluate', 'grill-multi-track', 'grill-iteration', 'grill-condense-requirement', 'grill-generate-plan',
-        'audit-start-run', 'audit-findings', 'audit-coverage',
-        'council-start-session', 'council-advisor-opinions', 'council-synthesis', 'council-structured-output',
+        'blueprint-create',
+        'blueprint-phase-management',
+        'blueprint-progress-tracking',
+        'blueprint-task-execution',
+        'mpa-preflight',
+        'mpa-goal-conditions',
+        'mpa-orchestration',
+        'mpa-cancellation',
+        'code-intel-code-graph-index',
+        'code-intel-embedding-generation',
+        'code-intel-semantic-search',
+        'grill-evaluate',
+        'grill-multi-track',
+        'grill-iteration',
+        'grill-condense-requirement',
+        'grill-generate-plan',
+        'audit-start-run',
+        'audit-findings',
+        'audit-coverage',
+        'council-start-session',
+        'council-advisor-opinions',
+        'council-synthesis',
+        'council-structured-output',
         'memory-tiers'
       ])
 
@@ -269,7 +321,9 @@ describe('E2EContracts', () => {
       // Future runners (waves B-F) — informational only, not a hard failure
       const futureRunners = missingFromRegistry.filter((r) => !existingRunners.has(r))
       if (futureRunners.length > 0) {
-        console.log(`  [info] Future runner keys not yet registered (expected): ${futureRunners.join(', ')}`)
+        console.log(
+          `  [info] Future runner keys not yet registered (expected): ${futureRunners.join(', ')}`
+        )
       }
     }
   })

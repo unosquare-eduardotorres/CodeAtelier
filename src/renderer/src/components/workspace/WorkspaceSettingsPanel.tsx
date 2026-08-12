@@ -2,10 +2,11 @@ import {
   Settings,
   Zap,
   Lightbulb,
-  Waypoints,
+  Brain,
   Users,
   FileText,
   GitBranch,
+  GitFork,
   Cpu,
   ChevronLeft,
   ChevronRight,
@@ -13,7 +14,7 @@ import {
   ScrollText,
   Bot,
   ShieldCheck,
-  Brain,
+  Code,
   Puzzle,
   Target,
   Landmark,
@@ -34,6 +35,7 @@ export type SettingsTab =
   | 'blueprints'
   | 'models'
   | 'repository'
+  | 'tracks'
   | 'code-intelligence'
   | 'integrations'
   | 'team'
@@ -52,10 +54,25 @@ export const SETTINGS_MENU: {
   icon: LucideIcon
   iconColor?: string
   group: SettingsMenuGroup
+  /** Hidden from the nav; route still resolves so deep-links/auto-nav keep working. */
+  hidden?: boolean
 }[] = [
   // ── Tools (interactive / operational) ──
-  { id: 'health', label: 'Health', icon: ShieldCheck, iconColor: 'text-success', group: 'tools' },
-  { id: 'goals', label: 'Goals', icon: Target, iconColor: 'text-cyan-400', group: 'tools' },
+  {
+    id: 'health',
+    label: 'Audit Code',
+    icon: ShieldCheck,
+    iconColor: 'text-success',
+    group: 'tools'
+  },
+  {
+    id: 'goals',
+    label: 'Goals',
+    icon: Target,
+    iconColor: 'text-cyan-400',
+    group: 'tools',
+    hidden: true
+  },
   { id: 'council', label: 'Council', icon: Landmark, iconColor: 'text-indigo-400', group: 'tools' },
   { id: 'ideas', label: 'Ideas', icon: Lightbulb, iconColor: 'text-warning', group: 'tools' },
   {
@@ -63,7 +80,8 @@ export const SETTINGS_MENU: {
     label: 'Plans',
     icon: ClipboardList,
     iconColor: 'text-mode-plan-text',
-    group: 'tools'
+    group: 'tools',
+    hidden: true
   },
   {
     id: 'blueprints',
@@ -89,16 +107,23 @@ export const SETTINGS_MENU: {
     group: 'configuration'
   },
   {
+    id: 'tracks',
+    label: 'Tracks',
+    icon: GitFork,
+    iconColor: 'text-accent',
+    group: 'configuration'
+  },
+  {
     id: 'memory',
     label: 'Brain',
-    icon: Waypoints,
+    icon: Brain,
     iconColor: 'text-mode-plan-text',
     group: 'configuration'
   },
   {
     id: 'code-intelligence',
     label: 'Code Intelligence',
-    icon: Brain,
+    icon: Code,
     iconColor: 'text-cyan-400',
     group: 'configuration'
   },
@@ -115,19 +140,21 @@ export const SETTINGS_MENU: {
     label: 'Documents',
     icon: FileText,
     iconColor: 'text-info',
-    group: 'configuration'
+    group: 'configuration',
+    hidden: true
   },
-  { id: 'tokens', label: 'Tokens', icon: Zap, group: 'configuration' },
+  { id: 'tokens', label: 'Tokens', icon: Zap, group: 'configuration', hidden: true },
   {
     id: 'events',
     label: 'Events',
     icon: ScrollText,
     iconColor: 'text-danger',
-    group: 'configuration'
+    group: 'configuration',
+    hidden: true
   },
   {
     id: 'testing',
-    label: 'Testing',
+    label: 'LLM Testing',
     icon: FlaskConical,
     iconColor: 'text-purple-400',
     group: 'tools'
@@ -150,6 +177,9 @@ export default function WorkspaceSettingsPanel({
   onClose
 }: WorkspaceSettingsPanelProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
+
+  const toolItems = SETTINGS_MENU.filter((item) => item.group === 'tools' && !item.hidden)
+  const configItems = SETTINGS_MENU.filter((item) => item.group === 'configuration' && !item.hidden)
 
   return (
     <div
@@ -204,13 +234,16 @@ export default function WorkspaceSettingsPanel({
           </div>
         )}
         <div className="space-y-0.5">
-          {SETTINGS_MENU.filter((item) => item.group === 'tools').map((item) => {
+          {toolItems.map((item) => {
             const Icon = item.icon
             const isActive = activeTab === item.id
             return (
               <button
                 key={item.id}
                 data-testid="workspace-settings-tab"
+                // Every tab shares one data-testid, so tests cannot address a
+                // specific tab by it. This carries the id for that.
+                data-tab-id={item.id}
                 onClick={() => onTabChange(item.id)}
                 className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'
@@ -240,13 +273,14 @@ export default function WorkspaceSettingsPanel({
           </div>
         )}
         <div className="space-y-0.5">
-          {SETTINGS_MENU.filter((item) => item.group === 'configuration').map((item) => {
+          {configItems.map((item) => {
             const Icon = item.icon
             const isActive = activeTab === item.id
             return (
               <button
                 key={item.id}
                 data-testid="workspace-settings-tab"
+                data-tab-id={item.id}
                 onClick={() => onTabChange(item.id)}
                 className={`flex items-center gap-2.5 w-full rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 ${
                   isCollapsed ? 'px-2 py-2 justify-center' : 'px-3 py-2'

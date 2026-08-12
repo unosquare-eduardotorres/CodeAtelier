@@ -54,26 +54,6 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
     timeout: 10_000
   },
   {
-    id: 'checkpoint-context',
-    serverScript: 'checkpoint-context-server.js',
-    condition: (opts) => !!opts.conversationId,
-    environment: (opts) => ({
-      CONVERSATION_ID: opts.conversationId!,
-      WORKSPACE_PATH: opts.workspacePath
-    }),
-    timeout: 8_000
-  },
-  {
-    id: 'github-context',
-    serverScript: 'github-context-server.js',
-    condition: (opts) => !!(opts.featureFlags.githubConfigured && opts.workspaceId),
-    environment: (opts) => ({
-      WORKSPACE_ID: opts.workspaceId!,
-      WORKSPACE_PATH: opts.workspacePath
-    }),
-    timeout: 8_000
-  },
-  {
     id: 'code-analysis',
     serverScript: 'code-analysis-server.js',
     condition: () => true,
@@ -102,6 +82,13 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
     condition: (opts) => !!opts.workspaceId,
     environment: (opts) => ({ WORKSPACE_ID: opts.workspaceId! }),
     timeout: 8_000
+  },
+  {
+    id: 'recall',
+    serverScript: 'recall-server.js',
+    condition: (opts) => !!opts.workspaceId,
+    environment: (opts) => ({ WORKSPACE_ID: opts.workspaceId! }),
+    timeout: 8_000
   }
 ]
 
@@ -109,7 +96,13 @@ export const LOCAL_MCP_SERVER_DEFS: LocalMcpServerDef[] = [
  * MCP servers that open the SQLite DB via getDatabase(). They run as plain `node`
  * (no Electron app global) so they must receive DB_PATH (the userData dir) explicitly.
  */
-export const DB_BACKED_SERVER_IDS = new Set(['code-graph', 'semantic-search', 'code-analysis', 'memory'])
+export const DB_BACKED_SERVER_IDS = new Set([
+  'code-graph',
+  'semantic-search',
+  'code-analysis',
+  'memory',
+  'recall'
+])
 
 /**
  * Build local MCP server entries from the declarative registry.

@@ -55,7 +55,9 @@ describe('DescriptionCacheService.makeKey (pure SHA256)', () => {
     const fp = 'src/test.ts'
     const sym = 'myFunc'
     const body = 'return 42'
-    const expected = createHash('sha256').update(fp + sym + body).digest('hex')
+    const expected = createHash('sha256')
+      .update(fp + sym + body)
+      .digest('hex')
     const actual = makeKey(fp, sym, body)
     assert.equal(actual, expected)
   })

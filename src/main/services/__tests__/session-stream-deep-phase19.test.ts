@@ -291,7 +291,9 @@ if (loaded) {
       const session = new AgentSessionService(adapter as any)
       let planCalled = false
       const cb: any = {
-        onPlan: () => { planCalled = true },
+        onPlan: () => {
+          planCalled = true
+        },
         onAskUser: () => {}
       }
       ;(session as any).accumulatedText = 'before plan'
@@ -314,7 +316,9 @@ if (loaded) {
       let askCalled = false
       const cb: any = {
         onPlan: () => {},
-        onAskUser: () => { askCalled = true }
+        onAskUser: () => {
+          askCalled = true
+        }
       }
       ;(session as any).wrapControlCallbacks(cb)
 
@@ -387,10 +391,7 @@ if (loaded) {
       test('overload_detected_for_529_error', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('529 Server overloaded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('529 Server overloaded'), false)
         assert.ok(result.isOverload)
         assert.ok(!result.isMaxTurns)
         assert.ok(!result.isAbort)
@@ -400,10 +401,7 @@ if (loaded) {
       test('overload_detected_for_server_is_overloaded', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('server_is_overloaded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('server_is_overloaded'), false)
         assert.ok(result.isOverload)
       })
 
@@ -442,10 +440,7 @@ if (loaded) {
       test('context_overflow_detected_for_local_llm', () => {
         const host = createMockHost({ llmProvider: 'local-llm' })
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('context length exceeded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('context length exceeded'), false)
         assert.ok(result.isContextOverflow)
       })
 
@@ -468,20 +463,14 @@ if (loaded) {
       test('context_overflow_not_detected_for_claude_provider', () => {
         const host = createMockHost({ llmProvider: 'claude' })
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('context length exceeded'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('context length exceeded'), false)
         assert.ok(!result.isContextOverflow, 'context overflow only for local-llm')
       })
 
       test('generic_error_all_false', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)
-        const result = (rm as any).classifyStreamError(
-          new Error('some random error'),
-          false
-        )
+        const result = (rm as any).classifyStreamError(new Error('some random error'), false)
         assert.ok(!result.isOverload)
         assert.ok(!result.isMaxTurns)
         assert.ok(!result.isAbort)
@@ -778,6 +767,97 @@ if (loaded) {
       })
     })
 
+    // ── AgentRecoveryManager — recovery nudge pending-tool gate ─────────
+
+    describe('AgentRecoveryManager — recovery nudge pending-tool gate', () => {
+      const { modelConfigService } = require('../model-config.service')
+
+      function createNudgeHost(pendingTools: string[]): {
+        host: any
+        attempts: number[]
+        warnings: string[]
+      } {
+        const attempts: number[] = []
+        const warnings: string[] = []
+        const host = new EventEmitter()
+        Object.assign(host, {
+          log: {
+            info: () => {},
+            warn: (msg: string) => warnings.push(String(msg)),
+            error: () => {}
+          },
+          adapter: { role: 'specialist', supportsEmitPlanRecovery: false },
+          llmProvider: 'claude',
+          currentMode: 'build',
+          controlToolState: { plan: false, askUser: false },
+          circuitBreaker: { count: 2 },
+          workspacePath: '/ws',
+          workspaceId: 'ws-1',
+          sessionMap: new Map<string, string>([['conv-1', 'sess-1']]),
+          activeStreams: new Map(),
+          accumulatedText: '',
+          tokenUsage: 0,
+          getCliMcpConfigPath: () => undefined,
+          getOrCreateCliExecutor: () => ({ getPendingToolNames: () => pendingTools }),
+          recoveryNudge: {
+            attemptRecovery: async () => {
+              attempts.push(1)
+              return { recovered: true, text: 'summary' }
+            },
+            attemptPlanToolRecovery: async () => ({ attempted: false })
+          }
+        })
+        return { host, attempts, warnings }
+      }
+
+      const streamState = {
+        hasTextAfterLastTool: false,
+        planModeToolBlock: false,
+        lastTerminalReason: undefined
+      }
+
+      async function runRecovery(host: any): Promise<void> {
+        const orig = modelConfigService.getModel
+        modelConfigService.getModel = () => 'claude-sonnet-4-6'
+        try {
+          const rm = new AgentRecoveryManager(host)
+          await (rm as any).attemptStreamRecovery({
+            streamState: { ...streamState },
+            conversationId: 'conv-1',
+            systemPrompt: 'sys',
+            isBuildMode: true,
+            timedOut: false
+          })
+        } finally {
+          modelConfigService.getModel = orig
+        }
+      }
+
+      // Regression: the nudge calls execute() without continueSession, which
+      // SIGTERMs the running process. Firing it while a tool is in flight kills
+      // the very work it is supposed to be recovering from.
+      test('pending_tool_skips_the_nudge_and_logs_why', async () => {
+        const { host, attempts, warnings } = createNudgeHost(['mcp__mulldev__test'])
+        await runRecovery(host)
+        assert.equal(attempts.length, 0, 'attemptRecovery must not be called with tools in flight')
+        assert.ok(
+          warnings.some((w) => w.includes('recovery-nudge-skipped-pending')),
+          'skip reason should be logged'
+        )
+        assert.ok(
+          warnings.some((w) => w.includes('mcp__mulldev__test')),
+          'the pending tool should be named'
+        )
+      })
+
+      test('idle_executor_still_fires_the_nudge', async () => {
+        const { host, attempts, warnings } = createNudgeHost([])
+        await runRecovery(host)
+        assert.equal(attempts.length, 1, 'nudge must still fire when nothing is pending')
+        assert.ok(!warnings.some((w) => w.includes('recovery-nudge-skipped-pending')))
+      })
+    })
+
     // ── AgentRecoveryManager — handleStreamError matrix ─────────────────
 
     describe('AgentRecoveryManager — handleStreamError dispatch', () => {
@@ -881,9 +961,11 @@ if (loaded) {
         const host = createMockHostFull()
         const rm = new AgentRecoveryManager(host)
         await rm.handleStreamError(new Error('some error'), false, 1)
-        assert.ok(host._chunks.some((c: any) =>
-          c.type === 'session_recovery' && c.recoveryPhase === 'failed'
-        ))
+        assert.ok(
+          host._chunks.some(
+            (c: any) => c.type === 'session_recovery' && c.recoveryPhase === 'failed'
+          )
+        )
       })
 
       test('clears_sdkAbortController', async () => {
@@ -935,9 +1017,9 @@ if (loaded) {
         const host = createMockHostForCapture()
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
-        assert.ok(host._emitted.some((e: any) =>
-          e.event === 'intent' && e.data?.type === 'response'
-        ))
+        assert.ok(
+          host._emitted.some((e: any) => e.event === 'intent' && e.data?.type === 'response')
+        )
       })
 
       test('sets_status_to_idle', () => {
@@ -958,16 +1040,23 @@ if (loaded) {
         const host = createMockHostForCapture()
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 2)
-        assert.ok(host._emitted.some((e: any) =>
-          e.event === 'chunk' &&
-          e.data?.type === 'session_recovery' &&
-          e.data?.recoveryPhase === 'completed'
-        ))
+        assert.ok(
+          host._emitted.some(
+            (e: any) =>
+              e.event === 'chunk' &&
+              e.data?.type === 'session_recovery' &&
+              e.data?.recoveryPhase === 'completed'
+          )
+        )
       })
 
       test('flushes_token_usage', () => {
         let flushed = false
-        const host = createMockHostForCapture({ flushTokenUsage: () => { flushed = true } })
+        const host = createMockHostForCapture({
+          flushTokenUsage: () => {
+            flushed = true
+          }
+        })
         const rm = new AgentRecoveryManager(host)
         ;(rm as any).captureSummaryAndIntents('conv-1', 'claude', 0)
         assert.ok(flushed)
@@ -978,7 +1067,9 @@ if (loaded) {
         const host = createMockHostForCapture({
           adapter: {
             role: 'specialist',
-            emitDetectedIntents: () => { called = true }
+            emitDetectedIntents: () => {
+              called = true
+            }
           }
         })
         const rm = new AgentRecoveryManager(host)
@@ -1059,7 +1150,11 @@ if (loaded) {
           isBuildMode: false,
           recoveryDepth: 0,
           timedOut: false,
-          streamState: { messageStopReceived: true, lastTerminalReason: null, overloadDetected: false },
+          streamState: {
+            messageStopReceived: true,
+            lastTerminalReason: null,
+            overloadDetected: false
+          },
           mcpResult: {},
           llmProvider: 'claude'
         })
@@ -1070,7 +1165,13 @@ if (loaded) {
       test('warns_when_no_messageStop_received', async () => {
         let warned = false
         const host = createHostForFinalize({
-          log: { info: () => {}, warn: () => { warned = true }, error: () => {} }
+          log: {
+            info: () => {},
+            warn: () => {
+              warned = true
+            },
+            error: () => {}
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await rm.finalizeStream({
@@ -1079,7 +1180,11 @@ if (loaded) {
           isBuildMode: false,
           recoveryDepth: 0,
           timedOut: false,
-          streamState: { messageStopReceived: false, lastTerminalReason: null, overloadDetected: false },
+          streamState: {
+            messageStopReceived: false,
+            lastTerminalReason: null,
+            overloadDetected: false
+          },
           mcpResult: {},
           llmProvider: 'claude'
         })
@@ -1088,7 +1193,13 @@ if (loaded) {
 
       test('skips_warning_when_timed_out', async () => {
         const host = createHostForFinalize({
-          log: { info: () => {}, warn: () => { /* intentionally unchecked */ }, error: () => {} }
+          log: {
+            info: () => {},
+            warn: () => {
+              /* intentionally unchecked */
+            },
+            error: () => {}
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await rm.finalizeStream({
@@ -1097,7 +1208,11 @@ if (loaded) {
           isBuildMode: false,
           recoveryDepth: 0,
           timedOut: true,
-          streamState: { messageStopReceived: false, lastTerminalReason: null, overloadDetected: false },
+          streamState: {
+            messageStopReceived: false,
+            lastTerminalReason: null,
+            overloadDetected: false
+          },
           mcpResult: {},
           llmProvider: 'claude'
         })
@@ -1178,6 +1293,109 @@ if (loaded) {
         })
         assert.equal(result, 'continue')
       })
+
+      // ── Defect C: auto-continuation must see progress ──────────────────
+      //
+      // Regression: the gate was `lastTerminalReason === 'max_turns'` and
+      // nothing else, so five consecutive continuations that resolved no tool
+      // and wrote no text all fired anyway — each one guaranteed to repeat the
+      // last. Progress is measured with signals continueTurnLimit already
+      // maintains: the circuit-breaker tool count and accumulatedTextBaseline.
+
+      /** Host with a per-conversation stream context, so text delta is measurable. */
+      function createHostForStall(opts: {
+        continuations: number
+        toolCalls: number
+        text: string
+        baseline: number
+      }): any {
+        const warns: string[] = []
+        return createHostForOverload({
+          maxTurnsContinuations: opts.continuations,
+          circuitBreaker: { count: opts.toolCalls, reset: () => {} },
+          activeStreams: new Map([
+            ['conv-1', { accumulatedText: opts.text, accumulatedTextBaseline: opts.baseline }]
+          ]),
+          log: {
+            info: () => {},
+            warn: (m: string) => warns.push(String(m)),
+            error: () => {}
+          },
+          _warns: warns
+        })
+      }
+
+      /** Run the gate with continueTurnLimit stubbed out, reporting whether it fired. */
+      async function runGate(host: any): Promise<{ result: string; continued: boolean }> {
+        const rm = new AgentRecoveryManager(host)
+        let continued = false
+        ;(rm as any).continueTurnLimit = async () => {
+          continued = true
+        }
+        const result = await (rm as any).handleOverloadOrMaxTurns({
+          streamState: { overloadDetected: false, lastTerminalReason: 'max_turns' },
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: false,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        return { result, continued }
+      }
+
+      test('first continuation fires even with no prior progress', async () => {
+        const host = createHostForStall({
+          continuations: 0,
+          toolCalls: 0,
+          text: '',
+          baseline: 0
+        })
+        const { result, continued } = await runGate(host)
+        assert.equal(continued, true, 'the first continuation is always allowed')
+        assert.equal(result, 'handled')
+      })
+
+      test('stalled continuation stops and still offers the Continue button', async () => {
+        const host = createHostForStall({
+          continuations: 2,
+          toolCalls: 0,
+          text: 'wrap-up text from before the break',
+          baseline: 'wrap-up text from before the break'.length
+        })
+        const { result, continued } = await runGate(host)
+        assert.equal(continued, false, 'zero tools + zero new text must not continue')
+        assert.equal(result, 'continue')
+        const chunk = host._chunks.find((c: any) => c.type === 'turn_limit')
+        assert.ok(chunk, 'the user still gets a turn_limit chunk')
+        assert.equal(chunk.turnLimit.continuable, true)
+        assert.ok(
+          host._warns.some((w: string) => w.includes('[PIPELINE:continuation-stalled]')),
+          'the stall must be named in the log'
+        )
+      })
+
+      test('a continuation that ran tools is not treated as stalled', async () => {
+        const host = createHostForStall({
+          continuations: 2,
+          toolCalls: 3,
+          text: 'same text',
+          baseline: 'same text'.length
+        })
+        const { continued } = await runGate(host)
+        assert.equal(continued, true)
+      })
+
+      test('a continuation that wrote text past the baseline is not treated as stalled', async () => {
+        const host = createHostForStall({
+          continuations: 2,
+          toolCalls: 0,
+          text: 'old text plus something new',
+          baseline: 'old text'.length
+        })
+        const { continued } = await runGate(host)
+        assert.equal(continued, true)
+      })
     })
 
     // ── AgentRecoveryManager — continueTurnLimit prompt building ─────────
@@ -1225,10 +1443,41 @@ if (loaded) {
         assert.equal(host.maxTurnsContinuations, 1)
       })
 
+      // Regression: the gratuitous-tool heuristic is per-TURN, so continueTurnLimit must
+      // rebase the text baseline alongside circuitBreaker.reset(). Otherwise the
+      // continuation's first tool call is measured against the pre-break turn's text
+      // and the stream is cut before the continuation does any work.
+      test('rebases_accumulated_text_baseline_to_current_length', async () => {
+        const streamCtx = {
+          accumulatedText: 'x'.repeat(1699),
+          accumulatedTextBaseline: 0,
+          abortController: null
+        }
+        const host = createHostForContinue({
+          activeStreams: new Map([['conv-1', streamCtx]])
+        })
+        const rm = new AgentRecoveryManager(host)
+        await (rm as any).continueTurnLimit({
+          conversationId: 'conv-1',
+          systemPrompt: 'sys',
+          isBuildMode: true,
+          mcpResult: {},
+          llmProvider: 'claude',
+          recoveryDepth: 0
+        })
+        assert.equal(streamCtx.accumulatedTextBaseline, 1699)
+        assert.equal(streamCtx.accumulatedText.length, 1699, 'text itself must be preserved')
+      })
+
       test('resets_circuit_breaker', async () => {
         let resetCalled = false
         const host = createHostForContinue({
-          circuitBreaker: { count: 5, reset: () => { resetCalled = true } }
+          circuitBreaker: {
+            count: 5,
+            reset: () => {
+              resetCalled = true
+            }
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await (rm as any).continueTurnLimit({
@@ -1274,7 +1523,9 @@ if (loaded) {
       test('calls_executeStream_with_continuation_prompt', async () => {
         let execOpts: any = null
         const host = createHostForContinue({
-          executeStream: async (opts: any) => { execOpts = opts }
+          executeStream: async (opts: any) => {
+            execOpts = opts
+          }
         })
         const rm = new AgentRecoveryManager(host)
         await (rm as any).continueTurnLimit({
@@ -1293,7 +1544,9 @@ if (loaded) {
       test('builds_detailed_prompt_for_local_llm', async () => {
         let execOpts: any = null
         const host = createHostForContinue({
-          executeStream: async (opts: any) => { execOpts = opts }
+          executeStream: async (opts: any) => {
+            execOpts = opts
+          }
         })
         const rm = new AgentRecoveryManager(host)
         try {
@@ -1341,6 +1594,56 @@ if (loaded) {
     })
   })
 
+  // The constants above only say what the numbers are; these say which one a
+  // given mcpServers map actually gets. The extension is keyed on the registry's
+  // `longRunningTools` flag, so a REST-backed server (jira) must keep the base
+  // budget — stretching it there just delays a hung call by 20 minutes.
+  describe('AgentSessionService — buildStreamTimeout', () => {
+    const adapter = {
+      role: 'specialist' as const,
+      agentId: 'test-specialist',
+      buildSystemPrompt: () => '',
+      getGoalCondition: () => null,
+      getGoalMode: () => null,
+      buildMcpConfig: () => ({}),
+      getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
+      detectIntents: () => []
+    }
+
+    /** Build the timeout handle, immediately cancel its timer, return the budget. */
+    function budgetFor(mcpServers: Record<string, unknown> | undefined): number {
+      const session = new AgentSessionService(adapter as any)
+      const handle = (session as any).buildStreamTimeout(
+        mcpServers,
+        new AbortController(),
+        'conv-timeout'
+      )
+      handle.cancel()
+      return handle.timeoutMs
+    }
+
+    test('no_mcp_servers_uses_base_budget', () => {
+      assert.equal(budgetFor(undefined), 10 * 60000)
+      assert.equal(budgetFor({}), 10 * 60000)
+    })
+
+    test('jira_only_keeps_base_budget', () => {
+      assert.equal(budgetFor({ jira: {} }), 10 * 60000)
+    })
+
+    test('maestro_extends_to_30_minutes', () => {
+      assert.equal(budgetFor({ maestro: {} }), 30 * 60000)
+    })
+
+    test('mixed_servers_extend_when_any_is_long_running', () => {
+      assert.equal(budgetFor({ jira: {}, maestro: {} }), 30 * 60000)
+    })
+
+    test('unknown_server_ids_do_not_extend', () => {
+      assert.equal(budgetFor({ 'some-other-mcp': {} }), 10 * 60000)
+    })
+  })
+
   describe('AgentSessionService — getStatus shape', () => {
     test('getStatus_returns_complete_shape', () => {
       const adapter = {
@@ -1351,7 +1654,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       const status = session.getStatus()
@@ -1371,7 +1674,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       const status = session.getStatus()
@@ -1391,7 +1694,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       // resolveSession with no existing session returns undefined
@@ -1408,7 +1711,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       assert.equal(session.getSessionId('conv-1'), undefined)
@@ -1423,7 +1726,7 @@ if (loaded) {
         getGoalMode: () => null,
         buildMcpConfig: () => ({}),
         getControlCallbacks: () => ({ onPlan: () => {}, onAskUser: () => {} }),
-        detectIntents: () => [],
+        detectIntents: () => []
       }
       const session = new AgentSessionService(adapter as any)
       // Should not throw

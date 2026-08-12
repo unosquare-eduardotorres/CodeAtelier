@@ -64,16 +64,10 @@ export default function UnsavedChangesDialog({
         data-testid="unsaved-changes-dialog"
         className="relative bg-surface-float border border-border-default rounded shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95"
       >
-        <h3
-          id="unsaved-dialog-title"
-          className="text-base font-semibold text-text-primary"
-        >
+        <h3 id="unsaved-dialog-title" className="text-base font-semibold text-text-primary">
           Unsaved changes
         </h3>
-        <p
-          id="unsaved-dialog-message"
-          className="text-sm text-text-secondary mt-1"
-        >
+        <p id="unsaved-dialog-message" className="text-sm text-text-secondary mt-1">
           You have unsaved model configuration changes. What would you like to do?
         </p>
 

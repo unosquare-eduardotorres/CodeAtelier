@@ -49,7 +49,10 @@ test.describe('MCP Integrations', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -128,6 +131,33 @@ test.describe('MCP Integrations', () => {
     const toggle = firstCard.locator('button[class*="rounded-full"]')
     const hasToggle = await toggle.isVisible({ timeout: 3_000 }).catch(() => false)
     expect(hasToggle).toBeTruthy()
+  })
+
+  test('jira card is addressable by id and renders its credentials form', async ({
+    electronPage: page
+  }) => {
+    await navigateToIntegrations(page)
+
+    // Scoped by id rather than `.first()`: the generic card selector always lands
+    // on Maestro (category `testing` renders before `other`).
+    const jiraCard = page.locator('[data-testid="integration-card-jira"]')
+    const hasJira = await jiraCard.isVisible({ timeout: 5_000 }).catch(() => false)
+
+    if (!hasJira) {
+      test.skip()
+      return
+    }
+
+    await expect(jiraCard).toContainText(/jira/i)
+
+    // The credentials form only renders with a workspace open; when it is there,
+    // it must be inside this card and not a sibling's.
+    const form = jiraCard.locator('[data-testid="integration-credentials-form"]')
+    const hasForm = await form.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (hasForm) {
+      const inputs = form.locator('input, select')
+      expect(await inputs.count()).toBeGreaterThan(0)
+    }
   })
 
   test('CLI availability indicator shows status', async ({ electronPage: page }) => {
@@ -245,7 +275,7 @@ test.describe('MCP Integrations', () => {
       // MCP section only renders when integrations or local MCPs are available
       // Check for the "MCP Tools" text anywhere
       const mcpText = page.getByText(/mcp tools/i).first()
-      const hasText = await mcpText.isVisible({ timeout: 3_000 }).catch(() => false)
+      const _hasText = await mcpText.isVisible({ timeout: 3_000 }).catch(() => false)
       // Either MCP section visible or no MCPs configured — both valid
       expect(true).toBeTruthy()
       return
@@ -280,8 +310,14 @@ test.describe('MCP Integrations', () => {
     const externalTab = page.getByText(/external/i)
     const systemTab = page.getByText(/system/i)
 
-    const hasExternal = await externalTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasSystem = await systemTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasExternal = await externalTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasSystem = await systemTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // At least one sub-tab should be visible when MCP section is open
     expect(hasExternal || hasSystem).toBeTruthy()
@@ -327,9 +363,7 @@ test.describe('MCP Integrations', () => {
     expect(blockText).toMatch(/\d+\s*tool/)
   })
 
-  test('tool activity block expand/collapse toggles tool list', async ({
-    electronPage: page
-  }) => {
+  test('tool activity block expand/collapse toggles tool list', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChat = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -418,8 +452,14 @@ test.describe('MCP Integrations', () => {
     const inputLabel = firstRow.getByText(/input|command/i)
     const outputLabel = firstRow.getByText(/output|error/i)
 
-    const hasInput = await inputLabel.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasOutput = await outputLabel.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasInput = await inputLabel
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasOutput = await outputLabel
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(hasInput || hasOutput).toBeTruthy()
   })
@@ -449,7 +489,10 @@ test.describe('MCP Integrations', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)

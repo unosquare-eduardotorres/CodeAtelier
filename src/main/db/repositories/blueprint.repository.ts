@@ -66,6 +66,7 @@ interface BlueprintTaskRow {
   started_at: string | null
   completed_at: string | null
   completion_json: string | null
+  skipped_by_user_at: string | null
 }
 
 // ── Row Mappers ──
@@ -119,8 +120,10 @@ function mapTaskRow(row: BlueprintTaskRow): BlueprintTask {
     startedAt: row.started_at,
     completedAt: row.completed_at,
     completionJson: safeParseJSON<{ filesCreated: string[]; filesModified: string[] } | null>(
-      row.completion_json, null
-    )
+      row.completion_json,
+      null
+    ),
+    skippedByUserAt: row.skipped_by_user_at ?? null
   }
 }
 
@@ -240,7 +243,8 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
       sets.push('status = ?')
       values.push(data.status)
       // Sync completed_at with terminal status transitions
-      const isTerminal = data.status === 'complete' || data.status === 'failed' || data.status === 'cancelled'
+      const isTerminal =
+        data.status === 'complete' || data.status === 'failed' || data.status === 'cancelled'
       if (isTerminal) {
         sets.push("completed_at = datetime('now')")
       } else {
@@ -452,8 +456,12 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
    * on stale artifact lists. Returns the updated phase, or undefined if the
    * phase doesn't exist.
    */
-  replaceArtifactOfType(id: string, type: string, artifact: BlueprintArtifact): BlueprintPhase | undefined {
-    const existing = this.findById(id)          // fresh read inside the repo
+  replaceArtifactOfType(
+    id: string,
+    type: string,
+    artifact: BlueprintArtifact
+  ): BlueprintPhase | undefined {
+    const existing = this.findById(id) // fresh read inside the repo
     if (!existing) return undefined
     const filtered = existing.artifactsJson.filter((a) => a.type !== type)
     return this.saveArtifacts(id, [...filtered, artifact])
@@ -579,6 +587,22 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
     sql += ` WHERE id = ? RETURNING *`
 
     const row = this.db().prepare(sql).get(status, id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  /**
+   * Record (or clear) a deliberate user skip. Reversible by design — passing
+   * `false` clears the column, so a mistaken skip is not permanent.
+   * Leaves `status` alone: the skip decision and the execution state are
+   * separate facts.
+   */
+  setUserSkipped(id: string, skipped: boolean): BlueprintTask | undefined {
+    const row = this.db()
+      .prepare(
+        `UPDATE blueprint_tasks SET skipped_by_user_at = ${skipped ? "datetime('now')" : 'NULL'}
+         WHERE id = ? RETURNING *`
+      )
+      .get(id) as BlueprintTaskRow | undefined
     return row ? mapTaskRow(row) : undefined
   }
 

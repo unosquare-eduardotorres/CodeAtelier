@@ -21,6 +21,9 @@ import type {
   ModelRoleMap,
   ResolvedAssignment
 } from '../../../../shared/types'
+import { useChatStore } from '../../store/chat.store'
+import { useWorkspaceModelInfo } from './useWorkspaceModelInfo'
+import { resolveDrift, formatContextWindow } from './model-config-drift'
 
 interface ModelConfigPopoverProps {
   /** The frozen model snapshot (null for legacy conversations) */
@@ -57,10 +60,13 @@ function modelLabel(modelId: string): string {
 
 function AssignmentRow({
   label,
-  assignment
+  assignment,
+  drift
 }: {
   label: string
   assignment: ResolvedAssignment
+  /** Live workspace model id, when it differs from the frozen one */
+  drift?: string
 }): React.JSX.Element {
   const providerBadge =
     assignment.provider === 'claude' ? (
@@ -82,6 +88,14 @@ function AssignmentRow({
           {modelLabel(assignment.modelId)}
         </span>
         <span className="text-[10px] text-text-muted">({sourceLabel(assignment.source)})</span>
+        {drift && (
+          <span
+            className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400"
+            title={`Workspace default is now ${modelLabel(drift)} — this conversation is pinned`}
+          >
+            workspace: {modelLabel(drift)}
+          </span>
+        )}
       </div>
     </div>
   )
@@ -141,15 +155,11 @@ function ModelSelector({
 
   return (
     <div className="mt-3 pt-3 border-t border-border-subtle">
-      <p className="text-[10px] text-text-muted mb-2">
-        Changes only affect this conversation.
-      </p>
+      <p className="text-[10px] text-text-muted mb-2">Changes only affect this conversation.</p>
       {EDITABLE_ROLES.map((role) => {
         const current =
           overrides[role.action]?.modelId ??
-          (role.action === 'specialist:plan'
-            ? snapshot?.plan.modelId
-            : snapshot?.build.modelId) ??
+          (role.action === 'specialist:plan' ? snapshot?.plan.modelId : snapshot?.build.modelId) ??
           ''
         return (
           <div key={role.action} className="flex items-center justify-between gap-3 py-1">
@@ -203,6 +213,14 @@ export default function ModelConfigPopover({
 
   const canEdit = !!conversationId && !!workspaceId
 
+  const { modelRoles } = useWorkspaceModelInfo(workspaceId)
+  const drift = resolveDrift(snapshot, modelRoles)
+  // Already in the store from the sidebar prefetch / live stream updates — no new IPC.
+  const contextWindow = useChatStore((s) =>
+    conversationId ? s.contextUsages[conversationId]?.contextWindowSize : undefined
+  )
+  const windowLabel = formatContextWindow(contextWindow)
+
   // Close on click outside
   useEffect(() => {
     if (!isOpen) return
@@ -245,13 +263,18 @@ export default function ModelConfigPopover({
           {snapshot ? (
             <>
               <div className="divide-y divide-border-subtle">
-                <AssignmentRow label="Plan" assignment={snapshot.plan} />
-                <AssignmentRow label="Build" assignment={snapshot.build} />
-                <AssignmentRow label="Background" assignment={snapshot.background} />
+                <AssignmentRow label="Plan" assignment={snapshot.plan} drift={drift.plan} />
+                <AssignmentRow label="Build" assignment={snapshot.build} drift={drift.build} />
+                <AssignmentRow
+                  label="Background"
+                  assignment={snapshot.background}
+                  drift={drift.background}
+                />
               </div>
               <div className="flex items-center justify-between mt-3">
                 <p className="text-[10px] text-text-muted">
                   Frozen at creation · {new Date(snapshot.snapshotAt).toLocaleDateString()}
+                  {windowLabel ? ` · ${windowLabel} context` : ''}
                 </p>
                 {canEdit && !isEditing && (
                   <button

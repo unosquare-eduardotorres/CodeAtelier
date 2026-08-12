@@ -104,10 +104,7 @@ describe('LocalContextReconstructor.buildMessageSection', () => {
   })
 
   test('single user message → formatted with User role', () => {
-    const result = recon.buildMessageSection(
-      [{ role: 'user', contentMd: 'Hello world' }],
-      5000
-    )
+    const result = recon.buildMessageSection([{ role: 'user', contentMd: 'Hello world' }], 5000)
     assert.ok(result)
     assert.ok(result.includes('**User:**'))
     assert.ok(result.includes('Hello world'))
@@ -125,30 +122,21 @@ describe('LocalContextReconstructor.buildMessageSection', () => {
 
   test('user message > 500 chars → truncated with ellipsis', () => {
     const longContent = 'A'.repeat(600)
-    const result = recon.buildMessageSection(
-      [{ role: 'user', contentMd: longContent }],
-      5000
-    )
+    const result = recon.buildMessageSection([{ role: 'user', contentMd: longContent }], 5000)
     assert.ok(result.includes('...'))
     assert.ok(!result.includes(longContent), 'full content should not appear')
   })
 
   test('assistant message > 300 chars → truncated with ellipsis', () => {
     const longContent = 'B'.repeat(400)
-    const result = recon.buildMessageSection(
-      [{ role: 'specialist', contentMd: longContent }],
-      5000
-    )
+    const result = recon.buildMessageSection([{ role: 'specialist', contentMd: longContent }], 5000)
     assert.ok(result.includes('...'))
     assert.ok(!result.includes(longContent), 'full content should not appear')
   })
 
   test('user message ≤ 500 chars → no ellipsis', () => {
     const content = 'Short user message'
-    const result = recon.buildMessageSection(
-      [{ role: 'user', contentMd: content }],
-      5000
-    )
+    const result = recon.buildMessageSection([{ role: 'user', contentMd: content }], 5000)
     assert.ok(result.includes(content))
     assert.ok(!result.includes('...'))
   })

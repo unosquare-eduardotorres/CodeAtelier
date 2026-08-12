@@ -22,9 +22,7 @@ import { AppChrome } from './pages/app-chrome'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Health Configure', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -44,7 +42,7 @@ test.describe('Health Configure', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.selectTab('health')
+    await settingsNav.navigateToSettingsTab('health')
     await page.waitForTimeout(800)
 
     // Look for "New Audit" or "Run Audit" or configure button
@@ -58,13 +56,17 @@ test.describe('Health Configure', () => {
     return configure.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('configure page renders with selectable auditor cards', async ({
-    electronPage: page
-  }) => {
+  test('configure page renders with selectable auditor cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     const configure = page.locator('[data-testid="health-configure"]')
     await expect(configure).toBeVisible()
@@ -81,13 +83,22 @@ test.describe('Health Configure', () => {
 
   test('auditor cards show checkmark when selected', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     const auditorCards = page.locator('[data-testid="health-auditor-card"]')
     const count = await auditorCards.count()
-    if (count === 0) { test.skip(); return }
+    if (count === 0) {
+      test.skip()
+      return
+    }
 
     // All tracks are selected by default — cards should have checkmark styling
     // Look for the primary-colored checkbox indicator
@@ -107,13 +118,17 @@ test.describe('Health Configure', () => {
     await expect(firstCard).toBeVisible()
   })
 
-  test('Light vs Deep toggle changes mode description', async ({
-    electronPage: page
-  }) => {
+  test('Light vs Deep toggle changes mode description', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     const configure = page.locator('[data-testid="health-configure"]')
 
@@ -138,13 +153,17 @@ test.describe('Health Configure', () => {
     await page.waitForTimeout(300)
   })
 
-  test('Deep mode reveals per-track skill chip selector', async ({
-    electronPage: page
-  }) => {
+  test('Deep mode reveals per-track skill chip selector', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     const configure = page.locator('[data-testid="health-configure"]')
 
@@ -155,7 +174,10 @@ test.describe('Health Configure', () => {
 
     // Skill chips should appear for selected auditors
     const skillChips = configure.getByText('Focus skills (optional)')
-    const hasSkills = await skillChips.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasSkills = await skillChips
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (hasSkills) {
       // Skill chip buttons should be clickable
@@ -169,13 +191,17 @@ test.describe('Health Configure', () => {
     await lightBtn.click()
   })
 
-  test('provider toggle switches between Cloud and Local', async ({
-    electronPage: page
-  }) => {
+  test('provider toggle switches between Cloud and Local', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     const configure = page.locator('[data-testid="health-configure"]')
 
@@ -205,9 +231,15 @@ test.describe('Health Configure', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // Run Audit button should be visible and enabled (all tracks selected by default)
     const runBtn = page.locator('[data-testid="health-run-btn"]')
@@ -221,14 +253,26 @@ test.describe('Health Configure', () => {
 
   test('back button returns to health landing page', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     const hasConfig = await navigateToHealthConfigure(page)
-    if (!hasConfig) { test.skip(); return }
+    if (!hasConfig) {
+      test.skip()
+      return
+    }
 
     // Back button (ChevronLeft) should be visible
-    const backBtn = page.locator('[data-testid="health-configure"] button').filter({ has: page.locator('svg') }).first()
+    const backBtn = page
+      .locator('[data-testid="health-configure"] button')
+      .filter({ has: page.locator('svg') })
+      .first()
     const hasBack = await backBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasBack) { test.skip(); return }
+    if (!hasBack) {
+      test.skip()
+      return
+    }
 
     await backBtn.click()
     await page.waitForTimeout(500)

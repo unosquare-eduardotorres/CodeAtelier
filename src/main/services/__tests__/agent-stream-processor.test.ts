@@ -16,6 +16,7 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync, createSpy } from './test-harness'
 import { AgentStreamProcessor } from '../agent-stream-processor'
+import { AgentCircuitBreaker } from '../agent-circuit-breaker'
 import { MCP_TOOLS } from '../../../shared/constants'
 
 interface MockHost {
@@ -114,11 +115,11 @@ describe('AgentStreamProcessor.resolveCompactionThresholds', () => {
     assert.deepEqual(proc.resolveCompactionThresholds(200_000), { suggest: 120_000, auto: 150_000 })
   })
 
-  test('1M window uses the later 0.7/0.85 ratios', () => {
+  test('1M window uses the same 0.6/0.75 ratios', () => {
     const proc = new AgentStreamProcessor(makeHost())
     assert.deepEqual(proc.resolveCompactionThresholds(1_000_000), {
-      suggest: 700_000,
-      auto: 850_000
+      suggest: 600_000,
+      auto: 750_000
     })
   })
 })
@@ -219,6 +220,61 @@ describe('AgentStreamProcessor.processContentChunk — plan-mode tool block dete
     )
     assert.equal(streamState.planModeToolBlock, undefined)
   })
+
+  // Regression: the CLI's native plan-mode prompt tells the model to finish with
+  // ExitPlanMode, which mode-permissions disallows. The old /\b(Write|Edit|MultiEdit)\b/
+  // regex could never match it, so recovery never fired and the user got no plan card.
+  test('tool_result with ExitPlanMode block in plan mode sets planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean; planModeBlockedTool?: string }
+    const r = proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'ExitPlanMode',
+        content: '<tool_use_error>No such tool available: ExitPlanMode</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(r, 'next')
+    assert.equal(streamState.planModeToolBlock, true)
+    assert.equal(streamState.planModeBlockedTool, 'ExitPlanMode')
+  })
+
+  test('ExitPlanMode block without <tool_use_error> wrapper still sets planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'plan'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean; planModeBlockedTool?: string }
+    proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'ExitPlanMode',
+        content: 'No such tool available: ExitPlanMode'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.planModeToolBlock, true)
+    assert.equal(streamState.planModeBlockedTool, 'ExitPlanMode')
+  })
+
+  test('ExitPlanMode block in build mode does NOT set planModeToolBlock', () => {
+    const host = makeHost()
+    ;(host as any).currentMode = 'build'
+    const proc = new AgentStreamProcessor(host)
+    const streamState = {} as { planModeToolBlock?: boolean; planModeBlockedTool?: string }
+    proc.processContentChunk(
+      {
+        type: 'tool_result',
+        toolName: 'ExitPlanMode',
+        content: '<tool_use_error>No such tool available: ExitPlanMode</tool_use_error>'
+      } as never,
+      { ...ctx, streamState: streamState as never }
+    )
+    assert.equal(streamState.planModeToolBlock, undefined)
+    assert.equal(streamState.planModeBlockedTool, undefined)
+  })
 })
 
 describe('AgentStreamProcessor.checkCompaction — decision.level undefined', () => {
@@ -287,12 +343,12 @@ describe('AgentStreamProcessor.resolveCompactionThresholds — window sizes', ()
     assert.equal(result.auto, 64_000 * 0.75)
   })
 
-  test('500K window (mid-range: transitions between ≤200K and 1M)', () => {
+  test('500K window (mid-range) uses the same uniform ratios', () => {
     const proc = new AgentStreamProcessor(makeHost())
     const result = proc.resolveCompactionThresholds(500_000)
-    // Between the two tiers, the policy interpolates
-    assert.ok(result.suggest > 0)
-    assert.ok(result.auto > result.suggest)
+    // Ratios are window-size independent — no tiering, no interpolation.
+    assert.equal(result.suggest, 500_000 * 0.6)
+    assert.equal(result.auto, 500_000 * 0.75)
   })
 
   test('0 window → both thresholds are 0', () => {
@@ -363,7 +419,11 @@ describe('AgentStreamProcessor.processContentChunk — api_retry', () => {
     const proc = new AgentStreamProcessor(host)
     const streamState = { overloadDetected: false } as { overloadDetected: boolean }
     proc.processContentChunk(
-      { type: 'api_retry', content: 'server_is_overloaded', retryInfo: { errorStatus: null } } as never,
+      {
+        type: 'api_retry',
+        content: 'server_is_overloaded',
+        retryInfo: { errorStatus: null }
+      } as never,
       { ...ctx, streamState: streamState as never }
     )
     assert.equal(streamState.overloadDetected, true)
@@ -378,6 +438,123 @@ describe('AgentStreamProcessor.processContentChunk — api_retry', () => {
       { ...ctx, streamState: streamState as never }
     )
     assert.equal(streamState.overloadDetected, false)
+  })
+})
+
+// ── Turn-scoped text measurement for the gratuitous-tool heuristic ──
+//
+// Regression: accumulatedText is per-MESSAGE and survives auto-continuations,
+// but the circuit breaker's gratuitous heuristic is per-TURN (_toolCallCount === 1).
+// continueTurnLimit rebases accumulatedTextBaseline so the continuation's first
+// tool call isn't judged against the pre-break turn's wrap-up text.
+describe('AgentStreamProcessor.processContentChunk — tool_use text measurement', () => {
+  function makeToolUseHost(streamCtx: {
+    accumulatedText: string
+    accumulatedTextBaseline?: number
+  }): { host: MockHost; seen: number[] } {
+    const seen: number[] = []
+    const host = makeHost()
+    ;(host as any).activeStreams = new Map([['c-tool', { ...streamCtx, abortController: null }]])
+    ;(host as any).toolActivityAccumulator = { record: (): void => {} }
+    ;(host as any).circuitBreaker = {
+      count: 1,
+      onToolUse: (o: { accumulatedTextLength: number }) => {
+        seen.push(o.accumulatedTextLength)
+        return { broken: false, shouldTerminate: false }
+      },
+      logToolCall: (): void => {}
+    }
+    return { host, seen }
+  }
+
+  const ctx = { conversationId: 'c-tool', isBuildMode: true, streamState: {} as never }
+
+  test('baseline equal to text length reports 0 to the breaker (continuation)', () => {
+    const { host, seen } = makeToolUseHost({
+      accumulatedText: 'x'.repeat(1699),
+      accumulatedTextBaseline: 1699
+    })
+    const proc = new AgentStreamProcessor(host)
+    const r = proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.equal(r, 'next')
+    assert.deepEqual(seen, [0])
+  })
+
+  test('baseline 0 reports the full length (normal turn — unchanged)', () => {
+    const { host, seen } = makeToolUseHost({
+      accumulatedText: 'x'.repeat(1699),
+      accumulatedTextBaseline: 0
+    })
+    const proc = new AgentStreamProcessor(host)
+    proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.deepEqual(seen, [1699])
+  })
+
+  test('missing baseline falls back to the full length', () => {
+    const { host, seen } = makeToolUseHost({ accumulatedText: 'x'.repeat(600) })
+    const proc = new AgentStreamProcessor(host)
+    proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+      ...ctx,
+      streamState: {} as never
+    })
+    assert.deepEqual(seen, [600])
+  })
+})
+
+// ── The 80% tool budget is a log breadcrumb, not a chat message ──
+//
+// Regression: the breaker used to return an `additionalContext` nudge at 80%,
+// and this processor rendered it into the transcript as `> ⚠️ You've used
+// 120/150 tool calls…`. It was addressed to the model but only ever reached the
+// human. The budget crossing must now be completely silent to the renderer.
+describe('AgentStreamProcessor.processContentChunk — 80% tool budget is silent', () => {
+  test('crossing the 80% budget emits no chunk', () => {
+    const host = makeHost()
+    ;(host as any).activeStreams = new Map([
+      ['c-budget', { accumulatedText: '', accumulatedTextBaseline: 0, abortController: null }]
+    ])
+    ;(host as any).toolActivityAccumulator = { record: (): void => {} }
+    const breaker = new AgentCircuitBreaker()
+    // Real 80%/limit logic, minus the event-log DB write per tool call.
+    breaker.logToolCall = (): void => {}
+    ;(host as any).circuitBreaker = breaker
+
+    const proc = new AgentStreamProcessor(host)
+    // Build limit is 400, so the breadcrumb fires on call 320 — well short of a break.
+    for (let i = 0; i < 320; i++) {
+      const r = proc.processContentChunk({ type: 'tool_use', toolName: 'Read' } as never, {
+        conversationId: 'c-budget',
+        isBuildMode: true,
+        streamState: {} as never
+      })
+      assert.equal(r, 'next', `call ${i + 1} should not break`)
+    }
+
+    assert.equal(breaker.count, 320)
+    assert.equal(breaker.isBroken, false)
+
+    // Every tool_use chunk is forwarded verbatim; the regression is the SYNTHETIC
+    // text chunk the processor used to inject on top of one of them.
+    const emitted = host.emit.calls
+      .filter((c) => c[0] === 'chunk')
+      .map((c) => c[1] as { type?: string; content?: string })
+    assert.equal(emitted.length, 320, 'each tool_use is still forwarded once')
+    assert.equal(
+      emitted.filter((c) => c.type === 'text').length,
+      0,
+      'the 80% budget crossing must not inject a text chunk into the transcript'
+    )
+    assert.equal(
+      emitted.filter((c) => c.content?.includes("You've used")).length,
+      0,
+      'the tool-budget nudge must not surface in the transcript'
+    )
   })
 })
 

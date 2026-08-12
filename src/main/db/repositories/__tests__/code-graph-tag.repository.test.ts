@@ -18,11 +18,32 @@ if (!env) {
   describe('CodeGraphTagRepository', () => {
     test('upsertTags() inserts tags and findDefsByWorkspace() retrieves defs', () => {
       const tags = [
-        { relFname: 'src/a.ts', fname: '/repo/src/a.ts', line: 10, name: 'MyClass', kind: 'def' as const },
-        { relFname: 'src/a.ts', fname: '/repo/src/a.ts', line: 20, name: 'MyClass', kind: 'ref' as const },
-        { relFname: 'src/b.ts', fname: '/repo/src/b.ts', line: 5, name: 'helperFn', kind: 'def' as const }
+        {
+          relFname: 'src/a.ts',
+          fname: '/repo/src/a.ts',
+          line: 10,
+          name: 'MyClass',
+          kind: 'def' as const
+        },
+        {
+          relFname: 'src/a.ts',
+          fname: '/repo/src/a.ts',
+          line: 20,
+          name: 'MyClass',
+          kind: 'ref' as const
+        },
+        {
+          relFname: 'src/b.ts',
+          fname: '/repo/src/b.ts',
+          line: 5,
+          name: 'helperFn',
+          kind: 'def' as const
+        }
       ]
-      const mtimes = new Map([['src/a.ts', 1000], ['src/b.ts', 2000]])
+      const mtimes = new Map([
+        ['src/a.ts', 1000],
+        ['src/b.ts', 2000]
+      ])
       codeGraphTagRepository.upsertTags(wsId, tags, mtimes)
 
       const defs = codeGraphTagRepository.findDefsByWorkspace(wsId)
@@ -33,12 +54,24 @@ if (!env) {
 
     test('upsertTags() replaces existing tags for same file', () => {
       const initial = [
-        { relFname: 'src/replace.ts', fname: '/repo/src/replace.ts', line: 1, name: 'old', kind: 'def' as const }
+        {
+          relFname: 'src/replace.ts',
+          fname: '/repo/src/replace.ts',
+          line: 1,
+          name: 'old',
+          kind: 'def' as const
+        }
       ]
       codeGraphTagRepository.upsertTags(wsId, initial, new Map([['src/replace.ts', 100]]))
 
       const updated = [
-        { relFname: 'src/replace.ts', fname: '/repo/src/replace.ts', line: 1, name: 'new', kind: 'def' as const }
+        {
+          relFname: 'src/replace.ts',
+          fname: '/repo/src/replace.ts',
+          line: 1,
+          name: 'new',
+          kind: 'def' as const
+        }
       ]
       codeGraphTagRepository.upsertTags(wsId, updated, new Map([['src/replace.ts', 200]]))
 
@@ -59,12 +92,14 @@ if (!env) {
 
     test('searchByName() respects includeDefinitions/includeReferences', () => {
       const defsOnly = codeGraphTagRepository.searchByName(wsId, 'MyClass', {
-        includeDefinitions: true, includeReferences: false
+        includeDefinitions: true,
+        includeReferences: false
       })
       assert.ok(defsOnly.every((t: any) => t.kind === 'def'))
 
       const refsOnly = codeGraphTagRepository.searchByName(wsId, 'MyClass', {
-        includeDefinitions: false, includeReferences: true
+        includeDefinitions: false,
+        includeReferences: true
       })
       assert.ok(refsOnly.every((t: any) => t.kind === 'ref'))
     })

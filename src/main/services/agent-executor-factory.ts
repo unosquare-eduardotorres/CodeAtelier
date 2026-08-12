@@ -10,6 +10,8 @@
  */
 
 import type { AgentSessionHost, CLIExecuteOptions } from './agent-session-host'
+import { SESSION_CONSTANTS } from './agent-session-host'
+import { spawnSignatureSatisfies, type SpawnSignature } from './cli-executor'
 import type { AdapterMcpResult } from './agent-session.types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import { deriveSkipServers } from './mcp-skip-servers'
@@ -22,6 +24,7 @@ import {
   EXTERNAL_MCP_INTEGRATIONS,
   MCP_TOOLS,
   RECOMMENDED_LOCAL_MODELS,
+  requiresContext1MBeta,
   resolveModelAction,
   supportsContext1M
 } from '../../shared/constants'
@@ -29,11 +32,12 @@ import {
 import { modelConfigService } from './model-config.service'
 import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { contextWindowResolver } from './context-window-resolver'
-import { resolveClaudeCompactionEnv, resolveSdkContextWindowSize } from './compaction-policy'
+import {
+  canUseContext1MBeta,
+  resolveClaudeCompactionEnv,
+  resolveSdkContextWindowSize
+} from './compaction-policy'
 import { conversationRepository, workspaceRepository } from '../db/repositories'
-import { join } from 'node:path'
-import { app } from 'electron'
-import { existsSync } from 'node:fs'
 
 export class AgentExecutorFactory {
   private readonly s: AgentSessionHost
@@ -90,7 +94,10 @@ export class AgentExecutorFactory {
    */
   async resolveLocalContextWindowAsync(): Promise<{ contextWindow: number; confident: boolean }> {
     if (this.cachedContextWindow !== null) {
-      return { contextWindow: this.cachedContextWindow, confident: this.cachedContextWindowConfident }
+      return {
+        contextWindow: this.cachedContextWindow,
+        confident: this.cachedContextWindowConfident
+      }
     }
 
     if (!this.s.workspacePath) {
@@ -168,28 +175,6 @@ export class AgentExecutorFactory {
     return flags
   }
 
-  // ── resolveHookPaths ──────────────────────────────────────────────────
-
-  resolveHookPaths(): { pre?: string; post?: string } {
-    const hooksDir = app.isPackaged
-      ? join(process.resourcesPath, 'hooks')
-      : join(__dirname, '..', '..', 'src', 'main', 'hooks')
-
-    const pre = join(hooksDir, 'pre-tool-use-hook.sh')
-    const post = join(hooksDir, 'post-tool-use-hook.sh')
-
-    const result: { pre?: string; post?: string } = {}
-    if (existsSync(pre)) result.pre = pre
-    if (existsSync(post)) result.post = post
-
-    if (result.pre || result.post) {
-      this.s.log.info(
-        `[resolveHookPaths] pre=${result.pre ?? 'none'} post=${result.post ?? 'none'}`
-      )
-    }
-    return result
-  }
-
   // ── resolveBudgetCap ──────────────────────────────────────────────────
 
   resolveBudgetCap(isLocal: boolean, isBuildMode: boolean): number | undefined {
@@ -256,22 +241,25 @@ export class AgentExecutorFactory {
 
   // ── buildCLIExecuteOptions ────────────────────────────────────────────
 
-  buildCLIExecuteOptions(params: {
-    prompt: string | Array<Record<string, unknown>>
-    systemPrompt: string
-    sessionId: string | undefined
-    isBuildMode: boolean
-    mode?: ConversationMode
-    resumeAt: string | undefined
-    abortController: AbortController
-    mcpResult: AdapterMcpResult
-    // F14: localContextWindow removed — was accepted as a parameter but never
-    // referenced. Context window is resolved internally from the model config.
-    /** Completion goal — Claude works autonomously until this condition is met */
-    goal?: string
-    /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
-    goalMode?: 'advisory' | 'enforce'
-  }): CLIExecuteOptions {
+  buildCLIExecuteOptions(
+    params: {
+      prompt: string | Array<Record<string, unknown>>
+      systemPrompt: string
+      sessionId: string | undefined
+      isBuildMode: boolean
+      mode?: ConversationMode
+      resumeAt: string | undefined
+      abortController: AbortController
+      mcpResult: AdapterMcpResult
+      // F14: localContextWindow removed — was accepted as a parameter but never
+      // referenced. Context window is resolved internally from the model config.
+      /** Completion goal — Claude works autonomously until this condition is met */
+      goal?: string
+      /** Goal delivery mode: 'advisory' (system prompt only) or 'enforce' (/goal stdin) */
+      goalMode?: 'advisory' | 'enforce'
+    },
+    resolvedExecutor?: { isAlive(): boolean; getSpawnSignature(): SpawnSignature | null }
+  ): CLIExecuteOptions {
     const { prompt, systemPrompt, sessionId, isBuildMode, resumeAt, abortController, mcpResult } =
       params
     const { allowedTools, disallowedTools } = mcpResult
@@ -284,7 +272,26 @@ export class AgentExecutorFactory {
       isBuildMode
     )
 
-    const supports1M = supportsContext1M(resolvedModel)
+    // `supportsContext1M` is a statement about the MODEL, never about the login.
+    // For LEGACY models the 1M window is only granted when the `context-1m` beta
+    // header is accepted, which is API-key-only — claiming it on an OAuth login
+    // sizes CLAUDE_CODE_AUTO_COMPACT_WINDOW to 1M against a real 200K ceiling and
+    // auto-compact can then never fire. Native-1M models carry no such gate.
+    const modelSupports1M = supportsContext1M(resolvedModel)
+    // Only the legacy Sonnet 4.x ids need the API-key-only beta header. Current
+    // models (Opus 5, Sonnet 5, Fable 5) have native 1M — gating them here is
+    // what silently dropped Max/OAuth sessions to 200K.
+    const needsBeta = modelSupports1M && requiresContext1MBeta(resolvedModel)
+    const entitled = !needsBeta || canUseContext1MBeta()
+    const supports1M = modelSupports1M && entitled
+    if (modelSupports1M && !entitled) {
+      this.s.log.warn(
+        `[compaction:1m-not-entitled] model=${resolvedModel} needs the legacy context-1m ` +
+          `beta, which is API-key-only on this login — falling back to ` +
+          `${CLAUDE_DEFAULT_CONTEXT_WINDOW} ` +
+          `(set ANTHROPIC_API_KEY or CODE_ATELIER_CONTEXT_1M=1 to force)`
+      )
+    }
     const effectiveContextWindow = supports1M
       ? CLAUDE_1M_CONTEXT_WINDOW
       : CLAUDE_DEFAULT_CONTEXT_WINDOW
@@ -294,9 +301,32 @@ export class AgentExecutorFactory {
     // The `claude` CLI controls its auto-compact window via env vars, not argv
     // flags. Without this, 1M models use the (smaller) model-default window —
     // inflating the context badge and triggering premature auto-compact.
-    const compactionEnv = resolveClaudeCompactionEnv(supports1M, effectiveContextWindow)
+    const compactionEnv = resolveClaudeCompactionEnv(effectiveContextWindow)
 
-    const canContinue = this.s.cliExecutor.isAlive() && !!sessionId
+    // WRONG-EXECUTOR-03: Use the resolved per-conversation executor when provided,
+    // not the cliExecutor getter which goes through _lastActiveConversationId.
+    const executor = resolvedExecutor ?? this.s.cliExecutor
+    const desiredEffort = this.resolveEffort(resolvedModel)
+    const alive = executor.isAlive() && !!sessionId
+    // --max-turns/--effort/--model are argv, fixed at spawn. Reusing a process
+    // whose budget doesn't fit this turn is what let a maxTurns:1 recovery
+    // spawn cap the whole session at one turn for 14 minutes. When the budget
+    // doesn't fit we fall through to the full path, which passes `resume` plus
+    // the complete tool/MCP policy — the conversation survives the respawn.
+    const liveSignature = alive ? executor.getSpawnSignature() : null
+    const budgetFits = spawnSignatureSatisfies(liveSignature, {
+      model: resolvedModel,
+      maxTurns: SESSION_CONSTANTS.CLI_MAX_TURNS,
+      effort: desiredEffort
+    })
+    const canContinue = alive && budgetFits
+    if (alive && !budgetFits) {
+      this.s.log.warn(
+        `[CLI:respawn-signature-mismatch] live=${JSON.stringify(liveSignature)} ` +
+          `desired={model:${resolvedModel},maxTurns:${SESSION_CONSTANTS.CLI_MAX_TURNS},effort:${desiredEffort}} ` +
+          '— respawning with --resume so this turn gets its own budget'
+      )
+    }
 
     // C2: Log tool availability on EVERY turn (not just first spawn)
     this.s.log.info(
@@ -319,10 +349,16 @@ export class AgentExecutorFactory {
         systemPrompt,
         permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
         model: resolvedModel,
-        cwd: this.s.workspacePath!,
+        // Per-conversation, not the session-wide workspace: two conversations
+        // on different branches must spawn in different directories.
+        cwd: this.s.resolveExecutionPath(this.s.currentConversationId ?? undefined),
         abortController,
         agentId: this.s.adapter.agentId,
-        effort: this.resolveEffort(resolvedModel),
+        effort: desiredEffort,
+        // Inert for a stdin write (argv is fixed at spawn), but it keeps the
+        // declared shape honest so the executor's reuse breadcrumb has
+        // something to compare against.
+        maxTurns: SESSION_CONSTANTS.CLI_MAX_TURNS,
         continueSession: true,
         // Reuse cached MCP config — process already has MCP servers connected
         mcpConfigPath: this.cachedMcpConfigPath,
@@ -371,6 +407,7 @@ export class AgentExecutorFactory {
     // Instrumentation: one-line snapshot of the resolved compaction config on spawn.
     this.s.log.info(
       `[compaction:config] model=${resolvedModel} supports1M=${supports1M} ` +
+        `entitled=${entitled} ` +
         `contextWindowSize=${sdkContextWindowSize} autoCompactEnabled=true ` +
         `autoCompactWindow=${compactionEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW} ` +
         `pctOverride=${compactionEnv.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ?? 'none'}`
@@ -380,27 +417,28 @@ export class AgentExecutorFactory {
       prompt,
       systemPrompt,
       model: resolvedModel,
-      cwd: this.s.workspacePath!,
+      cwd: this.s.resolveExecutionPath(this.s.currentConversationId ?? undefined),
       permissionMode: this.resolveCliPermissionMode(params.mode ?? this.s.currentMode),
       allowedTools,
       disallowedTools,
-      maxTurns: isBuildMode ? 200 : 50,
+      maxTurns: SESSION_CONSTANTS.CLI_MAX_TURNS,
       resume: sessionId,
       resumeSessionAt: resumeAt,
       abortController,
       agentId: this.s.adapter.agentId,
-      effort: this.resolveEffort(resolvedModel),
-      // Fable 5 has native 1M context — no beta header needed. Sonnet/Opus use the beta.
-      betas: supports1M && !resolvedModel.includes('fable')
-        ? [AgentExecutorFactory.CONTEXT_1M_BETA]
-        : undefined,
+      effort: desiredEffort,
+      // Only legacy Sonnet 4.x needs the beta header, and only when this login
+      // may actually request it (see `entitled`). Native-1M models send nothing.
+      betas: needsBeta && entitled ? [AgentExecutorFactory.CONTEXT_1M_BETA] : undefined,
       // F19: Tier-aware fallback — only fall back to a model of equal or higher capability.
       // Fable → Opus fallback (refusal/availability per Anthropic docs).
       // Opus → Sonnet fallback (appropriate cost reduction).
       // Sonnet/Haiku → no fallback.
       fallbackModel: resolvedModel.includes('fable')
         ? 'claude-opus-4-8'
-        : resolvedModel.includes('opus') ? 'claude-sonnet-5' : undefined,
+        : resolvedModel.includes('opus')
+          ? 'claude-sonnet-5'
+          : undefined,
       additionalDirectories,
       contextWindowSize: sdkContextWindowSize,
       autoCompactEnabled: true,
@@ -410,9 +448,7 @@ export class AgentExecutorFactory {
       // the packaged-app cold start is slower than dev.
       envOverrides: {
         ...compactionEnv,
-        ...(this.s.adapter.role.startsWith('blueprint-')
-          ? { MCP_TIMEOUT: '30000' }
-          : {})
+        ...(this.s.adapter.role.startsWith('blueprint-') ? { MCP_TIMEOUT: '30000' } : {})
       },
       continueSession: false,
       mcpConfigPath,
@@ -455,10 +491,15 @@ export class AgentExecutorFactory {
       // Use pre-computed skip servers when available (caller already derived them
       // to gate the permissionPromptTool flag). Fall back to computing here for
       // callers that don't pre-compute.
-      const skipServers = precomputedSkipServers ?? deriveSkipServers(_params.mcpResult.allowedTools)
+      const skipServers =
+        precomputedSkipServers ?? deriveSkipServers(_params.mcpResult.allowedTools)
 
       const configPath = this.s.mcpConfigWriter.writeConfig({
         workspacePath: this.s.workspacePath!,
+        // The same path the CLI is spawned with (see `cwd` above). MCP servers
+        // are separate processes and do not inherit it, so the per-tree ones
+        // have to be told explicitly or they answer about the primary tree.
+        executionPath: this.s.resolveExecutionPath(this.s.currentConversationId ?? undefined),
         workspaceId: this.s.workspaceId,
         conversationId: this.s.currentConversationId,
         mode: this.s.currentMode,
@@ -490,7 +531,9 @@ export class AgentExecutorFactory {
    * `default` (interactive prompts → blocked in our stream-json session)
    * when unavailable. `acceptEdits` is deterministic and needs no gating.
    */
-  private resolveCliPermissionMode(mode: ConversationMode): 'plan' | 'acceptEdits' | 'bypassPermissions' {
+  private resolveCliPermissionMode(
+    mode: ConversationMode
+  ): 'plan' | 'acceptEdits' | 'bypassPermissions' {
     switch (mode) {
       case 'danger':
         return 'bypassPermissions'
@@ -500,5 +543,4 @@ export class AgentExecutorFactory {
         return 'plan'
     }
   }
-
 }

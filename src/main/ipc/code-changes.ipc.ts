@@ -6,11 +6,24 @@ import { githubService } from '../services/github.service'
 import { workspaceRepository, conversationRepository, messageRepository } from '../db/repositories'
 import { runOneShotClaude } from '../services/one-shot-claude'
 import { modelConfigService } from '../services/model-config.service'
+import { trackService } from '../services/track.service'
 import { DEFAULT_MODEL_CONFIG } from '../../shared/constants'
 import { validateSender } from './validate-sender'
-import { requireObject, requireString, optionalString } from './validate-args'
+import { requireObject, requireString, requireStringArray, optionalString } from './validate-args'
 
 const logger = log.scope('CodeChangesIpc')
+
+/** Reject ref strings that look like flags or contain dangerous chars */
+function validateRef(ref: string, channel: string): void {
+  if (ref === 'WORKING_TREE') return // Sentinel value is allowed
+  if (ref.startsWith('-')) {
+    throw new Error(`${channel}: invalid ref — must not start with "-"`)
+  }
+  // eslint-disable-next-line no-control-regex -- NUL is exactly what this guard must reject
+  if (/[\x00\n\r]/.test(ref)) {
+    throw new Error(`${channel}: invalid ref — contains control characters`)
+  }
+}
 
 /**
  * Enqueue commit-based memory extraction if gated settings allow it.
@@ -36,7 +49,17 @@ async function maybeEnqueueCommitExtraction(
   })
 }
 
-/** Resolve workspace repoPath from conversationId */
+/**
+ * Resolve the working tree to read a conversation's changes from.
+ *
+ * Every handler in this file funnels through here, which is why it is the right
+ * place to make the code-changes panel worktree-aware: an isolated conversation
+ * edits files in its own checkout, so reading `workspace.repoPath` would show
+ * the user an empty diff while their agent's work sat in another directory.
+ *
+ * `workspaceId` stays the workspace's own id — it keys settings and GitHub
+ * config, which are per project, not per worktree.
+ */
 function resolveRepoPath(conversationId: string): { repoPath: string; workspaceId: string } {
   const conversation = conversationRepository.findById(conversationId)
   if (!conversation) throw new Error('Conversation not found')
@@ -44,7 +67,8 @@ function resolveRepoPath(conversationId: string): { repoPath: string; workspaceI
   const workspace = workspaceRepository.findById(conversation.workspaceId)
   if (!workspace) throw new Error('Workspace not found')
 
-  return { repoPath: workspace.repoPath, workspaceId: workspace.id }
+  const target = trackService.resolve(conversationId, workspace.repoPath)
+  return { repoPath: target.path, workspaceId: workspace.id }
 }
 
 export function registerCodeChangesIpc(): void {
@@ -64,9 +88,12 @@ export function registerCodeChangesIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_FILE_DIFF)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_GET_FILE_DIFF)
     const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
+    // Rename source — without it the old side is looked up at the new path and the
+    // file renders as a 100% addition.
+    const oldPath = optionalString(args, 'oldPath', IPC_CHANNELS.REPO_GET_FILE_DIFF)
 
     const { repoPath } = resolveRepoPath(conversationId)
-    return repoService.getFileDiff(repoPath, filePath)
+    return repoService.getFileDiff(repoPath, filePath, oldPath)
   })
 
   // Stage specific files and commit
@@ -75,10 +102,7 @@ export function registerCodeChangesIpc(): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.REPO_COMMIT_FILES)
     const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_COMMIT_FILES)
     const message = requireString(args, 'message', IPC_CHANNELS.REPO_COMMIT_FILES)
-    const filePaths = args.filePaths as string[]
-    if (!Array.isArray(filePaths) || filePaths.length === 0) {
-      throw new Error(`${IPC_CHANNELS.REPO_COMMIT_FILES}: filePaths must be a non-empty array`)
-    }
+    const filePaths = requireStringArray(args, 'filePaths', IPC_CHANNELS.REPO_COMMIT_FILES)
 
     const { repoPath, workspaceId } = resolveRepoPath(conversationId)
 
@@ -124,16 +148,13 @@ export function registerCodeChangesIpc(): void {
       'conversationId',
       IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE
     )
-    const filePaths = args.filePaths as string[]
-    if (!Array.isArray(filePaths) || filePaths.length === 0) {
-      throw new Error(
-        `${IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE}: filePaths must be a non-empty array`
-      )
-    }
+    const filePaths = requireStringArray(
+      args,
+      'filePaths',
+      IPC_CHANNELS.REPO_GENERATE_COMMIT_MESSAGE
+    )
 
-    const messages = messageRepository
-      .findByConversation(conversationId)
-      .filter((m) => !m.hidden)
+    const messages = messageRepository.findByConversation(conversationId).filter((m) => !m.hidden)
 
     const prompt = `You are generating a concise git commit message. Follow conventional commit style.
 
@@ -187,6 +208,55 @@ Respond with ONLY the commit message, no preamble or explanation.`
           )
       }
     }
+  })
+
+  // Get files differing between two refs (branch comparison)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    const conversationId = requireString(
+      args,
+      'conversationId',
+      IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS
+    )
+    const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    validateRef(fromRef, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+    validateRef(toRef, IPC_CHANNELS.REPO_GET_REF_FILE_DETAILS)
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getRefDiffFiles(repoPath, fromRef, toRef)
+  })
+
+  // Get file content at two refs for side-by-side diff (branch comparison)
+  ipcMain.handle(IPC_CHANNELS.REPO_GET_REF_FILE_DIFF, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const conversationId = requireString(
+      args,
+      'conversationId',
+      IPC_CHANNELS.REPO_GET_REF_FILE_DIFF
+    )
+    const filePath = requireString(args, 'filePath', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const fromRef = requireString(args, 'fromRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    const toRef = requireString(args, 'toRef', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    // Rename source — a path, not a ref, so repoService validates it with assertWithinRepo.
+    const oldPath = optionalString(args, 'oldPath', IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    validateRef(fromRef, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+    validateRef(toRef, IPC_CHANNELS.REPO_GET_REF_FILE_DIFF)
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.getRefFileDiff(repoPath, filePath, fromRef, toRef, oldPath)
+  })
+
+  // Fetch latest refs from origin remote
+  ipcMain.handle(IPC_CHANNELS.REPO_FETCH_ORIGIN, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.REPO_FETCH_ORIGIN)
+    const conversationId = requireString(args, 'conversationId', IPC_CHANNELS.REPO_FETCH_ORIGIN)
+
+    const { repoPath } = resolveRepoPath(conversationId)
+    return repoService.fetchOrigin(repoPath)
   })
 
   // Create a pull request via GitHub API

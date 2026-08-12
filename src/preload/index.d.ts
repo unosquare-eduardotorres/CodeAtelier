@@ -1,9 +1,17 @@
 import type {
+  IntegrationConnectionResult,
+  IntegrationCredentialStatus
+} from '../shared/integration-credentials.types'
+import type {
   Workspace,
   Conversation,
   ConversationMode,
+  FileDiffResult,
   Message,
   AgentStatus,
+  BackgroundProcessInfo,
+  ProcessStopResult,
+  ProcessCancelWatchResult,
   Specialist,
   ConversationSpecialist,
   Skill,
@@ -40,6 +48,7 @@ import type {
   OmlxExtendedStatus,
   PullProgress,
   IndexingState,
+  ExclusionPreflightResult,
   CodeGraphIndexingState,
   ContextUsage,
   BugRecord,
@@ -73,6 +82,11 @@ import type {
   IngestionProgress,
   BootstrapProgress,
   BootstrapMode,
+  BootstrapScope,
+  BootstrapItemStatus,
+  BootstrapItemView,
+  BootstrapPhaseLabel,
+  BootstrapRunSummary,
   ContradictionStatus,
   E2EScenarioSummary,
   E2EPreflightResult,
@@ -95,6 +109,13 @@ import type {
   ArtifactRef,
   CodeAnchor
 } from '../shared/handoff-types'
+import type {
+  TrackListResult,
+  LandingResult,
+  LandingPreview,
+  TrackLandingMode
+} from '../shared/track-types'
+import type { BlueprintBranchOptions } from '../shared/blueprint-types'
 
 interface Api {
   // Workspace
@@ -166,7 +187,10 @@ interface Api {
     sourceAuditRunId?: string
     branchName?: string
     autoBranch?: boolean
+    /** Take the selected branch from its current holder. Explicit confirmation only. */
+    takeover?: boolean
   }) => Promise<Conversation>
+  chatBranchOptions: (args: { workspaceId: string }) => Promise<BlueprintBranchOptions>
 
   updateMcpOverrides: (args: {
     conversationId: string
@@ -183,16 +207,36 @@ interface Api {
     routingOverrides?: Partial<ModelRoleMap>
   }) => Promise<Conversation>
   checkExternalMcp: (args: { command: string }) => Promise<{ available: boolean; path?: string }>
+  saveIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+    values: Record<string, string>
+  }) => Promise<IntegrationCredentialStatus>
+  getIntegrationCredentialStatus: (args: {
+    workspaceId: string
+    integrationId: string
+  }) => Promise<IntegrationCredentialStatus>
+  testIntegrationConnection: (args: {
+    workspaceId: string
+    integrationId: string
+    values?: Record<string, string>
+  }) => Promise<IntegrationConnectionResult>
+  clearIntegrationCredentials: (args: {
+    workspaceId: string
+    integrationId: string
+  }) => Promise<{ success: boolean }>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
-  getTodos: (args: { conversationId: string }) => Promise<Array<{
-    id: number
-    conversationId: string
-    text: string
-    completed: boolean
-    itemIndex: number | null
-    createdAt: string
-    updatedAt: string
-  }>>
+  getTodos: (args: { conversationId: string }) => Promise<
+    Array<{
+      id: number
+      conversationId: string
+      text: string
+      completed: boolean
+      itemIndex: number | null
+      createdAt: string
+      updatedAt: string
+    }>
+  >
   deleteConversation: (args: { conversationId: string }) => Promise<void>
   updateConversationMode: (args: {
     conversationId: string
@@ -204,6 +248,7 @@ interface Api {
   }) => Promise<{ effort: string }>
   renameConversation: (args: { conversationId: string; title: string }) => Promise<Conversation>
   stopGeneration: (conversationId?: string) => Promise<void>
+  forceReleaseConversation: (conversationId: string) => Promise<{ released: boolean }>
   getStreamingState: () => Promise<{
     isStreaming: boolean
     conversationId: string | null
@@ -213,7 +258,6 @@ interface Api {
     streams: Array<{ conversationId: string; requestId: string }>
   }>
   compactConversation: (args?: { extractNuance?: boolean }) => Promise<void>
-
 
   // Chat commands
   completeConversation: (args: {
@@ -351,28 +395,78 @@ interface Api {
   deployAll: (args: { workspacePath: string }) => Promise<{ agents: number; skills: number }>
 
   // Memory Engine (knowledge-aware facts)
-  memoryFactsList: (args: { workspaceId: string; status?: MemoryFactStatus }) => Promise<MemoryFact[]>
-  memoryFactsSearch: (args: { workspaceId: string; query: string; category?: MemoryFactCategory }) => Promise<MemoryFact[]>
+  memoryFactsList: (args: {
+    workspaceId: string
+    status?: MemoryFactStatus
+  }) => Promise<MemoryFact[]>
+  memoryFactsSearch: (args: {
+    workspaceId: string
+    query: string
+    category?: MemoryFactCategory
+  }) => Promise<MemoryFact[]>
   memoryFactsGet: (args: { id: string }) => Promise<MemoryFact>
-  memoryFactsUpdate: (args: { id: string; title?: string; content?: string; tags?: string[]; scopePaths?: string[]; category?: MemoryFactCategory }) => Promise<MemoryFact>
+  memoryFactsUpdate: (args: {
+    id: string
+    title?: string
+    content?: string
+    tags?: string[]
+    scopePaths?: string[]
+    category?: MemoryFactCategory
+  }) => Promise<MemoryFact>
   memoryFactsArchive: (args: { id: string }) => Promise<void>
   memoryFactsConfirm: (args: { id: string }) => Promise<MemoryFact>
   memoryFactsPromote: (args: { id: string; tier: MemoryFactTier }) => Promise<MemoryFact>
-  memoryFactsScopeToggle: (args: { id: string; global: boolean; workspaceId?: string }) => Promise<MemoryFact>
+  memoryFactsScopeToggle: (args: {
+    id: string
+    global: boolean
+    workspaceId?: string
+  }) => Promise<MemoryFact>
   memoryFactsDelete: (args: { id: string }) => Promise<void>
-  memoryContradictionsList: (args?: { status?: ContradictionStatus; limit?: number; offset?: number }) => Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }>
-  memoryContradictionsResolve: (args: { id: string; resolution: string; keepFactId: string; archiveFactId?: string }) => Promise<MemoryContradiction>
+  memoryContradictionsList: (args?: {
+    status?: ContradictionStatus
+    limit?: number
+    offset?: number
+  }) => Promise<{ items: MemoryContradiction[]; total: number; pendingCount: number }>
+  memoryContradictionsResolve: (args: {
+    id: string
+    resolution: string
+    keepFactId: string
+    archiveFactId?: string
+  }) => Promise<MemoryContradiction>
   memoryCaptureSettingsGet: (args: { workspaceId: string }) => Promise<MemoryCaptureSettings>
-  memoryCaptureSettingsSet: (args: { workspaceId: string; settings: Partial<MemoryCaptureSettings> }) => Promise<void>
+  memoryCaptureSettingsSet: (args: {
+    workspaceId: string
+    settings: Partial<MemoryCaptureSettings>
+  }) => Promise<void>
   memoryEmbeddingStatus: (args?: { workspaceId?: string }) => Promise<MemoryEmbeddingStatus>
   memoryEmbeddingBackfill: () => Promise<{ backfilled: number; error?: string }>
-  onMemoryEmbeddingProgress: (callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void) => () => void
-  memoryDedupScan: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number }>
-  memoryDedupAutoresolve: (args: { workspaceId: string; minCosine?: number }) => Promise<{ resolvedCount: number }>
-  memoryConsolidate: (args: { workspaceId: string }) => Promise<{ clustersFound: number; autoMerged: number; reviewItemsCreated: number; staleArchived: number; contradictionsPruned: number; reviewQueueCapped: number }>
-  memoryReadClaudeMd: (args: { workspacePath: string }) => Promise<{ content: string | null; path: string }>
+  onMemoryEmbeddingProgress: (
+    callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void
+  ) => () => void
+  memoryDedupScan: (args: {
+    workspaceId: string
+  }) => Promise<{ clustersFound: number; autoMerged: number }>
+  memoryDedupAutoresolve: (args: {
+    workspaceId: string
+    minCosine?: number
+  }) => Promise<{ resolvedCount: number }>
+  memoryConsolidate: (args: { workspaceId: string }) => Promise<{
+    clustersFound: number
+    autoMerged: number
+    reviewItemsCreated: number
+    staleArchived: number
+    contradictionsPruned: number
+    reviewQueueCapped: number
+  }>
+  memoryReadClaudeMd: (args: {
+    workspacePath: string
+  }) => Promise<{ content: string | null; path: string }>
   memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
-  memorySaveMessage: (args: { workspaceId: string; messageContent: string; workspacePath?: string }) => Promise<{ created: number }>
+  memorySaveMessage: (args: {
+    workspaceId: string
+    messageContent: string
+    workspacePath?: string
+  }) => Promise<{ created: number }>
   memorySavePlanExecution: (args: {
     workspaceId: string
     workspacePath: string
@@ -392,14 +486,47 @@ interface Api {
   // Memory Document Ingestion
   memoryIngestSelectFiles: () => Promise<string[] | null>
   memoryIngestSelectFolder: () => Promise<string | null>
-  memoryIngestDiscover: (args: { folderPath: string }) => Promise<{ files: string[]; counts: Record<string, number>; truncated: boolean }>
-  memoryIngestDocuments: (args: { files: string[]; workspaceId: string; workspacePath: string }) => Promise<{ jobId: string; factsCreated: number }>
+  memoryIngestDiscover: (args: {
+    folderPath: string
+  }) => Promise<{ files: string[]; counts: Record<string, number>; truncated: boolean }>
+  memoryIngestDocuments: (args: {
+    files: string[]
+    workspaceId: string
+    workspacePath: string
+  }) => Promise<{ jobId: string; factsCreated: number }>
   memoryIngestCancel: (args: { jobId: string }) => Promise<boolean>
   onMemoryIngestProgress: (callback: (data: IngestionProgress) => void) => () => void
 
   // Memory Bootstrap
-  memoryBootstrapStart: (args: { workspaceId: string; workspacePath: string; mode?: BootstrapMode }) => Promise<{ jobId: string; factsCreated: number }>
+  memoryBootstrapStart: (args: {
+    workspaceId: string
+    workspacePath: string
+    mode?: BootstrapMode
+    force?: boolean
+    scope?: BootstrapScope
+  }) => Promise<{ jobId: string; runId: string; factsCreated: number }>
   memoryBootstrapCancel: (args: { jobId: string }) => Promise<boolean>
+  memoryBootstrapPause: (args: { workspaceId: string }) => Promise<boolean>
+  memoryBootstrapResume: (args: {
+    runId: string
+    workspacePath: string
+  }) => Promise<{ jobId: string; runId: string; factsCreated: number }>
+  memoryBootstrapSnapshot: (args: { workspaceId: string }) => Promise<{
+    progress: BootstrapProgress | null
+    latestRun: BootstrapRunSummary | null
+    resumableRunId: string | null
+  }>
+  memoryBootstrapListRuns: (args: {
+    workspaceId: string
+    limit?: number
+  }) => Promise<BootstrapRunSummary[]>
+  memoryBootstrapListItems: (args: {
+    runId: string
+    status?: BootstrapItemStatus
+    phase?: BootstrapPhaseLabel
+    limit?: number
+    offset?: number
+  }) => Promise<{ items: BootstrapItemView[]; total: number }>
   onMemoryBootstrapProgress: (callback: (data: BootstrapProgress) => void) => () => void
 
   // Memory Feed (retained)
@@ -409,6 +536,22 @@ interface Api {
     workspacePath: string
     workspaceId: string
   }) => Promise<{ success: boolean; content: string; existing: string | null; error?: string }>
+  memoryProjectExport: (args: { workspaceId: string; workspacePath: string }) => Promise<{
+    indexPath: string
+    topicPaths: string[]
+    factsProjected: number
+    factsPruned: number
+    warnings: string[]
+  }>
+  memoryReflectionList: (args: {
+    workspaceId: string
+  }) => Promise<Array<{ parent: MemoryFact; children: MemoryFact[] }>>
+  memoryReflectionApprove: (args: { id: string }) => Promise<MemoryFact | null>
+  memoryReflectionReject: (args: { id: string }) => Promise<void>
+  memoryReflectionRun: (args: {
+    workspaceId: string
+    workspacePath: string
+  }) => Promise<{ clustersConsidered: number; parentsProposed: number; errors: number }>
   memoryFeedDocument: (args: {
     workspacePath: string
     filePath: string
@@ -511,6 +654,8 @@ interface Api {
       messageId: string
       taskId?: string
       requestId?: string
+      /** Workspace that owns the conversation — set even when it is not the active one. */
+      workspaceId?: string
     }) => void
   ) => () => void
   onAskQuestion: (
@@ -523,7 +668,11 @@ interface Api {
   ) => () => void
   respondToAskUser: (data: { requestId: string; response: string }) => Promise<void>
   /** IPC-BACKPRESSURE: Send ACK to backend after processing a batch of chunks. */
-  chunkAck: (data: { processed: number; timestamp: number }) => void
+  chunkAck: (data: {
+    processed: number
+    timestamp: number
+    perConversation?: Record<string, number>
+  }) => void
   onTaskRetry: (
     callback: (data: {
       taskId: string
@@ -559,7 +708,8 @@ interface Api {
   onUpdateAvailable: (
     callback: (info: { version: string; releaseDate?: string; releaseNotes?: string }) => void
   ) => () => void
-  onUpdateNotAvailable: (callback: () => void) => () => void
+  onUpdateNotAvailable: (callback: (info: { currentVersion?: string }) => void) => () => void
+  onUpdateStaging: (callback: (info: { version: string }) => void) => () => void
   onUpdateDownloaded: (callback: (info: { version: string }) => void) => () => void
   onUpdateProgress: (
     callback: (progress: {
@@ -598,15 +748,35 @@ interface Api {
   }) => Promise<{ switched: boolean; branch: string | null }>
 
   // Code Changes
-  getFileDetails: (args: {
-    conversationId: string
-  }) => Promise<
-    Array<{ filePath: string; changeType: 'created' | 'modified' | 'deleted'; staged: boolean }>
+  getFileDetails: (args: { conversationId: string }) => Promise<
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
   >
   getFileDiff: (args: {
     conversationId: string
     filePath: string
-  }) => Promise<{ oldContent: string; newContent: string; language: string }>
+    oldPath?: string
+  }) => Promise<FileDiffResult>
+  getRefFileDetails: (args: { conversationId: string; fromRef: string; toRef: string }) => Promise<
+    Array<{
+      filePath: string
+      changeType: 'created' | 'modified' | 'deleted'
+      staged: boolean
+      oldPath?: string
+    }>
+  >
+  getRefFileDiff: (args: {
+    conversationId: string
+    filePath: string
+    fromRef: string
+    toRef: string
+    oldPath?: string
+  }) => Promise<FileDiffResult>
+  fetchOrigin: (args: { conversationId: string }) => Promise<{ fetched: boolean; error?: string }>
   commitFiles: (args: {
     conversationId: string
     filePaths: string[]
@@ -827,7 +997,11 @@ interface Api {
   autoConfigureClaude: () => Promise<AutoConfigureResult>
 
   // Embedding Provider
-  embeddingCheckStatus: (args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }) => Promise<EmbeddingModelStatus>
+  embeddingCheckStatus: (args?: {
+    baseUrl?: string
+    apiKey?: string
+    workspaceId?: string
+  }) => Promise<EmbeddingModelStatus>
   embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }) => Promise<void>
   onEmbeddingModelReady: (callback: () => void) => () => void
   onEmbeddingModelError: (callback: (error: string) => void) => () => void
@@ -861,6 +1035,11 @@ interface Api {
   loadPersistedIndex: (args: {
     workspaceId: string
   }) => Promise<{ loaded: boolean; status: string; symbolCount?: number }>
+  indexingPreflightExclusions: (args: { workspaceId: string }) => Promise<ExclusionPreflightResult>
+  indexingApplyExclusions: (args: {
+    workspaceId: string
+    patterns: string[]
+  }) => Promise<{ written: string[] }>
   onIndexingProgress: (callback: (state: IndexingState) => void) => () => void
   // Semantic Search query
   semanticSearchQuery: (args: {
@@ -1095,7 +1274,14 @@ interface Api {
       tasks: Array<{ taskId: string; title: string; files: string[] }>
     }>
     phaseFiles: Record<number, string[]>
-    progress: Array<{ phaseId: number; status: string; startedAt: string | null; completedAt: string | null; touchedFiles?: string[]; tasks?: Array<{ taskId: string; title: string; status: string }> }>
+    progress: Array<{
+      phaseId: number
+      status: string
+      startedAt: string | null
+      completedAt: string | null
+      touchedFiles?: string[]
+      tasks?: Array<{ taskId: string; title: string; status: string }>
+    }>
   } | null>
 
   onAuditProgress: (cb: (data: AuditProgressEvent) => void) => () => void
@@ -1132,7 +1318,10 @@ interface Api {
     }) => void
   ) => () => void
   onGrillStreamComplete: (cb: () => void) => () => void
-  grillCondenseRequirement: (args: { text: string; workspaceId?: string }) => Promise<{ condensed: string }>
+  grillCondenseRequirement: (args: {
+    text: string
+    workspaceId?: string
+  }) => Promise<{ condensed: string }>
   grillGeneratePlan: (args: {
     sessionId: string
     ideaId?: string
@@ -1329,6 +1518,7 @@ interface Api {
     priority?: string
     settingsJson?: Record<string, unknown>
   }) => Promise<unknown>
+  blueprintBranchOptions: (args: { workspaceId: string }) => Promise<BlueprintBranchOptions>
   blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }) => Promise<unknown>
   blueprintStartSpecify: (args: {
     blueprintId: string
@@ -1392,20 +1582,22 @@ interface Api {
     blueprintId: string
     workspaceId: string
   }) => Promise<{ retrying: boolean; phase: string }>
-  blueprintAcknowledgeReview: (args: {
+  blueprintSkipTask: (args: {
     blueprintId: string
-  }) => Promise<{ acknowledged: boolean }>
-  blueprintGetTranscript: (args: {
-    blueprintId: string
-    afterSeq?: number
-  }) => Promise<Array<{
-    id: string
-    blueprintId: string
-    seq: number
-    type: string
-    payload: Record<string, unknown>
-    createdAt: string
-  }>>
+    taskId: string
+    skipped?: boolean
+  }) => Promise<{ skipped: boolean; skippedAt: string | null }>
+  blueprintAcknowledgeReview: (args: { blueprintId: string }) => Promise<{ acknowledged: boolean }>
+  blueprintGetTranscript: (args: { blueprintId: string; afterSeq?: number }) => Promise<
+    Array<{
+      id: string
+      blueprintId: string
+      seq: number
+      type: string
+      payload: Record<string, unknown>
+      createdAt: string
+    }>
+  >
   onBlueprintPhaseStart: (
     cb: (data: { blueprintId: string; workspaceId: string; phase: string }) => void
   ) => () => void
@@ -1434,7 +1626,12 @@ interface Api {
       blueprintId: string
       workspaceId: string
       phase: string
-      artifact: { type: string; filePath?: string; contentMd?: string; contentJson?: Record<string, unknown> }
+      artifact: {
+        type: string
+        filePath?: string
+        contentMd?: string
+        contentJson?: Record<string, unknown>
+      }
     }) => void
   ) => () => void
   blueprintApprovalRespond: (args: {
@@ -1448,10 +1645,7 @@ interface Api {
   onBlueprintClarifyFindings: (cb: (data: unknown) => void) => () => void
   onBlueprintClarifyQuestions: (cb: (data: unknown) => void) => () => void
   onBlueprintClarifyGate: (cb: (data: unknown) => void) => () => void
-  blueprintPreflightRun: (args: {
-    blueprintId: string
-    workspaceId: string
-  }) => Promise<{
+  blueprintPreflightRun: (args: { blueprintId: string; workspaceId: string }) => Promise<{
     checks: Array<{
       id: string
       name: string
@@ -1554,7 +1748,12 @@ interface Api {
       phaseStartedAt: number | null
       clarifyFindings: unknown
       clarifyQuestions: unknown
-      pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
+      pendingApproval: {
+        planSummary: string
+        completion?: Record<string, unknown>
+        reviewMarkdown?: string
+        preflight?: { result: Record<string, unknown>; overridden: boolean }
+      } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
       runningTasks: Record<string, { taskId: string; description: string }> | null
       lastError: string | null
@@ -1572,7 +1771,12 @@ interface Api {
     phaseStartedAt: number | null
     clarifyFindings: unknown
     clarifyQuestions: unknown
-    pendingApproval: { planSummary: string; completion?: Record<string, unknown>; reviewMarkdown?: string; preflight?: { result: Record<string, unknown>; overridden: boolean } } | null
+    pendingApproval: {
+      planSummary: string
+      completion?: Record<string, unknown>
+      reviewMarkdown?: string
+      preflight?: { result: Record<string, unknown>; overridden: boolean }
+    } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
     runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
@@ -1678,14 +1882,9 @@ interface Api {
     reason: string
   }) => Promise<{ success: boolean; error?: string }>
 
-  handoffGetHistory: (args: {
-    workspaceId: string
-    limit?: number
-  }) => Promise<HandoffRecord[]>
+  handoffGetHistory: (args: { workspaceId: string; limit?: number }) => Promise<HandoffRecord[]>
 
-  handoffGetChain: (args: {
-    handoffId: string
-  }) => Promise<HandoffRecord[]>
+  handoffGetChain: (args: { handoffId: string }) => Promise<HandoffRecord[]>
 
   handoffPreview: (args: {
     source: HandoffSource
@@ -1738,6 +1937,7 @@ interface Api {
       toolName?: string
       toolInput?: Record<string, unknown>
       conversationTitle?: string
+      conversationId?: string
       mode?: string
     }) => void
   ) => () => void
@@ -1746,7 +1946,18 @@ interface Api {
     workspaceId: string
     type: string
     response: unknown
+    /** Original request payload — carries requestId back to the control-actions server. */
+    payload?: unknown
   }) => Promise<void>
+  onPermissionResolved: (
+    cb: (data: {
+      permissionId: string
+      requestId: string
+      workspaceId: string
+      conversationId?: string
+      outcome: 'approved' | 'denied' | 'timedout' | 'cancelled'
+    }) => void
+  ) => () => void
   onCompletionNotification: (
     cb: (data: {
       workspaceId: string
@@ -1762,21 +1973,55 @@ interface Api {
     cb: (data: { workspaceId: string; targetPage: string; entityId?: string }) => void
   ) => () => void
   probeNotificationSupport: () => Promise<'granted' | 'denied' | 'unsupported'>
-  onTrayNavigate: (
-    cb: (data: { view: string; workspaceId?: string }) => void
-  ) => () => void
+
+  // Background Processes
+  processList: () => Promise<BackgroundProcessInfo[]>
+  processStop: (args: { pid: number }) => Promise<ProcessStopResult>
+  processCancelWatch: (args: { pid: number }) => Promise<ProcessCancelWatchResult>
+  onProcessChanged: (cb: () => void) => () => void
+
+  // Work Tracks
+  trackList: (args: { workspaceId: string }) => Promise<TrackListResult>
+  trackDiscard: (args: { trackId: string }) => Promise<boolean>
+  trackReveal: (args: { trackId: string }) => Promise<boolean>
+  trackAdopt: (args: { trackId: string }) => Promise<string | null>
+  trackLand: (args: {
+    trackId: string
+    commitMessage: string
+    description?: string
+    baseBranch?: string
+    mode?: TrackLandingMode
+  }) => Promise<LandingResult>
+  trackLandPreview: (args: {
+    trackId: string
+    baseBranch?: string
+    mode?: TrackLandingMode
+  }) => Promise<LandingPreview>
+  onTrackChanged: (cb: (data: { workspaceId: string | null }) => void) => () => void
+
+  onTrayNavigate: (cb: (data: { view: string; workspaceId?: string }) => void) => () => void
 
   // E2E Testing
   testingListScenarios: () => Promise<E2EScenarioSummary[]>
   testingPreflight: (args?: { workspaceId?: string }) => Promise<E2EPreflightResult>
-  testingRun: (args?: { scenarioIds?: string[]; category?: string; workspaceId?: string }) => Promise<{ runId: string }>
-  testingRequeueFailed: (args: { runId: string; workspaceId?: string }) => Promise<{ runId: string }>
+  testingRun: (args?: {
+    scenarioIds?: string[]
+    category?: string
+    workspaceId?: string
+  }) => Promise<{ runId: string }>
+  testingRequeueFailed: (args: {
+    runId: string
+    workspaceId?: string
+  }) => Promise<{ runId: string }>
   testingResumeRun: (args: { runId: string; workspaceId?: string }) => Promise<{ runId: string }>
   testingCancel: () => Promise<void>
   testingGetRuns: (args?: { workspaceId?: string }) => Promise<E2ERunSummary[]>
   testingGetRunResults: (args: { runId: string }) => Promise<E2EResultSummary[]>
   testingGetResultDetail: (args: { resultId: string }) => Promise<E2EResultDetail | undefined>
   onTestingProgress: (cb: (data: E2EProgressEvent) => void) => () => void
+
+  // Clipboard
+  clipboardWriteText: (text: string) => void
 }
 
 declare global {

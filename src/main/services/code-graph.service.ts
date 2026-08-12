@@ -9,28 +9,23 @@ import { codeGraphTagRepository } from '../db/repositories'
 import { codeGraphEdgeRepository } from '../db/repositories'
 import { codeGraphRankRepository } from '../db/repositories'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
+import type { EdgeType, EdgeResolution } from '../db/repositories/code-graph-edge.repository'
 import type { CodeGraphIndexingState } from '../../shared/types'
+import { extractTypedTags, releaseTypedParser, getQueryDiagnostics } from './code-graph-tags'
+import { detectCommunities, findGodNodes } from './code-graph-communities'
+import type { Community, GodNode } from './code-graph-communities'
 import {
-  CaseInsensitiveSet,
+  REPOMAP_EXCLUDED_DIRS,
   isExcludedPath,
   isExcludedDirName,
   isMarkupFile,
   sizeCapForFile,
   toPosixRel,
-  matchesSkipPattern
+  matchesSkipPattern,
+  filterRankedFiles
 } from './code-graph-exclusions'
 import { loadAllIgnorePatterns } from './workspace-ignore'
 import { memoryCheckpoint } from './indexing-diagnostics'
-
-/**
- * Directories repomap-mcp prunes internally — mirrored so our walker matches.
- * Uses CaseInsensitiveSet so "Build", "Dist", "Vendor" etc. are excluded on
- * case-insensitive filesystems (Windows NTFS, macOS HFS+).
- */
-const REPOMAP_EXCLUDED_DIRS = new CaseInsensitiveSet([
-  'node_modules', '__pycache__', 'venv', 'env', '.venv', '.env', 'dist', 'build',
-  '.next', '.nuxt', 'target', 'vendor', '.bundle', 'coverage', '.nyc_output', '.tox', 'egg-info'
-])
 
 export interface DiscoveryResult {
   files: string[]
@@ -138,6 +133,101 @@ interface GraphEdge {
   from: string
   to: string
   name: string
+  edgeType: EdgeType
+  resolution: EdgeResolution
+  /** How many files defined this symbol name — 1 means the match was unambiguous. */
+  defFanout: number
+}
+
+/**
+ * Fan-out above which a name/definition match is flagged as a guess
+ * (`resolution: 'ambiguous'`). The edge is still stored — only labelled.
+ */
+export const AMBIGUOUS_FANOUT = 8
+
+/**
+ * Fan-out above which edges are not stored at all: a name defined in this many
+ * files (`handle`, `render`, `id`, …) is an identifier collision, and the
+ * ref×def cartesian product it generates is pure noise.
+ *
+ * Set to `Infinity` to disable dropping entirely. Both numbers come from measuring
+ * six real indexed workspaces with `scripts/codegraph-fanout-report.ts`:
+ *
+ *   - Fan-out >32 is where names stop being symbols and become noise: in the
+ *     largest workspace measured, 16 such names produced 71% of all edges
+ *     (`T` alone: fan-out 123 → 8,795 edges; then `type`, `apply`, `get`).
+ *   - Fan-out 17-32 still carries real relationships (query-builder methods like
+ *     `from`/`select`/`eq` in one workspace), so cutting lower loses recall —
+ *     at ≤16 that workspace lost 46% of its edges.
+ *   - This repo is barely affected either way: ≤8 already retains 99.5%.
+ */
+export const AMBIGUITY_THRESHOLD = 32
+
+/**
+ * Map a (reference subtype, definition subtype) pair to a typed edge.
+ * Pure — the truth table lives here and nowhere else.
+ *
+ * Only relationships the `.scm` queries actually encode unambiguously are typed:
+ *   - `reference.call` / `reference.send` / `reference.constructor` → `calls`
+ *   - `reference.implementation` / `reference.interface`           → `implements`
+ *   - `reference.module` onto a module definition                  → `imports`
+ *
+ * `extends` is deliberately never emitted: the only candidate signal,
+ * `reference.class`, is overloaded across grammars — Java uses it for both
+ * `(superclass)` and `(object_creation_expression)`, C# for base lists, `new`,
+ * generic constraints and variable types. A wrong edge type is worse than a
+ * generic one, so those collapse to `references`.
+ */
+export function deriveEdgeType(
+  refKind: string | null | undefined,
+  defKind: string | null | undefined
+): EdgeType {
+  switch (refKind) {
+    case 'call':
+    case 'send':
+    case 'constructor':
+      return 'calls'
+    case 'implementation':
+    case 'interface':
+      return 'implements'
+    case 'module':
+      return defKind === 'module' || defKind == null ? 'imports' : 'references'
+    default:
+      return 'references'
+  }
+}
+
+/**
+ * Priority order when one file uses the same name in several roles (e.g. calls
+ * `Foo()` and annotates `: Foo`). The most specific relationship wins so the
+ * edge is typed by the strongest evidence available.
+ */
+const KIND_PRIORITY = [
+  'call',
+  'send',
+  'constructor',
+  'implementation',
+  'interface',
+  'module',
+  'function',
+  'method',
+  'class',
+  'type'
+]
+
+function kindRank(kind: string | null | undefined): number {
+  if (kind == null) return KIND_PRIORITY.length + 1
+  const idx = KIND_PRIORITY.indexOf(kind)
+  return idx === -1 ? KIND_PRIORITY.length : idx
+}
+
+/** Collapse a file's several capture subtypes for one name into the strongest one. */
+function strongerKind(
+  current: string | null | undefined,
+  incoming: string | null | undefined
+): string | null {
+  if (current === undefined) return incoming ?? null
+  return kindRank(incoming) < kindRank(current) ? (incoming ?? null) : (current ?? null)
 }
 
 /**
@@ -145,27 +235,49 @@ interface GraphEdge {
  * Pure function: takes tags, returns edge list.
  * An edge is created from each reference file to each definition file for the same symbol,
  * excluding self-references (ref and def in same file).
+ *
+ * Each edge carries provenance:
+ *   - `resolution: 'extracted'` when exactly one file defines the name
+ *   - `resolution: 'inferred'`  when several files do (this edge is one of N guesses)
+ *   - `resolution: 'ambiguous'` above AMBIGUITY_THRESHOLD, where the name is almost
+ *     certainly a collision rather than a relationship
  */
-export function buildEdgesFromTags(tags: RepomapTag[]): GraphEdge[] {
-  const defines = new Map<string, Set<string>>()
-  const references = new Map<string, Set<string>>()
+export function buildEdgesFromTags(
+  tags: RepomapTag[],
+  ambiguityThreshold: number = AMBIGUITY_THRESHOLD
+): GraphEdge[] {
+  // name → (file → strongest capture subtype seen in that file)
+  const defines = new Map<string, Map<string, string | null>>()
+  const references = new Map<string, Map<string, string | null>>()
   for (const tag of tags) {
     const map = tag.kind === 'def' ? defines : references
-    let set = map.get(tag.name)
-    if (!set) {
-      set = new Set()
-      map.set(tag.name, set)
+    let byFile = map.get(tag.name)
+    if (!byFile) {
+      byFile = new Map()
+      map.set(tag.name, byFile)
     }
-    set.add(tag.relFname)
+    byFile.set(tag.relFname, strongerKind(byFile.get(tag.relFname), tag.symbolKind))
   }
 
   const edges: GraphEdge[] = []
   for (const [name, refFiles] of references) {
     const defFiles = defines.get(name)
     if (!defFiles) continue
-    for (const refFile of refFiles) {
-      for (const defFile of defFiles) {
-        if (refFile !== defFile) edges.push({ from: refFile, to: defFile, name })
+    const defFanout = defFiles.size
+    if (defFanout > ambiguityThreshold) continue
+    const resolution: EdgeResolution =
+      defFanout === 1 ? 'extracted' : defFanout <= AMBIGUOUS_FANOUT ? 'inferred' : 'ambiguous'
+    for (const [refFile, refKind] of refFiles) {
+      for (const [defFile, defKind] of defFiles) {
+        if (refFile === defFile) continue
+        edges.push({
+          from: refFile,
+          to: defFile,
+          name,
+          edgeType: deriveEdgeType(refKind, defKind),
+          resolution,
+          defFanout
+        })
       }
     }
   }
@@ -225,11 +337,37 @@ export function sortAndFilterByRank(
     .sort((a, b) => b[1] - a[1])
 }
 
+/**
+ * Pick files for the parse health check.
+ *
+ * Spread across the discovery list rather than taking the head: `allFiles[0]`
+ * is alphabetically first, which on .NET repos is `Common/AssemblyVersion.cs`
+ * — assembly attributes only, legitimately zero tags. Sampling one file there
+ * printed "Tree-sitter parsing may be broken" on every single index run.
+ *
+ * Pure — deterministic for a given list so the check is reproducible.
+ */
+export function pickHealthCheckSamples(allFiles: string[], count = 8): string[] {
+  if (allFiles.length === 0) return []
+  if (allFiles.length <= count) return [...allFiles]
+  const stride = Math.floor(allFiles.length / count)
+  const samples: string[] = []
+  for (let i = 0; i < count; i++) samples.push(allFiles[i * stride])
+  return samples
+}
+
 // ADDITIONAL_EXCLUDED_DIRS and isExcludedPath imported from ./code-graph-exclusions
 // (extracted to a dependency-free module for testability)
 
 class CodeGraphService extends EventEmitter {
   private indexingStates = new Map<string, CodeGraphIndexingState>()
+
+  /** Cached subsystem detection — recomputing per graph_map call is wasteful. */
+  private subsystemCache = new Map<
+    string,
+    { computedAt: number; communities: Community[]; godNodes: GodNode[] }
+  >()
+  private static readonly SUBSYSTEM_CACHE_MS = 5 * 60_000
 
   /** Track whether we've logged a diagnostic for this session */
   private diagnosticLogged = false
@@ -273,6 +411,31 @@ class CodeGraphService extends EventEmitter {
   }
 
   /**
+   * Parse one file, preferring the subtype-preserving extractor.
+   *
+   * `extractTypedTags` returns `null` when typed extraction cannot run (grammar
+   * or query missing, WASM failure, kill switch) — in that case we fall back to
+   * repomap-mcp's `getTags`, which yields the same tags without `symbolKind`.
+   * Edges from untyped tags degrade to `edgeType: 'references'`, never to zero.
+   *
+   * `typed` reports which path ran so callers can count fallbacks: a silent
+   * 100% fallback rate is indistinguishable from success in the output alone.
+   */
+  private async parseFileTags(
+    getTags: typeof import('repomap-mcp/dist/tags.js').getTags,
+    fname: string,
+    relFname: string,
+    filenameToLang: (f: string) => string | null
+  ): Promise<{ tags: RepomapTag[]; typed: boolean }> {
+    const typed = await extractTypedTags(fname, relFname, filenameToLang)
+    if (typed !== null) return { tags: typed, typed: true }
+    return {
+      tags: await this.getTagsWithDiagnostics(getTags, fname, relFname, filenameToLang),
+      typed: false
+    }
+  }
+
+  /**
    * Full workspace indexing — called when toggle is enabled or "Re-index" clicked.
    * Phases: discover files → parse tags → build edges → PageRank → persist
    */
@@ -309,42 +472,52 @@ class CodeGraphService extends EventEmitter {
       )
 
       // ── Health check: verify tree-sitter parsing works ──
-      // getTagsRaw silently returns [] on failure. Test with a known file
-      // to catch Electron-specific WASM issues before processing all files.
+      // getTagsRaw silently returns [] on failure. Probe a spread of real files
+      // to catch Electron-specific WASM issues before processing all of them.
+      //
+      // Sampling only allFiles[0] produced a false alarm on every .NET repo:
+      // the first file alphabetically is typically AssemblyVersion.cs, which is
+      // assembly attributes only and legitimately yields zero tags. Warn only
+      // when EVERY sampled file comes back empty — that is the signal that
+      // actually means "parsing is broken", and it is the one worth acting on.
       try {
-        const testFile = allFiles[0]
-        if (testFile) {
+        const samples = pickHealthCheckSamples(allFiles)
+        let sampledTags = 0
+        let firstNonEmpty = ''
+        for (const testFile of samples) {
           const testRelFname = toPosixRel(testFile, workspacePath)
           const testTags = await getTags(testFile, testRelFname, null, false)
-          if (testTags.length === 0) {
-            const lang = filenameToLang(testFile)
-            log.warn(
-              `[CodeGraph] ⚠ Health check: 0 tags from ${testRelFname} (lang=${lang}). ` +
-                `Tree-sitter parsing may be broken in this runtime.`
-            )
+          sampledTags += testTags.length
+          if (testTags.length > 0 && !firstNonEmpty) firstNonEmpty = testRelFname
+        }
 
-            // Try a step-by-step diagnostic
-            try {
-              const tagsModule = (await import('repomap-mcp/dist/tags.js')) as Record<
-                string,
-                unknown
-              >
-              if (typeof tagsModule.getTagsRaw === 'function') {
-                const rawTags = await (
-                  tagsModule.getTagsRaw as (f: string, r: string) => Promise<RepomapTag[]>
-                )(testFile, testRelFname)
-                log.warn(`[CodeGraph] ⚠ getTagsRaw returned ${rawTags.length} tags`)
-              } else {
-                log.warn('[CodeGraph] ⚠ getTagsRaw not exported — cannot run deeper diagnostic')
-              }
-            } catch (rawErr) {
-              log.error(`[CodeGraph] ⚠ getTagsRaw threw: ${(rawErr as Error).message}`)
+        if (samples.length > 0 && sampledTags === 0) {
+          const langs = [...new Set(samples.map((f) => filenameToLang(f)))].join(', ')
+          log.warn(
+            `[CodeGraph] ⚠ Health check: 0 tags from all ${samples.length} sampled file(s) ` +
+              `(langs=${langs}). Tree-sitter parsing may be broken in this runtime.`
+          )
+
+          // Try a step-by-step diagnostic
+          try {
+            const tagsModule = (await import('repomap-mcp/dist/tags.js')) as Record<string, unknown>
+            if (typeof tagsModule.getTagsRaw === 'function') {
+              const probe = samples[0]
+              const rawTags = await (
+                tagsModule.getTagsRaw as (f: string, r: string) => Promise<RepomapTag[]>
+              )(probe, toPosixRel(probe, workspacePath))
+              log.warn(`[CodeGraph] ⚠ getTagsRaw returned ${rawTags.length} tags`)
+            } else {
+              log.warn('[CodeGraph] ⚠ getTagsRaw not exported — cannot run deeper diagnostic')
             }
-          } else {
-            log.info(
-              `[CodeGraph] ✓ Health check passed: ${testTags.length} tags from ${testRelFname}`
-            )
+          } catch (rawErr) {
+            log.error(`[CodeGraph] ⚠ getTagsRaw threw: ${(rawErr as Error).message}`)
           }
+        } else if (samples.length > 0) {
+          log.info(
+            `[CodeGraph] ✓ Health check passed: ${sampledTags} tags across ` +
+              `${samples.length} sampled file(s) (first: ${firstNonEmpty})`
+          )
         }
       } catch (healthErr) {
         log.error(`[CodeGraph] ⚠ Health check failed: ${(healthErr as Error).message}`)
@@ -358,7 +531,20 @@ class CodeGraphService extends EventEmitter {
       const allTags: RepomapTag[] = []
       const fileMtimes = new Map<string, number>()
 
+      // A v130 upgrade leaves every row with symbol_kind = NULL while mtimes still
+      // match, so the incremental cache would keep serving untyped tags forever.
+      // Detect that once and re-parse everything.
+      const forceReparse = codeGraphTagRepository.hasUntypedIndex(workspaceId)
+      if (forceReparse) {
+        log.info(
+          '[CodeGraph] Untyped index detected - re-parsing all files to populate symbol kinds'
+        )
+      }
+
       let markupDropped = 0
+      let filesParsed = 0
+      let typedFallbacks = 0
+      const changedFiles: string[] = []
       for (const fname of allFiles) {
         const relFname = toPosixRel(fname, workspacePath)
         state.currentFile = relFname
@@ -368,13 +554,21 @@ class CodeGraphService extends EventEmitter {
           const existingMtime = existingMtimes.get(relFname)
           fileMtimes.set(relFname, stat.mtimeMs)
 
-          if (existingMtime && stat.mtimeMs === existingMtime) {
+          if (existingMtime && stat.mtimeMs === existingMtime && !forceReparse) {
             // File unchanged — load cached tags from DB
             const cachedTags = codeGraphTagRepository.findByFile(workspaceId, relFname)
             allTags.push(...cachedTags)
           } else {
             // File changed or new — parse with Tree-sitter
-            const tags = await this.getTagsWithDiagnostics(getTags, fname, relFname, filenameToLang)
+            changedFiles.push(relFname)
+            const { tags, typed } = await this.parseFileTags(
+              getTags,
+              fname,
+              relFname,
+              filenameToLang
+            )
+            filesParsed++
+            if (!typed) typedFallbacks++
             // Generated markup (NUnit HTML docs, doxygen output) parses to zero
             // tags but still costs a node + mtime row per file. Drop it: it can
             // never contribute an edge, only bloat.
@@ -435,10 +629,43 @@ class CodeGraphService extends EventEmitter {
       // A completed full rebuild clears any prior degradation.
       state.degraded = false
       state.degradedReason = undefined
+      // Typed extraction failing wholesale still produces a usable index, just an
+      // untyped one, which looks identical from the outside. Say so out loud.
+      if (filesParsed > 0 && typedFallbacks === filesParsed) {
+        state.degraded = true
+        state.degradedReason =
+          'Typed tag extraction unavailable - edges fall back to untyped `references`. ' +
+          'Check the tree-sitter query pack in the packaged app.'
+      }
+      // A query pack that compiles to nothing looks exactly like a language
+      // with no symbols. Name the degraded packs in the summary so "0 rows for
+      // .cs" is traceable to its cause instead of being re-diagnosed by hand.
+      const queryDiagnostics = getQueryDiagnostics()
+      if (queryDiagnostics.length > 0) {
+        const dead = queryDiagnostics.filter((d) => d.droppedPatterns === d.totalPatterns)
+        log.warn(
+          `[CodeGraph] Degraded query packs: ` +
+            queryDiagnostics
+              .map((d) => `${d.lang} (${d.droppedPatterns}/${d.totalPatterns} patterns dropped)`)
+              .join(', ')
+        )
+        if (dead.length > 0) {
+          const reason =
+            `No usable tree-sitter query for: ${dead.map((d) => d.lang).join(', ')} — ` +
+            `files of these languages produce no tags.`
+          state.degraded = true
+          state.degradedReason = state.degradedReason ? `${state.degradedReason} ${reason}` : reason
+        }
+      }
       log.info(
-        `[CodeGraph] Indexing complete: ${fileCount} files, ${tagCount} tags, ${totalEdges} edges`
+        `[CodeGraph] Indexing complete: ${fileCount} files, ${tagCount} tags, ${totalEdges} edges` +
+          (typedFallbacks > 0
+            ? `, ${typedFallbacks}/${filesParsed} file(s) fell back to untyped tags`
+            : '') +
+          (queryDiagnostics.length > 0 ? `, ${queryDiagnostics.length} degraded query pack(s)` : '')
       )
       this.emitProgress(state)
+      this.mineRationales(workspaceId, workspacePath, changedFiles)
       this.postIndexCleanup(workspaceId)
     } catch (error) {
       state.status = 'error'
@@ -478,8 +705,10 @@ class CodeGraphService extends EventEmitter {
       sourceSymbol: e.name,
       targetFile: e.to,
       targetSymbol: e.name,
-      edgeType: 'references' as const,
-      pageRank: ranks.get(e.to) ?? 0
+      edgeType: e.edgeType,
+      pageRank: ranks.get(e.to) ?? 0,
+      resolution: e.resolution,
+      defFanout: e.defFanout
     }))
     await codeGraphEdgeRepository.upsertEdgesBatched(workspaceId, mappedEdges)
     codeGraphRankRepository.upsertRanks(workspaceId, ranks)
@@ -545,7 +774,7 @@ class CodeGraphService extends EventEmitter {
       try {
         const stat = statSync(absPath)
         fileMtimes.set(relPath, stat.mtimeMs)
-        const tags = await this.getTagsWithDiagnostics(getTags, absPath, relPath, filenameToLang)
+        const { tags } = await this.parseFileTags(getTags, absPath, relPath, filenameToLang)
         newTags.push(...tags)
       } catch (error) {
         const msg = (error as Error).message
@@ -604,12 +833,31 @@ class CodeGraphService extends EventEmitter {
     // Small/medium workspace: full rebuild is fast enough
     const allTags = codeGraphTagRepository.findAllByWorkspace(workspaceId)
     await this.buildAndPersistGraph(workspaceId, allTags)
-    allTags.length = 0  // release after persist
+    allTags.length = 0 // release after persist
 
     log.info(`[CodeGraph] Incremental: ${changedRelPaths.length} files, ${newTags.length} new tags`)
 
+    this.mineRationales(workspaceId, workspacePath, changedRelPaths)
+
     // Clean up after incremental reindex too
     this.postIndexCleanup(workspaceId)
+  }
+
+  /**
+   * Mine `// WHY:` / `// HACK:` / ADR citations out of the files we just parsed
+   * and hand them to the memory system. Fire-and-forget: indexing must never
+   * fail or stall because rationale capture did.
+   *
+   * The miner is imported lazily so the standalone code-graph MCP server, which
+   * loads this service, never pulls the memory engine into its process.
+   */
+  private mineRationales(workspaceId: string, workspacePath: string, relPaths: string[]): void {
+    if (relPaths.length === 0) return
+    void import('./rationale-miner.service')
+      .then(({ rationaleMinerService }) =>
+        rationaleMinerService.mineFiles(workspaceId, workspacePath, relPaths)
+      )
+      .catch((error) => log.warn(`[CodeGraph] Rationale mining failed: ${error.message}`))
   }
 
   /**
@@ -718,6 +966,23 @@ class CodeGraphService extends EventEmitter {
   }
 
   /**
+   * Detect subsystems (communities) and god nodes over the file dependency graph.
+   * Cached for five minutes — the graph only changes on re-index.
+   */
+  getSubsystems(workspaceId: string): { communities: Community[]; godNodes: GodNode[] } {
+    const cached = this.subsystemCache.get(workspaceId)
+    if (cached && Date.now() - cached.computedAt < CodeGraphService.SUBSYSTEM_CACHE_MS) {
+      return { communities: cached.communities, godNodes: cached.godNodes }
+    }
+
+    const pairs = codeGraphEdgeRepository.findFilePairs(workspaceId)
+    const communities = detectCommunities(pairs)
+    const godNodes = findGodNodes(pairs)
+    this.subsystemCache.set(workspaceId, { computedAt: Date.now(), communities, godNodes })
+    return { communities, godNodes }
+  }
+
+  /**
    * Search identifiers from DB — NO filesystem walk. Instant.
    */
   async searchIdentifiers(
@@ -728,6 +993,8 @@ class CodeGraphService extends EventEmitter {
       maxResults?: number
       includeDefinitions?: boolean
       includeReferences?: boolean
+      /** Restrict to Tree-sitter capture subtypes, e.g. ['function', 'method']. */
+      symbolKinds?: string[]
     }
   ): Promise<
     Array<{
@@ -735,6 +1002,7 @@ class CodeGraphService extends EventEmitter {
       line: number
       name: string
       kind: 'def' | 'ref'
+      symbolKind: string | null
       context: string
     }>
   > {
@@ -744,7 +1012,8 @@ class CodeGraphService extends EventEmitter {
     const matchingTags = codeGraphTagRepository.searchByName(workspaceId, query, {
       maxResults: options?.maxResults ?? 50,
       includeDefinitions: options?.includeDefinitions ?? true,
-      includeReferences: options?.includeReferences ?? true
+      includeReferences: options?.includeReferences ?? true,
+      symbolKinds: options?.symbolKinds
     })
 
     const results: Array<{
@@ -752,6 +1021,7 @@ class CodeGraphService extends EventEmitter {
       line: number
       name: string
       kind: 'def' | 'ref'
+      symbolKind: string | null
       context: string
     }> = []
 
@@ -770,6 +1040,7 @@ class CodeGraphService extends EventEmitter {
         line: tag.line,
         name: tag.name,
         kind: tag.kind,
+        symbolKind: tag.symbolKind ?? null,
         context
       })
     }
@@ -784,14 +1055,22 @@ class CodeGraphService extends EventEmitter {
   async findDeadCode(
     workspaceId: string,
     workspacePath: string,
-    options?: { path?: string; maxResults?: number }
-  ): Promise<Array<{ file: string; line: number; name: string; context: string }>> {
+    options?: { path?: string; maxResults?: number; excludeSymbolKinds?: string[] }
+  ): Promise<
+    Array<{ file: string; line: number; name: string; symbolKind: string | null; context: string }>
+  > {
     const { renderTreeContext } =
       (await import('repomap-mcp/dist/tree-context.js')) as typeof import('repomap-mcp/dist/tree-context.js')
 
     const deadDefs = codeGraphTagRepository.findDeadCode(workspaceId, options)
 
-    const results: Array<{ file: string; line: number; name: string; context: string }> = []
+    const results: Array<{
+      file: string
+      line: number
+      name: string
+      symbolKind: string | null
+      context: string
+    }> = []
 
     for (const tag of deadDefs) {
       const absPath = `${workspacePath}/${tag.relFname}`
@@ -807,6 +1086,7 @@ class CodeGraphService extends EventEmitter {
         file: tag.relFname,
         line: tag.line,
         name: tag.name,
+        symbolKind: tag.symbolKind ?? null,
         context
       })
     }
@@ -817,13 +1097,25 @@ class CodeGraphService extends EventEmitter {
   /**
    * Get top-ranked files for decompose() — replaces prefetchRankedFiles().
    * Optionally boosts focus files by placing them first.
+   *
+   * Pass `workspacePath` to drop excluded/ignored files from the ranking.
+   * Callers that feed an LLM (memory bootstrap, Deep Scan) should always do
+   * so — otherwise a vendored tree still in the index supplies the whole
+   * budget. Over-fetching is what keeps the budget full after filtering:
+   * without it, filtering shrinks a 40-file budget to a handful on exactly
+   * the repositories that need it most.
    */
   async getTopRankedFiles(
     workspaceId: string,
     focusFiles: string[],
-    limit: number
+    limit: number,
+    workspacePath?: string
   ): Promise<string[]> {
-    const topFiles = codeGraphRankRepository.getTopRanked(workspaceId, limit + focusFiles.length)
+    const fetchLimit = (workspacePath ? limit * 4 : limit) + focusFiles.length
+    const ranked = codeGraphRankRepository.getTopRanked(workspaceId, fetchLimit)
+    const topFiles = workspacePath
+      ? filterRankedFiles(ranked, loadAllIgnorePatterns(workspacePath))
+      : ranked
 
     // Merge: focus files first, then top-ranked (deduplicated)
     const seen = new Set<string>()
@@ -998,7 +1290,8 @@ class CodeGraphService extends EventEmitter {
         cwd: workspacePath,
         encoding: 'utf-8',
         timeout: 15_000,
-        maxBuffer: 5 * 1024 * 1024
+        maxBuffer: 5 * 1024 * 1024,
+        windowsHide: true
       }).trim()
     } catch {
       return []
@@ -1039,14 +1332,10 @@ class CodeGraphService extends EventEmitter {
       })
 
     if (options.filePath) {
-      pairs = pairs.filter(
-        (p) => p.fileA === options.filePath || p.fileB === options.filePath
-      )
+      pairs = pairs.filter((p) => p.fileA === options.filePath || p.fileB === options.filePath)
     }
 
-    return pairs
-      .sort((a, b) => b.coChangeCount - a.coChangeCount)
-      .slice(0, maxResults)
+    return pairs.sort((a, b) => b.coChangeCount - a.coChangeCount).slice(0, maxResults)
   }
 
   // ── Hotspot Scoring ────────────────────────────────────────────────────────
@@ -1077,7 +1366,10 @@ class CodeGraphService extends EventEmitter {
     for (const h of symbolHotspots) {
       const file = (h as { file?: string }).file ?? ''
       if (!file) continue
-      fileRefCounts.set(file, (fileRefCounts.get(file) ?? 0) + ((h as { refCount?: number }).refCount ?? 1))
+      fileRefCounts.set(
+        file,
+        (fileRefCounts.get(file) ?? 0) + ((h as { refCount?: number }).refCount ?? 1)
+      )
     }
 
     // 2. Get git churn per file
@@ -1085,7 +1377,13 @@ class CodeGraphService extends EventEmitter {
     try {
       const churnOutput = execSync(
         `git log --format= --name-only -n 500 | sort | uniq -c | sort -rn | head -200`,
-        { cwd: workspacePath, encoding: 'utf-8', timeout: 15_000, maxBuffer: 2 * 1024 * 1024 }
+        {
+          cwd: workspacePath,
+          encoding: 'utf-8',
+          timeout: 15_000,
+          maxBuffer: 2 * 1024 * 1024,
+          windowsHide: true
+        }
       ).trim()
 
       for (const line of churnOutput.split('\n')) {
@@ -1122,9 +1420,7 @@ class CodeGraphService extends EventEmitter {
       }
     }
 
-    return hotspots
-      .sort((a, b) => b.hotspotScore - a.hotspotScore)
-      .slice(0, maxResults)
+    return hotspots.sort((a, b) => b.hotspotScore - a.hotspotScore).slice(0, maxResults)
   }
 
   // ── Code Clone Detection ──────────────────────────────────────────────────
@@ -1143,9 +1439,19 @@ class CodeGraphService extends EventEmitter {
     const maxResults = options.maxResults ?? 20
 
     // Use code_chunks table which has body text + line ranges
-    let chunks: { filePath: string; symbolName: string; startLine: number; endLine: number; body: string }[]
+    let chunks: {
+      filePath: string
+      symbolName: string
+      startLine: number
+      endLine: number
+      body: string
+    }[]
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
+      // electron-vite bundling; this throws MODULE_NOT_FOUND at runtime.
+      // Convertible to a static import (the repositories barrel pulls in no
+      // services), but out of scope for the current fix. Tracked separately.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
       const { codeChunkRepository } = require('../db/repositories') as {
         codeChunkRepository: { db: () => import('better-sqlite3').Database }
       }
@@ -1157,8 +1463,12 @@ class CodeGraphService extends EventEmitter {
            WHERE workspace_id = ? AND (end_line - start_line) >= ?`
         )
         .all(workspaceId, minBodyLines) as {
-          file_path: string; symbol_name: string; start_line: number; end_line: number; body: string
-        }[]
+        file_path: string
+        symbol_name: string
+        start_line: number
+        end_line: number
+        body: string
+      }[]
       chunks = rows.map((r) => ({
         filePath: r.file_path,
         symbolName: r.symbol_name,
@@ -1174,7 +1484,10 @@ class CodeGraphService extends EventEmitter {
       chunks = chunks.filter((c) => c.filePath.startsWith(options.path!))
     }
 
-    const hashGroups = new Map<string, { file: string; symbol: string; line: number; lines: number }[]>()
+    const hashGroups = new Map<
+      string,
+      { file: string; symbol: string; line: number; lines: number }[]
+    >()
 
     for (const chunk of chunks) {
       const lineCount = chunk.endLine - chunk.startLine + 1
@@ -1235,17 +1548,27 @@ class CodeGraphService extends EventEmitter {
       }
     }, 30_000)
 
-    // 2. Release the tree-sitter WASM parser — it allocated memory outside
+    // 2. Subsystem detection is derived from the edge table — a rebuild invalidates it
+    this.subsystemCache.delete(workspaceId)
+
+    // 3. Release the tree-sitter WASM parser — it allocated memory outside
     //    V8's heap that the GC cannot see. Will be re-initialized on next index.
     initParserPromise = null
+    releaseTypedParser()
 
-    // 3. Shrink SQLite page cache after the heavy write burst
+    // 4. Shrink SQLite page cache after the heavy write burst
     try {
+      // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
+      // electron-vite bundling, so this best-effort shrink never runs.
+      // Tracked separately.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
       const { getDatabase } = require('../db')
       getDatabase().pragma('shrink_memory')
-    } catch { /* best-effort */ }
+    } catch {
+      /* best-effort */
+    }
 
-    // 4. Nudge V8 GC (available when Electron runs with --expose-gc,
+    // 5. Nudge V8 GC (available when Electron runs with --expose-gc,
     //    already used by vector-search.service.ts)
     if (typeof global.gc === 'function') {
       global.gc()

@@ -18,10 +18,6 @@ import {
   SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN,
   GIT_CONTEXT_GUIDANCE_PROMPT,
   GIT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
   CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN,
   LIBRARY_DOCS_GUIDANCE_PROMPT,
@@ -47,7 +43,16 @@ import {
   PLAN_MODE_SECTION_LEAN,
   BUILD_MODE_SECTION_LEAN,
   DANGER_MODE_SECTION_LEAN,
-  MODE_CONTEXT_SECTIONS_LEAN
+  MODE_CONTEXT_SECTIONS_LEAN,
+  MERMAID_DIAGRAM_REFERENCE,
+  SOLE_IMPLEMENTER_DIRECTIVE,
+  PLAN_MODE_SECTION_COMPACT,
+  PLAN_MODE_SECTION_LEAN_COMPACT,
+  MODE_CONTEXT_SECTIONS_COMPACT,
+  MODE_CONTEXT_SECTIONS_LEAN_COMPACT,
+  TOOL_PRIORITY_DIRECTIVE,
+  REPOMAP_UNINDEXED_NOTE,
+  SEMANTIC_SEARCH_UNINDEXED_NOTE
 } from '../default-prompts'
 
 describe('default-prompts — prompt constants', () => {
@@ -57,12 +62,22 @@ describe('default-prompts — prompt constants', () => {
     ['ASK_QUESTION_PROMPT', ASK_QUESTION_PROMPT, ASK_QUESTION_PROMPT_LEAN],
     ['MEMORY_PROTOCOL_PROMPT', MEMORY_PROTOCOL_PROMPT, MEMORY_PROTOCOL_PROMPT_LEAN],
     ['REPOMAP_GUIDANCE_PROMPT', REPOMAP_GUIDANCE_PROMPT, REPOMAP_GUIDANCE_PROMPT_LEAN],
-    ['SEMANTIC_SEARCH_GUIDANCE_PROMPT', SEMANTIC_SEARCH_GUIDANCE_PROMPT, SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN],
+    [
+      'SEMANTIC_SEARCH_GUIDANCE_PROMPT',
+      SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+      SEMANTIC_SEARCH_GUIDANCE_PROMPT_LEAN
+    ],
     ['GIT_CONTEXT_GUIDANCE_PROMPT', GIT_CONTEXT_GUIDANCE_PROMPT, GIT_CONTEXT_GUIDANCE_PROMPT_LEAN],
-    ['CHECKPOINT_CONTEXT_GUIDANCE_PROMPT', CHECKPOINT_CONTEXT_GUIDANCE_PROMPT, CHECKPOINT_CONTEXT_GUIDANCE_PROMPT_LEAN],
-    ['GITHUB_CONTEXT_GUIDANCE_PROMPT', GITHUB_CONTEXT_GUIDANCE_PROMPT, GITHUB_CONTEXT_GUIDANCE_PROMPT_LEAN],
-    ['CODE_ANALYSIS_GUIDANCE_PROMPT', CODE_ANALYSIS_GUIDANCE_PROMPT, CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN],
-    ['LIBRARY_DOCS_GUIDANCE_PROMPT', LIBRARY_DOCS_GUIDANCE_PROMPT, LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN],
+    [
+      'CODE_ANALYSIS_GUIDANCE_PROMPT',
+      CODE_ANALYSIS_GUIDANCE_PROMPT,
+      CODE_ANALYSIS_GUIDANCE_PROMPT_LEAN
+    ],
+    [
+      'LIBRARY_DOCS_GUIDANCE_PROMPT',
+      LIBRARY_DOCS_GUIDANCE_PROMPT,
+      LIBRARY_DOCS_GUIDANCE_PROMPT_LEAN
+    ],
     ['ESLINT_GUIDANCE_PROMPT', ESLINT_GUIDANCE_PROMPT, ESLINT_GUIDANCE_PROMPT_LEAN],
     ['MAESTRO_GUIDANCE_PROMPT', MAESTRO_GUIDANCE_PROMPT, MAESTRO_GUIDANCE_PROMPT_LEAN],
     ['DIRECT_ANSWER_BOOST_PROMPT', DIRECT_ANSWER_BOOST_PROMPT, DIRECT_ANSWER_BOOST_PROMPT_LEAN],
@@ -147,7 +162,7 @@ describe('default-prompts — buildSpecialistIdentityPromptLean', () => {
     // After trimming, both are compact. Lean may be longer due to inline Code
     // Exploration guidance with fully-qualified MCP tool names (mcp__server__tool).
     const ratio = lean.length / full.length
-    assert.ok(ratio < 1.40, `Lean/full ratio (${ratio.toFixed(2)}) should be < 1.40`)
+    assert.ok(ratio < 1.4, `Lean/full ratio (${ratio.toFixed(2)}) should be < 1.40`)
   })
 })
 
@@ -180,5 +195,140 @@ describe('default-prompts — MODE_CONTEXT_SECTIONS', () => {
     assert.ok(PLAN_MODE_SECTION_LEAN.length <= PLAN_MODE_SECTION.length)
     assert.ok(BUILD_MODE_SECTION_LEAN.length <= BUILD_MODE_SECTION.length)
     assert.ok(DANGER_MODE_SECTION_LEAN.length <= DANGER_MODE_SECTION.length)
+  })
+})
+
+describe('default-prompts — MERMAID_DIAGRAM_REFERENCE', () => {
+  test('is non-empty and contains classDef lines', () => {
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.length > 100)
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.includes('classDef decision'))
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.includes('classDef agent'))
+    assert.ok(MERMAID_DIAGRAM_REFERENCE.includes('Icon reference:'))
+  })
+
+  test('is embedded in PLAN_MODE_SECTION', () => {
+    assert.ok(
+      PLAN_MODE_SECTION.includes('classDef decision'),
+      'Full plan mode section should contain diagram reference'
+    )
+  })
+
+  test('is embedded in PLAN_MODE_SECTION_LEAN', () => {
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN.includes('classDef decision'),
+      'Lean plan mode section should contain diagram reference'
+    )
+  })
+})
+
+describe('default-prompts — compact mode context sections', () => {
+  test('PLAN_MODE_SECTION_COMPACT strips diagram reference', () => {
+    assert.ok(!PLAN_MODE_SECTION_COMPACT.includes('classDef decision'))
+    assert.ok(PLAN_MODE_SECTION_COMPACT.includes('See diagram reference from turn 1'))
+  })
+
+  test('PLAN_MODE_SECTION_LEAN_COMPACT strips diagram reference', () => {
+    assert.ok(!PLAN_MODE_SECTION_LEAN_COMPACT.includes('classDef decision'))
+    assert.ok(PLAN_MODE_SECTION_LEAN_COMPACT.includes('See diagram reference from turn 1'))
+  })
+
+  test('compact sections are shorter than full sections', () => {
+    assert.ok(
+      PLAN_MODE_SECTION_COMPACT.length < PLAN_MODE_SECTION.length,
+      `Compact (${PLAN_MODE_SECTION_COMPACT.length}) should be < full (${PLAN_MODE_SECTION.length})`
+    )
+    assert.ok(
+      PLAN_MODE_SECTION_LEAN_COMPACT.length < PLAN_MODE_SECTION_LEAN.length,
+      `Compact lean (${PLAN_MODE_SECTION_LEAN_COMPACT.length}) should be < full lean (${PLAN_MODE_SECTION_LEAN.length})`
+    )
+  })
+
+  test('compact sections preserve core behavioral rules', () => {
+    assert.ok(PLAN_MODE_SECTION_COMPACT.includes('emit_plan'), 'Missing emit_plan')
+    assert.ok(PLAN_MODE_SECTION_COMPACT.includes('read-only'), 'Missing read-only')
+    assert.ok(PLAN_MODE_SECTION_LEAN_COMPACT.includes('emit_plan'), 'Missing emit_plan (lean)')
+    assert.ok(PLAN_MODE_SECTION_LEAN_COMPACT.includes('read-only'), 'Missing read-only (lean)')
+  })
+
+  test('MODE_CONTEXT_SECTIONS_COMPACT has all modes', () => {
+    assert.ok('plan' in MODE_CONTEXT_SECTIONS_COMPACT)
+    assert.ok('build' in MODE_CONTEXT_SECTIONS_COMPACT)
+    assert.ok('danger' in MODE_CONTEXT_SECTIONS_COMPACT)
+  })
+
+  test('MODE_CONTEXT_SECTIONS_LEAN_COMPACT has all modes', () => {
+    assert.ok('plan' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
+    assert.ok('build' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
+    assert.ok('danger' in MODE_CONTEXT_SECTIONS_LEAN_COMPACT)
+  })
+})
+
+describe('default-prompts — tool routing', () => {
+  test('TOOL_PRIORITY_DIRECTIVE is a routing table, not an "always use first" mandate', () => {
+    assert.ok(
+      TOOL_PRIORITY_DIRECTIVE.includes('| Question shape | First tool | Fallback |'),
+      'must carry the routing table header'
+    )
+    for (const row of [
+      'mcp__code-graph__search_identifiers',
+      'mcp__semantic-search__semantic_search',
+      'mcp__code-graph__file_outline',
+      'mcp__code-graph__shortest_path'
+    ]) {
+      assert.ok(TOOL_PRIORITY_DIRECTIVE.includes(row), `routing table missing ${row}`)
+    }
+    assert.ok(TOOL_PRIORITY_DIRECTIVE.includes('| Grep |'), 'Grep must be a listed fallback')
+  })
+
+  test('TOOL_PRIORITY_DIRECTIVE carries the escape hatch', () => {
+    // Without it the table reads as a hard mandate, which the model discounts
+    // wholesale the first time the rule is obviously wrong.
+    assert.ok(
+      TOOL_PRIORITY_DIRECTIVE.includes(
+        'Skip all of the above when the answer is already in context'
+      ),
+      'missing skip clause'
+    )
+    assert.ok(TOOL_PRIORITY_DIRECTIVE.includes('do not retry it'), 'missing no-retry clause')
+  })
+
+  test('SEMANTIC_SEARCH_GUIDANCE_PROMPT states what it is weak at and the follow-up chain', () => {
+    assert.ok(SEMANTIC_SEARCH_GUIDANCE_PROMPT.includes('Weak at:'), 'missing negative space')
+    assert.ok(SEMANTIC_SEARCH_GUIDANCE_PROMPT.includes('Typical chain:'), 'missing tool chain')
+    assert.ok(
+      SEMANTIC_SEARCH_GUIDANCE_PROMPT.includes('mcp__code-graph__search_identifiers'),
+      'must route exact identifiers to code-graph'
+    )
+  })
+
+  const unindexedNotes = [
+    ['REPOMAP_UNINDEXED_NOTE', REPOMAP_UNINDEXED_NOTE, '## Code Graph', REPOMAP_GUIDANCE_PROMPT],
+    [
+      'SEMANTIC_SEARCH_UNINDEXED_NOTE',
+      SEMANTIC_SEARCH_UNINDEXED_NOTE,
+      '## Semantic Search',
+      SEMANTIC_SEARCH_GUIDANCE_PROMPT
+    ]
+  ] as const
+
+  for (const [name, note, marker, fullPrompt] of unindexedNotes) {
+    test(`${name} keeps the section marker so the block is still recognised`, () => {
+      assert.ok(note.length > 0, `${name} should not be empty`)
+      assert.ok(note.startsWith(marker), `${name} must start with ${marker}`)
+      assert.ok(note.length < fullPrompt.length, `${name} should be cheaper than the full guidance`)
+    })
+  }
+})
+
+describe('default-prompts — SOLE_IMPLEMENTER_DIRECTIVE', () => {
+  test('is a concise directive', () => {
+    assert.ok(SOLE_IMPLEMENTER_DIRECTIVE.includes('sole implementer'))
+    assert.ok(SOLE_IMPLEMENTER_DIRECTIVE.includes('never delegate'))
+    assert.ok(SOLE_IMPLEMENTER_DIRECTIVE.length < 200)
+  })
+
+  test('is embedded in lean identity prompt', () => {
+    const lean = buildSpecialistIdentityPromptLean('default')
+    assert.ok(lean.includes(SOLE_IMPLEMENTER_DIRECTIVE))
   })
 })

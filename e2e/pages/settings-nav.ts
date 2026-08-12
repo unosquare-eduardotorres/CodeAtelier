@@ -35,7 +35,8 @@ export type SettingsTab =
 /** Human-readable labels for settings tabs (used as text fallback). */
 const TAB_LABELS: Record<SettingsTab, string> = {
   specialist: 'Specialist',
-  health: 'Health',
+  // Relabelled in the nav (was 'Health') — the tab id is unchanged.
+  health: 'Audit Code',
   goals: 'Goals',
   council: 'Council',
   ideas: 'Ideas',
@@ -96,9 +97,7 @@ export class SettingsNav {
     }
 
     // Fallback: try any button with the label text
-    const fallbackBtn = this.page
-      .getByRole('button', { name: new RegExp(label, 'i') })
-      .first()
+    const fallbackBtn = this.page.getByRole('button', { name: new RegExp(label, 'i') }).first()
     const hasFallback = await fallbackBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
     if (hasFallback) {

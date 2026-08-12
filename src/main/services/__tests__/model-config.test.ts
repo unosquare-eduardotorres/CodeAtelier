@@ -9,8 +9,8 @@ describe('ModelConfigService', () => {
       assert.equal(DEFAULT_MODEL_CONFIG['specialist:plan'], 'claude-opus-5')
     })
 
-    test('specialist:build defaults to sonnet-5', () => {
-      assert.equal(DEFAULT_MODEL_CONFIG['specialist:build'], 'claude-sonnet-5')
+    test('specialist:build defaults to opus-5', () => {
+      assert.equal(DEFAULT_MODEL_CONFIG['specialist:build'], 'claude-opus-5')
     })
 
     test('specialist (base) defaults to opus-5', () => {

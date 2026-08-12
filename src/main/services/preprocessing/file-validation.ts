@@ -5,7 +5,7 @@
  * no class dependencies.
  */
 
-import { excludedDirGlobs, matchesSkipPattern } from '../code-graph-exclusions'
+import { excludedDirGlobs, isExcludedPath, matchesSkipPattern } from '../code-graph-exclusions'
 
 // Re-exported so existing importers of this module keep working.
 export { matchesSkipPattern }
@@ -75,6 +75,14 @@ export function shouldSkipFile(
   content: string,
   extraPatterns: string[] = []
 ): boolean {
+  // Built-in directory exclusions, matched case-insensitively on path
+  // segments. The glob copies in SKIP_PATTERNS are lower-cased, so on their
+  // own they miss "Pods/", "Bin/", "Packages/" — exactly the directories the
+  // exclusion list exists for.
+  if (isExcludedPath(filePath)) {
+    return true
+  }
+
   // Path-based filtering
   const allPatterns = [...SKIP_PATTERNS, ...extraPatterns]
   if (matchesSkipPattern(filePath, allPatterns)) {

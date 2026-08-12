@@ -25,9 +25,7 @@ if (!env) {
         version: 1,
         title: 'Security Fix Plan',
         summary: 'Fix 3 SQL injection issues',
-        items: [
-          { file: 'src/db.ts', action: 'Use parameterized queries', priority: 'high' }
-        ],
+        items: [{ file: 'src/db.ts', action: 'Use parameterized queries', priority: 'high' }],
         risks: [{ description: 'Breaking DB layer', mitigation: 'Add tests' }],
         sourceFindingIds: ['finding-1', 'finding-2'],
         requirementDocument: 'Fix all SQL injection issues found in the audit'
@@ -60,12 +58,22 @@ if (!env) {
     test('getPlansForRun() returns plans newest first', () => {
       const run2 = auditRepository.createRun(wsId, 'full', ['performance'], ['ts'])
       auditPlanRepository.savePlan(run2.id, {
-        version: 1, title: 'First', summary: '', items: [], risks: [],
-        sourceFindingIds: [], requirementDocument: ''
+        version: 1,
+        title: 'First',
+        summary: '',
+        items: [],
+        risks: [],
+        sourceFindingIds: [],
+        requirementDocument: ''
       } as any)
       auditPlanRepository.savePlan(run2.id, {
-        version: 1, title: 'Second', summary: '', items: [], risks: [],
-        sourceFindingIds: [], requirementDocument: ''
+        version: 1,
+        title: 'Second',
+        summary: '',
+        items: [],
+        risks: [],
+        sourceFindingIds: [],
+        requirementDocument: ''
       } as any)
 
       const plans = auditPlanRepository.getPlansForRun(run2.id)
@@ -81,8 +89,13 @@ if (!env) {
 
     test('findById() round-trip', () => {
       const plan = auditPlanRepository.savePlan(run.id, {
-        version: 1, title: 'Findable', summary: 'x', items: [], risks: [],
-        sourceFindingIds: ['f1'], requirementDocument: ''
+        version: 1,
+        title: 'Findable',
+        summary: 'x',
+        items: [],
+        risks: [],
+        sourceFindingIds: ['f1'],
+        requirementDocument: ''
       } as any)
       const found = auditPlanRepository.findById(plan.id)
       assert.ok(found)

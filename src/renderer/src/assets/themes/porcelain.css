@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    Porcelain — Ceramic elegance: cool whites/pearl, slate blue & charcoal ink
    ═══════════════════════════════════════════════════════════════════════════ */
-[data-theme="porcelain"] {
+[data-theme='porcelain'] {
   /* ── Surface layers (light → dark) ── */
   --color-surface-base: #f9fafb;
   --color-surface-raised: #ecedf2;
@@ -9,9 +9,9 @@
   --color-surface-float: #dddee3;
 
   /* ── Border layers (slate-based) ── */
-  --color-border-subtle: rgba(100, 116, 139, 0.20);
+  --color-border-subtle: rgba(100, 116, 139, 0.2);
   --color-border-default: rgba(100, 116, 139, 0.32);
-  --color-border-strong: rgba(100, 116, 139, 0.50);
+  --color-border-strong: rgba(100, 116, 139, 0.5);
 
   /* ── Text hierarchy (dark on light) ── */
   --color-text-primary: #1e293b;
@@ -27,51 +27,51 @@
   /* ── Primary accent (Charcoal Slate) ── */
   --color-primary: #475569;
   --color-primary-hover: #334155;
-  --color-primary-muted: rgba(71, 85, 105, 0.10);
+  --color-primary-muted: rgba(71, 85, 105, 0.1);
   --color-primary-text: #1e293b;
 
   /* ── Accent (Ocean Blue — APCA-calibrated for surface-overlay #e8e9ed) ── */
   --color-accent: #0564a0;
-  --color-accent-muted: rgba(2, 132, 199, 0.10);
+  --color-accent-muted: rgba(2, 132, 199, 0.1);
 
   /* ── Teal / Forest ── */
   --color-teal: #0d9488;
   --color-teal-light: #14b8a6;
-  --color-teal-muted: rgba(13, 148, 136, 0.10);
+  --color-teal-muted: rgba(13, 148, 136, 0.1);
   --color-teal-text: #0f766e;
   --color-forest: #15803d;
   --color-forest-light: #22c55e;
 
   /* ── Semantic status ── */
   --color-success: #16a34a;
-  --color-success-muted: rgba(22, 163, 74, 0.10);
+  --color-success-muted: rgba(22, 163, 74, 0.1);
   --color-warning: #d97706;
-  --color-warning-muted: rgba(217, 119, 6, 0.10);
+  --color-warning-muted: rgba(217, 119, 6, 0.1);
   --color-danger: #dc2626;
-  --color-danger-muted: rgba(220, 38, 38, 0.10);
+  --color-danger-muted: rgba(220, 38, 38, 0.1);
   --color-info: #2563eb;
-  --color-info-muted: rgba(37, 99, 235, 0.10);
+  --color-info-muted: rgba(37, 99, 235, 0.1);
 
   /* ── Mode tokens (Plan / Build / Danger) ── */
   --color-mode-plan: #e0f2fe;
   --color-mode-plan-muted: rgba(14, 165, 233, 0.08);
   --color-mode-plan-text: #0369a1;
-  --color-mode-plan-border: rgba(14, 165, 233, 0.30);
+  --color-mode-plan-border: rgba(14, 165, 233, 0.3);
 
   --color-mode-build: #fef3c7;
   --color-mode-build-muted: rgba(245, 158, 11, 0.08);
   --color-mode-build-text: #92400e;
-  --color-mode-build-border: rgba(245, 158, 11, 0.30);
+  --color-mode-build-border: rgba(245, 158, 11, 0.3);
 
   --color-mode-danger: #fee2e2;
   --color-mode-danger-muted: rgba(220, 38, 38, 0.08);
   --color-mode-danger-text: #dc2626;
-  --color-mode-danger-border: rgba(220, 38, 38, 0.30);
+  --color-mode-danger-border: rgba(220, 38, 38, 0.3);
 
   /* ── Plan Card ── */
   --color-plan-card: #0284c7;
   --color-plan-card-muted: rgba(2, 132, 199, 0.08);
-  --color-plan-card-border: rgba(2, 132, 199, 0.30);
+  --color-plan-card-border: rgba(2, 132, 199, 0.3);
   --color-plan-card-text: #0369a1;
   --color-plan-card-section-bg: rgba(2, 132, 199, 0.04);
   --color-plan-card-accent: #0d9488;
@@ -98,9 +98,9 @@
   --color-agent-cloud: #0d9488;
 
   /* ── Special-purpose tokens ── */
-  --color-user-bubble: rgba(71, 85, 105, 0.10);
+  --color-user-bubble: rgba(71, 85, 105, 0.1);
   --color-grill: #ea580c;
-  --color-grill-muted: rgba(234, 88, 12, 0.10);
+  --color-grill-muted: rgba(234, 88, 12, 0.1);
   --color-gold-glow: rgba(71, 85, 105, 0.12);
   --color-gold-muted: #94a3b8;
 
@@ -127,17 +127,17 @@
 
   /* ── Scrollbar ── */
   --color-scrollbar-thumb: rgba(100, 116, 139, 0.35);
-  --color-scrollbar-thumb-hover: rgba(100, 116, 139, 0.50);
+  --color-scrollbar-thumb-hover: rgba(100, 116, 139, 0.5);
 
   /* ── Selection ── */
   --color-selection-bg: rgba(71, 85, 105, 0.25);
   --color-selection-text: var(--color-text-primary);
 
   /* ── Hover lift shadow ── */
-  --color-hover-shadow: rgba(71, 85, 105, 0.20);
+  --color-hover-shadow: rgba(71, 85, 105, 0.2);
 
   /* ── Specialist radial gradient ── */
-  --color-specialist-glow: rgba(71, 85, 105, 0.10);
+  --color-specialist-glow: rgba(71, 85, 105, 0.1);
   --color-specialist-mid: rgba(221, 222, 227, 0.4);
 
   /* ── Porcelain-specific: disable grain overlay ── */
@@ -145,47 +145,52 @@
 
   /* ── Knowledge-graph: dark island inside the light UI ── */
   --graph-bg: #040610;
-  --graph-link: rgba(80, 120, 200, 0.30);
+  --graph-link: #4a94a3;
 
   /* ── Porcelain-specific: chat-icon pulse for light bg ── */
   --color-chat-icon-pulse: rgba(2, 132, 199, 0.35);
 }
 
 /* ── Porcelain scrollbar overrides ── */
-[data-theme="porcelain"] ::-webkit-scrollbar-track {
+[data-theme='porcelain'] ::-webkit-scrollbar-track {
   background: var(--color-surface-raised);
 }
 
-[data-theme="porcelain"] ::-webkit-scrollbar-thumb {
+[data-theme='porcelain'] ::-webkit-scrollbar-thumb {
   background: rgba(100, 116, 139, 0.35);
 }
 
-[data-theme="porcelain"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.50);
+[data-theme='porcelain'] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.5);
 }
 
 /* ── Porcelain shadow elevation — Linear/Notion-style depth for light theme ── */
-[data-theme="porcelain"] .shadow-sm {
+[data-theme='porcelain'] .shadow-sm {
   --tw-shadow: 0 1px 2px rgba(100, 116, 139, 0.07), 0 2px 8px rgba(100, 116, 139, 0.09);
-  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
-[data-theme="porcelain"] .shadow-lg {
+[data-theme='porcelain'] .shadow-lg {
   --tw-shadow: 0 4px 16px rgba(100, 116, 139, 0.12), 0 2px 4px rgba(100, 116, 139, 0.06);
-  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
-[data-theme="porcelain"] .shadow-xl {
+[data-theme='porcelain'] .shadow-xl {
   --tw-shadow: 0 8px 24px rgba(100, 116, 139, 0.14), 0 2px 8px rgba(100, 116, 139, 0.08);
-  box-shadow: var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+  box-shadow:
+    var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
 }
 
-[data-theme="porcelain"] .hover-lift:hover {
-  box-shadow: 0 4px 16px rgba(100, 116, 139, 0.16), 0 2px 4px rgba(100, 116, 139, 0.06);
+[data-theme='porcelain'] .hover-lift:hover {
+  box-shadow:
+    0 4px 16px rgba(100, 116, 139, 0.16),
+    0 2px 4px rgba(100, 116, 139, 0.06);
 }
 
 /* ── Graph-scoped: dark-glass chrome for floating controls on the dark canvas island ── */
-[data-theme="porcelain"] [data-testid="memory-graph-canvas"] {
+[data-theme='porcelain'] [data-testid='memory-graph-canvas'] {
   --color-surface-raised: rgba(15, 18, 35, 0.88);
   --color-surface-overlay: rgba(22, 28, 50, 0.75);
   --color-surface-float: rgba(15, 20, 40, 0.95);

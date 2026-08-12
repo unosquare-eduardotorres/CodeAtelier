@@ -2,8 +2,9 @@
  * MCP tool name convention tests.
  * Verifies structural contracts of the MCP tool registry.
  *
- * NOTE: The git-context and checkpoint-context wiring tests were removed
- * when those .tool.ts files were externalized to src/main/mcp-servers/.
+ * NOTE: The git-context wiring tests were removed when those .tool.ts files
+ * were externalized to src/main/mcp-servers/.
+ * Registry ↔ server parity is covered by mcp-tool-consistency.test.ts.
  */
 import assert from 'node:assert/strict'
 import { ALL_MCP_TOOL_NAMES, MCP_TOOLS } from '../../../shared/constants'
@@ -64,11 +65,12 @@ describe('MCP tool name convention (from MCP_TOOLS registry)', () => {
 
   test('expected server count is correct', () => {
     const servers = new Set(EXPECTED_MCP_TOOLS.map((n) => n.split('__')[1]))
-    // code-graph, semantic-search, git-context, checkpoint-context, github-context, code-analysis, memory, process-manager
+    // code-graph, semantic-search, git-context, code-analysis, memory, recall,
+    // process-manager, jira
     assert.equal(servers.size, 8, `Expected 8 MCP servers, got ${servers.size}`)
   })
 
-  test('registry includes all 8 MCP servers (including control-actions)', () => {
+  test('registry includes all 9 MCP servers (including control-actions)', () => {
     const allServers = new Set(ALL_MCP_TOOL_NAMES.map((n) => n.split('__')[1]))
     assert.equal(allServers.size, 9, `Expected 9 MCP servers, got ${allServers.size}`)
   })

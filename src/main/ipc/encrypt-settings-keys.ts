@@ -11,13 +11,25 @@
 // Lazy Electron import — this module gets bundled into a shared chunk that
 // MCP server child processes load transitively. `safeStorage` is only called
 // from the Electron main process, never from standalone servers.
+import { listSecretSettingsKeys } from '../../shared/integration-credentials.types'
+
 function getSafeStorage(): typeof import('electron').safeStorage {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
   return require('electron').safeStorage
 }
 
-/** All settings keys that contain API secrets and must be encrypted at rest. */
-const ENCRYPTED_SETTINGS_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey'] as const
+/** Settings keys that contain API secrets and must be encrypted at rest. */
+const STATIC_ENCRYPTED_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey']
+
+/**
+ * Static keys plus every `secret: true` credential field declared by an external
+ * MCP integration (e.g. `jira.apiToken`), so new integrations are encrypted
+ * automatically. `listSecretSettingsKeys` is pure registry data — no Electron.
+ */
+const ENCRYPTED_SETTINGS_KEYS: readonly string[] = [
+  ...STATIC_ENCRYPTED_KEYS,
+  ...listSecretSettingsKeys()
+]
 
 /**
  * Encrypt any plaintext API key fields in a settings object before DB storage.
@@ -52,7 +64,7 @@ export function decryptSettingsKey(
   if (isEncrypted) {
     try {
       return getSafeStorage().decryptString(Buffer.from(value, 'base64'))
-    } catch (err) {
+    } catch (_err) {
       // SEC-04b: Decryption failed — the flag/value pair is inconsistent.
       // This happens when:
       //   1. The value was stored as plaintext but the flag was set to true
@@ -64,13 +76,13 @@ export function decryptSettingsKey(
       if (looksLikePlaintext) {
         console.warn(
           `[SEC-04b] decryptSettingsKey: encrypted flag set but value appears to be plaintext ` +
-          `(len=${value.length}). Returning raw value as fallback.`
+            `(len=${value.length}). Returning raw value as fallback.`
         )
         return value
       }
       console.warn(
         `[SEC-04b] decryptSettingsKey: decryption failed for encrypted value (len=${value.length}). ` +
-        `Key is lost — user must re-enter it.`
+          `Key is lost — user must re-enter it.`
       )
       return undefined
     }

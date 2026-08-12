@@ -18,10 +18,10 @@ export type PreflightCheckStatus = 'pass' | 'warn' | 'blocker'
 
 /** Where the dependency was detected from. */
 export type PreflightDetectionSource =
-  | 'workspace-scan'      // tech-stack-detector / file markers
-  | 'env-example'         // .env.example keys
-  | 'task-keywords'       // keyword scan on blueprint task descriptions
-  | 'llm-declaration'     // LLM-declared externalDependencies in plan artifact
+  | 'workspace-scan' // tech-stack-detector / file markers
+  | 'env-example' // .env.example keys
+  | 'task-keywords' // keyword scan on blueprint task descriptions
+  | 'llm-declaration' // LLM-declared externalDependencies in plan artifact
 
 // ── Single check result ──
 

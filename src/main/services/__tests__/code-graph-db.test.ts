@@ -311,6 +311,12 @@ describe('CodeGraphEdgeRepository', () => {
     skip('findCalleesOf returns edges from a source symbol')
     skip('countByWorkspace returns correct count')
     skip('deleteByWorkspace removes all edges')
+    skip('persists resolution + def_fanout provenance')
+    skip('findCallersOf filters by edge type')
+    skip('findShortestPath walks a multi-hop chain')
+    skip('findShortestPath prefers the shorter of two routes')
+    skip('findShortestPath returns null when unreachable')
+    skip('findFilePairs aggregates duplicate edges')
     return
   }
 
@@ -419,6 +425,108 @@ describe('CodeGraphEdgeRepository', () => {
     assert.equal(edgeRepo.countByWorkspace(wsId), 1)
     edgeRepo.deleteByWorkspace(wsId)
     assert.equal(edgeRepo.countByWorkspace(wsId), 0)
+  })
+
+  // ── v130: typed edges + provenance ──
+
+  /** Compact edge builder for the graph-shape tests below. */
+  const edge = (
+    wsId: string,
+    from: string,
+    to: string,
+    extra: Partial<CodeGraphEdge> = {}
+  ): CodeGraphEdge => ({
+    workspaceId: wsId,
+    sourceFile: from,
+    sourceSymbol: 'sym',
+    targetFile: to,
+    targetSymbol: 'sym',
+    edgeType: 'references',
+    pageRank: 0,
+    ...extra
+  })
+
+  test('persists resolution + def_fanout provenance', () => {
+    const { wsId } = setupTestDb()
+    edgeRepo.upsertEdges(wsId, [
+      edge(wsId, 'a.ts', 'b.ts', { resolution: 'extracted', defFanout: 1 }),
+      edge(wsId, 'c.ts', 'd.ts', { resolution: 'ambiguous', defFanout: 17 })
+    ])
+    const loaded = edgeRepo.findByWorkspace(wsId)
+    const bySource = new Map(loaded.map((e) => [e.sourceFile, e]))
+    assert.equal(bySource.get('a.ts')?.resolution, 'extracted')
+    assert.equal(bySource.get('a.ts')?.defFanout, 1)
+    assert.equal(bySource.get('c.ts')?.resolution, 'ambiguous')
+    assert.equal(bySource.get('c.ts')?.defFanout, 17)
+  })
+
+  test('findCallersOf filters by edge type', () => {
+    const { wsId } = setupTestDb()
+    edgeRepo.upsertEdges(wsId, [
+      edge(wsId, 'caller.ts', 'target.ts', { edgeType: 'calls' }),
+      edge(wsId, 'typeuser.ts', 'target.ts', { edgeType: 'references' })
+    ])
+    assert.equal(edgeRepo.findCallersOf(wsId, 'sym').length, 2)
+    const callsOnly = edgeRepo.findCallersOf(wsId, 'sym', { edgeTypes: ['calls'] })
+    assert.equal(callsOnly.length, 1)
+    assert.equal(callsOnly[0].sourceFile, 'caller.ts')
+  })
+
+  test('findShortestPath walks a multi-hop chain', () => {
+    const { wsId } = setupTestDb()
+    // a → b → c → d, plus a decoy branch that leads nowhere
+    edgeRepo.upsertEdges(wsId, [
+      edge(wsId, 'a.ts', 'b.ts', { edgeType: 'calls', resolution: 'extracted' }),
+      edge(wsId, 'b.ts', 'c.ts'),
+      edge(wsId, 'c.ts', 'd.ts'),
+      edge(wsId, 'a.ts', 'z.ts')
+    ])
+    const result = edgeRepo.findShortestPath(wsId, 'a.ts', 'd.ts')
+    assert.ok(result, 'expected a path')
+    assert.deepEqual(result!.path, ['a.ts', 'b.ts', 'c.ts', 'd.ts'])
+    assert.equal(result!.hops.length, 3)
+    assert.equal(result!.hops[0].edgeType, 'calls')
+    assert.equal(result!.hops[0].resolution, 'extracted')
+  })
+
+  test('findShortestPath prefers the shorter of two routes', () => {
+    const { wsId } = setupTestDb()
+    // The long route is inserted first, so a search that stops at first contact
+    // instead of comparing meeting points would happily return the 3-hop path.
+    edgeRepo.upsertEdges(wsId, [
+      edge(wsId, 'a.ts', 'long1.ts'),
+      edge(wsId, 'long1.ts', 'long2.ts'),
+      edge(wsId, 'long2.ts', 'z.ts'),
+      edge(wsId, 'a.ts', 'short.ts'),
+      edge(wsId, 'short.ts', 'z.ts')
+    ])
+    const result = edgeRepo.findShortestPath(wsId, 'a.ts', 'z.ts')
+    assert.ok(result, 'expected a path')
+    assert.equal(result!.hops.length, 2, 'the 2-hop route must win')
+    assert.deepEqual(result!.path, ['a.ts', 'short.ts', 'z.ts'])
+  })
+
+  test('findShortestPath returns null when unreachable', () => {
+    const { wsId } = setupTestDb()
+    edgeRepo.upsertEdges(wsId, [edge(wsId, 'a.ts', 'b.ts'), edge(wsId, 'x.ts', 'y.ts')])
+    assert.equal(edgeRepo.findShortestPath(wsId, 'a.ts', 'y.ts'), null)
+    // Same file in and out is a zero-hop path, not a failure
+    const self = edgeRepo.findShortestPath(wsId, 'a.ts', 'a.ts')
+    assert.deepEqual(self, { path: ['a.ts'], hops: [] })
+  })
+
+  test('findFilePairs aggregates duplicate edges', () => {
+    const { wsId } = setupTestDb()
+    edgeRepo.upsertEdges(wsId, [
+      edge(wsId, 'a.ts', 'b.ts', { sourceSymbol: 'one', targetSymbol: 'one' }),
+      edge(wsId, 'a.ts', 'b.ts', { sourceSymbol: 'two', targetSymbol: 'two' }),
+      edge(wsId, 'c.ts', 'b.ts'),
+      edge(wsId, 'self.ts', 'self.ts')
+    ])
+    const pairs = edgeRepo.findFilePairs(wsId)
+    assert.equal(pairs.length, 2, 'self-edges excluded, duplicates collapsed')
+    assert.equal(pairs[0].sourceFile, 'a.ts')
+    assert.equal(pairs[0].edgeCount, 2)
   })
 })
 

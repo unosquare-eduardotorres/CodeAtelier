@@ -11,7 +11,12 @@ import {
   Bone
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../../../shared/types'
+import type {
+  CommunicationTone,
+  ConversationMode,
+  LLMProvider,
+  ModelRoleMap
+} from '../../../../shared/types'
 import { COMMUNICATION_TONES } from '../../../../shared/constants'
 import { AttachmentDropzone } from '@renderer/components/chat'
 import { useClipboardImagePaste, IMAGE_REGEX } from '@renderer/hooks'
@@ -34,6 +39,8 @@ interface NewConversationModalProps {
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    /** User confirmed taking the branch from whatever holds it. */
+    takeover?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<ModelRoleMap>
   }) => void
@@ -98,8 +105,7 @@ function ToneSelector({
   return (
     <div>
       <label className="block text-sm font-medium text-text-primary mb-1.5">
-        Tone{' '}
-        <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+        Tone <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
       </label>
       <div className="flex items-center gap-1.5 flex-wrap">
         <button
@@ -137,11 +143,7 @@ function ToneSelector({
 
 // ── Hooks ───────────────────────────────────────────────────────────────
 
-function useModalKeyboard(
-  isOpen: boolean,
-  onClose: () => void,
-  onSubmit: () => void
-): void {
+function useModalKeyboard(isOpen: boolean, onClose: () => void, onSubmit: () => void): void {
   useEffect(() => {
     if (!isOpen) return
 
@@ -172,9 +174,12 @@ export default function NewConversationModal({
   const [mode, setMode] = useState<ConversationMode>('plan')
   const [conversationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
-  const [branchMode, setBranchMode] = useState<BranchMode>('none')
+  // Auto-branch is the default: a chat without a branch runs in the shared
+  // primary tree alongside every other chat. 'none' is an explicit opt-out.
+  const [branchMode, setBranchMode] = useState<BranchMode>('auto')
   const [customBranchName, setCustomBranchName] = useState('')
-  const [gitAutoBranch, setGitAutoBranch] = useState(false)
+  const [takeover, setTakeover] = useState(false)
+  const [gitAutoBranch, setGitAutoBranch] = useState(true)
   const [routingOverrides, setRoutingOverrides] = useState<Partial<ModelRoleMap>>({})
   const titleInputRef = useRef<HTMLInputElement>(null)
 
@@ -215,6 +220,7 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setCustomBranchName('')
+      setTakeover(false)
       setRoutingOverrides({})
 
       // Load gitAutoBranch setting and set default branch mode
@@ -222,20 +228,21 @@ export default function NewConversationModal({
         window.api
           .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
           .then((s) => {
-            const autoBranch = !!s.gitAutoBranch
+            // Unset means yes — only a deliberate `false` opts out.
+            const autoBranch = s.gitAutoBranch !== false
             setGitAutoBranch(autoBranch)
             setBranchMode(autoBranch ? 'auto' : 'none')
           })
           .catch(() => {
-            setGitAutoBranch(false)
-            setBranchMode('none')
+            setGitAutoBranch(true)
+            setBranchMode('auto')
           })
       } else {
         setBranchMode('none')
       }
     }
-  // Only reset on open — not when defaultLlmProvider changes mid-modal
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Only reset on open — not when defaultLlmProvider changes mid-modal
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   const handleSubmit = useCallback(async (): Promise<void> => {
@@ -267,6 +274,7 @@ export default function NewConversationModal({
       attachments: attachments.length > 0 ? attachments : undefined,
       branchName,
       autoBranch,
+      takeover: branchName ? takeover : undefined,
       llmProvider: effectiveProvider,
       routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined
     })
@@ -278,6 +286,7 @@ export default function NewConversationModal({
     attachments,
     branchMode,
     customBranchName,
+    takeover,
     derivedProvider,
     routingOverrides,
     onSubmit
@@ -311,7 +320,10 @@ export default function NewConversationModal({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div data-testid="new-conversation-modal" className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl max-w-2xl w-full mx-4 animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]">
+      <div
+        data-testid="new-conversation-modal"
+        className="relative bg-surface-float border border-border-default rounded-xl shadow-2xl max-w-2xl w-full mx-4 animate-in fade-in zoom-in-95 flex flex-col max-h-[90vh]"
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-4 border-b border-border-subtle">
           <h2 id="new-conversation-title" className="text-lg font-semibold text-text-primary">
@@ -426,7 +438,9 @@ export default function NewConversationModal({
               onCustomBranchNameChange={setCustomBranchName}
               workspaceId={activeWorkspace.id}
               gitAutoBranch={gitAutoBranch}
-              datalistId="new-conv-modal"
+              idSuffix="new-conv-modal"
+              takeover={takeover}
+              onTakeoverChange={setTakeover}
             />
           )}
         </div>

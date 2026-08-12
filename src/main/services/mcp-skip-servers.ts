@@ -7,7 +7,7 @@
  * spawning it wastes a cold-start `node` process and increases the likelihood of
  * the MCP connection race (Root Cause A in the blueprint-tools diagnosis).
  *
- * Returns an array of server IDs (e.g. ['checkpoint-context', 'control-actions'])
+ * Returns an array of server IDs (e.g. ['control-actions', 'code-analysis'])
  * suitable for CliMcpConfigWriterOptions.skipServers.
  */
 
@@ -21,9 +21,7 @@ import { MCP_TOOLS } from '../../shared/constants'
  * since the CLI may expose it as a built-in tool).
  */
 const SKIPPABLE_SERVERS: Array<{ id: string; prefix: string }> = [
-  { id: 'checkpoint-context', prefix: MCP_TOOLS.CHECKPOINT_CONTEXT._PREFIX },
   { id: 'control-actions', prefix: MCP_TOOLS.CONTROL_ACTIONS._PREFIX },
-  { id: 'github-context', prefix: MCP_TOOLS.GITHUB_CONTEXT._PREFIX },
   // Phase 1.3: Allow lean MCP config to skip these when their tools aren't in allowedTools
   { id: 'semantic-search', prefix: MCP_TOOLS.SEMANTIC_SEARCH._PREFIX },
   { id: 'code-analysis', prefix: MCP_TOOLS.CODE_ANALYSIS._PREFIX }

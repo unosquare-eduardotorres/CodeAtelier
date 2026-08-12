@@ -17,7 +17,11 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react'
-import type { E2EResultDetail, E2ETranscriptEntry, E2EAssertionResult } from '../../../../shared/types'
+import type {
+  E2EResultDetail,
+  E2ETranscriptEntry,
+  E2EAssertionResult
+} from '../../../../shared/types'
 import { useChatActions } from '@renderer/store'
 
 // ── Types ──
@@ -254,9 +258,7 @@ export default function ResultDetailPanel({
                 className="flex items-center gap-1.5 mt-3 text-xs text-text-muted hover:text-text-secondary transition-colors"
               >
                 {showStatusEvents ? <EyeOff size={12} /> : <Eye size={12} />}
-                {showStatusEvents
-                  ? 'Hide system events'
-                  : `Show system events (${statusCount})`}
+                {showStatusEvents ? 'Hide system events' : `Show system events (${statusCount})`}
               </button>
             )}
           </Section>
@@ -291,7 +293,9 @@ function StatusBadge({ status }: { status: string }): React.JSX.Element {
     skipped: 'bg-surface-base text-text-muted'
   }
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded ${colors[status] ?? 'bg-surface-base text-text-muted'}`}>
+    <span
+      className={`text-xs px-1.5 py-0.5 rounded ${colors[status] ?? 'bg-surface-base text-text-muted'}`}
+    >
       {status}
     </span>
   )
@@ -332,9 +336,7 @@ function AssertionRow({ assertion }: { assertion: E2EAssertionResult }): React.J
       )}
       <div className="min-w-0">
         <span className="text-xs text-text-body font-mono">{assertion.name}</span>
-        {assertion.reason && (
-          <p className="text-xs text-text-muted mt-0.5">{assertion.reason}</p>
-        )}
+        {assertion.reason && <p className="text-xs text-text-muted mt-0.5">{assertion.reason}</p>}
       </div>
     </div>
   )
@@ -359,9 +361,7 @@ function MergedTranscriptRow({ entry }: { entry: MergedTranscriptEntry }): React
           <AlertTriangle size={10} />
           <span className="font-medium">Error</span>
         </div>
-        <pre className="whitespace-pre-wrap text-danger leading-relaxed">
-          {entry.content}
-        </pre>
+        <pre className="whitespace-pre-wrap text-danger leading-relaxed">{entry.content}</pre>
       </div>
     )
   }
@@ -424,9 +424,7 @@ function MergedTranscriptRow({ entry }: { entry: MergedTranscriptEntry }): React
       </div>
       {entry.content && (
         <pre className="whitespace-pre-wrap text-text-body leading-relaxed">
-          {entry.content.length > 4000
-            ? entry.content.slice(0, 4000) + '…'
-            : entry.content}
+          {entry.content.length > 4000 ? entry.content.slice(0, 4000) + '…' : entry.content}
         </pre>
       )}
     </div>

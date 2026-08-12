@@ -1,4 +1,4 @@
-import { resolve } from 'path'
+import { dirname, join, resolve } from 'path'
 import { cpSync } from 'fs'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
@@ -25,31 +25,37 @@ export default defineConfig({
           'mcp-servers/code-analysis-server': resolve(
             'src/main/mcp-servers/code-analysis-server.ts'
           ),
-          'mcp-servers/checkpoint-context-server': resolve(
-            'src/main/mcp-servers/checkpoint-context-server.ts'
-          ),
-          'mcp-servers/github-context-server': resolve(
-            'src/main/mcp-servers/github-context-server.ts'
-          ),
           'mcp-servers/memory-server': resolve('src/main/mcp-servers/memory-server.ts'),
+          'mcp-servers/recall-server': resolve('src/main/mcp-servers/recall-server.ts'),
           'mcp-servers/process-manager-server': resolve(
             'src/main/mcp-servers/process-manager-server.ts'
-          )
+          ),
+          'mcp-servers/jira-server': resolve('src/main/mcp-servers/jira-server.ts')
         }
       }
     },
     plugins: [
       {
         name: 'copy-tree-sitter-assets',
-        writeBundle() {
+        writeBundle(options, bundle) {
           // repomap-mcp + web-tree-sitter are bundled by Vite (ESM→CJS).
-          // The bundled code resolves paths relative to the output file:
-          //   tree-sitter.wasm  → out/main/tree-sitter.wasm   (via import.meta.url)
-          //   queries/          → out/queries/                 (via __dirname + "../queries")
-          cpSync(
-            resolve('node_modules/web-tree-sitter/tree-sitter.wasm'),
-            resolve('out/main/tree-sitter.wasm')
-          )
+          // web-tree-sitter's Emscripten loader resolves the runtime relative to
+          // its OWN file: new URL("tree-sitter.wasm", pathToFileURL(__filename)).
+          // Rollup decides where that file lands (currently out/main/chunks/), so
+          // derive the destination from the emitted bundle instead of hardcoding a
+          // directory — a hardcoded 'out/main' is exactly what broke in v1.0.69.
+          // queries/ is separate: resolved via __dirname + "../queries" → out/queries/
+          const outDir = options.dir ?? resolve('out/main')
+          const wasmSrc = resolve('node_modules/web-tree-sitter/tree-sitter.wasm')
+
+          const targets = new Set<string>([outDir])
+          for (const [fileName, output] of Object.entries(bundle)) {
+            if (output.type === 'chunk' && output.code.includes('tree-sitter.wasm')) {
+              targets.add(dirname(resolve(outDir, fileName)))
+            }
+          }
+          for (const dir of targets) cpSync(wasmSrc, join(dir, 'tree-sitter.wasm'))
+
           cpSync(resolve('node_modules/repomap-mcp/queries'), resolve('out/queries'), {
             recursive: true
           })
@@ -84,7 +90,7 @@ export default defineConfig({
             '  };',
             '}',
             '// ── End shim ────────────────────────────────────────────────────────',
-            '',
+            ''
           ].join('\n')
 
           // Insert after shebang + "use strict" but before any require()

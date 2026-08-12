@@ -83,9 +83,37 @@ describe('parsePlanPayload', () => {
     assert.equal(result.structuredPlan, null)
   })
 
-  test('object with phases but no type → null structuredPlan', () => {
+  test('object with phases and title but no type → detected via title+phases path', () => {
     const result = parsePlanPayload({ phases: [], title: 'Test' }, '')
-    // type is undefined but phases exists — need type !== undefined check
+    // MCP emit_plan sends { title, phases } without type — this should be detected
+    assert.ok(result.structuredPlan !== null)
+  })
+
+  test('MCP-shaped payload with title + summary + phases → structuredPlan populated', () => {
+    const payload = {
+      title: 'Fix auth',
+      summary: 'Implement auth fix across 3 files',
+      phases: [
+        { id: 1, title: 'Audit', complexity: 2, risk: 'low', description: 'Audit current auth' }
+      ]
+    }
+    const result = parsePlanPayload(payload, 'before')
+    assert.ok(result.structuredPlan !== null)
+    assert.equal((result.structuredPlan as unknown as Record<string, unknown>).title, 'Fix auth')
+  })
+
+  test('JSON string payload containing valid plan → structuredPlan populated via fallback parse', () => {
+    const plan = {
+      title: 'Deploy fix',
+      phases: [{ id: 1, title: 'Build', complexity: 1, risk: 'low', description: 'Build it' }]
+    }
+    const result = parsePlanPayload(JSON.stringify(plan), 'context')
+    assert.ok(result.structuredPlan !== null)
+    assert.equal((result.structuredPlan as unknown as Record<string, unknown>).title, 'Deploy fix')
+  })
+
+  test('JSON string payload without plan fields → structuredPlan stays null', () => {
+    const result = parsePlanPayload(JSON.stringify({ foo: 'bar' }), '')
     assert.equal(result.structuredPlan, null)
   })
 })

@@ -53,11 +53,13 @@ export interface StreamLoopState {
   lastTerminalReason?: string
   sessionRecoveryNeeded: boolean
   /**
-   * Set when, in Plan mode, the model attempted a blocked Write/Edit and the SDK
-   * returned "No such tool available". Triggers a deterministic emit_plan recovery
-   * in finalizeStream so the user still gets a plan card.
+   * Set when, in Plan mode, the model attempted a blocked tool (Write/Edit/MultiEdit/
+   * ExitPlanMode) and the SDK returned "No such tool available". Triggers a deterministic
+   * emit_plan recovery in finalizeStream so the user still gets a plan card.
    */
   planModeToolBlock?: boolean
+  /** Which tool was blocked — so the recovery prompt can name it accurately. */
+  planModeBlockedTool?: string
   /** Set when api_retry chunks indicate server overload (529/503/overloaded) */
   overloadDetected?: boolean
 }
@@ -73,6 +75,8 @@ export interface AgentSessionHost {
   readonly log: LogFunctions
   readonly tokenTracker: AgentTokenTracker
   readonly cliExecutor: CLIExecutor
+  /** Resolve the CLI executor for a specific conversation (creates one if needed). */
+  getOrCreateCliExecutor(conversationId: string): CLIExecutor
   readonly circuitBreaker: AgentCircuitBreaker
   readonly recoveryNudge: RecoveryNudgeService
   readonly toolActivityAccumulator: ToolActivityAccumulator
@@ -87,6 +91,14 @@ export interface AgentSessionHost {
   dbSessionId: string | null
   workspacePath: string | null
   workspaceId: string | null
+  /** Most-recently-started conversation — backward-compat alias for currentConversationId. */
+  lastActiveConversationId: string | null
+  /** Per-conversation stream contexts (text accumulator + abort controller). */
+  activeStreams: Map<string, ActiveStreamContext>
+  /**
+   * Backward-compat proxy — reads/writes lastActiveConversationId's context.
+   * Delegates with conversationId in scope should prefer activeStreams.get(conversationId).
+   */
   currentConversationId: string | null
   accumulatedText: string
   currentMode: ConversationMode
@@ -120,6 +132,19 @@ export interface AgentSessionHost {
   pendingResumeAt: Map<string, string>
   sdkAbortController: AbortController | null
 
+  /** Get accumulated text for a specific conversation (or lastActive if omitted). */
+  getAccumulatedTextForConversation(conversationId?: string): string
+
+  /**
+   * Absolute cwd to spawn this conversation's CLI in.
+   *
+   * Returns the conversation's worktree when it has one, otherwise the
+   * workspace root. Always prefer passing `conversationId` explicitly — the
+   * omitted form resolves through `lastActiveConversationId`, which is exactly
+   * the ambiguity that concurrent streams break.
+   */
+  resolveExecutionPath(conversationId?: string): string
+
   // ── Methods ──
   emit(event: string | symbol, ...args: unknown[]): boolean
   resolveLocalContextWindow(): number
@@ -137,8 +162,50 @@ export interface AgentSessionHost {
 // ── Static constants (replicated from AgentSessionService) ──
 export const SESSION_CONSTANTS = {
   MAX_TURN_CONTINUATIONS: 5,
-  MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000,
-  EXTERNAL_MCP_INTERACTION_TIMEOUT_MS: 30 * 60_000
+  /**
+   * `--max-turns` for every spawned CLI process, regardless of mode.
+   *
+   * This is a runaway guard, not a mode policy. Mode-aware limiting already
+   * exists one layer up and is finer-grained (MAX_PLAN_TOOL_CALLS = 250 /
+   * MAX_BUILD_TOOL_CALLS = 400 in agent-circuit-breaker, plus
+   * MAX_TURN_CONTINUATIONS). A second, coarser mode-coupled ceiling in argv
+   * bought nothing and made the process non-reusable across a plan⇄build
+   * toggle — the flag is spawn-time only, so a mode-dependent value forces a
+   * respawn (and a full MCP reconnection) on the first message after a toggle.
+   */
+  CLI_MAX_TURNS: 200,
+  /**
+   * Base idle budget. The extended external-MCP budget is NOT mirrored here:
+   * it lives only as `AgentSessionService.EXTERNAL_MCP_INTERACTION_TIMEOUT_MS`,
+   * which `buildStreamTimeout` applies to `longRunningTools` integrations only.
+   * A copy here had no readers and drifted out of step with that rule.
+   */
+  MAX_INTERACTION_TIMEOUT_MS: 10 * 60_000
 } as const
+
+/** Per-conversation streaming state — isolates accumulatedText + abortController per conversation. */
+export interface ActiveStreamContext {
+  accumulatedText: string
+  /**
+   * Length of `accumulatedText` at the start of the current TURN.
+   * `accumulatedText` is per-message (cleared only in resetForNewMessage), but the
+   * circuit breaker's gratuitous-tool heuristic is per-turn (it keys off
+   * `_toolCallCount === 1`). Subtracting this baseline gives the text written
+   * *this* turn. Reset to the current length by continueTurnLimit.
+   */
+  accumulatedTextBaseline?: number
+  abortController: AbortController | null
+  /**
+   * Absolute cwd for this conversation's CLI process.
+   *
+   * Per-conversation rather than per-session because a session serves many
+   * conversations and each one may own a different git worktree. Reading the
+   * session-wide `workspacePath` instead is what allowed three concurrent
+   * streams to write into one working tree on whichever branch happened to be
+   * checked out. Undefined means "no isolation resolved yet" and callers fall
+   * back to `workspacePath`.
+   */
+  executionPath?: string
+}
 
 export type { StreamChunk, ExecutorResult, CLIExecuteOptions }

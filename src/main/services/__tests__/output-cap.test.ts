@@ -121,10 +121,7 @@ describe('truncateToolOutput', () => {
   })
 
   test('markdown table with text after table — preserves post-table content', () => {
-    const rows = Array.from(
-      { length: 500 },
-      (_, i) => `| func_${i} | ${i + 10} |`
-    )
+    const rows = Array.from({ length: 500 }, (_, i) => `| func_${i} | ${i + 10} |`)
     const input = [
       '## Complexity',
       '',

@@ -49,128 +49,107 @@ function parseHandoffParams(
 
     priority: optionalString(args, 'priority', ch) as CreateHandoffParams['priority'],
     createdBy: optionalString(args, 'createdBy', ch) as CreateHandoffParams['createdBy'],
-    ...(opts.includeExpiresAt ? { expiresAt: optionalString(args, 'expiresAt', ch) } : {}),
+    ...(opts.includeExpiresAt ? { expiresAt: optionalString(args, 'expiresAt', ch) } : {})
   }
 }
 
 export function registerHandoffIpc(): void {
   // ── handoff:create — Create + persist a handoff envelope ──────────
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_CREATE,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_CREATE
-      const args = requireObject(rawArgs, ch)
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_CREATE, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_CREATE
+    const args = requireObject(rawArgs, ch)
 
-      const params = parseHandoffParams(args, ch, { includeExpiresAt: true })
+    const params = parseHandoffParams(args, ch, { includeExpiresAt: true })
 
-      const envelope = handoffService.createEnvelope(params)
-      const record = handoffService.persist(envelope)
-      return record
-    }
-  )
+    const envelope = handoffService.createEnvelope(params)
+    const record = handoffService.persist(envelope)
+    return record
+  })
 
   // ── handoff:execute — Create + persist + resolve target action ────
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_EXECUTE,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_EXECUTE
-      const args = requireObject(rawArgs, ch)
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_EXECUTE, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_EXECUTE
+    const args = requireObject(rawArgs, ch)
 
-      const params = parseHandoffParams(args, ch, { includeExpiresAt: true })
+    const params = parseHandoffParams(args, ch, { includeExpiresAt: true })
 
-      const envelope = handoffService.createEnvelope(params)
-      const { record, action } = handoffService.executeHandoff(envelope)
-      return { record, action }
-    }
-  )
+    const envelope = handoffService.createEnvelope(params)
+    const { record, action } = handoffService.executeHandoff(envelope)
+    return { record, action }
+  })
 
   // ── handoff:accept — Mark handoff accepted + link target session ──
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_ACCEPT,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_ACCEPT
-      const args = requireObject(rawArgs, ch)
-      const handoffId = requireString(args, 'handoffId', ch)
-      const targetSessionId = requireString(args, 'targetSessionId', ch)
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_ACCEPT, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_ACCEPT
+    const args = requireObject(rawArgs, ch)
+    const handoffId = requireString(args, 'handoffId', ch)
+    const targetSessionId = requireString(args, 'targetSessionId', ch)
 
-      try {
-        handoffService.accept(handoffId, targetSessionId)
-        return { success: true }
-      } catch (err) {
-        handoffLog.warn(`[handoff:accept] Failed: ${(err as Error).message}`)
-        return { success: false, error: (err as Error).message }
-      }
+    try {
+      handoffService.accept(handoffId, targetSessionId)
+      return { success: true }
+    } catch (err) {
+      handoffLog.warn(`[handoff:accept] Failed: ${(err as Error).message}`)
+      return { success: false, error: (err as Error).message }
     }
-  )
+  })
 
   // ── handoff:reject — Mark handoff rejected with reason ────────────
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_REJECT,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_REJECT
-      const args = requireObject(rawArgs, ch)
-      const handoffId = requireString(args, 'handoffId', ch)
-      const reason = requireString(args, 'reason', ch)
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_REJECT, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_REJECT
+    const args = requireObject(rawArgs, ch)
+    const handoffId = requireString(args, 'handoffId', ch)
+    const reason = requireString(args, 'reason', ch)
 
-      try {
-        handoffService.reject(handoffId, reason)
-        return { success: true }
-      } catch (err) {
-        handoffLog.warn(`[handoff:reject] Failed: ${(err as Error).message}`)
-        return { success: false, error: (err as Error).message }
-      }
+    try {
+      handoffService.reject(handoffId, reason)
+      return { success: true }
+    } catch (err) {
+      handoffLog.warn(`[handoff:reject] Failed: ${(err as Error).message}`)
+      return { success: false, error: (err as Error).message }
     }
-  )
+  })
 
   // ── handoff:getHistory — List handoffs for workspace ──────────────
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_GET_HISTORY,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_GET_HISTORY
-      const args = requireObject(rawArgs, ch)
-      const workspaceId = requireString(args, 'workspaceId', ch)
-      const limit = optionalNumber(args, 'limit', ch) ?? 50
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_GET_HISTORY, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_GET_HISTORY
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+    const limit = optionalNumber(args, 'limit', ch) ?? 50
 
-      // Expire stale handoffs on query
-      handoffService.expireStale(workspaceId)
+    // Expire stale handoffs on query
+    handoffService.expireStale(workspaceId)
 
-      return handoffService.getHistory(workspaceId, limit)
-    }
-  )
+    return handoffService.getHistory(workspaceId, limit)
+  })
 
   // ── handoff:getChain — Get lineage chain for a handoff ────────────
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_GET_CHAIN,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_GET_CHAIN
-      const args = requireObject(rawArgs, ch)
-      const handoffId = requireString(args, 'handoffId', ch)
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_GET_CHAIN, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_GET_CHAIN
+    const args = requireObject(rawArgs, ch)
+    const handoffId = requireString(args, 'handoffId', ch)
 
-      return handoffService.getChain(handoffId)
-    }
-  )
+    return handoffService.getChain(handoffId)
+  })
 
   // ── handoff:preview — Generate envelope preview (no persist) ──────
-  ipcMain.handle(
-    IPC_CHANNELS.HANDOFF_PREVIEW,
-    (event, rawArgs: unknown) => {
-      validateSender(event)
-      const ch = IPC_CHANNELS.HANDOFF_PREVIEW
-      const args = requireObject(rawArgs, ch)
+  ipcMain.handle(IPC_CHANNELS.HANDOFF_PREVIEW, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.HANDOFF_PREVIEW
+    const args = requireObject(rawArgs, ch)
 
-      const params = parseHandoffParams(args, ch)
+    const params = parseHandoffParams(args, ch)
 
-      const format = (optionalString(args, 'format', ch) ?? 'standard') as HandoffRenderFormat
+    const format = (optionalString(args, 'format', ch) ?? 'standard') as HandoffRenderFormat
 
-      return handoffService.preview(params, format)
-    }
-  )
+    return handoffService.preview(params, format)
+  })
 
   handoffLog.info('[handoff-ipc] ✓ Registered 7 handoff IPC handlers')
 }

@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('CloseDialog Deep', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,9 +33,7 @@ test.describe('CloseDialog Deep', () => {
     return true
   }
 
-  async function openCloseDialog(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function openCloseDialog(page: import('@playwright/test').Page): Promise<boolean> {
     // Navigate to chats tab
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
@@ -53,8 +49,13 @@ test.describe('CloseDialog Deep', () => {
     await page.waitForTimeout(1_500)
 
     // Try to trigger the close dialog — look for close/delete button
-    const closeBtn = page.locator('[data-testid="close-conversation-btn"], button:has-text("Close")')
-    const hasCloseBtn = await closeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const closeBtn = page.locator(
+      '[data-testid="close-conversation-btn"], button:has-text("Close")'
+    )
+    const hasCloseBtn = await closeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasCloseBtn) {
       await closeBtn.first().click()
       await page.waitForTimeout(500)
@@ -63,14 +64,22 @@ test.describe('CloseDialog Deep', () => {
     return true
   }
 
-  test('close dialog renders with destructive header and trash icon', async ({ electronPage: page }) => {
+  test('close dialog renders with destructive header and trash icon', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openCloseDialog(page)
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(dialog).toBeVisible()
 
@@ -87,14 +96,22 @@ test.describe('CloseDialog Deep', () => {
     await expect(iconCircle).toBeVisible()
   })
 
-  test('warning message explains permanent deletion consequences', async ({ electronPage: page }) => {
+  test('warning message explains permanent deletion consequences', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openCloseDialog(page)
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Warning block should mention permanent deletion
     const warning = dialog.locator('.bg-warning-muted')
@@ -107,12 +124,18 @@ test.describe('CloseDialog Deep', () => {
 
   test('insights summary loads asynchronously within dialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openCloseDialog(page)
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Wait for insights to load
     await page.waitForTimeout(2_000)
@@ -128,18 +151,29 @@ test.describe('CloseDialog Deep', () => {
     expect(hasLoading || hasInsights || true).toBe(true) // Graceful — insights are optional
   })
 
-  test('close button is disabled while submission is in progress', async ({ electronPage: page }) => {
+  test('close button is disabled while submission is in progress', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openCloseDialog(page)
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     const confirmBtn = dialog.locator('[data-testid="close-dialog-confirm"]')
     const hasBtn = await confirmBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     // Button should initially be enabled
     await expect(confirmBtn).toBeEnabled()
@@ -148,14 +182,22 @@ test.describe('CloseDialog Deep', () => {
     await expect(confirmBtn).toHaveText('Close')
   })
 
-  test('cancel button dismisses dialog without closing conversation', async ({ electronPage: page }) => {
+  test('cancel button dismisses dialog without closing conversation', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openCloseDialog(page)
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Click Cancel
     const cancelBtn = dialog.locator('button:has-text("Cancel")')
@@ -169,12 +211,18 @@ test.describe('CloseDialog Deep', () => {
 
   test('escape key dismisses dialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
     await openCloseDialog(page)
 
     const dialog = page.locator('[data-testid="close-dialog"]')
     const isVisible = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     // Press Escape
     await page.keyboard.press('Escape')

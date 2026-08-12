@@ -19,9 +19,10 @@ export default function ScrollToBottomButton({
         shadow-lg shadow-primary-base/20 hover:bg-primary-hover
         text-white
         transition-all duration-200
-        ${visible
-          ? 'opacity-100 translate-y-0 pointer-events-auto animate-pulse'
-          : 'opacity-0 translate-y-2 pointer-events-none'
+        ${
+          visible
+            ? 'opacity-100 translate-y-0 pointer-events-auto animate-pulse'
+            : 'opacity-0 translate-y-2 pointer-events-none'
         }`}
       aria-label={ariaLabel}
       data-testid="scroll-to-bottom"

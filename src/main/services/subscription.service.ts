@@ -151,7 +151,12 @@ class SubscriptionService {
 
       return {
         sdkVersion,
-        modelsAvailable: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
+        modelsAvailable: [
+          'claude-fable-5',
+          'claude-opus-5',
+          'claude-sonnet-5',
+          'claude-haiku-4-5-20251001'
+        ],
         opus48Available,
         error: null
       }

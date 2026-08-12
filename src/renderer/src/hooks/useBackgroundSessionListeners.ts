@@ -7,12 +7,14 @@
  */
 
 import { useEffect, useRef } from 'react'
-import { useBackgroundSessionStore } from '@renderer/store'
+import { useBackgroundSessionStore, useChatStore } from '@renderer/store'
+import { shouldRecordInline } from '@renderer/lib/permission-routing'
 import type { AgentStatus, PendingPermission } from '../../../shared/types'
 
 export function useBackgroundSessionListeners(): void {
   const updateStatus = useBackgroundSessionStore((s) => s.updateStatus)
   const addPermission = useBackgroundSessionStore((s) => s.addPermission)
+  const removePermission = useBackgroundSessionStore((s) => s.removePermission)
   const markBadgeFallback = useBackgroundSessionStore((s) => s.markBadgeFallback)
   const pendingPermissions = useBackgroundSessionStore((s) => s.pendingPermissions)
 
@@ -28,13 +30,36 @@ export function useBackgroundSessionListeners(): void {
     return unsub
   }, [updateStatus])
 
-  // Listen for permission requests from background workspaces
+  // Listen for permission requests from every workspace. The modal is the only
+  // decision surface, so every request goes to the notification store; a request
+  // for the conversation on screen ALSO leaves a read-only receipt in the
+  // transcript — read via getState() so the subscription is stable.
   useEffect(() => {
     const unsub = window.api.onPermissionRequest((data) => {
-      addPermission(data as unknown as PendingPermission)
+      const activeConvId = useChatStore.getState().activeConversation?.id ?? null
+      const permission = data as unknown as PendingPermission
+      addPermission(permission)
+      if (shouldRecordInline(permission, activeConvId)) {
+        useChatStore.getState().setPendingToolPermission(permission)
+      }
     })
     return unsub
   }, [addPermission])
+
+  // A permission can end without a click here: the turn is torn down, the CLI
+  // child dies, or a backstop denies it. Clear both surfaces on that signal —
+  // otherwise the toast/modal and the inline card stay up for a dead turn.
+  useEffect(() => {
+    const unsub = window.api.onPermissionResolved((data) => {
+      removePermission(data.permissionId)
+      useChatStore.getState().resolvePermissionExternally({
+        permissionId: data.permissionId,
+        conversationId: data.conversationId,
+        outcome: data.outcome
+      })
+    })
+    return unsub
+  }, [removePermission])
 
   // Fetch initial statuses on mount
   useEffect(() => {
@@ -56,8 +81,9 @@ export function useBackgroundSessionListeners(): void {
     const timers = timersRef.current
 
     for (const p of pendingPermissions) {
-      // toolPermission requests need explicit approve/deny — keep toast visible
-      // until the user acts or the server's 120s timeout fires.
+      // toolPermission requests need explicit approve/deny — keep the toast
+      // visible until the user acts or PERMISSION_RESOLVED clears it. There is
+      // no server-side auto-deny to fall back on.
       if (p.type === 'toolPermission') continue
       if (!p.badgeFallback && !timers[p.id]) {
         timers[p.id] = setTimeout(() => {

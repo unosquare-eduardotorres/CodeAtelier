@@ -121,8 +121,7 @@ describe('OmlxManagerService', () => {
         globalThis.fetch = (async (input: RequestInfo | URL) => {
           const u = String(input)
           if (u.includes('/admin/api/models')) return res({ ok: false, status: 401 })
-          if (u.includes('/v1/models'))
-            return res({ json: { data: [{ id: 'model-1' }] } })
+          if (u.includes('/v1/models')) return res({ json: { data: [{ id: 'model-1' }] } })
           throw new Error(`unexpected ${u}`)
         }) as FetchFn
 
@@ -144,8 +143,7 @@ describe('OmlxManagerService', () => {
           const u = String(input)
           if (u.includes('/admin/api/login')) return res({ ok: false, status: 401 })
           if (u.includes('/admin/api/models')) return res({ ok: false, status: 401 })
-          if (u.includes('/v1/models'))
-            return res({ json: { data: [{ id: 'model-1' }] } })
+          if (u.includes('/v1/models')) return res({ json: { data: [{ id: 'model-1' }] } })
           throw new Error(`unexpected ${u}`)
         }) as FetchFn
 

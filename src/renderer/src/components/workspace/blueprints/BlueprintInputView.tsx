@@ -17,15 +17,12 @@
 
 import { useState, useCallback, useRef, useEffect, type JSX } from 'react'
 import { useDropzone } from 'react-dropzone'
-import {
-  Paperclip,
-  Link2,
-  Upload,
-  Maximize2,
-  X,
-  Check
-} from 'lucide-react'
-import type { ReferenceDocument } from '../../../../../shared/blueprint-types'
+import { Paperclip, Link2, Upload, Maximize2, X, Check } from 'lucide-react'
+import type {
+  ReferenceDocument,
+  BlueprintBranchChoice
+} from '../../../../../shared/blueprint-types'
+import BlueprintBranchPicker from './BlueprintBranchPicker'
 import { useClipboardImagePaste, MAX_IMAGE_ATTACHMENTS, IMAGE_REGEX } from '@renderer/hooks'
 import { extractUrls, mergeUrlRefs } from './url-detector'
 import ReferenceDocList from './ReferenceDocList'
@@ -40,10 +37,40 @@ const LARGE_PASTE_THRESHOLD = 2000
 const CHAR_COUNT_THRESHOLD = 500
 
 const ACCEPTED_EXTENSIONS = [
-  '.txt', '.md', '.json', '.ts', '.tsx', '.js', '.jsx', '.py', '.sql',
-  '.yml', '.yaml', '.csv', '.png', '.jpg', '.jpeg', '.gif', '.webp',
-  '.pdf', '.doc', '.docx', '.html', '.xml', '.toml', '.env', '.sh',
-  '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.css', '.scss'
+  '.txt',
+  '.md',
+  '.json',
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.py',
+  '.sql',
+  '.yml',
+  '.yaml',
+  '.csv',
+  '.png',
+  '.jpg',
+  '.jpeg',
+  '.gif',
+  '.webp',
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.html',
+  '.xml',
+  '.toml',
+  '.env',
+  '.sh',
+  '.rs',
+  '.go',
+  '.java',
+  '.kt',
+  '.swift',
+  '.rb',
+  '.php',
+  '.css',
+  '.scss'
 ]
 
 const SUPPORTED_FORMAT_CHIPS = [
@@ -58,6 +85,7 @@ const SUPPORTED_FORMAT_CHIPS = [
 // ── Props ──
 
 interface BlueprintInputViewProps {
+  workspaceId: string
   onStart: (params: {
     title: string
     description?: string
@@ -73,6 +101,7 @@ interface BlueprintInputViewProps {
 // ── Component ──
 
 export function BlueprintInputView({
+  workspaceId,
   onStart,
   onBack,
   initialTitle = '',
@@ -80,6 +109,7 @@ export function BlueprintInputView({
 }: BlueprintInputViewProps): JSX.Element {
   const [title, setTitle] = useState(initialTitle)
   const [description, setDescription] = useState(initialDescription)
+  const [branchChoice, setBranchChoice] = useState<BlueprintBranchChoice>({ mode: 'auto' })
   const [referenceDocs, setReferenceDocs] = useState<ReferenceDocument[]>([])
   const [imageAttachments, setImageAttachments] = useState<string[]>([])
   const [showExpandModal, setShowExpandModal] = useState(false)
@@ -100,22 +130,19 @@ export function BlueprintInputView({
   // The expand modal still uses its own full-height layout.
 
   // ── URL detection on description change ──
-  const handleDescriptionChange = useCallback(
-    (value: string, prevLength?: number) => {
-      setDescription(value)
-      // Detect large paste
-      if (prevLength !== undefined && value.length - prevLength > LARGE_PASTE_THRESHOLD) {
-        setLargePasteFlash(true)
-        setTimeout(() => setLargePasteFlash(false), 2500)
-      }
-      // Detect URLs in pasted text
-      const detected = extractUrls(value)
-      if (detected.length > 0) {
-        setReferenceDocs((prev) => mergeUrlRefs(prev, detected))
-      }
-    },
-    []
-  )
+  const handleDescriptionChange = useCallback((value: string, prevLength?: number) => {
+    setDescription(value)
+    // Detect large paste
+    if (prevLength !== undefined && value.length - prevLength > LARGE_PASTE_THRESHOLD) {
+      setLargePasteFlash(true)
+      setTimeout(() => setLargePasteFlash(false), 2500)
+    }
+    // Detect URLs in pasted text
+    const detected = extractUrls(value)
+    if (detected.length > 0) {
+      setReferenceDocs((prev) => mergeUrlRefs(prev, detected))
+    }
+  }, [])
 
   // ── Char / word count ──
   const charCount = description.length
@@ -207,12 +234,19 @@ export function BlueprintInputView({
       })
     }
 
+    const settings: Record<string, unknown> = {}
+    if (allDocs.length > 0) settings.referenceDocuments = allDocs
+    // `auto` is what the resolver already assumes when nothing is stored, so
+    // only a deliberate choice is persisted — settings_json stays empty for the
+    // common case, and old blueprints keep reading the same way.
+    if (branchChoice.mode !== 'auto') settings.branchChoice = branchChoice
+
     onStart({
       title: title.trim(),
       description: description.trim() || undefined,
-      settingsJson: allDocs.length > 0 ? { referenceDocuments: allDocs } : undefined
+      settingsJson: Object.keys(settings).length > 0 ? settings : undefined
     })
-  }, [title, description, referenceDocs, imageAttachments, onStart])
+  }, [title, description, referenceDocs, imageAttachments, branchChoice, onStart])
 
   // ── Keyboard shortcut ──
   const handleKeyDown = useCallback(
@@ -231,12 +265,11 @@ export function BlueprintInputView({
     <>
       <div
         {...getRootProps()}
+        data-testid="blueprint-input-view"
         onPaste={handlePaste}
         onKeyDown={handleKeyDown}
         className={`bg-surface-raised rounded-xl border overflow-hidden transition-colors flex flex-col flex-1 min-h-0 ${
-          isDragActive
-            ? 'border-accent border-dashed bg-accent/5'
-            : 'border-border-subtle'
+          isDragActive ? 'border-accent border-dashed bg-accent/5' : 'border-border-subtle'
         }`}
       >
         <input {...getInputProps()} />
@@ -275,9 +308,7 @@ export function BlueprintInputView({
               {/* Description — large-paste editor */}
               <div className="relative flex-1 flex flex-col min-h-0">
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-text-secondary">
-                    Description
-                  </label>
+                  <label className="text-xs font-medium text-text-secondary">Description</label>
                   <button
                     type="button"
                     onClick={() => setShowExpandModal(true)}
@@ -308,7 +339,8 @@ export function BlueprintInputView({
                 {showMeta && (
                   <div className="flex items-center justify-between mt-1.5 px-0.5">
                     <span className="text-[10px] text-text-muted">
-                      {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars · {wordCount.toLocaleString()} words
+                      {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars ·{' '}
+                      {wordCount.toLocaleString()} words
                     </span>
                     <button
                       type="button"
@@ -342,6 +374,13 @@ export function BlueprintInputView({
                   </p>
                 </div>
               </div>
+
+              {/* Branch selection */}
+              <BlueprintBranchPicker
+                workspaceId={workspaceId}
+                value={branchChoice}
+                onChange={setBranchChoice}
+              />
 
               {/* Supported format chips */}
               <div className="flex flex-wrap gap-1">
@@ -470,7 +509,8 @@ export function BlueprintInputView({
             {/* Modal footer */}
             <div className="flex items-center justify-between px-4 py-2 border-t border-border-subtle">
               <span className="text-[10px] text-text-muted">
-                {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars · {wordCount.toLocaleString()} words
+                {charCount >= 1000 ? `${(charCount / 1000).toFixed(1)}k` : charCount} chars ·{' '}
+                {wordCount.toLocaleString()} words
               </span>
               <button
                 type="button"

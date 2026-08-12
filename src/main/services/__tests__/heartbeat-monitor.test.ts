@@ -132,7 +132,9 @@ describe('HeartbeatMonitor', () => {
     runExclusive(async () => {
       const hb = new HeartbeatMonitor({
         intervalMs: 10,
-        onStall: () => { throw new Error('callback boom') }
+        onStall: () => {
+          throw new Error('callback boom')
+        }
       })
       hb.start()
       ;(hb as unknown as { lastActivityAt: number }).lastActivityAt = Date.now() - 70_000

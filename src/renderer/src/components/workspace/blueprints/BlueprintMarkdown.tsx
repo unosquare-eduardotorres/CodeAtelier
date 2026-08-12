@@ -29,9 +29,7 @@ interface BlueprintMarkdownProps {
 export function BlueprintMarkdown({ children, className }: BlueprintMarkdownProps): JSX.Element {
   return (
     <div className={`${PROSE_CLASSES} ${className ?? ''}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
-        {children}
-      </ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>{children}</ReactMarkdown>
     </div>
   )
 }

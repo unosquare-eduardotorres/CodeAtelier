@@ -30,6 +30,7 @@ spec. You are adversarial — assume the goal is NOT achieved until proven other
 ### Step 1: Load All Artifacts
 
 From <previous_artifacts>, load:
+
 - **spec.md**: The requirements and success criteria (source of truth)
 - **plan.md**: The planned approach
 - **tasks.md**: The task decomposition
@@ -38,6 +39,7 @@ From <previous_artifacts>, load:
 ### Step 2: 4-Level Artifact Verification
 
 For each planned artifact, verify 4 levels:
+
 1. **EXISTS** — file at expected path
 2. **SUBSTANTIVE** — real implementation, not stubs (`return null`, `TODO`, `=> {}`)
 3. **WIRED** — imported AND used elsewhere (not orphaned)
@@ -57,19 +59,20 @@ Scan for: TODO/FIXME/HACK, empty bodies, console-only handlers, hardcoded dynami
 
 Run these checks on ALL files created/modified by BUILD. Use the MCP tool first; if it fails or is unavailable, fall back to the Bash command.
 
-| Gate | MCP Tool (preferred) | Bash Fallback | Fail Criteria |
-|------|---------------------|---------------|---------------|
-| **Lint compliance** | `mcp__code-analysis__eslint_check` | `npx eslint --no-warn <paths>` | Any error |
-| **Type check** | — | `npx tsc --noEmit 2>&1 \| head -80` | Any error |
-| **Complexity** | `mcp__code-analysis__analyze_complexity` | — | Cyclomatic > 15 |
-| **Test coverage** | `mcp__code-analysis__analyze_test_coverage` | `npm test -- --passWithNoTests 2>&1 \| head -100` | Failures |
-| **Dead code** | `mcp__code-graph__find_dead_code` | — | New orphans |
-| **Code smells** | `mcp__code-analysis__find_code_smells` | — | Critical smells |
-| **Dependency coupling** | `mcp__code-analysis__analyze_dependencies` | — | Circular dependencies introduced |
+| Gate                    | MCP Tool (preferred)                        | Bash Fallback                                     | Fail Criteria                    |
+| ----------------------- | ------------------------------------------- | ------------------------------------------------- | -------------------------------- |
+| **Lint compliance**     | `mcp__code-analysis__eslint_check`          | `npx eslint --no-warn <paths>`                    | Any error                        |
+| **Type check**          | —                                           | `npx tsc --noEmit 2>&1 \| head -80`               | Any error                        |
+| **Complexity**          | `mcp__code-analysis__analyze_complexity`    | —                                                 | Cyclomatic > 15                  |
+| **Tests**               | —                                           | `npm test -- --passWithNoTests 2>&1 \| head -100` | Failures                         |
+| **Dead code**           | `mcp__code-graph__find_dead_code`           | —                                                 | New orphans                      |
+| **Code smells**         | `mcp__code-analysis__audit_scan`            | —                                                 | Critical smells                  |
+| **Dependency coupling** | `mcp__code-graph__circular_dependencies`    | —                                                 | Circular dependencies introduced |
 
 **If an MCP tool returns an error or is unavailable, use the Bash fallback.** Do NOT skip the gate or defer it to `humanVerificationNeeded`. Only flag items as `humanVerificationNeeded` when they genuinely require human judgment (visual correctness, end-to-end user flows, real-time behavior, external integrations).
 
 Include results in the completion block as `qualityGates`:
+
 ```json
 {
   "qualityGates": {
@@ -89,6 +92,7 @@ Include results in the completion block as `qualityGates`:
 </workspace_docs>
 
 Verify BUILD output follows workspace conventions:
+
 - **CLAUDE.md rules**: Check every rule listed in CLAUDE.md against the code
   - Design tokens used (no hardcoded hex/sizes)?
   - Correct fonts (if specified)?
@@ -114,11 +118,11 @@ List items requiring manual verification: visual correctness, end-to-end flows, 
 
 MISSING/STUB artifacts or HOLLOW key links or critical anti-patterns → **gaps_found**. Human verification items → **human_needed**. All pass → **passed**.
 
-| overallStatus | recommendation | remediationTasks |
-|---|---|---|
-| `passed` | `ship` | omit |
-| `gaps_found` | `fix_gaps` | **required** (non-empty) |
-| `human_needed` | `manual_review` | omit |
+| overallStatus  | recommendation  | remediationTasks         |
+| -------------- | --------------- | ------------------------ |
+| `passed`       | `ship`          | omit                     |
+| `gaps_found`   | `fix_gaps`      | **required** (non-empty) |
+| `human_needed` | `manual_review` | omit                     |
 
 ## Completion
 
@@ -162,25 +166,25 @@ Note: `remediationTasks` is REQUIRED when `overallStatus` is `"gaps_found"`. Omi
 
 **Verify artifacts using code-intelligence tools — NOT Read/Glob/Grep.** The verification methodology above requires checking existence, wiring, and data flow. Code-intelligence tools give you this directly.
 
-| Goal | First tool | Fallback |
-|------|-----------|----------|
-| Check if planned files/symbols exist | `mcp__code-graph__search_identifiers` | `Glob` |
-| Check a file's exports and structure | `mcp__code-graph__file_outline` | `Read` |
-| Verify wiring (Level 3: who imports a module) | `mcp__code-graph__file_dependents` | `Grep` |
-| Verify callers exist (is a function used?) | `mcp__code-graph__find_callers` | `Grep` |
-| Verify data flow through call chain | `mcp__code-graph__find_callees` | `Read` |
-| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
-| Check module dependencies | `mcp__code-graph__file_dependencies` | `Read` |
-| Find similar implementations | `mcp__semantic-search__similar_code` | `Grep` |
-| Lint check (MANDATORY) | `mcp__code-analysis__eslint_check` | `Bash` (`npx eslint --no-warn <paths>`) |
-| Type check (Bash fallback) | — | `Bash` (`npx tsc --noEmit`) |
-| Test coverage (MANDATORY) | `mcp__code-analysis__analyze_test_coverage` | `Bash` (`npm test -- --passWithNoTests 2>&1 \| head -100`) |
-| Complexity check | `mcp__code-analysis__analyze_complexity` | — |
-| Dead code detection | `mcp__code-graph__find_dead_code` | — |
-| Code smell scan | `mcp__code-analysis__find_code_smells` | — |
-| Dependency analysis | `mcp__code-analysis__analyze_dependencies` | — |
-| Search workspace knowledge | `mcp__memory__memory_search` | — |
-| Record a verification finding | `mcp__memory__memory_record` | — |
+| Goal                                          | First tool                                  | Fallback                                                   |
+| --------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------- |
+| Check if planned files/symbols exist          | `mcp__code-graph__search_identifiers`       | `Glob`                                                     |
+| Check a file's exports and structure          | `mcp__code-graph__file_outline`             | `Read`                                                     |
+| Verify wiring (Level 3: who imports a module) | `mcp__code-graph__file_dependents`          | `Grep`                                                     |
+| Verify callers exist (is a function used?)    | `mcp__code-graph__find_callers`             | `Grep`                                                     |
+| Verify data flow through call chain           | `mcp__code-graph__find_callees`             | `Read`                                                     |
+| Find all references to a symbol               | `mcp__code-graph__find_references`          | `Grep`                                                     |
+| Check module dependencies                     | `mcp__code-graph__file_dependencies`        | `Read`                                                     |
+| Find similar implementations                  | `mcp__semantic-search__similar_code`        | `Grep`                                                     |
+| Lint check (MANDATORY)                        | `mcp__code-analysis__eslint_check`          | `Bash` (`npx eslint --no-warn <paths>`)                    |
+| Type check (Bash fallback)                    | —                                           | `Bash` (`npx tsc --noEmit`)                                |
+| Run the test suite (MANDATORY)                | —                                           | `Bash` (`npm test -- --passWithNoTests 2>&1 \| head -100`) |
+| Complexity check                              | `mcp__code-analysis__analyze_complexity`    | —                                                          |
+| Dead code detection                           | `mcp__code-graph__find_dead_code`           | —                                                          |
+| Code smell scan                               | `mcp__code-analysis__audit_scan`            | —                                                          |
+| Dependency analysis                           | `mcp__code-graph__coupling_analysis`        | —                                                          |
+| Search workspace knowledge                    | `mcp__memory__memory_search`                | —                                                          |
+| Record a verification finding                 | `mcp__memory__memory_record`                | —                                                          |
 
 **Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly.
 

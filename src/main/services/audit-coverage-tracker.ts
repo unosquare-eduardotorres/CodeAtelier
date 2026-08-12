@@ -36,7 +36,7 @@ const READ_TOOLS = new Set([
   // MCP tools — derived from canonical registry
   ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES,
   ...MCP_TOOLS.CODE_ANALYSIS._ALL_NAMES,
-  ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES,
+  ...MCP_TOOLS.SEMANTIC_SEARCH._ALL_NAMES
 ])
 
 export class AuditCoverageTracker {

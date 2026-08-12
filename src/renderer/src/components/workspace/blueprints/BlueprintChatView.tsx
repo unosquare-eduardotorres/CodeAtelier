@@ -9,9 +9,22 @@
  */
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react'
-import { Send, SkipForward, MessageSquare, CheckCircle2, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import {
+  Send,
+  SkipForward,
+  MessageSquare,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Loader2
+} from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import { useBlueprintStreamStore, useBlueprintLaneStore, getFlatContent, getFlatToolActivities } from '@renderer/store/blueprint-stream.store'
+import {
+  useBlueprintStreamStore,
+  useBlueprintLaneStore,
+  getFlatContent,
+  getFlatToolActivities
+} from '@renderer/store/blueprint-stream.store'
 import type { StreamingStoreState } from '@renderer/store/createStreamingStore'
 import type { StoreApi, UseBoundStore } from 'zustand'
 import { Avatar } from '@renderer/components/common'
@@ -69,13 +82,17 @@ function BlueprintQARecord({
   answers: Record<string, QuestionAnswerState>
 }): React.JSX.Element {
   return (
-    <div data-testid="blueprint-qa-record" className="bg-surface-raised rounded-xl border border-border/50 overflow-hidden">
+    <div
+      data-testid="blueprint-qa-record"
+      className="bg-surface-raised rounded-xl border border-border/50 overflow-hidden"
+    >
       <div className="px-4 py-3 border-b border-border/30 flex items-center gap-2">
         <CheckCircle2 size={12} className="text-success" />
         <h3 className="text-xs font-semibold text-text-primary">Answers submitted</h3>
       </div>
       <div className="px-4 py-3 space-y-2">
-        {questions.map((q) => {
+        {/* Defensive: a malformed journal row must not take down the whole page. */}
+        {(Array.isArray(questions) ? questions : []).map((q) => {
           const state = answers[q.id]
           const isSkipped = !state || state.skipped
           const parts: string[] = state ? [...state.selectedOptions] : []
@@ -108,7 +125,10 @@ function BlueprintQARecord({
 
 interface BlueprintQuestionFooterProps {
   questions: ClarifyQuestion[]
-  onSubmit: (formattedAnswer: string, answers?: Record<string, QuestionAnswerState>) => void | Promise<void>
+  onSubmit: (
+    formattedAnswer: string,
+    answers?: Record<string, QuestionAnswerState>
+  ) => void | Promise<void>
   onSkip: () => void
 }
 
@@ -182,7 +202,11 @@ function BlueprintQuestionFooter({
 
   if (freeTextMode) {
     return (
-      <div ref={cardRef} data-testid="blueprint-question-footer" className="bg-surface-raised rounded-xl border border-info/30 p-4 space-y-3">
+      <div
+        ref={cardRef}
+        data-testid="blueprint-question-footer"
+        className="bg-surface-raised rounded-xl border border-info/30 p-4 space-y-3"
+      >
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <MessageSquare size={12} className="text-info" />
@@ -227,7 +251,11 @@ function BlueprintQuestionFooter({
   }
 
   return (
-    <div ref={cardRef} data-testid="blueprint-question-footer" className="bg-surface-raised rounded-xl border border-info/30 p-4 space-y-3">
+    <div
+      ref={cardRef}
+      data-testid="blueprint-question-footer"
+      className="bg-surface-raised rounded-xl border border-info/30 p-4 space-y-3"
+    >
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -260,9 +288,7 @@ function BlueprintQuestionFooter({
                 skipped: false
               }
             }
-            onChange={(state) =>
-              setQuestionStates((prev) => ({ ...prev, [gq.id]: state }))
-            }
+            onChange={(state) => setQuestionStates((prev) => ({ ...prev, [gq.id]: state }))}
           />
         ))}
       </div>
@@ -292,7 +318,11 @@ function BlueprintQuestionFooter({
 
 // ── Message-history renderer ────────────────────────────────────────────────
 
-function renderBlueprintMessage(msg: BlueprintChatMessage, i: number, avatarSize: 'md' | 'lg' | 'xl'): React.ReactNode {
+function renderBlueprintMessage(
+  msg: BlueprintChatMessage,
+  i: number,
+  avatarSize: 'md' | 'lg' | 'xl'
+): React.ReactNode {
   switch (msg.type) {
     case 'agent':
       return (
@@ -405,7 +435,13 @@ function LaneStreamContent({
 // C1 FIX: When exactly 1 lane exists, render its content directly without
 // the collapsible card wrapper so the user sees build output immediately.
 
-function SingleLaneBuildStream({ laneId, isRunning }: { laneId: string; isRunning: boolean }): React.JSX.Element | null {
+function SingleLaneBuildStream({
+  laneId,
+  isRunning
+}: {
+  laneId: string
+  isRunning: boolean
+}): React.JSX.Element | null {
   const laneStore = useBlueprintLaneStore((s) => s.lanes[laneId])
   if (!laneStore) return null
   return <LaneStreamContent store={laneStore} isRunning={isRunning} />
@@ -431,11 +467,13 @@ function BuildLaneCard({
     setCollapsed(!isRunning)
   }, [isRunning])
 
-  const statusIcon = isRunning
-    ? <Loader2 size={12} className="animate-spin text-info" />
-    : status === 'complete'
-      ? <CheckCircle2 size={12} className="text-success" />
-      : <span className="w-3 h-3 rounded-full bg-error/60" />
+  const statusIcon = isRunning ? (
+    <Loader2 size={12} className="animate-spin text-info" />
+  ) : status === 'complete' ? (
+    <CheckCircle2 size={12} className="text-success" />
+  ) : (
+    <span className="w-3 h-3 rounded-full bg-error/60" />
+  )
 
   return (
     <div className="rounded-lg border border-border/40 bg-surface-overlay/50 overflow-hidden">

@@ -81,9 +81,7 @@ test.describe('Workspace CRUD', () => {
     await page.waitForTimeout(2_000)
 
     // Should transition to chat view — either ChatPanel or NewChatPage
-    const hasChatPanel = await chatPage.chatPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
+    const hasChatPanel = await chatPage.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
     const hasNewChatPage = await chatPage.newChatPage
       .isVisible({ timeout: 3_000 })
       .catch(() => false)
@@ -135,9 +133,7 @@ test.describe('Workspace CRUD', () => {
     await page.waitForTimeout(3_000)
 
     // Message input should eventually be visible
-    const hasInput = await chatPage.messageInput
-      .isVisible({ timeout: 15_000 })
-      .catch(() => false)
+    const hasInput = await chatPage.messageInput.isVisible({ timeout: 15_000 }).catch(() => false)
 
     if (hasInput) {
       // Input should be present (may or may not be enabled depending on agent state)
@@ -182,12 +178,8 @@ test.describe('Workspace CRUD', () => {
 
     // Chat view should be visible (restored)
     const chatPage = new ChatPage(page)
-    const hasChatView = await chatPage.chatPanel
-      .isVisible({ timeout: 10_000 })
-      .catch(() => false)
-    const hasNewChat = await chatPage.newChatPage
-      .isVisible({ timeout: 3_000 })
-      .catch(() => false)
+    const hasChatView = await chatPage.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
+    const hasNewChat = await chatPage.newChatPage.isVisible({ timeout: 3_000 }).catch(() => false)
 
     expect(hasChatView || hasNewChat).toBeTruthy()
   })

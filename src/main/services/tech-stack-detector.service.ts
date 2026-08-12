@@ -40,8 +40,27 @@ const TECH_MARKERS: TechMarker[] = [
   },
   { files: ['package.json'], deps: ['electron'], tech: 'electron' },
 
-  // .NET
-  { files: ['*.csproj', '*.sln', '*.slnx', 'global.json'], tech: 'dotnet' },
+  // .NET (modern SDK-style + classic .NET Framework markers)
+  {
+    files: [
+      '*.csproj',
+      '*.vbproj',
+      '*.sln',
+      '*.slnx',
+      'global.json',
+      'packages.config',
+      'web.config',
+      'App.config',
+      'Global.asax'
+    ],
+    tech: 'dotnet'
+  },
+  // C# source presence — the single most reliable .NET signal in repos whose
+  // project files sit below the candidate-dir horizon.
+  { files: ['*.cs'], tech: 'csharp' },
+
+  // SQL / database projects
+  { files: ['*.sqlproj', '*.dacpac'], tech: 'sql' },
 
   // Python
   {
@@ -112,6 +131,8 @@ export const TECH_TO_SKILL: Record<string, string[]> = {
   tailwind: ['design-system', 'design'],
   electron: ['electron-pro', 'ipc-patterns'],
   dotnet: ['dotnet-architect'],
+  csharp: ['dotnet-architect'],
+  sql: ['sqlite-patterns'],
   python: ['general-dev'],
   'python-web': ['general-dev'],
   rust: ['general-dev'],
@@ -145,6 +166,8 @@ export const TECH_TO_MCP: Record<string, string[]> = {
   'node-backend': ['code-graph', 'semantic-search'],
   electron: ['code-graph', 'semantic-search'],
   dotnet: ['code-graph'],
+  csharp: ['code-graph'],
+  sql: ['code-graph'],
   python: ['code-graph', 'semantic-search'],
   'python-web': ['code-graph', 'semantic-search'],
   rust: ['code-graph'],
@@ -258,20 +281,167 @@ export function collectCandidateDirs(workspacePath: string): string[] {
   return dirs
 }
 
-function filePatternExists(dirPath: string, pattern: string): boolean {
-  if (pattern.includes('*')) {
-    // Glob pattern — check if any matching files exist in this dir.
-    const ext = pattern.replace('*', '')
+// ── Bounded recursive glob scanning ────────────────────────────────
+
+/**
+ * How deep below each candidate dir glob markers (`*.csproj`, `*.cs`, …) are
+ * searched. Depth 0 alone missed the extremely common .NET layout
+ * `<Root>/<Project>/<Project>.csproj`, which is why large C# repos previously
+ * detected nothing but `docker` (a root-level Dockerfile).
+ */
+const MAX_GLOB_DEPTH = 3
+
+/**
+ * Shared cap on directory entries visited by glob scanning across ONE
+ * detection pass. Candidate dirs overlap (root already covers `backend/`),
+ * so a single budget keeps huge monorepos from turning detection into a
+ * full-tree walk.
+ */
+const MAX_GLOB_ENTRIES = 20_000
+
+interface GlobScanContext {
+  /** Candidate dir → lowercased file extensions found within MAX_GLOB_DEPTH. */
+  cache: Map<string, Set<string>>
+  /** Remaining directory-entry budget for this detection pass. */
+  budget: number
+}
+
+function newGlobScanContext(): GlobScanContext {
+  return { cache: new Map(), budget: MAX_GLOB_ENTRIES }
+}
+
+/**
+ * Collect the set of file extensions present under `dirPath`, walking at most
+ * MAX_GLOB_DEPTH levels and never entering denylisted or dot-directories.
+ * Cached per dir; charged against the pass-wide entry budget.
+ */
+function collectExtensions(dirPath: string, ctx: GlobScanContext): Set<string> {
+  const cached = ctx.cache.get(dirPath)
+  if (cached) return cached
+
+  const exts = new Set<string>()
+  const walk = (abs: string, depth: number): void => {
+    if (depth > MAX_GLOB_DEPTH || ctx.budget <= 0) return
+    let entries: import('node:fs').Dirent[]
     try {
-      const entries = readdirSync(dirPath)
-      return entries.some((e) => e.endsWith(ext))
+      entries = readdirSync(abs, { withFileTypes: true })
     } catch {
-      return false
+      return
     }
+    for (const entry of entries) {
+      if (ctx.budget <= 0) return
+      ctx.budget--
+      if (entry.isDirectory()) {
+        if (DIR_DENYLIST.has(entry.name) || entry.name.startsWith('.')) continue
+        walk(join(abs, entry.name), depth + 1)
+      } else {
+        const dot = entry.name.lastIndexOf('.')
+        if (dot > 0) exts.add(entry.name.slice(dot).toLowerCase())
+      }
+    }
+  }
+  walk(dirPath, 0)
+
+  ctx.cache.set(dirPath, exts)
+  return exts
+}
+
+function filePatternExists(dirPath: string, pattern: string, ctx: GlobScanContext): boolean {
+  if (pattern.includes('*')) {
+    // Glob pattern — search the bounded subtree, not just this dir.
+    const ext = pattern.replace('*', '').toLowerCase()
+    return collectExtensions(dirPath, ctx).has(ext)
   }
 
   // Check file or directory directly under this dir.
   return existsSync(join(dirPath, pattern))
+}
+
+// ── Code-graph evidence ────────────────────────────────────────────
+
+/**
+ * File extensions in the code-graph index that imply a technology. This is the
+ * strongest available signal: it reflects what was actually parsed in the repo
+ * rather than which marker files happened to sit near the root.
+ */
+const CODE_GRAPH_EXT_TO_TECH: Record<string, string[]> = {
+  '.cs': ['dotnet', 'csharp'],
+  '.vb': ['dotnet'],
+  '.sql': ['sql'],
+  '.ts': ['typescript'],
+  '.tsx': ['typescript'],
+  '.py': ['python'],
+  '.go': ['go'],
+  '.rs': ['rust'],
+  '.java': ['java'],
+  '.kt': ['java'],
+  '.rb': ['ruby'],
+  '.php': ['php']
+}
+
+/** Minimum indexed files of one extension before it counts as evidence. */
+const CODE_GRAPH_MIN_FILES = 5
+
+/** Confidence assigned to code-graph-derived techs (above file-marker 0.7). */
+const CODE_GRAPH_CONFIDENCE = 0.85
+
+/**
+ * Derive techs from the workspace's code-graph index. Best-effort: any DB
+ * problem (not initialised, table missing, workspace never indexed) yields an
+ * empty map rather than failing detection.
+ *
+ * Exported for unit-test inspection.
+ */
+export function detectFromCodeGraph(workspaceId: string): Map<string, number> {
+  const found = new Map<string, number>()
+  let rows: Array<{ rel_fname: string }>
+  try {
+    // Lazy require: a static `../db/index` import would drag better-sqlite3 and
+    // the `?raw` schema import into every consumer of this module (7 callers,
+    // several of which run outside an Electron/DB context).
+    // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
+    // electron-vite bundling, so detectFromCodeGraph always returns an empty
+    // map at runtime. The laziness above is a deliberate tradeoff (7 callers
+    // run outside an Electron/DB context), so the fix needs an injected
+    // accessor rather than a plain static import. Tracked separately.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
+    const { getDatabase } = require('../db/index') as typeof import('../db/index')
+    // DISTINCT collapses the many tags-per-file down to a file list, which is
+    // what the ≥N-files threshold is actually about.
+    rows = getDatabase()
+      .prepare(`SELECT DISTINCT rel_fname FROM code_graph_tags WHERE workspace_id = ?`)
+      .all(workspaceId) as Array<{ rel_fname: string }>
+  } catch (err) {
+    detectLogger.debug(`[detect:code-graph] unavailable for ${workspaceId}: ${String(err)}`)
+    return found
+  }
+
+  const histogram = new Map<string, number>()
+  for (const row of rows) {
+    const name = row.rel_fname
+    if (!name) continue
+    const dot = name.lastIndexOf('.')
+    if (dot <= 0) continue
+    const ext = name.slice(dot).toLowerCase()
+    if (!(ext in CODE_GRAPH_EXT_TO_TECH)) continue
+    histogram.set(ext, (histogram.get(ext) ?? 0) + 1)
+  }
+
+  const evidence: string[] = []
+  for (const [ext, count] of histogram) {
+    if (count < CODE_GRAPH_MIN_FILES) continue
+    evidence.push(`${ext}=${count}`)
+    for (const tech of CODE_GRAPH_EXT_TO_TECH[ext]) {
+      found.set(tech, CODE_GRAPH_CONFIDENCE)
+    }
+  }
+
+  detectLogger.info(
+    `[detect:code-graph] ${rows.length} indexed files → ${
+      evidence.length > 0 ? evidence.join(' ') : '(no qualifying extensions)'
+    } → techs: [${Array.from(found.keys()).join(', ')}]`
+  )
+  return found
 }
 
 /** Per-dir cache for package.json deps so each dir is parsed at most once per detection. */
@@ -304,17 +474,33 @@ function readPackageJsonDeps(dirPath: string, cache: Map<string, Set<string>>): 
   }
 }
 
-export function detectTechStack(workspacePath: string): TechStackResult {
+/**
+ * Detect the workspace tech stack from two independent sources:
+ *
+ *   1. Marker files under candidate dirs (glob markers searched recursively to
+ *      MAX_GLOB_DEPTH, under a shared entry budget).
+ *   2. The code-graph index, when `workspaceId` is supplied — an extension
+ *      histogram over indexed files. This is the stronger signal and the only
+ *      one that survives unusual repo layouts.
+ *
+ * `workspaceId` is optional so the six callers that have no workspace id keep
+ * working unchanged; they simply lose source 2.
+ */
+export function detectTechStack(workspacePath: string, workspaceId?: string): TechStackResult {
   const detected = new Map<string, number>()
   const depsCache = new Map<string, Set<string>>()
+  const globCtx = newGlobScanContext()
   const candidates = collectCandidateDirs(workspacePath)
+  // One aggregated diagnostic line: which dirs were probed and what each
+  // yielded. Dirs reporting '(none)' are how a mis-scoped scan shows itself.
+  const dirSummary: string[] = []
 
   for (const dir of candidates) {
     const perDirHits: string[] = []
     for (const marker of TECH_MARKERS) {
       let fileMatch = false
       for (const filePattern of marker.files) {
-        if (filePatternExists(dir, filePattern)) {
+        if (filePatternExists(dir, filePattern, globCtx)) {
           fileMatch = true
           break
         }
@@ -336,8 +522,24 @@ export function detectTechStack(workspacePath: string): TechStackResult {
         perDirHits.push(marker.tech)
       }
     }
-    if (perDirHits.length > 0) {
-      detectLogger.debug(`[detect] ${dir} → ${perDirHits.join(', ')}`)
+    const rel = dir === resolve(workspacePath) ? '.' : dir.slice(resolve(workspacePath).length + 1)
+    dirSummary.push(`${rel}=[${perDirHits.join(' ') || 'none'}]`)
+  }
+
+  detectLogger.info(
+    `[detect:dirs] ${workspacePath} — ${candidates.length} candidate(s): ${dirSummary.join(' ')}`
+  )
+
+  if (globCtx.budget <= 0) {
+    detectLogger.warn(
+      `[detect] Glob entry budget (${MAX_GLOB_ENTRIES}) exhausted — deep markers may have been missed in ${workspacePath}`
+    )
+  }
+
+  // Source 2 — code-graph evidence. Wins on confidence where it overlaps.
+  if (workspaceId) {
+    for (const [tech, conf] of detectFromCodeGraph(workspaceId)) {
+      detected.set(tech, Math.max(detected.get(tech) ?? 0, conf))
     }
   }
 
@@ -363,7 +565,7 @@ export function detectTechStack(workspacePath: string): TechStackResult {
   }
 
   detectLogger.info(
-    `Detected techs: ${detectedTechs.join(', ')} → skills: [${result.recommendedSkills.join(', ')}] mcps: [${result.recommendedMcps.join(', ')}] (scanned ${candidates.length} dirs)`
+    `Detected techs: ${detectedTechs.join(', ')} → skills: [${result.recommendedSkills.join(', ')}] mcps: [${result.recommendedMcps.join(', ')}] (scanned ${candidates.length} dirs, codeGraph=${workspaceId ? 'on' : 'off'})`
   )
 
   return result

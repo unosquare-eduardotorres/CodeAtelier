@@ -61,7 +61,8 @@ class OllamaManagerService extends EventEmitter {
           const { execSync } = await import('node:child_process')
           const result = execSync('which ollama 2>/dev/null || where ollama 2>NUL', {
             encoding: 'utf8',
-            timeout: 3000
+            timeout: 3000,
+            windowsHide: true
           }).trim()
           if (result) {
             status.installed = true
@@ -271,8 +272,11 @@ class OllamaManagerService extends EventEmitter {
         await execAsync('open -a Ollama')
       } else if (process.platform === 'win32') {
         // SVC-17: Use spawn with error handler instead of fire-and-forget exec
+        // No `detached` on Windows: DETACHED_PROCESS makes the OS ignore
+        // CREATE_NO_WINDOW (nodejs/node#21825), so the console would flash.
+        // Children already outlive the parent on Windows; unref() detaches the
+        // event loop reference.
         const child = spawn('ollama', ['serve'], {
-          detached: true,
           stdio: 'ignore',
           windowsHide: true
         })

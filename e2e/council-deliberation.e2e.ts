@@ -42,7 +42,10 @@ test.describe('Council Deliberation', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -102,7 +105,10 @@ test.describe('Council Deliberation', () => {
     if (!hasVerdict) {
       // Try opening a completed session
       const completedSessions = page.getByText(/completed/i)
-      const hasCompleted = await completedSessions.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasCompleted = await completedSessions
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       if (hasCompleted) {
         await completedSessions.first().click()
@@ -122,7 +128,10 @@ test.describe('Council Deliberation', () => {
 
     // Should show an overall score (SVG gauge or number)
     const scoreElements = verdictCard.locator('svg, [class*="font-bold"]')
-    const hasScore = await scoreElements.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasScore = await scoreElements
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
     expect(hasScore).toBeTruthy()
 
     // Should have recommendation text
@@ -217,7 +226,9 @@ test.describe('Council Deliberation', () => {
     }
 
     // Complete view should have tab navigation
-    const tabs = completeView.locator('button').filter({ hasText: /overview|advisor details|peer reviews/i })
+    const tabs = completeView
+      .locator('button')
+      .filter({ hasText: /overview|advisor details|peer reviews/i })
     const tabCount = await tabs.count()
     expect(tabCount).toBeGreaterThanOrEqual(2)
 
@@ -263,9 +274,7 @@ test.describe('Council Deliberation', () => {
 
   // ── CouncilFilterBar ──
 
-  test('CouncilFilterBar filters session history by status', async ({
-    electronPage: page
-  }) => {
+  test('CouncilFilterBar filters session history by status', async ({ electronPage: page }) => {
     await navigateToCouncil(page)
 
     const filterBar = page.locator('[data-testid="council-filter-bar"]')

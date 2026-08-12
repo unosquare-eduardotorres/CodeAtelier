@@ -180,6 +180,82 @@ describe('normalizeMessage — assistant', () => {
     const chunks = collect({ type: 'assistant' })
     assert.equal(chunks.length, 0)
   })
+
+  // Under --include-partial-messages the tool_use content_block_start carries
+  // `input: {}` (arguments stream as input_json_delta, which is not
+  // accumulated). The complete assistant message is the only place the full
+  // input arrives, so it must backfill the tracker — otherwise the tool_result
+  // chunk ships no toolInputRaw and the UI loses the file path and Edit diffs.
+  test('backfills tool input from the complete assistant message', () => {
+    const tools = new ToolTracker()
+    // 1. Partial stream: tool_use starts with an empty input.
+    collect(
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: 'tu-9', name: 'Edit', input: {} }
+        }
+      },
+      tools
+    )
+    assert.equal(tools.resolveRawInput('tu-9'), undefined, 'empty input stores nothing')
+
+    // 2. Complete assistant message carries the real arguments.
+    const input = { file_path: '/workspace/src/a.ts', old_string: 'a', new_string: 'b' }
+    collect(
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'tu-9', name: 'Edit', input }] }
+      },
+      tools
+    )
+    assert.deepEqual(JSON.parse(tools.resolveRawInput('tu-9')!), input)
+    assert.ok(tools.resolveInput('tu-9'), 'summary is backfilled too')
+
+    // 3. The tool_result then carries it downstream.
+    const chunks = collect(
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'tu-9', content: 'done' }] }
+      },
+      tools
+    )
+    assert.equal(chunks.length, 1)
+    assert.deepEqual(JSON.parse(chunks[0].toolInputRaw!), input)
+  })
+
+  test('backfill does not overwrite input captured by the streaming path', () => {
+    const tools = new ToolTracker()
+    const streamed = { file_path: '/workspace/streamed.ts', old_string: 'x', new_string: 'y' }
+    collect(
+      {
+        type: 'stream_event',
+        event: {
+          type: 'content_block_start',
+          content_block: { type: 'tool_use', id: 'tu-10', name: 'Edit', input: streamed }
+        }
+      },
+      tools
+    )
+    collect(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: 'tu-10',
+              name: 'Edit',
+              input: { file_path: '/workspace/other.ts' }
+            }
+          ]
+        }
+      },
+      tools
+    )
+    assert.deepEqual(JSON.parse(tools.resolveRawInput('tu-10')!), streamed)
+  })
 })
 
 // ── stream_event/content_block_delta ─────────────────────────────────────────
@@ -630,7 +706,9 @@ describe('normalizeMessage — result', () => {
       new TokenAccountant(),
       state,
       '/ws'
-    )) { /* consume generator for side effects on state */ }
+    )) {
+      /* consume generator for side effects on state */
+    }
     assert.equal(state.terminalReason, 'blocking_limit')
     assert.equal(state.sessionTitle, 'My Session')
     assert.equal(state.resultOrigin, 'user_prompt')
@@ -657,7 +735,9 @@ describe('normalizeMessage — result', () => {
       new TokenAccountant(),
       s,
       '/ws'
-    )) { /* consume generator */ }
+    )) {
+      /* consume generator */
+    }
     assert.equal(s.sessionTitle, 'CamelTitle')
   })
 
@@ -685,7 +765,9 @@ describe('normalizeMessage — result', () => {
       new TokenAccountant(),
       state,
       '/ws'
-    )) { /* consume generator */ }
+    )) {
+      /* consume generator */
+    }
     assert.equal(state.resultText, 'raw text output')
   })
 

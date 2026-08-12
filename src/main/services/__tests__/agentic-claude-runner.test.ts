@@ -18,13 +18,9 @@ setupElectronStub()
 
 // Dynamic require — setupElectronStub() must be called first because
 // agentic-claude-runner imports `app` from `electron`.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const {
-  buildClaudeArgs,
-  buildMinimalMcpConfig,
-  parseSentinelBlock,
-  SENTINELS
-} = require('../agentic-claude-runner') as typeof import('../agentic-claude-runner')
+
+const { buildClaudeArgs, buildMinimalMcpConfig, parseSentinelBlock, SENTINELS } =
+  require('../agentic-claude-runner') as typeof import('../agentic-claude-runner')
 
 type ClaudeArgsBuildInput = import('../agentic-claude-runner').ClaudeArgsBuildInput
 
@@ -35,7 +31,9 @@ describe('buildClaudeArgs', () => {
     configPath: '/tmp/mcp-config.json',
     prompt: 'Explore this project',
     allowedTools: [
-      'Read', 'Grep', 'Glob',
+      'Read',
+      'Grep',
+      'Glob',
       ...MCP_TOOLS.MEMORY._ALL_NAMES,
       ...MCP_TOOLS.CODE_GRAPH._ALL_NAMES
     ],
@@ -116,7 +114,10 @@ describe('buildMinimalMcpConfig', () => {
     assert.equal(mem.env.WORKSPACE_ID, 'ws-123')
     assert.ok(mem.env.DB_PATH, 'should have DB_PATH')
     assert.equal(mem.command, 'node')
-    assert.ok(mem.args[0].endsWith('memory-server.js'), `expected memory-server.js, got ${mem.args[0]}`)
+    assert.ok(
+      mem.args[0].endsWith('memory-server.js'),
+      `expected memory-server.js, got ${mem.args[0]}`
+    )
   })
 
   test('code-graph server has correct env keys', () => {
@@ -126,7 +127,10 @@ describe('buildMinimalMcpConfig', () => {
     assert.equal(cg.env.WORKSPACE_PATH, '/workspace/path')
     assert.ok(cg.env.DB_PATH, 'should have DB_PATH')
     assert.equal(cg.command, 'node')
-    assert.ok(cg.args[0].endsWith('code-graph-server.js'), `expected code-graph-server.js, got ${cg.args[0]}`)
+    assert.ok(
+      cg.args[0].endsWith('code-graph-server.js'),
+      `expected code-graph-server.js, got ${cg.args[0]}`
+    )
   })
 
   test('can include only code-graph server', () => {

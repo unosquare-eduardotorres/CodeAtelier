@@ -18,9 +18,7 @@ import {
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type {
-  StructuredPlan
-} from '../../../../../shared/types'
+import type { StructuredPlan } from '../../../../../shared/types'
 import { usePlanStore } from '@renderer/store/plan.store'
 import { usePlanActions } from './usePlanActions'
 import { useWorkspaceStore } from '@renderer/store'
@@ -206,8 +204,7 @@ export default function PlanDetailPage({
                   onBack()
                 },
                 onOpenConversation: () =>
-                  plan.linkedConversationId &&
-                  handleOpenConversation(plan.linkedConversationId)
+                  plan.linkedConversationId && handleOpenConversation(plan.linkedConversationId)
               }}
             />
           </div>
@@ -321,9 +318,7 @@ export default function PlanDetailPage({
         )}
 
         {/* ── Linked Resources ── */}
-        {(plan.linkedConversationId ||
-          plan.linkedCouncilSessionId ||
-          plan.linkedMpaRunId) && (
+        {(plan.linkedConversationId || plan.linkedCouncilSessionId || plan.linkedMpaRunId) && (
           <section>
             <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2">
               Linked Resources
@@ -364,7 +359,8 @@ export default function PlanDetailPage({
             <>
               <span className="mx-2">·</span>
               <span title={plan.completedAt}>
-                {plan.status === 'archived' ? 'Archived' : 'Completed'} {formatRelativeDate(plan.completedAt)}
+                {plan.status === 'archived' ? 'Archived' : 'Completed'}{' '}
+                {formatRelativeDate(plan.completedAt)}
               </span>
             </>
           )}

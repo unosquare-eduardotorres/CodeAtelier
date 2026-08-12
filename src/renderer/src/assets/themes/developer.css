@@ -2,7 +2,7 @@
    Developer — "Tokyo One": Cool blue-dark foundations, refined desaturated
    accents. Inspired by Tokyo Night × One Dark Pro. Professional focus.
    ═══════════════════════════════════════════════════════════════════════════ */
-[data-theme="developer"] {
+[data-theme='developer'] {
   /* ── Surface layers (cool blue-gray, NOT neutral gray) ── */
   --color-surface-base: #1a1b26;
   --color-surface-raised: #1f2133;

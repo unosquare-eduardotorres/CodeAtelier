@@ -19,9 +19,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Chat Sidebar', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -46,12 +44,20 @@ test.describe('Chat Sidebar', () => {
     return true
   }
 
-  test('chat sidebar renders with conversation list or empty state', async ({ electronPage: page }) => {
+  test('chat sidebar renders with conversation list or empty state', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToChats(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const sidebar = page.locator('[data-testid="chat-sidebar"]')
     const hasSidebar = await sidebar.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -80,10 +86,16 @@ test.describe('Chat Sidebar', () => {
 
   test('new chat button creates a conversation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToChats(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Find the new chat button
     const newChatBtn = page.locator('[data-testid="chat-new-btn"]')
@@ -93,7 +105,10 @@ test.describe('Chat Sidebar', () => {
     if (!hasBtn) {
       const fallbackBtn = page.locator('[aria-label="New chat"]').first()
       hasBtn = await fallbackBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-      if (!hasBtn) { test.skip(); return }
+      if (!hasBtn) {
+        test.skip()
+        return
+      }
       await fallbackBtn.click()
     } else {
       await newChatBtn.click()
@@ -113,15 +128,24 @@ test.describe('Chat Sidebar', () => {
 
   test('clicking a conversation selects it and loads messages', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToChats(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Find a chat item to click
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Click the first chat item
     await chatItems.first().click()
@@ -135,15 +159,24 @@ test.describe('Chat Sidebar', () => {
 
   test('delete conversation shows confirmation dialog', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToChats(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Find a chat item with a delete button
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Hover over the first chat item to reveal action buttons
     const firstItem = chatItems.first()
@@ -153,7 +186,10 @@ test.describe('Chat Sidebar', () => {
     // Find the delete button (trash icon) via aria-label
     const deleteBtn = firstItem.locator('[aria-label*="Delete conversation"]').first()
     const hasDelete = await deleteBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasDelete) { test.skip(); return }
+    if (!hasDelete) {
+      test.skip()
+      return
+    }
 
     await deleteBtn.click()
     await page.waitForTimeout(800)
@@ -171,15 +207,24 @@ test.describe('Chat Sidebar', () => {
 
   test('rename conversation updates title inline', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToChats(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     // Find a chat item
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
-    if (itemCount === 0) { test.skip(); return }
+    if (itemCount === 0) {
+      test.skip()
+      return
+    }
 
     // Hover to reveal rename button
     const firstItem = chatItems.first()
@@ -188,7 +233,10 @@ test.describe('Chat Sidebar', () => {
 
     const renameBtn = firstItem.locator('[aria-label*="Rename conversation"]').first()
     const hasRename = await renameBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasRename) { test.skip(); return }
+    if (!hasRename) {
+      test.skip()
+      return
+    }
 
     await renameBtn.click()
     await page.waitForTimeout(500)
@@ -207,19 +255,31 @@ test.describe('Chat Sidebar', () => {
 
   test('sidebar collapse button hides conversation list', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToChats(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const sidebar = page.locator('[data-testid="chat-sidebar"]')
     const hasSidebar = await sidebar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasSidebar) { test.skip(); return }
+    if (!hasSidebar) {
+      test.skip()
+      return
+    }
 
     // Click the collapse button
     const collapseBtn = page.locator('[aria-label="Collapse sidebar"]')
     const hasCollapse = await collapseBtn.isVisible({ timeout: 2_000 }).catch(() => false)
-    if (!hasCollapse) { test.skip(); return }
+    if (!hasCollapse) {
+      test.skip()
+      return
+    }
 
     await collapseBtn.click()
     await page.waitForTimeout(800)

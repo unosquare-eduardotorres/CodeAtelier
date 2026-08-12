@@ -99,7 +99,8 @@ export default function BlueprintPhaseStream({
   // Time since last chunk (clamp to 0 — chunk timestamps can race the 1s tick)
   const lastActivityAgo = lastChunkAt ? Math.max(0, now - lastChunkAt) : null
   // Stale detection — B5-FIX: suppress when awaiting user action
-  const isStale = isRunning && !awaitingUser && lastActivityAgo !== null && lastActivityAgo > STALE_THRESHOLD_MS
+  const isStale =
+    isRunning && !awaitingUser && lastActivityAgo !== null && lastActivityAgo > STALE_THRESHOLD_MS
 
   // Extract tool events from stream events
   const toolEvents = streamEvents?.filter((e) => e.kind === 'tool') ?? []
@@ -115,9 +116,7 @@ export default function BlueprintPhaseStream({
         {isRunning && (
           <span
             className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-              isPinned
-                ? 'bg-success-muted text-success'
-                : 'bg-surface-float text-text-muted'
+              isPinned ? 'bg-success-muted text-success' : 'bg-surface-float text-text-muted'
             }`}
           >
             {isPinned ? '● Live' : 'Paused'}
@@ -126,9 +125,7 @@ export default function BlueprintPhaseStream({
 
         {/* Right side: elapsed, copy, activity */}
         <div className="ml-auto flex items-center gap-3 text-[10px] text-text-muted">
-          {elapsed !== null && (
-            <span className="tabular-nums">{formatElapsed(elapsed)}</span>
-          )}
+          {elapsed !== null && <span className="tabular-nums">{formatElapsed(elapsed)}</span>}
           {isRunning && lastActivityAgo !== null && (
             <span className={isStale ? 'text-warning' : ''}>
               last activity {formatElapsed(lastActivityAgo)} ago
@@ -172,14 +169,12 @@ export default function BlueprintPhaseStream({
       )}
 
       <div className="relative flex-1 min-h-0 overflow-hidden">
-        <div
-          ref={scrollRef}
-          className="overflow-y-auto h-full p-4"
-        >
+        <div ref={scrollRef} className="overflow-y-auto h-full p-4">
           {displayText ? (
             <div className="space-y-1">
               {/* B4-FIX: Render displayText (stripped of fenced blocks for clarify) */}
-              <div className="prose prose-sm max-w-none text-text-body
+              <div
+                className="prose prose-sm max-w-none text-text-body
                 prose-headings:text-text-primary prose-headings:font-semibold
                 prose-p:leading-relaxed prose-p:text-sm
                 prose-code:font-mono prose-code:text-xs prose-code:bg-surface-base prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-accent prose-code:before:content-none prose-code:after:content-none
@@ -188,7 +183,8 @@ export default function BlueprintPhaseStream({
                 prose-a:text-accent prose-a:no-underline hover:prose-a:underline
                 prose-li:text-sm prose-li:text-text-body
                 prose-th:text-text-secondary prose-td:text-text-body
-              ">
+              "
+              >
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                   {displayText}
                 </ReactMarkdown>
@@ -209,7 +205,9 @@ export default function BlueprintPhaseStream({
               )}
             </div>
           ) : (
-            <span className="text-text-muted text-sm animate-pulse">Waiting for agent output...</span>
+            <span className="text-text-muted text-sm animate-pulse">
+              Waiting for agent output...
+            </span>
           )}
         </div>
         <ScrollToBottomButton visible={!isPinned} onClick={scrollToBottom} />

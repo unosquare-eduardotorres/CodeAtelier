@@ -273,7 +273,10 @@ test.describe('Agent Team Management', () => {
 
     // Look for dropzone content (drag-and-drop area)
     const dropzone = page.getByText(/drag|drop|import/i)
-    const hasDropzone = await dropzone.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasDropzone = await dropzone
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     expect(hasDropzone).toBeTruthy()
 
     // Click again to close

@@ -24,18 +24,45 @@ if (!env) {
   describe('CodeGraphTagRepository', () => {
     test('upsertTags() inserts tags for workspace', () => {
       const tags = [
-        { relFname: 'src/a.ts', fname: '/project/src/a.ts', line: 10, name: 'MyClass', kind: 'def' as const },
-        { relFname: 'src/a.ts', fname: '/project/src/a.ts', line: 20, name: 'MyClass', kind: 'ref' as const },
-        { relFname: 'src/b.ts', fname: '/project/src/b.ts', line: 5, name: 'helper', kind: 'def' as const }
+        {
+          relFname: 'src/a.ts',
+          fname: '/project/src/a.ts',
+          line: 10,
+          name: 'MyClass',
+          kind: 'def' as const
+        },
+        {
+          relFname: 'src/a.ts',
+          fname: '/project/src/a.ts',
+          line: 20,
+          name: 'MyClass',
+          kind: 'ref' as const
+        },
+        {
+          relFname: 'src/b.ts',
+          fname: '/project/src/b.ts',
+          line: 5,
+          name: 'helper',
+          kind: 'def' as const
+        }
       ]
-      const mtimes = new Map([['src/a.ts', 1000], ['src/b.ts', 2000]])
+      const mtimes = new Map([
+        ['src/a.ts', 1000],
+        ['src/b.ts', 2000]
+      ])
       // Should not throw
       tagRepo.upsertTags(wsId, tags, mtimes)
     })
 
     test('findDefsByWorkspace() returns only def tags', () => {
       const tags = [
-        { relFname: 'src/def.ts', fname: '/def.ts', line: 1, name: 'defOnly', kind: 'def' as const },
+        {
+          relFname: 'src/def.ts',
+          fname: '/def.ts',
+          line: 1,
+          name: 'defOnly',
+          kind: 'def' as const
+        },
         { relFname: 'src/def.ts', fname: '/def.ts', line: 5, name: 'refOnly', kind: 'ref' as const }
       ]
       tagRepo.upsertTags(wsId, tags, new Map([['src/def.ts', 1000]]))
@@ -46,19 +73,59 @@ if (!env) {
 
     test('upsertTags() replaces old tags for same file', () => {
       // Insert initial
-      tagRepo.upsertTags(wsId, [
-        { relFname: 'src/replace.ts', fname: '/r.ts', line: 1, name: 'Old', kind: 'def' as const }
-      ], new Map([['src/replace.ts', 1000]]))
+      tagRepo.upsertTags(
+        wsId,
+        [
+          { relFname: 'src/replace.ts', fname: '/r.ts', line: 1, name: 'Old', kind: 'def' as const }
+        ],
+        new Map([['src/replace.ts', 1000]])
+      )
 
       // Replace
-      tagRepo.upsertTags(wsId, [
-        { relFname: 'src/replace.ts', fname: '/r.ts', line: 1, name: 'New', kind: 'def' as const }
-      ], new Map([['src/replace.ts', 2000]]))
+      tagRepo.upsertTags(
+        wsId,
+        [
+          { relFname: 'src/replace.ts', fname: '/r.ts', line: 1, name: 'New', kind: 'def' as const }
+        ],
+        new Map([['src/replace.ts', 2000]])
+      )
 
       const defs = tagRepo.findDefsByWorkspace(wsId)
       const replaced = defs.filter((t: any) => t.relFname === 'src/replace.ts')
       assert.equal(replaced.length, 1)
       assert.equal(replaced[0].name, 'New')
+    })
+
+    test('hasUntypedIndex() detects a pre-v130 index and clears once kinds land', () => {
+      // Own workspace: the mtime cache bypass keys off this answer, so it must
+      // not be perturbed by tags other tests left behind.
+      const { seedWorkspace } = require('./db-test-helper')
+      const ws = seedWorkspace(env.db, 'ws-untyped-index')
+
+      assert.equal(tagRepo.hasUntypedIndex(ws), false, 'an empty workspace is not an untyped index')
+
+      tagRepo.upsertTags(
+        ws,
+        [{ relFname: 'src/a.ts', fname: '/a.ts', line: 1, name: 'A', kind: 'def' as const }],
+        new Map([['src/a.ts', 1000]])
+      )
+      assert.equal(tagRepo.hasUntypedIndex(ws), true, 'defs with no symbol_kind owe a re-parse')
+
+      tagRepo.upsertTags(
+        ws,
+        [
+          {
+            relFname: 'src/a.ts',
+            fname: '/a.ts',
+            line: 1,
+            name: 'A',
+            kind: 'def' as const,
+            symbolKind: 'class'
+          }
+        ],
+        new Map([['src/a.ts', 2000]])
+      )
+      assert.equal(tagRepo.hasUntypedIndex(ws), false, 'a typed index must not re-parse forever')
     })
   })
 
@@ -111,14 +178,16 @@ if (!env) {
         .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
         .run(freshWs, 'Edge Del', '/tmp/edge-del')
 
-      edgeRepo.upsertEdges(freshWs, [{
-        workspaceId: freshWs,
-        sourceFile: 'src/x.ts',
-        sourceSymbol: 'x',
-        targetFile: 'src/y.ts',
-        targetSymbol: 'y',
-        edgeType: 'calls' as const
-      }])
+      edgeRepo.upsertEdges(freshWs, [
+        {
+          workspaceId: freshWs,
+          sourceFile: 'src/x.ts',
+          sourceSymbol: 'x',
+          targetFile: 'src/y.ts',
+          targetSymbol: 'y',
+          edgeType: 'calls' as const
+        }
+      ])
       const count = edgeRepo.deleteByWorkspace(freshWs)
       assert.ok(count >= 1)
     })
@@ -173,7 +242,13 @@ if (!env) {
         .prepare('INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
         .run(freshWs, 'Rank Replace', '/tmp/rank-replace')
 
-      rankRepo.upsertRanks(freshWs, new Map([['a.ts', 0.1], ['b.ts', 0.2]]))
+      rankRepo.upsertRanks(
+        freshWs,
+        new Map([
+          ['a.ts', 0.1],
+          ['b.ts', 0.2]
+        ])
+      )
       rankRepo.upsertRanks(freshWs, new Map([['c.ts', 0.3]]))
       const found = rankRepo.findByWorkspace(freshWs)
       // After replacement, only c.ts should exist
@@ -205,14 +280,16 @@ if (!env) {
 
     test('upsertEmbeddings() stores embeddings', () => {
       // First create a code chunk to satisfy FK
-      env.db.prepare(`
+      env.db
+        .prepare(
+          `
         INSERT OR IGNORE INTO code_chunks (id, workspace_id, file_path, file_name, directory, symbol_name, symbol_kind, signature, start_line, end_line, language, body, embed_text, is_public, is_async, has_docstring, line_count, file_mtime)
         VALUES ('chunk-emb-1', ?, 'src/emb.ts', 'emb.ts', 'src', 'fn', 'function', 'fn()', 1, 10, 'typescript', 'body', 'embed text', 1, 0, 0, 10, 1000)
-      `).run(wsId)
+      `
+        )
+        .run(wsId)
 
-      const entries = [
-        { chunkId: 'chunk-emb-1', embedding: [0.1, 0.2, 0.3], model: 'test-model' }
-      ]
+      const entries = [{ chunkId: 'chunk-emb-1', embedding: [0.1, 0.2, 0.3], model: 'test-model' }]
       embeddingRepo.upsertEmbeddings(wsId, entries)
     })
 
@@ -232,10 +309,14 @@ if (!env) {
         .run(freshWs, 'Emb Del', '/tmp/emb-del')
 
       // Create chunk + embedding
-      env.db.prepare(`
+      env.db
+        .prepare(
+          `
         INSERT OR IGNORE INTO code_chunks (id, workspace_id, file_path, file_name, directory, symbol_name, symbol_kind, signature, start_line, end_line, language, body, embed_text, is_public, is_async, has_docstring, line_count, file_mtime)
         VALUES ('chunk-del-1', ?, 'src/del.ts', 'del.ts', 'src', 'fn', 'function', 'fn()', 1, 5, 'typescript', 'body', 'text', 1, 0, 0, 5, 1000)
-      `).run(freshWs)
+      `
+        )
+        .run(freshWs)
       embeddingRepo.upsertEmbeddings(freshWs, [
         { chunkId: 'chunk-del-1', embedding: [0.5], model: 'test' }
       ])

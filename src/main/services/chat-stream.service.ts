@@ -1,5 +1,10 @@
 import type { BrowserWindow } from 'electron'
-import { conversationRepository, messageRepository, workspaceRepository, appPreferenceRepository } from '../db/repositories'
+import {
+  conversationRepository,
+  messageRepository,
+  workspaceRepository,
+  appPreferenceRepository
+} from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -10,8 +15,13 @@ import type {
   AgentIntent,
   GrillQuestion,
   ImageAttachment,
+  PermissionOutcome,
   PlanDetectedEvent
 } from '../../shared/types'
+import {
+  PERMISSION_CANCELLED_MESSAGE,
+  PERMISSION_TIMEOUT_MESSAGE
+} from '../../shared/permission-messages'
 import { memoryExtractionService } from './memory-extraction.service'
 import { memoryRetrievalService } from './memory-retrieval.service'
 import { eventLoggerService } from './event-logger.service'
@@ -39,17 +49,31 @@ import { hookEngine } from './hook-engine.service'
 import { planRegistryService } from './plan-registry.service'
 import { promptOptimizerService } from './prompt-optimizer.service'
 import { backgroundCliSession } from './background-cli-session'
+import { trackService, primaryTreeLock, primaryTreeBusyError } from './track.service'
+import { trackRepository } from '../db/repositories/track.repository'
+import { resolveLentHolder, lentBranchRefusal, type LentBranchHolder } from './lent-branch'
 
 const log = chatIpcLogger
 
 /**
  * Maximum number of concurrent cross-conversation streams.
- * Set to 1 until Phase 2 lands per-conversation execution isolation
- * (conversationId-tagged chunk/complete events, per-conversation
- * getStreamedContent, per-conversation switchMode/compact).
- * Flip to Infinity when Phase 2 is complete.
+ * Phase 2 complete — per-conversation execution isolation in place:
+ *   - activeStreams Map (accumulatedText + abortController per conversation)
+ *   - per-conversation CLIExecutors
+ *   - per-conversation ACK tracking
+ *   - per-conversation cancel + getStreamedContent
+ * Start with 3 as a resource safety valve (each stream spawns a claude CLI process).
  */
-const MAX_CONCURRENT_STREAMS = 1
+const MAX_CONCURRENT_STREAMS = 3
+
+/** How often the orphan sweep looks for busy conversations with no live stream. */
+const ORPHAN_SWEEP_INTERVAL_MS = 60_000
+
+/**
+ * Minimum age before a busy conversation can be swept. Covers the legitimate
+ * window between acquiring the lock and the lifecycle becoming observable.
+ */
+const ORPHAN_MIN_AGE_MS = 2 * 60_000
 
 // ── StreamContext — explicit per-stream state bag ──
 
@@ -62,6 +86,8 @@ interface StreamContext {
   readonly specialistMeta: { specialist: string; taskId?: string } | undefined
   readonly adapterAgentId: string
   readonly workspacePath: string | undefined
+  /** Workspace this stream belongs to — captured at stream start for workspace-scoped lookups. */
+  readonly workspaceId: string | null
   /** HEAD sha captured at stream start — for memory extraction git delta. */
   readonly startSha: string | undefined
   /** Accumulated streamed content — mutable, shared across listeners. */
@@ -106,6 +132,10 @@ export class ChatStreamService {
 
   /** Per-conversation streaming locks — rejects if that conversation is already streaming */
   private streamingLocks = new Set<string>()
+  /** When each conversation acquired its lock — drives orphan-sweep age checks. */
+  private lockAcquiredAt = new Map<string, number>()
+  /** Periodic orphan sweep handle (see startOrphanSweep). */
+  private orphanSweepTimer: ReturnType<typeof setInterval> | null = null
   /** Per-conversation active request IDs */
   private activeRequestIds = new Map<string, string>()
 
@@ -113,7 +143,7 @@ export class ChatStreamService {
   private injectedFactIds = new Map<string, Set<string>>()
 
   /** Per-stream identity — set at stream() start, cleared on cleanup. */
-  private currentStreamingRole: 'specialist' = 'specialist'
+  private currentStreamingRole = 'specialist' as const
 
   /**
    * Keepalive timer — sends periodic IPC events to the renderer during streaming.
@@ -143,6 +173,7 @@ export class ChatStreamService {
     this.callbacks = callbacks
     this.intentRouter = new IntentRouter(mainWindow)
     this.registerEventForwarders()
+    this.startOrphanSweep()
   }
 
   /**
@@ -178,7 +209,18 @@ export class ChatStreamService {
   /** Resolve a workspace name from its ID (for permission toast labels). */
   private resolveWorkspaceName(workspaceId: string): string {
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy load avoids db/repositories circular dependency
+      // KNOWN BROKEN IN PACKAGED BUILDS — this relative require() does not
+      // survive electron-vite bundling, so permission toasts fall back to the
+      // 8-hex id prefix at runtime. Duplicates ipc/resolve-workspace-name,
+      // which has already been converted to a static import.
+      //
+      // NOT converted here: chat-stream.service is a circular-import
+      // participant, and binding the repository at module-load time instead of
+      // call time breaks the mock in chat-stream-body-p26.test.ts. The
+      // load-order fix (evictFromCache) re-executes half of the cycle and fails
+      // 4 further tests — the hazard setup-full-mock's restoreFullMock() notes
+      // call out by name. Needs the M9 setter-injection pattern. Tracked separately.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
       const { workspaceRepository } = require('../db/repositories')
       const workspace = workspaceRepository.findById(workspaceId)
       return workspace?.name ?? workspaceId.slice(0, 8)
@@ -188,18 +230,36 @@ export class ChatStreamService {
   }
 
   /**
+   * Resolve the workspace that owns a conversation.
+   *
+   * Used for the CHAT_MESSAGE_COMPLETE payload on the paths that have no
+   * StreamContext (release + stop). The renderer cannot fall back to its own
+   * active workspace: a background stream may complete after the user has
+   * already switched workspaces.
+   */
+  private resolveConversationWorkspaceId(conversationId: string): string | undefined {
+    try {
+      return conversationRepository.findById(conversationId)?.workspaceId
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
    * Resolve the conversation ID that is currently streaming.
    *
-   * PHASE-2-READY: Uses the authoritative streamingLocks Set instead of the
-   * global chatAgentService.getCurrentConversationId() which returns the
-   * *active UI* conversation — not necessarily the *streaming* one.
-   * With MAX_CONCURRENT_STREAMS = 1, the Set has at most one entry.
-   * When Phase 2 multi-stream lands, events must carry conversationId in
-   * their payload and this helper should be removed.
+   * Phase 2 note: Uses chatAgentService.getCurrentConversationId() as the
+   * primary source — bridge events (plan, askUser, elicitation) are inherently
+   * tied to the lastActiveConversationId. Falls back to the most recently
+   * acquired streaming lock, then empty string.
    */
   private resolveStreamingConversationId(): string {
-    const [first] = this.streamingLocks
-    return first ?? chatAgentService.getCurrentConversationId() ?? ''
+    // WRONG-STREAM-01: Use getCurrentConversationId() as the primary source.
+    // Bridge events (plan, askUser, elicitation) from chatAgentService are inherently
+    // tied to the lastActiveConversationId's stream processing. With multiple
+    // concurrent streams, the first streamingLocks entry (Set insertion order) is
+    // arbitrary and may attribute events to the wrong conversation.
+    return chatAgentService.getCurrentConversationId() ?? [...this.streamingLocks].pop() ?? ''
   }
 
   private registerEventForwarders(): void {
@@ -391,12 +451,20 @@ export class ChatStreamService {
     chatAgentService.on('askQuestion:ws', onAskQuestionWs)
     this.eventCleanups.push(() => chatAgentService.off('askQuestion:ws', onAskQuestionWs))
 
-    // Tool permission requests — route to toast UI for all workspaces.
-    // Unlike askQuestion (inline for active workspace), tool permissions always
-    // use the toast flow because they need explicit approve/deny, not free-text.
+    // Tool permission requests — the renderer routes on conversationId: the
+    // active conversation gets an inline card in the transcript, everything else
+    // toasts. A toast that auto-dismisses leaves no evidence when an approval
+    // fails to resume the turn, which is why the conversation is carried here.
     const onPermissionRequestWs = (
       workspaceId: string,
-      data: { toolName?: string; inputSummary?: string; requestId?: string; input?: Record<string, unknown> }
+      data: {
+        toolName?: string
+        inputSummary?: string
+        requestId?: string
+        input?: Record<string, unknown>
+        /** Mode the control-actions server is actually enforcing. */
+        serverMode?: string
+      }
     ): void => {
       try {
         const router = getSessionEventRouter()
@@ -410,9 +478,19 @@ export class ChatStreamService {
           try {
             const conv = conversationRepository.findById(conversationId)
             conversationTitle = conv?.title
-          } catch { /* non-critical */ }
+          } catch {
+            /* non-critical */
+          }
         }
         const mode = session?.getMode()
+
+        // Two sources of truth for the mode: the live session and the spawn-time
+        // env the control-actions server enforces. Them drifting apart is what
+        // made every shell command prompt after a Plan → Build switch, and it was
+        // invisible until now.
+        if (data.serverMode && data.serverMode !== mode) {
+          log.warn(`[permission] mode drift — session=${mode} controlActions=${data.serverMode}`)
+        }
 
         router.sendPermissionRequest({
           id: `perm-${data.requestId ?? Date.now()}`,
@@ -422,6 +500,7 @@ export class ChatStreamService {
           toolName,
           toolInput: data.input,
           conversationTitle,
+          conversationId: conversationId ?? undefined,
           mode,
           summary: `Agent wants to use ${toolName}${data.inputSummary ? `: ${data.inputSummary}` : ''}`,
           isSimple: true,
@@ -433,7 +512,198 @@ export class ChatStreamService {
       }
     }
     chatAgentService.on('permissionRequest:ws', onPermissionRequestWs)
-    this.eventCleanups.push(() => chatAgentService.off('permissionRequest:ws', onPermissionRequestWs))
+    this.eventCleanups.push(() =>
+      chatAgentService.off('permissionRequest:ws', onPermissionRequestWs)
+    )
+
+    // Terminal state for a permission request. Until this existed the renderer
+    // only ever learned an outcome from its own click, so a request that died
+    // with its turn left the modal/toast/card frozen on "waiting for the agent".
+    const onPermissionResolvedWs = (
+      workspaceId: string,
+      data: { requestId?: string; outcome?: PermissionOutcome; conversationId?: string }
+    ): void => {
+      const requestId = data.requestId
+      const outcome = data.outcome
+      if (!requestId || !outcome) return
+      try {
+        getSessionEventRouter().sendPermissionResolved({
+          // Must match the id minted in onPermissionRequestWs.
+          permissionId: `perm-${requestId}`,
+          requestId,
+          workspaceId,
+          conversationId: data.conversationId,
+          outcome
+        })
+      } catch {
+        // SessionEventRouter not yet initialized
+      }
+      // A request that was never answered leaves no other trace in the
+      // transcript — the tool simply never ran. Persist why.
+      if ((outcome === 'timedout' || outcome === 'cancelled') && data.conversationId) {
+        try {
+          messageRepository.create(
+            data.conversationId,
+            'specialist',
+            outcome === 'timedout' ? PERMISSION_TIMEOUT_MESSAGE : PERMISSION_CANCELLED_MESSAGE
+          )
+        } catch (err) {
+          log.warn('[permission-resolved] Failed to persist the outcome message:', err)
+        }
+      }
+    }
+    chatAgentService.on('permissionResolved:ws', onPermissionResolvedWs)
+    this.eventCleanups.push(() =>
+      chatAgentService.off('permissionResolved:ws', onPermissionResolvedWs)
+    )
+  }
+
+  // ── Busy-state authority ─────────────────────────────────────────
+
+  /**
+   * Why a conversation is considered busy, or null when it is free.
+   *
+   * "Busy" is three independent pieces of state: the lock, the state machine,
+   * and the lifecycle registry. They are set together but were released on
+   * different paths, so they could — and did — diverge. `acquireStreamLock`
+   * rejected on the union of them while both stall watchdogs only ever tested
+   * `streamingLocks`. A conversation left non-idle in the state machine with
+   * its lock already released therefore blocked every future send while no
+   * timer would ever fire: permanently wedged, recoverable only by switching
+   * workspaces (the one caller of `forceResetIfStuck`).
+   *
+   * Every guard now asks this one question, so no watchdog can test a narrower
+   * condition than the one that rejects users.
+   */
+  private describeBusy(conversationId: string): string | null {
+    const reasons: string[] = []
+    if (this.streamingLocks.has(conversationId)) reasons.push('lock')
+    if (!conversationStateMachine.isIdle(conversationId)) {
+      reasons.push(`sm=${conversationStateMachine.getState(conversationId)}`)
+    }
+    if (lifecycleRegistry.get(conversationId)?.isActive) reasons.push('lifecycle')
+    return reasons.length > 0 ? reasons.join('+') : null
+  }
+
+  /** Whether a conversation is busy by any of the three measures. */
+  isConversationBusy(conversationId: string): boolean {
+    return this.describeBusy(conversationId) !== null
+  }
+
+  /**
+   * Release every piece of per-conversation streaming state, in the order that
+   * leaves nothing behind: abort the lifecycle (which runs disposers and force-
+   * resets the state machine), then clear anything a disposer could have
+   * missed. Idempotent — safe to call on an already-free conversation.
+   *
+   * Returns true if the conversation had been busy.
+   */
+  releaseConversation(conversationId: string, reason: string, requestId?: string): boolean {
+    const busy = this.describeBusy(conversationId)
+    if (!busy) return false
+
+    // Captured before the maps are cleared below — the renderer matches the
+    // completion event on requestId and ignores it if it doesn't line up.
+    const effectiveRequestId = requestId ?? this.activeRequestIds.get(conversationId) ?? ''
+
+    log.warn(
+      `[STREAM:release] Releasing conversation ${conversationId} (was ${busy}) — reason=${reason}`
+    )
+    // completeStreamMetrics takes a closed outcome union; release reasons are
+    // finer-grained, so fold them onto the nearest recorded outcome.
+    const outcome =
+      reason === 'safety-timeout'
+        ? 'timeout'
+        : reason === 'max-lifetime'
+          ? 'max-lifetime'
+          : reason === 'user-force-release'
+            ? 'stopped'
+            : 'aborted'
+    completeStreamMetrics(conversationId, outcome)
+
+    try {
+      lifecycleRegistry.abort(conversationId, reason)
+    } catch (err) {
+      log.warn('[STREAM:release] lifecycle abort failed:', err)
+    }
+    // Belt-and-braces: the lifecycle only force-resets the state machine when it
+    // had an active controller, and its disposers only clear the lock if they
+    // were registered. Neither is guaranteed for a half-torn-down conversation.
+    conversationStateMachine.forceReset(conversationId)
+    this.streamingLocks.delete(conversationId)
+    this.activeRequestIds.delete(conversationId)
+    this.lockAcquiredAt.delete(conversationId)
+    this.safetyTimerResets.delete(conversationId)
+    const kt = this.keepaliveTimers.get(conversationId)
+    if (kt) {
+      clearInterval(kt)
+      this.keepaliveTimers.delete(conversationId)
+    }
+
+    // Let the renderer clear its own streaming flags — without this the input
+    // stays disabled even though main is now free.
+    this.safeWindowSend(
+      IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
+      createCompleteMessage({
+        conversationId,
+        messageId: `released-${Date.now()}`,
+        requestId: effectiveRequestId,
+        workspaceId: this.resolveConversationWorkspaceId(conversationId)
+      })
+    )
+    return true
+  }
+
+  /**
+   * Periodically release conversations that are busy but have no live stream
+   * behind them.
+   *
+   * The per-stream watchdogs are registered by a running stream and die with
+   * it, so they cannot recover state that outlives the stream that created it.
+   * This sweep is the backstop for exactly that case.
+   */
+  private startOrphanSweep(): void {
+    if (this.orphanSweepTimer) return
+    this.orphanSweepTimer = setInterval(() => {
+      try {
+        this.sweepOrphanedConversations()
+      } catch (err) {
+        log.warn('[STREAM:orphan-sweep] sweep failed:', err)
+      }
+    }, ORPHAN_SWEEP_INTERVAL_MS)
+    this.orphanSweepTimer.unref?.()
+  }
+
+  /**
+   * One sweep pass. A conversation is orphaned when the state machine still
+   * calls it streaming but no lifecycle is active for it — nothing is going to
+   * produce another chunk, so the busy state can never clear on its own.
+   *
+   * Exposed for tests.
+   */
+  sweepOrphanedConversations(): string[] {
+    const released: string[] = []
+    const candidates = new Set<string>([
+      ...conversationStateMachine.activeStreamingIds(),
+      ...this.streamingLocks
+    ])
+
+    for (const conversationId of candidates) {
+      if (lifecycleRegistry.get(conversationId)?.isActive) continue // real stream
+
+      // Grace period: a conversation mid-handoff between acquire and the first
+      // chunk legitimately has no active lifecycle for a brief window.
+      const acquiredAt = this.lockAcquiredAt.get(conversationId)
+      if (acquiredAt !== undefined && Date.now() - acquiredAt < ORPHAN_MIN_AGE_MS) continue
+
+      log.warn(
+        `[STREAM:orphan-sweep] Conversation ${conversationId} is busy with no active lifecycle — releasing`
+      )
+      if (this.releaseConversation(conversationId, 'orphan-sweep')) {
+        released.push(conversationId)
+      }
+    }
+    return released
   }
 
   // ── Extracted Lifecycle Methods ──
@@ -451,18 +721,18 @@ export class ChatStreamService {
     done: Promise<void>
   } {
     // Per-conversation lock: only reject if THIS conversation is already streaming
-    if (this.streamingLocks.has(conversationId) || !conversationStateMachine.isIdle(conversationId)) {
-      log.warn(`[STREAM:concurrent-rejected] Conversation ${conversationId} is already streaming`)
+    const busy = this.describeBusy(conversationId)
+    if (busy) {
+      log.warn(
+        `[STREAM:concurrent-rejected] Conversation ${conversationId} is already streaming (${busy})`
+      )
       throw new Error(
         'A message is already being processed in this chat. Please wait for it to complete or stop it first.'
       )
     }
 
-    // A1-FIX: Interim cross-conversation concurrency gate.
-    // Until Phase 2 lands per-conversation execution isolation, reject if
-    // another conversation is already streaming. Prevents the corruption
-    // path where shared global state (accumulatedText, sdkAbortController,
-    // single CLIExecutor) is interleaved between two streams.
+    // Phase-2: Resource limit gate — reject when at max concurrent streams.
+    // Each stream spawns a separate claude CLI process (CPU + memory cost).
     const activeStreams = lifecycleRegistry.active()
     if (
       activeStreams.length >= MAX_CONCURRENT_STREAMS &&
@@ -470,15 +740,12 @@ export class ChatStreamService {
     ) {
       const busyConvId = activeStreams[0]?.conversationId ?? 'unknown'
       log.warn(
-        `[STREAM:cross-conv-rejected] conversationId=${conversationId} ` +
-          `blocked by active stream in ${busyConvId} (MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS})`
+        `[STREAM:resource-limit] conversationId=${conversationId} ` +
+          `blocked — ${activeStreams.length} active streams (MAX_CONCURRENT_STREAMS=${MAX_CONCURRENT_STREAMS})`
       )
-      // F6-FIX: Include the blocking conversationId so the renderer can
-      // tell the user which chat is busy (e.g. map to a conversation title).
-      // The `(blockedBy:<uuid>)` tag is parsed by parseBlockedByError() in
-      // renderer/src/store/chat-action-utils.ts — keep the format in sync.
       throw new Error(
-        `Another chat is still processing. Please wait for it to complete or stop it first. (blockedBy:${busyConvId})`
+        `Too many chats are processing simultaneously (max ${MAX_CONCURRENT_STREAMS}). ` +
+          `Please wait for one to complete or stop it first. (blockedBy:${busyConvId})`
       )
     }
 
@@ -502,6 +769,7 @@ export class ChatStreamService {
     }
 
     this.activeRequestIds.set(conversationId, requestId)
+    this.lockAcquiredAt.set(conversationId, Date.now())
     this.stoppedConversations.delete(conversationId)
 
     // C3-FIX: Register lock-release disposer immediately at acquisition time.
@@ -510,6 +778,7 @@ export class ChatStreamService {
     lifecycle.onDispose(() => {
       this.streamingLocks.delete(conversationId)
       this.activeRequestIds.delete(conversationId)
+      this.lockAcquiredAt.delete(conversationId)
     })
 
     let settled = false
@@ -562,6 +831,23 @@ export class ChatStreamService {
   }
 
   /**
+   * Whether this turn was aborted while an earlier stage was awaiting.
+   * Logs once so the abandoned turn is visible in main.log.
+   */
+  private abandonIfAborted(
+    conversationId: string,
+    requestId: string,
+    lifecycle: ConversationLifecycle
+  ): boolean {
+    if (lifecycle.isActive && lifecycle.requestId === requestId) return false
+    log.warn(
+      `[PIPELINE:aborted-during-setup] conversationId=${conversationId} ` +
+        `requestId=${requestId} — abandoning turn`
+    )
+    return true
+  }
+
+  /**
    * Start keepalive and safety timers for a stream.
    * Registers dispose handlers on the lifecycle — no manual cleanup needed.
    */
@@ -571,6 +857,23 @@ export class ChatStreamService {
     lifecycle: ConversationLifecycle,
     rejectDone: (err: Error) => void
   ): void {
+    // STREAM-TIMERS-STALE-01: The lifecycle can already be dead by the time we
+    // get here — stages 2 and 2.5 of stream() await (session start, worktree
+    // acquisition) and a Stop/supersede/workspace-switch lands in that window.
+    // Arming timers for a corpse is how a dead request came to kill a live one:
+    // the safety timer fired 5 minutes later and released whatever lifecycle the
+    // conversation had by then.
+    if (!lifecycle.isActive || lifecycle.requestId !== requestId) {
+      log.warn(
+        `[STREAM:timers-skipped] Lifecycle no longer active — ` +
+          `conversationId=${conversationId} requestId=${requestId}`
+      )
+      return
+    }
+
+    /** True once this stream's lifecycle is gone or has been superseded. */
+    const isStale = (): boolean => !lifecycle.isActive || lifecycle.requestId !== requestId
+
     // Keepalive — prevents renderer's 2-min safety timer from firing.
     // Checks isDestroyed() to self-clear after window close — without this
     // the timer fires every 30s throwing unhandled exceptions.
@@ -583,9 +886,12 @@ export class ChatStreamService {
       // CHAT-KEEPALIVE-STALE-01: Validate the timer still references the current
       // lifecycle. If the lifecycle completed and a new stream started before this
       // interval fires, the captured conversationId/requestId are stale.
-      if (!lifecycle.isActive || lifecycle.requestId !== requestId) {
+      if (isStale()) {
         clearInterval(keepaliveTimer)
-        this.keepaliveTimers.delete(conversationId)
+        // Only drop the map entry if it is still ours — a newer stream may own it.
+        if (this.keepaliveTimers.get(conversationId) === keepaliveTimer) {
+          this.keepaliveTimers.delete(conversationId)
+        }
         return
       }
 
@@ -616,7 +922,19 @@ export class ChatStreamService {
 
     const startSafetyTimer = (): void => {
       safetyTimer = setTimeout(() => {
-        if (!safetyCleared && this.streamingLocks.has(conversationId)) {
+        // Consolidated guard: testing only `streamingLocks` here meant a stream
+        // that lost its lock but kept its state-machine entry was invisible to
+        // this watchdog while still blocking every send.
+        // Identity check first: a busy conversation may be busy with a *newer*
+        // request. Only the request that armed this timer may fire it.
+        if (isStale()) {
+          log.info(
+            '[STREAM:safety-timeout-stale] Ignoring safety timeout from a finished request — ' +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          return
+        }
+        if (!safetyCleared && this.isConversationBusy(conversationId)) {
           // SAFETY-LOG-LEVEL: Downgraded from error to warn. If the stream already
           // completed (resolveDone fired) the double-settle guard makes rejectDone
           // a no-op — this log would be a scary-looking no-op error. Using warn
@@ -625,22 +943,10 @@ export class ChatStreamService {
             '[STREAM:main-safety-timeout] No chunk activity for 5 minutes — force-resetting. ' +
               `conversationId=${conversationId} requestId=${requestId}`
           )
-          completeStreamMetrics(conversationId, 'timeout')
-          lifecycleRegistry.abort(conversationId, 'safety-timeout')
-
-          // SAFETY-COMPLETE-SIGNAL: Send a synthetic CHAT_MESSAGE_COMPLETE so the
-          // renderer's handleMessageComplete fires and cleans up streamingConversationIds,
-          // stashed state, and stall timers. Without this, the conversation can remain
-          // stuck in streamingConversationIds if handleStateChange's idle-guard
-          // (prevState === 'idle' → skip) prevents the forceReset cleanup path.
-          this.safeWindowSend(
-            IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-            createCompleteMessage({
-              conversationId,
-              messageId: `timeout-${conversationId}`,
-              requestId
-            })
-          )
+          // releaseConversation handles metrics, lifecycle abort, state-machine
+          // reset, timer teardown and the synthetic CHAT_MESSAGE_COMPLETE the
+          // renderer needs to re-enable its input.
+          this.releaseConversation(conversationId, 'safety-timeout', requestId)
 
           rejectDone(new Error('Streaming timed out — safety recovery triggered'))
         }
@@ -648,7 +954,8 @@ export class ChatStreamService {
     }
 
     const resetSafety = (): void => {
-      if (safetyCleared) return
+      // A live stream's chunks must never re-arm a dead stream's timer.
+      if (safetyCleared || isStale()) return
       clearTimeout(safetyTimer)
       startSafetyTimer()
     }
@@ -662,35 +969,58 @@ export class ChatStreamService {
     // maxStreamLifetimeMin preference (default 30, clamped 10–120).
     const lifetimeMin = appPreferenceRepository.getAppPreferences().maxStreamLifetimeMin
     const MAX_STREAM_LIFETIME_MS = lifetimeMin * 60 * 1000
-    const lifetimeTimer = setTimeout(() => {
-      if (!safetyCleared && this.streamingLocks.has(conversationId)) {
+    /** Re-check interval while the cap is deferred for a human decision. */
+    const LIFETIME_DEFER_MS = 60_000
+    let lifetimeTimer: ReturnType<typeof setTimeout>
+    const armLifetimeTimer = (delayMs: number): void => {
+      lifetimeTimer = setTimeout(() => {
+        if (safetyCleared || !this.isConversationBusy(conversationId)) return
+        if (isStale()) {
+          log.info(
+            '[STREAM:max-lifetime-stale] Ignoring lifetime cap from a finished request — ' +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          return
+        }
+        // A stream parked on a permission prompt is not a zombie — it is waiting
+        // on a person. Killing it here reintroduces the same failure the
+        // executor's suspendable wall clock exists to prevent, just 30 minutes
+        // later. Defer while the prompt is open; the cap re-arms the moment the
+        // user answers (or the prompt is torn down), so the guard still holds.
+        if (chatAgentService.hasPendingHumanDecision()) {
+          log.info(
+            `[STREAM:max-lifetime] Deferred — awaiting a human permission decision. ` +
+              `conversationId=${conversationId} requestId=${requestId}`
+          )
+          armLifetimeTimer(LIFETIME_DEFER_MS)
+          return
+        }
         log.warn(
           `[STREAM:max-lifetime] Stream exceeded ${lifetimeMin}-minute hard cap — force-aborting. ` +
             `conversationId=${conversationId} requestId=${requestId}`
         )
-        completeStreamMetrics(conversationId, 'max-lifetime')
-        lifecycleRegistry.abort(conversationId, 'max-lifetime')
-        this.safeWindowSend(
-          IPC_CHANNELS.CHAT_MESSAGE_COMPLETE,
-          createCompleteMessage({
-            conversationId,
-            messageId: `max-lifetime-${conversationId}`,
-            requestId
-          })
+        this.releaseConversation(conversationId, 'max-lifetime', requestId)
+        rejectDone(
+          new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`)
         )
-        rejectDone(new Error(`Stream exceeded maximum lifetime (${lifetimeMin} min) — force-aborted`))
-      }
-    }, MAX_STREAM_LIFETIME_MS)
+      }, delayMs)
+    }
+    armLifetimeTimer(MAX_STREAM_LIFETIME_MS)
 
     lifecycle.onDispose(() => {
       safetyCleared = true
       clearTimeout(safetyTimer)
       clearTimeout(lifetimeTimer)
-      this.safetyTimerResets.delete(conversationId)
-      const kt = this.keepaliveTimers.get(conversationId)
-      if (kt) {
-        clearInterval(kt)
+      // Always stop OUR interval, but only drop map entries this stream still
+      // owns. A late disposer from stream #1 used to delete stream #2's reset
+      // function, leaving #2 with a safety timer nothing ever reset — a second
+      // false-kill path.
+      clearInterval(keepaliveTimer)
+      if (this.keepaliveTimers.get(conversationId) === keepaliveTimer) {
         this.keepaliveTimers.delete(conversationId)
+      }
+      if (this.safetyTimerResets.get(conversationId) === resetSafety) {
+        this.safetyTimerResets.delete(conversationId)
       }
     })
   }
@@ -709,7 +1039,16 @@ export class ChatStreamService {
     mode: 'plan' | 'build'
     attachments?: string[]
   }): Promise<string | null> {
-    const { text, conversationId, requestId, signal, streamingRole, workspaceId, mode, attachments } = params
+    const {
+      text,
+      conversationId,
+      requestId,
+      signal,
+      streamingRole,
+      workspaceId,
+      mode,
+      attachments
+    } = params
 
     const guardReason = promptOptimizerService.checkGuards({ text, workspaceId })
     if (guardReason) return text // guarded — use original
@@ -737,7 +1076,12 @@ export class ChatStreamService {
       }
       this.safeWindowSend(
         IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
-        createToolActivityChunk({ conversationId, requestId, role: streamingRole, toolActivity: activity })
+        createToolActivityChunk({
+          conversationId,
+          requestId,
+          role: streamingRole,
+          toolActivity: activity
+        })
       )
       recordExternalToolActivity(conversationId, activity)
     }
@@ -753,7 +1097,10 @@ export class ChatStreamService {
     })
 
     const optimizeResult = await promptOptimizerService.optimize({
-      text, workspaceId, conversationId, mode
+      text,
+      workspaceId,
+      conversationId,
+      mode
     })
 
     if (signal.aborted) {
@@ -794,7 +1141,10 @@ export class ChatStreamService {
     } else if (optimizeResult.skippedReason) {
       // parse-error | empty-output | oversize — surface the real failure
       const reason = optimizeResult.skippedReason
-      emitCard({ status: 'error', result: `Optimization failed (${reason}) — original prompt sent` })
+      emitCard({
+        status: 'error',
+        result: `Optimization failed (${reason}) — original prompt sent`
+      })
       notifyChunkTaps(requestId, {
         type: 'tool_result',
         toolName: 'Prompt Optimizer',
@@ -864,6 +1214,7 @@ export class ChatStreamService {
 
     // Remove per-stream listeners
     lifecycle.onDispose(() => {
+      log.info(`[PIPELINE:plan-listener-removed] conversationId=${conversationId}`)
       chatAgentService.removeListener('chunk', onChunk)
       chatAgentService.removeListener('complete', onComplete)
       chatAgentService.removeListener('intent', onIntent)
@@ -878,20 +1229,22 @@ export class ChatStreamService {
       })
     })
 
-    // ORPHAN-EXECUTOR-FIX: Kill the CLI process on lifecycle abort.
+    // ORPHAN-EXECUTOR-FIX: Kill the CLI process on lifecycle abort ONLY.
     // Without this, safety-timeout and workspace-switch abort paths only
     // release locks and remove listeners — the executor keeps running.
     // cancelCurrentQuery() is idempotent; the duplicate call from stop()'s
     // finally block is harmless.
+    // Phase-2: Per-conversation cancel — only kills THIS conversation's query,
+    // not any sibling streams.
     //
-    // PHASE-2-NOTE: cancelCurrentQuery() is GLOBAL — it kills whichever query
-    // is active, not specifically this conversation's query. With
-    // MAX_CONCURRENT_STREAMS = 1 this is correct. When Phase 2 raises the
-    // limit, this disposer for conversation A could kill conversation B's
-    // executor. Fix: pass conversationId to a per-conversation cancel method.
+    // Guard: On normal completion the process must stay alive so background
+    // shell commands can finish and the next turn can reuse it (canContinue).
+    // lifecycle.signal.aborted is true only when abort() was called (which
+    // fires controllerBeforeDispose.abort(reason) BEFORE runDisposers()).
     lifecycle.onDispose(() => {
+      if (!lifecycle.signal?.aborted) return
       try {
-        chatAgentService.cancelCurrentQuery()
+        chatAgentService.cancelCurrentQuery(conversationId)
       } catch (e) {
         log.warn('[STREAM] Lifecycle dispose: cancelCurrentQuery failed:', e)
       }
@@ -973,7 +1326,9 @@ export class ChatStreamService {
       // Per-turn memory injection: prepend relevant facts to the user message
       let enrichedContent = fullContent
       try {
-        const workspace = ctx.workspacePath ? workspaceRepository.findByPath(ctx.workspacePath) : undefined
+        const workspace = ctx.workspacePath
+          ? workspaceRepository.findByPath(ctx.workspacePath)
+          : undefined
         if (workspace) {
           // Get or create the dedupe set for this conversation
           if (!this.injectedFactIds.has(conversationId)) {
@@ -993,11 +1348,16 @@ export class ChatStreamService {
             this.injectedFactIds.set(conversationId, existing)
           }
           const dedupeSet = this.injectedFactIds.get(conversationId)!
+          // Uncommitted files are what this turn is about, whether or not the
+          // message names them.
+          const { resolveActivePaths } = await import('./active-paths')
+          const activePaths = resolveActivePaths(ctx.workspacePath)
           const memoryContext = await memoryRetrievalService.getContextForTurn(
             workspace.id,
             fullContent,
             'medium',
-            dedupeSet
+            dedupeSet,
+            activePaths
           )
           if (memoryContext) {
             enrichedContent = `[Relevant Workspace Knowledge]\n${memoryContext}\n\n---\n\n${fullContent}`
@@ -1060,7 +1420,8 @@ export class ChatStreamService {
         createCompleteMessage({
           conversationId,
           messageId: savedMessage.id,
-          requestId
+          requestId,
+          workspaceId: ctx.workspaceId
         })
       )
       // Note: lifecycle.abort('streamError') already force-reset the state machine to idle
@@ -1072,7 +1433,10 @@ export class ChatStreamService {
    * Persist the streamed message to DB, process memory blocks, and notify renderer.
    * Extracted from the onComplete closure — all error paths transition the state machine.
    */
-  private async finalizeStreamMessage(ctx: StreamContext, lifecycle: ConversationLifecycle): Promise<void> {
+  private async finalizeStreamMessage(
+    ctx: StreamContext,
+    lifecycle: ConversationLifecycle
+  ): Promise<void> {
     // CHAT-STOP-COMPLETE-RACE-01: Re-check after the async gap between onComplete's
     // guard and this method's DB write. If stop() ran between the guard passing and
     // this point, it already saved a "stopped" message — skip to avoid duplicates.
@@ -1088,17 +1452,67 @@ export class ChatStreamService {
     if (lifecycle.requestId !== ctx.requestId) {
       log.info(
         `[PIPELINE:finalize-orphaned] requestId mismatch ` +
-        `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping`
+          `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping`
       )
       return
     }
 
     try {
+      // PLAN-RACE-FIX-01: If the session received a plan event (controlToolState.plan)
+      // but the per-stream listener missed it (ctx.planInjected is false), the plan
+      // event arrived via IPC socket after the complete event via stdout — a race
+      // between two I/O channels. Late-inject the plan block before DB save.
+      // PLAN-RACE-FIX-02: Use workspace-scoped session lookup instead of
+      // getControlToolState() (which reads the *active* workspace session).
+      // If the user switched workspaces during the stream, the active session
+      // would be wrong. ctx.workspaceId was captured at stream start.
+      if (!ctx.planInjected) {
+        const session = ctx.workspaceId
+          ? chatAgentService.getSessionForWorkspace(ctx.workspaceId)
+          : null
+        const sessionState = session?.getControlToolState() ?? null
+        if (sessionState?.plan && sessionState.planIntent?.plan) {
+          const data = sessionState.planIntent.plan
+          log.warn(
+            `[PIPELINE:plan-late-inject] Plan received by session but missed by stream listener — ` +
+              `injecting late. conversationId=${ctx.conversationId} workspaceId=${ctx.workspaceId} ` +
+              `rawContentLen=${data.rawContent.length}`
+          )
+          const planBlock = `\n\n\`\`\`plan\n${data.rawContent}\n\`\`\`\n\n`
+          ctx.streamedContent += planBlock
+          ctx.planInjected = true
+          // Also send to renderer for immediate display
+          this.safeWindowSend(
+            IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
+            createTextChunk({
+              conversationId: ctx.conversationId,
+              requestId: ctx.requestId,
+              text: planBlock,
+              role: ctx.streamingRole
+            })
+          )
+          // Late-register in Plan Hub (non-critical)
+          try {
+            if (ctx.workspaceId && data.structuredPlan) {
+              planRegistryService.registerChatPlan({
+                workspaceId: ctx.workspaceId,
+                conversationId: ctx.conversationId,
+                messageId: ctx.requestId,
+                plan: data.structuredPlan,
+                rawContent: data.rawContent
+              })
+            }
+          } catch (err) {
+            log.warn('[PIPELINE:plan-late-inject-registry-failed] Non-critical:', err)
+          }
+        }
+      }
+
       log.info('Agent complete — saving to DB:', { contentLen: ctx.streamedContent.length })
       const cleanedContent = ctx.streamedContent.trim()
 
       if (!cleanedContent) {
-        const accumulatedText = chatAgentService.getStreamedContent()
+        const accumulatedText = chatAgentService.getStreamedContent(ctx.conversationId)
         log.error(
           `[PIPELINE:silent-failure] Agent completed with no streamed content. ` +
             `streamedLen=${ctx.streamedContent.length} ` +
@@ -1202,7 +1616,8 @@ export class ChatStreamService {
         createCompleteMessage({
           conversationId: ctx.conversationId,
           messageId: savedMessage.id,
-          requestId: ctx.requestId
+          requestId: ctx.requestId,
+          workspaceId: ctx.workspaceId
         })
       )
     } catch (error) {
@@ -1221,7 +1636,8 @@ export class ChatStreamService {
         createCompleteMessage({
           conversationId: ctx.conversationId,
           messageId: `error-${Date.now()}`,
-          requestId: ctx.requestId
+          requestId: ctx.requestId,
+          workspaceId: ctx.workspaceId
         })
       )
     }
@@ -1235,7 +1651,7 @@ export class ChatStreamService {
     } else {
       log.info(
         `[PIPELINE:finalize-orphaned-transition] requestId mismatch after DB write ` +
-        `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping transition`
+          `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping transition`
       )
     }
 
@@ -1380,6 +1796,11 @@ export class ChatStreamService {
     }
 
     const onPlanEvent = (data: PlanDetectedEvent): void => {
+      log.info(
+        `[PIPELINE:plan-event-received] conversationId=${ctx.conversationId} ` +
+          `planInjected=${ctx.planInjected} rawContentLen=${data.rawContent.length} ` +
+          `lifecycleActive=${lifecycle.isActive}`
+      )
       if (ctx.planInjected) {
         log.warn('[PIPELINE:plan-skipped] Plan already injected this stream — skipping duplicate')
         return
@@ -1398,11 +1819,12 @@ export class ChatStreamService {
         })
       )
       // Dual-write: register plan in Plan Hub registry (non-critical)
+      // PLAN-RACE-FIX-02: Use ctx.workspaceId (captured at stream start) instead of
+      // chatAgentService.activeWorkspaceId to avoid wrong-workspace registration.
       try {
-        const workspaceId = chatAgentService.activeWorkspaceId
-        if (workspaceId && data.structuredPlan) {
+        if (ctx.workspaceId && data.structuredPlan) {
           planRegistryService.registerChatPlan({
-            workspaceId,
+            workspaceId: ctx.workspaceId,
             conversationId: ctx.conversationId,
             messageId: ctx.requestId,
             plan: data.structuredPlan,
@@ -1419,6 +1841,28 @@ export class ChatStreamService {
     }
 
     return { onChunk, onComplete, onIntent, onPlanEvent }
+  }
+
+  /**
+   * Who is holding this chat's branch, when it is not the chat itself.
+   *
+   * The database read only; `resolveLentHolder` owns the rules and is unit
+   * tested directly. Best-effort — a bookkeeping read failure must not be what
+   * blocks a turn.
+   */
+  private lentBranchHolder(conv: {
+    id: string
+    workspaceId: string
+    branchName?: string | null
+  }): LentBranchHolder | null {
+    if (!conv.branchName) return null
+    try {
+      const held = trackRepository.findByBranch(conv.workspaceId, conv.branchName)
+      return resolveLentHolder(conv, held)
+    } catch (err) {
+      log.warn(`[lentBranchHolder] lookup failed: ${(err as Error).message}`)
+      return null
+    }
   }
 
   // ── Stream Lifecycle ──
@@ -1438,12 +1882,95 @@ export class ChatStreamService {
 
     // Stage 2: Ensure workspace session is live
     const conv = conversationRepository.findById(conversationId)
+    let ws: ReturnType<typeof workspaceRepository.findById>
     try {
-      const ws = conv ? workspaceRepository.findById(conv.workspaceId) : undefined
+      ws = conv ? workspaceRepository.findById(conv.workspaceId) : undefined
       if (ws?.repoPath) await chatAgentService.ensureStarted(ws.id, ws.repoPath)
     } catch (error) {
       lifecycleRegistry.abort(conversationId, 'streamError')
       throw error
+    }
+
+    // The await above can span seconds; a Stop or a supersede in that window
+    // leaves this turn dead. Keep walking the stages and it persists a message,
+    // arms timers and spawns a CLI — against whatever workspace is active by
+    // then, not the one it started in.
+    if (this.abandonIfAborted(conversationId, requestId, lifecycle)) {
+      resolveDone()
+      return { done, abort: () => lifecycleRegistry.abort(conversationId, 'external'), requestId }
+    }
+
+    // Stage 2.5: Give this conversation its own working tree.
+    //
+    // This runs before the user message is persisted and before any CLI is
+    // spawned, because it is the step that decides *where* the turn happens.
+    // Up to MAX_CONCURRENT_STREAMS turns run at once and each may be on a
+    // different branch; without this they all shared one directory and one
+    // HEAD, so whoever committed last silently absorbed the others' edits.
+    //
+    // A conflict aborts the turn rather than falling back to the shared tree:
+    // "another chat owns this branch" is a decision for the user to make, and
+    // proceeding anyway would reintroduce exactly the corruption being fixed.
+    try {
+      if (conv && ws?.repoPath) {
+        // Stage 2.4: has this chat's branch been lent to other work?
+        //
+        // A blueprint can take a chat's branch over (trackService.transferOwner),
+        // and the chat keeps its `branch_name` throughout — that is what makes
+        // handing it back possible. Without this check `ensureTrack` finds the
+        // branch held by another owner and refuses the turn with a generic
+        // "already checked out" message that names nobody and blocks planning
+        // too. Answering here lets us name the holder, and lets read-only turns
+        // carry on in the shared checkout while the branch is away.
+        const lent = this.lentBranchHolder(conv)
+        const refusal = lentBranchRefusal(lent, conv.mode)
+        if (refusal) throw new Error(refusal)
+
+        const target = await trackService.ensure({
+          conversationId,
+          workspaceId: conv.workspaceId,
+          repoPath: ws.repoPath,
+          // A lent branch is in somebody else's worktree, so asking for it would
+          // throw. Planning happens in the shared checkout until it comes back.
+          branchName: lent ? null : (conv.branchName ?? null)
+        })
+
+        // Backstop for conversations that opted out of a branch. They have
+        // nothing to isolate, so they all run in the shared primary tree — and
+        // MAX_CONCURRENT_STREAMS still allows three at once, which is the
+        // original one-HEAD-many-writers bug with the fix simply not applying.
+        // Serialise them against each other AND against the other writers that
+        // share that tree (Blueprint BUILD/VERIFY, MPA execute phases).
+        // Worktree-backed turns never reach this and stay fully parallel.
+        if (!target.isolated) {
+          const claim = {
+            ownerKind: 'chat' as const,
+            ownerId: conversationId,
+            reason: `Chat "${conv.title}"`
+          }
+          if (!primaryTreeLock.acquire(conv.workspaceId, claim)) {
+            const holder = primaryTreeLock.holder(conv.workspaceId)
+            log.warn(
+              `[PIPELINE:primary-tree-busy] conversationId=${conversationId} ` +
+                `blocked — ${holder?.reason ?? 'unknown'} (${holder?.ownerId ?? 'unknown'}) ` +
+                `is running in the shared working tree`
+            )
+            throw primaryTreeBusyError(holder)
+          }
+          // Freed by the lifecycle, so an abort, a crash mid-turn and a normal
+          // finish all release it through the same path.
+          lifecycle.onDispose(() => primaryTreeLock.release(conv.workspaceId, conversationId))
+        }
+      }
+    } catch (error) {
+      log.error(`[PIPELINE:worktree-failed] ${(error as Error).message}`)
+      lifecycleRegistry.abort(conversationId, 'streamError')
+      throw error
+    }
+
+    if (this.abandonIfAborted(conversationId, requestId, lifecycle)) {
+      resolveDone()
+      return { done, abort: () => lifecycleRegistry.abort(conversationId, 'external'), requestId }
     }
 
     // Stage 3: Resolve identity
@@ -1464,7 +1991,9 @@ export class ChatStreamService {
 
     // Stage 6: Save original user message + run prompt optimization
     const attachmentsJson = attachments ? JSON.stringify(attachments) : '[]'
-    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson, { hidden: opts?.hidden })
+    messageRepository.create(conversationId, 'user', text, undefined, attachmentsJson, {
+      hidden: opts?.hidden
+    })
     log.info('User message saved to DB')
 
     // Stage 6.5: Prompt Optimization (chat plan/build only — skipped for programmatic callers)
@@ -1472,8 +2001,14 @@ export class ChatStreamService {
     const convMode = (conv?.mode ?? chatAgentService.getMode()) as 'plan' | 'build'
     if (opts?.optimizePrompt !== false && conv && (convMode === 'plan' || convMode === 'build')) {
       const result = await this.runPromptOptimization({
-        text, conversationId, requestId, signal, streamingRole,
-        workspaceId: conv.workspaceId, mode: convMode, attachments
+        text,
+        conversationId,
+        requestId,
+        signal,
+        streamingRole,
+        workspaceId: conv.workspaceId,
+        mode: convMode,
+        attachments
       })
       if (result === null) {
         // H1-FIX: settle the done promise before returning
@@ -1492,15 +2027,25 @@ export class ChatStreamService {
     const wpPath = chatAgentService.getWorkspacePath()
     if (wpPath) {
       try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- deferred: only needed on this rare path
         const { exec } = require('node:child_process')
         startSha = await new Promise<string | undefined>((resolve) => {
-          exec('git rev-parse HEAD 2>/dev/null || true', {
-            cwd: wpPath, encoding: 'utf-8', timeout: 2000
-          }, (err: Error | null, stdout: string) => {
-            resolve(err ? undefined : (stdout?.trim() || undefined))
-          })
+          exec(
+            'git rev-parse HEAD 2>/dev/null || true',
+            {
+              cwd: wpPath,
+              encoding: 'utf-8',
+              timeout: 2000,
+              windowsHide: true
+            },
+            (err: Error | null, stdout: string) => {
+              resolve(err ? undefined : stdout?.trim() || undefined)
+            }
+          )
         })
-      } catch { /* no git — fine */ }
+      } catch {
+        /* no git — fine */
+      }
     }
 
     const ctx: StreamContext = {
@@ -1511,6 +2056,7 @@ export class ChatStreamService {
       specialistMeta,
       adapterAgentId,
       workspacePath: wpPath ?? undefined,
+      workspaceId: conv?.workspaceId ?? null,
       startSha,
       streamedContent: '',
       planInjected: false
@@ -1524,7 +2070,14 @@ export class ChatStreamService {
     )
 
     // Stage 8: Register disposers (needs listener refs)
-    this.registerStreamDisposers(lifecycle, conversationId, onChunk, onComplete, onIntent, onPlanEvent)
+    this.registerStreamDisposers(
+      lifecycle,
+      conversationId,
+      onChunk,
+      onComplete,
+      onIntent,
+      onPlanEvent
+    )
 
     // Stage 9: Dispatch to agent
     await this.dispatchToAgent(
@@ -1614,14 +2167,9 @@ export class ChatStreamService {
         await this.stopSingleConversation(targetConversationId)
       }
     } finally {
-      // A3-FIX: Cancel the global query ONCE after all per-conversation stops
-      // have completed. Previously each stopSingleConversation iteration called
-      // cancelCurrentQuery(), which with N streams would kill whichever query
-      // was active on the first call, then no-op on subsequent calls.
-      // R2-FIX: Wrap in try/catch so a throw here doesn't mask the original
-      // stop error propagating through the finally block.
+      // Phase-2: Cancel per-conversation or ALL depending on whether a target was given.
       try {
-        chatAgentService.cancelCurrentQuery()
+        chatAgentService.cancelCurrentQuery(targetConversationId)
       } catch (cancelErr) {
         log.error('[STREAM:stop-cancel-failed] cancelCurrentQuery threw:', cancelErr)
       }
@@ -1644,7 +2192,9 @@ export class ChatStreamService {
 
     const lifecycle = conversationId ? lifecycleRegistry.get(conversationId) : undefined
     const requestId = conversationId
-      ? (this.activeRequestIds.get(conversationId) ?? lifecycle?.requestId ?? `req-stop-${Date.now()}`)
+      ? (this.activeRequestIds.get(conversationId) ??
+        lifecycle?.requestId ??
+        `req-stop-${Date.now()}`)
       : `req-stop-${Date.now()}`
 
     try {
@@ -1658,25 +2208,10 @@ export class ChatStreamService {
       // Save partial content
       if (conversationId) {
         try {
-          // A3-FIX: Only read global getStreamedContent() when this conversation
-          // owns the active session. With the A1 gate (MAX_CONCURRENT_STREAMS=1),
-          // at most one stream is active, so this is the common path. For any
-          // other conversation (e.g. background abort), save the plain marker
-          // to avoid writing another stream's content into this conversation.
-          const isActiveSession =
-            chatAgentService.getCurrentConversationId() === conversationId
-          const partialContent = isActiveSession
-            ? chatAgentService.getStreamedContent()
-            : ''
-          // F5-FIX: Log loudly on the fallback path so Phase 2 work
-          // (per-conversation getStreamedContent) has a visible signal.
-          // This path saves only a plain marker — partial content is discarded.
-          if (!isActiveSession) {
-            log.warn(
-              `[STREAM:stop-fallback] saving plain marker — conversation ${conversationId} ` +
-              `does not own active session (active=${chatAgentService.getCurrentConversationId()})`
-            )
-          }
+          // Phase-2: Always use per-conversation accumulator — each conversation
+          // has its own. Live-only: stop() falls through to here even when nothing
+          // is streaming, and the last completed turn is already saved.
+          const partialContent = chatAgentService.getLiveStreamedContent(conversationId)
           const contentToSave = partialContent
             ? partialContent + '\n\n---\n\n⏹ *Generation stopped by user.*'
             : '⏹ *Generation stopped by user.*'
@@ -1685,15 +2220,16 @@ export class ChatStreamService {
           // IPC entry point and has no per-turn snapshot in scope.
           // A3-FIX: Only read persona/role from chatAgentService when this
           // conversation owns the active session, otherwise use defaults.
-          const stopPersona = isActiveSession
-            ? chatAgentService.getActivePersona()
-            : undefined
-          const stopRole = stopPersona ? 'specialist' : (
-            isActiveSession ? chatAgentService.getActiveMessageRole() : 'specialist'
-          )
-          const stopAgentId = stopPersona?.agentId ?? (
-            isActiveSession ? chatAgentService.getActiveAgentId() : 'specialist'
-          )
+          const isActiveSession = chatAgentService.getCurrentConversationId() === conversationId
+          const stopPersona = isActiveSession ? chatAgentService.getActivePersona() : undefined
+          const stopRole = stopPersona
+            ? 'specialist'
+            : isActiveSession
+              ? chatAgentService.getActiveMessageRole()
+              : 'specialist'
+          const stopAgentId =
+            stopPersona?.agentId ??
+            (isActiveSession ? chatAgentService.getActiveAgentId() : 'specialist')
           const savedMessage = messageRepository.create(
             conversationId,
             stopRole,
@@ -1723,7 +2259,8 @@ export class ChatStreamService {
             createCompleteMessage({
               conversationId,
               messageId: savedMessage.id,
-              requestId
+              requestId,
+              workspaceId: this.resolveConversationWorkspaceId(conversationId)
             })
           )
         } catch (error) {
@@ -1750,34 +2287,24 @@ export class ChatStreamService {
   }
 
   /**
-   * Force-reset streaming state if switching away from a workspace with a stuck stream.
-   * Called by the workspace switch IPC handler to prevent cross-workspace lock contamination.
+   * Release conversations that are busy with no live stream behind them.
+   * Called by the workspace-activation IPC handler so a wedged conversation
+   * from any workspace cannot block future sends (the P12 protection).
+   *
+   * Live streams are NOT touched: a chat streaming in workspace A must survive
+   * a switch to workspace B, the same way a running blueprint does. The old
+   * implementation called `lifecycleRegistry.abortAll()` plus a global state-
+   * machine reset, which killed every healthy stream on every workspace switch.
+   * Per-conversation release is exactly what `sweepOrphanedConversations()`
+   * already does — it skips conversations with an active lifecycle and cleans
+   * up locks, request ids, timers and emits CHAT_MESSAGE_COMPLETE for the rest.
    */
   forceResetIfStuck(): void {
-    const activeStreams = lifecycleRegistry.active()
-    const smStuck = !conversationStateMachine.isIdle()
-    if (activeStreams.length > 0 || this.streamingLocks.size > 0 || smStuck) {
+    const released = this.sweepOrphanedConversations()
+    if (released.length > 0) {
       log.warn(
-        `[STREAM:force-reset] activeStreams=${activeStreams.length} locks=${this.streamingLocks.size} ` +
-        `smStuck=${smStuck} — aborting all (fixes P12)`
+        `[STREAM:force-reset] Released ${released.length} orphaned conversation(s) on workspace activation: ${released.join(', ')}`
       )
-      // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics before abort to prevent leak.
-      for (const stream of activeStreams) {
-        completeStreamMetrics(stream.conversationId, 'aborted')
-      }
-      lifecycleRegistry.abortAll('workspace-switch')
-      // F2-FIX (replaces A9-FIX): After abortAll, re-check whether the SM
-      // is still stuck. The old condition (smStuck && activeStreams.length === 0)
-      // missed the mixed state: SM stuck for conv-B while the registry only
-      // held conv-A. abortAll clears conv-A's SM entry via forceReset(convId),
-      // but conv-B stays stuck. Unconditional re-check catches both cases.
-      if (!conversationStateMachine.isIdle()) {
-        log.warn('[STREAM:force-reset] SM still not idle after abortAll — forcing SM global reset')
-        conversationStateMachine.forceReset()
-      }
-      // Belt-and-suspenders: clear any orphaned locks
-      this.streamingLocks.clear()
-      this.activeRequestIds.clear()
     }
   }
 
@@ -1803,7 +2330,12 @@ export class ChatStreamService {
 
     // Abort all active streams before disposal
     lifecycleRegistry.abortAll('service-disposed')
+    if (this.orphanSweepTimer) {
+      clearInterval(this.orphanSweepTimer)
+      this.orphanSweepTimer = null
+    }
     this.streamingLocks.clear()
+    this.lockAcquiredAt.clear()
     this.activeRequestIds.clear()
     this.stoppedConversations.clear()
     this.safetyTimerResets.clear()

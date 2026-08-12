@@ -15,9 +15,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Plan Superseded Indicators', () => {
-  async function ensureChatReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureChatReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -36,11 +34,12 @@ test.describe('Plan Superseded Indicators', () => {
     return true
   }
 
-  test('plan slim indicator renders for plan messages', async ({
-    electronPage: page
-  }) => {
+  test('plan slim indicator renders for plan messages', async ({ electronPage: page }) => {
     const ready = await ensureChatReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for plan slim indicators
     const slimIndicators = page.locator('[data-testid="plan-slim-indicator"]')
@@ -61,11 +60,12 @@ test.describe('Plan Superseded Indicators', () => {
     expect(text).toContain('Plan available')
   })
 
-  test('superseded label appears on older plan messages', async ({
-    electronPage: page
-  }) => {
+  test('superseded label appears on older plan messages', async ({ electronPage: page }) => {
     const ready = await ensureChatReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const supersededLabels = page.locator('[data-testid="plan-superseded-label"]')
     const count = await supersededLabels.count().catch(() => 0)
@@ -84,11 +84,12 @@ test.describe('Plan Superseded Indicators', () => {
     expect(text!.toLowerCase()).toContain('superseded')
   })
 
-  test('latest plan indicator does not show superseded label', async ({
-    electronPage: page
-  }) => {
+  test('latest plan indicator does not show superseded label', async ({ electronPage: page }) => {
     const ready = await ensureChatReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const slimIndicators = page.locator('[data-testid="plan-slim-indicator"]')
     const count = await slimIndicators.count().catch(() => 0)

@@ -193,6 +193,28 @@ describe('createCompleteMessage', () => {
     assert.equal('requestId' in msg, false)
     assert.equal('phase' in msg, false)
     assert.equal('taskId' in msg, false)
+    assert.equal('workspaceId' in msg, false)
+  })
+
+  // BACKGROUND-CHAT-02: the renderer attributes completed plan executions to
+  // this workspace. If it were dropped, a completion arriving after a workspace
+  // switch would be credited to whichever workspace happens to be active.
+  test('includes workspaceId when provided', () => {
+    const msg = createCompleteMessage({
+      conversationId: 'c1',
+      messageId: 'm-1',
+      workspaceId: 'ws-a'
+    })
+    assert.equal(msg.workspaceId, 'ws-a')
+  })
+
+  test('omits workspaceId when null (StreamContext with no workspace)', () => {
+    const msg = createCompleteMessage({
+      conversationId: 'c1',
+      messageId: 'm-1',
+      workspaceId: null
+    })
+    assert.equal('workspaceId' in msg, false)
   })
 
   test('propagates all optional fields when provided', () => {

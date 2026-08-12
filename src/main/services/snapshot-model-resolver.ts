@@ -12,7 +12,11 @@
  */
 
 import type { ConversationModelSnapshot, ModelAction, ResolvedAssignment } from '../../shared/types'
-import { conversationRepository, blueprintRepository, workspaceRepository } from '../db/repositories'
+import {
+  conversationRepository,
+  blueprintRepository,
+  workspaceRepository
+} from '../db/repositories'
 import { modelConfigService } from './model-config.service'
 import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 import log from 'electron-log'
@@ -30,7 +34,8 @@ import log from 'electron-log'
  * Format: `blueprint-{phase}-{blueprintId}-{timestamp}`
  * Groups: [1] = phase, [2] = blueprintId
  */
-export const BLUEPRINT_CONV_RE = /^blueprint-(specify|clarify|plan|tasks|review|build|verify)-(.+)-\d+$/
+export const BLUEPRINT_CONV_RE =
+  /^blueprint-(specify|clarify|plan|tasks|review|build|verify)-(.+)-\d+$/
 
 export function resolveModelFromSnapshot(
   conversationId: string | null,

@@ -24,9 +24,7 @@ import { ChatPage } from './pages/chat-page'
 test.describe('Chat Plan Sections & NewChatPopover', () => {
   // ── Shared helpers ────────────────────────────────────────────────
 
-  async function ensureWorkspaceOpen(
-    page: import('@playwright/test').Page
-  ): Promise<ChatPage> {
+  async function ensureWorkspaceOpen(page: import('@playwright/test').Page): Promise<ChatPage> {
     const welcomePage = new WelcomePage(page)
     const chat = new ChatPage(page)
 
@@ -59,7 +57,10 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
     const planSections = page.locator(
       '[data-testid^="plan-section-"], [data-testid="plan-phases-list"], [data-testid="plan-root-causes-list"]'
     )
-    const hasPlanContent = await planSections.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasPlanContent = await planSections
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (hasPlanContent) return true
 
@@ -73,7 +74,10 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
         await sidebarItems.nth(i).click()
         await page.waitForTimeout(2_000)
 
-        const hasPlan = await planSections.first().isVisible({ timeout: 5_000 }).catch(() => false)
+        const hasPlan = await planSections
+          .first()
+          .isVisible({ timeout: 5_000 })
+          .catch(() => false)
         if (hasPlan) return true
       }
     }
@@ -83,9 +87,7 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
 
   // ── 1. TaskPlanSections: expand/collapse individual sections ──────
 
-  test('TaskPlanSections: expand/collapse phases section', async ({
-    electronPage: page
-  }) => {
+  test('TaskPlanSections: expand/collapse phases section', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -143,9 +145,7 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
 
   // ── 2. PlanHelpers: root causes list renders ──────────────────────
 
-  test('PlanHelpers: root causes list renders with items', async ({
-    electronPage: page
-  }) => {
+  test('PlanHelpers: root causes list renders with items', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -167,7 +167,10 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
     if (!hasRootCauses) {
       // Not all plans have root causes — check for complexity indicators instead
       const complexityIndicator = page.locator('[data-testid="plan-complexity-indicator"]')
-      const hasComplexity = await complexityIndicator.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      const hasComplexity = await complexityIndicator
+        .first()
+        .isVisible({ timeout: 3_000 })
+        .catch(() => false)
 
       // If neither exists, this plan is too simple for these components
       if (!hasComplexity) {
@@ -198,11 +201,12 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
   test('NewChatPopover: popover shows Plan and Build mode options', async ({
     electronPage: page
   }) => {
-    const chat = await ensureWorkspaceOpen(page)
+    const _chat = await ensureWorkspaceOpen(page)
 
     // We need to find the "new chat" button that opens the popover
     // It's typically in the sidebar header area
-    const newChatBtn = page.locator('[data-testid="new-chat-button"]')
+    const newChatBtn = page
+      .locator('[data-testid="new-chat-button"]')
       .or(page.getByRole('button', { name: /new chat|new conversation/i }))
       .first()
 
@@ -272,7 +276,8 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
     const chat = await ensureWorkspaceOpen(page)
 
     // Open the new chat popover
-    const newChatBtn = page.locator('[data-testid="new-chat-button"]')
+    const newChatBtn = page
+      .locator('[data-testid="new-chat-button"]')
       .or(page.getByRole('button', { name: /new chat|new conversation/i }))
       .first()
 
@@ -318,9 +323,7 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
 
   // ── 5. ContextBadge: click opens CompactContextModal ──────────────
 
-  test('ContextBadge: click opens context details modal', async ({
-    electronPage: page
-  }) => {
+  test('ContextBadge: click opens context details modal', async ({ electronPage: page }) => {
     const chat = await ensureWorkspaceOpen(page)
 
     const hasChatPanel = await chat.chatPanel.isVisible({ timeout: 10_000 }).catch(() => false)
@@ -330,9 +333,13 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
     }
 
     // ContextBadge shows token usage (e.g. "45K / 200K")
-    const contextBadge = page.locator('[data-testid="context-badge"]')
+    const contextBadge = page
+      .locator('[data-testid="context-badge"]')
       .or(page.getByText(/\d+K\s*\/\s*\d+K/i).first())
-    const hasBadge = await contextBadge.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const hasBadge = await contextBadge
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     if (!hasBadge) {
       // Context badge only appears during/after conversation with token usage
@@ -360,8 +367,14 @@ test.describe('Chat Plan Sections & NewChatPopover', () => {
     const contextText = page.getByText(/context|tokens|usage|window/i)
 
     const hasDialog = await dialog.isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasPopover = await popoverContent.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    const hasContextText = await contextText.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasPopover = await popoverContent
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    const hasContextText = await contextText
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // At least some context detail UI should be visible after click
     expect(hasDialog || hasPopover || hasContextText).toBeTruthy()

@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
-import { Send, Square, Lightbulb, Mic, MicOff } from 'lucide-react'
+import { Send, Square, Lightbulb, Mic, MicOff, Terminal } from 'lucide-react'
 import {
   useChatStore,
   useChatActions,
@@ -13,6 +13,7 @@ import {
 } from '@renderer/store'
 import { useVoiceInput } from '@renderer/hooks'
 import IdeaPopover from './IdeaPopover'
+import BackgroundTasksPopover from './BackgroundTasksPopover'
 import VoiceIndicator from './VoiceIndicator'
 import {
   SlashCommandDropdown,
@@ -66,15 +67,11 @@ function handleCommandKey(e: React.KeyboardEvent, ctx: CommandContext): boolean 
   switch (e.key) {
     case 'ArrowUp':
       e.preventDefault()
-      ctx.setSelectedCommandIndex((prev) =>
-        prev > 0 ? prev - 1 : ctx.filteredCommands.length - 1
-      )
+      ctx.setSelectedCommandIndex((prev) => (prev > 0 ? prev - 1 : ctx.filteredCommands.length - 1))
       return true
     case 'ArrowDown':
       e.preventDefault()
-      ctx.setSelectedCommandIndex((prev) =>
-        prev < ctx.filteredCommands.length - 1 ? prev + 1 : 0
-      )
+      ctx.setSelectedCommandIndex((prev) => (prev < ctx.filteredCommands.length - 1 ? prev + 1 : 0))
       return true
     case 'Tab': {
       e.preventDefault()
@@ -147,6 +144,7 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [showRewindDialog, setShowRewindDialog] = useState(false)
   const [showIdeaPopover, setShowIdeaPopover] = useState(false)
+  const [showBackgroundTasks, setShowBackgroundTasks] = useState(false)
   const { stopGeneration, completeConversation, closeConversation } = useChatActions()
 
   const handleStopConfirm = useCallback(async () => {
@@ -187,6 +185,8 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
     setShowRewindDialog,
     showIdeaPopover,
     setShowIdeaPopover,
+    showBackgroundTasks,
+    setShowBackgroundTasks,
     handleStopConfirm,
     handleStopCancel: useCallback(() => setShowStopConfirm(false), []),
     conversationTitle: activeConversation?.title ?? 'Untitled',
@@ -212,14 +212,28 @@ function useMessageSubmit(params: {
   checkWarning: (text: string, attachments?: string[]) => boolean
   executeSend: (content: string, sendAttachments?: string[]) => Promise<void>
 }): () => Promise<void> {
-  const { text, setText, attachments, activeConversation, executeCommand, checkWarning, executeSend } = params
+  const {
+    text,
+    setText,
+    attachments,
+    activeConversation,
+    executeCommand,
+    checkWarning,
+    executeSend
+  } = params
 
   return useCallback(async (): Promise<void> => {
     const trimmed = text.trim()
     // SEND-RACE-02: Read live store state (not stale React closure) to prevent
     // rapid double-clicks from bypassing the guard between render cycles.
     const { isStreaming: liveStreaming, sendingConversationIds } = useChatStore.getState()
-    if (!trimmed || liveStreaming || sendingConversationIds.has(activeConversation?.id ?? '') || !activeConversation) return
+    if (
+      !trimmed ||
+      liveStreaming ||
+      sendingConversationIds.has(activeConversation?.id ?? '') ||
+      !activeConversation
+    )
+      return
 
     if (trimmed.startsWith('/')) {
       setText('')
@@ -360,7 +374,13 @@ export default function MessageInput({
   })
 
   // ── Side effects ──
-  useMessageInputEffects(text, conversationId, textareaRef, loadPreferences, hydrateConversationSpecialists)
+  useMessageInputEffects(
+    text,
+    conversationId,
+    textareaRef,
+    loadPreferences,
+    hydrateConversationSpecialists
+  )
 
   // ── Slash commands ──
   const currentProvider = activeConversation?.llmProvider ?? 'claude'
@@ -443,7 +463,9 @@ export default function MessageInput({
     }
   }
 
-  const isSending = useChatStore((s) => s.sendingConversationIds.has(s.activeConversation?.id ?? ''))
+  const isSending = useChatStore((s) =>
+    s.sendingConversationIds.has(s.activeConversation?.id ?? '')
+  )
   const isDisabled = isStreaming || isSending || !activeConversation || isInitializing
 
   return (
@@ -488,8 +510,11 @@ export default function MessageInput({
           aria-label="Message input"
         />
 
-        {/* Stop button */}
-        {isStreaming && (
+        {/* Stop button — shown whenever the chat is non-idle, not just while
+            streaming. If `isSending` sticks with no stream behind it, the input
+            is disabled; without this the Stop button was hidden too and there
+            was no way out. CHAT_STOP in main is unconditional and always works. */}
+        {(isStreaming || isSending) && (
           <button
             onClick={() => dialogs.setShowStopConfirm(true)}
             className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
@@ -498,6 +523,20 @@ export default function MessageInput({
           >
             <Square size={18} />
           </button>
+        )}
+
+        {/* Background tasks */}
+        <button
+          onClick={() => dialogs.setShowBackgroundTasks(!dialogs.showBackgroundTasks)}
+          className="flex-shrink-0 p-2 rounded-lg text-text-secondary hover:bg-surface-overlay hover:text-text-primary transition-colors"
+          aria-label="Background tasks"
+          title="Background tasks"
+        >
+          <Terminal size={18} />
+        </button>
+
+        {dialogs.showBackgroundTasks && (
+          <BackgroundTasksPopover onClose={() => dialogs.setShowBackgroundTasks(false)} />
         )}
 
         {/* Idea capture button */}

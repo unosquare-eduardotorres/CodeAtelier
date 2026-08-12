@@ -9,14 +9,10 @@ import type { ToolActivity } from './types'
 
 // ── Phase & Status Enums ──
 
+import type { TrackOwnerKind } from './track-types'
+
 export type BlueprintPhaseType =
-  | 'specify'
-  | 'clarify'
-  | 'plan'
-  | 'tasks'
-  | 'review'
-  | 'build'
-  | 'verify'
+  'specify' | 'clarify' | 'plan' | 'tasks' | 'review' | 'build' | 'verify'
 
 export type BlueprintStatus =
   | 'draft'
@@ -90,6 +86,12 @@ export interface BlueprintTask {
   startedAt: string | null
   completedAt: string | null
   completionJson: { filesCreated: string[]; filesModified: string[] } | null
+  /**
+   * ISO timestamp of a deliberate user skip, or null. Separate from `status`
+   * because the failure cascade writes `status = 'skipped'` on its own and a
+   * retry resets `status` — neither may forge or erase a human decision.
+   */
+  skippedByUserAt: string | null
 }
 
 // ── Composite / Joined Types ──
@@ -110,6 +112,71 @@ export interface ReferenceDocument {
   name: string
   url?: string
   label?: string
+}
+
+// ── Branch selection ──
+
+/**
+ * How a blueprint run picks the branch it works on.
+ *
+ * Git allows a branch in exactly one worktree repo-wide, so "share a branch"
+ * can only mean one of two things, and they are different enough to need
+ * different modes: `fork` runs beside the other work on a branch of its own
+ * taken from theirs, while `takeover` moves the branch from its current owner
+ * to this blueprint. Concurrent shared writing is deliberately absent — it is
+ * the exact failure the track system exists to remove.
+ *
+ *  - `auto`     — `blueprint/<slug>-<id8>` off primary HEAD. The default, and
+ *                 what every blueprint did before branch selection existed.
+ *  - `fork`     — a new branch cut from a chosen base (typically a chat's
+ *                 branch). Both keep running, fully parallel.
+ *  - `takeover` — work directly on an existing branch, taking ownership of it.
+ *  - `primary`  — run in the workspace checkout under the primary-tree lock.
+ *                 Not a failure state: it is the only option on a repo with no
+ *                 commits, and the honest answer when the user wants output in
+ *                 their own working copy.
+ */
+export type BlueprintBranchMode = 'auto' | 'fork' | 'takeover' | 'primary'
+
+export interface BlueprintBranchChoice {
+  mode: BlueprintBranchMode
+  /** `fork`: the base to branch from. `takeover`: the branch to work on. */
+  branch?: string
+  /** `fork` only — overrides the generated branch name. */
+  name?: string
+}
+
+/** One selectable branch, with what the picker needs to disable and explain it. */
+export interface BlueprintBranchOption {
+  name: string
+  /**
+   * The workspace checkout is sitting on this branch.
+   *
+   * Git allows a branch in one worktree only, so taking this one over runs in
+   * the primary tree with no isolation at all. Not an error — but it has to be
+   * said at pick time rather than discovered when build output lands in the
+   * user's working copy.
+   */
+  isPrimaryHead: boolean
+  /** The track holding this branch, when one does. */
+  heldBy: {
+    ownerKind: TrackOwnerKind
+    /** Null for retained work — nobody owns it, so it is free to take. */
+    ownerId: string | null
+    /** Chat title where resolvable; otherwise the owner id. */
+    label: string | null
+  } | null
+}
+
+export interface BlueprintBranchOptions {
+  branches: BlueprintBranchOption[]
+  /**
+   * False on a repo with no commits, where `primary` is the only workable mode:
+   * there are no branches to show and nothing to isolate from yet.
+   */
+  repoHasCommits: boolean
+  /** The workspace checkout's branch, or null on an unborn HEAD. */
+  currentBranch: string | null
 }
 
 // ── Create / Update Params ──

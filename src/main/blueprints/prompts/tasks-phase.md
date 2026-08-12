@@ -27,6 +27,7 @@
 </workspace_docs>
 
 When decomposing tasks, respect existing workspace structure:
+
 - File paths must follow existing naming conventions
 - If CLAUDE.md specifies workflow expectations (e.g., "compose existing design-system components first"), tasks must reflect that order
 - Search `mcp__memory__memory_search` for file path conventions before assigning paths
@@ -39,6 +40,7 @@ tasks. Each task must be atomic enough for a single agent execution session.
 ## Input
 
 From previous artifacts:
+
 - **spec.md**: User stories, requirements, success criteria
 - **plan.md**: Plan items with files, scope, dependencies
 
@@ -92,6 +94,7 @@ Emit one fenced JSON block tagged `blueprint-tasks`:
 ## Validation Checks
 
 Before completing, verify:
+
 - [ ] Every plan item maps to at least one task
 - [ ] Every user story maps to at least one task
 - [ ] No task modifies more than 5 files
@@ -122,25 +125,26 @@ Before your completion block, emit a `blueprint-discoveries` block: a JSON array
 
 ## Tool Priority
 
-**Your FIRST tool for any codebase question must be a code-intelligence tool — NOT Read/Glob/Grep.**
+Route by question shape. Grep wins for exact strings, regex, config values and error text; Glob wins for finding files by path pattern.
 
-| Goal | First tool | Fallback |
-|------|-----------|----------|
-| Find a symbol/function/class | `mcp__code-graph__search_identifiers` | `Grep` |
-| Understand file structure | `mcp__code-graph__file_outline` | `Read` |
-| See what calls a function | `mcp__code-graph__find_callers` | `Grep` |
-| See what a function calls | `mcp__code-graph__find_callees` | `Read` |
-| Find all references to a symbol | `mcp__code-graph__find_references` | `Grep` |
-| See file imports/importers | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep` |
-| Understand codebase architecture | `mcp__code-graph__graph_map` | `Glob` + `Read` |
-| Find related code semantically | `mcp__semantic-search__semantic_search` | `Grep` |
-| Find similar patterns | `mcp__semantic-search__similar_code` | `Grep` |
-| Understand domain concepts | `mcp__semantic-search__codebase_concepts` | — |
-| Search workspace knowledge | `mcp__memory__memory_search` | — |
-| Record a discovery for later phases | `mcp__memory__memory_record` | — |
+| Goal                                | First tool                                               | Fallback        |
+| ----------------------------------- | -------------------------------------------------------- | --------------- |
+| Find a symbol/function/class        | `mcp__code-graph__search_identifiers`                    | `Grep`          |
+| Understand file structure           | `mcp__code-graph__file_outline`                          | `Read`          |
+| See what calls a function           | `mcp__code-graph__find_callers`                          | `Grep`          |
+| See what a function calls           | `mcp__code-graph__find_callees`                          | `Read`          |
+| Find all references to a symbol     | `mcp__code-graph__find_references`                       | `Grep`          |
+| See file imports/importers          | `mcp__code-graph__file_dependencies` / `file_dependents` | `Grep`          |
+| Understand codebase architecture    | `mcp__code-graph__graph_map`                             | `Glob` + `Read` |
+| Find related code semantically      | `mcp__semantic-search__semantic_search`                  | `Grep`          |
+| Find similar patterns               | `mcp__semantic-search__similar_code`                     | `Grep`          |
+| Understand domain concepts          | `mcp__semantic-search__codebase_concepts`                | —               |
+| Search workspace knowledge          | `mcp__memory__memory_search`                             | —               |
+| Record a discovery for later phases | `mcp__memory__memory_record`                             | —               |
 
 **Greenfield caveat**: If the workspace has no source tree yet (empty or skeleton), use Glob/Read directly — code-intelligence tools need indexed files.
 
-Use Read only on files identified by code intelligence. If a code-graph/semantic-search/memory tool returns an error that it is unavailable, fall back to Read/Glob/Grep — do not retry it.
+Skip all of the above when the answer is already in context, the task names the file, or the change is trivial.
+Otherwise use Read on files identified by code intelligence. If a code-graph/semantic-search/memory tool errors or returns empty, fall back to Read/Glob/Grep immediately — do not retry it.
 
 Do NOT attempt to use `Write`, `Edit`, `Bash`, or any tool not listed above.

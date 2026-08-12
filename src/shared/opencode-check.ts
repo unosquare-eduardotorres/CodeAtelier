@@ -30,7 +30,7 @@ export async function checkOpenCodeCli(): Promise<OpenCodeCliCheckResult> {
     return { available: true, version }
   } catch (error) {
     const err = error as Error & { code?: string }
-    
+
     if (err.code === 'ENOENT' || err.message.includes('not found')) {
       return {
         available: false,
@@ -40,7 +40,7 @@ export async function checkOpenCodeCli(): Promise<OpenCodeCliCheckResult> {
           'Or download from: https://opencode.ai/getting-started'
       }
     }
-    
+
     return {
       available: false,
       error: `Failed to check OpenCode CLI: ${err.message}`

@@ -40,7 +40,8 @@ export function validateDiffScope(
     const diff = execSync(`git diff --name-only ${diffRef}`, {
       cwd: workspacePath,
       encoding: 'utf-8',
-      timeout: 10_000
+      timeout: 10_000,
+      windowsHide: true
     })
     const changedFiles = diff.trim().split('\n').filter(Boolean)
 
@@ -80,12 +81,14 @@ export function getUncommittedChanges(workspacePath: string): string[] {
     const diff = execSync('git diff --name-only HEAD', {
       cwd: workspacePath,
       encoding: 'utf-8',
-      timeout: 10_000
+      timeout: 10_000,
+      windowsHide: true
     })
     const staged = execSync('git diff --name-only --cached', {
       cwd: workspacePath,
       encoding: 'utf-8',
-      timeout: 10_000
+      timeout: 10_000,
+      windowsHide: true
     })
     const allFiles = new Set([
       ...diff.trim().split('\n').filter(Boolean),

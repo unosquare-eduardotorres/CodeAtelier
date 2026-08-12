@@ -41,7 +41,10 @@ test.describe('MPA Campaign', () => {
     }
 
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -129,7 +132,10 @@ test.describe('MPA Campaign', () => {
     const goalList = page.getByText(/goal|step|task/i)
 
     const hasLoading = await loadingIndicator.isVisible({ timeout: 5_000 }).catch(() => false)
-    const hasGoalList = await goalList.first().isVisible({ timeout: 30_000 }).catch(() => false)
+    const hasGoalList = await goalList
+      .first()
+      .isVisible({ timeout: 30_000 })
+      .catch(() => false)
 
     expect(hasLoading || hasGoalList).toBeTruthy()
   })
@@ -200,7 +206,7 @@ test.describe('MPA Campaign', () => {
 
     // Check for history section
     const historySection = page.getByText(/history|previous|past/i).first()
-    const hasHistory = await historySection.isVisible({ timeout: 5_000 }).catch(() => false)
+    const _hasHistory = await historySection.isVisible({ timeout: 5_000 }).catch(() => false)
 
     // History may or may not exist depending on workspace state
     // Just verify the page renders without crashing

@@ -17,9 +17,7 @@ import type {
   ArtifactRef,
   HandoffSource
 } from '../../../shared/handoff-types'
-import type {
-  BlueprintWithDetails
-} from '../../../shared/blueprint-types'
+import type { BlueprintWithDetails } from '../../../shared/blueprint-types'
 
 // ── Input Shape ──────────────────────────────────────────────────────
 
@@ -79,9 +77,7 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
         steps.push({
           title: `Phase: ${phase.phase}`,
           outcome: `Completed with ${artifacts.length} artifact(s)`,
-          filesModified: artifacts
-            .filter((a) => a.filePath)
-            .map((a) => a.filePath!),
+          filesModified: artifacts.filter((a) => a.filePath).map((a) => a.filePath!)
         })
       }
     }
@@ -91,7 +87,7 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
         steps.push({
           title: task.description.slice(0, 100),
           outcome: `Task completed (wave ${task.wave})`,
-          filesModified: task.filePathsJson ?? [],
+          filesModified: task.filePathsJson ?? []
         })
       }
     }
@@ -108,7 +104,7 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
         remaining.push({
           title: `Phase: ${phase.phase}`,
           description: `Blueprint phase ${phase.phase} (${phase.status})`,
-          priority: 'medium',
+          priority: 'medium'
         })
       }
     }
@@ -120,7 +116,10 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
           title: task.description.slice(0, 100),
           description: task.userStory ?? task.description,
           priority: 'medium',
-          estimatedComplexity: Math.min(10, Math.max(1, (task.filePathsJson?.length ?? 0) + (task.dependsOnJson?.length ?? 0))),
+          estimatedComplexity: Math.min(
+            10,
+            Math.max(1, (task.filePathsJson?.length ?? 0) + (task.dependsOnJson?.length ?? 0))
+          )
         })
       }
     }
@@ -137,7 +136,7 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
       if (typeof value === 'string' || typeof value === 'boolean') {
         decisions.push({
           what: `Blueprint setting: ${key}`,
-          why: String(value),
+          why: String(value)
         })
       }
     }
@@ -157,19 +156,23 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
     const failedTasks = input.blueprint.tasks.filter((t) => t.status === 'failed')
     if (failedTasks.length === 0) return []
 
-    return [{
-      risk: `${failedTasks.length} task(s) failed during blueprint execution`,
-      severity: failedTasks.length > 3 ? 'high' : 'medium',
-      mitigation: `Review failed tasks: ${failedTasks.map((t) => t.taskId).join(', ')}`,
-    }]
+    return [
+      {
+        risk: `${failedTasks.length} task(s) failed during blueprint execution`,
+        severity: failedTasks.length > 3 ? 'high' : 'medium',
+        mitigation: `Review failed tasks: ${failedTasks.map((t) => t.taskId).join(', ')}`
+      }
+    ]
   }
 
   extractArtifacts(input: BlueprintAdapterInput): ArtifactRef[] {
-    const refs: ArtifactRef[] = [{
-      type: 'blueprint',
-      path: `blueprint:${input.blueprint.id}`,
-      description: `Blueprint: ${input.blueprint.title}`,
-    }]
+    const refs: ArtifactRef[] = [
+      {
+        type: 'blueprint',
+        path: `blueprint:${input.blueprint.id}`,
+        description: `Blueprint: ${input.blueprint.title}`
+      }
+    ]
 
     // Include phase artifacts
     for (const phase of input.blueprint.phases) {
@@ -179,7 +182,7 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
             refs.push({
               type: 'spec',
               path: artifact.filePath,
-              description: `${phase.phase} artifact: ${artifact.type}`,
+              description: `${phase.phase} artifact: ${artifact.type}`
             })
           }
         }
@@ -210,7 +213,7 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
       currentPhase: input.blueprint.currentPhase,
       priority: input.blueprint.priority,
       taskCount: input.blueprint.tasks.length,
-      completedTasks: input.blueprint.tasks.filter((t) => t.status === 'complete').length,
+      completedTasks: input.blueprint.tasks.filter((t) => t.status === 'complete').length
     }
   }
 }

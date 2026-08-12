@@ -15,9 +15,7 @@ import { test, describe, summaryAsync } from './test-harness'
 describe('Scope Guard — path matching logic', () => {
   // Simulate the core logic extracted from validateDiffScope
   function matchFiles(changedFiles: string[], allowedPaths: string[]): string[] {
-    return changedFiles.filter(
-      (file) => !allowedPaths.some((allowed) => file.startsWith(allowed))
-    )
+    return changedFiles.filter((file) => !allowedPaths.some((allowed) => file.startsWith(allowed)))
   }
 
   test('all changes within allowed paths → no violations', () => {
@@ -31,10 +29,7 @@ describe('Scope Guard — path matching logic', () => {
   })
 
   test('one change outside → violation detected', () => {
-    const changed = [
-      'src/main/services/cost-tracker.service.ts',
-      'package.json'
-    ]
+    const changed = ['src/main/services/cost-tracker.service.ts', 'package.json']
     const allowed = ['src/main/services/']
     const violations = matchFiles(changed, allowed)
     assert.deepEqual(violations, ['package.json'])
@@ -46,11 +41,7 @@ describe('Scope Guard — path matching logic', () => {
   })
 
   test('multiple allowed paths (OR matching)', () => {
-    const changed = [
-      'src/main/services/foo.ts',
-      'src/shared/types.ts',
-      'scripts/build.sh'
-    ]
+    const changed = ['src/main/services/foo.ts', 'src/shared/types.ts', 'scripts/build.sh']
     const allowed = ['src/main/services/', 'src/shared/']
     const violations = matchFiles(changed, allowed)
     assert.deepEqual(violations, ['scripts/build.sh'])

@@ -66,8 +66,6 @@ async function handleWorkspaceCreate(
     isGitRepo
   )
 
-
-
   try {
     const db = getDatabase()
     const existing = db
@@ -147,6 +145,19 @@ async function handleWorkspaceOpen(
     dbLogger.warn('Failed to start memory consolidation idle job:', e)
   }
 
+  // Align the global embedding facade with this workspace's persisted backend
+  // (omlx | ollama) and probe it, so embeddings resolve without the user having
+  // to visit Code Intelligence first.
+  try {
+    const { localEmbeddingProvider } = await import('../services/local-embedding.provider')
+    localEmbeddingProvider.configureForWorkspace(workspace.id)
+    // Fire-and-forget: an Ollama probe does a real test-embed (30s timeout)
+    // and must not delay workspace open.
+    void localEmbeddingProvider.ensureEmbeddingReady().catch(() => {})
+  } catch (e) {
+    dbLogger.warn('Failed to configure embedding provider on workspace open:', e)
+  }
+
   return workspace
 }
 
@@ -174,6 +185,15 @@ async function handleSettingsUpdate(
     }
   } catch (e) {
     dbLogger.warn('Failed to update file watcher on settings change:', e)
+  }
+
+  // Re-align the embedding facade whenever local-model settings change
+  // (backend switch, embedding model, host/port all route through here).
+  try {
+    const { localEmbeddingProvider } = await import('../services/local-embedding.provider')
+    localEmbeddingProvider.configureForWorkspace(workspaceId)
+  } catch (e) {
+    dbLogger.warn('Failed to re-configure embedding provider on settings change:', e)
   }
 
   try {
@@ -313,7 +333,10 @@ export function registerWorkspaceIpc(): void {
       throw new Error(`${ch}: invalid command name`)
     }
     try {
-      execSync(`which ${command}`, { stdio: 'pipe', timeout: 3000 })
+      // `which` does not exist on Windows — without this the check always
+      // reported "not found" there, regardless of what was installed.
+      const lookup = process.platform === 'win32' ? 'where' : 'which'
+      execSync(`${lookup} ${command}`, { stdio: 'pipe', timeout: 3000, windowsHide: true })
       // IPC-03: Don't expose filesystem path to renderer
       return { available: true }
     } catch {

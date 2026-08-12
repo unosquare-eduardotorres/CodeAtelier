@@ -9,17 +9,18 @@ import type { ConversationMode } from '../../shared/types'
 import {
   // Unified guidance blocks (full === lean after W2 unification)
   ASK_QUESTION_PROMPT,
-  CHECKPOINT_CONTEXT_GUIDANCE_PROMPT,
   CODE_ANALYSIS_GUIDANCE_PROMPT,
   GIT_CONTEXT_GUIDANCE_PROMPT,
-  GITHUB_CONTEXT_GUIDANCE_PROMPT,
   IMAGE_ATTACHMENTS_PROMPT,
   LIBRARY_DOCS_GUIDANCE_PROMPT,
   MAESTRO_GUIDANCE_PROMPT,
   MEMORY_PROTOCOL_PROMPT,
   PROCESS_MANAGER_GUIDANCE_PROMPT,
+  RECALL_TOOLS_PROMPT,
   REPOMAP_GUIDANCE_PROMPT,
+  REPOMAP_UNINDEXED_NOTE,
   SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+  SEMANTIC_SEARCH_UNINDEXED_NOTE,
   // Guidance blocks that still differ between full/lean
   ESLINT_GUIDANCE_PROMPT,
   ESLINT_GUIDANCE_PROMPT_LEAN,
@@ -29,6 +30,8 @@ import {
   // Mode & plan constants
   MODE_CONTEXT_SECTIONS,
   MODE_CONTEXT_SECTIONS_LEAN,
+  MODE_CONTEXT_SECTIONS_COMPACT,
+  MODE_CONTEXT_SECTIONS_LEAN_COMPACT,
   PLAN_REMINDER_FULL,
   PLAN_REMINDER_LEAN,
   TOOL_PRIORITY_DIRECTIVE
@@ -39,15 +42,29 @@ import { chatAgentLogger } from '../logger'
 
 const log = chatAgentLogger
 
+/**
+ * Phrases that reference past work — "that plan", "revisit", "you said earlier".
+ * Gates the recall protocol reminder so the agent searches history instead of
+ * asserting that earlier plans are unrecoverable.
+ */
+const RECALL_TRIGGER_RE =
+  /\b(that plan|the plan (we|you|i)\b|previous plan|prior plan|past plan|earlier plan|old plan|last plan|revisit|recover the|remind me|we (discussed|talked about)|you (said|proposed|suggested) (earlier|before)|earlier you|from (yesterday|last week|earlier))\b/i
+
 /** Feature flags that affect prompt assembly (same shape used by both roles). */
 export interface PromptFeatureFlags {
   repomapEnabled: boolean
   semanticSearchEnabled: boolean
+  /**
+   * True only when the workspace actually has a persisted code-graph index.
+   * Undefined means "unknown" and is treated as indexed — never suppress
+   * guidance because index state could not be resolved.
+   */
+  repomapIndexed?: boolean
+  /** True only when the workspace actually has a persisted embedding index. */
+  semanticSearchIndexed?: boolean
   githubConfigured: boolean
   /** Whether git-context tools are mounted (default true). Set false for local-LLM adapters that skip git tools. */
   includeGitContext?: boolean
-  /** Whether checkpoint-context tools are mounted (default true). Set false for evaluation adapters that skip checkpoints. */
-  includeCheckpoint?: boolean
   /** External MCPs active for this chat (e.g. { maestro: true }) — drives prompt guidance injection */
   externalMcpActive?: Record<string, boolean>
   /** Whether code-analysis tools are mounted (default true). Set false for small-tier local LLMs. */
@@ -71,20 +88,64 @@ interface GuidanceSection {
   leanVariant?: string
   /** When set, skip the lean variant if basePrompt already contains this marker. */
   skipLeanWhen?: string
+  /**
+   * Replaces `prompt` when the feature is enabled but its index is missing.
+   * Returns false when the index is known to be absent; undefined/true keep the
+   * normal prompt (fail open).
+   */
+  indexed?: (f: PromptFeatureFlags) => boolean
+  /** Text used in place of `prompt` when `indexed` reports false. */
+  unindexedVariant?: string
 }
 
 const GUIDANCE_SECTIONS: GuidanceSection[] = [
-  { marker: '## Code Graph', flag: (f) => f.repomapEnabled, prompt: REPOMAP_GUIDANCE_PROMPT, skipLeanWhen: '## Code Exploration' },
-  { marker: '## Semantic Search', flag: (f) => f.semanticSearchEnabled, prompt: SEMANTIC_SEARCH_GUIDANCE_PROMPT },
-  { marker: '## Git Context', flag: (f) => f.includeGitContext !== false, prompt: GIT_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## Checkpoint Tools', flag: (f) => f.includeCheckpoint !== false, prompt: CHECKPOINT_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## GitHub Tools', flag: (f) => f.githubConfigured, prompt: GITHUB_CONTEXT_GUIDANCE_PROMPT },
-  { marker: '## Code Analysis', flag: (f) => f.codeAnalysisEnabled !== false, prompt: CODE_ANALYSIS_GUIDANCE_PROMPT },
-  { marker: '## Library Doc', flag: (f) => f.codeAnalysisEnabled !== false, prompt: LIBRARY_DOCS_GUIDANCE_PROMPT },
-  { marker: '## Maestro', flag: (f) => !!f.externalMcpActive?.['maestro'], prompt: MAESTRO_GUIDANCE_PROMPT },
+  {
+    marker: '## Code Graph',
+    flag: (f) => f.repomapEnabled,
+    prompt: REPOMAP_GUIDANCE_PROMPT,
+    indexed: (f) => f.repomapIndexed !== false,
+    unindexedVariant: REPOMAP_UNINDEXED_NOTE,
+    skipLeanWhen: '## Code Exploration'
+  },
+  {
+    marker: '## Semantic Search',
+    flag: (f) => f.semanticSearchEnabled,
+    prompt: SEMANTIC_SEARCH_GUIDANCE_PROMPT,
+    indexed: (f) => f.semanticSearchIndexed !== false,
+    unindexedVariant: SEMANTIC_SEARCH_UNINDEXED_NOTE
+  },
+  {
+    marker: '## Git Context',
+    flag: (f) => f.includeGitContext !== false,
+    prompt: GIT_CONTEXT_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Code Analysis',
+    flag: (f) => f.codeAnalysisEnabled !== false,
+    prompt: CODE_ANALYSIS_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Library Doc',
+    flag: (f) => f.codeAnalysisEnabled !== false,
+    prompt: LIBRARY_DOCS_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Maestro',
+    flag: (f) => !!f.externalMcpActive?.['maestro'],
+    prompt: MAESTRO_GUIDANCE_PROMPT
+  },
   // ESLint: only entry where lean differs (full includes "Warnings OK; errors are NOT")
-  { marker: '## ESLint', flag: () => true, prompt: ESLINT_GUIDANCE_PROMPT, leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN },
-  { marker: '## Background Processes', flag: (f) => f.processManagerEnabled !== false, prompt: PROCESS_MANAGER_GUIDANCE_PROMPT }
+  {
+    marker: '## ESLint',
+    flag: () => true,
+    prompt: ESLINT_GUIDANCE_PROMPT,
+    leanVariant: ESLINT_GUIDANCE_PROMPT_LEAN
+  },
+  {
+    marker: '## Background Processes',
+    flag: (f) => f.processManagerEnabled !== false,
+    prompt: PROCESS_MANAGER_GUIDANCE_PROMPT
+  }
 ]
 
 /**
@@ -104,7 +165,12 @@ export function appendMcpToolGuidance(
   // Lean models already have tool priority in their identity prompt every turn.
   if (turnCount > 1) {
     const verbosity2 = resolvePromptVerbosity(model ?? '')
-    if (verbosity2 !== 'lean' && featureFlags.repomapEnabled) {
+    // Both flags matter: a semantic-search-only workspace was previously dropped
+    // from the reminder entirely.
+    if (
+      verbosity2 !== 'lean' &&
+      (featureFlags.repomapEnabled || featureFlags.semanticSearchEnabled)
+    ) {
       return basePrompt + TOOL_PRIORITY_DIRECTIVE
     }
     return basePrompt
@@ -115,8 +181,15 @@ export function appendMcpToolGuidance(
 
   for (const section of GUIDANCE_SECTIONS) {
     if (!section.flag(featureFlags) || basePrompt.includes(section.marker)) continue
-    if (verbosity === 'lean' && section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen)) continue
-    const text = (verbosity === 'lean' && section.leanVariant) ? section.leanVariant : section.prompt
+    if (verbosity === 'lean' && section.skipLeanWhen && basePrompt.includes(section.skipLeanWhen))
+      continue
+    // Unindexed wins over the lean variant: telling the model to use a tool that
+    // cannot answer is worse than the extra tokens of saying so.
+    if (section.unindexedVariant && section.indexed && !section.indexed(featureFlags)) {
+      appendSections.push(section.unindexedVariant)
+      continue
+    }
+    const text = verbosity === 'lean' && section.leanVariant ? section.leanVariant : section.prompt
     appendSections.push(text)
   }
 
@@ -135,8 +208,13 @@ export function buildConditionalPrefix(opts: {
   mode: ConversationMode
   turnCount: number
   model?: string
+  /**
+   * True when history is being compacted on this turn. Compaction discards the
+   * turn-1 message that carried the memory protocol, so it must be re-emitted.
+   */
+  postCompaction?: boolean
 }): string {
-  const { message, hasImages, mode, turnCount } = opts
+  const { message, hasImages, mode, turnCount, postCompaction } = opts
   const verbosity = resolvePromptVerbosity(opts.model ?? '')
   const conditionalSections = promptBuilder.getGeneralistConditionalSections(
     message,
@@ -151,8 +229,19 @@ export function buildConditionalPrefix(opts: {
   }
 
   // Skip memory-protocol prompt on turns 2+ — already in history from turn 1.
-  if (conditionalSections.includeMemoryProtocolPrompt && turnCount <= 1) {
+  // Exception: on a compaction turn the turn-1 copy is being discarded, so
+  // re-emit it or the model loses the protocol for the rest of the session.
+  if (conditionalSections.includeMemoryProtocolPrompt && (turnCount <= 1 || postCompaction)) {
     sections.push(MEMORY_PROTOCOL_PROMPT) // unified: full === lean
+  }
+
+  // Recall protocol — injected on ANY turn the user references past work.
+  // Unlike the memory protocol this isn't turn-gated: "revisit that plan from
+  // last week" typically arrives mid-session, and without the reminder the
+  // agent confidently answers "that context is unrecoverable".
+  const isRecallRequest = RECALL_TRIGGER_RE.test(message)
+  if (isRecallRequest) {
+    sections.push(RECALL_TOOLS_PROMPT)
   }
 
   if (conditionalSections.includeImageAttachmentsPrompt) {
@@ -183,12 +272,13 @@ export function buildConditionalPrefix(opts: {
 
   if (planReminderInjected) {
     // Turn 1 + full-verbosity model: full reminder. All other cases: lean.
-    const planReminder = turnCount <= 1 && verbosity !== 'lean' ? PLAN_REMINDER_FULL : PLAN_REMINDER_LEAN
+    const planReminder =
+      turnCount <= 1 && verbosity !== 'lean' ? PLAN_REMINDER_FULL : PLAN_REMINDER_LEAN
     sections.push(planReminder)
   }
 
   log.info(
-    `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} planReminder=${planReminderInjected}`
+    `[PIPELINE:conditional-prefix] ask=${conditionalSections.includeAskQuestionPrompt} memory=${conditionalSections.includeMemoryProtocolPrompt} recall=${isRecallRequest} image=${conditionalSections.includeImageAttachmentsPrompt} directBoost=${conditionalSections.includeDirectAnswerBoost} planReminder=${planReminderInjected}`
   )
 
   return sections.length > 0
@@ -196,13 +286,44 @@ export function buildConditionalPrefix(opts: {
     : ''
 }
 
+/** Regex to detect diagram-related keywords in user messages for conditional re-injection. */
+const DIAGRAM_KEYWORD_RE =
+  /\b(diagram|mermaid|flowchart|stateDiagram|erDiagram|sequenceDiagram|classDef|graph TD|graph LR)\b/i
+
 /**
  * Pattern 8: Build the `<mode-context>` block injected per-message.
  * Shared by ProjectSpecialistRoleAdapter.
+ *
+ * Turn-aware optimization: on turns 2+, plan-mode strips the ~453-token
+ * Mermaid diagram reference block (already in history from turn 1).
+ * If the user message contains diagram-related keywords, the full block
+ * is re-injected to ensure quality diagram output.
  */
-export function buildModeContextPrefix(mode: ConversationMode, model?: string): string {
+export function buildModeContextPrefix(
+  mode: ConversationMode,
+  model?: string,
+  turnCount?: number,
+  userMessage?: string
+): string {
   const verbosity = resolvePromptVerbosity(model ?? '')
-  const sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+
+  // Turn 1 or unknown turn: always inject full mode context
+  const isFollowUp = (turnCount ?? 1) > 1
+
+  // On turns 2+ in plan mode, check if user is requesting diagrams
+  const diagramRequested = isFollowUp && userMessage ? DIAGRAM_KEYWORD_RE.test(userMessage) : false
+
+  // Use compact sections on follow-up turns unless diagrams are requested
+  const useCompact = isFollowUp && mode === 'plan' && !diagramRequested
+
+  let sections: Record<ConversationMode, string>
+  if (useCompact) {
+    sections =
+      verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN_COMPACT : MODE_CONTEXT_SECTIONS_COMPACT
+  } else {
+    sections = verbosity === 'lean' ? MODE_CONTEXT_SECTIONS_LEAN : MODE_CONTEXT_SECTIONS
+  }
+
   const block = sections[mode] ?? sections.plan
   return `<mode-context>\n${block.trim()}\n</mode-context>`
 }

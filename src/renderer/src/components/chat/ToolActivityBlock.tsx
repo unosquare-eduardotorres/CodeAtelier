@@ -16,6 +16,7 @@ import {
 import type { ToolActivity, ToolOperationType } from '../../../../shared/types'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import { shortenInput, getToolDisplayName } from './tool-activity-utils'
+import InlineEditDiff from './InlineEditDiff'
 
 // ── Copy button helper ──
 
@@ -107,10 +108,21 @@ function resolveOpConfig(activity: ToolActivity): OpConfig {
 
 // ── Status styling ──
 
-const STATUS_STYLES: Record<string, { iconColor: string; outputColor: string; outputLabel: string }> = {
-  running: { iconColor: 'text-purple-400 animate-pulse', outputColor: 'text-text-muted', outputLabel: 'Output' },
+const STATUS_STYLES: Record<
+  string,
+  { iconColor: string; outputColor: string; outputLabel: string }
+> = {
+  running: {
+    iconColor: 'text-purple-400 animate-pulse',
+    outputColor: 'text-text-muted',
+    outputLabel: 'Output'
+  },
   error: { iconColor: 'text-danger', outputColor: 'text-danger', outputLabel: 'Error' },
-  completed: { iconColor: 'text-emerald-400', outputColor: 'text-text-muted', outputLabel: 'Output' }
+  completed: {
+    iconColor: 'text-emerald-400',
+    outputColor: 'text-text-muted',
+    outputLabel: 'Output'
+  }
 }
 
 // ── ToolRow sub-components ──
@@ -156,6 +168,9 @@ function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.J
   const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
   return (
     <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
+      {activity.editDiffs && activity.editDiffs.length > 0 && (
+        <InlineEditDiff edits={activity.editDiffs} omitted={activity.editDiffsOmitted} />
+      )}
       {activity.input && (activity.operationType === 'shell' || activity.input.length > 30) && (
         <div className="px-3 py-2 border-b border-border-subtle/50">
           <span className="flex items-center text-[10px] uppercase tracking-wider text-text-secondary font-medium">
@@ -187,6 +202,9 @@ function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.J
 // ── ToolRow component ──
 
 function hasExpandableContent(activity: ToolActivity): boolean {
+  // Edit rows would otherwise be unexpandable — their result is just "Done" —
+  // which would make the inline diff unreachable.
+  if (activity.editDiffs?.length) return true
   if (activity.resultDetail) return true
   if (activity.result && activity.result.length > 40) return true
   if (activity.input && activity.input.length > 60) return true
@@ -340,35 +358,36 @@ export default function ToolActivityBlock({
       )}
 
       {/* Expanded — render activities with optional truncation for long lists */}
-      {isExpanded && (() => {
-        const shouldTruncate = !showAllActivities && activities.length > VISIBLE_ACTIVITY_LIMIT
-        const hiddenCount = shouldTruncate ? activities.length - VISIBLE_ACTIVITY_LIMIT : 0
-        const visibleActivities = shouldTruncate
-          ? activities.slice(-VISIBLE_ACTIVITY_LIMIT)
-          : activities
+      {isExpanded &&
+        (() => {
+          const shouldTruncate = !showAllActivities && activities.length > VISIBLE_ACTIVITY_LIMIT
+          const hiddenCount = shouldTruncate ? activities.length - VISIBLE_ACTIVITY_LIMIT : 0
+          const visibleActivities = shouldTruncate
+            ? activities.slice(-VISIBLE_ACTIVITY_LIMIT)
+            : activities
 
-        return (
-          <div className="mt-1.5 ml-1 space-y-0.5">
-            {shouldTruncate && (
-              <button
-                type="button"
-                onClick={() => setShowAllActivities(true)}
-                className="text-[11px] text-text-muted hover:text-text-secondary transition-colors pl-2.5 py-1"
-              >
-                ▸ Show {hiddenCount} earlier tool{hiddenCount !== 1 ? 's' : ''}
-              </button>
-            )}
-            {visibleActivities.map((a) => (
-              <ToolRow
-                key={a.id}
-                activity={a}
-                isExpanded={expandedIds.has(a.id)}
-                onToggleExpand={toggleActivityExpand}
-              />
-            ))}
-          </div>
-        )
-      })()}
+          return (
+            <div className="mt-1.5 ml-1 space-y-0.5">
+              {shouldTruncate && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllActivities(true)}
+                  className="text-[11px] text-text-muted hover:text-text-secondary transition-colors pl-2.5 py-1"
+                >
+                  ▸ Show {hiddenCount} earlier tool{hiddenCount !== 1 ? 's' : ''}
+                </button>
+              )}
+              {visibleActivities.map((a) => (
+                <ToolRow
+                  key={a.id}
+                  activity={a}
+                  isExpanded={expandedIds.has(a.id)}
+                  onToggleExpand={toggleActivityExpand}
+                />
+              ))}
+            </div>
+          )
+        })()}
     </div>
   )
 }

@@ -1,12 +1,86 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Sparkles, FileText, Check, X, Loader2, FilePlus, ArrowLeftRight } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
+import {
+  Sparkles,
+  FileText,
+  Check,
+  X,
+  Loader2,
+  ArrowLeftRight,
+  Copy,
+  FolderOpen,
+  Pencil
+} from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
 import CodeEditor from '@renderer/components/settings/CodeEditor'
+import { codeAtelierDiffStyles } from '@renderer/components/chat/diff-theme'
+import { Button, SegmentedControl, Tooltip } from '@renderer/components/common/ui'
 import RegenerateOverlay from './RegenerateOverlay'
 
 /**
- * CLAUDE.md tab panel — loads current on-disk content, allows regeneration,
- * and shows an inline diff with sticky action bar for approval.
+ * GFM prose stack. Tables matter here specifically: CLAUDE.md is mostly
+ * tables, and rendering it through a code editor exploded every row into
+ * unaligned `| Layer | Technology |` lines.
+ */
+const PROSE_CLASSES = `prose prose-sm prose-invert max-w-none text-text-secondary
+  prose-headings:text-text-primary prose-headings:font-semibold
+  prose-p:text-sm prose-li:text-sm
+  prose-code:text-xs prose-code:bg-surface-overlay prose-code:px-1 prose-code:rounded
+  prose-code:before:content-none prose-code:after:content-none
+  prose-pre:bg-surface-base prose-pre:border prose-pre:border-border-subtle
+  prose-table:text-xs prose-th:text-text-primary prose-th:font-medium
+  prose-td:border-border-subtle prose-th:border-border-subtle
+  prose-strong:text-text-primary prose-a:text-primary-text`
+
+type ViewMode = 'rendered' | 'source'
+
+const VIEW_MODES = [
+  { value: 'rendered' as const, label: 'Rendered' },
+  { value: 'source' as const, label: 'Source' }
+]
+
+/** Path chip that copies on click and can reveal the file in the OS shell. */
+function PathChip({ path }: { path: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <span className="inline-flex items-center gap-1 h-6 pl-2 pr-1 rounded border border-border-default bg-surface-overlay">
+      <span className="font-mono text-[11px] text-text-muted truncate max-w-[26rem]" title={path}>
+        {path}
+      </span>
+      <Tooltip content={copied ? 'Copied' : 'Copy path'}>
+        <button
+          type="button"
+          aria-label="Copy path"
+          onClick={() => {
+            void navigator.clipboard.writeText(path)
+            setCopied(true)
+            setTimeout(() => setCopied(false), 1500)
+          }}
+          className="p-0.5 rounded text-text-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-focus"
+        >
+          {copied ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
+        </button>
+      </Tooltip>
+      <Tooltip content="Reveal in file manager">
+        <button
+          type="button"
+          aria-label="Reveal in file manager"
+          onClick={() => void window.api.showItemInFolder(path)}
+          className="p-0.5 rounded text-text-muted hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-focus"
+        >
+          <FolderOpen className="w-3 h-3" />
+        </button>
+      </Tooltip>
+    </span>
+  )
+}
+
+/**
+ * CLAUDE.md tab panel — renders the on-disk file, regenerates it, and shows a
+ * real diff of the proposal before anything is written.
  */
 export default function ClaudeMdPanel(): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
@@ -28,6 +102,8 @@ export default function ClaudeMdPanel(): React.JSX.Element {
   } | null>(null)
   const [editedContent, setEditedContent] = useState('')
   const [isConfirming, setIsConfirming] = useState(false)
+  const [editingProposal, setEditingProposal] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('rendered')
 
   const workspacePath = activeWorkspace?.repoPath ?? ''
   const workspaceId = activeWorkspace?.id ?? ''
@@ -50,6 +126,7 @@ export default function ClaudeMdPanel(): React.JSX.Element {
       if (result.success && result.content) {
         setDiffData({ existing: result.existing ?? null, generated: result.content })
         setEditedContent(result.content)
+        setEditingProposal(false)
         dismissFeed()
       } else {
         useMemoryStore.setState({
@@ -71,114 +148,81 @@ export default function ClaudeMdPanel(): React.JSX.Element {
     try {
       await window.api.confirmClaudeMd({ workspacePath, content: editedContent })
       setDiffData(null)
-      // Reload the on-disk content
       await loadClaudeMd(workspacePath)
     } finally {
       setIsConfirming(false)
     }
   }, [workspacePath, editedContent])
 
-  const handleDismiss = useCallback(() => {
-    setDiffData(null)
-  }, [])
-
   // ── Diff view (after regeneration) ──
   if (diffData) {
     return (
       <div className="flex flex-col h-full min-h-0">
-        {/* Sticky action bar */}
-        <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 border-b border-border-default bg-surface-base/95 backdrop-blur-sm rounded-t-lg">
-          <div className="flex items-center gap-2">
-            <ArrowLeftRight size={14} className="text-primary-text" />
+        {/* Action bar */}
+        <div className="flex items-center justify-between gap-3 px-1 py-2 border-b border-border-default shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <ArrowLeftRight size={14} className="text-primary-text shrink-0" />
             <span className="text-sm font-medium text-text-primary">Review CLAUDE.md Changes</span>
-            {claudeMdPath && (
-              <span className="text-[11px] text-text-muted font-mono truncate max-w-[280px]">
-                {claudeMdPath}
-              </span>
-            )}
+            {claudeMdPath && <PathChip path={claudeMdPath} />}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleDismiss}
-              disabled={isConfirming}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors disabled:opacity-50"
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant={editingProposal ? 'primary' : 'ghost'}
+              onClick={() => setEditingProposal((v) => !v)}
+              aria-pressed={editingProposal}
             >
-              <X size={14} />
+              <Pencil size={13} />
+              Edit proposed
+            </Button>
+            <Button variant="ghost" onClick={() => setDiffData(null)} disabled={isConfirming}>
+              <X size={13} />
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               data-testid="claude-md-approve"
+              variant="success"
+              size="md"
               onClick={handleConfirm}
               disabled={isConfirming}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-md text-sm font-medium bg-success hover:bg-success/90 text-white transition-colors disabled:opacity-50"
             >
               {isConfirming ? (
                 <>
-                  <Loader2 size={14} className="animate-spin" />
+                  <Loader2 size={13} className="animate-spin" />
                   Writing…
                 </>
               ) : (
                 <>
-                  <Check size={14} />
+                  <Check size={13} />
                   Approve &amp; Write
                 </>
               )}
-            </button>
+            </Button>
           </div>
         </div>
 
-        {/* Side-by-side panels */}
-        <div className="flex-1 flex min-h-0 overflow-hidden">
-          {/* Left — Current */}
-          <div className="flex-1 flex flex-col min-w-0 border-r border-border-default">
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-base/30">
-              <FileText size={13} className="text-text-muted" />
-              <span className="text-xs font-medium text-text-muted">Current</span>
-              {!diffData.existing && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-text-muted">
-                  No file
-                </span>
-              )}
-            </div>
-            <div className="flex-1 overflow-auto p-2">
-              {diffData.existing ? (
-                <CodeEditor
-                  value={diffData.existing}
-                  onChange={() => {}}
-                  language="markdown"
-                  readOnly
-                  className="h-full min-h-full !border-border-default"
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full">
-                  <div className="text-center">
-                    <FilePlus size={28} className="text-border-default mx-auto mb-2" />
-                    <p className="text-sm text-text-secondary">No CLAUDE.md exists</p>
-                    <p className="text-xs text-border-default mt-1">A new file will be created</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right — Proposed (editable) */}
-          <div className="flex-1 flex flex-col min-w-0">
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-base/30">
-              <FilePlus size={13} className="text-success" />
-              <span className="text-xs font-medium text-success">Proposed</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-success-muted text-success border border-success/20">
-                Editable
-              </span>
-            </div>
-            <div className="flex-1 overflow-auto p-2">
-              <CodeEditor
-                value={editedContent}
-                onChange={setEditedContent}
-                language="markdown"
-                className="h-full min-h-full !border-border-default"
-              />
-            </div>
-          </div>
+        {/* Diff — highlights what changed instead of asking you to eyeball
+            two full editors side by side */}
+        <div className="flex-1 min-h-0 overflow-auto">
+          {editingProposal ? (
+            <CodeEditor
+              value={editedContent}
+              onChange={setEditedContent}
+              language="markdown"
+              className="min-h-full !border-0"
+            />
+          ) : (
+            <ReactDiffViewer
+              oldValue={diffData.existing ?? ''}
+              newValue={editedContent}
+              splitView
+              useDarkTheme
+              compareMethod={DiffMethod.WORDS}
+              showDiffOnly={false}
+              leftTitle={diffData.existing ? 'Current' : 'No file yet'}
+              rightTitle="Proposed"
+              styles={codeAtelierDiffStyles}
+            />
+          )}
         </div>
       </div>
     )
@@ -186,50 +230,57 @@ export default function ClaudeMdPanel(): React.JSX.Element {
 
   // ── Main panel (no diff active) ──
   return (
-    <div className="relative space-y-4">
-      {/* Regeneration overlay */}
+    <div className="relative flex flex-col h-full min-h-0">
       {feedStatus === 'running' && (
-        <RegenerateOverlay
-          message={feedMessage}
-          onCancel={cancelFeed}
-        />
+        <RegenerateOverlay message={feedMessage} onCancel={cancelFeed} />
       )}
 
-      {/* Header with file path */}
-      <div className="flex items-center justify-between">
-        <div>
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 pb-3 shrink-0">
+        <div className="flex items-center gap-2 min-w-0">
+          <FileText size={14} className="text-text-muted shrink-0" />
           <h3 className="text-sm font-medium text-text-primary">CLAUDE.md</h3>
-          {claudeMdPath && (
-            <p className="text-xs text-text-muted font-mono mt-0.5 truncate max-w-lg">
-              {claudeMdPath}
-            </p>
+          {claudeMdPath && <PathChip path={claudeMdPath} />}
+          {claudeMdContent && (
+            <span className="font-mono text-[11px] tabular-nums text-text-muted shrink-0">
+              {claudeMdContent.split('\n').length} lines
+            </span>
           )}
         </div>
-        <button
-          onClick={handleRegenerate}
-          disabled={feedStatus === 'running' || claudeMdLoading}
-          className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-primary-muted text-primary-text border border-border-default rounded-lg hover:bg-primary/20 disabled:opacity-50 transition-colors"
-        >
-          <Sparkles className="w-4 h-4" />
-          Regenerate CLAUDE.md
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {claudeMdContent && (
+            <SegmentedControl
+              value={viewMode}
+              segments={VIEW_MODES}
+              onChange={setViewMode}
+              ariaLabel="CLAUDE.md view mode"
+            />
+          )}
+          <Button
+            variant="primary"
+            size="md"
+            onClick={handleRegenerate}
+            disabled={feedStatus === 'running' || claudeMdLoading}
+          >
+            <Sparkles className="w-4 h-4" />
+            Regenerate CLAUDE.md
+          </Button>
+        </div>
       </div>
 
-      {/* Current content preview */}
+      {/* Content — one scroll container, not a max-height box nested in the
+          page scroll */}
       {claudeMdLoading ? (
         <div className="flex items-center justify-center py-16">
           <Loader2 className="w-5 h-5 animate-spin text-text-muted" />
         </div>
       ) : claudeMdContent ? (
-        <div className="border border-border-default rounded-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-4 py-2 border-b border-border-default bg-surface-overlay/50">
-            <FileText size={13} className="text-success" />
-            <span className="text-xs font-medium text-text-secondary">Current on-disk content</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-success-muted text-success">
-              {claudeMdContent.split('\n').length} lines
-            </span>
-          </div>
-          <div className="max-h-[500px] overflow-auto">
+        <div className="flex-1 min-h-0 overflow-auto border border-border-default rounded-lg">
+          {viewMode === 'rendered' ? (
+            <div className={`${PROSE_CLASSES} p-4`}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{claudeMdContent}</ReactMarkdown>
+            </div>
+          ) : (
             <CodeEditor
               value={claudeMdContent}
               onChange={() => {}}
@@ -237,19 +288,20 @@ export default function ClaudeMdPanel(): React.JSX.Element {
               readOnly
               className="!border-0"
             />
-          </div>
+          )}
         </div>
       ) : (
         <div className="text-center py-16 text-text-muted border border-border-default border-dashed rounded-lg">
           <FileText className="w-8 h-8 mx-auto mb-2 opacity-40" />
           <p className="text-sm">No CLAUDE.md exists in this workspace</p>
-          <p className="text-xs mt-1">Click "Regenerate CLAUDE.md" to create one from your memories</p>
+          <p className="text-xs mt-1">
+            Click &quot;Regenerate CLAUDE.md&quot; to create one from your memories
+          </p>
         </div>
       )}
 
-      {/* Feed error display */}
       {feedStatus === 'error' && (
-        <div className="px-4 py-2.5 bg-danger/10 border border-danger/30 rounded-md text-xs text-danger">
+        <div className="mt-3 px-4 py-2.5 bg-danger-muted border border-danger/30 rounded-md text-xs text-danger shrink-0">
           {useMemoryStore.getState().feedError ?? 'An error occurred'}
         </div>
       )}

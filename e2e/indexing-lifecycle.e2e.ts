@@ -40,7 +40,10 @@ test.describe('Indexing & Embedding Lifecycle', () => {
 
     // Navigate to Code Intelligence settings tab
     const settingsTab = page.getByRole('button', { name: /settings/i })
-    const hasTab = await settingsTab.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTab = await settingsTab
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
     if (hasTab) {
       await settingsTab.first().click()
       await page.waitForTimeout(500)
@@ -90,7 +93,7 @@ test.describe('Indexing & Embedding Lifecycle', () => {
 
     // Should show time estimate
     const estimateText = modal.getByText(/estimated|minutes|seconds/i)
-    const hasEstimate = await estimateText.isVisible({ timeout: 2_000 }).catch(() => false)
+    const _hasEstimate = await estimateText.isVisible({ timeout: 2_000 }).catch(() => false)
 
     // Should have confirm and cancel buttons
     const confirmBtn = modal.getByRole('button', { name: /start|confirm|index/i })
@@ -167,7 +170,10 @@ test.describe('Indexing & Embedding Lifecycle', () => {
 
     const hasProgress = await progressBar.isVisible({ timeout: 2_000 }).catch(() => false)
     const hasSpinner = await spinnerIcon.isVisible({ timeout: 2_000 }).catch(() => false)
-    const hasCheck = await checkIcon.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasCheck = await checkIcon
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
     expect(hasProgress || hasSpinner || hasCheck).toBeTruthy()
   })

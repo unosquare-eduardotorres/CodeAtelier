@@ -6,27 +6,51 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { setupElectronStub, capturedHandlers, tryInvokeHandler, mockMainWindow } from './electron-stub'
+import {
+  setupElectronStub,
+  capturedHandlers,
+  tryInvokeHandler,
+  mockMainWindow
+} from './electron-stub'
 
 setupElectronStub()
 
 // ── Register IPC modules ─────────────────────────────────────────────────
 
-let grillOk = false, auditOk = false, councilOk = false, mpaOk = false, ideaOk = false
+let grillOk = false,
+  auditOk = false,
+  councilOk = false,
+  mpaOk = false,
+  ideaOk = false
 
-try { require('../../ipc/grill.ipc').registerGrillIpc(mockMainWindow); grillOk = true } catch (err) {
+try {
+  require('../../ipc/grill.ipc').registerGrillIpc(mockMainWindow)
+  grillOk = true
+} catch (err) {
   console.log(`⚠ grill.ipc: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/audit.ipc').registerAuditIpc(mockMainWindow); auditOk = true } catch (err) {
+try {
+  require('../../ipc/audit.ipc').registerAuditIpc(mockMainWindow)
+  auditOk = true
+} catch (err) {
   console.log(`⚠ audit.ipc: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/council.ipc').registerCouncilIpc(mockMainWindow); councilOk = true } catch (err) {
+try {
+  require('../../ipc/council.ipc').registerCouncilIpc(mockMainWindow)
+  councilOk = true
+} catch (err) {
   console.log(`⚠ council.ipc: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/mpa.ipc').registerMpaIpc(mockMainWindow); mpaOk = true } catch (err) {
+try {
+  require('../../ipc/mpa.ipc').registerMpaIpc(mockMainWindow)
+  mpaOk = true
+} catch (err) {
   console.log(`⚠ mpa.ipc: ${(err as Error).message?.split('\n')[0]}`)
 }
-try { require('../../ipc/idea.ipc').registerIdeaIpc(); ideaOk = true } catch (err) {
+try {
+  require('../../ipc/idea.ipc').registerIdeaIpc()
+  ideaOk = true
+} catch (err) {
   console.log(`⚠ idea.ipc: ${(err as Error).message?.split('\n')[0]}`)
 }
 
@@ -36,11 +60,23 @@ try { require('../../ipc/idea.ipc').registerIdeaIpc(); ideaOk = true } catch (er
 
 if (grillOk) {
   describe('grill.ipc — channel registration', () => {
-    for (const ch of ['grill:evaluate', 'grill:cancel', 'grill:getStatus', 'grill:getSession',
-      'grill:saveAnswers', 'grill:generatePlan', 'grill:generatePlanFromDecisions',
-      'grill:seedPlanCard', 'grill:complete', 'grill:discard', 'grill:listPlannedIdeas',
-      'grill:condenseRequirement']) {
-      test(`registers ${ch}`, () => { assert.ok(capturedHandlers.has(ch)) })
+    for (const ch of [
+      'grill:evaluate',
+      'grill:cancel',
+      'grill:getStatus',
+      'grill:getSession',
+      'grill:saveAnswers',
+      'grill:generatePlan',
+      'grill:generatePlanFromDecisions',
+      'grill:seedPlanCard',
+      'grill:complete',
+      'grill:discard',
+      'grill:listPlannedIdeas',
+      'grill:condenseRequirement'
+    ]) {
+      test(`registers ${ch}`, () => {
+        assert.ok(capturedHandlers.has(ch))
+      })
     }
   })
 
@@ -51,12 +87,20 @@ if (grillOk) {
     })
 
     test('grill:evaluate rejects missing workspaceId', async () => {
-      const r = await tryInvokeHandler('grill:evaluate', { trackId: 'grilled', ideaTitle: 'T', ideaDescription: 'D' })
+      const r = await tryInvokeHandler('grill:evaluate', {
+        trackId: 'grilled',
+        ideaTitle: 'T',
+        ideaDescription: 'D'
+      })
       assert.equal(r.ok, false)
     })
 
     test('grill:evaluate rejects missing trackId', async () => {
-      const r = await tryInvokeHandler('grill:evaluate', { workspaceId: 'ws-1', ideaTitle: 'T', ideaDescription: 'D' })
+      const r = await tryInvokeHandler('grill:evaluate', {
+        workspaceId: 'ws-1',
+        ideaTitle: 'T',
+        ideaDescription: 'D'
+      })
       assert.equal(r.ok, false)
     })
 
@@ -81,7 +125,10 @@ if (grillOk) {
     })
 
     test('grill:generatePlanFromDecisions rejects missing workspaceId', async () => {
-      const r = await tryInvokeHandler('grill:generatePlanFromDecisions', { projectName: 'P', description: 'D' })
+      const r = await tryInvokeHandler('grill:generatePlanFromDecisions', {
+        projectName: 'P',
+        description: 'D'
+      })
       assert.equal(r.ok, false)
     })
 
@@ -113,11 +160,24 @@ if (grillOk) {
 
 if (auditOk) {
   describe('audit.ipc — channel registration', () => {
-    for (const ch of ['audit:start', 'audit:cancel', 'audit:rerunTrack', 'audit:resume',
-      'audit:getLatest', 'audit:getHistory', 'audit:deleteRun', 'audit:generatePlan',
-      'audit:getPlans', 'audit:convertFindings', 'audit:exportMarkdown',
-      'audit:exportPlanMarkdown', 'audit:handoffToChat']) {
-      test(`registers ${ch}`, () => { assert.ok(capturedHandlers.has(ch)) })
+    for (const ch of [
+      'audit:start',
+      'audit:cancel',
+      'audit:rerunTrack',
+      'audit:resume',
+      'audit:getLatest',
+      'audit:getHistory',
+      'audit:deleteRun',
+      'audit:generatePlan',
+      'audit:getPlans',
+      'audit:convertFindings',
+      'audit:exportMarkdown',
+      'audit:exportPlanMarkdown',
+      'audit:handoffToChat'
+    ]) {
+      test(`registers ${ch}`, () => {
+        assert.ok(capturedHandlers.has(ch))
+      })
     }
   })
 
@@ -166,9 +226,17 @@ if (auditOk) {
 
 if (councilOk) {
   describe('council.ipc — channel registration', () => {
-    for (const ch of ['council:start', 'council:cancel', 'council:getSession',
-      'council:resume', 'council:getHistory', 'council:deleteSession']) {
-      test(`registers ${ch}`, () => { assert.ok(capturedHandlers.has(ch)) })
+    for (const ch of [
+      'council:start',
+      'council:cancel',
+      'council:getSession',
+      'council:resume',
+      'council:getHistory',
+      'council:deleteSession'
+    ]) {
+      test(`registers ${ch}`, () => {
+        assert.ok(capturedHandlers.has(ch))
+      })
     }
   })
 
@@ -211,16 +279,21 @@ if (councilOk) {
 
 if (mpaOk) {
   describe('mpa.ipc — channel registration', () => {
-    const mpaChannels = [...capturedHandlers.keys()].filter(c => c.startsWith('mpa:'))
+    const mpaChannels = [...capturedHandlers.keys()].filter((c) => c.startsWith('mpa:'))
     test('registers at least 8 MPA channels', () => {
-      assert.ok(mpaChannels.length >= 8, `Expected ≥8, got ${mpaChannels.length}: ${mpaChannels.join(', ')}`)
+      assert.ok(
+        mpaChannels.length >= 8,
+        `Expected ≥8, got ${mpaChannels.length}: ${mpaChannels.join(', ')}`
+      )
     })
   })
 
   describe('mpa.ipc — validation', () => {
     test('mpa:getStatus handles missing workspaceId', async () => {
-      const ch = [...capturedHandlers.keys()].find(c => c.includes('mpa') && c.includes('status') && c.includes('get'))
-        ?? 'mpa:getStatus'
+      const ch =
+        [...capturedHandlers.keys()].find(
+          (c) => c.includes('mpa') && c.includes('status') && c.includes('get')
+        ) ?? 'mpa:getStatus'
       if (capturedHandlers.has(ch)) {
         const r = await tryInvokeHandler(ch, {})
         assert.equal(typeof r.ok, 'boolean')
@@ -228,7 +301,7 @@ if (mpaOk) {
     })
 
     test('mpa:cancel handler exists', () => {
-      const ch = [...capturedHandlers.keys()].find(c => c.includes('mpa') && c.includes('cancel'))
+      const ch = [...capturedHandlers.keys()].find((c) => c.includes('mpa') && c.includes('cancel'))
       assert.ok(ch, 'Should have an MPA cancel channel')
     })
   })
@@ -240,15 +313,20 @@ if (mpaOk) {
 
 if (ideaOk) {
   describe('idea.ipc — channel registration', () => {
-    const ideaChannels = [...capturedHandlers.keys()].filter(c => c.startsWith('idea:'))
+    const ideaChannels = [...capturedHandlers.keys()].filter((c) => c.startsWith('idea:'))
     test('registers at least 5 idea channels', () => {
-      assert.ok(ideaChannels.length >= 5, `Expected ≥5, got ${ideaChannels.length}: ${ideaChannels.join(', ')}`)
+      assert.ok(
+        ideaChannels.length >= 5,
+        `Expected ≥5, got ${ideaChannels.length}: ${ideaChannels.join(', ')}`
+      )
     })
   })
 
   describe('idea.ipc — validation', () => {
     test('idea:create rejects missing workspaceId', async () => {
-      const ch = [...capturedHandlers.keys()].find(c => c.includes('idea') && c.includes('create'))
+      const ch = [...capturedHandlers.keys()].find(
+        (c) => c.includes('idea') && c.includes('create')
+      )
       if (ch) {
         const r = await tryInvokeHandler(ch, { title: 'Test' })
         assert.equal(r.ok, false)
@@ -256,7 +334,9 @@ if (ideaOk) {
     })
 
     test('idea:create rejects missing title', async () => {
-      const ch = [...capturedHandlers.keys()].find(c => c.includes('idea') && c.includes('create'))
+      const ch = [...capturedHandlers.keys()].find(
+        (c) => c.includes('idea') && c.includes('create')
+      )
       if (ch) {
         const r = await tryInvokeHandler(ch, { workspaceId: 'ws-1' })
         assert.equal(r.ok, false)
@@ -264,7 +344,9 @@ if (ideaOk) {
     })
 
     test('idea:delete rejects missing id', async () => {
-      const ch = [...capturedHandlers.keys()].find(c => c.includes('idea') && c.includes('delete'))
+      const ch = [...capturedHandlers.keys()].find(
+        (c) => c.includes('idea') && c.includes('delete')
+      )
       if (ch) {
         const r = await tryInvokeHandler(ch, {})
         assert.equal(r.ok, false)
@@ -275,11 +357,31 @@ if (ideaOk) {
 
 // ── Skip blocks ──────────────────────────────────────────────────────────
 
-if (!grillOk) { describe('grill.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!auditOk) { describe('audit.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!councilOk) { describe('council.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!mpaOk) { describe('mpa.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
-if (!ideaOk) { describe('idea.ipc (skipped)', () => { test('skipped', () => {}, { skipReason: 'module not loaded' }) }) }
+if (!grillOk) {
+  describe('grill.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!auditOk) {
+  describe('audit.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!councilOk) {
+  describe('council.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!mpaOk) {
+  describe('mpa.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
+if (!ideaOk) {
+  describe('idea.ipc (skipped)', () => {
+    test('skipped', () => {}, { skipReason: 'module not loaded' })
+  })
+}
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()

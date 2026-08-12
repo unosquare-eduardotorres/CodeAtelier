@@ -1,21 +1,28 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Brain } from 'lucide-react'
+import { Braces } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
-import type { EmbeddingModelStatus, CodeGraphIndexingState, PlatformInfo } from '../../../../shared/types'
+import type {
+  EmbeddingModelStatus,
+  CodeGraphIndexingState,
+  PlatformInfo
+} from '../../../../shared/types'
 import {
   CodeGraphCard,
   SemanticSearchCard,
   EmbeddingModelCard,
   SearchPlayground,
   LibraryDocsCard,
-  PromptOptimizerCard
+  PromptOptimizerCard,
+  StartIndexingModal
 } from './code-intelligence'
 
 interface CodeIntelligencePageProps {
   onNavigateToModels?: () => void
 }
 
-export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelligencePageProps): React.JSX.Element {
+export default function CodeIntelligencePage({
+  onNavigateToModels
+}: CodeIntelligencePageProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
 
   // Workspace settings
@@ -33,6 +40,8 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
 
   // Semantic search indexing state
   const [isStartingIndex, setIsStartingIndex] = useState(false)
+  /** null = closed; 'start' = confirm + review before indexing; 'review' = exclusions only */
+  const [indexModal, setIndexModal] = useState<'start' | 'review' | null>(null)
   const [persistedIndexStatus, setPersistedIndexStatus] = useState<{
     loaded: boolean
     symbolCount?: number
@@ -91,7 +100,10 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       )
 
     // Load platform info (for Apple Silicon gating)
-    window.api.getPlatformInfo().then(setPlatformInfo).catch(() => {})
+    window.api
+      .getPlatformInfo()
+      .then(setPlatformInfo)
+      .catch(() => {})
   }, [activeWorkspace])
 
   // ── Subscribe to code graph progress events ──
@@ -157,9 +169,16 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
     [handleToggleSetting, onNavigateToModels]
   )
 
-  // ── Start indexing ──
+  // ── Start indexing — exclusion review first, then the pipeline ──
   const handleStartIndex = useCallback(async (): Promise<void> => {
     if (!activeWorkspace) return
+    setIndexModal('start')
+  }, [activeWorkspace])
+
+  const handleConfirmIndex = useCallback(async (): Promise<void> => {
+    const mode = indexModal
+    setIndexModal(null)
+    if (!activeWorkspace || mode !== 'start') return
     setIsStartingIndex(true)
     try {
       await window.api.indexingStart({ workspaceId: activeWorkspace.id })
@@ -167,7 +186,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       console.error('Failed to start indexing:', e)
     }
     setIsStartingIndex(false)
-  }, [activeWorkspace])
+  }, [activeWorkspace, indexModal])
 
   if (!activeWorkspace) return <div />
 
@@ -176,7 +195,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
       {/* Page header */}
       <div className="mb-2">
         <h2 className="text-base font-semibold text-text-primary flex items-center gap-2">
-          <Brain size={18} className="text-cyan-400" />
+          <Braces size={18} className="text-cyan-400" />
           Code Intelligence
         </h2>
         <p className="text-xs text-text-secondary mt-1">
@@ -203,6 +222,7 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
         onToggle={handleSemanticSearchToggle}
         onSettingToggle={handleToggleSetting}
         onStartIndex={handleStartIndex}
+        onReviewExclusions={() => setIndexModal('review')}
         onNavigateToModels={() => onNavigateToModels?.()}
       />
 
@@ -225,7 +245,16 @@ export default function CodeIntelligencePage({ onNavigateToModels }: CodeIntelli
         indexLoaded={persistedIndexStatus.loaded}
       />
 
-
+      {indexModal !== null && (
+        <StartIndexingModal
+          workspaceId={activeWorkspace.id}
+          symbolCount={persistedIndexStatus.symbolCount ?? 0}
+          aiDescriptionsEnabled={!!settings.semanticSearchDescriptions}
+          reviewOnly={indexModal === 'review'}
+          onConfirm={handleConfirmIndex}
+          onCancel={() => setIndexModal(null)}
+        />
+      )}
     </div>
   )
 }

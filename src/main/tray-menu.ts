@@ -12,10 +12,7 @@ import { bugRepository } from './db/repositories/bug.repository'
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
-export function setupTrayMenu(
-  tray: Tray,
-  getMainWindow: () => BrowserWindow | null
-): void {
+export function setupTrayMenu(tray: Tray, getMainWindow: () => BrowserWindow | null): void {
   // Single-click = show/focus window (macOS convention)
   tray.on('click', () => {
     const win = getMainWindow()
@@ -65,15 +62,13 @@ function buildMenu(getMainWindow: () => BrowserWindow | null): Menu {
   // ── Workspaces submenu ──
   const workspaces = getWorkspaces()
   if (workspaces.length > 0) {
-    const workspaceItems: MenuItemConstructorOptions[] = workspaces
-      .slice(0, 8)
-      .map((ws) => {
-        const status = getWorkspaceStatusLabel(ws.id)
-        return {
-          label: `${ws.name}${status ? `  —  ${status}` : ''}`,
-          click: () => showAndNavigate(getMainWindow, 'workspace', ws.id)
-        }
-      })
+    const workspaceItems: MenuItemConstructorOptions[] = workspaces.slice(0, 8).map((ws) => {
+      const status = getWorkspaceStatusLabel(ws.id)
+      return {
+        label: `${ws.name}${status ? `  —  ${status}` : ''}`,
+        click: () => showAndNavigate(getMainWindow, 'workspace', ws.id)
+      }
+    })
     template.push({ label: 'Workspaces', submenu: workspaceItems })
     template.push({ type: 'separator' })
   }

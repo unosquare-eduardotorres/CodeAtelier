@@ -27,8 +27,9 @@ describe('QualityGateRunnerService — instance + exports', () => {
   test('QualityGateResult interface shape (via module import)', async () => {
     // Module imports without error — types are erased but class code runs
     const mod = await import('../quality-gate-runner.service')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.qualityGateRunnerService))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.qualityGateRunnerService)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length >= 1, `has methods: ${methods.join(', ')}`)
   })
 })
@@ -45,8 +46,9 @@ describe('ContextHandoffService — instance + exports', () => {
 
   test('has expected methods', async () => {
     const mod = await import('../context-handoff.service')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.contextHandoffService))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.contextHandoffService)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length >= 1, `has methods: ${methods.join(', ')}`)
   })
 })
@@ -63,8 +65,9 @@ describe('ModelConfigService — instance + exports', () => {
 
   test('has expected methods', async () => {
     const mod = await import('../model-config.service')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.modelConfigService))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.modelConfigService)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length >= 1, `has methods: ${methods.join(', ')}`)
   })
 })
@@ -88,8 +91,9 @@ describe('LocalPlanStateService — instance + state management', () => {
 
   test('has state management methods', async () => {
     const { LocalPlanStateService } = await import('../local-plan-state.service')
-    const proto = Object.getOwnPropertyNames(LocalPlanStateService.prototype)
-      .filter((m) => m !== 'constructor')
+    const proto = Object.getOwnPropertyNames(LocalPlanStateService.prototype).filter(
+      (m) => m !== 'constructor'
+    )
     assert.ok(proto.length >= 2, `has ${proto.length} methods: ${proto.join(', ')}`)
   })
 })
@@ -106,8 +110,9 @@ describe('GrillPlanGeneratorService — instance + exports', () => {
 
   test('has methods', async () => {
     const mod = await import('../grill-plan-generator.service')
-    const methods = Object.getOwnPropertyNames(Object.getPrototypeOf(mod.grillPlanGeneratorService))
-      .filter((m) => m !== 'constructor')
+    const methods = Object.getOwnPropertyNames(
+      Object.getPrototypeOf(mod.grillPlanGeneratorService)
+    ).filter((m) => m !== 'constructor')
     assert.ok(methods.length >= 1, `has methods: ${methods.join(', ')}`)
   })
 })
@@ -133,8 +138,9 @@ describe('AgentStreamProcessor — class + method verification', () => {
 
   test('has processing methods', async () => {
     const { AgentStreamProcessor } = await import('../agent-stream-processor')
-    const proto = Object.getOwnPropertyNames(AgentStreamProcessor.prototype)
-      .filter((m) => m !== 'constructor')
+    const proto = Object.getOwnPropertyNames(AgentStreamProcessor.prototype).filter(
+      (m) => m !== 'constructor'
+    )
     assert.ok(proto.length >= 1, `has ${proto.length} methods: ${proto.join(', ')}`)
   })
 })

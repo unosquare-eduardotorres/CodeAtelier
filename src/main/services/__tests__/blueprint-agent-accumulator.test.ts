@@ -96,7 +96,10 @@ describe('createAccumulator', () => {
     acc.flush('bp-1', 'specify')
     assert.equal(journal.length, 1)
     const content = journal[0].payload.content as string
-    assert.ok(content.length <= AGENT_ENTRY_CHAR_CAP + 100, 'Content should be capped near entry limit')
+    assert.ok(
+      content.length <= AGENT_ENTRY_CHAR_CAP + 100,
+      'Content should be capped near entry limit'
+    )
     assert.ok(content.includes('[… truncated at 32KB]'), 'Should include truncation marker')
   })
 
@@ -112,9 +115,14 @@ describe('createAccumulator', () => {
       acc.flush('bp-1', 'build')
     }
     // Should have fewer entries than numFlushes (some dropped by cap)
-    const totalChars = journal.reduce((sum, e) => sum + ((e.payload.content as string)?.length ?? 0), 0)
-    assert.ok(totalChars <= AGENT_PHASE_CHAR_CAP + AGENT_ENTRY_CHAR_CAP,
-      `Total chars (${totalChars}) should not greatly exceed phase cap`)
+    const totalChars = journal.reduce(
+      (sum, e) => sum + ((e.payload.content as string)?.length ?? 0),
+      0
+    )
+    assert.ok(
+      totalChars <= AGENT_PHASE_CHAR_CAP + AGENT_ENTRY_CHAR_CAP,
+      `Total chars (${totalChars}) should not greatly exceed phase cap`
+    )
   })
 
   // ── flushAllForBlueprint (cancel cleanup) ──
@@ -129,7 +137,10 @@ describe('createAccumulator', () => {
     acc.flushAllForBlueprint('bp-1')
     // Should flush 3 entries for bp-1
     assert.equal(journal.length, 3)
-    assert.ok(journal.every(e => e.blueprintId === 'bp-1'), 'All entries should be for bp-1')
+    assert.ok(
+      journal.every((e) => e.blueprintId === 'bp-1'),
+      'All entries should be for bp-1'
+    )
     // bp-2 accumulator should still exist
     const bp2Acc = acc.getAccumulator('bp-2', 'build')
     assert.equal(bp2Acc.text, 'other-bp')
@@ -172,7 +183,7 @@ describe('createAccumulator', () => {
 
     acc.flushAllForPhase('bp-1', 'build')
     assert.equal(journal.length, 3) // 3 build entries
-    assert.ok(journal.every(e => e.payload.phase === 'build'))
+    assert.ok(journal.every((e) => e.payload.phase === 'build'))
 
     // verify accumulator should still have content
     const verifyAcc = acc.getAccumulator('bp-1', 'verify')

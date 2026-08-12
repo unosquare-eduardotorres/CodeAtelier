@@ -130,7 +130,10 @@ describe('BlueprintSpecifyAdapter', () => {
       description: 'x',
       phaseContext: dummyPhaseContext
     })
-    assert.throws(() => a.buildPrompts(makePromptCtx()), /buildPrompts\(\) called before onSessionStart\(\)/)
+    assert.throws(
+      () => a.buildPrompts(makePromptCtx()),
+      /buildPrompts\(\) called before onSessionStart\(\)/
+    )
   })
 
   test('buildPrompts_returns_phase_message_after_setup', () => {
@@ -194,7 +197,10 @@ describe('BlueprintClarifyAdapter', () => {
       blueprintId: 'bp-1',
       phaseContext: dummyPhaseContext
     })
-    assert.throws(() => a.buildPrompts(makePromptCtx()), /buildPrompts\(\) called before onSessionStart\(\)/)
+    assert.throws(
+      () => a.buildPrompts(makePromptCtx()),
+      /buildPrompts\(\) called before onSessionStart\(\)/
+    )
   })
 })
 
@@ -245,7 +251,10 @@ describe('BlueprintPlanAdapter', () => {
       blueprintId: 'bp-1',
       phaseContext: dummyPhaseContext
     })
-    assert.throws(() => a.buildPrompts(makePromptCtx()), /buildPrompts\(\) called before onSessionStart\(\)/)
+    assert.throws(
+      () => a.buildPrompts(makePromptCtx()),
+      /buildPrompts\(\) called before onSessionStart\(\)/
+    )
   })
 })
 
@@ -297,7 +306,10 @@ describe('BlueprintTasksAdapter', () => {
       blueprintId: 'bp-1',
       phaseContext: dummyPhaseContext
     })
-    assert.throws(() => a.buildPrompts(makePromptCtx()), /buildPrompts\(\) called before onSessionStart\(\)/)
+    assert.throws(
+      () => a.buildPrompts(makePromptCtx()),
+      /buildPrompts\(\) called before onSessionStart\(\)/
+    )
   })
 
   test('buildPrompts_returns_effectiveMessage_after_setup', () => {

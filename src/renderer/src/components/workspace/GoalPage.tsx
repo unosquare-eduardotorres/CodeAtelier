@@ -161,11 +161,7 @@ function useGoalPageState(workspaceId: string) {
 
 // ── EmptyGoalState ──
 
-function EmptyGoalState({
-  onStartCampaign
-}: {
-  onStartCampaign: () => void
-}): JSX.Element {
+function EmptyGoalState({ onStartCampaign }: { onStartCampaign: () => void }): JSX.Element {
   return (
     <div className="flex flex-col items-center justify-center py-10 px-4">
       <div className="max-w-2xl w-full space-y-6">
@@ -181,10 +177,7 @@ function EmptyGoalState({
           </h2>
           <p className="text-sm text-text-secondary max-w-md mx-auto">
             Describe what you want to achieve. The agent will
-            <span className="text-text-primary font-medium">
-              {' '}
-              plan, execute, and verify{' '}
-            </span>
+            <span className="text-text-primary font-medium"> plan, execute, and verify </span>
             autonomously — pausing for your approval before writing code.
           </p>
         </div>
@@ -356,9 +349,7 @@ export default function GoalPage(_props: GoalPageProps): JSX.Element {
           !isRunning &&
           !pendingApproval &&
           !selectedRunId &&
-          !hasAnyHistory && (
-            <EmptyGoalState onStartCampaign={() => setShowCampaignPanel(true)} />
-          )}
+          !hasAnyHistory && <EmptyGoalState onStartCampaign={() => setShowCampaignPanel(true)} />}
 
         {/* Approval Gate — shown when awaiting approval */}
         {pendingApproval && (

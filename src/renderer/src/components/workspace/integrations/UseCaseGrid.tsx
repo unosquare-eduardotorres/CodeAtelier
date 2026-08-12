@@ -46,8 +46,10 @@ export default function UseCaseGrid({
   useCases: NonNullable<ExternalMcpDefinition['useCases']>
 }): React.JSX.Element {
   return (
-    <div className="space-y-2">
-      <h5 className="text-xs font-semibold text-text-primary">What can your agent do?</h5>
+    <div data-testid="use-case-grid" className="space-y-2">
+      <h5 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+        What can your agent do?
+      </h5>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {useCases.map((uc) => (
           <div

@@ -13,39 +13,49 @@ setupElectronStub()
 import {
   formatDirectFindings,
   formatConsolidatedPlan,
-  buildHandoffTitle,
+  buildHandoffTitle
 } from '../audit-handoff.service'
 
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
-function makeFinding(overrides: Partial<{
-  severity: string; title: string; description: string;
-  filePath: string; recommendation: string
-}> = {}): any {
+function makeFinding(
+  overrides: Partial<{
+    severity: string
+    title: string
+    description: string
+    filePath: string
+    recommendation: string
+  }> = {}
+): any {
   return {
     severity: overrides.severity ?? 'medium',
     title: overrides.title ?? 'Test Finding',
     description: overrides.description ?? 'A test finding description',
     filePath: overrides.filePath,
-    recommendation: overrides.recommendation,
+    recommendation: overrides.recommendation
   }
 }
 
-function makeResult(overrides: Partial<{
-  trackId: string; score: number | null; findings: any[]; status: string
-}> = {}): any {
+function makeResult(
+  overrides: Partial<{
+    trackId: string
+    score: number | null
+    findings: any[]
+    status: string
+  }> = {}
+): any {
   return {
     trackId: overrides.trackId ?? 'database',
     score: overrides.score !== undefined ? overrides.score : 75,
     findings: overrides.findings ?? [],
-    status: overrides.status ?? 'completed',
+    status: overrides.status ?? 'completed'
   }
 }
 
 function makeRun(results: any[], overallScore?: number | null): any {
   return {
     results,
-    overallScore: overallScore !== undefined ? overallScore : 72,
+    overallScore: overallScore !== undefined ? overallScore : 72
   }
 }
 
@@ -61,7 +71,7 @@ describe('audit-handoff › formatDirectFindings', () => {
   test('includes score and issue count', () => {
     const result = makeResult({
       score: 85,
-      findings: [makeFinding({ severity: 'high' }), makeFinding({ severity: 'low' })],
+      findings: [makeFinding({ severity: 'high' }), makeFinding({ severity: 'low' })]
     })
     const md = formatDirectFindings(result)
     assert.ok(md.includes('**Score:** 85/100'))
@@ -70,7 +80,7 @@ describe('audit-handoff › formatDirectFindings', () => {
 
   test('singular issue count for 1 finding', () => {
     const result = makeResult({
-      findings: [makeFinding({ severity: 'critical' })],
+      findings: [makeFinding({ severity: 'critical' })]
     })
     const md = formatDirectFindings(result)
     assert.ok(md.includes('1 issue found'))
@@ -80,8 +90,8 @@ describe('audit-handoff › formatDirectFindings', () => {
     const result = makeResult({
       findings: [
         makeFinding({ severity: 'info', title: 'Info Thing' }),
-        makeFinding({ severity: 'high', title: 'Real Issue' }),
-      ],
+        makeFinding({ severity: 'high', title: 'Real Issue' })
+      ]
     })
     const md = formatDirectFindings(result)
     assert.ok(!md.includes('Info Thing'))
@@ -95,8 +105,8 @@ describe('audit-handoff › formatDirectFindings', () => {
         makeFinding({ severity: 'low', title: 'Low Issue' }),
         makeFinding({ severity: 'critical', title: 'Critical Issue' }),
         makeFinding({ severity: 'high', title: 'High Issue' }),
-        makeFinding({ severity: 'medium', title: 'Medium Issue' }),
-      ],
+        makeFinding({ severity: 'medium', title: 'Medium Issue' })
+      ]
     })
     const md = formatDirectFindings(result)
     const critIdx = md.indexOf('[CRITICAL]')
@@ -110,7 +120,7 @@ describe('audit-handoff › formatDirectFindings', () => {
 
   test('includes filePath when present', () => {
     const result = makeResult({
-      findings: [makeFinding({ severity: 'high', filePath: 'src/service.ts' })],
+      findings: [makeFinding({ severity: 'high', filePath: 'src/service.ts' })]
     })
     const md = formatDirectFindings(result)
     assert.ok(md.includes('**File:** `src/service.ts`'))
@@ -118,7 +128,7 @@ describe('audit-handoff › formatDirectFindings', () => {
 
   test('includes recommendation when present', () => {
     const result = makeResult({
-      findings: [makeFinding({ severity: 'high', recommendation: 'Add validation' })],
+      findings: [makeFinding({ severity: 'high', recommendation: 'Add validation' })]
     })
     const md = formatDirectFindings(result)
     assert.ok(md.includes('**Recommendation:** Add validation'))
@@ -126,7 +136,7 @@ describe('audit-handoff › formatDirectFindings', () => {
 
   test('omits filePath and recommendation when absent', () => {
     const result = makeResult({
-      findings: [makeFinding({ severity: 'high' })],
+      findings: [makeFinding({ severity: 'high' })]
     })
     const md = formatDirectFindings(result)
     assert.ok(!md.includes('**File:**'))
@@ -157,7 +167,10 @@ describe('audit-handoff › formatDirectFindings', () => {
   })
 
   test('unknown trackId falls back to raw ID', () => {
-    const result = makeResult({ trackId: 'unknown_track_xyz', findings: [makeFinding({ severity: 'high' })] })
+    const result = makeResult({
+      trackId: 'unknown_track_xyz',
+      findings: [makeFinding({ severity: 'high' })]
+    })
     const md = formatDirectFindings(result)
     assert.ok(md.includes('unknown_track_xyz'))
   })
@@ -173,18 +186,18 @@ describe('audit-handoff › formatDirectFindings', () => {
 
 describe('audit-handoff › formatConsolidatedPlan', () => {
   test('includes overall score in header', () => {
-    const run = makeRun(
-      [makeResult({ findings: [makeFinding({ severity: 'high' })] })],
-      65
-    )
+    const run = makeRun([makeResult({ findings: [makeFinding({ severity: 'high' })] })], 65)
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('# 🔍 Audit Health Report — 65/100'))
   })
 
   test('counts total issues across tracks', () => {
     const run = makeRun([
-      makeResult({ trackId: 'database', findings: [makeFinding({ severity: 'high' }), makeFinding({ severity: 'medium' })] }),
-      makeResult({ trackId: 'security', findings: [makeFinding({ severity: 'critical' })] }),
+      makeResult({
+        trackId: 'database',
+        findings: [makeFinding({ severity: 'high' }), makeFinding({ severity: 'medium' })]
+      }),
+      makeResult({ trackId: 'security', findings: [makeFinding({ severity: 'critical' })] })
     ])
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('3 total issues'))
@@ -192,9 +205,7 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
   })
 
   test('singular auditor count for 1 track', () => {
-    const run = makeRun([
-      makeResult({ findings: [makeFinding({ severity: 'high' })] }),
-    ])
+    const run = makeRun([makeResult({ findings: [makeFinding({ severity: 'high' })] })])
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('1 auditor'))
     assert.ok(!md.includes('1 auditors'))
@@ -202,8 +213,16 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
 
   test('filters non-completed results', () => {
     const run = makeRun([
-      makeResult({ trackId: 'database', status: 'completed', findings: [makeFinding({ severity: 'high', title: 'DB Issue' })] }),
-      makeResult({ trackId: 'security', status: 'running', findings: [makeFinding({ severity: 'critical', title: 'Sec Issue' })] }),
+      makeResult({
+        trackId: 'database',
+        status: 'completed',
+        findings: [makeFinding({ severity: 'high', title: 'DB Issue' })]
+      }),
+      makeResult({
+        trackId: 'security',
+        status: 'running',
+        findings: [makeFinding({ severity: 'critical', title: 'Sec Issue' })]
+      })
     ])
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('DB Issue'))
@@ -215,9 +234,9 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
       makeResult({
         findings: [
           makeFinding({ severity: 'high', title: 'Real' }),
-          makeFinding({ severity: 'info', title: 'FYI' }),
-        ],
-      }),
+          makeFinding({ severity: 'info', title: 'FYI' })
+        ]
+      })
     ])
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('1 total issue'))
@@ -226,7 +245,7 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
 
   test('per-track section shows score and issue count', () => {
     const run = makeRun([
-      makeResult({ trackId: 'database', score: 80, findings: [makeFinding({ severity: 'high' })] }),
+      makeResult({ trackId: 'database', score: 80, findings: [makeFinding({ severity: 'high' })] })
     ])
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('Database (80/100) — 1 issue'))
@@ -235,8 +254,10 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
   test('per-track includes file path suffix', () => {
     const run = makeRun([
       makeResult({
-        findings: [makeFinding({ severity: 'high', title: 'T', description: 'D', filePath: 'src/x.ts' })],
-      }),
+        findings: [
+          makeFinding({ severity: 'high', title: 'T', description: 'D', filePath: 'src/x.ts' })
+        ]
+      })
     ])
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('`src/x.ts`'))
@@ -245,7 +266,10 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
   test('skips tracks with zero actionable findings', () => {
     const run = makeRun([
       makeResult({ trackId: 'database', findings: [makeFinding({ severity: 'info' })] }),
-      makeResult({ trackId: 'security', findings: [makeFinding({ severity: 'high', title: 'Issue' })] }),
+      makeResult({
+        trackId: 'security',
+        findings: [makeFinding({ severity: 'high', title: 'Issue' })]
+      })
     ])
     const md = formatConsolidatedPlan(run)
     // Database section should be skipped (only info findings)
@@ -257,7 +281,7 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
     const findings = [
       makeFinding({ severity: 'critical', recommendation: 'Fix critical thing' }),
       makeFinding({ severity: 'high', recommendation: 'Fix high thing' }),
-      makeFinding({ severity: 'medium', title: 'Medium title no rec' }),
+      makeFinding({ severity: 'medium', title: 'Medium title no rec' })
     ]
     const run = makeRun([makeResult({ findings })])
     const md = formatConsolidatedPlan(run)
@@ -269,10 +293,7 @@ describe('audit-handoff › formatConsolidatedPlan', () => {
   })
 
   test('handles null overall score', () => {
-    const run = makeRun(
-      [makeResult({ findings: [makeFinding({ severity: 'high' })] })],
-      null
-    )
+    const run = makeRun([makeResult({ findings: [makeFinding({ severity: 'high' })] })], null)
     const md = formatConsolidatedPlan(run)
     assert.ok(md.includes('N/A'))
   })

@@ -86,6 +86,8 @@ interface AuditWorkspaceState {
   running: boolean
   abortController: AbortController | null
   session: AgentSessionService | null
+  /** Per-conversation cancel: track the syntheticConvId used for send(). */
+  lastConversationId?: string
 }
 
 // ── Service ────────────────────────────────────────────────────────────────
@@ -197,19 +199,21 @@ export class AuditAgentService extends EventEmitter {
         const wsSettings = workspaceRepository.getSettings(params.workspaceId)
         if ((wsSettings as any).memoryCaptureBlueprints !== false) {
           for (const finding of highFindings.slice(0, 10)) {
-            await memoryEngineService.writeFact({
-              workspaceId: params.workspaceId,
-              category: 'gotcha',
-              title: `Audit: ${finding.title}`,
-              content: `${finding.description}${finding.recommendation ? `\n\n**Recommendation**: ${finding.recommendation}` : ''}`,
-              tags: ['audit', finding.severity],
-              scopePaths: finding.filePath ? [finding.filePath] : [],
-              sourceType: 'blueprint',
-              sourceRef: `audit:${params.workspaceId}`,
-              workspacePath: params.workspacePath
-            }).catch((err) => {
-              auditLog.warn(`[audit] Failed to write finding fact: ${err}`)
-            })
+            await memoryEngineService
+              .writeFact({
+                workspaceId: params.workspaceId,
+                category: 'gotcha',
+                title: `Audit: ${finding.title}`,
+                content: `${finding.description}${finding.recommendation ? `\n\n**Recommendation**: ${finding.recommendation}` : ''}`,
+                tags: ['audit', finding.severity],
+                scopePaths: finding.filePath ? [finding.filePath] : [],
+                sourceType: 'blueprint',
+                sourceRef: `audit:${params.workspaceId}`,
+                workspacePath: params.workspacePath
+              })
+              .catch((err) => {
+                auditLog.warn(`[audit] Failed to write finding fact: ${err}`)
+              })
           }
         }
       }
@@ -227,7 +231,7 @@ export class AuditAgentService extends EventEmitter {
         state.abortController?.abort()
         if (state.session) {
           try {
-            state.session.cancelCurrentQuery()
+            state.session.cancelCurrentQuery(state.lastConversationId)
           } catch {
             /* non-fatal */
           }
@@ -240,7 +244,7 @@ export class AuditAgentService extends EventEmitter {
         state.abortController?.abort()
         if (state.session) {
           try {
-            state.session.cancelCurrentQuery()
+            state.session.cancelCurrentQuery(state.lastConversationId)
           } catch {
             /* non-fatal */
           }
@@ -648,13 +652,14 @@ export class AuditAgentService extends EventEmitter {
         : this.buildContinuationPrompt(params)
 
       const syntheticConvId = `audit-${params.trackId}-r${params.roundNumber}-${Date.now()}`
+      state.lastConversationId = syntheticConvId
       await session.send(message, syntheticConvId, [])
 
       if (session.wasTimedOut()) {
         auditLog.warn(`[audit:${params.trackId}] Round ${params.roundNumber} timed out`)
       }
 
-      const responseText = session.getStreamedContent()
+      const responseText = session.getStreamedContent(syntheticConvId)
 
       // Detect empty/very short responses — likely CLI or API failure
       if (responseText.length < 50) {

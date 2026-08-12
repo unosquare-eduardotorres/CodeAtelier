@@ -119,7 +119,6 @@ export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
     }
   }
 
-
   override onSessionStop(): void {
     this.systemPrompt = null
   }

@@ -23,7 +23,18 @@ try {
   createTestDb = require('../../db/test-helpers').createTestDb
   seedWorkspace = require('../../db/test-helpers').seedWorkspace
   _setDatabaseForTesting = require('../../db/index')._setDatabaseForTesting
-  memoryFactRepository = require('../../db/repositories/memory-fact.repository').memoryFactRepository
+  memoryFactRepository =
+    require('../../db/repositories/memory-fact.repository').memoryFactRepository
+  // An earlier file in the shared run (ipc/__tests__/ipc-handler-bodies.test)
+  // installs setup-full-mock's Module._load patch and loads memory.ipc, which
+  // transitively caches memory-consolidation.service with MOCKED repositories.
+  // restoreFullMock() un-patches the loader but cannot re-bind an already-cached
+  // module, so that cached copy's memoryFactRepository.getConfirmations() is a
+  // stub returning undefined — and hasRealEvidence() throws on `.some`.
+  // Drop just this one leaf service so it re-binds to the real repositories.
+  for (const key of Object.keys(require.cache)) {
+    if (key.includes('memory-consolidation.service')) delete require.cache[key]
+  }
   const consolidationMod = require('../memory-consolidation.service')
   selectStaleT0Facts = consolidationMod.selectStaleT0Facts
   hasRealEvidence = consolidationMod.hasRealEvidence
@@ -98,13 +109,17 @@ if (dbAvailable) {
 
       // ── Back-date A, B, C, E to 40 days ago ──
       const staleDate = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString()
-      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id IN (?, ?, ?, ?)`)
-        .run(staleDate, factA.id, factB.id, factC.id, factE.id)
+      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id IN (?, ?, ?, ?)`).run(
+        staleDate,
+        factA.id,
+        factB.id,
+        factC.id,
+        factE.id
+      )
 
       // ── Fact D stays fresh (5 days ago) ──
       const freshDate = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString()
-      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`)
-        .run(freshDate, factD.id)
+      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`).run(freshDate, factD.id)
 
       // ── Add confirmations ──
       // Fact A: 2× auto_dedup (no real evidence)
@@ -124,9 +139,18 @@ if (dbAvailable) {
       // ── Assertions ──
       const selectedIds = selected.map((f) => f.id)
       assert.equal(selectedIds.length, 1, `Expected exactly 1 selected, got ${selectedIds.length}`)
-      assert.ok(selectedIds.includes(factA.id), 'Fact A should be selected (stale T0, auto_dedup only)')
-      assert.ok(!selectedIds.includes(factB.id), 'Fact B should NOT be selected (has extraction confirmation)')
-      assert.ok(!selectedIds.includes(factC.id), 'Fact C should NOT be selected (lastAccessedAt set)')
+      assert.ok(
+        selectedIds.includes(factA.id),
+        'Fact A should be selected (stale T0, auto_dedup only)'
+      )
+      assert.ok(
+        !selectedIds.includes(factB.id),
+        'Fact B should NOT be selected (has extraction confirmation)'
+      )
+      assert.ok(
+        !selectedIds.includes(factC.id),
+        'Fact C should NOT be selected (lastAccessedAt set)'
+      )
       assert.ok(!selectedIds.includes(factD.id), 'Fact D should NOT be selected (too fresh)')
       assert.ok(!selectedIds.includes(factE.id), 'Fact E should NOT be selected (global fact)')
 
@@ -180,8 +204,16 @@ if (dbAvailable) {
         factNone.id
       ])
 
-      assert.equal(counts.get(factWithHuman.id), 1, 'Human-confirmed fact should have evidence count 1')
-      assert.equal(counts.has(factDedupOnly.id), false, 'Auto-dedup-only fact should be absent from map')
+      assert.equal(
+        counts.get(factWithHuman.id),
+        1,
+        'Human-confirmed fact should have evidence count 1'
+      )
+      assert.equal(
+        counts.has(factDedupOnly.id),
+        false,
+        'Auto-dedup-only fact should be absent from map'
+      )
       assert.equal(counts.has(factNone.id), false, 'No-confirmation fact should be absent from map')
 
       // ── Empty input returns empty map ──
@@ -208,8 +240,7 @@ if (dbAvailable) {
 
       // Back-date to 40 days ago
       const staleDate = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000).toISOString()
-      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`)
-        .run(staleDate, fact.id)
+      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`).run(staleDate, fact.id)
 
       // Add only auto_dedup confirmations (no real evidence)
       memoryFactRepository.addConfirmation(fact.id, 'auto_dedup', 0)
@@ -223,8 +254,10 @@ if (dbAvailable) {
         sourceType: 'session',
         embeddingPending: false
       })
-      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`)
-        .run(staleDate, protectedFact.id)
+      db.prepare(`UPDATE memory_facts SET created_at = ? WHERE id = ?`).run(
+        staleDate,
+        protectedFact.id
+      )
       memoryFactRepository.addConfirmation(protectedFact.id, 'human', 1)
 
       // Run selection + archival (the production path)

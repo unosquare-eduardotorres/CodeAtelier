@@ -19,9 +19,7 @@ test.describe('Update Flow', () => {
   /**
    * Helper: Ensure workspace is open.
    */
-  async function ensureAppReady(
-    page: import('@playwright/test').Page
-  ): Promise<void> {
+  async function ensureAppReady(page: import('@playwright/test').Page): Promise<void> {
     const welcomePage = new WelcomePage(page)
 
     const hasModal = await welcomePage.isWelcomeModalVisible()
@@ -125,9 +123,7 @@ test.describe('Update Flow', () => {
     await expect(banner).not.toBeVisible()
   })
 
-  test('download progress bar updates during download state', async ({
-    electronPage: page
-  }) => {
+  test('download progress bar updates during download state', async ({ electronPage: page }) => {
     await ensureAppReady(page)
 
     // Look for progress indicators in update banner
@@ -152,9 +148,7 @@ test.describe('Update Flow', () => {
     expect(hasProgress || hasProgressText || bannerText!.length > 0).toBeTruthy()
   })
 
-  test('restart and install button triggers confirmation', async ({
-    electronPage: page
-  }) => {
+  test('restart and install button triggers confirmation', async ({ electronPage: page }) => {
     await ensureAppReady(page)
 
     // Look for restart & install button (only visible when update is downloaded)

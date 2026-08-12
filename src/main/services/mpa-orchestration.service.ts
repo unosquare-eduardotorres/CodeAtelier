@@ -27,6 +27,7 @@ import { parsePlanArtifact, parseVerifyReport, hasFailingCriteria } from './mpa-
 import { mpaRunRepository } from '../db/repositories/mpa-run.repository'
 import { mpaArtifactRepository } from '../db/repositories/mpa-artifact.repository'
 import { hookEngine } from './hook-engine.service'
+import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import type {
   MpaOrchestrateParams,
   MpaPhaseType,
@@ -535,19 +536,41 @@ export class MpaOrchestrationService extends EventEmitter {
 
     const iteration = verifierFeedback ? 2 : 1
 
-    const { phase } = await this.setupAndExecutePhase({
-      run,
-      adapter,
-      phaseType: 'execute',
-      iteration,
-      goalCondition: buildBuilderGoalCondition(plan),
-      workspacePath: params.workspacePath
-    })
+    // Execute is the only MPA phase that runs in a writing mode ('build'); plan
+    // and verify are readers. It writes into `params.workspacePath`, the shared
+    // primary tree, so it takes the same claim chats and blueprints take.
+    //
+    // Claimed per execute phase rather than per run: a run interleaves execute
+    // with long read-only plan/verify phases, and holding the user's checkout
+    // hostage through those would block every branchless chat for no benefit.
+    const primaryTreeOwnerId = `mpa:${run.id}`
+    if (
+      !primaryTreeLock.acquire(params.workspaceId, {
+        ownerKind: 'campaign',
+        ownerId: primaryTreeOwnerId,
+        reason: 'An MPA execute phase'
+      })
+    ) {
+      throw primaryTreeBusyError(primaryTreeLock.holder(params.workspaceId))
+    }
 
-    mpaRunRepository.updatePhase(phase.id, {
-      status: 'completed',
-      completedAt: new Date().toISOString()
-    })
+    try {
+      const { phase } = await this.setupAndExecutePhase({
+        run,
+        adapter,
+        phaseType: 'execute',
+        iteration,
+        goalCondition: buildBuilderGoalCondition(plan),
+        workspacePath: params.workspacePath
+      })
+
+      mpaRunRepository.updatePhase(phase.id, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      })
+    } finally {
+      primaryTreeLock.release(params.workspaceId, primaryTreeOwnerId)
+    }
   }
 
   private async runVerifyPhase(
@@ -679,13 +702,14 @@ export class MpaOrchestrationService extends EventEmitter {
     })
 
     const mode = phaseType === 'execute' ? 'build' : 'plan'
+    // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output return) can read it.
+    const syntheticConvId = `mpa-${phaseType}-${runId}-${iteration}-${Date.now()}`
 
     try {
       // Start session
       await session.start(workspacePath, mode)
 
       // Send the phase message — session will run until /goal is met or timeout
-      const syntheticConvId = `mpa-${phaseType}-${runId}-${iteration}-${Date.now()}`
 
       // Create a timeout race
       let timeoutId: NodeJS.Timeout | undefined
@@ -701,7 +725,7 @@ export class MpaOrchestrationService extends EventEmitter {
         if (timeoutId) clearTimeout(timeoutId)
       }
 
-      const text = session.getStreamedContent()
+      const text = session.getStreamedContent(syntheticConvId)
 
       // Emit phase complete
       this.emit('phaseComplete', {
@@ -724,7 +748,7 @@ export class MpaOrchestrationService extends EventEmitter {
         tokensUsed: 0
       } satisfies MpaPhaseCompletePayload)
 
-      return session.getStreamedContent()
+      return session.getStreamedContent(syntheticConvId)
     } finally {
       await session.stop()
       if (ownerPipeline) ownerPipeline.currentPhaseSession = null
@@ -897,8 +921,7 @@ export class MpaOrchestrationService extends EventEmitter {
       phases: remainingPhases,
       grillSessionId: run.grillSessionId ?? undefined,
       grillDecisions: config.grillDecisions as
-        | import('../../shared/mpa-types').GrillDecision[]
-        | undefined,
+        import('../../shared/mpa-types').GrillDecision[] | undefined,
       campaignId: run.campaignId ?? undefined,
       orderIndex: run.orderIndex ?? undefined,
       successCriteria

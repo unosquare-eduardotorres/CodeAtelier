@@ -9,6 +9,7 @@ import {
   Network,
   Search,
   Clock,
+  History,
   BarChart3,
   MessageSquare,
   Heart,
@@ -21,7 +22,12 @@ import { GithubIcon } from '../common/icons/GithubIcon'
 import { useProfileStore, useWorkspaceStore, useAuditStore } from '@renderer/store'
 import { useClipboardImagePaste, IMAGE_REGEX } from '@renderer/hooks'
 import { AttachmentDropzone } from '@renderer/components/chat'
-import type { CommunicationTone, ConversationMode, LLMProvider, ModelRoleMap } from '../../../../shared/types'
+import type {
+  CommunicationTone,
+  ConversationMode,
+  LLMProvider,
+  ModelRoleMap
+} from '../../../../shared/types'
 import {
   COMMUNICATION_TONES,
   EXTERNAL_MCP_INTEGRATIONS,
@@ -46,6 +52,8 @@ interface NewChatPageProps {
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    /** User confirmed taking the branch from whatever holds it. */
+    takeover?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
@@ -103,9 +111,7 @@ function useMcpSettings(activeWorkspace: { id: string } | null) {
         }
         setMcpOverrides((prev) => ({ ...localDefaults, ...prev }))
       })
-      .catch((err) =>
-        console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err)
-      )
+      .catch((err) => console.warn('[NewChatPage] Non-fatal: workspace settings load failed:', err))
   }, [activeWorkspace])
 
   return {
@@ -130,8 +136,7 @@ function ToneSelector({
   return (
     <div data-testid="new-chat-tone-selector" className="w-full mb-5">
       <label className="block text-sm font-medium text-text-primary mb-1.5">
-        Tone{' '}
-        <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
+        Tone <span className="text-text-muted font-normal">(uses workspace default if unset)</span>
       </label>
       <div className="flex items-center gap-1.5 flex-wrap">
         <button
@@ -183,9 +188,12 @@ export default function NewChatPage({
   const [mode, setMode] = useState<ConversationMode>('plan')
   const [communicationTone, setConversationTone] = useState<CommunicationTone | null>(null)
   const [attachments, setAttachments] = useState<string[]>([])
-  const [branchMode, setBranchMode] = useState<BranchMode>('none')
+  // Auto-branch is the default: a chat without a branch runs in the shared
+  // primary tree alongside every other chat. 'none' is an explicit opt-out.
+  const [branchMode, setBranchMode] = useState<BranchMode>('auto')
   const [customBranchName, setCustomBranchName] = useState('')
-  const [gitAutoBranch, setGitAutoBranch] = useState(false)
+  const [takeover, setTakeover] = useState(false)
+  const [gitAutoBranch, setGitAutoBranch] = useState(true)
   const {
     modelRoles: workspaceModelRoles,
     claudeModelOverrides,
@@ -227,13 +235,14 @@ export default function NewChatPage({
     window.api
       .getWorkspaceSettings({ workspaceId: activeWorkspace.id })
       .then((s) => {
-        const autoBranch = !!s.gitAutoBranch
+        // Unset means yes — only a deliberate `false` opts out.
+        const autoBranch = s.gitAutoBranch !== false
         setGitAutoBranch(autoBranch)
         setBranchMode(autoBranch ? 'auto' : 'none')
       })
       .catch(() => {
-        setGitAutoBranch(false)
-        setBranchMode('none')
+        setGitAutoBranch(true)
+        setBranchMode('auto')
       })
   }, [activeWorkspace])
 
@@ -242,7 +251,12 @@ export default function NewChatPage({
 
   useEffect(() => {
     if (pendingFixContext) {
-      const { title: ctxTitle, description: ctxDesc, autoSend, sourceAuditRunId } = pendingFixContext
+      const {
+        title: ctxTitle,
+        description: ctxDesc,
+        autoSend,
+        sourceAuditRunId
+      } = pendingFixContext
       // Consume immediately to prevent re-application
       setPendingFixContext(null)
 
@@ -274,7 +288,11 @@ export default function NewChatPage({
     // Model defaults are now configured exclusively in Settings → Models tab.
     // Chat creation should not silently rewrite workspace-wide settings.
 
-    const mcpOverridesPayload = buildMcpPayload(availableLocalMcps, availableIntegrations, mcpOverrides)
+    const mcpOverridesPayload = buildMcpPayload(
+      availableLocalMcps,
+      availableIntegrations,
+      mcpOverrides
+    )
 
     // Derive provider from routing overrides or workspace routing
     const effectiveProvider = routingOverrides['specialist:plan']?.provider ?? derivedProvider
@@ -298,9 +316,10 @@ export default function NewChatPage({
       attachments: attachments.length > 0 ? attachments : undefined,
       branchName,
       autoBranch,
+      takeover: branchName ? takeover : undefined,
       llmProvider: effectiveProvider,
       routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined,
-      mcpOverrides: mcpOverridesPayload,
+      mcpOverrides: mcpOverridesPayload
     })
   }, [
     title,
@@ -310,6 +329,7 @@ export default function NewChatPage({
     attachments,
     branchMode,
     customBranchName,
+    takeover,
     derivedProvider,
     routingOverrides,
     mcpOverrides,
@@ -482,7 +502,9 @@ export default function NewChatPage({
               onCustomBranchNameChange={setCustomBranchName}
               workspaceId={activeWorkspace.id}
               gitAutoBranch={gitAutoBranch}
-              datalistId="new-chat-page"
+              idSuffix="new-chat-page"
+              takeover={takeover}
+              onTakeoverChange={setTakeover}
             />
           </div>
         )}
@@ -550,6 +572,7 @@ const ICON_MAP: Record<string, React.FC<{ size?: number; className?: string }>> 
   Search,
   GitBranch,
   Clock,
+  History,
   Github: GithubIcon,
   BarChart3,
   Smartphone,

@@ -77,7 +77,11 @@ const makeHeaderChunk = (overrides: Record<string, unknown> = {}) => ({
 
 describe('buildChunkHeader', () => {
   test('formats function header correctly', () => {
-    const chunk = makeHeaderChunk({ filePath: 'src/utils.ts', symbolName: 'helper', symbolKind: 'function' })
+    const chunk = makeHeaderChunk({
+      filePath: 'src/utils.ts',
+      symbolName: 'helper',
+      symbolKind: 'function'
+    })
     const header = buildChunkHeader(chunk as any)
     assert.ok(header.includes('utils.ts'))
     assert.ok(header.includes('function'))
@@ -85,7 +89,11 @@ describe('buildChunkHeader', () => {
   })
 
   test('includes class name when present', () => {
-    const chunk = makeHeaderChunk({ className: 'MyClass', symbolKind: 'method', symbolName: 'doWork' })
+    const chunk = makeHeaderChunk({
+      className: 'MyClass',
+      symbolKind: 'method',
+      symbolName: 'doWork'
+    })
     const header = buildChunkHeader(chunk as any)
     assert.ok(header.includes('MyClass'))
   })

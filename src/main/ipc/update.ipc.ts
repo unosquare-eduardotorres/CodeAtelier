@@ -7,7 +7,8 @@ import type { UpdateConfig } from '../../shared/types'
 export function registerUpdateIpc(): void {
   ipcMain.handle(IPC_CHANNELS.UPDATE_CHECK, (event) => {
     validateSender(event)
-    autoUpdateService.checkForUpdates()
+    // Reached only from the "Check for Updates" button — always report the outcome.
+    autoUpdateService.checkForUpdates(true)
   })
 
   ipcMain.handle(IPC_CHANNELS.UPDATE_DOWNLOAD, (event) => {

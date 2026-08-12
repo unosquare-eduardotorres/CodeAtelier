@@ -291,9 +291,10 @@ class GrillPlanGeneratorService {
 
   /** Call Claude CLI in one-shot mode (W3-F18: selects lean system prompt when model qualifies) */
   private async callClaude(prompt: string, model: string, workspaceId?: string): Promise<string> {
-    const systemPrompt = resolvePromptVerbosity(model) === 'lean'
-      ? PLAN_GENERATION_SYSTEM_PROMPT_LEAN
-      : PLAN_GENERATION_SYSTEM_PROMPT
+    const systemPrompt =
+      resolvePromptVerbosity(model) === 'lean'
+        ? PLAN_GENERATION_SYSTEM_PROMPT_LEAN
+        : PLAN_GENERATION_SYSTEM_PROMPT
     try {
       const { text } = await runOneShotClaude({
         feature: 'grill_plan',
@@ -377,7 +378,9 @@ class GrillPlanGeneratorService {
   private validatePlanStructure(parsed: GrillStructuredPlan): boolean {
     // Top-level required fields
     if (!parsed.title || !parsed.summary || !Array.isArray(parsed.items)) {
-      planLog.error('[plan-gen] Parsed plan missing required top-level fields (title/summary/items)')
+      planLog.error(
+        '[plan-gen] Parsed plan missing required top-level fields (title/summary/items)'
+      )
       return false
     }
 

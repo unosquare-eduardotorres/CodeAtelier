@@ -21,9 +21,7 @@ test.describe('Create Project Dialog', () => {
   /**
    * Navigate to the welcome screen.
    */
-  async function ensureWelcomeScreen(
-    page: import('@playwright/test').Page
-  ): Promise<WelcomePage> {
+  async function ensureWelcomeScreen(page: import('@playwright/test').Page): Promise<WelcomePage> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) {
@@ -45,10 +43,15 @@ test.describe('Create Project Dialog', () => {
     return dialog.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('dialog opens from welcome screen Create New Project button', async ({ electronPage: page }) => {
+  test('dialog opens from welcome screen Create New Project button', async ({
+    electronPage: page
+  }) => {
     await ensureWelcomeScreen(page)
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     await expect(page.locator('[data-testid="create-project-dialog"]')).toBeVisible()
     // Name input should be present
@@ -60,7 +63,10 @@ test.describe('Create Project Dialog', () => {
   test('name input accepts text and validates', async ({ electronPage: page }) => {
     await ensureWelcomeScreen(page)
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const nameInput = page.locator('[data-testid="create-project-name"]')
     await expect(nameInput).toBeVisible()
@@ -82,7 +88,10 @@ test.describe('Create Project Dialog', () => {
   test('create button is disabled without required fields', async ({ electronPage: page }) => {
     await ensureWelcomeScreen(page)
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     // Create button should be disabled initially (no name, no folder)
     const createBtn = page.getByRole('button', { name: /create project/i })
@@ -92,7 +101,10 @@ test.describe('Create Project Dialog', () => {
   test('dialog closes on cancel', async ({ electronPage: page }) => {
     await ensureWelcomeScreen(page)
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="create-project-dialog"]')
     await expect(dialog).toBeVisible()
@@ -108,7 +120,10 @@ test.describe('Create Project Dialog', () => {
   test('dialog closes on close button', async ({ electronPage: page }) => {
     await ensureWelcomeScreen(page)
     const opened = await openDialog(page)
-    if (!opened) { test.skip(); return }
+    if (!opened) {
+      test.skip()
+      return
+    }
 
     const dialog = page.locator('[data-testid="create-project-dialog"]')
     await expect(dialog).toBeVisible()

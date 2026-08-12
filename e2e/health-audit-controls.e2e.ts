@@ -21,9 +21,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('Health Audit Controls', () => {
-  async function navigateToHealthPage(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToHealthPage(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -41,15 +39,19 @@ test.describe('Health Audit Controls', () => {
     return true
   }
 
-  test('health auditor card renders with mode badge and status', async ({
-    electronPage: page
-  }) => {
+  test('health auditor card renders with mode badge and status', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const card = page.locator('[data-testid="health-auditor-card"]').first()
     const isVisible = await card.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(card).toBeVisible()
 
@@ -66,11 +68,17 @@ test.describe('Health Audit Controls', () => {
     electronPage: page
   }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const planCard = page.locator('[data-testid="audit-plan-card"]')
     const isVisible = await planCard.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!isVisible) { test.skip(); return }
+    if (!isVisible) {
+      test.skip()
+      return
+    }
 
     await expect(planCard).toBeVisible()
 
@@ -83,16 +91,23 @@ test.describe('Health Audit Controls', () => {
     expect(await routeButtons.count()).toBeGreaterThan(0)
   })
 
-  test('start button triggers audit execution', async ({
-    electronPage: page
-  }) => {
+  test('start button triggers audit execution', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for the start/run audit button
-    const startBtn = page.locator('button').filter({ hasText: /Start Audit|Run Audit|Start/i }).first()
+    const startBtn = page
+      .locator('button')
+      .filter({ hasText: /Start Audit|Run Audit|Start/i })
+      .first()
     const hasStart = await startBtn.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasStart) { test.skip(); return }
+    if (!hasStart) {
+      test.skip()
+      return
+    }
 
     // Ensure at least one track is selected
     const cards = page.locator('[data-testid="health-auditor-card"]')
@@ -112,25 +127,38 @@ test.describe('Health Audit Controls', () => {
     await page.waitForTimeout(2_000)
 
     // After starting, the page should show running state or remain stable
-    const pageStillVisible = await page.locator('[data-testid="health-auditor-card"]').first()
-      .isVisible({ timeout: 5_000 }).catch(() => false)
+    const pageStillVisible = await page
+      .locator('[data-testid="health-auditor-card"]')
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
     expect(pageStillVisible).toBeTruthy()
   })
 
-  test('pause/resume controls toggle audit state', async ({
-    electronPage: page
-  }) => {
+  test('pause/resume controls toggle audit state', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for pause/resume buttons (only visible during active audit)
-    const pauseBtn = page.locator('button').filter({ hasText: /Pause|Stop/i }).first()
-    const resumeBtn = page.locator('button').filter({ hasText: /Resume|Continue/i }).first()
+    const pauseBtn = page
+      .locator('button')
+      .filter({ hasText: /Pause|Stop/i })
+      .first()
+    const resumeBtn = page
+      .locator('button')
+      .filter({ hasText: /Resume|Continue/i })
+      .first()
 
     const hasPause = await pauseBtn.isVisible({ timeout: 3_000 }).catch(() => false)
     const hasResume = await resumeBtn.isVisible({ timeout: 1_000 }).catch(() => false)
 
-    if (!hasPause && !hasResume) { test.skip(); return }
+    if (!hasPause && !hasResume) {
+      test.skip()
+      return
+    }
 
     if (hasPause) {
       await expect(pauseBtn).toBeEnabled()
@@ -146,16 +174,23 @@ test.describe('Health Audit Controls', () => {
     }
   })
 
-  test('export button downloads findings as JSON/Markdown', async ({
-    electronPage: page
-  }) => {
+  test('export button downloads findings as JSON/Markdown', async ({ electronPage: page }) => {
     const ready = await navigateToHealthPage(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for export button (available when findings exist)
-    const exportBtn = page.locator('button').filter({ hasText: /Export|Download/i }).first()
+    const exportBtn = page
+      .locator('button')
+      .filter({ hasText: /Export|Download/i })
+      .first()
     const hasExport = await exportBtn.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasExport) { test.skip(); return }
+    if (!hasExport) {
+      test.skip()
+      return
+    }
 
     await expect(exportBtn).toBeEnabled()
 
@@ -164,8 +199,11 @@ test.describe('Health Audit Controls', () => {
     await page.waitForTimeout(1_000)
 
     // After export, page should remain stable
-    const pageStable = await page.locator('[data-testid="health-auditor-card"]').first()
-      .isVisible({ timeout: 3_000 }).catch(() => true) // page is stable even if card not visible
+    const pageStable = await page
+      .locator('[data-testid="health-auditor-card"]')
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => true) // page is stable even if card not visible
     expect(pageStable).toBeTruthy()
   })
 })

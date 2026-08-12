@@ -149,7 +149,11 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   })
 
   test('custom provider with baseUrl → npm: @ai-sdk/openai-compatible', () => {
-    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const provider = {
+      providerId: 'omlx',
+      modelId: 'test-model',
+      baseUrl: 'http://192.168.1.1:8000'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'small')
     const entry = providers.omlx
     assert.ok(entry)
@@ -157,13 +161,21 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   })
 
   test('custom provider baseUrl auto-appends /v1 for OpenAI-compatible SDK', () => {
-    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const provider = {
+      providerId: 'omlx',
+      modelId: 'test-model',
+      baseUrl: 'http://192.168.1.1:8000'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'small')
     assert.equal(providers.omlx.options.baseURL, 'http://192.168.1.1:8000/v1')
   })
 
   test('custom provider baseUrl already ending with /v1 is not doubled', () => {
-    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000/v1' }
+    const provider = {
+      providerId: 'omlx',
+      modelId: 'test-model',
+      baseUrl: 'http://192.168.1.1:8000/v1'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'small')
     assert.equal(providers.omlx.options.baseURL, 'http://192.168.1.1:8000/v1')
   })
@@ -176,7 +188,11 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   })
 
   test('local + small tier + confident → models with tier-accurate limits', () => {
-    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:7b', baseUrl: 'http://localhost:11434' }
+    const provider = {
+      providerId: 'ollama',
+      modelId: 'qwen2.5-coder:7b',
+      baseUrl: 'http://localhost:11434'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'small', true)
     const entry = providers.ollama
     assert.ok(entry)
@@ -184,7 +200,11 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   })
 
   test('local + medium tier + confident → models with context 32768', () => {
-    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b', baseUrl: 'http://localhost:11434' }
+    const provider = {
+      providerId: 'ollama',
+      modelId: 'qwen2.5-coder:32b',
+      baseUrl: 'http://localhost:11434'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'medium', true)
     const entry = providers.ollama
     assert.ok(entry)
@@ -192,7 +212,11 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   })
 
   test('local + large tier + confident → models with context 131072', () => {
-    const provider = { providerId: 'ollama', modelId: 'qwen2.5-coder:32b', baseUrl: 'http://localhost:11434' }
+    const provider = {
+      providerId: 'ollama',
+      modelId: 'qwen2.5-coder:32b',
+      baseUrl: 'http://localhost:11434'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'large', true)
     const entry = providers.ollama
     assert.ok(entry)
@@ -200,16 +224,27 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   })
 
   test('custom provider + not confident → models with default fallback limits', () => {
-    const provider = { providerId: 'omlx', modelId: 'mlx-community/test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const provider = {
+      providerId: 'omlx',
+      modelId: 'mlx-community/test-model',
+      baseUrl: 'http://192.168.1.1:8000'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'medium', false)
     const entry = providers.omlx
     assert.ok(entry, 'should have omlx entry')
     assert.ok(entry.models, 'models block must exist even when not confident')
-    assert.deepEqual(entry.models['mlx-community/test-model'].limit, { context: 131072, output: 32768 })
+    assert.deepEqual(entry.models['mlx-community/test-model'].limit, {
+      context: 131072,
+      output: 32768
+    })
   })
 
   test('custom provider + no contextWindowConfident → models with default limits', () => {
-    const provider = { providerId: 'omlx', modelId: 'test-model', baseUrl: 'http://192.168.1.1:8000' }
+    const provider = {
+      providerId: 'omlx',
+      modelId: 'test-model',
+      baseUrl: 'http://192.168.1.1:8000'
+    }
     const providers = (writer as any).buildProviderConfig(provider, true, 'small')
     const entry = providers.omlx
     assert.ok(entry, 'should have omlx entry')
@@ -348,7 +383,11 @@ describe('OpenCodeConfigWriter.buildInstructions — glob safety', () => {
     const instructions = (writer as any).buildInstructions('/tmp/no-such-dir-xyz')
     const archGlob = instructions.find((i: string) => i.includes('docs/architecture'))
     const cursorGlob = instructions.find((i: string) => i.includes('.cursor/rules'))
-    assert.equal(archGlob, undefined, 'Should not include docs/architecture glob for non-existent dir')
+    assert.equal(
+      archGlob,
+      undefined,
+      'Should not include docs/architecture glob for non-existent dir'
+    )
     assert.equal(
       cursorGlob,
       undefined,

@@ -56,9 +56,17 @@ export class ChunkConsumer {
     if (this.queue.length === 0) return
     const batch = this.queue.splice(0) // drain
     this.processCallback(batch)
-    // Send ACK with batch size for backpressure feedback
+    // Send ACK with batch size + per-conversation counts for targeted backpressure
     if (typeof window !== 'undefined' && window.api?.chunkAck) {
-      window.api.chunkAck({ processed: batch.length, timestamp: performance.now() })
+      const perConv: Record<string, number> = {}
+      for (const chunk of batch) {
+        perConv[chunk.conversationId] = (perConv[chunk.conversationId] ?? 0) + 1
+      }
+      window.api.chunkAck({
+        processed: batch.length,
+        timestamp: performance.now(),
+        perConversation: perConv
+      })
     }
   }
 

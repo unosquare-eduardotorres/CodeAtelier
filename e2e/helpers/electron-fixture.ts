@@ -32,7 +32,13 @@ const BASE_CDP_PORT = 19222
 
 // ── Types ────────────────────────────────────────────────────────────
 
-interface ElectronFixtures {
+/**
+ * Both of these are worker-scoped: one Electron process and one CDP port are
+ * shared by every test a worker runs. They therefore belong in extend()'s
+ * SECOND type parameter -- Playwright types the first as test-scoped, so
+ * declaring them there while passing { scope: 'worker' } does not typecheck.
+ */
+interface ElectronWorkerFixtures {
   electronPage: Page
   cdpPort: number
 }
@@ -64,7 +70,8 @@ async function waitForPageWsUrl(port: number, timeoutMs = 25_000): Promise<strin
 
 // ── Fixture ──────────────────────────────────────────────────────────
 
-export const test = base.extend<ElectronFixtures>({
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export const test = base.extend<{}, ElectronWorkerFixtures>({
   // Per-worker CDP port to avoid conflicts when running in parallel
   cdpPort: [
     // eslint-disable-next-line no-empty-pattern
@@ -95,6 +102,10 @@ export const test = base.extend<ElectronFixtures>({
         if (process.env.CLAUDE_SHIM_DIR) {
           const shimDir = resolve(__dirname, '../../', process.env.CLAUDE_SHIM_DIR)
           env.PATH = `${shimDir}:${env.PATH ?? ''}`
+          // Absolute, so main can re-prepend it after buildEnvWithPath()'s own
+          // /usr/local/bin prepends — otherwise a real `claude` install wins and
+          // the "shim" test quietly exercises the live CLI.
+          env.CLAUDE_SHIM_DIR = shimDir
         }
 
         // Spawn Electron with CDP port.
@@ -139,7 +150,9 @@ export const test = base.extend<ElectronFixtures>({
           }
           // Listen for new pages (splash → main transition creates a new page)
           if (!page) {
-            const newPagePromise = context.waitForEvent('page', { timeout: 5_000 }).catch(() => null)
+            const newPagePromise = context
+              .waitForEvent('page', { timeout: 5_000 })
+              .catch(() => null)
             const newPage = await newPagePromise
             if (newPage && newPage.url().includes('index.html')) {
               page = newPage
@@ -163,10 +176,11 @@ export const test = base.extend<ElectronFixtures>({
         // The renderer runs with contextIsolation + sandbox, so process.env is
         // unreachable — this window flag is the only way isE2ETesting() returns true.
         await page.evaluate(() => {
-          (window as Record<string, unknown>).__E2E_TESTING__ = true
+          ;(window as unknown as Record<string, unknown>).__E2E_TESTING__ = true
         })
 
         // Provide the ready page to the test
+        // eslint-disable-next-line react-hooks/rules-of-hooks -- Playwright's fixture `use` callback, not React's `use` hook
         await use(page)
       } finally {
         // ── Teardown ─────────────────────────────────────────────

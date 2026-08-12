@@ -40,7 +40,9 @@ test.describe('Specialist Build', () => {
     return settings
   }
 
-  test('Generate specialist modal appears for pending specialist', async ({ electronPage: page }) => {
+  test('Generate specialist modal appears for pending specialist', async ({
+    electronPage: page
+  }) => {
     await ensureWorkspaceOpen(page)
 
     // Look for the generate specialist modal — only appears for pending/no specialist

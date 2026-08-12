@@ -289,7 +289,9 @@ function wireMpaEvents(workspaceId: string): void {
     'status',
     (data) => {
       if (data.workspaceId && data.workspaceId !== workspaceId) return
-      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, { ...data.status })
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, {
+        ...data.status
+      })
     }
   )
 

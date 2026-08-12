@@ -18,9 +18,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Complete & Commit Journey', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -34,9 +32,7 @@ test.describe('Complete & Commit Journey', () => {
     return true
   }
 
-  async function selectConversation(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function selectConversation(page: import('@playwright/test').Page): Promise<boolean> {
     const chatsTab = page.locator('[data-testid="sidebar-tab-chats"]')
     const hasTab = await chatsTab.isVisible({ timeout: 3_000 }).catch(() => false)
     if (hasTab) {
@@ -50,12 +46,20 @@ test.describe('Complete & Commit Journey', () => {
     return true
   }
 
-  test('conversation with code changes shows commit bar at bottom', async ({ electronPage: page }) => {
+  test('conversation with code changes shows commit bar at bottom', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Commit bar appears at the bottom of conversations with code changes
     const commitBar = page.locator('[data-testid="commit-bar"]')
@@ -70,16 +74,29 @@ test.describe('Complete & Commit Journey', () => {
     }
   })
 
-  test('file change list renders modified files with indicators', async ({ electronPage: page }) => {
+  test('file change list renders modified files with indicators', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Look for file change list or code changes panel
-    const fileChangeList = page.locator('[data-testid="file-change-list"], [data-testid="code-changes-panel"]')
-    const hasFileChanges = await fileChangeList.first().isVisible({ timeout: 5_000 }).catch(() => false)
+    const fileChangeList = page.locator(
+      '[data-testid="file-change-list"], [data-testid="code-changes-panel"]'
+    )
+    const hasFileChanges = await fileChangeList
+      .first()
+      .isVisible({ timeout: 5_000 })
+      .catch(() => false)
 
     // File changes are conversation-dependent
     expect(typeof hasFileChanges).toBe('boolean')
@@ -94,14 +111,23 @@ test.describe('Complete & Commit Journey', () => {
 
   test('commit bar shows branch name and commit button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     const commitBar = page.locator('[data-testid="commit-bar"]')
     const hasCommitBar = await commitBar.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasCommitBar) { test.skip(); return }
+    if (!hasCommitBar) {
+      test.skip()
+      return
+    }
 
     // Commit bar should show branch info and action buttons
     const commitBtn = commitBar.locator('button')
@@ -115,22 +141,37 @@ test.describe('Complete & Commit Journey', () => {
 
   test('complete dialog opens with branch and PR options', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Try to trigger complete dialog
     const completeBtn = page.locator('button:has-text("Complete"), [data-testid="complete-btn"]')
-    const hasCompleteBtn = await completeBtn.first().isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCompleteBtn) { test.skip(); return }
+    const hasCompleteBtn = await completeBtn
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
+    if (!hasCompleteBtn) {
+      test.skip()
+      return
+    }
 
     await completeBtn.first().click()
     await page.waitForTimeout(1_500)
 
     const dialog = page.locator('[data-testid="complete-dialog"]')
     const hasDialog = await dialog.isVisible({ timeout: 5_000 }).catch(() => false)
-    if (!hasDialog) { test.skip(); return }
+    if (!hasDialog) {
+      test.skip()
+      return
+    }
 
     // Dialog should have branch and commit inputs
     const branchInput = dialog.locator('[data-testid="complete-dialog-branch"]')
@@ -149,12 +190,20 @@ test.describe('Complete & Commit Journey', () => {
     }
   })
 
-  test('after completion, conversation shows completed state in sidebar', async ({ electronPage: page }) => {
+  test('after completion, conversation shows completed state in sidebar', async ({
+    electronPage: page
+  }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const hasConversation = await selectConversation(page)
-    if (!hasConversation) { test.skip(); return }
+    if (!hasConversation) {
+      test.skip()
+      return
+    }
 
     // Check sidebar for any conversations that show a completed state
     const chatItems = page.locator('[data-testid="chat-item"]')

@@ -22,9 +22,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { AppChrome } from './pages/app-chrome'
 
 test.describe('WorkspaceSettingsPanel', () => {
-  async function navigateToSettings(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToSettings(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -44,20 +42,31 @@ test.describe('WorkspaceSettingsPanel', () => {
     return panel.isVisible({ timeout: 5_000 }).catch(() => false)
   }
 
-  test('settings panel renders with Tools and Configuration tab groups', async ({ electronPage: page }) => {
+  test('settings panel renders with Tools and Configuration tab groups', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
     await expect(panel).toBeVisible()
 
     // Should have "Tools" group header
     const toolsHeader = panel.locator('text=Tools')
-    const hasTools = await toolsHeader.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasTools = await toolsHeader
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     // Should have "Configuration" group header
     const configHeader = panel.locator('text=Configuration')
-    const hasConfig = await configHeader.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasConfig = await configHeader
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     expect(hasTools || hasConfig).toBe(true)
 
@@ -69,28 +78,38 @@ test.describe('WorkspaceSettingsPanel', () => {
 
   test('clicking a tab updates content area to matching page', async ({ electronPage: page }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
     const tabs = panel.locator('[data-testid="workspace-settings-tab"]')
     const tabCount = await tabs.count()
-    if (tabCount < 2) { test.skip(); return }
+    if (tabCount < 2) {
+      test.skip()
+      return
+    }
 
     // Click the second tab
     const secondTab = tabs.nth(1)
-    const tabText = await secondTab.textContent() ?? ''
+    const tabText = (await secondTab.textContent()) ?? ''
     await secondTab.click()
     await page.waitForTimeout(1_000)
 
     // The tab should now have active styling (bg-primary-muted)
-    const secondTabClasses = await secondTab.getAttribute('class') ?? ''
-    const isActive = secondTabClasses.includes('bg-primary-muted') || secondTabClasses.includes('border-primary')
+    const secondTabClasses = (await secondTab.getAttribute('class')) ?? ''
+    const isActive =
+      secondTabClasses.includes('bg-primary-muted') || secondTabClasses.includes('border-primary')
     expect(isActive || tabText.length > 0).toBe(true)
   })
 
   test('collapse toggle shrinks panel to icon-only mode', async ({ electronPage: page }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
     await expect(panel).toBeVisible()
@@ -99,26 +118,35 @@ test.describe('WorkspaceSettingsPanel', () => {
     const collapseBtn = panel.locator('button[aria-label="Collapse settings panel"]')
     const hasCollapseBtn = await collapseBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCollapseBtn) { test.skip(); return }
+    if (!hasCollapseBtn) {
+      test.skip()
+      return
+    }
 
     // Click collapse
     await collapseBtn.click()
     await page.waitForTimeout(500)
 
     // Panel should now have w-12 class (48px width)
-    const panelClasses = await panel.getAttribute('class') ?? ''
+    const panelClasses = (await panel.getAttribute('class')) ?? ''
     expect(panelClasses).toContain('w-12')
   })
 
   test('collapsed mode hides tab labels but shows icons', async ({ electronPage: page }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
     const collapseBtn = panel.locator('button[aria-label="Collapse settings panel"]')
     const hasCollapseBtn = await collapseBtn.isVisible({ timeout: 3_000 }).catch(() => false)
 
-    if (!hasCollapseBtn) { test.skip(); return }
+    if (!hasCollapseBtn) {
+      test.skip()
+      return
+    }
 
     // Collapse the panel
     await collapseBtn.click()
@@ -139,24 +167,33 @@ test.describe('WorkspaceSettingsPanel', () => {
     const spanCount = await tabSpan.count()
     // In collapsed mode, the span with text is conditionally rendered
     // Icons should still be visible via SVG
-    const hasSvg = await firstTab.locator('svg').isVisible().catch(() => false)
+    const hasSvg = await firstTab
+      .locator('svg')
+      .isVisible()
+      .catch(() => false)
     expect(hasSvg || spanCount === 0).toBe(true)
   })
 
   test('active tab has highlighted styling', async ({ electronPage: page }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
     const tabs = panel.locator('[data-testid="workspace-settings-tab"]')
     const tabCount = await tabs.count()
-    if (tabCount === 0) { test.skip(); return }
+    if (tabCount === 0) {
+      test.skip()
+      return
+    }
 
     // Find the active tab (should have bg-primary-muted class)
     let foundActive = false
     for (let i = 0; i < tabCount; i++) {
       const tab = tabs.nth(i)
-      const classes = await tab.getAttribute('class') ?? ''
+      const classes = (await tab.getAttribute('class')) ?? ''
       if (classes.includes('bg-primary-muted') || classes.includes('border-primary/20')) {
         foundActive = true
         break
@@ -166,9 +203,14 @@ test.describe('WorkspaceSettingsPanel', () => {
     expect(foundActive).toBe(true)
   })
 
-  test('health tab shows grill radar chart when data is available', async ({ electronPage: page }) => {
+  test('health tab shows grill radar chart when data is available', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
     const tabs = panel.locator('[data-testid="workspace-settings-tab"]')
@@ -189,38 +231,47 @@ test.describe('WorkspaceSettingsPanel', () => {
 
   test('expanding panel restores full tab labels', async ({ electronPage: page }) => {
     const ready = await navigateToSettings(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const panel = page.locator('[data-testid="workspace-settings-panel"]')
 
     // First collapse
     const collapseBtn = panel.locator('button[aria-label="Collapse settings panel"]')
     const hasCollapseBtn = await collapseBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasCollapseBtn) { test.skip(); return }
+    if (!hasCollapseBtn) {
+      test.skip()
+      return
+    }
 
     await collapseBtn.click()
     await page.waitForTimeout(500)
 
     // Verify collapsed state
-    let panelClasses = await panel.getAttribute('class') ?? ''
+    let panelClasses = (await panel.getAttribute('class')) ?? ''
     expect(panelClasses).toContain('w-12')
 
     // Now expand
     const expandBtn = panel.locator('button[aria-label="Expand settings panel"]')
     const hasExpandBtn = await expandBtn.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (!hasExpandBtn) { test.skip(); return }
+    if (!hasExpandBtn) {
+      test.skip()
+      return
+    }
 
     await expandBtn.click()
     await page.waitForTimeout(500)
 
     // Panel should have w-72 class (288px width) again
-    panelClasses = await panel.getAttribute('class') ?? ''
+    panelClasses = (await panel.getAttribute('class')) ?? ''
     expect(panelClasses).toContain('w-72')
 
     // Tab labels should be visible again
     const tabs = panel.locator('[data-testid="workspace-settings-tab"]')
     const firstTab = tabs.first()
-    const tabText = await firstTab.textContent() ?? ''
+    const tabText = (await firstTab.textContent()) ?? ''
     expect(tabText.length).toBeGreaterThan(0)
   })
 })

@@ -6,7 +6,13 @@
  */
 
 import { useMemo, useState, useRef, useEffect } from 'react'
-import { ShieldCheck, CheckCheck, MessageSquare, ChevronDown, SplitSquareVertical } from 'lucide-react'
+import {
+  ShieldCheck,
+  CheckCheck,
+  MessageSquare,
+  ChevronDown,
+  SplitSquareVertical
+} from 'lucide-react'
 import { useAuditStore } from '@renderer/store'
 import type { AuditRun, AuditTrackId, AuditFinding } from '../../../../../shared/types'
 import { AUDIT_TRACKS, deriveApplicability } from '../../../../../shared/constants'
@@ -230,8 +236,8 @@ function SendToChatSection({
   return (
     <div className="flex items-center justify-between pt-4 border-t border-border-subtle">
       <span className="text-xs text-text-secondary">
-        {issueCount} issue{issueCount !== 1 ? 's' : ''} across{' '}
-        {completedCount} auditor{completedCount !== 1 ? 's' : ''}
+        {issueCount} issue{issueCount !== 1 ? 's' : ''} across {completedCount} auditor
+        {completedCount !== 1 ? 's' : ''}
       </span>
       <div className="relative flex items-center" ref={dropdownRef}>
         <button

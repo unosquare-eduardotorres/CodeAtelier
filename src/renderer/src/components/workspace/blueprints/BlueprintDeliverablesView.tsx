@@ -19,7 +19,7 @@ import {
 import type {
   BlueprintWithDetails,
   BlueprintPhase,
-  BlueprintPhaseType,
+  BlueprintPhaseType
 } from '../../../../../shared/blueprint-types'
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
 import { SpecifyDeliverable } from './deliverables/SpecifyDeliverable'
@@ -147,8 +147,9 @@ function PhaseDeliverableContent({
   phaseDurations: Partial<Record<BlueprintPhaseType, number>>
 }): JSX.Element {
   const storeDuration = phaseDurations[phase.phase as BlueprintPhaseType]
-  const duration = storeDuration
-    ?? (phase.startedAt && phase.completedAt
+  const duration =
+    storeDuration ??
+    (phase.startedAt && phase.completedAt
       ? Math.max(0, new Date(phase.completedAt).getTime() - new Date(phase.startedAt).getTime())
       : null)
 
@@ -216,7 +217,11 @@ export function BlueprintDeliverablesView({
 
       {/* Phase selector — horizontal pill bar */}
       <div className="sticky top-0 z-10 bg-surface-raised/95 backdrop-blur-sm border-b border-border-subtle px-6 py-3">
-        <div className="flex items-center gap-2 flex-wrap max-w-7xl mx-auto" role="tablist" aria-label="Phase deliverables">
+        <div
+          className="flex items-center gap-2 flex-wrap max-w-7xl mx-auto"
+          role="tablist"
+          aria-label="Phase deliverables"
+        >
           {phases.map((phase) => (
             <PhaseSelector
               key={phase.phase}

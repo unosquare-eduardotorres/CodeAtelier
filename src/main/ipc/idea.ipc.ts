@@ -67,13 +67,15 @@ function syncIdeaToMemory(idea: Idea): void {
   if (grillSession) {
     // Track scores
     if (Array.isArray(grillSession.trackScores) && grillSession.trackScores.length > 0) {
-      const scoreLines = grillSession.trackScores.map((ts: any) =>
-        `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
+      const scoreLines = grillSession.trackScores.map(
+        (ts: any) => `- ${ts.trackId ?? ts.track ?? 'unknown'}: ${ts.score ?? ts.value ?? '?'}/10`
       )
       contentParts.push(`\n### Track Scores\n${scoreLines.join('\n')}`)
     }
     if (grillSession.currentScore != null) {
-      contentParts.push(`\n**Final Score**: ${grillSession.currentScore}/10 (${grillSession.scoreLabel ?? 'unrated'})`)
+      contentParts.push(
+        `\n**Final Score**: ${grillSession.currentScore}/10 (${grillSession.scoreLabel ?? 'unrated'})`
+      )
     }
   }
 

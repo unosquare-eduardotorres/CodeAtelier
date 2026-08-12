@@ -19,9 +19,7 @@ import { WelcomePage } from './pages/welcome-page'
 import { SettingsNav } from './pages/settings-nav'
 
 test.describe('Activation Flow', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -35,9 +33,7 @@ test.describe('Activation Flow', () => {
     return true
   }
 
-  async function navigateToSpecialist(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function navigateToSpecialist(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
     return nav.navigateToSettingsTab('specialist')
   }
@@ -46,10 +42,16 @@ test.describe('Activation Flow', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="activation-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -63,19 +65,26 @@ test.describe('Activation Flow', () => {
     await expect(banner).toBeVisible()
   })
 
-  test('banner shows "Activate Agents for Workspace" heading', async ({
-    electronPage: page
-  }) => {
+  test('banner shows "Activate Agents for Workspace" heading', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="activation-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Should show the heading
     const heading = banner.getByText(/activate agents for workspace/i)
@@ -89,19 +98,26 @@ test.describe('Activation Flow', () => {
     }
   })
 
-  test('detected tech stack badges display with icons', async ({
-    electronPage: page
-  }) => {
+  test('detected tech stack badges display with icons', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="activation-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Check for "Detected Tech Stack:" label
     const stackLabel = banner.getByText(/detected tech stack/i)
@@ -126,25 +142,31 @@ test.describe('Activation Flow', () => {
     expect(badgeText?.length).toBeGreaterThan(0)
   })
 
-  test('"Auto-Activate Agents" button triggers activation', async ({
-    electronPage: page
-  }) => {
+  test('"Auto-Activate Agents" button triggers activation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const deployBtn = page.locator('[data-testid="activation-deploy-btn"]')
     const hasBtn = await deployBtn.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     // Button should show "Auto-Activate Agents" text
     const btnText = await deployBtn.textContent()
     expect(
-      btnText?.toLowerCase().includes('activate') ||
-        btnText?.toLowerCase().includes('activating')
+      btnText?.toLowerCase().includes('activate') || btnText?.toLowerCase().includes('activating')
     ).toBeTruthy()
 
     // Button should have a sparkles icon
@@ -155,23 +177,33 @@ test.describe('Activation Flow', () => {
     await expect(deployBtn).toBeEnabled()
   })
 
-  test('error state shows error message with Retry button', async ({
-    electronPage: page
-  }) => {
+  test('error state shows error message with Retry button', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const navigated = await navigateToSpecialist(page)
-    if (!navigated) { test.skip(); return }
+    if (!navigated) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="activation-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Check for error state
     const errorMsg = banner.locator('.text-danger')
-    const hasError = await errorMsg.first().isVisible({ timeout: 3_000 }).catch(() => false)
+    const hasError = await errorMsg
+      .first()
+      .isVisible({ timeout: 3_000 })
+      .catch(() => false)
 
     if (!hasError) {
       // No error state — expected in normal operation

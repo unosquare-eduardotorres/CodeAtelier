@@ -17,17 +17,31 @@ export function parsePlanPayload(payload: unknown, beforePlan: string): PlanDete
   const raw = typeof payload === 'string' ? payload : JSON.stringify(payload)
   const obj =
     typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {}
-  return {
+  const result: PlanDetectedEvent = {
     rawContent: raw,
     structuredPlan:
       (obj.structuredPlan as PlanDetectedEvent['structuredPlan']) ??
-      // Direct StructuredPlan object (from SDK onPlan callback)
-      (obj.type !== undefined && obj.phases !== undefined
+      // Direct StructuredPlan object — detect by title+phases (MCP emit_plan path)
+      // or type+phases (SDK onPlan callback path)
+      ((obj.title !== undefined || obj.type !== undefined) && obj.phases !== undefined
         ? (payload as PlanDetectedEvent['structuredPlan'])
         : null),
     beforePlan,
     afterPlan: ''
   }
+  // Fallback: if structuredPlan is still null, try parsing rawContent
+  // (handles string payloads that contain a valid plan JSON)
+  if (!result.structuredPlan && result.rawContent) {
+    try {
+      const parsed = JSON.parse(result.rawContent)
+      if (parsed?.title && parsed?.phases) {
+        result.structuredPlan = parsed
+      }
+    } catch {
+      /* non-fatal — rawContent may not be valid JSON */
+    }
+  }
+  return result
 }
 
 /**

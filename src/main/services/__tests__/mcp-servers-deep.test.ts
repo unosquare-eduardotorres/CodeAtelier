@@ -151,7 +151,9 @@ if (capLoaded) {
       const text = 'x'.repeat(100000)
       const result = truncateToolOutput(text, 50000)
       assert.ok(result.length <= 50000 + 200) // Some overhead for truncation message
-      assert.ok(result.includes('truncated') || result.includes('...') || result.length < text.length)
+      assert.ok(
+        result.includes('truncated') || result.includes('...') || result.length < text.length
+      )
     })
 
     test('truncation_preserves_start', () => {

@@ -23,9 +23,7 @@ import { test, expect } from './helpers/electron-fixture'
 import { WelcomePage } from './pages/welcome-page'
 
 test.describe('Sync Review', () => {
-  async function ensureWorkspaceReady(
-    page: import('@playwright/test').Page
-  ): Promise<boolean> {
+  async function ensureWorkspaceReady(page: import('@playwright/test').Page): Promise<boolean> {
     const welcomePage = new WelcomePage(page)
     const hasModal = await welcomePage.isWelcomeModalVisible()
     if (hasModal) await welcomePage.completeWelcomeModal('Test User')
@@ -45,28 +43,38 @@ test.describe('Sync Review', () => {
     electronPage: page
   }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="sync-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Banner should show the YAML sync messaging
     const text = await banner.textContent()
     expect(text?.includes('YAML Sync Available') || text?.includes('sync')).toBeTruthy()
   })
 
-  test('banner shows new/updated/removed agent counts', async ({
-    electronPage: page
-  }) => {
+  test('banner shows new/updated/removed agent counts', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="sync-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     const text = await banner.textContent()
 
@@ -80,22 +88,29 @@ test.describe('Sync Review', () => {
     expect(hasCountInfo).toBeTruthy()
   })
 
-  test('"Review & Sync" button opens the sync review modal', async ({
-    electronPage: page
-  }) => {
+  test('"Review & Sync" button opens the sync review modal', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const banner = page.locator('[data-testid="sync-banner"]')
     const hasBanner = await banner.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasBanner) { test.skip(); return }
+    if (!hasBanner) {
+      test.skip()
+      return
+    }
 
     // Click the "Review & Sync" button
     const reviewBtn = banner.locator('button:has-text("Review & Sync")')
     const hasBtn = await reviewBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasBtn) { test.skip(); return }
+    if (!hasBtn) {
+      test.skip()
+      return
+    }
 
     await reviewBtn.click()
     await page.waitForTimeout(500)
@@ -108,11 +123,12 @@ test.describe('Sync Review', () => {
 
   // ── Sync Review Modal ──
 
-  test('sync review modal shows collapsible sections', async ({
-    electronPage: page
-  }) => {
+  test('sync review modal shows collapsible sections', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="sync-review-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
@@ -121,14 +137,20 @@ test.describe('Sync Review', () => {
       // Try to open via banner
       const banner = page.locator('[data-testid="sync-banner"]')
       const hasBanner = await banner.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (!hasBanner) { test.skip(); return }
+      if (!hasBanner) {
+        test.skip()
+        return
+      }
 
       const reviewBtn = banner.locator('button:has-text("Review & Sync")')
       await reviewBtn.click()
       await page.waitForTimeout(500)
 
       const nowVisible = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
-      if (!nowVisible) { test.skip(); return }
+      if (!nowVisible) {
+        test.skip()
+        return
+      }
     }
 
     // Modal should have a header with "Review YAML Sync"
@@ -141,61 +163,82 @@ test.describe('Sync Review', () => {
     expect(sectionCount).toBeGreaterThan(0)
   })
 
-  test('"Skip removed" toggle prevents agent deactivation', async ({
-    electronPage: page
-  }) => {
+  test('"Skip removed" toggle prevents agent deactivation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="sync-review-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Look for the "Keep these specialists active" checkbox
     const keepCheckbox = modal.locator('input[type="checkbox"]')
-    const hasCheckbox = await keepCheckbox.first().isVisible({ timeout: 2_000 }).catch(() => false)
+    const hasCheckbox = await keepCheckbox
+      .first()
+      .isVisible({ timeout: 2_000 })
+      .catch(() => false)
 
-    if (!hasCheckbox) { test.skip(); return }
+    if (!hasCheckbox) {
+      test.skip()
+      return
+    }
 
     // The label should mention keeping specialists active
     const keepLabel = modal.locator('text=Keep these specialists active')
     const hasLabel = await keepLabel.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasLabel) { test.skip(); return }
+    if (!hasLabel) {
+      test.skip()
+      return
+    }
 
     await expect(keepLabel).toBeVisible()
     await keepCheckbox.first().check()
     await expect(keepCheckbox.first()).toBeChecked()
   })
 
-  test('"Apply All Changes" button triggers the sync operation', async ({
-    electronPage: page
-  }) => {
+  test('"Apply All Changes" button triggers the sync operation', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     const modal = page.locator('[data-testid="sync-review-modal"]')
     const hasModal = await modal.isVisible({ timeout: 5_000 }).catch(() => false)
 
-    if (!hasModal) { test.skip(); return }
+    if (!hasModal) {
+      test.skip()
+      return
+    }
 
     // Apply button should be visible
     const applyBtn = page.locator('[data-testid="sync-review-apply"]')
     const hasApplyBtn = await applyBtn.isVisible({ timeout: 2_000 }).catch(() => false)
 
-    if (!hasApplyBtn) { test.skip(); return }
+    if (!hasApplyBtn) {
+      test.skip()
+      return
+    }
 
     await expect(applyBtn).toBeVisible()
     await expect(applyBtn).toContainText('Apply All Changes')
     await expect(applyBtn).toBeEnabled()
   })
 
-  test('success result shows import/update/deactivate counts', async ({
-    electronPage: page
-  }) => {
+  test('success result shows import/update/deactivate counts', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)
-    if (!ready) { test.skip(); return }
+    if (!ready) {
+      test.skip()
+      return
+    }
 
     // Look for the success result view (shows after Apply completes)
     const syncComplete = page.locator('text=Sync Complete')
@@ -205,13 +248,16 @@ test.describe('Sync Review', () => {
       // Also check for "Sync Applied Successfully"
       const appliedText = page.locator('text=Sync Applied Successfully')
       const hasApplied = await appliedText.isVisible({ timeout: 2_000 }).catch(() => false)
-      if (!hasApplied) { test.skip(); return }
+      if (!hasApplied) {
+        test.skip()
+        return
+      }
     }
 
     // Result should show counts (imported/updated/deactivated)
-    const resultArea = page.locator('[data-testid="sync-review-modal"]').or(
-      page.locator('text=Sync Applied Successfully').locator('..')
-    )
+    const resultArea = page
+      .locator('[data-testid="sync-review-modal"]')
+      .or(page.locator('text=Sync Applied Successfully').locator('..'))
     const text = await resultArea.first().textContent()
 
     const hasResults =

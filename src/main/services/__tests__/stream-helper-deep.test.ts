@@ -13,11 +13,8 @@ setupElectronStub()
 // Dynamic import — stream-helper transitively imports chat-agent → db/index
 // which needs the electron stub's .sql?raw hook to be installed first.
 void (async () => {
-  const {
-    generateFillerWithNeedle,
-    generateNoWhitespaceFiller,
-    chunkToTranscriptEntry,
-  } = await import('../e2e-testing/stream-helper')
+  const { generateFillerWithNeedle, generateNoWhitespaceFiller, chunkToTranscriptEntry } =
+    await import('../e2e-testing/stream-helper')
 
   // ── generateFillerWithNeedle ───────────────────────────────────────────────
 
@@ -124,7 +121,7 @@ void (async () => {
       const entry = chunkToTranscriptEntry({
         type: 'tool_use',
         toolName: 'read_file',
-        toolInput: '{"path": "/src/app.ts"}',
+        toolInput: '{"path": "/src/app.ts"}'
       } as any)
       assert.ok(entry)
       assert.equal(entry.role, 'assistant')
@@ -137,7 +134,7 @@ void (async () => {
       const entry = chunkToTranscriptEntry({
         type: 'tool_use',
         toolName: 'run_command',
-        toolInput: '{invalid json',
+        toolInput: '{invalid json'
       } as any)
       assert.ok(entry)
       assert.equal(entry.type, 'tool_use')
@@ -147,7 +144,7 @@ void (async () => {
     test('tool_use chunk with no toolInput → undefined args', () => {
       const entry = chunkToTranscriptEntry({
         type: 'tool_use',
-        toolName: 'search',
+        toolName: 'search'
       } as any)
       assert.ok(entry)
       assert.equal(entry.toolArgs, undefined)
@@ -157,7 +154,7 @@ void (async () => {
       const entry = chunkToTranscriptEntry({
         type: 'tool_result',
         toolName: 'read_file',
-        content: 'file contents here',
+        content: 'file contents here'
       } as any)
       assert.ok(entry)
       assert.equal(entry.role, 'assistant')
@@ -170,7 +167,7 @@ void (async () => {
       const entry = chunkToTranscriptEntry({
         type: 'error',
         error: 'Connection failed',
-        content: 'fallback content',
+        content: 'fallback content'
       } as any)
       assert.ok(entry)
       assert.equal(entry.role, 'system')
@@ -181,7 +178,7 @@ void (async () => {
     test('error chunk without error field → content fallback', () => {
       const entry = chunkToTranscriptEntry({
         type: 'error',
-        content: 'Some error content',
+        content: 'Some error content'
       } as any)
       assert.ok(entry)
       assert.equal(entry.content, 'Some error content')
@@ -218,7 +215,7 @@ void (async () => {
     test('permission_request chunk → system/status with toolName', () => {
       const entry = chunkToTranscriptEntry({
         type: 'permission_request',
-        toolName: 'write_file',
+        toolName: 'write_file'
       } as any)
       assert.ok(entry)
       assert.equal(entry.content, 'permission_request: write_file')
@@ -239,7 +236,7 @@ void (async () => {
     test('phase_progress chunk → system/status with title', () => {
       const entry = chunkToTranscriptEntry({
         type: 'phase_progress',
-        phaseProgress: { phaseTitle: 'Build Phase' },
+        phaseProgress: { phaseTitle: 'Build Phase' }
       } as any)
       assert.ok(entry)
       assert.equal(entry.content, 'phase_progress: Build Phase')
@@ -261,7 +258,7 @@ void (async () => {
       const entry = chunkToTranscriptEntry({
         type: 'custom_unknown_type',
         toolName: 'myTool',
-        content: 'some content',
+        content: 'some content'
       } as any)
       assert.ok(entry)
       assert.equal(entry.role, 'system')
@@ -280,7 +277,7 @@ void (async () => {
       const longContent = 'A'.repeat(300)
       const entry = chunkToTranscriptEntry({
         type: 'verbose_type',
-        content: longContent,
+        content: longContent
       } as any)
       assert.ok(entry)
       assert.ok(entry.content!.length < 300, 'Should truncate long content')
@@ -288,9 +285,20 @@ void (async () => {
     })
 
     test('all chunk types produce entries with numeric timestamps', () => {
-      const types = ['text', 'thinking', 'tool_use', 'tool_result', 'error', 'status',
-        'compact_boundary', 'context_usage_update', 'permission_request', 'todo_update',
-        'phase_progress', 'turn_boundary'] as const
+      const types = [
+        'text',
+        'thinking',
+        'tool_use',
+        'tool_result',
+        'error',
+        'status',
+        'compact_boundary',
+        'context_usage_update',
+        'permission_request',
+        'todo_update',
+        'phase_progress',
+        'turn_boundary'
+      ] as const
       for (const type of types) {
         const entry = chunkToTranscriptEntry({ type } as any)
         assert.ok(entry, `Entry for ${type} should not be null`)

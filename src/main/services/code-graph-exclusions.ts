@@ -30,6 +30,34 @@ export class CaseInsensitiveSet {
 }
 
 /**
+ * Directories repomap-mcp prunes internally — mirrored so our walker matches.
+ * Uses CaseInsensitiveSet so "Build", "Dist", "Vendor" etc. are excluded on
+ * case-insensitive filesystems (Windows NTFS, macOS HFS+).
+ *
+ * Lives here (not in code-graph.service.ts) so the exclusion preflight can
+ * consume it without pulling in the db/repository import chain.
+ */
+export const REPOMAP_EXCLUDED_DIRS = new CaseInsensitiveSet([
+  'node_modules',
+  '__pycache__',
+  'venv',
+  'env',
+  '.venv',
+  '.env',
+  'dist',
+  'build',
+  '.next',
+  '.nuxt',
+  'target',
+  'vendor',
+  '.bundle',
+  'coverage',
+  '.nyc_output',
+  '.tox',
+  'egg-info'
+])
+
+/**
  * Additional directories to exclude from indexing.
  * Supplements repomap-mcp's EXCLUDED_DIRS with platform-specific build
  * artifacts and vendored dependency trees that aren't reliably in .gitignore.
@@ -42,7 +70,9 @@ export class CaseInsensitiveSet {
  *
  * Deliberately NOT included: generic names like `lib`, `libs`, `docs`, `src`,
  * `test` — those are commonly first-party and excluding them would hide real
- * code. Use .atelierignore for workspace-specific cases.
+ * code. They live in TIER2_CANDIDATE_DIRS instead and are surfaced by the
+ * exclusion preflight for explicit confirmation, which writes the decision to
+ * .atelierignore.
  *
  * Case-insensitive: "Packages", "PACKAGES", "packages" all match.
  */
@@ -78,8 +108,84 @@ export const ADDITIONAL_EXCLUDED_DIRS = new CaseInsensitiveSet([
   'externals',
   'NuGet',
   '.nuget',
-  'Setup'
+  'Setup',
+  // .NET — checked-in binary dependency drops. Pure assemblies plus the odd
+  // decompiled/bundled source file; never hand-edited, so indexing them only
+  // multiplies edge counts for common symbols.
+  'ReferencedAssemblies',
+  // iOS / macOS — CocoaPods vendors full C++/ObjC source trees (boost,
+  // ReactNativeDependencies). `Pods/` is `pod install` output: never
+  // hand-edited, so it is wrong to index regardless of VCS policy.
+  'Pods',
+  'Carthage',
+  'DerivedData',
+  'xcuserdata',
+  // Android / JVM
+  'captures',
+  'gen',
+  'Intermediates',
+  // Unreal Engine — UBT-generated headers and compiled output
+  'Binaries',
+  'Intermediate',
+  'DerivedDataCache',
+  'Saved',
+  // Unity — asset/session caches. `Library` is deliberately NOT here:
+  // it is a generic name and just as often first-party (see Tier 2).
+  'Temp',
+  'Logs',
+  'Builds',
+  'MemoryCaptures',
+  // C / C++ / CMake — FetchContent, vcpkg and conan vendor entire upstreams
+  'CMakeFiles',
+  'cmake-build-debug',
+  'cmake-build-release',
+  '_deps',
+  'vcpkg_installed',
+  'conan',
+  // Python — installed dependency trees
+  'site-packages',
+  'eggs',
+  'wheels',
+  '.eggs',
+  // Web (legacy package roots)
+  'bower_components',
+  'jspm_packages',
+  'web_modules',
+  // Go (pre-modules vendoring)
+  'Godeps',
+  // Generated documentation / static output — thousands of files, ~0 tags
+  '_site',
+  'storybook-static'
 ])
+
+/**
+ * Directory names that are OFTEN vendored dependency trees but just as often
+ * first-party code. These are deliberately NOT in ADDITIONAL_EXCLUDED_DIRS —
+ * excluding `lib/` or `Library/` by default would silently hide real source.
+ *
+ * Instead they are surfaced by the exclusion preflight
+ * (index-exclusion-preflight.service.ts), which gathers evidence (git status,
+ * vendor markers, file mix) and asks the user to confirm.
+ */
+export const TIER2_CANDIDATE_DIRS = new CaseInsensitiveSet([
+  'lib',
+  'libs',
+  'library',
+  'external',
+  'deps',
+  'dependencies',
+  'third-party',
+  'plugins',
+  'modules',
+  'frameworks',
+  'common',
+  'shared'
+])
+
+/** True when a directory name is a Tier-2 confirm-before-excluding candidate. */
+export function isTier2CandidateDirName(name: string): boolean {
+  return TIER2_CANDIDATE_DIRS.has(name)
+}
 
 /**
  * Convert an absolute path to a workspace-relative POSIX path.
@@ -151,6 +257,22 @@ export function matchesSkipPattern(filePath: string, patterns: string[]): boolea
     }
   }
   return false
+}
+
+/**
+ * Drop paths that should never reach an LLM-facing view of the repository:
+ * the built-in excluded directories plus the workspace's own
+ * `.atelierignore` / `.gitignore` rules.
+ *
+ * PageRank is computed over whatever the index happens to contain, so a
+ * vendored tree indexed before an exclusion decision (or excluded only after
+ * the fact) still dominates the top of the ranking — three copies of
+ * `angular.js` multiply every common symbol by three. Filtering the ranked
+ * list means no such file is ever queued for extraction, whatever state the
+ * index is in.
+ */
+export function filterRankedFiles(relPaths: string[], ignorePatterns: string[]): string[] {
+  return relPaths.filter((rel) => !isExcludedPath(rel) && !matchesSkipPattern(rel, ignorePatterns))
 }
 
 /**

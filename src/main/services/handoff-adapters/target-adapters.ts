@@ -94,7 +94,12 @@ function renderStandard(env: HandoffEnvelope): string {
 
   if (env.filesToReadFirst.length > 0) {
     lines.push(`### Files to Read First`)
-    lines.push(env.filesToReadFirst.slice(0, 10).map((f) => `- \`${f}\``).join('\n'))
+    lines.push(
+      env.filesToReadFirst
+        .slice(0, 10)
+        .map((f) => `- \`${f}\``)
+        .join('\n')
+    )
     lines.push('')
   }
 
@@ -132,7 +137,9 @@ function renderFull(env: HandoffEnvelope): string {
   if (env.remainingWork.length > 0) {
     lines.push(`### Remaining Work`)
     for (const step of env.remainingWork) {
-      lines.push(`- **${step.title}** [${step.priority}${step.estimatedComplexity ? `, complexity: ${step.estimatedComplexity}` : ''}]`)
+      lines.push(
+        `- **${step.title}** [${step.priority}${step.estimatedComplexity ? `, complexity: ${step.estimatedComplexity}` : ''}]`
+      )
       lines.push(`  ${step.description}`)
     }
     lines.push('')
@@ -295,7 +302,7 @@ function resolveChatTarget(envelope: HandoffEnvelope): ChatTargetAction {
     contextMarkdown: renderEnvelopeMarkdown(envelope, 'standard'),
     handoffContextCompact: renderEnvelopeMarkdown(envelope, 'compact'),
     mode: envelope.remainingWork.length > 0 ? 'plan' : 'build',
-    title: `Handoff: ${envelope.intent}`,
+    title: `Handoff: ${envelope.intent}`
   }
 }
 
@@ -303,7 +310,7 @@ function resolveGrillTarget(envelope: HandoffEnvelope): GrillTargetAction {
   return {
     type: 'grill',
     ideaTitle: envelope.intent.slice(0, 100),
-    ideaDescription: envelope.contextSummary,
+    ideaDescription: envelope.contextSummary
   }
 }
 
@@ -323,7 +330,7 @@ function resolveAuditTarget(envelope: HandoffEnvelope): AuditTargetAction {
 function resolveCouncilTarget(envelope: HandoffEnvelope): CouncilTargetAction {
   return {
     type: 'council',
-    planContent: renderEnvelopeMarkdown(envelope, 'full'),
+    planContent: renderEnvelopeMarkdown(envelope, 'full')
   }
 }
 
@@ -335,7 +342,7 @@ function resolveBlueprintTarget(envelope: HandoffEnvelope): BlueprintTargetActio
   return {
     type: 'blueprint',
     specSeed: envelope.contextSummary,
-    settings,
+    settings
   }
 }
 
@@ -344,6 +351,6 @@ function resolveGoalsTarget(envelope: HandoffEnvelope): GoalsTargetAction {
   return {
     type: 'goals',
     goalTitle: firstGoal?.title ?? envelope.intent,
-    goalDescription: firstGoal?.description ?? envelope.contextSummary,
+    goalDescription: firstGoal?.description ?? envelope.contextSummary
   }
 }

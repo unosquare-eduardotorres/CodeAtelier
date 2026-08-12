@@ -25,7 +25,11 @@ function makeTmpWorkspace(): string {
 }
 
 function cleanupTmpWorkspace(path: string): void {
-  try { rmSync(path, { recursive: true, force: true }) } catch { /* best-effort */ }
+  try {
+    rmSync(path, { recursive: true, force: true })
+  } catch {
+    /* best-effort */
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -40,11 +44,10 @@ describe('verifyTaskFileClaims — all claimed files exist', () => {
       writeFileSync(join(wp, 'src/a.ts'), 'content')
       writeFileSync(join(wp, 'src/b.ts'), 'content')
 
-      const result = verifyTaskFileClaims(
-        wp,
-        { filesCreated: ['src/a.ts', 'src/b.ts'] },
-        ['src/a.ts', 'src/b.ts']
-      )
+      const result = verifyTaskFileClaims(wp, { filesCreated: ['src/a.ts', 'src/b.ts'] }, [
+        'src/a.ts',
+        'src/b.ts'
+      ])
       assert.equal(result.ok, true)
       assert.equal(result.missingClaimed.length, 0)
       assert.equal(result.unverifiable, false)
@@ -62,11 +65,10 @@ describe('verifyTaskFileClaims — one claimed created file missing', () => {
       writeFileSync(join(wp, 'src/a.ts'), 'content')
       // src/b.ts intentionally NOT created
 
-      const result = verifyTaskFileClaims(
-        wp,
-        { filesCreated: ['src/a.ts', 'src/b.ts'] },
-        ['src/a.ts', 'src/b.ts']
-      )
+      const result = verifyTaskFileClaims(wp, { filesCreated: ['src/a.ts', 'src/b.ts'] }, [
+        'src/a.ts',
+        'src/b.ts'
+      ])
       assert.equal(result.ok, false)
       assert.deepEqual(result.missingClaimed, ['src/b.ts'])
       assert.equal(result.unverifiable, false)
@@ -102,11 +104,7 @@ describe('verifyTaskFileClaims — R029 signature: no completion + zero planned 
     const wp = makeTmpWorkspace()
     try {
       // No files created on disk
-      const result = verifyTaskFileClaims(
-        wp,
-        null,
-        ['src/a.ts', 'src/b.ts']
-      )
+      const result = verifyTaskFileClaims(wp, null, ['src/a.ts', 'src/b.ts'])
       assert.equal(result.ok, false)
       assert.equal(result.missingClaimed.length, 0)
       assert.deepEqual(result.missingPlanned, ['src/a.ts', 'src/b.ts'])
@@ -124,11 +122,7 @@ describe('verifyTaskFileClaims — no completion block + planned files exist (le
       mkdirSync(join(wp, 'src'), { recursive: true })
       writeFileSync(join(wp, 'src/a.ts'), 'content')
 
-      const result = verifyTaskFileClaims(
-        wp,
-        null,
-        ['src/a.ts', 'src/b.ts']
-      )
+      const result = verifyTaskFileClaims(wp, null, ['src/a.ts', 'src/b.ts'])
       assert.equal(result.ok, true)
       assert.equal(result.missingClaimed.length, 0)
       // b.ts is missing from planned but that's non-fatal
@@ -143,11 +137,7 @@ describe('verifyTaskFileClaims — path traversal treated as missing', () => {
   test('../../etc/passwd counts as missing', () => {
     const wp = makeTmpWorkspace()
     try {
-      const result = verifyTaskFileClaims(
-        wp,
-        { filesCreated: ['../../etc/passwd'] },
-        []
-      )
+      const result = verifyTaskFileClaims(wp, { filesCreated: ['../../etc/passwd'] }, [])
       assert.equal(result.ok, false)
       assert.deepEqual(result.missingClaimed, ['../../etc/passwd'])
     } finally {
@@ -162,7 +152,7 @@ describe('verifyTaskFileClaims — no claims + no planned files (unverifiable)',
     try {
       const result = verifyTaskFileClaims(
         wp,
-        { summary: 'All done' },  // completion block with no file claims
+        { summary: 'All done' }, // completion block with no file claims
         []
       )
       assert.equal(result.ok, true)
@@ -249,7 +239,8 @@ describe('scanCompletedTaskFiles — with completionJson', () => {
 
       const result = scanCompletedTaskFiles(wp, [
         {
-          taskId: 'T001', status: 'complete',
+          taskId: 'T001',
+          status: 'complete',
           filePathsJson: ['src/a.ts', 'src/b.ts', 'src/c.ts'],
           completionJson: { filesCreated: ['src/a.ts', 'src/b.ts'], filesModified: [] }
         }
@@ -270,7 +261,8 @@ describe('scanCompletedTaskFiles — with completionJson', () => {
 
       const result = scanCompletedTaskFiles(wp, [
         {
-          taskId: 'T001', status: 'complete',
+          taskId: 'T001',
+          status: 'complete',
           filePathsJson: ['src/a.ts', 'src/b.ts'],
           completionJson: { filesCreated: ['src/a.ts', 'src/b.ts'], filesModified: [] }
         }
@@ -291,7 +283,8 @@ describe('scanCompletedTaskFiles — with completionJson', () => {
 
       const result = scanCompletedTaskFiles(wp, [
         {
-          taskId: 'T001', status: 'complete',
+          taskId: 'T001',
+          status: 'complete',
           filePathsJson: ['src/a.ts', 'src/b.ts'],
           completionJson: { filesCreated: ['src/a.ts'], filesModified: [] }
         }
@@ -309,7 +302,8 @@ describe('scanCompletedTaskFiles — with completionJson', () => {
     try {
       const result = scanCompletedTaskFiles(wp, [
         {
-          taskId: 'T001', status: 'complete',
+          taskId: 'T001',
+          status: 'complete',
           filePathsJson: ['src/missing.ts'],
           completionJson: null
         }
@@ -495,11 +489,7 @@ describe('verifyTaskFileClaims — taskStartedAt omitted → freshness skipped',
       utimesSync(join(wp, 'src/old.ts'), tenMinAgo, tenMinAgo)
 
       // No taskStartedAt → freshness check skipped
-      const result = verifyTaskFileClaims(
-        wp,
-        { filesCreated: ['src/old.ts'] },
-        ['src/old.ts']
-      )
+      const result = verifyTaskFileClaims(wp, { filesCreated: ['src/old.ts'] }, ['src/old.ts'])
       assert.equal(result.ok, true)
       assert.equal(result.staleClaimed.length, 0)
     } finally {
@@ -519,15 +509,160 @@ describe('verifyTaskFileClaims — lenient path with taskStartedAt requires fres
       utimesSync(join(wp, 'src/old.ts'), tenMinAgo, tenMinAgo)
 
       const taskStartedAt = Date.now()
-      const result = verifyTaskFileClaims(
-        wp,
-        null,
-        ['src/old.ts'],
-        taskStartedAt
-      )
+      const result = verifyTaskFileClaims(wp, null, ['src/old.ts'], taskStartedAt)
       assert.equal(result.ok, false)
     } finally {
       cleanupTmpWorkspace(wp)
+    }
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════════
+// BP-VERIFY-UNVERIFIABLE-01 (R007): re-rooting + "cannot check" ≠ "missing"
+// ══════════════════════════════════════════════════════════════════════
+
+describe('verifyTaskFileClaims — planned path in the main checkout re-roots onto the worktree', () => {
+  test('absolute main-checkout path is confirmed against the execution root', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      // BUILD wrote the file in its worktree; the plan named it in the main checkout.
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const result = verifyTaskFileClaims(worktree, null, [join(main, 'src/a.ts')], undefined, main)
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.missingPlanned, [])
+      assert.deepEqual(result.unverifiablePlanned, [])
+      assert.equal(result.unverifiable, false)
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('claimed main-checkout path re-roots too — no false missingClaimed', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const result = verifyTaskFileClaims(
+        worktree,
+        { filesCreated: [join(main, 'src/a.ts')] },
+        [],
+        undefined,
+        main
+      )
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.missingClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('verifyTaskFileClaims — path under neither root is unverifiable, never missing', () => {
+  test('out-of-root planned path lands in unverifiablePlanned and not missingPlanned', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = verifyTaskFileClaims(worktree, null, ['src/a.ts', stray], undefined, main)
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.unverifiablePlanned, [stray])
+      assert.equal(result.missingPlanned.includes(stray), false)
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('traversal path is still refused (not silently re-rooted)', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      const result = verifyTaskFileClaims(
+        worktree,
+        { filesCreated: ['../../etc/passwd'] },
+        [],
+        undefined,
+        main
+      )
+      assert.equal(result.ok, false)
+      assert.deepEqual(result.missingClaimed, ['../../etc/passwd'])
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('verifyTaskFileClaims — R007 regression: all planned paths unverifiable + no completion', () => {
+  test('returns ok: true, unverifiable: true instead of hard-failing forever', () => {
+    const worktree = makeTmpWorkspace()
+    try {
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = verifyTaskFileClaims(worktree, null, [stray], Date.now())
+      assert.equal(result.ok, true)
+      assert.equal(result.unverifiable, true)
+      assert.deepEqual(result.unverifiablePlanned, [stray])
+      assert.deepEqual(result.missingPlanned, [])
+    } finally {
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('one checkable path that is genuinely absent still hard-fails (R029 detector intact)', () => {
+    const worktree = makeTmpWorkspace()
+    try {
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = verifyTaskFileClaims(worktree, null, [stray, 'src/absent.ts'], Date.now())
+      assert.equal(result.ok, false)
+      assert.equal(result.unverifiable, false)
+      assert.deepEqual(result.missingPlanned, ['src/absent.ts'])
+      assert.deepEqual(result.unverifiablePlanned, [stray])
+    } finally {
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('scanCompletedTaskFiles — re-rooting and unverifiable paths', () => {
+  test('re-rootable planned path is not reported as missingClaimed (legacy branch)', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      mkdirSync(join(worktree, 'src'), { recursive: true })
+      writeFileSync(join(worktree, 'src/a.ts'), 'content')
+
+      const result = scanCompletedTaskFiles(
+        worktree,
+        [{ taskId: 'T001', status: 'complete', filePathsJson: [join(main, 'src/a.ts')] }],
+        main
+      )
+      assert.equal(result.size, 0)
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('out-of-root planned path is skipped rather than downgrading the task', () => {
+    const worktree = makeTmpWorkspace()
+    try {
+      const stray = join(tmpdir(), 'bp-not-a-root-xyz', 'src/stray.ts')
+      const result = scanCompletedTaskFiles(worktree, [
+        { taskId: 'T001', status: 'complete', filePathsJson: [stray] }
+      ])
+      assert.equal(result.size, 0)
+    } finally {
+      cleanupTmpWorkspace(worktree)
     }
   })
 })
@@ -542,7 +677,11 @@ describe('verifyTaskFileClaims — lenient path with taskStartedAt requires fres
 
 describe('EVIDENCE_ONLY_RX — matches evidence/verification task descriptions', () => {
   test('matches "Re-run the full verify pass with evidence: eslint, tsc, vitest"', () => {
-    assert.ok(EVIDENCE_ONLY_RX.test('Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'))
+    assert.ok(
+      EVIDENCE_ONLY_RX.test(
+        'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'
+      )
+    )
   })
 
   // GAP-4: bare "Run" (without "Re-") no longer matches — accepted tradeoff
@@ -581,7 +720,11 @@ describe('EVIDENCE_ONLY_RX — matches evidence/verification task descriptions',
 
 describe('RERUN_VERIFY_RX — matches circular re-run-verify task descriptions', () => {
   test('matches "Re-run the full verify pass with evidence"', () => {
-    assert.ok(RERUN_VERIFY_RX.test('Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'))
+    assert.ok(
+      RERUN_VERIFY_RX.test(
+        'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'
+      )
+    )
   })
 
   test('matches "re-run verification"', () => {
@@ -631,7 +774,8 @@ describe('evidence-only soft-pass — stale-only + evidence description → shou
       assert.equal(result.missingPlanned.length, 0)
 
       // This is the soft-pass condition:
-      const description = 'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'
+      const description =
+        'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'
       const isEvidenceOnly =
         !result.ok &&
         result.missingClaimed.length === 0 &&
@@ -683,11 +827,7 @@ describe('evidence-only soft-pass — missing files + evidence description → s
     const wp = makeTmpWorkspace()
     try {
       // src/a.ts does not exist
-      const result = verifyTaskFileClaims(
-        wp,
-        { filesCreated: ['src/a.ts'] },
-        ['src/a.ts']
-      )
+      const result = verifyTaskFileClaims(wp, { filesCreated: ['src/a.ts'] }, ['src/a.ts'])
       assert.equal(result.ok, false)
       assert.equal(result.missingClaimed.length, 1)
 
@@ -712,9 +852,22 @@ describe('evidence-only soft-pass — missing files + evidence description → s
 describe('remediation filter — filters out circular re-run-verify tasks', () => {
   test('filters out "Re-run the full verify pass" task, keeps real tasks', () => {
     const tasks = [
-      { taskId: 'R001', description: 'Fix missing error handling in auth.ts', files: ['src/auth.ts'] },
-      { taskId: 'R002', description: 'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code', files: [] },
-      { taskId: 'R003', description: 'Add unit tests for user service', files: ['src/user.test.ts'] }
+      {
+        taskId: 'R001',
+        description: 'Fix missing error handling in auth.ts',
+        files: ['src/auth.ts']
+      },
+      {
+        taskId: 'R002',
+        description:
+          'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code',
+        files: []
+      },
+      {
+        taskId: 'R003',
+        description: 'Add unit tests for user service',
+        files: ['src/user.test.ts']
+      }
     ]
 
     const filtered = tasks.filter((t) => !RERUN_VERIFY_RX.test(t.description))
@@ -755,7 +908,10 @@ describe('filter → fallback → filter ordering (GAP-C)', () => {
   function simulateFilterFallbackFlow(
     agentTasks: Array<{ taskId: string; description: string; files: string[] }>,
     generatedTasks: Array<{ taskId: string; description: string; files: string[] }>
-  ): { finalTasks: Array<{ taskId: string; description: string; files: string[] }>; usedRescue: boolean } {
+  ): {
+    finalTasks: Array<{ taskId: string; description: string; files: string[] }>
+    usedRescue: boolean
+  } {
     const filterCircular = (tasks: typeof agentTasks) =>
       tasks.filter((t) => !RERUN_VERIFY_RX.test(t.description))
 
@@ -771,11 +927,13 @@ describe('filter → fallback → filter ordering (GAP-C)', () => {
       // GAP-B rescue: if defensive filter emptied generated list, use generic task
       if (result.length === 0) {
         usedRescue = true
-        result = [{
-          taskId: 'R001',
-          description: GENERIC_REMEDIATION_TASK_DESC,
-          files: []
-        }]
+        result = [
+          {
+            taskId: 'R001',
+            description: GENERIC_REMEDIATION_TASK_DESC,
+            files: []
+          }
+        ]
       }
     }
 
@@ -788,7 +946,11 @@ describe('filter → fallback → filter ordering (GAP-C)', () => {
       { taskId: 'R002', description: 'Re-run the verification with evidence', files: [] }
     ]
     const generated = [
-      { taskId: 'R001', description: 'Fix: missing error handling in auth.ts', files: ['src/auth.ts'] }
+      {
+        taskId: 'R001',
+        description: 'Fix: missing error handling in auth.ts',
+        files: ['src/auth.ts']
+      }
     ]
 
     const { finalTasks, usedRescue } = simulateFilterFallbackFlow(agentTasks, generated)
@@ -814,9 +976,7 @@ describe('filter → fallback → filter ordering (GAP-C)', () => {
   })
 
   test('GAP-B rescue: all-circular agent tasks + all-circular generated tasks → generic rescue task', () => {
-    const agentTasks = [
-      { taskId: 'R001', description: 're-run verify pass', files: [] }
-    ]
+    const agentTasks = [{ taskId: 'R001', description: 're-run verify pass', files: [] }]
     // Edge case: generated task also matches the circular regex
     const generated = [
       { taskId: 'R001', description: 'Fix: verification evidence missing for eslint', files: [] }
@@ -842,6 +1002,9 @@ describe('filter → fallback → filter ordering (GAP-C)', () => {
 
 // ── Standalone runner ──
 
-if (import.meta.url === `file://${process.argv[1]}` || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`) {
+if (
+  import.meta.url === `file://${process.argv[1]}` ||
+  import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`
+) {
   void summaryAsync()
 }

@@ -55,7 +55,7 @@ export class MpaVerifierAdapter extends MpaBaseAdapter {
         'Read',
         'Glob',
         'Grep',
-        'Bash',    // For running tests + lint + typecheck
+        'Bash', // For running tests + lint + typecheck
         'ListDir', // For directory traversal verification
         'WebSearch',
         'WebFetch',

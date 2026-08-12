@@ -1,5 +1,5 @@
 /**
-* Blueprint Goal Conditions — /goal completion conditions for all blueprint phases.
+ * Blueprint Goal Conditions — /goal completion conditions for all blueprint phases.
  *
  * Following the mpa-goal-conditions.ts pattern: pure functions that build
  * goal condition strings delivered via /goal stdin command (goalMode: enforce).

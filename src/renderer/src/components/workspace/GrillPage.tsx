@@ -134,9 +134,7 @@ function GrillCompletedPlanView({ plan }: { plan: GrillStructuredPlan }): React.
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-semibold text-text-primary">
-                {plan.title}
-              </h2>
+              <h2 className="text-lg font-semibold text-text-primary">{plan.title}</h2>
               {plan.goalType && (
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-accent/15 text-accent">
                   {GOAL_TYPE_LABELS[plan.goalType] ?? plan.goalType}
@@ -186,14 +184,10 @@ function GrillCompletedPlanView({ plan }: { plan: GrillStructuredPlan }): React.
         </div>
 
         {/* Decisions by track */}
-        {plan.decisions.length > 0 && (
-          <PlanDecisionGroups decisions={plan.decisions} />
-        )}
+        {plan.decisions.length > 0 && <PlanDecisionGroups decisions={plan.decisions} />}
 
         {/* Requirement Document */}
-        {plan.requirementDocument && (
-          <RequirementDocumentPanel text={plan.requirementDocument} />
-        )}
+        {plan.requirementDocument && <RequirementDocumentPanel text={plan.requirementDocument} />}
 
         {/* Risks */}
         {plan.risks.length > 0 && (
