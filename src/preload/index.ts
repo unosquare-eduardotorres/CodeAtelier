@@ -192,7 +192,11 @@ const api = {
     sourceAuditRunId?: string
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
   }): Promise<Conversation> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_CREATE_CONVERSATION, args),
+
+  chatBranchOptions: (args: { workspaceId: string }): Promise<BlueprintBranchOptions> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_BRANCH_OPTIONS, args),
 
   updateMcpOverrides: (args: {
     conversationId: string

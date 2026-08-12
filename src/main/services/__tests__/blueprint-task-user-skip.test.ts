@@ -69,6 +69,27 @@ if (!env) {
     return { blueprintId: bp.id }
   }
 
+  /**
+   * retryPhase drives the pipeline state machine at the end, and other files in
+   * the shared runner replace that module with a partial mock. The machine is
+   * not what these tests assert, so stub it for the duration of the call.
+   */
+  function withStubbedMachine<T>(fn: () => T): T {
+    const original = blueprintService.getMachine
+    blueprintService.getMachine = (): unknown => ({
+      isTerminal: () => true,
+      isIdle: () => true,
+      isRunning: () => false,
+      transition: () => {},
+      forceReset: () => {}
+    })
+    try {
+      return fn()
+    } finally {
+      blueprintService.getMachine = original
+    }
+  }
+
   function findTask(blueprintId: string, taskId: string): any {
     return blueprintTaskRepository
       .findByBlueprint(blueprintId)
@@ -188,7 +209,7 @@ if (!env) {
       ])
       blueprintService.setTaskUserSkipped(blueprintId, 'T002', true)
 
-      blueprintService.retryPhase(blueprintId)
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
 
       assert.equal(findTask(blueprintId, 'T001').status, 'pending', 'plain failed task resets')
       assert.equal(
@@ -203,7 +224,7 @@ if (!env) {
     test('an un-skipped task is re-queued by the next retry', () => {
       const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
       blueprintService.setTaskUserSkipped(blueprintId, 'T001', true)
-      blueprintService.retryPhase(blueprintId)
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
       assert.equal(findTask(blueprintId, 'T001').status, 'failed')
 
       // Park the blueprint back on a failed build phase and clear the skip.
@@ -212,7 +233,7 @@ if (!env) {
       blueprintRepository.update(blueprintId, { currentPhase: 'build', status: 'failed' })
       blueprintService.setTaskUserSkipped(blueprintId, 'T001', false)
 
-      blueprintService.retryPhase(blueprintId)
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
       assert.equal(findTask(blueprintId, 'T001').status, 'pending')
     })
   })

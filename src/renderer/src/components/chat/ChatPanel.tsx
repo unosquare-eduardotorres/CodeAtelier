@@ -399,6 +399,7 @@ function EmptyConversationState({
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
     llmProvider?: string
     mcpOverrides?: Record<string, boolean>
     sourceAuditRunId?: string
@@ -569,6 +570,7 @@ export default function ChatPanel({
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
     llmProvider?: string
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
@@ -586,7 +588,8 @@ export default function ChatPanel({
       data.communicationTone,
       data.sourceAuditRunId,
       data.branchName,
-      data.autoBranch
+      data.autoBranch,
+      data.takeover
     )
     onNewChatDismiss?.()
     // Send when there is a description OR attachments — an image-only creation

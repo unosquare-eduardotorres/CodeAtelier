@@ -93,6 +93,8 @@ export default function WorkspaceCard({
 
   return (
     <div
+      data-testid="workspace-card"
+      data-workspace-id={workspace.id}
       role="button"
       tabIndex={0}
       onClick={() => {

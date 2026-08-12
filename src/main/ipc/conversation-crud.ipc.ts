@@ -24,6 +24,8 @@ import type {
 } from '../../shared/types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { trackService } from '../services/track.service'
+import { trackRepository } from '../db/repositories/track.repository'
+import { loadBranchOptions } from './load-branch-options'
 import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { completeStreamMetrics } from './chunk-router'
@@ -58,6 +60,14 @@ async function handleCreateConversation(args: {
   branchName?: string
   /** When true, auto-create a branch from the title (overrides workspace gitAutoBranch setting) */
   autoBranch?: boolean
+  /**
+   * Take the selected branch from whatever holds it right now.
+   *
+   * Only ever set by an explicit confirmation in the picker: seizing another
+   * chat's or blueprint's working tree silently is exactly the surprise the
+   * track system exists to prevent.
+   */
+  takeover?: boolean
 }): Promise<ReturnType<typeof conversationRepository.create>> {
   const ch = IPC_CHANNELS.CHAT_CREATE_CONVERSATION
   const {
@@ -71,7 +81,8 @@ async function handleCreateConversation(args: {
     communicationTone,
     sourceAuditRunId,
     branchName: explicitBranchName,
-    autoBranch
+    autoBranch,
+    takeover
   } = args
 
   if (title !== undefined && title.length > 500) {
@@ -214,7 +225,70 @@ async function handleCreateConversation(args: {
     }
   }
 
+  if (takeover && conversation.branchName) {
+    takeOverHeldBranch(conversation.id, workspaceId, conversation.branchName)
+  }
+
   return conversation
+}
+
+/**
+ * Hand a branch — and the directory it is checked out in — to a new chat.
+ *
+ * The blueprint side of this has existed since blueprints got worktrees
+ * (`blueprint-track.ts`); chats had no way back. A finished blueprint holds its
+ * branch forever, so "continue this work in a chat" meant either a fork of the
+ * code or a hard refusal from the lent-branch guard.
+ *
+ * `transferOwner` moves the owner columns only: the worktree is not recreated
+ * and nothing is copied, so the chat opens on exactly the files the previous
+ * owner left, uncommitted ones included, with `node_modules` still linked.
+ *
+ * Not caught here: a busy holder must reach the user. Being told "the blueprint
+ * is still running" is the entire reason the busy probe exists, and silently
+ * degrading to a fresh worktree would put the chat somewhere other than where
+ * the user asked for.
+ */
+function takeOverHeldBranch(conversationId: string, workspaceId: string, branchName: string): void {
+  const holder = trackRepository.findByBranch(workspaceId, branchName)
+  if (!holder || holder.ownerId === conversationId) return
+
+  const outcome = trackService.transferOwner(holder.id, {
+    ownerKind: 'chat',
+    ownerId: conversationId
+  })
+
+  if (outcome.ok) {
+    log.info(
+      `[takeover] chat ${conversationId} took ${branchName} from ` +
+        `${holder.ownerKind}:${holder.ownerId ?? '—'} at ${outcome.track.path}`
+    )
+    return
+  }
+
+  if (outcome.reason === 'busy') {
+    const who = outcome.holder.label ?? outcome.holder.ownerId ?? 'other work'
+    // The chat was created moments ago, in this call, and nothing references it
+    // yet. Leaving it behind would put a chat in the sidebar that failed to get
+    // the one thing it was created for.
+    try {
+      conversationRepository.delete(conversationId)
+    } catch (e) {
+      log.warn('[takeover] could not roll back the new conversation:', e)
+    }
+    throw new Error(
+      `${who} is using "${branchName}" right now — ${outcome.because}. ` +
+        `Try again once it is idle, or pick another branch.`
+    )
+  }
+
+  // 'no-tree' or 'absent': the bookkeeping outlived the directory. Nothing to
+  // hand over, so the first turn's ensureTrack builds a fresh worktree on the
+  // branch — which is the right outcome, not a failure.
+  log.info(
+    `[takeover] chat ${conversationId} could not inherit ${branchName} ` +
+      `(${outcome.reason}) — a new working tree will be created for it`
+  )
 }
 
 /**
@@ -277,8 +351,17 @@ export function registerConversationCrudIpc(): void {
       communicationTone: args.communicationTone as CommunicationTone | null | undefined,
       sourceAuditRunId: optionalString(args, 'sourceAuditRunId', ch),
       branchName: optionalString(args, 'branchName', ch),
-      autoBranch: typeof args.autoBranch === 'boolean' ? args.autoBranch : undefined
+      autoBranch: typeof args.autoBranch === 'boolean' ? args.autoBranch : undefined,
+      takeover: args.takeover === true
     })
+  })
+
+  // ── Branches a new chat may pick from, and who holds each one ──
+  ipcMain.handle(IPC_CHANNELS.CHAT_BRANCH_OPTIONS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.CHAT_BRANCH_OPTIONS
+    const args = requireObject(rawArgs, ch)
+    return loadBranchOptions(requireString(args, 'workspaceId', ch))
   })
 
   ipcMain.handle(IPC_CHANNELS.CHAT_GET_MESSAGES, async (event, rawArgs: unknown) => {

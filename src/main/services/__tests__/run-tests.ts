@@ -409,6 +409,8 @@ const TEST_FILES: string[] = [
   '../../ipc/__tests__/process-ipc.test',
   '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../../renderer/src/store/__tests__/workspace-switch-streams.test',
+  '../../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
+  '../../../renderer/src/hooks/__tests__/background-stream-routing.test',
   '../../../renderer/src/store/__tests__/update-snooze.test',
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',

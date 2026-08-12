@@ -40,6 +40,8 @@ export const IPC_CHANNELS = {
   CHAT_GET_TODOS: 'chat:getTodos',
   PLAN_GET_PHASE_PROGRESS: 'plan:getPhaseProgress',
   CHAT_SWITCH_BRANCH: 'chat:switchBranch',
+  /** Branches a new chat may pick from, with who currently holds each one. */
+  CHAT_BRANCH_OPTIONS: 'chat:branchOptions',
   /** Session recovery: stale session auto-heal progress events */
   CHAT_SESSION_RECOVERY: 'chat:sessionRecovery',
   /** State machine transitions — renderer mirrors backend conversation state */

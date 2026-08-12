@@ -18,6 +18,7 @@ import { useHookLifecycleStore } from '@renderer/store/hook-lifecycle.store'
 import { usePlanExecutionStore } from '@renderer/store/plan-execution.store'
 import { streamingInternals } from '@renderer/store/chat-streaming.actions'
 import { ChunkConsumer } from './useChunkConsumer'
+import { isActiveConversationEvent, resolveCompletionWorkspace } from './stream-routing'
 
 // ─── Type Aliases ─────────────────────────────────────────
 
@@ -185,7 +186,7 @@ function handleMessageChunk(data: MessageChunkPayload, actions: ChatActions): vo
   }
 
   const activeConvId = useChatStore.getState().activeConversation?.id
-  const isActive = data.conversationId === activeConvId
+  const isActive = isActiveConversationEvent(data.conversationId, activeConvId)
 
   // Cross-store updates: conversation-scoped in separate stores,
   // processed regardless of which conversation is active.
@@ -318,7 +319,7 @@ function handleMessageComplete(
   }
 
   const activeConvId = useChatStore.getState().activeConversation?.id
-  const isActive = data.conversationId === activeConvId
+  const isActive = isActiveConversationEvent(data.conversationId, activeConvId)
 
   // STALL-DETECT-06: Clear orphaned stall timer for the completed conversation.
   if (!data.taskId) {
@@ -351,16 +352,13 @@ function handleMessageComplete(
       // savePlan never ran for this turn (e.g. emit_plan fired without a
       // resolvable workspace/conversation), so its phase/task data has no
       // durable backing and would record unverifiable counts into memory.
-      // BACKGROUND-CHAT-02: A background stream can complete long after the user
-      // switched workspaces, so the active workspace is not a safe source of
-      // truth. Prefer the workspace the backend stamped on the completion; only
-      // fall back to the active one when this IS the active conversation.
+      // BACKGROUND-CHAT-02: a background stream can complete long after the user
+      // switched workspaces — see resolveCompletionWorkspace for the rule.
       const wsState = useWorkspaceStore.getState()
-      const workspace = data.workspaceId
-        ? wsState.workspaces.find((w) => w.id === data.workspaceId)
-        : isActive
-          ? (wsState.activeWorkspace ?? undefined)
-          : undefined
+      const workspace = resolveCompletionWorkspace(data.workspaceId, isActive, {
+        all: wsState.workspaces,
+        active: wsState.activeWorkspace
+      })
       if (!workspace && !isActive) {
         rendererLog.warn(
           `[PlanMemory] Skipping extraction for background conversation ${data.conversationId} — ` +
@@ -483,6 +481,10 @@ export function useAppIpcListeners(): void {
     loadProfile()
     loadWorkspaces()
     loadPreferences()
+    // BOOT-REHYDRATE: main survives a renderer-only reload (crash auto-reload,
+    // RewindDialog's window.location.reload), so streams may already be running
+    // before the first chunk of this renderer session arrives.
+    void chatActions.rehydrateStreamingState()
 
     // IPC-BACKPRESSURE: Frame-aligned chunk consumer batches IPC messages
     // and processes them once per animation frame (~16ms at 60fps).

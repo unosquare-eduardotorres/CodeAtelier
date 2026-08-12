@@ -22,11 +22,17 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import simpleGit from 'simple-git'
 import { test, describe, summaryAsync } from './test-harness'
-import { setupElectronStub, invokeHandler, capturedHandlers } from './electron-stub'
+import {
+  setupElectronStub,
+  invokeHandler,
+  tryInvokeHandler,
+  capturedHandlers
+} from './electron-stub'
 import { attachTestDb } from '../../db/repositories/__tests__/db-test-helper'
 
 setupElectronStub()
@@ -53,7 +59,19 @@ if (!gitAvailable || !dbContext || !registered) {
   })
 } else {
   const { db } = dbContext
-  const { trackService } = require('../track.service')
+  const { trackService, registerTrackBusyProbe } = require('../track.service')
+  const { trackRepository } = require('../../db/repositories/track.repository')
+
+  /**
+   * Which owners count as mid-turn, keyed by owner id.
+   *
+   * Keyed rather than a single flag because this harness runs tests
+   * concurrently, and because the probe registry is process-wide: reporting
+   * "busy" for anything but this file's own synthetic ids would reach into
+   * other suites.
+   */
+  const busyBlueprints = new Map<string, string>()
+  registerTrackBusyProbe('blueprint', (ownerId: string) => busyBlueprints.get(ownerId) ?? null)
 
   let wsSeq = 0
 
@@ -246,6 +264,134 @@ if (!gitAvailable || !dbContext || !registered) {
           sourceBranch?: string
         }
         assert.equal(conv.sourceBranch, 'main')
+      })
+    })
+  })
+
+  // ── Taking a branch over from work that already holds it ──────────
+
+  describe('chat creation — taking a held branch over', () => {
+    /** A blueprint-owned track on `branch`, with an uncommitted file in it. */
+    async function heldByBlueprint(
+      dir: string,
+      wsId: string,
+      branch: string
+    ): Promise<{ bpId: string; path: string }> {
+      const bpId = `bp-holder-${wsId}-${branch.replace(/\W/g, '')}`
+      const target = await trackService.ensureTrack({
+        ownerKind: 'blueprint',
+        ownerId: bpId,
+        workspaceId: wsId,
+        repoPath: dir,
+        branchName: branch,
+        baseBranch: 'main'
+      })
+      // Deliberately uncommitted: the promise of a handoff is that the new owner
+      // sees what the previous one left, not a clean checkout.
+      await writeFile(join(target.path, 'blueprint-left-this.txt'), 'half-done\n')
+      return { bpId, path: target.path }
+    }
+
+    test('the chat inherits the same directory, uncommitted work included', async () => {
+      await withWorkspace({}, async (dir, wsId) => {
+        const held = await heldByBlueprint(dir, wsId, 'blueprint/finished-work')
+
+        const conv = await createChat({
+          workspaceId: wsId,
+          title: 'Carry on from the blueprint',
+          branchName: 'blueprint/finished-work',
+          takeover: true
+        })
+
+        const owned = trackRepository.findByOwner('chat', conv.id)
+        assert.ok(owned, 'the chat has to end up owning the track, not a copy of it')
+        assert.equal(owned.path, held.path, 'the SAME directory changes hands')
+        assert.equal(owned.branchName, 'blueprint/finished-work')
+        assert.ok(
+          existsSync(join(owned.path, 'blueprint-left-this.txt')),
+          'nothing is recreated, so the uncommitted file is still there'
+        )
+        assert.equal(
+          trackRepository.findByOwner('blueprint', held.bpId),
+          undefined,
+          'one track moved — not a second row'
+        )
+
+        await trackService.release(conv.id, { discard: true })
+      })
+    })
+
+    test('without the flag the holder keeps its tree — no silent seizure', async () => {
+      await withWorkspace({}, async (dir, wsId) => {
+        const held = await heldByBlueprint(dir, wsId, 'blueprint/not-yours')
+
+        const conv = await createChat({
+          workspaceId: wsId,
+          title: 'Just picked the branch',
+          branchName: 'blueprint/not-yours'
+        })
+
+        assert.equal(
+          trackRepository.findByOwner('blueprint', held.bpId)?.path,
+          held.path,
+          'picking a branch is not consent to take somebody else’s working tree'
+        )
+        assert.equal(trackRepository.findByOwner('chat', conv.id), undefined)
+
+        await trackService.releaseTrack('blueprint', held.bpId, { discard: true })
+      })
+    })
+
+    test('a busy holder is refused, by name, and the chat is not left behind', async () => {
+      await withWorkspace({}, async (dir, wsId) => {
+        const held = await heldByBlueprint(dir, wsId, 'blueprint/still-running')
+        busyBlueprints.set(held.bpId, 'its BUILD phase is still running')
+
+        try {
+          const outcome = await tryInvokeHandler('chat:createConversation', {
+            workspaceId: wsId,
+            title: 'Impatient',
+            branchName: 'blueprint/still-running',
+            takeover: true
+          })
+
+          assert.equal(outcome.ok, false, 'a running blueprint cannot be robbed')
+          assert.match(String(outcome.error), /still-running/)
+          assert.match(String(outcome.error), /its BUILD phase is still running/)
+
+          assert.equal(
+            trackRepository.findByOwner('blueprint', held.bpId)?.path,
+            held.path,
+            'the holder keeps everything'
+          )
+          const strays = db
+            .prepare('SELECT COUNT(*) AS n FROM conversations WHERE workspace_id = ?')
+            .get(wsId) as { n: number }
+          assert.equal(strays.n, 0, 'the chat that failed to get its branch is rolled back')
+        } finally {
+          busyBlueprints.delete(held.bpId)
+          await trackService.releaseTrack('blueprint', held.bpId, { discard: true })
+        }
+      })
+    })
+
+    test('bookkeeping that outlived its directory falls through, it does not fail', async () => {
+      await withWorkspace({}, async (dir, wsId) => {
+        const held = await heldByBlueprint(dir, wsId, 'blueprint/vanished')
+        // Somebody deleted the worktree by hand. There is nothing to hand over,
+        // and refusing here would strand the branch permanently.
+        await rm(held.path, { recursive: true, force: true })
+
+        const conv = await createChat({
+          workspaceId: wsId,
+          title: 'Ghost tree',
+          branchName: 'blueprint/vanished',
+          takeover: true
+        })
+
+        assert.equal(conv.branchName, 'blueprint/vanished', 'the chat is created regardless')
+
+        await trackService.releaseTrack('blueprint', held.bpId, { discard: true })
       })
     })
   })

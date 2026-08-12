@@ -187,7 +187,10 @@ interface Api {
     sourceAuditRunId?: string
     branchName?: string
     autoBranch?: boolean
+    /** Take the selected branch from its current holder. Explicit confirmation only. */
+    takeover?: boolean
   }) => Promise<Conversation>
+  chatBranchOptions: (args: { workspaceId: string }) => Promise<BlueprintBranchOptions>
 
   updateMcpOverrides: (args: {
     conversationId: string

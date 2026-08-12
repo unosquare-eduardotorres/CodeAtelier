@@ -62,6 +62,7 @@ export default function ChatSidebar({
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    takeover?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
   }): Promise<void> => {
@@ -77,7 +78,8 @@ export default function ChatSidebar({
       data.communicationTone,
       undefined, // sourceAuditRunId
       data.branchName,
-      data.autoBranch
+      data.autoBranch,
+      data.takeover
     )
     setShowNewChatModal(false)
     // Send when there is a description OR attachments — an image-only creation

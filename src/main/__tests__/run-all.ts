@@ -653,6 +653,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../mcp-servers/__tests__/jira-server.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/workspace-switch-streams.test',
+  '../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
+  '../../renderer/src/hooks/__tests__/background-stream-routing.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   '../../renderer/src/lib/__tests__/permission-routing.test',

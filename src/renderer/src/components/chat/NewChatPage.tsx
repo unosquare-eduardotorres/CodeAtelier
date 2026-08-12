@@ -52,6 +52,8 @@ interface NewChatPageProps {
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    /** User confirmed taking the branch from whatever holds it. */
+    takeover?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<ModelRoleMap>
     mcpOverrides?: Record<string, boolean>
@@ -190,6 +192,7 @@ export default function NewChatPage({
   // primary tree alongside every other chat. 'none' is an explicit opt-out.
   const [branchMode, setBranchMode] = useState<BranchMode>('auto')
   const [customBranchName, setCustomBranchName] = useState('')
+  const [takeover, setTakeover] = useState(false)
   const [gitAutoBranch, setGitAutoBranch] = useState(true)
   const {
     modelRoles: workspaceModelRoles,
@@ -313,6 +316,7 @@ export default function NewChatPage({
       attachments: attachments.length > 0 ? attachments : undefined,
       branchName,
       autoBranch,
+      takeover: branchName ? takeover : undefined,
       llmProvider: effectiveProvider,
       routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined,
       mcpOverrides: mcpOverridesPayload
@@ -325,6 +329,7 @@ export default function NewChatPage({
     attachments,
     branchMode,
     customBranchName,
+    takeover,
     derivedProvider,
     routingOverrides,
     mcpOverrides,
@@ -497,7 +502,9 @@ export default function NewChatPage({
               onCustomBranchNameChange={setCustomBranchName}
               workspaceId={activeWorkspace.id}
               gitAutoBranch={gitAutoBranch}
-              datalistId="new-chat-page"
+              idSuffix="new-chat-page"
+              takeover={takeover}
+              onTakeoverChange={setTakeover}
             />
           </div>
         )}

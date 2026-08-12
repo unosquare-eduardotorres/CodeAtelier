@@ -39,6 +39,8 @@ interface NewConversationModalProps {
     attachments?: string[]
     branchName?: string
     autoBranch?: boolean
+    /** User confirmed taking the branch from whatever holds it. */
+    takeover?: boolean
     llmProvider?: LLMProvider
     routingOverrides?: Partial<ModelRoleMap>
   }) => void
@@ -176,6 +178,7 @@ export default function NewConversationModal({
   // primary tree alongside every other chat. 'none' is an explicit opt-out.
   const [branchMode, setBranchMode] = useState<BranchMode>('auto')
   const [customBranchName, setCustomBranchName] = useState('')
+  const [takeover, setTakeover] = useState(false)
   const [gitAutoBranch, setGitAutoBranch] = useState(true)
   const [routingOverrides, setRoutingOverrides] = useState<Partial<ModelRoleMap>>({})
   const titleInputRef = useRef<HTMLInputElement>(null)
@@ -217,6 +220,7 @@ export default function NewConversationModal({
       setConversationTone(null)
       setAttachments([])
       setCustomBranchName('')
+      setTakeover(false)
       setRoutingOverrides({})
 
       // Load gitAutoBranch setting and set default branch mode
@@ -270,6 +274,7 @@ export default function NewConversationModal({
       attachments: attachments.length > 0 ? attachments : undefined,
       branchName,
       autoBranch,
+      takeover: branchName ? takeover : undefined,
       llmProvider: effectiveProvider,
       routingOverrides: Object.keys(routingOverrides).length > 0 ? routingOverrides : undefined
     })
@@ -281,6 +286,7 @@ export default function NewConversationModal({
     attachments,
     branchMode,
     customBranchName,
+    takeover,
     derivedProvider,
     routingOverrides,
     onSubmit
@@ -432,7 +438,9 @@ export default function NewConversationModal({
               onCustomBranchNameChange={setCustomBranchName}
               workspaceId={activeWorkspace.id}
               gitAutoBranch={gitAutoBranch}
-              datalistId="new-conv-modal"
+              idSuffix="new-conv-modal"
+              takeover={takeover}
+              onTakeoverChange={setTakeover}
             />
           )}
         </div>

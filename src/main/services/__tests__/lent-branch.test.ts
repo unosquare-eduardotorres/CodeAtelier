@@ -63,6 +63,17 @@ describe('resolveLentHolder — is the branch away?', () => {
     assert.equal(resolveLentHolder(CHAT, heldBy('chat', 'conv-1')), null)
   })
 
+  test('taking a branch over from a blueprint unblocks the chat that took it', () => {
+    // The take-over path (`chat:createConversation` with `takeover`) moves the
+    // owner columns to the new chat and nothing else. This is what that has to
+    // buy: the guard reads the row it left behind, sees the chat holding its
+    // own branch, and stops refusing build turns. Before the take-over existed,
+    // a finished blueprint held the branch forever and this stayed refused.
+    const afterTransfer = resolveLentHolder(CHAT, heldBy('chat', 'conv-1'))
+    assert.equal(afterTransfer, null)
+    assert.equal(lentBranchRefusal(afterTransfer, 'build'), null)
+  })
+
   test('another chat holding it is a loan', () => {
     const lent = resolveLentHolder(CHAT, heldBy('chat', 'conv-2'))
     assert.ok(lent)

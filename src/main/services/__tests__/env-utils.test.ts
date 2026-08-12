@@ -18,7 +18,9 @@ function withEnv(patch: Record<string, string | undefined>, fn: () => void): voi
     'CLAUDE_CODE_ENTRYPOINT',
     'PATH',
     'HOME',
-    'USERPROFILE'
+    'USERPROFILE',
+    'NODE_ENV',
+    'CLAUDE_SHIM_DIR'
   ])
   for (const k of keys) saved[k] = process.env[k]
   try {
@@ -88,6 +90,41 @@ describe('env-utils › buildEnvWithPath', () => {
       const parts = (env.PATH ?? '').split(delimiter)
       assert.deepEqual(parts.slice(0, 2), ['/usr/local/bin', '/opt/homebrew/bin'])
     })
+  })
+
+  // The E2E shim seam. Without it, /usr/local/bin lands ahead of the fixture's
+  // shim dir and every "shim-gated" test silently runs the real claude CLI.
+  test('test builds let the E2E claude shim win over a real install', () => {
+    withEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/me',
+        USERPROFILE: undefined,
+        NODE_ENV: 'test',
+        CLAUDE_SHIM_DIR: '/repo/e2e/helpers/claude-shim'
+      },
+      () => {
+        const parts = (buildEnvWithPath().PATH ?? '').split(delimiter)
+        assert.equal(parts[0], '/repo/e2e/helpers/claude-shim')
+      }
+    )
+  })
+
+  test('the shim seam is inert outside test builds', () => {
+    withEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/me',
+        USERPROFILE: undefined,
+        NODE_ENV: 'production',
+        CLAUDE_SHIM_DIR: '/repo/e2e/helpers/claude-shim'
+      },
+      () => {
+        const path = buildEnvWithPath().PATH ?? ''
+        assert.ok(!path.includes('claude-shim'), 'a stray env var must not redirect the CLI')
+        assert.equal(path.split(delimiter)[0], '/usr/local/bin')
+      }
+    )
   })
 
   test('no-PATH edge: leaves PATH undefined and prepends nothing', () => {

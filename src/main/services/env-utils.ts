@@ -26,5 +26,14 @@ export function buildEnvWithPath(): NodeJS.ProcessEnv {
     env.PATH = `/usr/local/bin${delimiter}${env.PATH}`
   }
 
+  // E2E seam: the Playwright fixture puts a scripted `claude` shim on PATH, but
+  // the prepends above would pull a real install in /usr/local/bin ahead of it —
+  // so shim-gated tests silently ran against the real CLI. Double-gated on
+  // NODE_ENV=test AND the fixture's own variable, so production is untouched.
+  // Set by e2e/helpers/electron-fixture.ts (absolute path).
+  if (process.env.NODE_ENV === 'test' && process.env.CLAUDE_SHIM_DIR && env.PATH) {
+    env.PATH = `${process.env.CLAUDE_SHIM_DIR}${delimiter}${env.PATH}`
+  }
+
   return env
 }

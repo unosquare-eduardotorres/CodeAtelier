@@ -103,6 +103,61 @@ export function partitionStreamsForWorkspaceSwitch(
   return { kept, dropped }
 }
 
+/**
+ * BOOT-REHYDRATE: main outlives a renderer-only reload (the `render-process-gone`
+ * auto-reload in main/index.ts, RewindDialog's `window.location.reload`), so
+ * streams can already be running when the renderer boots with empty state.
+ * Without this the sidebar shows no spinner and the composer looks ready, but
+ * main rejects the next send with "a message is already being processed".
+ *
+ * Merges — never clobbers a stream the renderer has already started tracking
+ * from live chunks. Returns `null` when there is nothing to restore.
+ */
+export function reconcileBootStreamingState(
+  backendStreams: Array<{ conversationId: string; requestId: string }>,
+  current: {
+    streamingConversationIds: Set<string>
+    conversationStreams: Map<string, PerConversationStreamState>
+    activeConversationId: string | null
+  }
+): {
+  streamingConversationIds: Set<string>
+  conversationStreams: Map<string, PerConversationStreamState>
+  isStreaming: boolean
+  activeRequestId: string | null
+} | null {
+  if (backendStreams.length === 0) return null
+
+  const streamingConversationIds = new Set(current.streamingConversationIds)
+  const conversationStreams = new Map(current.conversationStreams)
+
+  for (const { conversationId, requestId } of backendStreams) {
+    streamingConversationIds.add(conversationId)
+    // Only seed where the renderer has no buffer yet — an existing buffer is
+    // already receiving live chunks and must not be reset to empty.
+    if (!conversationStreams.has(conversationId)) {
+      conversationStreams.set(conversationId, {
+        ...emptyStreamState(),
+        isStreaming: true,
+        // finalizeStreamAction compares this against the completion's requestId
+        // to reject late chunks from a superseded request.
+        activeRequestId: requestId
+      })
+    }
+  }
+
+  const activeStream = current.activeConversationId
+    ? backendStreams.find((s) => s.conversationId === current.activeConversationId)
+    : undefined
+
+  return {
+    streamingConversationIds,
+    conversationStreams,
+    isStreaming: !!activeStream,
+    activeRequestId: activeStream?.requestId ?? null
+  }
+}
+
 // ── Streaming state reset ────────────────────────────────────────────────
 
 /** Fields common to every "stop streaming" state transition. */

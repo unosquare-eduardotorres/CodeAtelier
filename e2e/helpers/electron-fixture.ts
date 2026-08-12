@@ -102,6 +102,10 @@ export const test = base.extend<{}, ElectronWorkerFixtures>({
         if (process.env.CLAUDE_SHIM_DIR) {
           const shimDir = resolve(__dirname, '../../', process.env.CLAUDE_SHIM_DIR)
           env.PATH = `${shimDir}:${env.PATH ?? ''}`
+          // Absolute, so main can re-prepend it after buildEnvWithPath()'s own
+          // /usr/local/bin prepends — otherwise a real `claude` install wins and
+          // the "shim" test quietly exercises the live CLI.
+          env.CLAUDE_SHIM_DIR = shimDir
         }
 
         // Spawn Electron with CDP port.

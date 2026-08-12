@@ -23,6 +23,7 @@ import {
   parseBlockedByError,
   emptyStreamState,
   reconcileStopState,
+  reconcileBootStreamingState,
   partitionStreamsForWorkspaceSwitch
 } from './chat-action-utils'
 import type { PerConversationStreamState } from './chat-action-utils'
@@ -150,7 +151,9 @@ export interface ChatState {
     communicationTone?: CommunicationTone | null,
     sourceAuditRunId?: string,
     branchName?: string,
-    autoBranch?: boolean
+    autoBranch?: boolean,
+    /** Take the branch from its current holder — explicit user confirmation only. */
+    takeover?: boolean
   ) => Promise<void>
   selectConversation: (id: string) => Promise<void>
   deleteConversation: (id: string) => Promise<void>
@@ -311,6 +314,13 @@ export interface ChatState {
   reorderConversations: (orderedIds: string[]) => Promise<void>
 
   /**
+   * BOOT-REHYDRATE: adopt streams main is already running. The renderer can
+   * restart on its own (crash auto-reload, RewindDialog reload) while main and
+   * its streams survive — without this the boot state claims nothing is running.
+   */
+  rehydrateStreamingState: () => Promise<void>
+
+  /**
    * Workspace switch — clear the previous workspace's view state WITHOUT
    * dropping conversations that are still streaming in the background.
    * Mirrors blueprint.store's resetForWorkspaceSwitch.
@@ -424,7 +434,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     communicationTone?: CommunicationTone | null,
     sourceAuditRunId?: string,
     branchName?: string,
-    autoBranch?: boolean
+    autoBranch?: boolean,
+    takeover?: boolean
   ) => {
     // BUG-A-FIX: Coordinate with selectConversation via switchGeneration.
     // Without this, a rapid selectConversation during the async createConversation
@@ -441,7 +452,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       communicationTone,
       sourceAuditRunId,
       branchName,
-      autoBranch
+      autoBranch,
+      takeover
     })
     // BUG-A-FIX: Bail if a selectConversation (or another createConversation)
     // superseded this one while we awaited the IPC round-trip.
@@ -1607,6 +1619,31 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
   },
 
+  rehydrateStreamingState: async () => {
+    let backendStreams: Array<{ conversationId: string; requestId: string }>
+    try {
+      const backendState = await window.api.getStreamingState()
+      backendStreams = backendState.streams ?? []
+    } catch (error) {
+      // Same rule as reconcileStopState: never act on a failed query — the
+      // local state is the only state we have.
+      rendererLog.warn('[BOOT-REHYDRATE] Streaming-state query failed:', error)
+      return
+    }
+
+    const patch = reconcileBootStreamingState(backendStreams, {
+      streamingConversationIds: get().streamingConversationIds,
+      conversationStreams: get().conversationStreams,
+      activeConversationId: get().activeConversation?.id ?? null
+    })
+    if (!patch) return
+
+    rendererLog.info(
+      `[BOOT-REHYDRATE] Adopted ${backendStreams.length} stream(s) still running in main`
+    )
+    set(patch)
+  },
+
   resetForWorkspaceSwitch: () => {
     // Flush the outgoing conversation's accumulator so its buffer holds the
     // latest chunks before we stop projecting it to the globals.
@@ -1737,6 +1774,7 @@ export const useChatActions = (): Pick<
   | 'reorderConversations'
   | 'setConversationState'
   | 'setEffort'
+  | 'rehydrateStreamingState'
 > =>
   useChatStore(
     useShallow((s) => ({
@@ -1770,7 +1808,8 @@ export const useChatActions = (): Pick<
       loadContextUsage: s.loadContextUsage,
       reorderConversations: s.reorderConversations,
       setConversationState: s.setConversationState,
-      setEffort: s.setEffort
+      setEffort: s.setEffort,
+      rehydrateStreamingState: s.rehydrateStreamingState
     }))
   )
 
