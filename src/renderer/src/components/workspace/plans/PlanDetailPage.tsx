@@ -357,9 +357,17 @@ export default function PlanDetailPage({
 
         {/* ── Footer metadata ── */}
         <div className="pt-4 border-t border-border-subtle text-[11px] text-text-muted">
-          <span>Created {formatRelativeDate(plan.createdAt)}</span>
+          <span title={plan.createdAt}>Created {formatRelativeDate(plan.createdAt)}</span>
           <span className="mx-2">·</span>
-          <span>Updated {formatRelativeDate(plan.updatedAt)}</span>
+          <span title={plan.updatedAt}>Updated {formatRelativeDate(plan.updatedAt)}</span>
+          {plan.completedAt && (plan.status === 'completed' || plan.status === 'archived') && (
+            <>
+              <span className="mx-2">·</span>
+              <span title={plan.completedAt}>
+                {plan.status === 'archived' ? 'Archived' : 'Completed'} {formatRelativeDate(plan.completedAt)}
+              </span>
+            </>
+          )}
           <span className="mx-2">·</span>
           <span className="font-mono text-[10px]">{plan.id.slice(0, 8)}</span>
         </div>

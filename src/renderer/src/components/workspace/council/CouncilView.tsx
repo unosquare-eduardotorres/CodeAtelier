@@ -11,7 +11,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Hammer, Play, RefreshCw, X, Landmark, Loader2, Target } from 'lucide-react'
+import { Hammer, Play, RefreshCw, X, Landmark, Loader2, GitFork, FileText } from 'lucide-react'
 import { useCouncilStore } from '@renderer/store/council.store'
 import { COUNCIL_ADVISOR_ROLES, COUNCIL_ADVISORS } from '../../../../../shared/constants'
 import type { CouncilAdvisorRole, CouncilPeerReview, CouncilVerdict } from '../../../../../shared/types'
@@ -28,14 +28,16 @@ type CouncilAdvisors = ReturnType<typeof useCouncilStore.getState>['advisors']
 interface CouncilViewProps {
   /** Title of the content being reviewed */
   inputTitle?: string
-  /** Called when user clicks "Accept & Build" */
-  onAcceptAndBuild?: () => void
-  /** Called when user clicks "Revise Plan" */
-  onRevisePlan?: (feedback: string) => void
+  /** Called when user clicks "Update Plan" (from-chat flow) */
+  onUpdatePlan?: (sessionId: string, verdict: CouncilVerdict, originConversationId: string, workspaceId: string) => void
+  /** Called when user clicks "Accept & Build" (standalone flow) */
+  onAcceptAndBuild?: (sessionId: string, workspaceId: string) => void
   /** Called when user clicks "Back to Sessions" / dismiss */
   onDismiss?: () => void
-  /** Called when user clicks "Send to Goal" */
-  onSendToGoal?: (goal: string, title: string) => void
+  /** Whether an outcome action is in progress */
+  isProcessing?: boolean
+  /** Navigate to the Plans Hub tab */
+  onNavigateToPlans?: () => void
 }
 
 // ── Phase indicator ───────────────────────────────────────────────────────
@@ -82,81 +84,80 @@ function PhaseIndicator({ phase }: { phase: string }): React.JSX.Element {
 
 interface CouncilActionBarProps {
   verdict: CouncilVerdict
-  resolvedTitle: string | undefined
-  onAcceptAndBuild?: () => void
-  onSendToGoal?: (text: string, title: string) => void
-  onRevisePlan?: (feedback: string) => void
+  /** Null = standalone council (no originating chat) */
+  originConversationId: string | null
+  currentSessionId: string
+  currentWorkspaceId: string
+  onUpdatePlan: (sessionId: string, verdict: CouncilVerdict, originConversationId: string, workspaceId: string) => void
+  onAcceptAndBuild: (sessionId: string, workspaceId: string) => void
   onDismiss?: () => void
   onReset: () => void
+  isProcessing?: boolean
 }
 
 function CouncilActionBar({
   verdict,
-  resolvedTitle,
+  originConversationId,
+  currentSessionId,
+  currentWorkspaceId,
+  onUpdatePlan,
   onAcceptAndBuild,
-  onSendToGoal,
-  onRevisePlan,
   onDismiss,
-  onReset
+  onReset,
+  isProcessing
 }: CouncilActionBarProps): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 px-5 py-2.5 border-b border-border-subtle bg-surface-overlay/95 backdrop-blur-sm">
-      {onAcceptAndBuild && (
+      {originConversationId ? (
+        /* ── From-chat: "Update Plan" is primary, "Fork" is secondary ── */
+        <>
+          <button
+            disabled={isProcessing}
+            onClick={() => {
+              const sid = currentSessionId
+              const v = verdict
+              const cid = originConversationId
+              const wid = currentWorkspaceId
+              // onReset() moved into handler — called AFTER async navigation completes
+              onUpdatePlan(sid, v, cid, wid)
+            }}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors press-scale disabled:opacity-50"
+          >
+            <RefreshCw size={14} className={isProcessing ? 'animate-spin' : ''} />
+            {isProcessing ? 'Updating…' : 'Update Plan'}
+          </button>
+          <button
+            disabled={isProcessing}
+            data-testid="council-fork-button"
+            onClick={() => {
+              const sid = currentSessionId
+              const wid = currentWorkspaceId
+              // onReset() moved into handler — called AFTER async navigation completes
+              onAcceptAndBuild(sid, wid)
+            }}
+            className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale disabled:opacity-50"
+          >
+            {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <GitFork size={14} />}
+            {isProcessing ? 'Forking…' : 'Fork as New Chat'}
+          </button>
+        </>
+      ) : (
+        /* ── Standalone: "Accept & Build" is primary ── */
         <button
+          disabled={isProcessing}
           onClick={() => {
-            onReset()
-            onAcceptAndBuild()
+            const sid = currentSessionId
+            const wid = currentWorkspaceId
+            // onReset() moved into handler — called AFTER async navigation completes
+            onAcceptAndBuild(sid, wid)
           }}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors press-scale"
+          className="flex items-center gap-1.5 px-4 py-1.5 bg-mode-build hover:brightness-110 text-white rounded text-sm font-medium transition-colors press-scale disabled:opacity-50"
         >
           <Hammer size={14} />
-          Accept & Build
+          {isProcessing ? 'Preparing…' : 'Accept & Build'}
         </button>
       )}
-      {onSendToGoal && (
-        <button
-          onClick={() => {
-            const goalText = [
-              verdict.sections.recommendation,
-              '',
-              'Key revisions:',
-              ...verdict.revisions
-                .filter((r) => r.priority === 'high' || r.priority === 'medium')
-                .map((r) => `- ${r.description}`)
-            ].join('\n')
 
-            onReset()
-            onSendToGoal(goalText, resolvedTitle ?? 'Council-reviewed plan')
-          }}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-400 rounded text-sm font-medium transition-colors press-scale"
-        >
-          <Target size={14} />
-          Send to Goal
-        </button>
-      )}
-      {onRevisePlan && (
-        <button
-          onClick={() => {
-            const feedback = [
-              'Council Review Feedback:',
-              `Overall Score: ${verdict.overallScore}/100`,
-              '',
-              `Recommendation: ${verdict.sections.recommendation}`,
-              '',
-              'Revisions needed:',
-              ...verdict.revisions.map(
-                (r) => `- [${r.priority.toUpperCase()}] ${r.description} (${r.consensus})`
-              )
-            ].join('\n')
-            onReset()
-            onRevisePlan(feedback)
-          }}
-          className="flex items-center gap-1.5 px-4 py-1.5 bg-surface-overlay hover:bg-surface-float text-text-body rounded text-sm font-medium transition-colors press-scale"
-        >
-          <RefreshCw size={14} />
-          Revise Plan
-        </button>
-      )}
       <button
         onClick={() => {
           onReset()
@@ -487,7 +488,11 @@ function CouncilFooterBar({
               const wid = currentWorkspaceId
               startCouncil()
               setSessionIdentity(sid, wid)
-              window.api.councilResume({ sessionId: sid, workspaceId: wid }).catch(console.error)
+              window.api.councilResume({ sessionId: sid, workspaceId: wid })
+                .catch((err) => {
+                  console.error('[council] Resume failed:', err)
+                  reset()
+                })
             }
           }}
           className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded text-sm font-medium transition-colors press-scale"
@@ -556,10 +561,11 @@ function CouncilFooterBar({
 
 export default function CouncilView({
   inputTitle,
+  onUpdatePlan,
   onAcceptAndBuild,
-  onRevisePlan,
   onDismiss,
-  onSendToGoal
+  isProcessing,
+  onNavigateToPlans
 }: CouncilViewProps): React.JSX.Element {
   const {
     phase,
@@ -569,6 +575,8 @@ export default function CouncilView({
     currentSessionId,
     currentWorkspaceId,
     inputTitle: storeInputTitle,
+    originConversationId,
+    isHydrated,
     handlePhaseChanged,
     handleMemberStream,
     handleMemberComplete,
@@ -581,6 +589,20 @@ export default function CouncilView({
 
   // Resolve title: prop > store > fallback
   const resolvedTitle = inputTitle ?? storeInputTitle ?? undefined
+
+  // Look up plan created from this council session (for hydrated/historical views)
+  const [linkedPlanTitle, setLinkedPlanTitle] = useState<string | null>(null)
+  useEffect(() => {
+    if (!isHydrated || !currentSessionId || phase !== 'complete') return
+    let cancelled = false
+    window.api
+      .planFindBySource({ source: 'council', sourceId: currentSessionId })
+      .then((plan) => {
+        if (!cancelled && plan?.title) setLinkedPlanTitle(plan.title)
+      })
+      .catch(() => { /* best-effort */ })
+    return () => { cancelled = true }
+  }, [isHydrated, currentSessionId, phase])
 
   // Local UI state
   const [selectedAdvisor, setSelectedAdvisor] = useState<CouncilAdvisorRole>(
@@ -646,17 +668,41 @@ export default function CouncilView({
         <PhaseIndicator phase={phase} />
       </div>
 
-      {/* ── Sticky action bar (complete phase) ──────────────────────────── */}
-      {phase === 'complete' && verdict && (
+      {/* ── Sticky action bar (complete phase, live sessions only) ──────── */}
+      {phase === 'complete' && verdict && !isHydrated && (
         <CouncilActionBar
           verdict={verdict}
-          resolvedTitle={resolvedTitle}
-          onAcceptAndBuild={onAcceptAndBuild}
-          onSendToGoal={onSendToGoal}
-          onRevisePlan={onRevisePlan}
+          originConversationId={originConversationId}
+          currentSessionId={currentSessionId!}
+          currentWorkspaceId={currentWorkspaceId!}
+          onUpdatePlan={onUpdatePlan!}
+          onAcceptAndBuild={onAcceptAndBuild!}
           onDismiss={onDismiss}
           onReset={reset}
+          isProcessing={isProcessing}
         />
+      )}
+
+      {/* ── Linked plan banner (hydrated historical sessions) ──────────── */}
+      {isHydrated && linkedPlanTitle && (
+        <div className="flex items-center gap-2 px-5 py-2 border-b border-border-subtle bg-indigo-500/5">
+          <FileText size={14} className="text-indigo-400 flex-shrink-0" />
+          <span className="text-xs text-text-secondary">
+            This council produced a plan:
+          </span>
+          <span className="text-xs font-medium text-text-primary truncate">
+            &ldquo;{linkedPlanTitle}&rdquo;
+          </span>
+          {onNavigateToPlans && (
+            <button
+              type="button"
+              onClick={onNavigateToPlans}
+              className="text-xs text-indigo-400 hover:text-indigo-300 font-medium ml-auto flex-shrink-0 transition-colors"
+            >
+              View in Plans Hub →
+            </button>
+          )}
+        </div>
       )}
 
       {/* ── Main content area ───────────────────────────────────────────── */}

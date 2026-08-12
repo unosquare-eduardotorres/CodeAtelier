@@ -215,7 +215,7 @@ export function journalEventsToChatMessages(events: JournalEvent[]): HydratedCha
         if (p.artifactType && agentPhase && phasesWithAccumulatorAgents.has(agentPhase)) {
           break // duplicate — accumulator entry already journals this content
         }
-        const content = (p.contentMd as string) ?? (p.content as string) ?? ''
+        const content = (p.contentMd as string) || (p.content as string) || ''
         const toolActivities = (p.toolActivities as ToolActivity[]) ?? []
         if (content.trim() || toolActivities.length > 0) {
           messages.push({ type: 'agent', content: stripBlueprintBlocks(content), toolActivities, timestamp: ts })

@@ -88,6 +88,16 @@ After each task, verify:
 - [ ] **CLAUDE.md conventions followed** (design tokens, naming, domain rules)
 - [ ] Code follows existing patterns found in the codebase
 
+## Bash Safety
+
+When running Bash commands that include text from task descriptions or file paths:
+- **Prefer double quotes** over single quotes for string arguments — single quotes break on apostrophes (`user's`, `don't`)
+- **Escape special characters** in grep/test patterns: `grep "user'\''s"` or use double quotes
+- **Avoid embedding multi-word descriptions** directly in shell arguments — use variables or shorter identifiers instead
+
+Example — **wrong**: `npm test -- --testNamePattern='Fix user's profile'`
+Example — **right**: `npm test -- --testNamePattern="Fix user's profile"`
+
 ## Discoveries
 
 Before your completion block, emit a `blueprint-discoveries` block: a JSON array of up to 10 short strings (≤250 chars each) recording non-obvious things you learned about this codebase that later phases need — real entry points, gotchas, dead-ends tried, key file relationships. Skip obvious facts. Example:

@@ -55,6 +55,10 @@ interface CouncilState {
   currentWorkspaceId: string | null
   /** Title of the content being reviewed (extracted from input) */
   inputTitle: string | null
+  /** The conversation that originated this council (null if standalone) */
+  originConversationId: string | null
+  /** Whether this session was loaded from history (no action buttons) */
+  isHydrated: boolean
 
   // Actions
   startCouncil: () => void
@@ -70,6 +74,7 @@ interface CouncilState {
   handleMemberComplete: (advisorRole: string, review: CouncilReview | null) => void
   handlePeerReviewComplete: (peerReviews: CouncilPeerReview[]) => void
   handleVerdict: (verdict: CouncilVerdict) => void
+  setOriginConversationId: (id: string) => void
   /** Hydrate store from a completed/failed/cancelled DB session record (for View) */
   hydrateFromRecord: (record: {
     sessionId: string
@@ -79,6 +84,7 @@ interface CouncilState {
     peerReviews: CouncilPeerReview[]
     advisorReviews: CouncilReview[]
     inputTitle?: string
+    conversationId?: string
   }) => void
   reset: () => void
 }
@@ -133,6 +139,8 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
   currentSessionId: null,
   currentWorkspaceId: null,
   inputTitle: null,
+  originConversationId: null,
+  isHydrated: false,
 
   startCouncil: () => {
     resetAccumulators()
@@ -144,7 +152,9 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       verdict: null,
       currentSessionId: null,
       currentWorkspaceId: null,
-      inputTitle: null
+      inputTitle: null,
+      originConversationId: null,
+      isHydrated: false
     })
   },
 
@@ -154,6 +164,10 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
 
   setSessionIdentity: (sessionId, workspaceId) => {
     set({ currentSessionId: sessionId, currentWorkspaceId: workspaceId })
+  },
+
+  setOriginConversationId: (id) => {
+    set({ originConversationId: id })
   },
 
   handlePhaseChanged: (phase) => {
@@ -236,7 +250,9 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       verdict: record.verdict,
       currentSessionId: record.sessionId,
       currentWorkspaceId: record.workspaceId,
-      inputTitle: record.inputTitle ?? null
+      inputTitle: record.inputTitle ?? null,
+      originConversationId: record.conversationId ?? null,
+      isHydrated: true
     })
   },
 
@@ -250,7 +266,9 @@ export const useCouncilStore = create<CouncilState>((set, get) => ({
       verdict: null,
       currentSessionId: null,
       currentWorkspaceId: null,
-      inputTitle: null
+      inputTitle: null,
+      originConversationId: null,
+      isHydrated: false
     })
   }
 }))

@@ -23,6 +23,7 @@ import {
   useSpecialistWarningFlow,
   useInputHistory
 } from './message-input'
+import { isMacPlatform } from '@renderer/utils/platform'
 
 // ─── Pure Helpers ─────────────────────────────────────────
 
@@ -33,7 +34,7 @@ function getPlaceholderText(
 ): string {
   if (isInitializing) return 'Waiting for AI agent to initialize...'
   if (!activeConversation) return 'Select or create a conversation...'
-  const shortcut = navigator.platform.toUpperCase().includes('MAC') ? '⌘.' : 'Ctrl+.'
+  const shortcut = isMacPlatform ? '⌘.' : 'Ctrl+.'
   if (activeConversation.mode === 'danger') {
     return `⚠️ Danger mode — all commands execute without checks. ${shortcut} to switch mode...`
   }
@@ -154,12 +155,19 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   }, [stopGeneration])
 
   const handleCompleteConfirm = useCallback(
-    async (branchName: string, commitMessage: string, description: string) => {
-      await completeConversation(branchName, commitMessage, description)
+    async (branchName: string, commitMessage: string, description: string, baseBranch?: string) => {
+      await completeConversation(branchName, commitMessage, description, baseBranch)
       setShowCompleteDialog(false)
     },
     [completeConversation]
   )
+
+  const handleCompleteClose = useCallback(async () => {
+    if (activeConversation?.id) {
+      await closeConversation(activeConversation.id)
+    }
+    setShowCompleteDialog(false)
+  }, [activeConversation, closeConversation])
 
   const handleCloseConfirm = useCallback(async () => {
     if (activeConversation) {
@@ -184,6 +192,7 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
     conversationTitle: activeConversation?.title ?? 'Untitled',
     dialogConversationId: activeConversation?.id ?? '',
     handleCompleteConfirm,
+    handleCompleteClose,
     handleCompleteCancel: useCallback(() => setShowCompleteDialog(false), []),
     handleCloseConfirm,
     handleCloseCancel: useCallback(() => setShowCloseConfirm(false), []),
@@ -207,10 +216,10 @@ function useMessageSubmit(params: {
 
   return useCallback(async (): Promise<void> => {
     const trimmed = text.trim()
-    // SEND-RACE-01: Read live store state (not stale React closure) to prevent
+    // SEND-RACE-02: Read live store state (not stale React closure) to prevent
     // rapid double-clicks from bypassing the guard between render cycles.
-    const { isStreaming: liveStreaming, isSending } = useChatStore.getState()
-    if (!trimmed || liveStreaming || isSending || !activeConversation) return
+    const { isStreaming: liveStreaming, sendingConversationIds } = useChatStore.getState()
+    if (!trimmed || liveStreaming || sendingConversationIds.has(activeConversation?.id ?? '') || !activeConversation) return
 
     if (trimmed.startsWith('/')) {
       setText('')
@@ -434,7 +443,8 @@ export default function MessageInput({
     }
   }
 
-  const isDisabled = isStreaming || !activeConversation || isInitializing
+  const isSending = useChatStore((s) => s.sendingConversationIds.has(s.activeConversation?.id ?? ''))
+  const isDisabled = isStreaming || isSending || !activeConversation || isInitializing
 
   return (
     <>
@@ -542,6 +552,7 @@ export default function MessageInput({
         conversationTitle={dialogs.conversationTitle}
         conversationId={dialogs.dialogConversationId}
         onCompleteConfirm={dialogs.handleCompleteConfirm}
+        onCompleteClose={dialogs.handleCompleteClose}
         onCompleteCancel={dialogs.handleCompleteCancel}
         showCloseConfirm={dialogs.showCloseConfirm}
         onCloseConfirm={dialogs.handleCloseConfirm}

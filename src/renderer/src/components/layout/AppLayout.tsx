@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Home, Sliders, CircleHelp, Bug } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
@@ -16,6 +16,7 @@ import {
   TokenDetailsModal,
   UnsavedChangesDialog
 } from '@renderer/components/common'
+import { WorkspaceTransition, useTransitionState, consumeUserInitiated } from '@renderer/components/transitions'
 import { NotificationStack } from '@renderer/components/notifications'
 import { useBackgroundSessionListeners } from '@renderer/hooks/useBackgroundSessionListeners'
 import { BugTrackerPage } from '@renderer/components/bugs'
@@ -44,7 +45,7 @@ import {
 } from './hooks'
 import { useBlueprintStatusBar } from './hooks/useBlueprintStatusBar'
 
-const isMac = navigator.platform.toUpperCase().includes('MAC')
+import { isMacPlatform as isMac } from '@renderer/utils/platform'
 
 // ── useAppLayoutEffects ───────────────────────────────────────────────
 
@@ -267,6 +268,30 @@ export default function AppLayout(): React.JSX.Element {
   // Blueprint status for StatusBar indicator
   const blueprintStatus = useBlueprintStatusBar()
   const openWorkspace = useWorkspaceStore((s) => s.openWorkspace)
+
+  // ── Workspace transition animation ──
+  const {
+    state: transitionState,
+    shouldShowOverlay,
+    startTransition,
+    completeAnimation,
+    forceComplete
+  } = useTransitionState()
+  const prevWorkspaceIdRef = useRef<string | null>(activeWorkspace?.id ?? null)
+
+  useEffect(() => {
+    const currentId = activeWorkspace?.id ?? null
+    const prevId = prevWorkspaceIdRef.current
+
+    if (currentId && currentId !== prevId && consumeUserInitiated()) {
+      startTransition(currentId, activeWorkspace!.name)
+    } else if (!currentId && prevId && shouldShowOverlay) {
+      // Workspace deactivated (Home pressed) — tear down any running animation
+      forceComplete()
+    }
+
+    prevWorkspaceIdRef.current = currentId
+  }, [activeWorkspace, startTransition, shouldShowOverlay, forceComplete])
 
   const handleNavigateToBlueprint = useCallback(() => {
     guardedSetSidebarView('settings')
@@ -515,6 +540,16 @@ export default function AppLayout(): React.JSX.Element {
         onDiscard={handleUnsavedDiscard}
         onCancel={handleUnsavedCancel}
       />
+
+      {shouldShowOverlay && (
+        <WorkspaceTransition
+          phase={transitionState.phase}
+          animationType={transitionState.animationType}
+          workspaceName={transitionState.workspaceName}
+          onAnimationComplete={completeAnimation}
+          onAnimationError={forceComplete}
+        />
+      )}
     </div>
   )
 }

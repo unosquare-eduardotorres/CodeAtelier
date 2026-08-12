@@ -1,5 +1,5 @@
 /**
- * Converts an AuditPlan (from the auditor) into a StructuredPlan (for TaskPlanCard).
+ * Converts an AuditPlan (from the auditor) into a StructuredPlan (for PlanTabContent in ChatExecutionPanel).
  * This allows audit plans to render as rich cards in chat using the existing
  * plan card infrastructure with type: 'audit' section sequencing.
  */

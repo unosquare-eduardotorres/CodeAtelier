@@ -2,6 +2,9 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { Loader2 } from 'lucide-react'
 import Avatar from './Avatar'
 import { USER_AVATAR_KEY } from '@renderer/utils/agentIdentity'
+import { useAppPreferenceActions } from '@renderer/store'
+import { USER_AVATAR_OPTIONS } from '@renderer/assets/avatars'
+import type { UserAvatarVariant } from '../../../../shared/types'
 
 interface WelcomeModalProps {
   onComplete: (displayName: string, avatarKey: string) => Promise<void>
@@ -25,10 +28,12 @@ interface WelcomeModalProps {
  */
 export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.JSX.Element {
   const [name, setName] = useState('')
+  const [selectedVariant, setSelectedVariant] = useState<UserAvatarVariant>('1')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const nameInputRef = useRef<HTMLInputElement>(null)
   const modalRef = useRef<HTMLDivElement>(null)
+  const { setPreference } = useAppPreferenceActions()
 
   // Auto-focus name input on mount
   useEffect(() => {
@@ -40,12 +45,13 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
     setIsSaving(true)
     setError(null)
     try {
+      await setPreference('userAvatarVariant', selectedVariant)
       await onComplete(name.trim(), USER_AVATAR_KEY)
     } catch (err) {
       setError((err as Error).message)
       setIsSaving(false)
     }
-  }, [name, onComplete])
+  }, [name, selectedVariant, setPreference, onComplete])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -127,6 +133,32 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
               </p>
             </div>
 
+            {/* Avatar picker */}
+            <div>
+              <label className="block text-sm font-semibold text-text-primary mb-2">
+                Choose your avatar
+              </label>
+              <div className="flex gap-3 justify-center">
+                {USER_AVATAR_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.variant}
+                    aria-label={`Select ${opt.label} avatar`}
+                    onClick={() => setSelectedVariant(opt.variant)}
+                    className={`p-1.5 rounded-full border-2 transition-all ${
+                      selectedVariant === opt.variant
+                        ? 'border-primary scale-110'
+                        : 'border-transparent hover:border-border-default'
+                    }`}
+                  >
+                    <Avatar avatarKey={`user-${opt.variant}`} size="lg" />
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-text-muted mt-2 text-center">
+                You can change this anytime in Settings
+              </p>
+            </div>
+
             {/* Live preview */}
             <div
               className="bg-surface-base rounded-xl p-4 border border-border-subtle"
@@ -137,7 +169,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
                 Preview
               </p>
               <div className="flex items-start gap-3 flex-row-reverse">
-                <Avatar avatarKey={USER_AVATAR_KEY} size="md" />
+                <Avatar avatarKey={`user-${selectedVariant}`} size="md" />
                 <div className="flex flex-col items-end">
                   <span className="text-xs text-text-secondary mb-1 px-1">
                     {name.trim() || 'You'}

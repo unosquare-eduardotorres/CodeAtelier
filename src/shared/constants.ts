@@ -45,6 +45,8 @@ export const IPC_CHANNELS = {
   CHAT_STATE_CHANGE: 'chat:stateChange',
   /** Query current streaming state — used by renderer on conversation switch to restore streaming indicator */
   CHAT_GET_STREAMING_STATE: 'chat:getStreamingState',
+  /** Set a /goal condition for the next send on a conversation */
+  CHAT_SET_GOAL: 'chat:setGoal',
 
   // Agents
   AGENT_GET_STATUSES: 'agent:getStatuses',
@@ -193,6 +195,7 @@ export const IPC_CHANNELS = {
   MEMORY_SELECT_DOCUMENT: 'memory:selectDocument',
   MEMORY_REGENERATE_CLAUDE_MD: 'memory:regenerateClaudeMd',
   MEMORY_SAVE_MESSAGE: 'memory:saveMessage',
+  MEMORY_SAVE_PLAN_EXECUTION: 'memory:savePlanExecution',
 
   // Memory document ingestion
   MEMORY_INGEST_DOCUMENTS: 'memory:ingest:documents',
@@ -265,6 +268,7 @@ export const IPC_CHANNELS = {
   REPO_GET_PUSH_STATUS: 'repo:getPushStatus',
   REPO_GENERATE_COMMIT_MESSAGE: 'repo:generateCommitMessage',
   REPO_CREATE_PR: 'repo:createPr',
+  REPO_LIST_BRANCHES: 'repo:listBranches',
 
   // PR Description Generation
   CHAT_GENERATE_PR_DESCRIPTION: 'chat:generatePrDescription',
@@ -405,6 +409,9 @@ export const IPC_CHANNELS = {
   // Stream Diagnostics — aggregated streaming health metrics
   STREAM_METRICS_GET: 'stream:metricsGet',
 
+  // IPC Backpressure — renderer ACK for adaptive batching
+  CHAT_CHUNK_ACK: 'chat:chunkAck',
+
   // SDK Elicitation (enriched — via elicitation.service)
   SDK_ELICITATION_REQUEST: 'sdk:elicitationRequest',
   SDK_ELICITATION_RESPONSE: 'sdk:elicitationResponse',
@@ -469,6 +476,7 @@ export const IPC_CHANNELS = {
   PLAN_DELETE: 'plan:delete',
   PLAN_IMPORT: 'plan:import',
   PLAN_GET_STATUS_HISTORY: 'plan:getStatusHistory',
+  PLAN_FIND_BY_SOURCE: 'plan:findBySource',
 
   // Grill (dedicated agent)
   GRILL_EVALUATE: 'grill:evaluate',
@@ -1875,6 +1883,12 @@ export const MCP_TOOLS = {
     MEMORY_SEARCH: mcpTool('memory', 'memory_search', 'Memory · memory_search'),
     MEMORY_RECORD: mcpTool('memory', 'memory_record', 'Memory · memory_record'),
     MEMORY_FLAG: mcpTool('memory', 'memory_flag', 'Memory · memory_flag')
+  }),
+  PROCESS_MANAGER: mcpServer('process-manager', {
+    RUN_BACKGROUND: mcpTool('process-manager', 'run_background', 'Process · run_background'),
+    CHECK_PROCESS: mcpTool('process-manager', 'check_process', 'Process · check_process'),
+    STOP_PROCESS: mcpTool('process-manager', 'stop_process', 'Process · stop_process'),
+    LIST_PROCESSES: mcpTool('process-manager', 'list_processes', 'Process · list_processes')
   })
 } as const
 

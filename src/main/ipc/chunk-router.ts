@@ -6,12 +6,15 @@
 import { ipcMain, type BrowserWindow } from 'electron'
 import type { StreamChunk } from '../services'
 import { IPC_CHANNELS } from '../../shared/constants'
-import type { ConversationMode, ConversationPhase, ToolActivity } from '../../shared/types'
+import type { ConversationMode, ConversationPhase, ToolActivity, PlanRecord } from '../../shared/types'
 import { createTextChunk, createToolActivityChunk, createTurnBoundary } from './chat-protocol'
 import { processToolChunk } from './tool-chunk-processor'
 import { TextDeltaBatcher } from './text-delta-batcher'
 import { chatIpcLogger } from '../logger'
+import { chunkAckTracker } from './chunk-ack-tracker'
 import { todoRepository } from '../db/repositories/todo.repository'
+import { planRepository } from '../db/repositories/plan.repository'
+import { matchPlanTaskForFile, isPhaseTaskSetComplete } from '../../shared/plan-tasks'
 
 // ── Tool Activity Persistence Accumulator ──────────────────────────────
 // Collects completed ToolActivity objects during streaming, keyed by
@@ -116,9 +119,10 @@ export interface ChunkRouterContext {
  *   swapped    — Specialist swap interrupted the stream
  *   aborted    — System abort (workspace switch, conversation deleted, safety timeout cleanup)
  *   error      — Unrecoverable stream error
- *   timeout    — Safety timeout fired before LLM responded
+ *   timeout       — Safety timeout fired before LLM responded
+ *   max-lifetime  — Stream exceeded absolute hard cap (MAX_STREAM_LIFETIME_MS)
  */
-type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout' | 'aborted' | 'completed' | 'swapped'
+type StreamOutcome = 'complete' | 'stopped' | 'error' | 'timeout' | 'aborted' | 'completed' | 'swapped' | 'max-lifetime'
 
 interface StreamMetrics {
   startedAt: number
@@ -188,7 +192,7 @@ export class StreamMetricsAggregator {
 
   /** Distribution of outcomes in the current window. */
   get outcomeCounts(): Record<StreamOutcome, number> {
-    const counts: Record<StreamOutcome, number> = { complete: 0, stopped: 0, error: 0, timeout: 0, completed: 0, aborted: 0, swapped: 0 }
+    const counts: Record<StreamOutcome, number> = { complete: 0, stopped: 0, error: 0, timeout: 0, completed: 0, aborted: 0, swapped: 0, 'max-lifetime': 0 }
     for (const r of this.records) counts[r.outcome]++
     return counts
   }
@@ -240,6 +244,9 @@ export function completeStreamMetrics(
   // Record into sliding-window aggregator
   streamAggregator.record(outcome, ttft, duration)
 
+  // IPC-BACKPRESSURE: Collect backpressure metrics for this stream
+  const bp = chunkAckTracker.getMetrics('__global__')
+
   chatIpcLogger.info(
     `[METRIC:STREAM_COMPLETE] ` +
       `outcome=${outcome} duration=${duration}ms ttft=${ttft}ms ` +
@@ -247,8 +254,15 @@ export function completeStreamMetrics(
       `conversationId=${conversationId.slice(0, 8)} ` +
       `completionRate=${(streamAggregator.completionRate * 100).toFixed(1)}% ` +
       `ttftP95=${streamAggregator.ttftP95}ms ` +
-      `sampleSize=${streamAggregator.sampleSize}`
+      `sampleSize=${streamAggregator.sampleSize} ` +
+      `backpressureActivations=${bp.backpressureActivations} ` +
+      `avgAckLatency=${bp.avgAckLatency}ms ` +
+      `maxPending=${bp.maxPendingChunks}`
   )
+
+  // Clean up backpressure tracking for this stream
+  chunkAckTracker.cleanup('__global__')
+  chunkAckTracker.clearMetrics('__global__')
 }
 
 /** Expose the aggregator for diagnostic IPC or health checks. */
@@ -267,13 +281,19 @@ const textBatcher = new TextDeltaBatcher()
 
 /** Queue text for batched delivery to the renderer for this conversation. */
 function pushText(ctx: ChunkRouterContext, text: string): void {
+  // IPC-BACKPRESSURE: Pass the adaptive interval to the batcher. When the
+  // renderer is under pressure (pending > HWM), the interval widens from
+  // 33ms (~30fps) to 100ms (~10fps), giving React more breathing room.
+  const interval = chunkAckTracker.getRecommendedInterval('__global__')
   textBatcher.push(ctx.conversationId, text, (buffer) => {
     safeSend(
       ctx,
       IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
       createTextChunk({ ...basePayload(ctx), text: buffer, phase: ctx.phase })
     )
-  })
+    // Record send for backpressure tracking
+    chunkAckTracker.recordSend('__global__')
+  }, interval)
 }
 
 /**
@@ -371,8 +391,8 @@ function handleThinking(ctx: ChunkRouterContext, chunk: StreamChunk): void {
 }
 
 function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
-  // Flush pending text before tool activity (tool_use starts a new visual block)
-  if (chunk.type === 'tool_use') textBatcher.flush(ctx.conversationId)
+  // Flush pending text before tool activity (tool_use and tool_result start/end a visual block)
+  if (chunk.type === 'tool_use' || chunk.type === 'tool_result') textBatcher.flush(ctx.conversationId)
 
   const result = processToolChunk(chunk, {
     workspacePath: ctx.workspacePath,
@@ -391,6 +411,115 @@ function handleToolChunk(ctx: ChunkRouterContext, chunk: StreamChunk): void {
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,
     createToolActivityChunk({ ...basePayload(ctx), toolActivity: result.toolActivity })
   )
+
+  // TASK-DERIVE-01: Derive task completion from OBSERVED write/edit activity
+  // (main-owned, DB-backed) instead of relying solely on the model
+  // self-reporting via emit_phase_progress. Fires only on tool_result (the
+  // operation actually completed, not just started) for successful write/edit
+  // ops — this is what lets a phase the model never reported on still show
+  // accurate progress, mirroring how BlueprintBuildService derives task
+  // status from its own wave loop rather than trusting the model.
+  if (
+    chunk.type === 'tool_result' &&
+    result.toolActivity.status !== 'error' &&
+    result.toolActivity.filePath &&
+    (result.toolActivity.operationType === 'write' || result.toolActivity.operationType === 'edit')
+  ) {
+    try {
+      derivePlanTaskFromFileActivity(ctx, result.toolActivity.filePath)
+    } catch (err) {
+      chatIpcLogger.warn(`[chunk-router] Task derivation failed: ${(err as Error).message}`)
+    }
+  }
+}
+
+// ── Active-plan lookup cache (per conversation) ──────────────────────
+// A file-heavy build fires derivePlanTaskFromFileActivity once per
+// write/edit tool_result — findActiveByConversationId on every single one
+// is wasted work, since the plan's structuredPlan (title/phases/files) is
+// immutable for the life of a build; only its phase_progress_json changes,
+// which is still always read fresh (never cached) for correctness. Short
+// TTL bounds staleness if the user starts a brand-new plan mid-conversation
+// without needing cross-module cache invalidation wiring.
+const ACTIVE_PLAN_CACHE_TTL_MS = 5000
+const activePlanCache = new Map<string, { plan: PlanRecord; cachedAt: number }>()
+
+function getCachedActivePlan(conversationId: string): PlanRecord | null {
+  const cached = activePlanCache.get(conversationId)
+  if (cached && Date.now() - cached.cachedAt < ACTIVE_PLAN_CACHE_TTL_MS) {
+    return cached.plan
+  }
+  const plan = planRepository.findActiveByConversationId(conversationId)
+  if (plan) {
+    activePlanCache.set(conversationId, { plan, cachedAt: Date.now() })
+  } else {
+    activePlanCache.delete(conversationId)
+  }
+  return plan
+}
+
+/**
+ * Match a touched file against the conversation's persisted plan and, on a
+ * unique match, promote that task to 'complete' and its phase to
+ * 'in_progress' (never regressing a phase past 'pending'). Emits a synthetic
+ * phaseProgress chunk so the renderer converges on the same state the DB now
+ * holds, whether or not the model itself called emit_phase_progress.
+ */
+function derivePlanTaskFromFileActivity(ctx: ChunkRouterContext, filePath: string): void {
+  const plan = getCachedActivePlan(ctx.conversationId)
+  if (!plan) return
+
+  const match = matchPlanTaskForFile(plan.structuredPlan, filePath)
+  if (!match) return
+
+  const existingProgress = planRepository.getPhaseProgress(plan.id)
+  const currentPhase = existingProgress.find((p) => p.phaseId === match.phaseId)
+  let nextPhaseStatus: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped' =
+    !currentPhase || currentPhase.status === 'pending'
+      ? 'in_progress'
+      : (currentPhase.status as 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped')
+
+  planRepository.updatePhaseProgress(
+    plan.id,
+    match.phaseId,
+    nextPhaseStatus,
+    undefined,
+    [match.touchedFile],
+    { taskId: match.taskId, title: match.taskTitle, status: 'complete' }
+  )
+
+  // Auto-finalize the phase once every DECLARED task in it (the full
+  // manifest, not just whatever's been recorded so far) has reached a
+  // terminal status. Without this, an execution the model never explicitly
+  // completed stays "in progress" forever — handleMessageComplete's allDone
+  // check requires every phase to reach completed/skipped/failed before the
+  // panel goes read-only and memory extraction fires. 'failed' phases are
+  // never auto-promoted — a task landing after a failure doesn't undo it.
+  if (nextPhaseStatus !== 'completed' && nextPhaseStatus !== 'failed') {
+    const refreshedPhase = planRepository
+      .getPhaseProgress(plan.id)
+      .find((p) => p.phaseId === match.phaseId)
+    if (isPhaseTaskSetComplete(plan.structuredPlan, match.phaseId, refreshedPhase?.tasks ?? [])) {
+      nextPhaseStatus = 'completed'
+      planRepository.updatePhaseProgress(plan.id, match.phaseId, 'completed')
+    }
+  }
+
+  safeSend(ctx, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+    ...basePayload(ctx),
+    chunk: '',
+    phaseProgress: {
+      planId: plan.id,
+      phaseId: match.phaseId,
+      phaseTitle: match.phaseTitle,
+      status: nextPhaseStatus,
+      totalPhases: plan.structuredPlan.phases?.length ?? 0,
+      taskId: match.taskId,
+      taskTitle: match.taskTitle,
+      taskStatus: 'complete',
+      totalTasks: match.totalTasksInPhase
+    }
+  })
 }
 
 function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
@@ -580,6 +709,22 @@ function handleContextUsageUpdate(ctx: ChunkRouterContext, chunk: StreamChunk): 
 }
 
 function handleTodoUpdate(ctx: ChunkRouterContext, chunk: StreamChunk): void {
+  // Full-snapshot sync from Claude CLI's TodoWrite tool — replaces the whole
+  // list rather than applying an incremental patch. See StreamChunk.todoSync.
+  if (chunk.todoSync) {
+    safeSend(ctx, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
+      ...basePayload(ctx),
+      chunk: '',
+      todoSync: chunk.todoSync
+    })
+    try {
+      todoRepository.syncTodos(ctx.conversationId, chunk.todoSync)
+    } catch (err) {
+      chatIpcLogger.warn(`[chunk-router] Failed to persist todo sync: ${(err as Error).message}`)
+    }
+    return
+  }
+
   if (!chunk.todoUpdate) return
   safeSend(ctx, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, {
     ...basePayload(ctx),
@@ -869,5 +1014,13 @@ export function registerStreamDiagnosticsIpc(): void {
       sampleSize: streamAggregator.sampleSize,
       outcomeCounts: streamAggregator.outcomeCounts
     }
+  })
+
+  // IPC-BACKPRESSURE: Renderer sends ACK after processing a batch of chunks.
+  // This feeds the adaptive batcher interval adjustment.
+  ipcMain.on(IPC_CHANNELS.CHAT_CHUNK_ACK, (_event, data: { processed: number; timestamp: number }) => {
+    // The ACK doesn't specify a conversationId — distribute across all pending.
+    // In practice with MAX_CONCURRENT_STREAMS=1, there's only ever one active.
+    chunkAckTracker.recordAck('__global__', data.processed)
   })
 }

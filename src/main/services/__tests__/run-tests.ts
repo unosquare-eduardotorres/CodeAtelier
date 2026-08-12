@@ -22,6 +22,7 @@ const TEST_FILES: string[] = [
   './preprocessing.test',
   './description-cache.test',
   './code-graph-logic.test',
+  './is-excluded-path.test',
   './vector-search.test',
   './code-graph-db.test',
   './mcp-tool-wiring.test',
@@ -217,6 +218,7 @@ const TEST_FILES: string[] = [
   './shared-types-coverage.test',
   './blueprint-spec-helpers.test',
   './plan-registry-helpers.test',
+  './plan-tasks.test',
   './zero-coverage-services.test',
   // ─── Phase 15: Coverage Mega-Push — pure function tests ───
   './default-prompts-constants.test',
@@ -362,7 +364,24 @@ const TEST_FILES: string[] = [
   './executor-derivation.test',
   // ─── Local embedding provider facade (oMLX/Ollama routing) ───
   './local-embedding-provider.test',
+  // ─── Process Manager MCP server (ring buffer, tool registry, mode gating) ───
+  './process-manager.test',
+  // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
+  './validate-args-pure.test',
+  './stream-helper-deep.test',
+  './audit-handoff-service.test',
+  './context-handoff-agent-sync.test',
+  './chunk-router-metrics-deep.test',
+  './preprocessing-repo-mappers.test',
+  './chat-agent-executor-deep.test',
+  './memory-ipc-workspace-ipc-deep.test',
+  './mcp-servers-pure.test',
+  // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
+  './mermaid-sanitizers.test',
 ]
+// NOTE: is-excluded-path.test is registered early (after code-graph-logic)
+// because summaryAsync() calls process.exit(), which can truncate stdout
+// for tests near the end of the array.
 
 // ─── Dynamic import loop with per-file error isolation ───
 // Wrapped in async IIFE because the project is CJS (no top-level await).

@@ -159,6 +159,13 @@ export const test = base.extend<ElectronFixtures>({
         await page.waitForLoadState('domcontentloaded')
         await page.waitForTimeout(3_000)
 
+        // Set E2E testing flag so workspace transition animations are skipped.
+        // The renderer runs with contextIsolation + sandbox, so process.env is
+        // unreachable — this window flag is the only way isE2ETesting() returns true.
+        await page.evaluate(() => {
+          (window as Record<string, unknown>).__E2E_TESTING__ = true
+        })
+
         // Provide the ready page to the test
         await use(page)
       } finally {

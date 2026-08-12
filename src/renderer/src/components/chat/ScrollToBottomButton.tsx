@@ -24,6 +24,7 @@ export default function ScrollToBottomButton({
           : 'opacity-0 translate-y-2 pointer-events-none'
         }`}
       aria-label={ariaLabel}
+      data-testid="scroll-to-bottom"
       tabIndex={visible ? 0 : -1}
     >
       <ArrowDown size={18} />

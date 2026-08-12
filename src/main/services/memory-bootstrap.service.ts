@@ -788,7 +788,7 @@ class MemoryBootstrapService {
     try {
       const entries = readdirSync(dirPath)
       for (const entry of entries) {
-        if (IGNORE_DIRS.has(entry)) continue
+        if (IGNORE_DIRS.has(entry.toLowerCase())) continue
         const fullPath = join(dirPath, entry)
         try {
           const stat = statSync(fullPath)
@@ -808,7 +808,7 @@ class MemoryBootstrapService {
     try {
       const entries = readdirSync(dirPath)
       for (const entry of entries) {
-        if (IGNORE_DIRS.has(entry)) continue
+        if (IGNORE_DIRS.has(entry.toLowerCase())) continue
         const fullPath = join(dirPath, entry)
         try {
           const stat = statSync(fullPath)

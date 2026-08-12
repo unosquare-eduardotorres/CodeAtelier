@@ -94,7 +94,8 @@ export function useChatPanelState() {
       mode: ConversationMode
       communicationTone?: import('../../../../shared/types').CommunicationTone | null
       attachments?: string[]
-      useIsolatedBranch?: boolean
+      branchName?: string
+      autoBranch?: boolean
       llmProvider?: string
       routingOverrides?: Partial<import('../../../../shared/types').ModelRoleMap>
       mcpOverrides?: Record<string, boolean>
@@ -108,13 +109,11 @@ export function useChatPanelState() {
         (data.llmProvider as import('../../../../shared/types').LLMProvider) ?? undefined,
         data.routingOverrides,
         data.mcpOverrides,
-        data.communicationTone
+        data.communicationTone,
+        undefined, // sourceAuditRunId
+        data.branchName,
+        data.autoBranch
       )
-      if (data.useIsolatedBranch) {
-        console.info(
-          '[NewConversationModal] Isolated branch requested — worktree integration pending'
-        )
-      }
       if (data.description) {
         sendMessage(data.description, data.attachments)
       }
@@ -137,7 +136,7 @@ export function useChatPanelState() {
 
   // Filter messages for search
   const filteredMessages = searchQuery
-    ? messages.filter((m) => m.contentMd.toLowerCase().includes(searchQuery.toLowerCase()))
+    ? messages.filter((m) => !m.hidden && m.contentMd.toLowerCase().includes(searchQuery.toLowerCase()))
     : []
 
   return {

@@ -131,7 +131,9 @@ export function registerCodeChangesIpc(): void {
       )
     }
 
-    const messages = messageRepository.findByConversation(conversationId)
+    const messages = messageRepository
+      .findByConversation(conversationId)
+      .filter((m) => !m.hidden)
 
     const prompt = `You are generating a concise git commit message. Follow conventional commit style.
 

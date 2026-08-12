@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
-import type { AppPreferences, AppTheme, ChatBubbleSize } from '../../../shared/types'
+import type { AppPreferences, AppTheme, ChatBubbleSize, UserAvatarVariant } from '../../../shared/types'
 
 type AppPreferenceKey = keyof AppPreferences
 
@@ -18,7 +18,9 @@ const defaultPreferences: AppPreferences = {
   context7ApiKey: '',
   notificationsEnabled: true,
   parallelBuildAgents: 3,
-  leanBuildMcp: false
+  leanBuildMcp: false,
+  userAvatarVariant: '1' as UserAvatarVariant,
+  maxStreamLifetimeMin: 30
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -34,7 +36,9 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   context7ApiKey: 'context7_api_key',
   notificationsEnabled: 'notifications_enabled',
   parallelBuildAgents: 'parallel_build_agents',
-  leanBuildMcp: 'lean_build_mcp'
+  leanBuildMcp: 'lean_build_mcp',
+  userAvatarVariant: 'user_avatar_variant',
+  maxStreamLifetimeMin: 'max_stream_lifetime_min'
 }
 
 interface AppPreferenceState {
@@ -149,6 +153,12 @@ export const useParallelBuildAgents = (): number =>
 
 export const useLeanBuildMcp = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.leanBuildMcp)
+
+export const useMaxStreamLifetimeMin = (): number =>
+  useAppPreferenceStore((state) => state.preferences.maxStreamLifetimeMin)
+
+export const useUserAvatarVariant = (): UserAvatarVariant =>
+  useAppPreferenceStore((state) => state.preferences.userAvatarVariant)
 
 export const useAppPreferenceActions = (): Pick<
   AppPreferenceState,

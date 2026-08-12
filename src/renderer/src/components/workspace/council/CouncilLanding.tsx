@@ -28,15 +28,38 @@ import CouncilView from './CouncilView'
 import CouncilFilterBar, { type CouncilFilter } from './CouncilFilterBar'
 import CouncilSessionCard, { type CouncilSessionSummary } from './CouncilSessionCard'
 import StartCouncilModal from './StartCouncilModal'
-import type { CouncilInputType } from '../../../../../shared/types'
+import type { CouncilInputType, CouncilVerdict } from '../../../../../shared/types'
 
 // ── Props ──────────────────────────────────────────────────────────────────
 
 interface CouncilLandingProps {
-  onAcceptAndBuild?: () => void
-  onRevisePlan?: (feedback: string) => void
+  onUpdatePlan?: (sessionId: string, verdict: CouncilVerdict, originConversationId: string, workspaceId: string) => void
+  onAcceptAndBuild?: (sessionId: string, workspaceId: string) => void
   onDismiss?: () => void
-  onSendToGoal?: (goal: string, title: string) => void
+  isProcessing?: boolean
+  onNavigateToPlans?: () => void
+}
+
+/** Batch-fetch plan titles for completed council sessions (concurrent Promise.all). */
+async function loadPlanTitles(sessions: CouncilSessionSummary[]): Promise<Map<string, string>> {
+  const completedIds = sessions
+    .filter((s) => s.status === 'completed')
+    .map((s) => s.id)
+  if (completedIds.length === 0) return new Map()
+
+  const results = await Promise.all(
+    completedIds.map((id) =>
+      window.api
+        .planFindBySource({ source: 'council', sourceId: id })
+        .then((plan) => (plan?.title ? { sessionId: id, title: plan.title } : null))
+        .catch(() => null)
+    )
+  )
+  return new Map(
+    results
+      .filter((r): r is { sessionId: string; title: string } => r !== null)
+      .map((r) => [r.sessionId, r.title])
+  )
 }
 
 // ── Component ──────────────────────────────────────────────────────────────
@@ -172,7 +195,8 @@ function useCouncilLandingHandlers(opts: {
           verdict: session.verdict,
           peerReviews: session.peerReviews ?? [],
           advisorReviews: session.advisorReviews ?? [],
-          inputTitle: extractInputTitle(session.inputContent)
+          inputTitle: extractInputTitle(session.inputContent),
+          conversationId: session.conversationId ?? undefined
         })
       }
     },
@@ -214,10 +238,11 @@ function useCouncilLandingHandlers(opts: {
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function CouncilLanding({
+  onUpdatePlan,
   onAcceptAndBuild,
-  onRevisePlan,
   onDismiss,
-  onSendToGoal
+  isProcessing,
+  onNavigateToPlans
 }: CouncilLandingProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const workspaceId = activeWorkspace?.id ?? ''
@@ -225,6 +250,7 @@ export default function CouncilLanding({
   const councilIsActive = useCouncilStore((s) => s.isActive)
 
   const [history, setHistory] = useState<CouncilSessionSummary[]>([])
+  const [planTitleMap, setPlanTitleMap] = useState<Map<string, string>>(new Map())
   const [isLoading, setIsLoading] = useState(true)
   const [showStartModal, setShowStartModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -240,15 +266,28 @@ export default function CouncilLanding({
       setDeleteTarget
     })
 
-  // Load history on mount + workspace change
+  // Load history + batch plan titles on mount + workspace change
   useEffect(() => {
     if (!workspaceId) return
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional loading state before async fetch
     setIsLoading(true)
     window.api
       .councilGetHistory({ workspaceId, limit: 50 })
-      .then((records) => setHistory(records as CouncilSessionSummary[]))
+      .then(async (records) => {
+        const sessions = records as CouncilSessionSummary[]
+        setHistory(sessions)
+        const planMap = await loadPlanTitles(sessions)
+        setPlanTitleMap(planMap)
+      })
       .finally(() => setIsLoading(false))
+  }, [workspaceId])
+
+  // Reset council store when workspace changes to prevent stale session display
+  useEffect(() => {
+    const { currentWorkspaceId, isActive } = useCouncilStore.getState()
+    if (isActive && currentWorkspaceId && currentWorkspaceId !== workspaceId) {
+      useCouncilStore.getState().reset()
+    }
   }, [workspaceId])
 
   // Refresh history when a council reaches a terminal phase
@@ -258,7 +297,12 @@ export default function CouncilLanding({
       if (data.phase === 'complete' || data.phase === 'failed' || data.phase === 'cancelled') {
         window.api
           .councilGetHistory({ workspaceId, limit: 50 })
-          .then((records) => setHistory(records as CouncilSessionSummary[]))
+          .then(async (records) => {
+            const sessions = records as CouncilSessionSummary[]
+            setHistory(sessions)
+            const planMap = await loadPlanTitles(sessions)
+            setPlanTitleMap(planMap)
+          })
       }
     })
     return cleanup
@@ -269,10 +313,11 @@ export default function CouncilLanding({
   if (councilIsActive) {
     return (
       <CouncilView
+        onUpdatePlan={onUpdatePlan}
         onAcceptAndBuild={onAcceptAndBuild}
-        onRevisePlan={onRevisePlan}
         onDismiss={onDismiss}
-        onSendToGoal={onSendToGoal}
+        isProcessing={isProcessing}
+        onNavigateToPlans={onNavigateToPlans}
       />
     )
   }
@@ -466,9 +511,11 @@ export default function CouncilLanding({
             <CouncilSessionCard
               key={session.id}
               session={session}
+              planTitle={planTitleMap.get(session.id) ?? null}
               onView={handleView}
               onResume={handleResume}
               onDelete={(id) => setDeleteTarget(id)}
+              onNavigateToPlans={onNavigateToPlans}
             />
           ))}
         </div>

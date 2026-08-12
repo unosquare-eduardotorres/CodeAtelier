@@ -100,7 +100,7 @@ echo "  dependencies stripped from package.json (afterPack will copy node_module
 echo ""
 echo "▸ Step 3: Package with electron-builder (Windows NSIS)"
 set +e
-NODE_OPTIONS="--max-old-space-size=16384" npx electron-builder --win "$@"
+NODE_OPTIONS="--max-old-space-size=16384" npx electron-builder --win --x64 "$@"
 BUILD_EXIT=$?
 set -e
 

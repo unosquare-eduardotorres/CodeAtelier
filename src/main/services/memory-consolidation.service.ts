@@ -73,7 +73,12 @@ class MemoryConsolidationService {
   private startupTimer: ReturnType<typeof setTimeout> | null = null
   private idleTimer: ReturnType<typeof setInterval> | null = null
   private running = false
-  private boundWorkspaceId: string | null = null
+  private _boundWorkspaceId: string | null = null
+
+  /** The workspace currently bound to the idle consolidation job, or null. */
+  get boundWorkspaceId(): string | null {
+    return this._boundWorkspaceId
+  }
 
   // ── One-time consolidation pass ──────────────────────────────────────
 
@@ -326,7 +331,7 @@ class MemoryConsolidationService {
   startIdleJob(workspaceId: string): void {
     if (this.idleTimer || this.startupTimer) return
 
-    this.boundWorkspaceId = workspaceId
+    this._boundWorkspaceId = workspaceId
 
     // Delay first run — store handle so stopIdleJob can cancel
     this.startupTimer = setTimeout(() => {
@@ -345,7 +350,7 @@ class MemoryConsolidationService {
 
   /** Stop the idle job for a specific workspace (no-op if different workspace is bound). */
   stopIdleJobIfWorkspace(workspaceId: string): void {
-    if (this.boundWorkspaceId === workspaceId) this.stopIdleJob()
+    if (this._boundWorkspaceId === workspaceId) this.stopIdleJob()
   }
 
   /** Stop the idle job (cancels both startup timer and interval). */
@@ -358,7 +363,7 @@ class MemoryConsolidationService {
       clearInterval(this.idleTimer)
       this.idleTimer = null
     }
-    this.boundWorkspaceId = null
+    this._boundWorkspaceId = null
   }
 
   /** Run a lightweight consolidation pass (subset of full). */

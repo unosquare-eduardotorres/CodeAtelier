@@ -44,7 +44,8 @@ let vitalsFd: number | undefined
 let vitalsPath: string | undefined
 let lastRss = 0
 let processStartTime = Date.now()
-let started = false
+let initialised = false // one-time setup (file, signals, exit handler)
+let running = false     // heartbeat is actively ticking
 
 /** Register app-specific gauges. Safe to call before or after {@link startVitals}. */
 export function setVitalsProviders(p: VitalsProviders): void {
@@ -139,49 +140,92 @@ function writeVitals(prefix: string): void {
   if (vitalsFd === undefined) return
   try {
     writeSync(vitalsFd, `${new Date().toISOString()} ${prefix}${sample()}\n`)
-    fsyncSync(vitalsFd)
+    // fsyncSync blocks the main thread on Windows NTFS — can stall 100ms–5s+
+    // after sleep/wake or under disk I/O contention. On macOS/Linux, APFS/ext4
+    // fsync is fast enough to keep for crash-safety diagnostics.
+    if (process.platform !== 'win32') {
+      fsyncSync(vitalsFd)
+    }
   } catch {
     /* best-effort — never throw from the death path */
   }
 }
 
 /**
- * Start heartbeat + lifecycle logging. Idempotent. Call once after app is ready.
+ * Start heartbeat + lifecycle logging.
+ *
+ * First call performs one-time setup (file, signals, exit handler).
+ * Subsequent calls (e.g. after {@link stopVitals} on power-resume) restart
+ * only the heartbeat timer — signals and the exit handler are never re-registered.
+ *
  * @param intervalMs heartbeat cadence (default 5s — small fsync'd lines, cheap).
  */
 export function startVitals(intervalMs = 5000): void {
-  if (started) return
-  started = true
+  if (running) return // heartbeat already ticking
 
-  // Resolve and test a writable path for the vitals file
-  vitalsPath = resolveVitalsPath()
-  vitalsLog.info(`Vitals target path: ${vitalsPath}`)
+  // ── One-time setup (file handle, startup marker, signal + exit handlers) ──
+  if (!initialised) {
+    initialised = true
 
-  try {
-    vitalsFd = openSync(vitalsPath, 'a')
-    vitalsLog.info(`Vitals heartbeat → ${vitalsPath} (every ${intervalMs}ms)`)
-  } catch (e) {
-    vitalsLog.warn(`Could not open vitals file — heartbeat will only hit main.log:', ${e}`)
-    vitalsLog.warn(`Searched path: ${vitalsPath}`)
+    // Resolve and test a writable path for the vitals file
+    vitalsPath = resolveVitalsPath()
+    vitalsLog.info(`Vitals target path: ${vitalsPath}`)
+
+    try {
+      vitalsFd = openSync(vitalsPath, 'a')
+      vitalsLog.info(`Vitals heartbeat → ${vitalsPath} (every ${intervalMs}ms)`)
+    } catch (e) {
+      vitalsLog.warn(`Could not open vitals file — heartbeat will only hit main.log:', ${e}`)
+      vitalsLog.warn(`Searched path: ${vitalsPath}`)
+    }
+
+    // Startup marker: record WHERE the app is running from. A build-output
+    // (`/dist/`) or mounted-DMG (`/Volumes/`) launch is deleted/unmounted out from
+    // under the process on the next rebuild/eject — an uncatchable death that
+    // leaves no crash report. Warn loudly so a fragile launch is obvious in logs.
+    const exe = process.execPath
+    const fragile = /\/dist\/|^\/Volumes\//.test(exe)
+    const marker = `START v${app.getVersion()} exe=${exe} uptime=${elapsed()}`
+    writeVitals(`${marker} `)
+    if (fragile) {
+      vitalsLog.error(
+        `Running from a FRAGILE location — a rebuild or DMG eject will hard-kill the app: ${exe}. ` +
+          `Install to /Applications and launch from there.`
+      )
+    } else {
+      vitalsLog.info(marker)
+    }
+
+    // Catchable termination signals: a script/pkill sends SIGTERM; Ctrl-C sends
+    // SIGINT. Logging + re-raising lets us tell these apart from an uncatchable
+    // SIGKILL/Force Quit (which leaves no signal line — only the last heartbeat).
+    const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT']
+    for (const sig of signals) {
+      process.once(sig, () => {
+        vitalsLog.error(`Received ${sig} — terminating. Final vitals: ${sample()} uptime=${elapsed()}`)
+        writeVitals(`SIGNAL ${sig} `)
+        // Handler was `once`, so re-raising now hits the default action (terminate).
+        process.kill(process.pid, sig)
+      })
+    }
+
+    // Fires on normal exit and self-inflicted process.exit()/app.exit(); NOT on
+    // SIGKILL. Synchronous-only context — every call here is sync.
+    process.on('exit', (code) => {
+      vitalsLog.info(`process 'exit' code=${code}. Final vitals: ${sample()} uptime=${elapsed()}`)
+      writeVitals(`EXIT code=${code} `)
+      if (vitalsFd !== undefined) {
+        try {
+          closeSync(vitalsFd)
+        } catch {
+          /* best-effort */
+        }
+        vitalsFd = undefined
+      }
+    })
   }
 
-  // Startup marker: record WHERE the app is running from. A build-output
-  // (`/dist/`) or mounted-DMG (`/Volumes/`) launch is deleted/unmounted out from
-  // under the process on the next rebuild/eject — an uncatchable death that
-  // leaves no crash report. Warn loudly so a fragile launch is obvious in logs.
-  const exe = process.execPath
-  const fragile = /\/dist\/|^\/Volumes\//.test(exe)
-  const marker = `START v${app.getVersion()} exe=${exe} uptime=${elapsed()}`
-  writeVitals(`${marker} `)
-  if (fragile) {
-    vitalsLog.error(
-      `Running from a FRAGILE location — a rebuild or DMG eject will hard-kill the app: ${exe}. ` +
-        `Install to /Applications and launch from there.`
-    )
-  } else {
-    vitalsLog.info(marker)
-  }
-
+  // ── Start (or restart) the heartbeat timer ──
   const tick = (): void => {
     const rss = process.memoryUsage().rss
     // Surface a sudden doubling of RSS — the fingerprint of a runaway/leak
@@ -195,42 +239,20 @@ export function startVitals(intervalMs = 5000): void {
   tick()
   heartbeatTimer = setInterval(tick, intervalMs)
   heartbeatTimer.unref?.()
-
-  // Catchable termination signals: a script/pkill sends SIGTERM; Ctrl-C sends
-  // SIGINT. Logging + re-raising lets us tell these apart from an uncatchable
-  // SIGKILL/Force Quit (which leaves no signal line — only the last heartbeat).
-  const signals: NodeJS.Signals[] = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT']
-  for (const sig of signals) {
-    process.once(sig, () => {
-      vitalsLog.error(`Received ${sig} — terminating. Final vitals: ${sample()} uptime=${elapsed()}`)
-      writeVitals(`SIGNAL ${sig} `)
-      // Handler was `once`, so re-raising now hits the default action (terminate).
-      process.kill(process.pid, sig)
-    })
-  }
-
-  // Fires on normal exit and self-inflicted process.exit()/app.exit(); NOT on
-  // SIGKILL. Synchronous-only context — every call here is sync.
-  process.on('exit', (code) => {
-    vitalsLog.info(`process 'exit' code=${code}. Final vitals: ${sample()} uptime=${elapsed()}`)
-    writeVitals(`EXIT code=${code} `)
-    if (vitalsFd !== undefined) {
-      try {
-        closeSync(vitalsFd)
-      } catch {
-        /* best-effort */
-      }
-      vitalsFd = undefined
-    }
-  })
+  running = true
 }
 
-/** Stop the heartbeat (used on graceful shutdown before the exit handler runs). */
+/**
+ * Stop the heartbeat timer.
+ * Used on graceful shutdown and on system suspend (power events).
+ * After calling this, {@link startVitals} can be called again to resume.
+ */
 export function stopVitals(): void {
   if (heartbeatTimer) {
     clearInterval(heartbeatTimer)
     heartbeatTimer = undefined
   }
+  running = false
 }
 
 /**

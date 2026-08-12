@@ -1,7 +1,7 @@
 /**
  * TaskPlanSections Deep E2E Tests
  *
- * Verifies TaskPlanSections (445 LOC) — structured plan section renderers:
+ * Verifies structured plan section renderers inside ChatExecutionPanel:
  *   - Investigation/problem analysis section rendering
  *   - Implementation section with files-to-modify list
  *   - Phase timeline rendering with ordered steps
@@ -9,6 +9,8 @@
  *   - Markdown content rendering inside section bodies
  *   - Mermaid diagrams in plan sections
  *   - Bug fix plan with affected areas
+ *
+ * Plans now render inside the ChatExecutionPanel's Plan tab (not inline cards).
  *
  * Uses CDP fixture (Electron 41+ compatible).
  *
@@ -36,6 +38,24 @@ test.describe('TaskPlanSections Deep', () => {
     return true
   }
 
+  /** Open the execution panel and switch to the Plan tab */
+  async function openPlanTab(page: import('@playwright/test').Page): Promise<boolean> {
+    // Open panel via the toggle button
+    const toggle = page.locator('[data-testid="task-summary-badge-toggle"]')
+    const hasToggle = await toggle.isVisible({ timeout: 5_000 }).catch(() => false)
+    if (!hasToggle) return false
+    await toggle.click()
+    await page.waitForTimeout(500)
+
+    // Click the Plan tab
+    const planTab = page.locator('[data-testid="chat-execution-tab-plan"]')
+    const hasTab = await planTab.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasTab) return false
+    await planTab.click()
+    await page.waitForTimeout(500)
+    return true
+  }
+
   async function navigateToConversationWithPlan(
     page: import('@playwright/test').Page
   ): Promise<boolean> {
@@ -49,14 +69,18 @@ test.describe('TaskPlanSections Deep', () => {
     const chatItems = page.locator('[data-testid="chat-item"]')
     const itemCount = await chatItems.count()
 
-    // Try each conversation to find one with a task plan card
+    // Try each conversation to find one with a plan indicator
     for (let i = 0; i < Math.min(itemCount, 5); i++) {
       await chatItems.nth(i).click()
       await page.waitForTimeout(1_500)
 
-      const planCard = page.locator('[data-testid="task-plan-card"]')
-      const hasPlan = await planCard.isVisible({ timeout: 3_000 }).catch(() => false)
-      if (hasPlan) return true
+      // Check for plan slim indicator in messages
+      const planIndicator = page.locator('[data-testid="plan-slim-indicator"]')
+      const hasPlan = await planIndicator.first().isVisible({ timeout: 3_000 }).catch(() => false)
+      if (hasPlan) {
+        // Open the panel and switch to Plan tab
+        return openPlanTab(page)
+      }
     }
     return false
   }
@@ -68,18 +92,18 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+
     // Look for investigation/problem analysis section
-    const investigation = page.locator('[data-testid="task-plan-investigation"]')
+    const investigation = panel.locator('[data-testid="task-plan-investigation"]')
     const hasInvestigation = await investigation.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Also check for root causes list as alternative
-    const rootCauses = page.locator('text=Root Cause')
+    const rootCauses = panel.locator('text=Root Cause')
     const hasRootCauses = await rootCauses.first().isVisible({ timeout: 3_000 }).catch(() => false)
 
-    // At least one plan section type should exist in a plan card
-    const planCard = page.locator('[data-testid="task-plan-card"]')
-    const hasPlanCard = await planCard.isVisible({ timeout: 3_000 }).catch(() => false)
-    expect(hasPlanCard).toBeTruthy()
+    // Panel should be visible with plan content
+    await expect(panel).toBeVisible()
     expect(typeof hasInvestigation).toBe('boolean')
     expect(typeof hasRootCauses).toBe('boolean')
   })
@@ -91,12 +115,14 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+
     // Look for implementation section with file list
-    const implementation = page.locator('[data-testid="task-plan-implementation"]')
+    const implementation = panel.locator('[data-testid="task-plan-implementation"]')
     const hasImpl = await implementation.isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Also check for "Files Changed" or "Files in Scope" text
-    const filesSection = page.locator('[data-testid="task-plan-card"]').locator('text=Files')
+    const filesSection = panel.locator('text=Files')
     const hasFiles = await filesSection.first().isVisible({ timeout: 3_000 }).catch(() => false)
 
     expect(typeof hasImpl).toBe('boolean')
@@ -110,9 +136,10 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
-    // Phases are rendered via PhasesList component within plan card
-    const planCard = page.locator('[data-testid="task-plan-card"]')
-    const phaseElements = planCard.locator('text=Phase')
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+
+    // Phases are rendered within the plan tab content
+    const phaseElements = panel.locator('text=Phase')
     const phaseCount = await phaseElements.count()
 
     // Phases may or may not exist depending on plan complexity
@@ -127,8 +154,10 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+
     // Deferred items use <details> with chevron — look for collapsible sections
-    const details = page.locator('[data-testid="task-plan-card"] details')
+    const details = panel.locator('details')
     const detailsCount = await details.count()
 
     if (detailsCount > 0) {
@@ -153,19 +182,19 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
-    const planCard = page.locator('[data-testid="task-plan-card"]')
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
 
     // Plan sections should contain rendered prose (markdown rendered to HTML)
-    const proseElements = planCard.locator('.prose, [class*="prose"]')
+    const proseElements = panel.locator('.prose, [class*="prose"]')
     const proseCount = await proseElements.count()
 
-    // At least some rendered markdown content should exist in a plan card
+    // At least some rendered markdown content should exist
     expect(proseCount).toBeGreaterThanOrEqual(0)
 
-    // Check for any text content within the plan card
-    const planText = await planCard.textContent()
-    expect(planText).toBeTruthy()
-    expect(planText!.length).toBeGreaterThan(0)
+    // Check for any text content within the panel
+    const panelText = await panel.textContent()
+    expect(panelText).toBeTruthy()
+    expect(panelText!.length).toBeGreaterThan(0)
   })
 
   test('mermaid diagrams render in plan sections when present', async ({ electronPage: page }) => {
@@ -175,9 +204,10 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
-    // Mermaid diagrams use the MermaidDiagram component — look for SVG within plan
-    const planCard = page.locator('[data-testid="task-plan-card"]')
-    const mermaidSvgs = planCard.locator('[data-testid="mermaid-diagram"], svg.mermaid, [class*="mermaid"]')
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
+
+    // Mermaid diagrams use the MermaidDiagram component — look for SVG within plan tab
+    const mermaidSvgs = panel.locator('[data-testid="mermaid-diagram"], svg.mermaid, [class*="mermaid"]')
     const mermaidCount = await mermaidSvgs.count()
 
     // Mermaid diagrams are optional depending on plan content
@@ -192,19 +222,19 @@ test.describe('TaskPlanSections Deep', () => {
     const hasPlan = await navigateToConversationWithPlan(page)
     if (!hasPlan) { test.skip(); return }
 
-    const planCard = page.locator('[data-testid="task-plan-card"]')
+    const panel = page.locator('[data-testid="chat-execution-panel"]')
 
     // Verification section with test commands
-    const verification = planCard.locator('text=Verification')
+    const verification = panel.locator('text=Verification')
     const hasVerification = await verification.first().isVisible({ timeout: 3_000 }).catch(() => false)
 
     // Risks section
-    const risks = planCard.locator('text=Risks')
+    const risks = panel.locator('text=Risks')
     const hasRisks = await risks.first().isVisible({ timeout: 3_000 }).catch(() => false)
 
-    // At minimum, the plan card should have some content rendered
-    const cardText = await planCard.textContent()
-    expect(cardText).toBeTruthy()
+    // At minimum, the panel should have some content rendered
+    const panelText = await panel.textContent()
+    expect(panelText).toBeTruthy()
     expect(typeof hasVerification).toBe('boolean')
     expect(typeof hasRisks).toBe('boolean')
   })

@@ -6,9 +6,8 @@ import { ConfirmDialog } from '@renderer/components/common'
 import FloatingIconField from './FloatingIconField'
 import WorkspaceCard from './WorkspaceCard'
 import CreateProjectDialog from './CreateProjectDialog'
-
-const isMac = navigator.platform.toUpperCase().includes('MAC')
-const metaKey = isMac ? '⌘' : 'Ctrl+'
+import { markUserInitiatedOpen } from '@renderer/components/transitions'
+import { modifierKey as metaKey } from '@renderer/utils/platform'
 
 const tips = [
   {
@@ -131,7 +130,10 @@ export default function WelcomeScreen(): React.JSX.Element {
                 key={ws.id}
                 workspace={ws}
                 data={cardData[ws.id]}
-                onOpen={openWorkspace}
+                onOpen={(id) => {
+                  markUserInitiatedOpen()
+                  openWorkspace(id)
+                }}
                 onDelete={(id) => setDeleteTarget(id)}
               />
             ))}
@@ -196,6 +198,7 @@ export default function WelcomeScreen(): React.JSX.Element {
           onClose={() => setShowDialog(false)}
           onCreated={(workspaceId) => {
             setShowDialog(false)
+            markUserInitiatedOpen()
             openWorkspace(workspaceId)
           }}
         />

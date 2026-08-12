@@ -29,7 +29,9 @@ export interface ChatStreamingState {
   streamingSpecialist: string | null
   streamingTaskId: string | null
   isStreaming: boolean
-  isSending: boolean
+  /** SEND-RACE-02: Per-conversation send mutex — replaces the global isSending boolean.
+   *  Tracks which conversations have an IPC send in-flight. Phase 2 ready. */
+  sendingConversationIds: Set<string>
   streamingConversationIds: Set<string>
   activeRequestId: string | null
   streamingPhase: ConversationPhase | null
@@ -68,7 +70,19 @@ export class ChatStreamingInternals {
   // gets its own timeout so clearing/resetting one doesn't affect others.
   private safetyTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private stallTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private accumulator: StreamSegmentAccumulator | null = null
+  /** PER-CONV-ACCUM: Per-conversation accumulators — each conversation gets its own
+   *  StreamSegmentAccumulator so chunks are always routed to the right buffer,
+   *  eliminating the stash/restore race (P0 RACE #4). */
+  private accumulators = new Map<string, StreamSegmentAccumulator>()
+  /** PRE-MORTEM-2: Pending metadata written by appendStreamChunkAction, consumed by
+   *  the accumulator's onChange to avoid an extra Map-copy set() per chunk. */
+  private pendingMeta = new Map<string, {
+    role?: 'specialist'
+    specialist?: string | null
+    taskId?: string | null
+    phase?: ConversationPhase | null
+    requestId?: string | null
+  }>()
   private storeGet: GetFn | null = null
   private storeSet: SetFn | null = null
 
@@ -96,28 +110,108 @@ export class ChatStreamingInternals {
     this.storeSet = set
   }
 
-  getOrCreateAccumulator(): StreamSegmentAccumulator {
-    if (!this.accumulator) {
-      this.accumulator = new StreamSegmentAccumulator((state: SegmentState) => {
-        // Sync accumulator state → Zustand store
-        this.storeSet?.({
-          streamingSegments: state.segments,
-          streamingContent: state.currentContent,
-          toolActivities: state.currentToolActivities
+  /**
+   * PER-CONV-ACCUM: Get or create a per-conversation accumulator.
+   * Each accumulator writes to its conversation's buffer in conversationStreams
+   * AND projects to global streaming fields if it's the active conversation.
+   *
+   * @param conversationId — required; identifies which conversation owns this accumulator
+   */
+  getOrCreateAccumulatorFor(conversationId: string): StreamSegmentAccumulator {
+    let acc = this.accumulators.get(conversationId)
+    if (!acc) {
+      acc = new StreamSegmentAccumulator((state: SegmentState) => {
+        // PRE-MORTEM-2: Consume pending metadata (written by appendStreamChunkAction)
+        // in the same set() call that writes content, avoiding an extra Map copy.
+        const meta = this.pendingMeta.get(conversationId)
+        if (meta) this.pendingMeta.delete(conversationId)
+
+        // Write to per-conversation buffer AND project to globals if active
+        this.storeSet?.((prev) => {
+          const streams = new Map(prev.conversationStreams)
+          const existing = streams.get(conversationId)
+          const entry = {
+            streamingContent: state.currentContent,
+            streamingSegments: state.segments,
+            streamingRole: meta?.role ?? existing?.streamingRole ?? ('specialist' as const),
+            streamingSpecialist: (meta?.specialist !== undefined ? meta.specialist : existing?.streamingSpecialist) ?? null,
+            streamingTaskId: (meta?.taskId !== undefined ? meta.taskId : existing?.streamingTaskId) ?? null,
+            streamingPhase: meta?.phase ?? existing?.streamingPhase ?? null,
+            activeRequestId: (meta?.requestId !== undefined ? meta.requestId : existing?.activeRequestId) ?? null,
+            isStreaming: existing?.isStreaming ?? true,
+            toolActivities: state.currentToolActivities,
+            pendingQuestions: existing?.pendingQuestions ?? null,
+            pendingQuestionAction: existing?.pendingQuestionAction ?? null,
+            pendingQuestionRequestId: existing?.pendingQuestionRequestId ?? null
+          }
+          streams.set(conversationId, entry)
+          // Project to globals if this is the active conversation
+          const isActive = prev.activeConversation?.id === conversationId
+          return {
+            conversationStreams: streams,
+            ...(isActive ? {
+              streamingContent: state.currentContent,
+              streamingSegments: state.segments,
+              toolActivities: state.currentToolActivities,
+              // Also project metadata when present
+              ...(meta ? {
+                streamingRole: entry.streamingRole,
+                streamingSpecialist: entry.streamingSpecialist,
+                streamingTaskId: entry.streamingTaskId,
+                streamingPhase: entry.streamingPhase,
+                isStreaming: true
+              } : {})
+            } : {})
+          }
         })
       })
+      this.accumulators.set(conversationId, acc)
     }
-    return this.accumulator
+    return acc
   }
 
-  resetAccumulator(): void {
-    this.accumulator?.reset()
-    this.accumulator = null
+  /**
+   * PER-CONV-ACCUM: Reset accumulator(s).
+   * With conversationId: resets and removes that conversation's accumulator.
+   * Without: resets and removes ALL accumulators.
+   */
+  resetAccumulator(conversationId?: string): void {
+    if (conversationId) {
+      const acc = this.accumulators.get(conversationId)
+      if (acc) {
+        acc.reset()
+        this.accumulators.delete(conversationId)
+      }
+      this.pendingMeta.delete(conversationId)
+    } else {
+      for (const acc of this.accumulators.values()) acc.reset()
+      this.accumulators.clear()
+      this.pendingMeta.clear()
+    }
   }
 
-  /** Flush whatever's currently buffered without creating an accumulator if none exists. */
-  flushAccumulator(): void {
-    this.accumulator?.flush()
+  /**
+   * PER-CONV-ACCUM: Flush accumulator(s) without destroying them.
+   * With conversationId: flushes that conversation's accumulator.
+   * Without: flushes ALL accumulators.
+   */
+  flushAccumulator(conversationId?: string): void {
+    if (conversationId) {
+      this.accumulators.get(conversationId)?.flush()
+    } else {
+      for (const acc of this.accumulators.values()) acc.flush()
+    }
+  }
+
+  /** PRE-MORTEM-2: Stash metadata for the next accumulator onChange to consume. */
+  setPendingMeta(conversationId: string, meta: {
+    role?: 'specialist'
+    specialist?: string | null
+    taskId?: string | null
+    phase?: ConversationPhase | null
+    requestId?: string | null
+  }): void {
+    this.pendingMeta.set(conversationId, meta)
   }
 
   /**
@@ -274,68 +368,74 @@ export const streamingInternals = new ChatStreamingInternals()
 export function appendStreamChunkAction(
   get: GetFn,
   set: SetFn,
+  conversationId: string,
   chunk: string,
   role?: 'specialist',
   taskId?: string,
   specialist?: string,
   requestId?: string
 ): void {
-  const activeRequestId = get().activeRequestId
-  const isCurrentlyStreaming = get().isStreaming
+  // PER-CONV-ACCUM: Validate against the conversation's own buffer state,
+  // not just the global activeRequestId. For active conversations, the global
+  // activeRequestId is authoritative; for background ones, the buffer's is.
+  const isActive = get().activeConversation?.id === conversationId
+  const buffer = get().conversationStreams.get(conversationId)
+  const effectiveRequestId = isActive ? get().activeRequestId : (buffer?.activeRequestId ?? null)
+  const isCurrentlyStreaming = isActive ? get().isStreaming : (buffer?.isStreaming ?? false)
 
   // CHUNK-LEAK-01: Drop chunks when no active request is expected AND not streaming.
-  // Previously, the null-guard was inverted: when activeRequestId was null (e.g. after
-  // conv switch), the check was bypassed, leaking chunks to the wrong conversation.
-  if (!activeRequestId && !isCurrentlyStreaming) return
+  if (!effectiveRequestId && !isCurrentlyStreaming) return
 
   // Drop stale chunks (mismatched request)
-  if (activeRequestId && requestId && requestId !== activeRequestId) {
+  if (effectiveRequestId && requestId && requestId !== effectiveRequestId) {
     rendererLog.debug(
-      `[appendStreamChunk] Dropped stale chunk: expected=${activeRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
+      `[appendStreamChunk] Dropped stale chunk: expected=${effectiveRequestId.slice(0, 12)} got=${requestId.slice(0, 12)}`
     )
     return
   }
 
   // STREAM-REQID-BYPASS-01: If we expect a specific request but this chunk has no ID,
   // drop it — it's likely a late chunk from a previous request that omitted requestId.
-  if (activeRequestId && !requestId) {
-    rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (activeRequestId set)')
+  if (effectiveRequestId && !requestId) {
+    rendererLog.debug('[appendStreamChunk] Dropped chunk without requestId (effectiveRequestId set)')
     return
   }
 
   // Reset safety timer — backend is still alive
-  streamingInternals.resetSafetyTimer()
+  streamingInternals.resetSafetyTimer(conversationId)
   if (!chunk) return // Skip empty chunks (tool-only messages)
   // STALL-DETECT-01: Track real content chunk activity (independent of keepalive).
-  // This resets the 3-minute stall detector that warns users of stuck streams.
-  // Placed AFTER the empty-chunk guard so only real text resets the stall timer.
-  streamingInternals.recordChunkActivity()
+  streamingInternals.recordChunkActivity(conversationId)
 
-  const isNewTask = taskId != null && taskId !== get().streamingTaskId
+  const currentTaskId = isActive ? get().streamingTaskId : (buffer?.streamingTaskId ?? null)
+  const isNewTask = taskId != null && taskId !== currentTaskId
 
-  // STREAM-TASK-FLUSH-RACE-01: On task switch, flush the accumulator (which pushes
-  // buffered text to the store via onFlush), then read the flushed state BEFORE
-  // clearing — otherwise the set() below overwrites what flush just wrote.
+  // STREAM-TASK-FLUSH-RACE-01: On task switch, flush then reset the accumulator.
   if (isNewTask) {
-    streamingInternals.flushAccumulator()
-    streamingInternals.resetAccumulator()
+    streamingInternals.flushAccumulator(conversationId)
+    streamingInternals.resetAccumulator(conversationId)
+    // Clear globals immediately so the UI doesn't flash old task content
+    // between the reset and the next SentenceBuffer flush.
+    if (isActive) {
+      set({ streamingContent: '', streamingSegments: [], streamingTaskId: taskId ?? null })
+    }
   }
 
-  // Update streaming metadata (non-content state) immediately.
-  // On task switch the segments/content were already archived by flush above,
-  // so clearing here is safe (flush output was consumed by the accumulator's onFlush).
-  set((state) => ({
-    isStreaming: true, // Ensure streaming bubble renders for specialist chunks
-    streamingPhase: role === 'specialist' ? 'specialist-executing' : 'specialist-responding',
-    streamingSegments: isNewTask ? [] : state.streamingSegments,
-    streamingContent: isNewTask ? '' : state.streamingContent,
-    streamingRole: role ?? state.streamingRole,
-    streamingSpecialist: specialist ?? state.streamingSpecialist,
-    streamingTaskId: taskId ?? state.streamingTaskId
-  }))
+  // PRE-MORTEM-2: Stash metadata so the accumulator's onChange merges it in the
+  // same set() call that writes content. This eliminates a redundant Map copy
+  // that the old separate set() did on every chunk (~50/sec).
+  const updatedPhase = role === 'specialist' ? 'specialist-executing' as const : 'specialist-responding' as const
+  streamingInternals.setPendingMeta(conversationId, {
+    role,
+    specialist: specialist ?? undefined,
+    taskId: taskId ?? undefined,
+    phase: updatedPhase,
+    requestId: requestId ?? undefined
+  })
 
-  // Push chunk through segment accumulator (auto-segments at sentence + tool boundaries)
-  streamingInternals.getOrCreateAccumulator().appendText(chunk)
+  // Push chunk through per-conversation segment accumulator.
+  // SentenceBuffer will fire onChange which reads pendingMeta and does a single set().
+  streamingInternals.getOrCreateAccumulatorFor(conversationId).appendText(chunk)
 }
 
 // ── finalizeStream helpers ───────────────────────────────────────────────
@@ -427,28 +527,30 @@ function reloadMessagesFromDb(
 export function finalizeStreamAction(
   get: GetFn,
   set: SetFn,
+  conversationId: string,
   messageId: string,
   taskId?: string,
   requestId?: string
 ): void {
-  streamingInternals.flushAccumulator()
+  streamingInternals.flushAccumulator(conversationId)
 
-  const activeRequestId = get().activeRequestId
-  if (activeRequestId && requestId && requestId !== activeRequestId) return
+  const isActive = get().activeConversation?.id === conversationId
+  // PER-CONV-ACCUM: Read from per-conversation buffer, not from globals
+  const buffer = get().conversationStreams.get(conversationId)
+  const effectiveRequestId = isActive ? get().activeRequestId : (buffer?.activeRequestId ?? null)
+  if (effectiveRequestId && requestId && requestId !== effectiveRequestId) return
 
-  const {
-    streamingSegments,
-    streamingContent,
-    streamingRole,
-    streamingSpecialist,
-    activeConversation,
-    toolActivities
-  } = get()
+  // Read streaming state from the buffer (or globals for active conv as fallback)
+  const streamingSegments = buffer?.streamingSegments ?? (isActive ? get().streamingSegments : [])
+  const streamingContent = buffer?.streamingContent ?? (isActive ? get().streamingContent : '')
+  const streamingRole = buffer?.streamingRole ?? (isActive ? get().streamingRole : 'specialist' as const)
+  const streamingSpecialist = buffer?.streamingSpecialist ?? (isActive ? get().streamingSpecialist : null)
+  const toolActivities = buffer?.toolActivities ?? (isActive ? get().toolActivities : [])
 
-  if (!taskId) streamingInternals.clearSafetyTimer(activeConversation?.id)
+  if (!taskId) streamingInternals.clearSafetyTimer(conversationId)
 
-  // Main path: streamed content exists and we have a conversation
-  if ((streamingContent || streamingSegments.length > 0) && activeConversation) {
+  // Main path: streamed content exists
+  if (streamingContent || streamingSegments.length > 0) {
     const { mergedContent, mergedTools } = mergeStreamedContent(
       streamingSegments, streamingContent, toolActivities
     )
@@ -457,7 +559,7 @@ export function finalizeStreamAction(
     if (mergedContent || mergedTools.length > 0) {
       newMessages.push({
         id: messageId,
-        conversationId: activeConversation.id,
+        conversationId,
         role: streamingRole,
         ...(streamingRole === 'specialist' && streamingSpecialist
           ? { agentId: streamingSpecialist }
@@ -472,55 +574,81 @@ export function finalizeStreamAction(
       })
     }
 
-    set((state) => ({
-      messages: [...state.messages, ...newMessages],
-      ...computeFinalizeStateDelta(taskId, activeConversation, state.streamingConversationIds),
-      // Preserve mutable refs when task is still active
-      ...(taskId ? {
-        activeRequestId: state.activeRequestId,
-        streamingPhase: state.streamingPhase,
-        toolActivities: state.toolActivities,
-        streamingSpecialist: state.streamingSpecialist
-      } : {})
-    }))
+    set((state) => {
+      // Clean up the conversation buffer
+      const streams = new Map(state.conversationStreams)
+      if (!taskId) {
+        streams.delete(conversationId)
+      } else {
+        // Task completed but stream continues — clear content but keep buffer
+        const existing = streams.get(conversationId)
+        if (existing) {
+          streams.set(conversationId, {
+            ...existing,
+            streamingContent: '',
+            streamingSegments: [],
+            streamingTaskId: null
+          })
+        }
+      }
+      return {
+        conversationStreams: streams,
+        // Only append messages + update globals for active conversation
+        ...(isActive ? {
+          messages: [...state.messages, ...newMessages],
+          ...computeFinalizeStateDelta(taskId, { id: conversationId }, state.streamingConversationIds),
+          ...(taskId ? {
+            activeRequestId: state.activeRequestId,
+            streamingPhase: state.streamingPhase,
+            toolActivities: state.toolActivities,
+            streamingSpecialist: state.streamingSpecialist
+          } : {})
+        } : {})
+      }
+    })
   } else if (taskId) {
     // Per-task complete with no accumulated content
-    set({ streamingContent: '', streamingSegments: [], streamingTaskId: null })
-  } else if (activeConversation) {
-    // Clear streaming state + reload from DB
+    set((state) => {
+      const streams = new Map(state.conversationStreams)
+      const existing = streams.get(conversationId)
+      if (existing) {
+        streams.set(conversationId, { ...existing, streamingContent: '', streamingSegments: [], streamingTaskId: null })
+      }
+      return {
+        conversationStreams: streams,
+        ...(isActive ? { streamingContent: '', streamingSegments: [], streamingTaskId: null } : {})
+      }
+    })
+  } else if (isActive) {
+    // Active conversation — clear streaming state + reload from DB
     set((state) => {
       const newStreamingIds = new Set(state.streamingConversationIds)
-      newStreamingIds.delete(activeConversation.id)
+      newStreamingIds.delete(conversationId)
+      const streams = new Map(state.conversationStreams)
+      streams.delete(conversationId)
       return {
+        conversationStreams: streams,
         streamingContent: '',
         streamingSegments: [],
-        // BUG-R5-1: Active conv just finished (no-content branch) — always false.
         isStreaming: false,
         activeRequestId: null,
         toolActivities: [],
         streamingTaskId: null,
         streamingConversationIds: newStreamingIds,
-        // STALL-DETECT-05: Defense-in-depth — clear stall flag in finalize sub-branch
         streamStalledConversationId: null
-        // DON'T clear pendingQuestions here — let submitQuestionAnswers/skipAllQuestions
-        // handle that. Clearing here races with user submission and drops the requestId.
       }
     })
-    reloadMessagesFromDb(activeConversation.id, get, set)
+    reloadMessagesFromDb(conversationId, get, set)
   } else {
-    set({
-      streamingContent: '',
-      streamingSegments: [],
-      isStreaming: false,
-      activeRequestId: null,
-      toolActivities: [],
-      streamingTaskId: null,
-      // STALL-DETECT-05: Defense-in-depth — clear stall flag in finalize fallback branch
-      streamStalledConversationId: null
+    // Background or no active conv — clean up buffer only
+    set((state) => {
+      const streams = new Map(state.conversationStreams)
+      streams.delete(conversationId)
+      return { conversationStreams: streams }
     })
   }
 
-  streamingInternals.resetAccumulator()
+  streamingInternals.resetAccumulator(conversationId)
 }
 
 export function finalizeTurnBubbleAction(
@@ -530,17 +658,18 @@ export function finalizeTurnBubbleAction(
   turnRole?: 'specialist',
   turnSpecialist?: string
 ): void {
-  // Flush any remaining buffered content before finalizing the turn.
-  streamingInternals.flushAccumulator()
+  const activeConversation = get().activeConversation
+  const conversationId = activeConversation?.id
+  // Flush the active conversation's accumulator before finalizing
+  streamingInternals.flushAccumulator(conversationId)
 
-  const {
-    streamingSegments,
-    streamingContent,
-    streamingRole,
-    streamingSpecialist,
-    activeConversation,
-    toolActivities
-  } = get()
+  // PER-CONV-ACCUM: Read from per-conversation buffer (or globals as fallback)
+  const buffer = conversationId ? get().conversationStreams.get(conversationId) : undefined
+  const streamingSegments = buffer?.streamingSegments ?? get().streamingSegments
+  const streamingContent = buffer?.streamingContent ?? get().streamingContent
+  const streamingRole = buffer?.streamingRole ?? get().streamingRole
+  const streamingSpecialist = buffer?.streamingSpecialist ?? get().streamingSpecialist
+  const toolActivities = buffer?.toolActivities ?? get().toolActivities
 
   // Nothing to finalize — agent went straight to tools without text
   if (!streamingContent && streamingSegments.length === 0 && toolActivities.length === 0) return
@@ -576,17 +705,33 @@ export function finalizeTurnBubbleAction(
         toolActivities: mergedTools.length > 0 ? mergedTools : undefined
       }
 
-      set((state) => ({
-        messages: [...state.messages, message],
-        streamingContent: '',
-        streamingSegments: [],
-        toolActivities: [],
-        isStreaming: true
-      }))
+      set((state) => {
+        // Clean up the conversation buffer content
+        const streams = new Map(state.conversationStreams)
+        const existing = streams.get(activeConversation.id)
+        if (existing) {
+          streams.set(activeConversation.id, { ...existing, streamingContent: '', streamingSegments: [], toolActivities: [] })
+        }
+        return {
+          messages: [...state.messages, message],
+          streamingContent: '',
+          streamingSegments: [],
+          toolActivities: [],
+          isStreaming: true,
+          conversationStreams: streams
+        }
+      })
     } else {
-      set({ streamingContent: '', streamingSegments: [], toolActivities: [], isStreaming: true })
+      set((state) => {
+        const streams = new Map(state.conversationStreams)
+        const existing = streams.get(activeConversation.id)
+        if (existing) {
+          streams.set(activeConversation.id, { ...existing, streamingContent: '', streamingSegments: [], toolActivities: [] })
+        }
+        return { streamingContent: '', streamingSegments: [], toolActivities: [], isStreaming: true, conversationStreams: streams }
+      })
     }
   }
 
-  streamingInternals.resetAccumulator()
+  streamingInternals.resetAccumulator(conversationId)
 }

@@ -1,5 +1,6 @@
 import { ClipboardList, Hammer, Skull } from 'lucide-react'
 import type { ConversationMode } from '../../../../shared/types'
+import { isMacPlatform } from '@renderer/utils/platform'
 
 interface ModeToggleProps {
   mode: ConversationMode
@@ -42,8 +43,7 @@ export default function ModeToggle({
   onChange,
   disabled
 }: ModeToggleProps): React.JSX.Element {
-  const isMac = navigator.platform.toUpperCase().includes('MAC')
-  const shortcut = isMac ? '⌘.' : 'Ctrl+.'
+  const shortcut = isMacPlatform ? '⌘.' : 'Ctrl+.'
 
   return (
     <div

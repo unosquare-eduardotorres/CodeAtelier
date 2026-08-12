@@ -6,7 +6,7 @@
  *   - CouncilRankingsMatrix shows ranked advisor verdicts
  *   - CouncilVerdictCard shows individual advisor verdict with score
  *   - CouncilAdvisorDetailsTab shows advisor analysis breakdown
- *   - CouncilPhaseViews switches between deliberation phases
+ *   - CouncilView phase switching between deliberation phases
  *   - CouncilFilterBar filters session history
  *
  * The council has 11 components but only 7 surface-level scenarios
@@ -172,9 +172,9 @@ test.describe('Council Deliberation', () => {
     expect(hasAdvisorNames).toBeTruthy()
   })
 
-  // ── CouncilPhaseViews (deliberating, peer review, synthesizing, complete) ──
+  // ── CouncilView phases (deliberating, peer review, synthesizing, complete) ──
 
-  test('CouncilPhaseViews switches between phases in completed session', async ({
+  test('CouncilView switches between phases in completed session', async ({
     electronPage: page
   }) => {
     await navigateToCouncil(page)

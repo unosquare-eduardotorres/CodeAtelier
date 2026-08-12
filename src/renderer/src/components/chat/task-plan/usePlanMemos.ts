@@ -11,7 +11,7 @@ function filterPlanArray<T>(arr: T[] | undefined, predicate?: (item: T) => boole
 
 /**
  * All defensive `useMemo` filters for structured plan arrays.
- * Extracted from TaskPlanCard to centralise validation logic.
+ * Extracted from TaskPlanCard (now used by PlanTabContent in ChatExecutionPanel) to centralise validation logic.
  */
 export function usePlanMemos(structuredPlan: StructuredPlan | null): {
   visibleFilesChanged: NonNullable<StructuredPlan['filesChanged']>

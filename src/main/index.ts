@@ -11,13 +11,16 @@ import {
   nativeTheme,
   session,
   dialog,
-  crashReporter
+  crashReporter,
+  powerMonitor
 } from 'electron'
 import { join } from 'node:path'
 import { execSync } from 'node:child_process'
 import os from 'node:os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import icon from '../../resources/icon.png?asset'
+import iconDefault from '../../resources/icon.png?asset'
+import iconWin from '../../resources/icon-win.png?asset'
+const icon = process.platform === 'win32' ? iconWin : iconDefault
 import { getDatabase, closeDatabase } from './db'
 import {
   agentSessionRepository,
@@ -43,6 +46,7 @@ import { fileWatcherService } from './services/file-watcher.service'
 import { localEmbeddingProvider } from './services/local-embedding.provider'
 import { cleanupStalePromptFiles } from './services/cli-executor'
 import { notificationService } from './services/notification.service'
+import { memoryConsolidationService } from './services/memory-consolidation.service'
 
 // Augment PATH to include Homebrew and npm global bin directories
 // CRITICAL: Ensures child_process.spawn() can locate binaries like 'opencode',
@@ -99,6 +103,22 @@ locateOpenCodeCli()
 // Fix dock tooltip: Electron defaults to "Electron" in dev mode.
 // Must be set before app.whenReady().
 app.setName('Code Atelier')
+
+// ── Single-instance lock: prevent multiple instances opening the same DB ──
+// Two Electron processes writing to the same SQLite file (5+ GB) cause
+// WAL checkpoint deadlocks and data corruption. Standard Electron pattern.
+const gotTheLock = app.requestSingleInstanceLock()
+if (!gotTheLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    // Focus existing window when user tries to open a second instance
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+}
 
 // ── Process-level error safety net — never crash silently ──
 process.on('uncaughtException', (error) => {
@@ -502,6 +522,15 @@ app.whenReady().then(() => {
     )
   }, 5000)
 
+  // ── Prompt Optimizer: pre-warm CLI session (delayed, non-fatal) ──
+  setTimeout(() => {
+    import('./services/prompt-optimizer.service').then(({ promptOptimizerService }) =>
+      promptOptimizerService.warmup().catch((e) =>
+        log.debug('Prompt optimizer warmup (non-fatal):', e)
+      )
+    )
+  }, 8_000)
+
   // ── Code Atelier: Force dark mode always ──
   nativeTheme.themeSource = 'dark'
 
@@ -510,7 +539,7 @@ app.whenReady().then(() => {
     app.dock.setIcon(icon)
   }
 
-  // ── macOS Tray Icon (Code Atelier diamond sigil) ──
+  // ── macOS Tray Icon (CA monogram) ──
   if (process.platform === 'darwin') {
     const trayIconPath = join(__dirname, '../../resources/trayTemplate@2x.png')
     const trayIcon = nativeImage.createFromPath(trayIconPath)
@@ -537,16 +566,92 @@ app.whenReady().then(() => {
     activeOpenCodeSessions: () => openCodeExecutor.getVitals().activeSessions,
     pendingRetryTimers: () => openCodeExecutor.getVitals().retriesInFlight,
     childProcessCount: () => {
+      // pgrep is Unix-only — on Windows it doesn't exist and every 5s spawn
+      // attempt adds overhead that accumulates into main-thread stalls.
+      if (process.platform === 'win32') return 0
       try {
-        // Quick ls of child processes (child.pid files from spawn)
-        const output = execSync('pgrep -c -P $$ || true', { encoding: 'utf-8', timeout: 2000 }).trim()
+        const output = execSync('pgrep -c -P $ || true', {
+          encoding: 'utf-8',
+          timeout: 500
+        }).trim()
         return parseInt(output, 10) || 0
       } catch {
         return 0
       }
     }
   })
-  startVitals()
+  const vitalsInterval = process.platform === 'win32' ? 15_000 : 5_000
+  startVitals(vitalsInterval)
+
+  // ── Power management: pause background work during sleep, restart on wake ──
+  // Without this, all accumulated timer callbacks fire in a burst after wake,
+  // colliding with stale file handles and database connections. On Windows,
+  // fs.watch events batch during sleep and trigger simultaneous reindexFiles()
+  // + consolidation writes that compete for the SQLite write lock.
+  //
+  // We snapshot watcher state before stopping so we can restart after wake.
+  // fileWatcherService.stopAll() closes fs.watch handles and clears all state,
+  // so we need to preserve {workspaceId, workspacePath, options} to recreate them.
+  let suspendedWatchers: { workspaceId: string; workspacePath: string; codeGraphEnabled: boolean; semanticSearchEnabled: boolean }[] = []
+  let suspendedConsolidationWorkspace: string | null = null
+
+  powerMonitor.on('suspend', () => {
+    log.info('[Power] System suspending — pausing vitals, file watchers, consolidation')
+    stopVitals()
+
+    // Snapshot active watchers before stopping them
+    suspendedWatchers = fileWatcherService.getActiveWatchers()
+    fileWatcherService.stopAll()
+
+    // Snapshot consolidation workspace before stopping
+    suspendedConsolidationWorkspace = memoryConsolidationService.boundWorkspaceId
+    memoryConsolidationService.stopIdleJob()
+  })
+  powerMonitor.on('resume', () => {
+    log.info('[Power] System resumed — restarting background services after stabilisation delay')
+    // Delay restart to let disk, network, and file handles stabilise after wake.
+    setTimeout(() => {
+      startVitals(vitalsInterval)
+
+      // Restart file watchers for previously-active workspaces
+      for (const w of suspendedWatchers) {
+        try {
+          fileWatcherService.start(w.workspaceId, w.workspacePath, {
+            codeGraphEnabled: w.codeGraphEnabled,
+            semanticSearchEnabled: w.semanticSearchEnabled
+          })
+        } catch (e) {
+          log.warn(`[Power] Failed to restart file watcher for ${w.workspaceId}:`, e)
+        }
+      }
+      suspendedWatchers = []
+
+      // Restart consolidation for previously-active workspace
+      if (suspendedConsolidationWorkspace) {
+        try {
+          memoryConsolidationService.startIdleJob(suspendedConsolidationWorkspace)
+        } catch (e) {
+          log.warn('[Power] Failed to restart consolidation:', e)
+        }
+        suspendedConsolidationWorkspace = null
+      }
+    }, 3000)
+  })
+
+  // On Windows, `before-quit` does NOT fire during system shutdown/restart/signoff
+  // (electron/electron#9613, confirmed platform/windows bug). The `shutdown` event
+  // from powerMonitor DOES fire in that scenario (Electron 15+). Run a best-effort
+  // TRUNCATE checkpoint so the WAL file doesn't persist across reboots.
+  // closeDatabase() is idempotent (checks `if (db)` before acting), so calling it
+  // from both here and `before-quit` is safe.
+  powerMonitor.on('shutdown', () => {
+    log.info('[Power] System shutdown detected — running best-effort WAL checkpoint')
+    try {
+      closeDatabase()
+    } catch {
+      // Best-effort — process is about to die anyway
+    }
+  })
 
   // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
   cleanupStalePromptFiles()

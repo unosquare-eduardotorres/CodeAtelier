@@ -19,6 +19,11 @@ interface TodoState {
   completeTodo: (conversationId: string, text: string, index?: number) => void
   removeTodo: (conversationId: string, text: string, index?: number) => void
   updateTodo: (conversationId: string, text: string, index?: number) => void
+  /** Full-list replace — used for TodoWrite's authoritative snapshot (CLI backend). */
+  setTodos: (
+    conversationId: string,
+    todos: Array<{ text: string; completed: boolean; index: number }>
+  ) => void
   clearTodos: (conversationId: string) => void
   toggleExpanded: () => void
 }
@@ -78,6 +83,22 @@ export const useTodoStore = create<TodoState>((set) => ({
         t.index === index ? { ...t, text, updatedAt: Date.now() } : t
       )
       return { todos: { ...state.todos, [conversationId]: updated } }
+    })
+  },
+
+  setTodos: (
+    conversationId: string,
+    todos: Array<{ text: string; completed: boolean; index: number }>
+  ) => {
+    set((state) => {
+      const now = Date.now()
+      const items: TodoItem[] = todos.map((t) => ({
+        text: t.text,
+        completed: t.completed,
+        index: t.index,
+        updatedAt: now
+      }))
+      return { todos: { ...state.todos, [conversationId]: items } }
     })
   },
 

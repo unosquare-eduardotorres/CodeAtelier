@@ -24,6 +24,7 @@ export async function launchApp(): Promise<{ app: ElectronApplication; page: Pag
 
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+
   // Allow initial renders and animations to settle
   await page.waitForTimeout(2000)
 

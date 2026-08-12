@@ -7,7 +7,7 @@ function getElectronApp(): typeof import('electron').app {
   return require('electron').app
 }
 import { join } from 'node:path'
-import { existsSync, renameSync } from 'node:fs'
+import { existsSync, renameSync, statSync } from 'node:fs'
 import { dbLogger } from '../logger'
 import SCHEMA_SQL from './schema.sql?raw'
 export { SCHEMA_SQL }
@@ -25,12 +25,16 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-const CURRENT_SCHEMA_VERSION = 125
+const CURRENT_SCHEMA_VERSION = 129
 
 export interface Migration {
   version: number
   name: string
   up: (db: Database.Database) => void
+  /** Set true for migrations that DROP parent tables (e.g. conversations rebuild).
+   *  The runner will disable PRAGMA foreign_keys before the transaction and
+   *  re-enable + verify integrity after. */
+  disableForeignKeys?: boolean
 }
 
 export const migrations: Migration[] = [
@@ -578,7 +582,7 @@ export const migrations: Migration[] = [
         .prepare("SELECT display_name, avatar_key FROM user_profile WHERE id = 'default'")
         .get() as { display_name: string; avatar_key: string } | undefined
       const displayName = profile?.display_name ?? 'Developer'
-      const avatarKey = profile?.avatar_key ?? 'business-man'
+      const avatarKey = profile?.avatar_key ?? 'user'
 
       // Insert user specialist (idempotent)
       const exists = db.prepare("SELECT 1 FROM specialists WHERE agent_id = 'user'").get()
@@ -3414,6 +3418,99 @@ export const migrations: Migration[] = [
         '[migration-125] ✓ Added phase_progress_json to plans + conversation_todos table'
       )
     }
+  },
+  {
+    version: 126,
+    name: 'add-completed-at-to-blueprints-and-plans',
+    up: (db) => {
+      // Add completed_at to blueprints
+      db.exec(`ALTER TABLE blueprints ADD COLUMN completed_at TEXT`)
+      // Backfill from updated_at for existing terminal blueprints
+      db.exec(`UPDATE blueprints SET completed_at = updated_at WHERE status IN ('complete', 'failed', 'cancelled')`)
+
+      // Add completed_at to plans
+      db.exec(`ALTER TABLE plans ADD COLUMN completed_at TEXT`)
+      // Backfill from updated_at for existing terminal plans
+      db.exec(`UPDATE plans SET completed_at = updated_at WHERE status IN ('completed', 'archived')`)
+
+      dbLogger.info('[migration-126] ✓ Added completed_at to blueprints and plans tables')
+    }
+  },
+  {
+    version: 127,
+    name: 'expand-effort-check-constraint',
+    disableForeignKeys: true, // CRITICAL: prevents CASCADE wipe of messages/attachments/checkpoints
+    up: (db) => {
+      // SQLite cannot ALTER CHECK constraints — rebuild the table.
+      db.exec(`
+        CREATE TABLE conversations_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT 'New Conversation',
+          mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build', 'danger')),
+          type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+          summary TEXT,
+          claude_session_id TEXT,
+          pr_number INTEGER,
+          pr_url TEXT,
+          branch_name TEXT,
+          sort_order INTEGER DEFAULT 0,
+          persona_specialist_id TEXT DEFAULT NULL REFERENCES specialists(id) ON DELETE SET NULL,
+          llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm')),
+          mcp_overrides_json TEXT DEFAULT '{}',
+          communication_tone TEXT DEFAULT NULL,
+          effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high', 'xhigh', 'max')),
+          preset_id TEXT DEFAULT NULL,
+          handoff_context TEXT DEFAULT NULL,
+          model_config_json TEXT DEFAULT NULL,
+          source_audit_run_id TEXT DEFAULT NULL
+        )
+      `)
+
+      db.exec(`
+        INSERT INTO conversations_new (
+          id, workspace_id, title, mode, type, created_at, status, summary, claude_session_id,
+          pr_number, pr_url, branch_name, sort_order, persona_specialist_id, llm_provider,
+          mcp_overrides_json, communication_tone, effort, preset_id, handoff_context,
+          model_config_json, source_audit_run_id
+        )
+        SELECT
+          id, workspace_id, title, mode, type, created_at, status, summary, claude_session_id,
+          pr_number, pr_url, branch_name, sort_order, persona_specialist_id, llm_provider,
+          mcp_overrides_json, communication_tone, effort, preset_id, handoff_context,
+          model_config_json, source_audit_run_id
+        FROM conversations
+      `)
+
+      db.exec('DROP TABLE conversations')
+      db.exec('ALTER TABLE conversations_new RENAME TO conversations')
+
+      // Recreate indexes dropped with the old table
+      db.exec('CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)')
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_conversations_audit_run ON conversations(source_audit_run_id) WHERE source_audit_run_id IS NOT NULL`
+      )
+
+      dbLogger.info('[migration-127] ✓ Expanded effort CHECK constraint to include xhigh + max')
+    }
+  },
+  {
+    version: 128,
+    name: 'add-hidden-to-messages',
+    up: (db) => {
+      db.exec(`ALTER TABLE messages ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0`)
+      dbLogger.info('[migration-128] ✓ Added hidden column to messages table')
+    }
+  },
+  {
+    version: 129,
+    name: 'add-source-branch-to-conversations',
+    up: (db) => {
+      db.exec(`ALTER TABLE conversations ADD COLUMN source_branch TEXT DEFAULT NULL`)
+      dbLogger.info('[migration-129] ✓ Added source_branch column to conversations')
+    }
   }
 ]
 
@@ -3436,13 +3533,39 @@ function runMigrations(database: Database.Database): void {
 
   for (const migration of pending) {
     dbLogger.info(`Running migration v${migration.version}: ${migration.name}`)
+    const needsFkOff = migration.disableForeignKeys === true
     try {
+      if (needsFkOff) {
+        // PRAGMA foreign_keys cannot be changed inside a transaction.
+        // Disable BEFORE the transaction to prevent CASCADE side-effects
+        // when parent tables are rebuilt via DROP TABLE + RENAME.
+        database.pragma('foreign_keys = OFF')
+      }
       database.transaction(() => {
         migration.up(database)
         database.pragma(`user_version = ${migration.version}`)
       })()
+      if (needsFkOff) {
+        database.pragma('foreign_keys = ON')
+        // Verify FK integrity wasn't broken by the rebuild
+        const violations = database.pragma('foreign_key_check') as unknown[]
+        if (violations.length > 0) {
+          dbLogger.error(
+            `[DB] FK violations after migration v${migration.version}:`,
+            violations.slice(0, 10)
+          )
+        }
+      }
       dbLogger.info(`✓ Migration v${migration.version} complete`)
     } catch (error) {
+      // Re-enable FK enforcement even on failure
+      if (needsFkOff) {
+        try {
+          database.pragma('foreign_keys = ON')
+        } catch {
+          /* best-effort */
+        }
+      }
       // Tolerate "duplicate column" errors when schema.sql already includes the column.
       // This happens on fresh DBs where CREATE TABLE includes columns that ALTER TABLE
       // migrations try to re-add. Advance user_version so we don't retry.
@@ -3478,8 +3601,37 @@ export function getDatabase(): Database.Database {
   const dbPath = newDbPath
   db = new Database(dbPath)
 
-  // Enable WAL mode for crash-safe writes
+  // Standalone MCP-server processes run as plain `node` (no Electron app global).
+  // They pass DB_PATH explicitly. This flag gates several behaviors below:
+  // - busy_timeout: MCP servers retry patiently (5s); main process fails fast (500ms)
+  // - migrations: only the main process runs schema changes
+  // - WAL checkpoint: only the main process checkpoints
+  const isStandaloneMcpServer = !!process.env.DB_PATH
+
+  // ── ARM BUSY HANDLER FIRST ──
+  // Must be set BEFORE journal_mode = WAL. Switching to WAL creates/recovers
+  // the -wal/-shm files and takes a brief exclusive lock. Without busy_timeout
+  // armed first, a concurrent opener gets instant SQLITE_BUSY (0ms wait) instead
+  // of retrying. Same bug as Cursor SDK #166153 (July 2026, confirmed & fixed).
+  //
+  // Split by process role:
+  // - Main Electron process: 500ms (fail fast enough to avoid UI jank,
+  //   but not so aggressive that legitimate short contention triggers
+  //   spurious SQLITE_BUSY errors. better-sqlite3 recommends ≥1000ms
+  //   even for "max performance" — 500ms is a pragmatic middle ground.)
+  // - Standalone MCP servers: 5000ms (retry patiently, no UI to block)
+  db.pragma(`busy_timeout = ${isStandaloneMcpServer ? 5000 : 500}`)
+
+  // Enable WAL mode for crash-safe writes.
+  // Now safe — busy handler will retry if the WAL switch contends for a lock.
   db.pragma('journal_mode = WAL')
+
+  // Cap WAL file growth. Without this, checkpoint starvation can let the WAL
+  // grow unboundedly (Cursor's 2.1 GB write storm, May 2026, was exactly this).
+  // 256 MB is generous for any reasonable write burst but prevents disk exhaustion.
+  // SQLite truncates the WAL to this size after each successful checkpoint.
+  db.pragma('journal_size_limit = 268435456') // 256 MB
+
   db.pragma('foreign_keys = ON')
 
   // Run schema (creates tables if not exist) — inlined at build time via ?raw import
@@ -3488,7 +3640,6 @@ export function getDatabase(): Database.Database {
   // Run versioned migrations (only pending ones).
   // Standalone MCP-server processes (spawned with DB_PATH) must NOT run migrations —
   // the Electron main process owns schema changes; racing two writers corrupts state.
-  const isStandaloneMcpServer = !!process.env.DB_PATH
   if (!isStandaloneMcpServer) {
     try {
       runMigrations(db)
@@ -3504,8 +3655,53 @@ export function getDatabase(): Database.Database {
     dbLogger.info('[DB] Standalone MCP server — skipping migrations (main process owns schema)')
   }
 
-  // WAL checkpoint to reclaim space (runs every startup, cheap no-op if WAL is small)
-  db.pragma('wal_checkpoint(TRUNCATE)')
+  // WAL checkpoint to reclaim space.
+  // PASSIVE: checkpoints what it can without blocking — never stalls the main
+  // thread waiting for readers/writers to finish. SQLite auto-checkpoints at
+  // 1000 WAL pages anyway, so this is just an opportunistic housekeeping nudge.
+  // TRUNCATE was replaced because it forces a full WAL replay synchronously,
+  // which blocks the main thread for seconds on NTFS with large WAL files.
+  // Standalone MCP servers skip checkpointing entirely — the main process owns it.
+  if (!isStandaloneMcpServer) {
+    db.pragma('wal_checkpoint(PASSIVE)')
+  }
+
+  // ── DB + WAL size monitoring ──
+  // Log a warning if the database or WAL file exceeds safe thresholds. Catches
+  // Cursor-style growth problems (state.vscdb hit 390 MB; WAL write storm
+  // reached 2.1 GB in 9 min) before they become crashes or disk exhaustion.
+  if (!isStandaloneMcpServer) {
+    try {
+      const dbSizeBytes = statSync(dbPath).size
+      const dbSizeMB = Math.round(dbSizeBytes / (1024 * 1024))
+      if (dbSizeBytes > 2 * 1024 * 1024 * 1024) {
+        dbLogger.warn(
+          `[DB] ⚠ Database file is ${dbSizeMB} MB — consider re-indexing or cleaning old workspace data`
+        )
+      } else if (dbSizeBytes > 1024 * 1024 * 1024) {
+        dbLogger.info(`[DB] Database file is ${dbSizeMB} MB — approaching large size`)
+      }
+
+      // WAL file can grow independently of the main DB file. Checkpoint starvation
+      // (everlasting concurrent reads preventing WAL recycling) lets it grow without
+      // bound. journal_size_limit caps it at 256 MB after each successful checkpoint,
+      // but if checkpoints keep failing, the WAL can still bloat.
+      const walPath = dbPath + '-wal'
+      if (existsSync(walPath)) {
+        const walSizeBytes = statSync(walPath).size
+        const walSizeMB = Math.round(walSizeBytes / (1024 * 1024))
+        if (walSizeBytes > 256 * 1024 * 1024) {
+          dbLogger.warn(
+            `[DB] ⚠ WAL file is ${walSizeMB} MB — possible checkpoint starvation`
+          )
+        } else if (walSizeBytes > 128 * 1024 * 1024) {
+          dbLogger.info(`[DB] WAL file is ${walSizeMB} MB — elevated but within limits`)
+        }
+      }
+    } catch {
+      // Best-effort — don't block startup if stat fails
+    }
+  }
 
   // Seed default data (idempotent — checks count before inserting)
   seedDefaultSpecialists(db)
@@ -3516,6 +3712,16 @@ export function getDatabase(): Database.Database {
 
 export function closeDatabase(): void {
   if (db) {
+    // Force WAL checkpoint at clean shutdown to reclaim disk space.
+    // TRUNCATE resets the WAL file to zero bytes. This is safe at shutdown
+    // because all services have already stopped — no concurrent readers/writers.
+    // If MCP servers are still alive (shouldn't be), TRUNCATE will checkpoint
+    // what it can and proceed.
+    try {
+      db.pragma('wal_checkpoint(TRUNCATE)')
+    } catch {
+      // Best-effort — don't prevent shutdown if checkpoint fails
+    }
     db.close()
     db = null
   }

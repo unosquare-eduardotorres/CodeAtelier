@@ -3,7 +3,7 @@ export type ConversationMode = 'plan' | 'build' | 'danger'
 export type ConversationType = 'chat' | 'blueprint'
 
 /** Thinking effort level — controls reasoning depth (thinking budget + temperature) */
-export type ThinkingEffort = 'low' | 'medium' | 'high'
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /** Prompt verbosity level — controls how much guardrailing the system prompt includes */
 export type PromptVerbosity = 'full' | 'lean'
@@ -93,6 +93,8 @@ export interface Conversation {
   prUrl?: string
   /** Git branch name created during /complete */
   branchName?: string
+  /** Git branch the conversation was started from (for PR base branch default) */
+  sourceBranch?: string
   /** User-defined sort order for sidebar reordering */
   sortOrder?: number
   /** Specialist ID used as persona overlay (null = default specialist) */
@@ -187,6 +189,8 @@ export interface Message {
   parentMessageId?: string
   /** Which plan card action the user clicked: 'build' | 'refine' | 'save_as_idea' | 'council' */
   planAction?: string
+  /** Hidden messages are persisted for context but not shown in the chat UI (auto-send messages). */
+  hidden?: boolean
 }
 
 export interface AgentStatus {
@@ -232,6 +236,14 @@ export interface PendingPermission {
   receivedAt: number
   /** True after toast timeout — indicates permission should show as sidebar badge instead */
   badgeFallback?: boolean
+  /** Tool name extracted for structured display (e.g., "Bash", "Read", "Write") */
+  toolName?: string
+  /** Full structured tool input for detailed rendering */
+  toolInput?: Record<string, unknown>
+  /** Conversation title for context (e.g., "Implement auth system") */
+  conversationTitle?: string
+  /** Conversation mode for context badge */
+  mode?: ConversationMode
 }
 
 export interface PermissionResponse {
@@ -376,6 +388,9 @@ export interface SpecialistTokenEstimate {
 
 export type ChatBubbleSize = 'small' | 'medium' | 'large' | 'xl'
 
+/** User avatar variant — selectable in App Settings > Profile */
+export type UserAvatarVariant = '1' | '2' | '3'
+
 /** Visual theme for the entire application */
 export type AppTheme = 'code-atelier' | 'glass' | 'porcelain' | 'developer'
 
@@ -412,6 +427,10 @@ export interface AppPreferences {
   parallelBuildAgents: number
   /** Drop semantic-search + code-analysis MCP servers from build tasks (saves 2 processes per task). Default: false (full MCP). */
   leanBuildMcp: boolean
+  /** User's chosen avatar variant (1=Hooded Artisan, 2=Scholar, 3=Inventor). Default: '1'. */
+  userAvatarVariant: UserAvatarVariant
+  /** Absolute hard cap for stream lifetime in minutes (clamped 10–120). Default: 30. */
+  maxStreamLifetimeMin: number
 }
 
 // ── Workspace Deploy Models ──
@@ -770,6 +789,11 @@ export interface StructuredPlan {
   title: string
   summary: string
 
+  /** Clear, measurable completion condition — what "done" looks like.
+   *  Used by Claude CLI's /goal command (Haiku stop-hook evaluator)
+   *  to enforce autonomous execution until the condition is met. */
+  goal?: string
+
   // ── Diagnostic fields (bugs / investigations) ──
   problemSummary?: string
   rootCause?: string
@@ -1011,6 +1035,7 @@ export interface MemoryCaptureSettings {
   commitCapture: boolean
   docCapture: boolean
   captureBlueprints: boolean
+  capturePlans: boolean
   captureGrill: boolean
   captureDocumentsOnAttach: boolean
   watcherGlobs: string[]
@@ -1300,6 +1325,15 @@ export interface CodeGraphIndexingState {
   totalEdges: number
   currentFile: string
   error?: string
+  /**
+   * True when a guard rail silently reduced index quality (e.g. the workspace
+   * exceeded LARGE_WORKSPACE_TAG_THRESHOLD and the full graph rebuild was
+   * skipped). Previously this degradation was invisible, so the graph froze at
+   * 0 edges with no signal to the user.
+   */
+  degraded?: boolean
+  /** Human-readable explanation shown in the UI when degraded is true. */
+  degradedReason?: string
 }
 
 // ── Semantic Search / Indexing ──
@@ -1877,6 +1911,7 @@ export interface PlanRecord {
   riskCount: number
   createdAt: string
   updatedAt: string
+  completedAt: string | null
   previousPlanId: string | null
 }
 
@@ -1904,6 +1939,11 @@ export interface PhaseProgressEvent {
   status: 'started' | 'in_progress' | 'completed' | 'failed' | 'skipped'
   totalPhases: number
   message?: string
+  // ── Task-level tracking (optional) ──
+  taskId?: string
+  taskTitle?: string
+  taskStatus?: 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
+  totalTasks?: number
 }
 
 /** Persisted phase progress entry (stored as JSON in plans.phase_progress_json) */
@@ -1914,6 +1954,12 @@ export interface PhaseProgress {
   completedAt: string | null
   /** Files the agent has touched within this phase (populated via tool activity inference) */
   touchedFiles?: string[]
+  /** Task-level progress within this phase */
+  tasks?: Array<{
+    taskId: string
+    title: string
+    status: string
+  }>
 }
 
 // ── E2E Testing Types ──────────────────────────────────────────────────────
