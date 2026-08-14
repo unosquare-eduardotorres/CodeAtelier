@@ -180,6 +180,11 @@ const TEST_FILES: string[] = [
   './analyze-complexity.test',
   './complexity-analyzer.test',
   './dotnet-lint.test',
+  './cli-executor-process-identity.test',
+  './cli-executor-spawn-guards.test',
+  './cli-interrupt-cancel.test',
+  '../../../renderer/src/store/__tests__/safety-timeout-policy.test',
+  '../../../renderer/src/store/__tests__/safety-timeout-orphan.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   './evaluation-mcp-config.test',
   './mpa-base-adapter.test',

@@ -274,10 +274,12 @@ export class AgentSessionService extends AgentBaseService {
     if (!executor) {
       executor = new CLIExecutor()
       // A permission the executor abandons (turn finalized, child died, Stop)
-      // can never be answered — tell the UI so its prompt does not freeze.
+      // can never be answered — tell the UI so its prompt does not freeze, and
+      // answer the MCP side so its handler does not sit on the socket forever.
       executor.onHumanDecisionsCleared = (requestIds, reason) => {
         for (const requestId of requestIds) {
           this.emitPermissionResolved(requestId, 'cancelled', conversationId, reason)
+          this.denyAbandonedPermission(requestId, reason)
         }
       }
       this.cliExecutors.set(conversationId, executor)
@@ -656,6 +658,30 @@ export class AgentSessionService extends AgentBaseService {
       outcome,
       conversationId: conversationId ?? this.currentConversationId ?? undefined
     })
+  }
+
+  /**
+   * Close out a permission request nobody will ever answer.
+   *
+   * The prompt travels out of band: the CLI calls the permission-prompt MCP tool,
+   * whose handler blocks on the bridge until `sendPermissionResponse` arrives.
+   * A killed CLI used to collect that handler by dying, but a gracefully
+   * cancelled turn leaves the process (and its MCP servers) alive, so an
+   * unanswered prompt would strand one pending handler per Stop. Denying is the
+   * honest answer: the user cancelled rather than approved.
+   */
+  private denyAbandonedPermission(requestId: string, reason?: string): void {
+    if (!this.ipcBridge) return
+    try {
+      this.ipcBridge.sendPermissionResponse(requestId, false)
+      this.log.info(
+        `[permission-abandoned] denied requestId=${requestId} over the bridge` +
+          `${reason ? ` — ${reason}` : ''}`
+      )
+    } catch (err) {
+      // Best-effort: the socket may already be gone with the process.
+      this.log.warn(`[permission-abandoned] deny failed for requestId=${requestId}:`, err)
+    }
   }
 
   /**
@@ -1067,19 +1093,30 @@ export class AgentSessionService extends AgentBaseService {
    */
   cancelCurrentQuery(conversationId?: string): void {
     if (conversationId) {
+      // Record the intent before anything can end the turn. executeStream reads
+      // this after the loop to skip the continuation paths that would otherwise
+      // start a new turn on a conversation the user just stopped.
+      this.markCancelledByUser(conversationId)
+
+      // CLI backend: ask the CLI to cancel the turn in-band first, the way its
+      // own ESC does. A honoured interrupt ends the turn with the process still
+      // alive and ready for input, so nothing is left unanswered, the session
+      // stays resumable, and recordTurnBoundary sees a normal (unaborted) end.
+      // Aborting here instead would fire the abort listener that kills the
+      // child before the interrupt ever had its chance.
+      if (this.executorBackend === 'cli') {
+        const cliExecutor = this.cliExecutors.get(conversationId)
+        if (cliExecutor?.isAlive()) {
+          void this.cancelCliTurn(conversationId, cliExecutor)
+          return
+        }
+      }
+
       // Per-conversation cancel
       const ctx = this.activeStreams.get(conversationId)
       if (ctx?.abortController) {
         ctx.abortController.abort()
         ctx.abortController = null
-      }
-      if (this.executorBackend === 'cli') {
-        const executor = this.cliExecutors.get(conversationId)
-        if (executor?.isAlive()) {
-          executor.killProcess().catch(() => {
-            /* best-effort */
-          })
-        }
       }
       if (this.executorBackend === 'opencode') {
         const sessionId = openCodeExecutor.getSessionId(conversationId)
@@ -1093,8 +1130,29 @@ export class AgentSessionService extends AgentBaseService {
         }
       }
     } else {
-      // Cancel ALL active streams (full reset / backward compat)
+      // Cancel ALL active streams (full reset / backward compat).
+      //
+      // This branch is reached whenever the caller cannot name a conversation —
+      // the renderer passes `activeConversation?.id`, which is undefined if the
+      // chat was switched or closed mid-stream. It is still a user Stop, so it
+      // gets the same in-band cancel; killing every executor here would poison
+      // every live session for a caller that merely omitted an argument.
+      const liveCliTurns = new Set<string>()
+      if (this.executorBackend === 'cli') {
+        for (const [convId, executor] of this.cliExecutors) {
+          if (executor.isAlive()) {
+            liveCliTurns.add(convId)
+            this.markCancelledByUser(convId)
+            void this.cancelCliTurn(convId, executor)
+          }
+        }
+      }
+
       for (const [convId, ctx] of this.activeStreams) {
+        // Left to cancelCliTurn: aborting here fires the listener that kills the
+        // child before the interrupt can land.
+        if (liveCliTurns.has(convId)) continue
+        this.markCancelledByUser(convId)
         if (ctx.abortController) {
           ctx.abortController.abort()
           ctx.abortController = null
@@ -1106,11 +1164,54 @@ export class AgentSessionService extends AgentBaseService {
           }
         }
       }
-      if (this.executorBackend === 'cli') {
-        for (const executor of this.cliExecutors.values()) {
-          if (executor.isAlive()) executor.killProcess().catch(() => {})
-        }
-      }
+    }
+  }
+
+  /**
+   * Flag a conversation's in-flight turn as user-cancelled.
+   *
+   * No-op when nothing is streaming: the flag lives on the per-turn context, and
+   * creating one here would hand a later turn a cancellation it never received.
+   */
+  private markCancelledByUser(conversationId: string): void {
+    const ctx = this.activeStreams.get(conversationId)
+    if (ctx) ctx.cancelledByUser = true
+  }
+
+  /**
+   * Cancel one CLI turn, preferring the CLI's own turn cancel over a kill.
+   *
+   * Only on a refused or ignored interrupt do we fall back to today's
+   * abort + SIGTERM, which is also what poisons the session — that penalty now
+   * applies to the path that actually earns it rather than to every Stop.
+   */
+  private async cancelCliTurn(conversationId: string, executor: CLIExecutor): Promise<void> {
+    let graceful = false
+    try {
+      graceful = await executor.interrupt()
+    } catch (err) {
+      this.log.warn('[cancelCurrentQuery] interrupt() threw — falling back to kill:', err)
+    }
+
+    if (graceful) {
+      this.log.info(
+        `[cancelCurrentQuery] ${conversationId} cancelled in-band — process kept, session preserved`
+      )
+      return
+    }
+
+    this.log.warn(
+      `[cancelCurrentQuery] ${conversationId} interrupt not honoured — escalating to abort + kill`
+    )
+    const ctx = this.activeStreams.get(conversationId)
+    if (ctx?.abortController) {
+      ctx.abortController.abort()
+      ctx.abortController = null
+    }
+    if (executor.isAlive()) {
+      await executor.killProcess().catch(() => {
+        /* best-effort */
+      })
     }
   }
 
@@ -1948,6 +2049,12 @@ export class AgentSessionService extends AgentBaseService {
       }
 
       cancelInteractionTimer()
+      // The CLI reported the turn closed in response to our interrupt: nothing is
+      // left unanswered, so the zero-chunk poison rule must not fire on a Stop
+      // pressed before the first chunk.
+      const gracefullyCancelled =
+        effectiveBackend === 'cli' &&
+        this.cliExecutors.get(conversationId)?.wasTurnGracefullyCancelled() === true
       this.recordTurnBoundary({
         conversationId,
         turnCount,
@@ -1955,12 +2062,40 @@ export class AgentSessionService extends AgentBaseService {
         backend: effectiveBackend,
         aborted: abortController.signal.aborted,
         messageStopReceived: streamState.messageStopReceived,
-        terminalReason: streamState.lastTerminalReason
+        terminalReason: streamState.lastTerminalReason,
+        gracefullyCancelled
       })
       boundaryRecorded = true
       // Clear per-conversation abort controller
       const postCtx = this.activeStreams.get(conversationId)
       if (postCtx) postCtx.abortController = null
+
+      // The user asked for this turn to stop. Everything below is post-turn
+      // continuation work — session recovery, the plan-mode recovery nudge and
+      // the max_turns auto-continue can each start a NEW turn, and memory
+      // extraction spends a model call on a transcript the user abandoned.
+      // A graceful cancel makes the turn look successful at this point, so
+      // without an explicit flag nothing downstream can tell the difference.
+      const userCancelled = this.activeStreams.get(conversationId)?.cancelledByUser === true
+      if (userCancelled) {
+        this.log.info(
+          `[executeStream] conversation=${conversationId} was cancelled by the user — ` +
+            'skipping session recovery, continuation and memory extraction'
+        )
+        await this.finalizeStream({
+          conversationId,
+          systemPrompt,
+          isBuildMode,
+          recoveryDepth,
+          timedOut: this._lastTimedOut,
+          streamState,
+          mcpResult,
+          llmProvider,
+          userCancelled: true
+        })
+        void this.recordFileClaims(conversationId)
+        return
+      }
 
       const recovered = await this.handleSessionRecovery({
         sessionRecoveryNeeded: streamState.sessionRecoveryNeeded,
@@ -2079,6 +2214,8 @@ export class AgentSessionService extends AgentBaseService {
     aborted: boolean
     messageStopReceived: boolean
     terminalReason: string | undefined
+    /** The CLI closed this turn in response to interrupt() — see isTurnPoisoned. */
+    gracefullyCancelled?: boolean
   }): void {
     const sessionId = this.sessionMap.get(info.conversationId)
     const poisoned = isTurnPoisoned(info)
@@ -2088,6 +2225,7 @@ export class AgentSessionService extends AgentBaseService {
         `session=${sessionId ?? 'none'} chunks=${info.chunkCount} ` +
         `backend=${info.backend} ` +
         `aborted=${info.aborted} messageStop=${info.messageStopReceived} ` +
+        `cancelled=${info.gracefullyCancelled === true} ` +
         `terminalReason=${info.terminalReason ?? 'unset'} poisoned=${poisoned}`
     )
 
@@ -2096,6 +2234,17 @@ export class AgentSessionService extends AgentBaseService {
     // dropping it would degrade OpenCode recovery for no benefit.
     if (poisoned && sessionId && info.backend === 'cli') {
       this.poisonedSessions.add(info.conversationId)
+      // Belt and braces: tell the executor directly so the refusal also lives at
+      // the point of use. `poisonedSessions` is dropped by clearSession() and is
+      // only consulted by resolveSession(), so any path that reaches a spawn
+      // without going through either would otherwise re-emit `--resume` for this
+      // dead session. Never creates an executor — no live one, nothing to guard.
+      this.cliExecutors
+        .get(info.conversationId)
+        ?.markSessionPoisoned(
+          sessionId,
+          `turn ${info.turnCount} ended ${info.aborted ? 'aborted' : 'with zero chunks'}`
+        )
       // Drop the session id EAGERLY rather than waiting for the next
       // resolveSession(). The max_turns auto-continue and recovery-nudge paths
       // in agent-recovery-manager read `sessionMap` directly instead of going
@@ -2782,6 +2931,7 @@ export class AgentSessionService extends AgentBaseService {
     streamState: StreamLoopState
     mcpResult: AdapterMcpResult
     llmProvider: LLMProvider
+    userCancelled?: boolean
   }): Promise<void> {
     await this.recoveryManager.finalizeStream(params)
   }

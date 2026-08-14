@@ -215,6 +215,11 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/analyze-complexity.test',
   '../services/__tests__/complexity-analyzer.test',
   '../services/__tests__/dotnet-lint.test',
+  '../services/__tests__/cli-executor-process-identity.test',
+  '../services/__tests__/cli-executor-spawn-guards.test',
+  '../services/__tests__/cli-interrupt-cancel.test',
+  '../../renderer/src/store/__tests__/safety-timeout-policy.test',
+  '../../renderer/src/store/__tests__/safety-timeout-orphan.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   '../services/__tests__/evaluation-mcp-config.test',
   '../services/__tests__/mpa-base-adapter.test',

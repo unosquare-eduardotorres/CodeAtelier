@@ -55,9 +55,21 @@ describe('Lean Identity Prompt', () => {
     assert.ok(!lean.includes('(IMPORTANT)'), 'Lean prompt should not contain (IMPORTANT)')
   })
 
-  test('full prompt retains verbose labels', () => {
+  test('full prompt narration section is scoped to state-changing tools', () => {
     const full = buildSpecialistIdentityPrompt('default')
-    assert.ok(full.includes('(MANDATORY)'), 'Full prompt should contain (MANDATORY)')
+    // The old '## Tool Narration (MANDATORY)' section demanded a line before and
+    // after EVERY tool call. Narration is now scoped to writes/edits/deletes.
+    assert.ok(full.includes('## Tool Narration'), 'Missing ## Tool Narration section')
+    assert.ok(!full.includes('(MANDATORY)'), 'Narration should no longer be labelled MANDATORY')
+    assert.ok(!full.includes('EACH tool call'), 'Narration should not demand a line per tool call')
+    assert.ok(full.includes('CHANGE state'), 'Narration should be scoped to state-changing tools')
+  })
+
+  test('lean prompt carries Reporting Findings alongside Code Exploration', () => {
+    const lean = buildSpecialistIdentityPromptLean('default')
+    assert.ok(lean.includes('## Reporting Findings'), 'Missing ## Reporting Findings section')
+    assert.ok(lean.includes('Lead with the conclusion'), 'Missing conclusion-first guidance')
+    assert.ok(lean.includes('## Code Exploration'), 'Reporting Findings displaced Code Exploration')
   })
 
   test('lean identity includes Code Exploration rules from repomap merge', () => {

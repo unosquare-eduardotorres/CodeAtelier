@@ -206,6 +206,18 @@ export interface ActiveStreamContext {
    * back to `workspacePath`.
    */
   executionPath?: string
+  /**
+   * The user asked for this turn to stop (Stop button, pipeline cancel).
+   *
+   * Set by cancelCurrentQuery, read by executeStream once the turn ends. A
+   * gracefully cancelled turn ends with a normal `result` and an unaborted
+   * signal, so this flag is the only remaining way to tell it apart from a turn
+   * that finished on its own — and the post-turn continuation paths (recovery
+   * nudge, max_turns auto-continue) would otherwise start a new turn right after
+   * the user pressed Stop. Lives on the per-turn context, which is recreated on
+   * every send, so it cannot leak into the next turn.
+   */
+  cancelledByUser?: boolean
 }
 
 export type { StreamChunk, ExecutorResult, CLIExecuteOptions }

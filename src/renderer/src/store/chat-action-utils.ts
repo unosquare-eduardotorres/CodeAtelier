@@ -369,6 +369,45 @@ export async function reconcileStopState(
   }
 }
 
+// ── Safety-timeout policy ──────────────────────────────────
+
+/** What the renderer's 2-minute watchdog should do when it fires. */
+export type SafetyTimeoutOutcome = 'ignore' | 'defer' | 'teardown'
+
+/**
+ * Whether main must be consulted before this timeout tears anything down.
+ *
+ * Only an open `ask_user` gate qualifies. It is the one state with no backend
+ * timeout by design — a human may take arbitrarily long — so two minutes of
+ * silence there is not evidence that anything died. Every other case is torn
+ * down on local state alone, with no IPC round-trip.
+ */
+export function needsBackendConfirmation(input: {
+  isActiveConversation: boolean
+  hasOpenQuestion: boolean
+}): boolean {
+  return input.isActiveConversation && input.hasOpenQuestion
+}
+
+/**
+ * Decide the fate of a timed-out conversation.
+ *
+ * `backendOwnsStream` is `null` when main was not consulted. Deferring requires
+ * a positive answer, so a failed query (reported as `false`) still tears down:
+ * an unreachable main process is precisely the wedge this watchdog exists to
+ * recover from and must never disarm it.
+ */
+export function resolveSafetyTimeout(input: {
+  stillStreaming: boolean
+  isActiveConversation: boolean
+  hasOpenQuestion: boolean
+  backendOwnsStream: boolean | null
+}): SafetyTimeoutOutcome {
+  if (!input.stillStreaming) return 'ignore'
+  if (needsBackendConfirmation(input) && input.backendOwnsStream === true) return 'defer'
+  return 'teardown'
+}
+
 // ── Message builders (continued) ────────────────────────────────────────
 
 /**

@@ -589,6 +589,12 @@ function derivePlanTaskFromFileActivity(ctx: ChunkRouterContext, filePath: strin
 function handleTurnBoundary(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush any pending text before emitting boundary
   textBatcher.flush(ctx.conversationId)
+  // The renderer splits bubbles on this boundary, but the accumulator is what
+  // gets persisted — without a separator the fragments either side of a tool
+  // call fuse into one run-on sentence when the conversation is reloaded.
+  if (ctx.contentAccumulator.value && !ctx.contentAccumulator.value.endsWith('\n\n')) {
+    ctx.contentAccumulator.value += '\n\n'
+  }
   safeSend(
     ctx,
     IPC_CHANNELS.CHAT_MESSAGE_CHUNK,

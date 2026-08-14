@@ -129,6 +129,30 @@ describe('default-prompts — TONE_STYLE_DIRECTIVES', () => {
       assert.ok(TONE_STYLE_DIRECTIVES[tone].length > 0)
     })
   }
+
+  test('every directive keeps the no-emoji/no-dashboard guardrail', () => {
+    for (const tone of expectedTones) {
+      const directive = TONE_STYLE_DIRECTIVES[tone]
+      assert.ok(
+        /No emoji/i.test(directive) && /dashboards?/i.test(directive),
+        `Tone "${tone}" lost its emoji/dashboard guardrail`
+      )
+    }
+  })
+
+  test('line caps are scoped to shell-command answers, not global', () => {
+    for (const tone of expectedTones) {
+      const directive = TONE_STYLE_DIRECTIVES[tone]
+      assert.ok(
+        !/lines for commands/.test(directive),
+        `Tone "${tone}" still uses the ambiguous "lines for commands" cap`
+      )
+      assert.ok(
+        /lines when the answer is a shell command/.test(directive),
+        `Tone "${tone}" is missing its scoped line cap`
+      )
+    }
+  })
 })
 
 describe('default-prompts — buildSpecialistIdentityPrompt', () => {
@@ -145,6 +169,28 @@ describe('default-prompts — buildSpecialistIdentityPrompt', () => {
     const prompt = buildSpecialistIdentityPrompt('brutal')
     assert.ok(prompt.length > 0)
   })
+
+  test('emits Reporting Findings guidance for every tone', () => {
+    const tones = ['default', 'calm', 'optimistic', 'brutal', 'caveman'] as const
+    for (const tone of tones) {
+      const prompt = buildSpecialistIdentityPrompt(tone)
+      assert.ok(
+        prompt.includes('## Reporting Findings'),
+        `Missing ## Reporting Findings for tone=${tone}`
+      )
+      assert.ok(prompt.includes('Lead with the conclusion'), `Missing lead-with-conclusion rule`)
+      assert.ok(
+        prompt.includes('Commands and tool output are evidence'),
+        'Missing evidence-not-content rule'
+      )
+    }
+  })
+
+  test('narration is scoped to state-changing tools', () => {
+    const prompt = buildSpecialistIdentityPrompt('default')
+    assert.ok(!prompt.includes('EACH'), 'Narration should no longer demand a line per tool call')
+    assert.ok(prompt.includes('CHANGE state'), 'Narration should name state-changing tools')
+  })
 })
 
 describe('default-prompts — buildSpecialistIdentityPromptLean', () => {
@@ -154,6 +200,17 @@ describe('default-prompts — buildSpecialistIdentityPromptLean', () => {
       const result = buildSpecialistIdentityPromptLean(tone)
       assert.equal(typeof result, 'string')
       assert.ok(result.length > 50)
+    }
+  })
+
+  test('lean version carries the shared Reporting Findings section', () => {
+    const tones = ['default', 'calm', 'optimistic', 'brutal', 'caveman'] as const
+    for (const tone of tones) {
+      const lean = buildSpecialistIdentityPromptLean(tone)
+      assert.ok(
+        lean.includes('## Reporting Findings'),
+        `Missing ## Reporting Findings for tone=${tone}`
+      )
     }
   })
 

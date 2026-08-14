@@ -17,7 +17,11 @@ import {
 } from '@renderer/utils/stream-segment-accumulator'
 import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
-import type { PerConversationStreamState } from './chat-action-utils'
+import {
+  needsBackendConfirmation,
+  resolveSafetyTimeout,
+  type PerConversationStreamState
+} from './chat-action-utils'
 import type { ChatState, PendingToolPermission } from './chat.store'
 import { findPlanBlock } from '@renderer/components/chat/plan-detection'
 import { usePlanExecutionStore } from './plan-execution.store'
@@ -44,6 +48,14 @@ export interface ChatStreamingState {
   streamStalledConversationId: string | null
   /** Inline tool-permission prompt — cleared when its turn finalizes. */
   pendingToolPermission: PendingToolPermission | null
+  /**
+   * Open `ask_user` gate for the active conversation, or null.
+   *
+   * Read by the safety timeout: a gate has no backend timeout by design (a
+   * human may take arbitrarily long), so it is the one state where two minutes
+   * of silence is not evidence that anything died.
+   */
+  pendingQuestions: unknown[] | null
   /** MULTI-CHAT-06: Per-conversation streaming state snapshots. */
   conversationStreams: Map<string, PerConversationStreamState>
   messages: Message[]
@@ -321,82 +333,161 @@ export class ChatStreamingInternals {
       setTimeout(
         () => {
           this.safetyTimers.delete(convId)
-          // MULTI-CHAT-06: Check per-conversation membership instead of global isStreaming.
-          // After a conversation switch, isStreaming reflects the TARGET conv's state, not this
-          // timed-out conv. Without this, safety cleanup is skipped and the dead conv stays
-          // in streamingConversationIds forever (permanent sidebar spinner ghost).
-          if (this.storeGet?.().streamingConversationIds.has(convId)) {
-            rendererLog.warn(
-              `Safety timeout: conversation ${convId} stuck for 2 minutes — force-resetting`
-            )
-            // STREAM-SAFETY-PARTIAL-01: Also clear activeRequestId so late chunks
-            // from the timed-out request are rejected instead of silently accepted.
-            // MULTI-CHAT-05: Only remove THIS timed-out conversation from
-            // streamingConversationIds — other conversations may still be
-            // legitimately streaming in the background.
-            const currentIds = this.storeGet?.().streamingConversationIds ?? new Set<string>()
-            const newIds = new Set(currentIds)
-            newIds.delete(convId)
-            // GAP-R7-1: Clean up stashed streaming state for the timed-out conversation.
-            // Without this, the stash retains isStreaming: true, causing BUG-R7-1 (locked
-            // input when the user switches to this conversation).
-            const currentStreams =
-              this.storeGet?.().conversationStreams ?? new Map<string, PerConversationStreamState>()
-            const newStreams = new Map(currentStreams)
-            newStreams.delete(convId)
-            // BUG-R5-1: Derive isStreaming from active conv membership, not global set size.
-            // A background conv timing out shouldn't lock/unlock the active conv's input.
-            const activeId = this.storeGet?.()?.activeConversation?.id
-            // IMP-R6-1: Only reset conversationState/activeRequestId if the timed-out
-            // conv is the active one. A background conv timing out shouldn't clear
-            // the active conv's phase label or request tracking.
-            const isActiveConv = activeId === convId
-            // WEDGE-FIX: release the send flag too. `sendingConversationIds`
-            // drives the composer lock and the Stop button independently of
-            // `isStreaming`; if the stream dies silently after the 30s reconcile
-            // declined, clearing only the streaming state removes the thinking
-            // indicator but leaves the composer permanently disabled.
-            const currentSending =
-              this.storeGet?.().sendingConversationIds ?? new Set<string>()
-            const newSending = new Set(currentSending)
-            newSending.delete(convId)
-            this.storeSet?.({
-              isStreaming: activeId ? newIds.has(activeId) : false,
-              ...(isActiveConv ? { activeRequestId: null } : {}),
-              streamingConversationIds: newIds,
-              sendingConversationIds: newSending,
-              conversationStreams: newStreams,
-              ...(isActiveConv
-                ? {
-                    conversationState: {
-                      phase: 'idle',
-                      from: null,
-                      event: null,
-                      conversationId: null
-                    }
-                  }
-                : {}),
-              // STALL-DETECT-01: Clear stall flag on safety timeout.
-              // Use per-conversation matching (not isActiveConv) so background
-              // safety timeouts also clear their own stale stall flag.
-              ...(this.storeGet?.().streamStalledConversationId === convId
-                ? { streamStalledConversationId: null }
-                : {}),
-              // SAFETY-ORPHAN-QUESTIONS: Clear orphaned question cards on safety timeout.
-              // The backend is dead — answers can't be routed to the CLI anymore.
-              ...(isActiveConv
-                ? {
-                    pendingQuestions: null,
-                    pendingQuestionAction: null,
-                    pendingQuestionRequestId: null
-                  }
-                : {})
-            })
-          }
+          void this.handleSafetyTimeout(convId)
         },
         2 * 60 * 1000
       )
     )
+  }
+
+  /**
+   * Fired when a conversation has shown no sign of life for two minutes.
+   *
+   * This watchdog is the last defence against a wedged main process, so it
+   * stays — every observed occurrence in the field was a genuine backend death
+   * (main-process exception → keepalives stopped) and it recovered the UI.
+   */
+  private async handleSafetyTimeout(convId: string): Promise<void> {
+    const get = this.storeGet
+    const set = this.storeSet
+    if (!get || !set) return
+
+    // MULTI-CHAT-06: Check per-conversation membership instead of global isStreaming.
+    // After a conversation switch, isStreaming reflects the TARGET conv's state, not this
+    // timed-out conv. Without this, safety cleanup is skipped and the dead conv stays
+    // in streamingConversationIds forever (permanent sidebar spinner ghost).
+    if (!get().streamingConversationIds.has(convId)) return
+
+    const isActiveConversation = get().activeConversation?.id === convId
+    const hasOpenQuestion = !!get().pendingQuestions
+
+    // SAFETY-GATE-ALIVE: an open ask_user gate is the one case where silence
+    // proves nothing, so ask main whether the request is really dead before
+    // clearing the card. Everything else tears down with no round-trip.
+    const backendOwnsStream = needsBackendConfirmation({ isActiveConversation, hasOpenQuestion })
+      ? await this.backendStillOwns(convId)
+      : null
+
+    const outcome = resolveSafetyTimeout({
+      // Re-read: state can have moved on across the await above.
+      stillStreaming: get().streamingConversationIds.has(convId),
+      isActiveConversation,
+      hasOpenQuestion,
+      backendOwnsStream
+    })
+    if (outcome === 'ignore') return
+    if (outcome === 'defer') {
+      rendererLog.warn(
+        `Safety timeout: conversation ${convId} silent for 2 minutes but main still owns the ` +
+          `stream and a question is open — re-arming instead of clearing the card`
+      )
+      this.resetSafetyTimer(convId)
+      return
+    }
+
+    rendererLog.warn(`Safety timeout: conversation ${convId} stuck for 2 minutes — force-resetting`)
+
+    // STREAM-SAFETY-ORPHAN-01: Commit whatever was already streamed.
+    // Clearing conversationStreams below drops the per-conversation buffer
+    // but leaves the TOP-LEVEL streamingContent/segments/toolActivities
+    // untouched — and stopGeneration reads exactly those. That is how a
+    // timed-out turn's text vanished from the transcript and then came
+    // back inside a "⏹ stopped" bubble on the next Stop. Committing it
+    // here means it is either shown once or not at all.
+    // Only for the active conversation: the globals belong to whatever is
+    // on screen, and flushStreamingIntoMessage commits to that same
+    // conversation. Like the pre-question and stopped bubbles, this is a
+    // client-only message — main persists its own copy of the turn, so
+    // saving it here would duplicate the text after a reload.
+    if (get().activeConversation?.id === convId) {
+      flushStreamingIntoMessage(get, set, 'safety-timeout')
+    }
+
+    // STREAM-SAFETY-PARTIAL-01: Also clear activeRequestId so late chunks
+    // from the timed-out request are rejected instead of silently accepted.
+    // MULTI-CHAT-05: Only remove THIS timed-out conversation from
+    // streamingConversationIds — other conversations may still be
+    // legitimately streaming in the background.
+    const currentIds = this.storeGet?.().streamingConversationIds ?? new Set<string>()
+    const newIds = new Set(currentIds)
+    newIds.delete(convId)
+    // GAP-R7-1: Clean up stashed streaming state for the timed-out conversation.
+    // Without this, the stash retains isStreaming: true, causing BUG-R7-1 (locked
+    // input when the user switches to this conversation).
+    const currentStreams =
+      this.storeGet?.().conversationStreams ?? new Map<string, PerConversationStreamState>()
+    const newStreams = new Map(currentStreams)
+    newStreams.delete(convId)
+    // BUG-R5-1: Derive isStreaming from active conv membership, not global set size.
+    // A background conv timing out shouldn't lock/unlock the active conv's input.
+    const activeId = this.storeGet?.()?.activeConversation?.id
+    // IMP-R6-1: Only reset conversationState/activeRequestId if the timed-out
+    // conv is the active one. A background conv timing out shouldn't clear
+    // the active conv's phase label or request tracking.
+    const isActiveConv = activeId === convId
+    // WEDGE-FIX: release the send flag too. `sendingConversationIds`
+    // drives the composer lock and the Stop button independently of
+    // `isStreaming`; if the stream dies silently after the 30s reconcile
+    // declined, clearing only the streaming state removes the thinking
+    // indicator but leaves the composer permanently disabled.
+    const currentSending = this.storeGet?.().sendingConversationIds ?? new Set<string>()
+    const newSending = new Set(currentSending)
+    newSending.delete(convId)
+    this.storeSet?.({
+      isStreaming: activeId ? newIds.has(activeId) : false,
+      ...(isActiveConv ? { activeRequestId: null } : {}),
+      streamingConversationIds: newIds,
+      sendingConversationIds: newSending,
+      conversationStreams: newStreams,
+      ...(isActiveConv
+        ? {
+            conversationState: {
+              phase: 'idle',
+              from: null,
+              event: null,
+              conversationId: null
+            }
+          }
+        : {}),
+      // STALL-DETECT-01: Clear stall flag on safety timeout.
+      // Use per-conversation matching (not isActiveConv) so background
+      // safety timeouts also clear their own stale stall flag.
+      ...(this.storeGet?.().streamStalledConversationId === convId
+        ? { streamStalledConversationId: null }
+        : {}),
+      // SAFETY-ORPHAN-QUESTIONS: Clear orphaned question cards on safety timeout.
+      // The backend is dead — answers can't be routed to the CLI anymore.
+      ...(isActiveConv
+        ? {
+            pendingQuestions: null,
+            pendingQuestionAction: null,
+            pendingQuestionRequestId: null
+          }
+        : {})
+    })
+  }
+
+  /**
+   * Ask main whether it still owns a stream for this conversation.
+   *
+   * A failed query counts as "gone": an unreachable main process is exactly the
+   * wedge the safety timeout exists to recover from, so the watchdog must not
+   * be disarmed by the very failure it is watching for.
+   */
+  private async backendStillOwns(
+    conversationId: string,
+    /** Injectable for tests — same seam as reconcileStopState's fetchStreamingState. */
+    fetchStreamingState: () => Promise<{
+      streams?: Array<{ conversationId: string }>
+    }> = () => window.api.getStreamingState()
+  ): Promise<boolean> {
+    try {
+      const state = await fetchStreamingState()
+      return !!state?.streams?.some((s) => s.conversationId === conversationId)
+    } catch (error) {
+      rendererLog.warn('[SAFETY-GATE-ALIVE] Streaming-state query failed:', error)
+      return false
+    }
   }
 }
 

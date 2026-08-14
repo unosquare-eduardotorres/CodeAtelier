@@ -521,6 +521,12 @@ export class AgentRecoveryManager {
     streamState: StreamLoopState
     mcpResult: AdapterMcpResult
     llmProvider: LLMProvider
+    /**
+     * The user stopped this turn. Steps 1 and 2 below can each dispatch a NEW
+     * turn, which is the opposite of what Stop means; only the completion work
+     * in step 3 still applies.
+     */
+    userCancelled?: boolean
   }): Promise<void> {
     const {
       conversationId,
@@ -530,7 +536,8 @@ export class AgentRecoveryManager {
       timedOut,
       streamState,
       mcpResult,
-      llmProvider
+      llmProvider,
+      userCancelled
     } = params
 
     if (!streamState.messageStopReceived && !this.s.circuitBreaker.isBroken && !timedOut) {
@@ -543,26 +550,33 @@ export class AgentRecoveryManager {
       `[PIPELINE:response-complete] conversationId=${conversationId} textLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
     )
 
-    // Step 1: Handle overload / max_turns auto-continue
-    const overloadResult = await this.handleOverloadOrMaxTurns({
-      streamState,
-      conversationId,
-      systemPrompt,
-      isBuildMode,
-      mcpResult,
-      llmProvider,
-      recoveryDepth
-    })
-    if (overloadResult === 'handled') return
+    if (userCancelled) {
+      this.s.log.info(
+        `[PIPELINE:cancelled-finalize] conversationId=${conversationId} — skipping ` +
+          'auto-continue and recovery nudge; completing the turn as stopped'
+      )
+    } else {
+      // Step 1: Handle overload / max_turns auto-continue
+      const overloadResult = await this.handleOverloadOrMaxTurns({
+        streamState,
+        conversationId,
+        systemPrompt,
+        isBuildMode,
+        mcpResult,
+        llmProvider,
+        recoveryDepth
+      })
+      if (overloadResult === 'handled') return
 
-    // Step 2: Plan-mode tool-block recovery + nudge
-    await this.attemptStreamRecovery({
-      streamState,
-      conversationId,
-      systemPrompt,
-      isBuildMode,
-      timedOut
-    })
+      // Step 2: Plan-mode tool-block recovery + nudge
+      await this.attemptStreamRecovery({
+        streamState,
+        conversationId,
+        systemPrompt,
+        isBuildMode,
+        timedOut
+      })
+    }
 
     // Step 3: Summary capture, intent detection, completion
     this.captureSummaryAndIntents(conversationId, llmProvider, recoveryDepth)

@@ -12,8 +12,68 @@ import { setupElectronStub } from './electron-stub'
 setupElectronStub()
 
 void (async () => {
-  const { StreamMetricsAggregator, recordExternalToolActivity, getAndClearToolActivities } =
-    await import('../../ipc/chunk-router')
+  const {
+    StreamMetricsAggregator,
+    recordExternalToolActivity,
+    getAndClearToolActivities,
+    routeChunk,
+    flushTextBatcher
+  } = await import('../../ipc/chunk-router')
+
+  // ── Turn boundary separator ────────────────────────────────────────────────
+  // The renderer starts a new bubble on a turn_boundary, but the accumulator is
+  // what gets persisted. Without a separator, the text either side of a tool
+  // call fuses into one run-on sentence when the conversation is reloaded.
+
+  type RouteCtx = Parameters<typeof routeChunk>[0]
+  type RouteChunk = Parameters<typeof routeChunk>[1]
+
+  const makeCtx = (conversationId: string, initial = ''): RouteCtx =>
+    ({
+      mainWindow: { isDestroyed: () => false, webContents: { send: () => {} } },
+      conversationId,
+      role: 'specialist',
+      contentAccumulator: { value: initial }
+    }) as unknown as RouteCtx
+
+  const boundary = { type: 'turn_boundary', content: 'turn-1' } as RouteChunk
+
+  describe('chunk-router › turn_boundary accumulator separator', () => {
+    test('separates text fragments on either side of a boundary', () => {
+      const ctx = makeCtx('conv-boundary-1')
+      routeChunk(ctx, { type: 'text', content: 'via repo build script' } as RouteChunk)
+      routeChunk(ctx, boundary)
+      routeChunk(ctx, { type: 'text', content: 'Build succeeded.' } as RouteChunk)
+      flushTextBatcher('conv-boundary-1')
+
+      assert.equal(ctx.contentAccumulator.value, 'via repo build script\n\nBuild succeeded.')
+    })
+
+    test('leaves an empty accumulator untouched', () => {
+      const ctx = makeCtx('conv-boundary-2')
+      routeChunk(ctx, boundary)
+      flushTextBatcher('conv-boundary-2')
+
+      assert.equal(ctx.contentAccumulator.value, '')
+    })
+
+    test('does not double a separator that is already present', () => {
+      const ctx = makeCtx('conv-boundary-3', 'Done.\n\n')
+      routeChunk(ctx, boundary)
+      flushTextBatcher('conv-boundary-3')
+
+      assert.equal(ctx.contentAccumulator.value, 'Done.\n\n')
+    })
+
+    test('consecutive boundaries add at most one separator', () => {
+      const ctx = makeCtx('conv-boundary-4', 'Done.')
+      routeChunk(ctx, boundary)
+      routeChunk(ctx, boundary)
+      flushTextBatcher('conv-boundary-4')
+
+      assert.equal(ctx.contentAccumulator.value, 'Done.\n\n')
+    })
+  })
 
   // ── StreamMetricsAggregator ──────────────────────────────────────────────
 

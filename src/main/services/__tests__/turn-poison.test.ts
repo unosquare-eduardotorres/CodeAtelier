@@ -36,6 +36,30 @@ describe('isTurnPoisoned — stale-turn guard', () => {
   test('a single-chunk turn is enough to keep the session resumable', () => {
     assert.equal(isTurnPoisoned({ aborted: false, chunkCount: 1 }), false)
   })
+
+  test('a gracefully cancelled turn survives even with zero chunks', () => {
+    // Stop pressed before the first chunk: system/init yields nothing and the
+    // first heartbeat is 5s out, so chunkCount is legitimately 0. The CLI still
+    // closed the turn itself in response to the interrupt, so nothing is left
+    // unanswered and --resume stays correct.
+    assert.equal(
+      isTurnPoisoned({ aborted: false, chunkCount: 0, gracefullyCancelled: true }),
+      false
+    )
+  })
+
+  test('a gracefully cancelled turn with output is not poisoned either', () => {
+    assert.equal(
+      isTurnPoisoned({ aborted: false, chunkCount: 9, gracefullyCancelled: true }),
+      false
+    )
+  })
+
+  test('an abort still poisons even when a cancel was requested', () => {
+    // The escalation path: the interrupt was not honoured, so the process was
+    // torn down under the turn after all.
+    assert.equal(isTurnPoisoned({ aborted: true, chunkCount: 4, gracefullyCancelled: true }), true)
+  })
 })
 
 // ─── Standalone runner ──────────────────────────────────────────────────

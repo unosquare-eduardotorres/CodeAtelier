@@ -65,6 +65,17 @@ export type TerminalReason =
 
 // ── Spawn signature ──
 
+/**
+ * Mutable holder for a spawn's own temp system-prompt file.
+ *
+ * A box rather than a closure variable so the exit/error handlers can live as
+ * methods (and therefore be unit-testable) while still deleting only the file
+ * belonging to THEIR process.
+ */
+interface OwnedPromptFile {
+  file: string | null
+}
+
 /** The argv-baked flags of a live process. These cannot change without a respawn. */
 export interface SpawnSignature {
   model?: string
@@ -210,6 +221,27 @@ const WAIT_BREADCRUMB_MS = 60_000 // 1 minute
 const TIMEOUT_TICK_MS = 5_000
 
 /** Maximum character length for a /goal condition sent to the CLI. */
+/**
+ * How long `interrupt()` waits for the CLI to even acknowledge the request.
+ *
+ * Measured against claude 2.1.228: the `control_response` ack lands in 0-2ms and
+ * the turn's `result` in 2-8ms, whether the interrupt arrives during text
+ * generation or with a tool call in flight. 2s is therefore pure headroom — it
+ * elapses only when the CLI does not implement the subtype at all.
+ */
+const INTERRUPT_ACK_TIMEOUT_MS = 2000
+
+/**
+ * How long to wait for the turn to actually end once the CLI has ACKED.
+ *
+ * A `success` ack is proof the request was understood and the unwind is in
+ * progress, so the deadline is no longer about capability — it is about how long
+ * teardown takes on a loaded machine (MCP servers closing, swap pressure).
+ * Killing at 2s there would reintroduce the poisoning this whole path exists to
+ * avoid, on the machines least able to absorb it.
+ */
+const INTERRUPT_UNWIND_TIMEOUT_MS = 15_000
+
 const GOAL_MAX_CHARS = 4_000
 
 /** Words that, when a goal condition starts with them, collide with /goal subcommands. */
@@ -233,6 +265,14 @@ export class CLIExecutor {
    * "System prompt file not found: …" and a cascade of empty-exit turns.
    */
   private pendingSystemPromptFile: string | null = null
+  /**
+   * Contents of `pendingSystemPromptFile`, kept only until the spawn owns it.
+   *
+   * Lets verifySystemPromptFile() rebuild the file if it disappears between
+   * being written and being handed to spawn(). Dropped as soon as ownership
+   * transfers, so a ~20K string is never held for the life of a process.
+   */
+  private pendingSystemPromptContent: string | null = null
   /** Persisted NDJSON iterator — survives across turns so multi-turn stdin/stdout works */
   private ndjsonIterator: AsyncGenerator<Record<string, unknown>> | null = null
   /**
@@ -276,6 +316,63 @@ export class CLIExecutor {
    * fit the turn it is about to serve. Null while no process is running.
    */
   private spawnSignature: SpawnSignature | null = null
+
+  /**
+   * In-flight process termination, or null when nothing is dying.
+   *
+   * `killProcess()` drops `cliProcess` synchronously but the child can take
+   * seconds to actually exit (MCP servers tearing down, 5s SIGKILL
+   * escalation). Publishing the promise lets a concurrent spawn wait for the
+   * old process to be gone instead of racing it.
+   */
+  private killPromise: Promise<void> | null = null
+
+  /**
+   * In-flight graceful turn cancel, or null when none was requested.
+   *
+   * `interrupt()` writes the control request but must NOT read the reply: the
+   * NDJSON iterator is owned by the live `execute()` loop, and a second reader
+   * would steal messages from the turn it is cancelling. So the request parks a
+   * deferred here and the read loop settles it when the turn's `result` arrives
+   * (which the CLI emits within milliseconds of honouring the interrupt).
+   */
+  private pendingInterrupt: {
+    requestId: string
+    promise: Promise<boolean>
+    resolve: (graceful: boolean) => void
+    timer: ReturnType<typeof setTimeout>
+    acked: boolean
+  } | null = null
+
+  /**
+   * Whether THIS turn ended because the user cancelled it and the CLI complied.
+   *
+   * Reset at the start of every execute(). Read by AgentSessionService after the
+   * turn to tell a requested stop apart from a turn that produced nothing — they
+   * look identical at the boundary (no abort, possibly zero chunks) but only one
+   * of them leaves the CLI session unsafe to resume.
+   */
+  private turnGracefullyCancelled = false
+
+  /**
+   * Session ids this executor must never pass to `--resume`.
+   *
+   * A turn that was killed mid-flight, or that produced no output at all, left
+   * a user turn sitting unanswered inside the CLI session. `--resume` replays
+   * that session and the model answers the OLDEST unanswered turn — or, as seen
+   * on Windows, the resumed process dies in under a second with zero NDJSON and
+   * surfaces as "CLI produced no output (empty-exit, exit null)".
+   *
+   * AgentSessionService already drops such a session from its map (see
+   * recordTurnBoundary), but that bookkeeping sits several layers above the
+   * spawn. This set is the guard at the point of use: even if the boundary is
+   * never recorded — the failure actually observed in the field, where
+   * `[turn:end]` never logged — argv still cannot name the dead session.
+   */
+  private readonly poisonedSessionIds = new Set<string>()
+
+  /** Cap on `poisonedSessionIds` — only the most recent ids can still be resumed. */
+  private static readonly MAX_POISONED_SESSIONS = 32
 
   /**
    * Rejects as soon as the current child process exits or errors.
@@ -325,6 +422,26 @@ export class CLIExecutor {
   /** Get the captured session ID */
   getSessionId(): string | undefined {
     return this.sessionId
+  }
+
+  /**
+   * Mark a CLI session as unsafe to resume. Idempotent; ignores empty ids.
+   *
+   * Called from this executor's own kill/empty-turn paths and from
+   * AgentSessionService.recordTurnBoundary, so the guard holds whichever of the
+   * two notices the bad turn first.
+   */
+  markSessionPoisoned(sessionId: string | undefined | null, reason: string): void {
+    if (!sessionId || this.poisonedSessionIds.has(sessionId)) return
+    this.poisonedSessionIds.add(sessionId)
+    executorLog.warn(`[CLI:poisoned-session] ${sessionId} will not be resumed — ${reason}`)
+    // Insertion-ordered eviction. Old ids only matter until the session is
+    // abandoned for good, so keeping the last few dozen is ample.
+    while (this.poisonedSessionIds.size > CLIExecutor.MAX_POISONED_SESSIONS) {
+      const oldest = this.poisonedSessionIds.values().next().value
+      if (oldest === undefined) break
+      this.poisonedSessionIds.delete(oldest)
+    }
   }
 
   /** Tool calls dispatched but not yet resolved. Empty when idle. */
@@ -524,6 +641,8 @@ export class CLIExecutor {
     this.lastStderrError = null
     this.lastExitCode = null
     this.betasRejected = false
+    // Belongs to the turn about to run, not the one that just ended.
+    this.turnGracefullyCancelled = false
 
     heartbeat.start()
 
@@ -681,6 +800,19 @@ export class CLIExecutor {
             state.sessionId = this.sessionId
           }
 
+          // The CLI's reply to our interrupt request rides the same stream.
+          // normalizeMessage has no case for it, so consume it here.
+          if (msg.type === 'control_response') {
+            this.handleControlResponse(msg)
+          }
+
+          // A turn cancelled by interrupt() ends as `is_error` /
+          // `error_during_execution` — that is the requested outcome, not a
+          // failure, so tell the normalizer before it classifies the result.
+          if (msg.type === 'result' && this.pendingInterrupt) {
+            state.userInterrupted = true
+          }
+
           // Delegate to existing stream normalizer — same NDJSON format
           yield* normalizeMessage(msg, tools, tokens, state, options.cwd)
 
@@ -691,6 +823,9 @@ export class CLIExecutor {
           if (msg.type === 'result') {
             this.cliReadyForInput = true
             this.goalQueuedForTurn = false
+            // The turn is over and the process is alive and ready for input —
+            // exactly the state a graceful cancel was asking for.
+            this.settleInterrupt(true)
             // A finished turn owns no live permission prompt: the CLI already
             // resolved (or auto-denied) it. Leaving the entry resident would
             // keep the wall clock suspended for every later turn.
@@ -770,6 +905,10 @@ export class CLIExecutor {
           `[CLI:empty-turn] reason=${emptyTurn.reason} exitCode=${this.lastExitCode ?? 'null'} ` +
             `— process produced zero NDJSON messages`
         )
+        // Resuming this session produced nothing at all. Retrying the same
+        // `--resume` just repeats the failure, which is exactly the cascade of
+        // empty-exit turns seen after a Stop on Windows.
+        this.markSessionPoisoned(options.resume, `resume yielded zero output (${emptyTurn.reason})`)
         telemetry.recordFailure(new Error(emptyTurn.message))
         yield { type: 'error', error: emptyTurn.message }
       }
@@ -901,6 +1040,134 @@ export class CLIExecutor {
   }
 
   /**
+   * Cancel the turn in flight the way the CLI's own ESC does: an in-band
+   * `interrupt` control request, not a signal.
+   *
+   * The process survives, the CLI records the interruption in its own
+   * transcript, and the next message is an ordinary stdin write — so nothing is
+   * left unanswered and the session stays resumable. Killing instead leaves the
+   * user turn dangling, which is what `--resume` then replays.
+   *
+   * Resolves `true` once the turn actually ended (the read loop settles it on
+   * `result`), `false` if the CLI did not unwind within `timeoutMs` — the
+   * caller is then expected to escalate to `killProcess()`.
+   */
+  async interrupt(timeoutMs = INTERRUPT_ACK_TIMEOUT_MS): Promise<boolean> {
+    // A second Stop press joins the first request rather than issuing another.
+    if (this.pendingInterrupt) return this.pendingInterrupt.promise
+
+    if (!this.isAlive() || !this.cliProcess?.stdin) {
+      executorLog.warn('[CLI:interrupt] No live process — nothing to interrupt')
+      return false
+    }
+    // Between turns there is no turn to cancel, and the CLI would have nothing
+    // to reply to — the deferred would sit until it timed out.
+    if (this.cliReadyForInput) {
+      executorLog.info('[CLI:interrupt] CLI is idle between turns — nothing to cancel')
+      return false
+    }
+
+    const requestId = `int_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
+    let resolve: (graceful: boolean) => void = () => {}
+    const promise = new Promise<boolean>((r) => {
+      resolve = r
+    })
+    const timer = setTimeout(() => {
+      executorLog.warn(
+        `[CLI:interrupt] ${requestId} — no acknowledgement within ${timeoutMs}ms ` +
+          '(CLI may not support the interrupt subtype); caller must escalate'
+      )
+      this.settleInterrupt(false)
+    }, timeoutMs)
+    // Never hold the event loop open purely for the escalation timer.
+    timer.unref?.()
+    this.pendingInterrupt = { requestId, promise, resolve, timer, acked: false }
+
+    executorLog.info(`[CLI:interrupt] Requesting graceful turn cancel (${requestId})`)
+    writeNdjsonMessage(this.cliProcess.stdin, {
+      type: 'control_request',
+      request_id: requestId,
+      request: { subtype: 'interrupt' }
+    })
+
+    return promise
+  }
+
+  /**
+   * Settle a pending interrupt exactly once.
+   *
+   * `graceful: true` comes from the read loop seeing the turn's `result`;
+   * `false` from the escalation timer or from the process going away, both of
+   * which mean the caller still owns the teardown.
+   */
+  private settleInterrupt(graceful: boolean): void {
+    const pending = this.pendingInterrupt
+    if (!pending) return
+    this.pendingInterrupt = null
+    clearTimeout(pending.timer)
+    if (graceful) this.turnGracefullyCancelled = true
+    executorLog.info(`[CLI:interrupt] settled graceful=${graceful}`)
+    pending.resolve(graceful)
+  }
+
+  /**
+   * Consume the CLI's reply to our interrupt control_request.
+   *
+   * Two outcomes matter. A `success` ack proves the CLI understood the request,
+   * so the deadline switches from "does this build support interrupt at all"
+   * (2s) to "how long is teardown taking" (15s). An `error` ack — what an older
+   * build that never learned the subtype replies — is a definitive no, and
+   * waiting out the timeout for it would make every Stop slower than the kill it
+   * replaced.
+   */
+  private handleControlResponse(msg: Record<string, unknown>): void {
+    const pending = this.pendingInterrupt
+    if (!pending) return
+    const response = msg.response as Record<string, unknown> | undefined
+    if (!response) return
+    // The id lives on the inner response object (verified against 2.1.228).
+    const requestId = (response.request_id ?? msg.request_id) as string | undefined
+    if (requestId && requestId !== pending.requestId) return
+
+    const subtype = response.subtype as string | undefined
+    if (subtype === 'error') {
+      const detail = (response.error as string | undefined) ?? 'no detail'
+      executorLog.warn(
+        `[CLI:interrupt] ${pending.requestId} rejected by the CLI (${detail}) — escalating now`
+      )
+      this.settleInterrupt(false)
+      return
+    }
+    if (subtype !== 'success' || pending.acked) return
+
+    pending.acked = true
+    clearTimeout(pending.timer)
+    const timer = setTimeout(() => {
+      executorLog.warn(
+        `[CLI:interrupt] ${pending.requestId} acked but the turn did not end within ` +
+          `${INTERRUPT_UNWIND_TIMEOUT_MS}ms; caller must escalate`
+      )
+      this.settleInterrupt(false)
+    }, INTERRUPT_UNWIND_TIMEOUT_MS)
+    timer.unref?.()
+    pending.timer = timer
+    executorLog.info(`[CLI:interrupt] ${pending.requestId} acknowledged — awaiting turn end`)
+  }
+
+  /**
+   * Whether the turn that just finished ended because interrupt() was honoured.
+   * Valid until the next execute() resets it.
+   */
+  wasTurnGracefullyCancelled(): boolean {
+    return this.turnGracefullyCancelled
+  }
+
+  /** Whether a graceful turn cancel is awaiting the CLI's unwind. */
+  isInterruptPending(): boolean {
+    return this.pendingInterrupt !== null
+  }
+
+  /**
    * Kill the active CLI process. SIGTERM first (closes stdout so any pending
    * iterator `.next()` settles), then close the async generator, then wait for
    * exit with a 5s SIGKILL escalation.
@@ -912,7 +1179,26 @@ export class CLIExecutor {
    * deadlock when the CLI was idle after emitting a result.
    */
   async killProcess(): Promise<void> {
-    if (!this.cliProcess) return
+    // Whatever the interrupt was waiting for is not coming: this is the
+    // escalation, so report it as the non-graceful outcome it is.
+    this.settleInterrupt(false)
+
+    if (!this.cliProcess) {
+      // The process field is cleared SYNCHRONOUSLY below, so "no process" does
+      // not mean "nothing is dying". Without joining the in-flight termination,
+      // spawnCLIProcess's `await this.killProcess()` guard returns immediately
+      // and the new child races the old one's teardown.
+      if (this.killPromise) await this.killPromise
+      return
+    }
+
+    // A kill lands mid-turn whenever the CLI has not reported back that it is
+    // ready for input again (user Stop, workspace switch, recovery nudge,
+    // respawn). The user turn it was answering stays unanswered in the CLI
+    // session, so that session must never be resumed.
+    if (!this.cliReadyForInput) {
+      this.markSessionPoisoned(this.sessionId, 'process killed mid-turn')
+    }
 
     // Anything still pending is real work that will never report back. Record it
     // so execute() can surface it as failed instead of leaving it at 'running'.
@@ -957,7 +1243,7 @@ export class CLIExecutor {
     }
 
     // Step 3: Wait for process exit with 5s SIGKILL escalation.
-    return new Promise<void>((resolve) => {
+    const termination = new Promise<void>((resolve) => {
       // No prompt-file cleanup here: the file belongs to `proc`, and proc's own
       // 'exit' handler (wired in spawnCLIProcess) deletes it. Doing it from
       // killProcess is what allowed a terminated process to unlink the file a
@@ -980,6 +1266,14 @@ export class CLIExecutor {
       // If process already exited from SIGTERM, 'exit' fires immediately.
       // If not, forceKillTimer will escalate.
     })
+
+    // Published so a concurrent caller (the next turn's spawn) can join it.
+    this.killPromise = termination
+    try {
+      await termination
+    } finally {
+      if (this.killPromise === termination) this.killPromise = null
+    }
   }
 
   // ── Private helpers ──
@@ -1009,6 +1303,94 @@ export class CLIExecutor {
   }
 
   /**
+   * Terminate one specific child. Used by a turn's abort listener, which must
+   * never reach a process spawned for a LATER turn: pressing Stop and then
+   * sending a new message would otherwise kill the new turn's process.
+   */
+  private async killChild(child: ChildProcess): Promise<void> {
+    if (this.cliProcess !== child) {
+      // Already superseded — its own termination path owns it now. Kill it
+      // directly (best-effort) without touching current executor state.
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        /* already dead */
+      }
+      return
+    }
+    await this.killProcess()
+  }
+
+  /**
+   * `exit` handler for ONE child.
+   *
+   * The identity guard is the whole point. A killed CLI takes time to die (MCP
+   * child servers must tear down, and SIGKILL escalation is 5s out), so its
+   * `exit` routinely lands AFTER the next turn has spawned a replacement.
+   * Without the guard that late event nulls `cliProcess`, destroys the CURRENT
+   * process's stdout, overwrites `lastExitCode` with the killed process's null,
+   * and disarms the live read — surfacing as
+   * "CLI produced no output (empty-exit, exit null)" on the message the user
+   * sent right after pressing Stop.
+   */
+  private handleChildExit(
+    child: ChildProcess,
+    owned: OwnedPromptFile,
+    code: number | null,
+    signal: NodeJS.Signals | null
+  ): void {
+    const isCurrent = this.cliProcess === child
+    executorLog.info(
+      `[CLI:exit] code=${code} signal=${signal}` +
+        (isCurrent ? '' : ' (superseded process — live executor state left untouched)')
+    )
+
+    // EXEC-03: Clean up this process's own temp system prompt file on
+    // natural exit/crash. Scoped to the owned path so a later spawn's file
+    // survives — deleting shared state here is what caused the
+    // "System prompt file not found" cascade.
+    this.deleteSystemPromptFile(owned.file)
+    owned.file = null
+
+    // Break any in-flight read. 'exit' does not imply stdout has ended — an
+    // inherited fd can hold it open — so destroying it is what actually lets
+    // parseNdjsonStream's `for await` finish. Always THIS child's stdout:
+    // reading the field here is what destroyed the successor's stream.
+    try {
+      child.stdout?.destroy()
+    } catch {
+      /* already torn down */
+    }
+
+    if (!isCurrent) return
+
+    this.lastExitCode = code
+    this.cliProcess = null
+    this.spawnSignature = null
+    // A dead child can never end its turn gracefully.
+    this.settleInterrupt(false)
+    this.disarmExitSignal(
+      `CLI process exited (code=${code} signal=${signal}) while awaiting output`
+    )
+    this.clearHumanDecisions(`CLI process exited (code=${code} signal=${signal})`)
+  }
+
+  /** `error` handler for ONE child — identity-guarded, see handleChildExit. */
+  private handleChildError(child: ChildProcess, owned: OwnedPromptFile, err: Error): void {
+    const isCurrent = this.cliProcess === child
+    executorLog.error(`[CLI:error]${isCurrent ? '' : ' (superseded process)'}`, err)
+    // EXEC-03: Clean up this process's own temp system prompt file
+    this.deleteSystemPromptFile(owned.file)
+    owned.file = null
+    if (!isCurrent) return
+    this.cliProcess = null
+    this.spawnSignature = null
+    this.settleInterrupt(false)
+    this.disarmExitSignal(`CLI process error while awaiting output: ${err.message}`)
+    this.clearHumanDecisions(`CLI process error: ${err.message}`)
+  }
+
+  /**
    * Spawn a fresh CLI process, wire abort/stderr/exit handlers, and write
    * the initial user message to stdin.
    * Extracted from execute() — cohesive process lifecycle setup concern.
@@ -1022,9 +1404,12 @@ export class CLIExecutor {
     // Owned by THIS spawn only. buildCLIArgs writes the file and parks it on
     // this.pendingSystemPromptFile; ownership moves here once spawn() succeeds,
     // and the exit/error handlers below close over this binding.
-    let ownedSystemPromptFile: string | null = null
+    const owned: OwnedPromptFile = { file: null }
 
     const args = this.buildCLIArgs(options)
+    // argv now names the prompt file — confirm it is still there before handing
+    // it to a process that cannot tell us anything except exit 1.
+    this.verifySystemPromptFile()
     const env = this.buildProcessEnv(options)
 
     executorLog.info(
@@ -1043,21 +1428,24 @@ export class CLIExecutor {
 
     // EXEC-02: Guard spawn() — throws synchronously (ENOENT/ENOEXEC) if 'claude'
     // is not in PATH or is not a valid executable.
+    let child: ChildProcess
     try {
-      this.cliProcess = spawn('claude', args, {
+      child = spawn('claude', args, {
         cwd: options.cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         detached: false,
         windowsHide: true
       })
+      this.cliProcess = child
       // Arm before any handler can fire, so an immediate spawn failure still
       // has a signal to reject.
       this.armExitSignal()
       // Transfer prompt-file ownership to this process. From here only this
       // process's exit/error handler may unlink it.
-      ownedSystemPromptFile = this.pendingSystemPromptFile
+      owned.file = this.pendingSystemPromptFile
       this.pendingSystemPromptFile = null
+      this.pendingSystemPromptContent = null
       // Record what this process was actually spawned with. buildCLIArgs bakes
       // these into argv, so every later turn served off stdin inherits them.
       this.spawnSignature = {
@@ -1072,6 +1460,7 @@ export class CLIExecutor {
       // file, so drop it here rather than leaving it for the 24h stale sweeper.
       this.deleteSystemPromptFile(this.pendingSystemPromptFile)
       this.pendingSystemPromptFile = null
+      this.pendingSystemPromptContent = null
       const code = (err as NodeJS.ErrnoException).code
       const message = (err as Error).message
       this.lastStderrError = `Failed to spawn claude CLI: ${message}`
@@ -1089,12 +1478,14 @@ export class CLIExecutor {
     if (options.abortController) {
       const signal = options.abortController.signal
       if (signal.aborted) {
-        this.cliProcess.kill('SIGTERM')
+        child.kill('SIGTERM')
       } else {
         signal.addEventListener(
           'abort',
           () => {
-            this.killProcess()
+            // Kill THIS child, not whatever is current. A turn's abort must
+            // never reach a process spawned for a later turn.
+            void this.killChild(child)
           },
           { once: true }
         )
@@ -1102,7 +1493,7 @@ export class CLIExecutor {
     }
 
     // Log stderr — upgrade to ERROR level for patterns that indicate real failures
-    this.cliProcess.stderr?.on('data', (data: Buffer) => {
+    child.stderr?.on('data', (data: Buffer) => {
       const text = data.toString('utf-8').trim()
       if (!text) return
       // The CLI silently drops `--betas` on subscription logins. Record it so an
@@ -1119,46 +1510,11 @@ export class CLIExecutor {
     })
 
     // Handle process exit
-    this.cliProcess.on('exit', (code, signal) => {
-      executorLog.info(`[CLI:exit] code=${code} signal=${signal}`)
-      this.lastExitCode = code
-      // EXEC-03: Clean up this process's own temp system prompt file on
-      // natural exit/crash. Scoped to the owned path so a later spawn's file
-      // survives — deleting shared state here is what caused the
-      // "System prompt file not found" cascade.
-      this.deleteSystemPromptFile(ownedSystemPromptFile)
-      ownedSystemPromptFile = null
-      const exited = this.cliProcess
-      this.cliProcess = null
-      this.spawnSignature = null
-      // Break any in-flight read. 'exit' does not imply stdout has ended — an
-      // inherited fd can hold it open — so destroying it is what actually lets
-      // parseNdjsonStream's `for await` finish. The signal covers the case
-      // where even that doesn't land.
-      try {
-        exited?.stdout?.destroy()
-      } catch {
-        /* already torn down */
-      }
-      this.disarmExitSignal(
-        `CLI process exited (code=${code} signal=${signal}) while awaiting output`
-      )
-      this.clearHumanDecisions(`CLI process exited (code=${code} signal=${signal})`)
-    })
-
-    this.cliProcess.on('error', (err) => {
-      executorLog.error('[CLI:error]', err)
-      // EXEC-03: Clean up this process's own temp system prompt file
-      this.deleteSystemPromptFile(ownedSystemPromptFile)
-      ownedSystemPromptFile = null
-      this.cliProcess = null
-      this.spawnSignature = null
-      this.disarmExitSignal(`CLI process error while awaiting output: ${err.message}`)
-      this.clearHumanDecisions(`CLI process error: ${err.message}`)
-    })
+    child.on('exit', (code, signal) => this.handleChildExit(child, owned, code, signal))
+    child.on('error', (err) => this.handleChildError(child, owned, err))
 
     // Write the initial user message to stdin
-    if (this.cliProcess.stdin) {
+    if (child.stdin) {
       await this.writeToStdin(buildUserMessage(options.prompt))
 
       // Queue /goal as a second stdin message (spawn path) — enforce mode only
@@ -1268,8 +1624,14 @@ export class CLIExecutor {
       args.push('--system-prompt-file', promptFilePath)
     }
 
-    // Session resume — validate format before passing to CLI
-    if (options.resume) {
+    // Session resume — refuse poisoned sessions, then validate format
+    const resumeBlocked = !!options.resume && this.poisonedSessionIds.has(options.resume)
+    if (resumeBlocked) {
+      executorLog.warn(
+        `[CLI:poisoned-resume] Refusing --resume ${options.resume} — that session was left with ` +
+          `an unanswered user turn; this spawn starts a fresh session instead`
+      )
+    } else if (options.resume) {
       if (/^[a-zA-Z0-9_-]{8,}$/.test(options.resume)) {
         args.push('--resume', options.resume)
       } else {
@@ -1279,8 +1641,10 @@ export class CLIExecutor {
       }
     }
 
-    // Resume at specific message (undo support)
-    if (options.resumeSessionAt) {
+    // Resume at specific message (undo support). Meaningless without --resume,
+    // and actively wrong when the resume was refused: it would point a fresh
+    // session at a message inside the abandoned one.
+    if (options.resumeSessionAt && !resumeBlocked) {
       args.push('--resume-session-at', options.resumeSessionAt)
     }
 
@@ -1359,7 +1723,46 @@ export class CLIExecutor {
     const filePath = join(dir, `system-prompt-${Date.now()}-${randomUUID().slice(0, 8)}.md`)
     writeFileSync(filePath, prompt, 'utf-8')
     this.pendingSystemPromptFile = filePath
+    this.pendingSystemPromptContent = prompt
     return filePath
+  }
+
+  /**
+   * Make sure the `--system-prompt-file` about to be baked into argv still
+   * exists on disk.
+   *
+   * The CLI opens that file after startup, so a file removed in the window
+   * between write and spawn produces `System prompt file not found: …`, exit 1,
+   * and a turn with zero NDJSON output — which reaches the user as "CLI
+   * produced no output". Windows makes the window easier to hit: a SIGTERM
+   * there is an immediate terminate, so a dying process's cleanup can run
+   * arbitrarily interleaved with the next spawn's setup.
+   *
+   * Per-spawn ownership means nothing inside this executor should be able to
+   * unlink the file — so if it is gone, something outside did it. Rebuild it
+   * from the content still in hand, and if even that is impossible, fail loudly
+   * here rather than let the CLI die silently a second later.
+   */
+  private verifySystemPromptFile(): void {
+    const filePath = this.pendingSystemPromptFile
+    if (!filePath || existsSync(filePath)) return
+
+    executorLog.error(
+      `[CLI:prompt-file-missing] ${filePath} disappeared between write and spawn — rebuilding`
+    )
+    if (this.pendingSystemPromptContent === null) {
+      throw new Error(
+        `System prompt file disappeared before spawn and cannot be rebuilt: ${filePath}`
+      )
+    }
+    try {
+      writeFileSync(filePath, this.pendingSystemPromptContent, 'utf-8')
+    } catch (err) {
+      throw new Error(
+        `System prompt file disappeared before spawn and could not be rewritten: ${filePath} ` +
+          `(${(err as Error).message})`
+      )
+    }
   }
 
   /**

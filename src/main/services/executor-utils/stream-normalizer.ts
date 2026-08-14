@@ -32,6 +32,15 @@ export interface StreamState {
    * result text exceeds what was actually streamed (interrupted / partial streams).
    */
   streamedTextLength: number
+  /**
+   * The turn is ending because the user asked for it (CLIExecutor.interrupt()).
+   *
+   * A honoured interrupt closes the turn with `is_error: true` /
+   * `error_during_execution` — identical in shape to a genuine failure. Set by
+   * the executor when it has an interrupt in flight, so a user-requested Stop
+   * does not surface as "Execution stopped: error_during_execution".
+   */
+  userInterrupted?: boolean
 }
 
 /**
@@ -367,7 +376,7 @@ export function* normalizeMessage(
     const subtype = msg.subtype as string | undefined
     const isError = msg.is_error as boolean | undefined
 
-    if (isError && subtype && subtype !== 'success') {
+    if (isError && subtype && subtype !== 'success' && !state.userInterrupted) {
       const errorDetail =
         subtype === 'error_max_budget_usd'
           ? 'budget cap exceeded'
@@ -378,6 +387,10 @@ export function* normalizeMessage(
               : subtype
       executorLog.warn(`[TELEMETRY:result-error] subtype=${subtype} detail=${errorDetail}`)
       yield { type: 'error', error: `Execution stopped: ${errorDetail}` }
+    } else if (isError && state.userInterrupted) {
+      executorLog.info(
+        `[TELEMETRY:result-interrupted] subtype=${subtype ?? 'none'} — turn cancelled by user, not an error`
+      )
     }
 
     state.resultText = msg.result as string | undefined
