@@ -96,15 +96,55 @@ async function handleWorkspaceCreate(
 async function handleWorkspaceOpen(
   id: string
 ): Promise<ReturnType<typeof workspaceRepository.updateLastOpened>> {
-  const workspace = workspaceRepository.updateLastOpened(id)
-  if (!workspace) {
+  const opened = workspaceRepository.updateLastOpened(id)
+  if (!opened) {
     throw new Error(`Workspace not found: ${id}`)
   }
+  let workspace = opened
 
   try {
     await repoService.ensureOwnRepo(workspace.repoPath)
   } catch (e) {
     dbLogger.warn('ensureOwnRepo on workspace open failed (non-fatal):', e)
+  }
+
+  // Re-check git-ness on every open. The flag was written once at registration,
+  // so a directory that became a repo afterwards — by hand, or via an auto-init
+  // that failed the first time — stayed marked "not a repo" permanently, which
+  // shows up as "No git repository" in the status bar on a repo that plainly is
+  // one. Runs after ensureOwnRepo so an init performed just above is picked up.
+  try {
+    let isGitRepo = false
+    try {
+      const top = (await simpleGit(workspace.repoPath).revparse(['--show-toplevel'])).trim()
+      isGitRepo = resolve(top) === resolve(workspace.repoPath)
+    } catch {
+      /* not a repo, or git unavailable — falls through as false */
+    }
+    if (isGitRepo !== workspace.isGitRepo) {
+      workspace = workspaceRepository.updateIsGitRepo(workspace.id, isGitRepo) ?? workspace
+      dbLogger.info(
+        `Workspace ${workspace.id} is_git_repo corrected to ${isGitRepo} at ${workspace.repoPath}`
+      )
+    }
+  } catch (e) {
+    dbLogger.warn('is_git_repo refresh on workspace open failed (non-fatal):', e)
+  }
+
+  // Drop index scopes whose worktree no longer exists. Tracks are released by
+  // several paths (finish, discard, the reaper), and tying cleanup to each of
+  // them would leak a scope the first time a new one is added. Checking the
+  // directory is the one condition that is true however the tree went away, and
+  // deleting the row takes its graph rows with it via ON DELETE CASCADE.
+  try {
+    for (const shadow of workspaceRepository.findShadows(workspace.id)) {
+      if (!existsSync(shadow.repoPath)) {
+        workspaceRepository.delete(shadow.id)
+        dbLogger.info(`Pruned stale code-graph index scope for ${shadow.repoPath}`)
+      }
+    }
+  } catch (e) {
+    dbLogger.warn('Shadow index scope prune failed (non-fatal):', e)
   }
 
   try {

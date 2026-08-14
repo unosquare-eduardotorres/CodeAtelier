@@ -47,6 +47,7 @@ import { registerMpaIpc } from './mpa.ipc'
 import { registerPermissionIpc } from './permission.ipc'
 import { registerCouncilIpc } from './council.ipc'
 import { registerBlueprintIpc } from './blueprint.ipc'
+import { registerBlueprintHandoffIpc } from './blueprint-handoff.ipc'
 import { registerPlanIpc } from './plan.ipc'
 import { initSessionEventRouter } from '../services/session-event-router'
 import { registerStreamDiagnosticsIpc } from './chunk-router'
@@ -107,6 +108,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerPermissionIpc()
   registerCouncilIpc(mainWindow)
   registerBlueprintIpc(mainWindow)
+  registerBlueprintHandoffIpc()
   registerPlanIpc()
   registerStreamDiagnosticsIpc()
   registerTestingIpc(mainWindow)

@@ -13,6 +13,7 @@ interface WorkspaceRow {
   is_git_repo: number | null
   constitution_md: string | null
   constitution_version: string | null
+  shadow_of_workspace_id: string | null
 }
 
 function mapRow(row: WorkspaceRow): Workspace {
@@ -26,7 +27,8 @@ function mapRow(row: WorkspaceRow): Workspace {
     settingsJson: row.settings_json,
     isGitRepo: row.is_git_repo !== 0,
     constitutionMd: row.constitution_md ?? undefined,
-    constitutionVersion: row.constitution_version ?? undefined
+    constitutionVersion: row.constitution_version ?? undefined,
+    shadowOfWorkspaceId: row.shadow_of_workspace_id ?? undefined
   }
 }
 
@@ -47,10 +49,54 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
     return mapRow(row)
   }
 
+  /**
+   * Every *real* workspace, newest-opened first.
+   *
+   * Shadow rows (per-worktree index scopes) are excluded here rather than at the
+   * call sites: this is the enumeration the tray, the workspace picker, the
+   * landing service and session lookup all read, and a shadow surfacing in any
+   * of them would look like a duplicate workspace to the user.
+   */
   findAll(): Workspace[] {
     const db = this.db()
-    const stmt = db.prepare('SELECT * FROM workspaces ORDER BY last_opened_at DESC')
+    const stmt = db.prepare(
+      'SELECT * FROM workspaces WHERE shadow_of_workspace_id IS NULL ORDER BY last_opened_at DESC'
+    )
     const rows = stmt.all() as WorkspaceRow[]
+    return rows.map(mapRow)
+  }
+
+  /**
+   * The workspace-shaped row that scopes a worktree's own code-graph index.
+   *
+   * Created on demand and reused thereafter, keyed on the worktree path (which
+   * `repo_path` already makes unique). Callers pass the returned id wherever a
+   * workspace id scopes graph data, so the graph tables, their repositories and
+   * the MCP server stay entirely unaware that tracks exist.
+   */
+  ensureShadow(parentWorkspaceId: string, worktreePath: string, label: string): Workspace {
+    const db = this.db()
+    const existing = db
+      .prepare('SELECT * FROM workspaces WHERE repo_path = ?')
+      .get(worktreePath) as WorkspaceRow | undefined
+    if (existing) return mapRow(existing)
+
+    const row = db
+      .prepare(
+        `INSERT INTO workspaces (name, repo_path, is_git_repo, shadow_of_workspace_id)
+         VALUES (?, ?, 1, ?)
+         RETURNING *`
+      )
+      .get(label, worktreePath, parentWorkspaceId) as WorkspaceRow
+    return mapRow(row)
+  }
+
+  /** Shadow rows belonging to a workspace. */
+  findShadows(parentWorkspaceId: string): Workspace[] {
+    const db = this.db()
+    const rows = db
+      .prepare('SELECT * FROM workspaces WHERE shadow_of_workspace_id = ?')
+      .all(parentWorkspaceId) as WorkspaceRow[]
     return rows.map(mapRow)
   }
 
@@ -76,6 +122,25 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
       RETURNING *
     `)
     const row = stmt.get(id) as WorkspaceRow | undefined
+    return row ? mapRow(row) : undefined
+  }
+
+  /**
+   * Re-record whether the workspace is a git repository.
+   *
+   * `is_git_repo` was previously written once at registration and never revisited,
+   * so a directory that became a repo afterwards (`git init` by hand, or an
+   * auto-init that failed at registration time) stayed marked `false` forever.
+   * Returns undefined when the row is gone.
+   */
+  updateIsGitRepo(id: string, isGitRepo: boolean): Workspace | undefined {
+    const db = this.db()
+    const stmt = db.prepare(`
+      UPDATE workspaces SET is_git_repo = ?
+      WHERE id = ?
+      RETURNING *
+    `)
+    const row = stmt.get(isGitRepo ? 1 : 0, id) as WorkspaceRow | undefined
     return row ? mapRow(row) : undefined
   }
 

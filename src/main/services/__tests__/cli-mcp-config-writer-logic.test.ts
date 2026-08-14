@@ -272,16 +272,20 @@ describe('CliMcpConfigWriter.buildConfig', () => {
       assert.equal(inWorktree().mcpServers['control-actions'].env?.WORKSPACE_PATH, WORKTREE)
     })
 
-    test('code-graph stays on the primary tree — one index per repo', () => {
+    test('code-graph follows the execution tree too — a track is its own branch', () => {
       const cg = inWorktree().mcpServers['code-graph']
-      assert.equal(cg.env?.WORKSPACE_PATH, '/test/workspace')
-      // ...and says so, so the model discounts a stale answer instead of
-      // reading it as a fact about the files in front of it.
-      assert.equal(cg.env?.EXECUTION_PATH, WORKTREE)
+      // Pointing the graph at the primary tree meant an agent on a track's
+      // branch queried an index built from a different set of files, got
+      // nothing back, and could not tell that from "the symbol does not exist".
+      assert.equal(cg.env?.WORKSPACE_PATH, WORKTREE)
+      // Superseded by scoping the index itself; there is no stale tree to warn about.
+      assert.equal(cg.env?.EXECUTION_PATH, undefined)
     })
 
-    test('no staleness note when the agent is in the primary tree', () => {
+    test('code-graph is scoped to the primary workspace when not in a track', () => {
       const cg = buildConfig().mcpServers['code-graph']
+      assert.equal(cg.env?.WORKSPACE_PATH, '/test/workspace')
+      assert.equal(cg.env?.WORKSPACE_ID, 'ws-1')
       assert.equal(cg.env?.EXECUTION_PATH, undefined)
     })
   })

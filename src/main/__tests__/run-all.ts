@@ -213,6 +213,8 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Run 33: ESLint MCP tools ───
   '../services/__tests__/eslint-mcp-tools.test',
   '../services/__tests__/analyze-complexity.test',
+  '../services/__tests__/complexity-analyzer.test',
+  '../services/__tests__/dotnet-lint.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   '../services/__tests__/evaluation-mcp-config.test',
   '../services/__tests__/mpa-base-adapter.test',
@@ -625,6 +627,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/grill-prompt-blocks.test',
   '../services/__tests__/grill-prompt-builders.test',
   '../services/__tests__/handoff.service.test',
+  '../services/__tests__/blueprint-chat-handoff.test',
+  '../services/__tests__/blueprint-handoff-options.test',
   '../services/__tests__/heuristic-description-batch.test',
   '../services/__tests__/json-utils.test',
   '../services/__tests__/language-detector.test',
@@ -665,6 +669,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/components/workspace/memory/review/__tests__/word-diff.test',
   '../../renderer/src/components/workspace/integrations/__tests__/integration-readiness.test',
   '../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
+  '../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
   '../../renderer/src/components/chat/__tests__/message-identity.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, type JSX } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from 'react'
 import BlueprintFilterBar, { type BlueprintFilter } from './blueprints/BlueprintFilterBar'
 import { BookOpen, Plus, Send, SkipForward, AlertTriangle, X, PlayCircle } from 'lucide-react'
 import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
@@ -392,7 +392,7 @@ const lastViewedByWorkspace = new Map<string, string>()
 
 // ── BlueprintPage ──
 
-export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
+export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps): JSX.Element {
   const workspace = useWorkspaceStore((s) => s.activeWorkspace)
   const workspaceId = workspace?.id ?? ''
 
@@ -579,6 +579,28 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
       /* eslint-enable react-hooks/set-state-in-effect */
     }
   }, [pendingOnboard, workspaceId, isRunning, clearPendingOnboard, startBlueprint])
+
+  // ── Land on the finished run ──
+  //
+  // Nothing set `selectedId` when a pipeline ended on its own, so `getEffectiveView`
+  // fell through to whatever `viewState` happened to be — usually the create form
+  // the run was started from. The outcome summary and the hand-off card were then
+  // only reachable by going back to the list and clicking the run again, which is
+  // exactly the moment they exist for.
+  const wasRunningRef = useRef(false)
+  useEffect(() => {
+    const finishedId = useBlueprintStore.getState().currentBlueprint?.id
+    // `finishedId` is null after a workspace switch clears the store, which is
+    // what keeps that reset from reading as a completion.
+    if (wasRunningRef.current && !isRunning && finishedId) {
+      setSelectedId(finishedId)
+      setViewState('detail')
+      void loadBlueprint(finishedId)
+      hydrateTranscript(finishedId)
+      if (workspaceId) lastViewedByWorkspace.set(workspaceId, finishedId)
+    }
+    wasRunningRef.current = isRunning
+  }, [isRunning, loadBlueprint, hydrateTranscript, workspaceId])
 
   // ── Derive view state ──
   const effectiveView = getEffectiveView(viewState, isRunning, pendingApproval, selectedId)
@@ -965,7 +987,9 @@ export default function BlueprintPage(_props: BlueprintPageProps): JSX.Element {
             currentBlueprint={currentBlueprint}
             lastError={lastError}
             isRunning={isRunning}
+            workspaceId={workspaceId || null}
             onBack={handleBackFromDetail}
+            onNavigateToChat={onNavigateToChat}
             onRetryPhase={() => {
               if (selectedId && workspaceId) {
                 retryPhase(selectedId, workspaceId)

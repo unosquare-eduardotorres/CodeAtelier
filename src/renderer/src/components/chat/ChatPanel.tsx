@@ -15,6 +15,7 @@ import {
 } from '@renderer/components/chat'
 import { IMAGE_ONLY_FALLBACK_PROMPT } from '@renderer/hooks'
 import SessionRecoveryBanner from './SessionRecoveryBanner'
+import StagedHandoffBanner from './StagedHandoffBanner'
 import BlockedByBanner from './BlockedByBanner'
 import PermissionRetryBanner from './PermissionRetryBanner'
 import BudgetCapBanner from './BudgetCapBanner'
@@ -793,6 +794,8 @@ export default function ChatPanel({
                   }}
                 />
               )}
+
+              <StagedHandoffBanner conversationId={activeConversation.id} />
 
               <div className="flex-shrink-0 px-6 pb-4 pt-2">
                 <AttachmentDropzone

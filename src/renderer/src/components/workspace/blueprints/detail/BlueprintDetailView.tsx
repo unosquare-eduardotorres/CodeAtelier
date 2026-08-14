@@ -32,6 +32,7 @@ import { formatTimeAgo } from '../utils'
 import { BlueprintMarkdown } from '../BlueprintMarkdown'
 import { PhaseJourney } from './PhaseJourney'
 import { OutcomeSummary } from './OutcomeSummary'
+import { BlueprintHandoffCard } from './BlueprintHandoffCard'
 import { getOutcomeStats, formatDuration } from './phase-summaries'
 import { findArtifact } from '../deliverables/artifact-helpers'
 
@@ -79,8 +80,10 @@ interface BlueprintDetailViewProps {
   currentBlueprint: BlueprintWithDetails | null
   lastError: { blueprintId: string; message: string } | null
   isRunning: boolean
+  workspaceId: string | null
   onBack: () => void
   onRetryPhase: () => void
+  onNavigateToChat?: () => void
 }
 
 // ── Component ──
@@ -90,8 +93,10 @@ export function BlueprintDetailView({
   currentBlueprint,
   lastError,
   isRunning,
+  workspaceId,
   onBack,
-  onRetryPhase
+  onRetryPhase,
+  onNavigateToChat
 }: BlueprintDetailViewProps): JSX.Element {
   // All hooks must be called before any early returns (Rules of Hooks)
   const bp = currentBlueprint
@@ -387,6 +392,16 @@ export function BlueprintDetailView({
             </div>
           )
         })()}
+
+      {/* ── Continue in Chat (only once the run has produced something to hand over) ── */}
+      {!isRunning && bp.phases.some((p) => p.status === 'complete') && (
+        <BlueprintHandoffCard
+          blueprintId={bp.id}
+          blueprintTitle={bp.title}
+          workspaceId={workspaceId}
+          onNavigateToChat={onNavigateToChat}
+        />
+      )}
 
       {/* ── Phase Journey (replaces flat Phases + Tasks lists) ── */}
       <PhaseJourney phases={bp.phases} tasks={bp.tasks} autoExpandActive={true} />

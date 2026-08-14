@@ -49,6 +49,11 @@ export function isBuildRunning(execution: ExecutionLike | undefined | null): boo
  * the live build, including the 50-200ms gaps where `isStreaming` drops between
  * phases and a mid-build `emit_plan` has replaced the latest plan message.
  *
+ * Scope note: this now governs only the GoalCard's read-only/regenerate props,
+ * NOT action-bar visibility — that is `derivePlanBarState` below. The two differ
+ * on purpose: editing the goal of an already-actioned plan would desync it from
+ * the build in flight, while re-clicking Build is exactly what we want to allow.
+ *
  * `buildIdle` is what stops `isBuildRunning` from locking forever: models often
  * never emit the final `emit_phase_progress`, so a phase stays 'in_progress' and
  * `completedAt` is never set — without this the bar was hidden for every plan
@@ -64,4 +69,66 @@ export function isPlanLocked(input: {
   if (input.planAction) return true
   if (input.buildIdle) return false
   return isBuildRunning(input.execution)
+}
+
+// ── Action bar state ───────────────────────────────────────────────
+//
+// The bar used to be rendered behind `!planLocked && !isStreaming`, so both
+// operands failing produced *nothing on screen and no way forward*: an
+// unfinalized turn leaves `isStreaming` stuck true, which also stops the
+// `buildIdle` escape hatch from ever arming, so a phase left 'in_progress'
+// locked the bar until the app was restarted.
+//
+// The fix is to make every situation a named state with a rendering. Clicking a
+// button is explicitly NOT terminal — only a completed build is.
+
+export type PlanBarState =
+  | { kind: 'actionable' }
+  /** The agent is mid-turn — buttons visible but disabled. */
+  | { kind: 'working' }
+  /** Blocked on a tool permission or a question — the user must answer first. */
+  | { kind: 'awaiting_input' }
+  /** A phase is genuinely running. */
+  | { kind: 'building' }
+  /** This plan was actioned; the action can be repeated. */
+  | { kind: 'actioned'; action: string }
+  /** The stream stopped responding (STALL-DETECT-03). */
+  | { kind: 'stalled' }
+  /** Terminal: the build completed or emitted its summary. */
+  | { kind: 'done' }
+
+export interface PlanBarStateInput {
+  planAction: string | undefined | null
+  execution: ExecutionLike | undefined | null
+  /** chatStore.isStreaming — global, and stuck true for turns that never finalize. */
+  isStreaming?: boolean
+  /** 2s of genuine idle: an in-flight phase status past this point is stale. */
+  buildIdle?: boolean
+  /** chatStore.streamStalledConversationId matches this conversation. */
+  stalled?: boolean
+  /** A pending tool permission or pending questions are on screen. */
+  awaitingInput?: boolean
+  /** A build-summary block has landed for this build. */
+  buildSummarySeen?: boolean
+}
+
+/**
+ * Live reality outranks stale flags: `building`/`stalled`/`awaiting_input`/
+ * `working` are evaluated before the terminal states, so a rehydrated record
+ * can never claim "done" while the agent is visibly working.
+ *
+ * `done` is deliberately scoped to *this* plan (planAction 'build' + a
+ * completed execution, or an observed build summary). The execution record is
+ * per-conversation and outlives the build, so keying `done` off `completedAt`
+ * alone would mark every subsequent plan in the conversation as finished.
+ */
+export function derivePlanBarState(input: PlanBarStateInput): PlanBarState {
+  if (isBuildRunning(input.execution) && !input.buildIdle) return { kind: 'building' }
+  if (input.stalled) return { kind: 'stalled' }
+  if (input.awaitingInput) return { kind: 'awaiting_input' }
+  if (input.isStreaming) return { kind: 'working' }
+  if (input.buildSummarySeen) return { kind: 'done' }
+  if (input.planAction === 'build' && input.execution?.completedAt) return { kind: 'done' }
+  if (input.planAction) return { kind: 'actioned', action: input.planAction }
+  return { kind: 'actionable' }
 }

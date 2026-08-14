@@ -26,7 +26,8 @@ import {
   GripVertical,
   X,
   Target,
-  AlertTriangle
+  AlertTriangle,
+  RotateCw
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -43,7 +44,13 @@ import { PHASE_STATUS_ICON, statusDotColor } from './plan-status-icons'
 import { remarkStripStrayBackticks } from './remark-plugins'
 import { findPlanBlock, hasPlanBlock, hasBuildSummaryBlock } from './plan-detection'
 import type { SectionKey } from './task-plan/TaskPlanSections'
-import { BuildActionBar, usePlanMemos, buildSectionMap, isPlanLocked } from './task-plan'
+import {
+  BuildActionBar,
+  usePlanMemos,
+  buildSectionMap,
+  isPlanLocked,
+  derivePlanBarState
+} from './task-plan'
 import type { StructuredPlan, MemoryFact } from '../../../../shared/types'
 import {
   derivePlanTasks,
@@ -433,31 +440,56 @@ function PlanTabContent({
     [structuredPlan, planMemos, isSimplePlan, conversationId]
   )
 
-  // Check if action already taken for this plan
+  // Check if action already taken for this plan, and whether a build summary has
+  // landed since it (the terminal signal — `completedAt` only exists on a live
+  // IPC completion and is always absent on a hydrated record).
   const messages = useChatStore((s) => s.messages)
-  const latestPlanMsg = useMemo(() => {
+  const { latestPlanMsg, buildSummarySeen } = useMemo(() => {
+    let planIdx = -1
     for (let i = messages.length - 1; i >= 0; i--) {
-      if (
-        messages[i].role !== 'user' &&
-        messages[i].contentMd &&
-        hasPlanBlock(messages[i].contentMd) &&
-        !hasBuildSummaryBlock(messages[i].contentMd)
-      ) {
-        return messages[i]
+      const md = messages[i].contentMd
+      if (messages[i].role !== 'user' && md && hasPlanBlock(md) && !hasBuildSummaryBlock(md)) {
+        planIdx = i
+        break
       }
     }
-    return null
+    let summarySeen = false
+    for (let i = planIdx + 1; planIdx >= 0 && i < messages.length; i++) {
+      const md = messages[i].contentMd
+      if (messages[i].role !== 'user' && md && hasBuildSummaryBlock(md)) {
+        summarySeen = true
+        break
+      }
+    }
+    return { latestPlanMsg: planIdx >= 0 ? messages[planIdx] : null, buildSummarySeen: summarySeen }
   }, [messages])
 
   const planActionTaken = latestPlanMsg?.planAction
 
-  // Hide the action bar / lock the goal card when this specific plan has been
-  // actioned, or a build is actively running. See build-bar-visibility.ts for
-  // why neither `activeMode` nor `!!execution` is the right signal.
+  // Lock the goal card when this specific plan has been actioned, or a build is
+  // actively running. See build-bar-visibility.ts for why neither `activeMode`
+  // nor `!!execution` is the right signal.
   const planLocked = isPlanLocked({
     planAction: planActionTaken,
     execution,
     buildIdle: buildIdleStable
+  })
+
+  // The action bar is never hidden — it renders one of these states instead.
+  // Hiding it is what forced an app restart: with `isStreaming` stuck true on an
+  // unfinalized turn, `buildIdleStable` never arms and the bar never came back.
+  const stalled = useChatStore((s) => s.streamStalledConversationId === conversationId)
+  const awaitingInput = useChatStore(
+    (s) => s.pendingToolPermission !== null || (s.pendingQuestions?.length ?? 0) > 0
+  )
+  const planBarState = derivePlanBarState({
+    planAction: planActionTaken,
+    execution,
+    isStreaming: isCurrentlyStreaming,
+    buildIdle: buildIdleStable,
+    stalled,
+    awaitingInput,
+    buildSummarySeen
   })
 
   // Goal state: user edit → plan's goal → derived fallback
@@ -484,8 +516,27 @@ function PlanTabContent({
     setEditedGoal(null)
   }, [latestPlanMsg?.id])
 
-  const handleBuildNow = useCallback((): void => {
-    if (latestPlanMsg && !latestPlanMsg.planAction) {
+  const handleBuildNow = useCallback(async (): Promise<void> => {
+    // Switch mode FIRST and await it. CHAT_UPDATE_MODE rejects while a stream is
+    // live ('Cannot change mode while streaming'); the old fire-and-forget `void`
+    // swallowed that and the click still burned planAction='build', which
+    // permanently hid the bar — a failed build destroyed its own retry.
+    //
+    // updateMode does NOT rethrow (it logs and rolls the optimistic update back),
+    // so the post-condition is the reliable signal, not a rejection. Nothing
+    // below mutates state until the mode has actually settled on 'build'.
+    await updateMode('build')
+    if (useChatStore.getState().activeConversation?.mode !== 'build') {
+      useToastStore.getState().addToast({
+        type: 'error',
+        message: 'Could not switch to build mode — stop the current response and try again'
+      })
+      return
+    }
+
+    // Overwrite rather than skip: "Build again" must record the retry. The old
+    // `!planAction` guard made every re-click a silent no-op on the DB row.
+    if (latestPlanMsg) {
       useChatStore.setState((state) => ({
         messages: state.messages.map((m) =>
           m.id === latestPlanMsg.id ? { ...m, planAction: 'build' } : m
@@ -527,8 +578,6 @@ function PlanTabContent({
       })
       .catch(() => {})
 
-    void updateMode('build')
-
     // Build the kickoff message with an explicit task manifest so the model
     // reports emit_phase_progress taskId/taskStatus against the SAME taskIds
     // the panel already created via startExecution above — without this the
@@ -545,6 +594,12 @@ function PlanTabContent({
         ].join('\n')
       : 'Build the plan. Report phase progress using emit_phase_progress as you work through each phase.'
 
+    // skipModeDetection: this kickoff is machine-generated. The manifest quotes
+    // the plan's own task titles, so a title containing "refactor"/"migrate"
+    // scored 2 signals in detectComplexTask and flipped the conversation right
+    // back to plan mode — the button undoing itself.
+    const kickoffOptions = { hidden: true, skipOptimizer: true, skipModeDetection: true }
+
     // Set goal on adapter before sending (enforce mode for autonomous execution)
     const goalToEnforce = effectiveGoal?.trim()
     if (goalToEnforce) {
@@ -555,15 +610,15 @@ function PlanTabContent({
           goalMode: 'enforce'
         })
         .then(() => {
-          void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
+          void sendMessage(buildKickoffMessage, undefined, kickoffOptions)
         })
         .catch((err) => {
           console.error('[plan] Failed to set goal, sending without enforcement:', err)
-          void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
+          void sendMessage(buildKickoffMessage, undefined, kickoffOptions)
         })
     } else {
       // No goal — send without enforcement (backward compat)
-      void sendMessage(buildKickoffMessage, undefined, { hidden: true, skipOptimizer: true })
+      void sendMessage(buildKickoffMessage, undefined, kickoffOptions)
     }
   }, [conversationId, structuredPlan, effectiveGoal, latestPlanMsg, sendMessage, updateMode])
 
@@ -735,26 +790,33 @@ function PlanTabContent({
       )}
 
       {/* Action bar — after content so sticky bottom-0 works correctly.
-         Gated on whether this plan was actioned / a build is running rather than
-         on conversation mode: the bar stays available in build mode (where the
-         Plan tab is already visible) and disappears the moment execution starts.
-         `buildRunning` is what keeps it hidden across the 50-200ms gaps where
-         isStreaming drops between phases, including after a mid-build emit_plan
-         replaces latestPlanMsg. */}
-      {!planLocked && !isCurrentlyStreaming && (
-        <BuildActionBar
-          onBuildNow={handleBuildNow}
-          onRefine={handleRefine}
-          onSaveAsIdea={handleSaveAsIdea}
-          onCouncilReview={handleCouncilReview}
-          savedToPlans
-        />
-      )}
+         ALWAYS rendered: it shows a state and a way forward instead of
+         vanishing. It used to be gated on `!planLocked && !isStreaming`, and
+         when a turn never finalized both operands stayed wrong until the app was
+         restarted. `planBarState` distinguishes "a build is genuinely running"
+         from "the stream is stuck" so the bar can say which. */}
+      <BuildActionBar
+        state={planBarState}
+        onBuildNow={handleBuildNow}
+        onRefine={handleRefine}
+        onSaveAsIdea={handleSaveAsIdea}
+        onCouncilReview={handleCouncilReview}
+        savedToPlans
+        progress={
+          execution
+            ? {
+                completed: execution.phases.filter((p) => p.status === 'completed').length,
+                total: execution.phases.length
+              }
+            : undefined
+        }
+        actionedAt={planActionTaken === 'build' ? execution?.startedAt : undefined}
+      />
       {/* Hint bar when build finished/failed — guide user back to plan mode to retry.
          BUG-HINT-BAR-FIX: Uses debounced `retryHintStable` to prevent 50-200ms flash
          between build phases when isStreaming is briefly false.
          BUG-PLATFORM-KEY-FIX: Uses platform-detected modifier key. */}
-      {retryHintStable && (
+      {retryHintStable && planBarState.kind !== 'actioned' && planBarState.kind !== 'stalled' && (
         <div
           data-testid="task-plan-retry-hint"
           className="sticky bottom-0 flex items-center gap-2 px-5 py-2.5 border-t border-border-subtle bg-surface-overlay/90 backdrop-blur-sm text-xs text-text-secondary"
@@ -1002,6 +1064,19 @@ export default function ChatExecutionPanel({
 }: ChatExecutionPanelProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<PanelTab>(initialTab ?? 'plan')
 
+  // Re-pull messages + phase progress from the DB. This is exactly what
+  // restarting the app was doing for users whose panel state went stale after a
+  // turn that never finalized.
+  const [refreshing, setRefreshing] = useState(false)
+  const handleRefresh = useCallback((): void => {
+    setRefreshing(true)
+    void useChatStore
+      .getState()
+      .selectConversation(conversationId)
+      .catch((err) => console.error('[exec-panel] refresh failed:', err))
+      .finally(() => setRefreshing(false))
+  }, [conversationId])
+
   // ── Data sources (ALL hooks called unconditionally) ──
   const selectExecution = useCallback(
     (s: { executions: Record<string, PlanExecution> }) => s.executions[conversationId],
@@ -1188,14 +1263,27 @@ export default function ChatExecutionPanel({
           Memories
         </button>
 
-        {/* Close button — pushed to right */}
+        {/* Refresh — reload this conversation's messages and phase progress */}
+        <button
+          type="button"
+          data-testid="chat-execution-panel-refresh"
+          aria-label="Refresh execution panel"
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors disabled:opacity-50"
+          title="Refresh from database"
+        >
+          <RotateCw size={13} className={refreshing ? 'animate-spin' : undefined} />
+        </button>
+
+        {/* Close button */}
         {onClose && (
           <button
             type="button"
             data-testid="chat-execution-panel-close"
             aria-label="Close execution panel"
             onClick={onClose}
-            className="ml-auto flex items-center justify-center w-7 h-7 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
+            className="flex items-center justify-center w-7 h-7 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
             title="Close panel"
           >
             <X size={14} />

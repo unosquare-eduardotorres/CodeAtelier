@@ -80,3 +80,26 @@ export function detectComplexTask(text: string): boolean {
   // Require 2+ categories to fire — prevents false positives
   return score >= 2
 }
+
+/**
+ * The build → plan auto-switch rule, as a pure function so it can be tested
+ * without the store.
+ *
+ * `skipModeDetection` exists because these detectors read *user intent*, and
+ * UI-generated messages are not user intent. The "Build Now" kickoff switches
+ * the conversation to build mode and then sends a task manifest — a >300 char
+ * message that quotes the plan's own task titles. If one of those titles says
+ * "refactor"/"migrate"/"rewrite", detectComplexTask scores 2 and the send flips
+ * the conversation straight back to plan mode, silently undoing the button.
+ * That is why Build Now worked for some plans and not others.
+ */
+export function shouldAutoSwitchToPlan(input: {
+  mode: string | undefined
+  text: string
+  /** Set by machine-generated sends (Build Now kickoff, regenerate). */
+  skipModeDetection?: boolean
+}): boolean {
+  if (input.skipModeDetection) return false
+  if (input.mode !== 'build') return false
+  return detectPlanIntent(input.text) || detectComplexTask(input.text)
+}

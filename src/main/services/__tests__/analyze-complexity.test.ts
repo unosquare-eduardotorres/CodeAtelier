@@ -8,6 +8,11 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import {
+  ESLINT_EXTENSIONS,
+  ALL_SUPPORTED_EXTENSIONS,
+  complexityEngineFor
+} from '../complexity-analyzer'
 
 // ── Mirror of server types/logic (avoids importing the server, which calls main()) ──
 
@@ -38,7 +43,10 @@ function parseComplexityMessage(
   return { file: filePath, function: funcName, line: msg.line, column: msg.column, complexity }
 }
 
-const SUPPORTED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'])
+// Imported from the module the handler itself uses — a local copy could stay
+// green while the real routing table diverged, which is how these tests kept
+// asserting `.py` was unsupported.
+const SUPPORTED_EXTENSIONS = ESLINT_EXTENSIONS
 
 // ── Tests ──
 
@@ -176,24 +184,38 @@ describe('SUPPORTED_EXTENSIONS', () => {
     }
   })
 
-  test('rejects unsupported extensions', () => {
-    for (const ext of ['.py', '.rs', '.go', '.rb', '.java', '.c', '.cpp']) {
-      assert.ok(!SUPPORTED_EXTENSIONS.has(ext), `Expected ${ext} to NOT be supported`)
+  test('JS/TS extensions still route to the ESLint engine', () => {
+    for (const ext of SUPPORTED_EXTENSIONS) {
+      assert.equal(complexityEngineFor(`src/app${ext}`), 'eslint')
+    }
+  })
+
+  test('C#, Java and Python are supported now — by tree-sitter, not ESLint', () => {
+    for (const ext of ['.cs', '.java', '.py']) {
+      assert.ok(!SUPPORTED_EXTENSIONS.has(ext), `${ext} must NOT go through ESLint`)
+      assert.equal(complexityEngineFor(`src/main${ext}`), 'tree-sitter')
+      assert.ok(ALL_SUPPORTED_EXTENSIONS.includes(ext), `${ext} must be advertised as supported`)
+    }
+  })
+
+  test('rejects languages neither engine handles', () => {
+    for (const ext of ['.rs', '.go', '.rb', '.c', '.cpp']) {
+      assert.equal(complexityEngineFor(`src/main${ext}`), null, `Expected ${ext} to be unsupported`)
+      assert.ok(!ALL_SUPPORTED_EXTENSIONS.includes(ext))
     }
   })
 
   test('unsupported file produces clear error message', () => {
     // Mirrors the extension check in handleAnalyzeComplexity
-    const filePath = 'src/main.py'
+    const filePath = 'src/main.rs'
     const ext = '.' + filePath.split('.').pop()!.toLowerCase()
-    assert.ok(!SUPPORTED_EXTENSIONS.has(ext))
+    assert.equal(complexityEngineFor(filePath), null)
 
-    // Verify the message format matches what the handler produces
-    const message = `[analyze_complexity] Language not supported: ${ext}\nCurrently supports: ${[...SUPPORTED_EXTENSIONS].join(', ')}\n\nFuture: tree-sitter based analysis for Python, Rust, Go, etc.`
-    assert.ok(message.includes('.py'))
+    const message = `[analyze_complexity] Language not supported: ${ext}\nCurrently supports: ${ALL_SUPPORTED_EXTENSIONS.join(', ')}`
+    assert.ok(message.includes('.rs'))
     assert.ok(message.includes('Currently supports:'))
     assert.ok(message.includes('.ts'))
-    assert.ok(message.includes('tree-sitter'))
+    assert.ok(message.includes('.cs'), 'the message must advertise the new languages')
   })
 })
 

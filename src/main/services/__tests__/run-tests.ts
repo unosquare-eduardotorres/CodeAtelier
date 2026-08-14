@@ -178,6 +178,8 @@ const TEST_FILES: string[] = [
   // ─── Run 33: ESLint MCP tools (output parsing, summary formatting, error handling) ───
   './eslint-mcp-tools.test',
   './analyze-complexity.test',
+  './complexity-analyzer.test',
+  './dotnet-lint.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   './evaluation-mcp-config.test',
   './mpa-base-adapter.test',
@@ -351,6 +353,9 @@ const TEST_FILES: string[] = [
   './agentic-claude-runner.test',
   // ─── Unified Handoff Protocol (types, adapters, rendering, redaction) ───
   './handoff.service.test',
+  // ─── Blueprint → Chat handoff (intents, seed message, adapter intent) ───
+  './blueprint-chat-handoff.test',
+  './blueprint-handoff-options.test',
   // ─── Blueprint Verify Extractor (post-hoc structured extraction) ───
   './blueprint-verify-extractor.test',
   // ─── OS Notification Service (dispatch routing, rate limiting, preferences) ───
@@ -644,6 +649,8 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/lib/__tests__/permission-routing.test',
   // ─── BuildActionBar visibility (plan actioned / build running) ───
   '../../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
+  // ─── Build Now kickoff must not re-trigger the build → plan auto-switch ───
+  '../../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
   // ─── Chat header naming (project specialist, raw agent ids) ───
   '../../../renderer/src/components/chat/__tests__/message-identity.test'
 ]

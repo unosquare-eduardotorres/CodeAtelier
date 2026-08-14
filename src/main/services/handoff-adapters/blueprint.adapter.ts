@@ -18,12 +18,20 @@ import type {
   HandoffSource
 } from '../../../shared/handoff-types'
 import type { BlueprintWithDetails } from '../../../shared/blueprint-types'
+import type { BlueprintHandoffIntentSpec } from '../../../shared/blueprint-handoff'
 
 // ── Input Shape ──────────────────────────────────────────────────────
 
 export interface BlueprintAdapterInput {
   blueprint: BlueprintWithDetails
   planRecordId?: string
+  /**
+   * What the user asked the receiving chat to do.
+   *
+   * Absent for machine-initiated handoffs, where the blueprint's own status is
+   * the only intent there is.
+   */
+  intentSpec?: BlueprintHandoffIntentSpec
 }
 
 // ── Adapter ──────────────────────────────────────────────────────────
@@ -32,7 +40,10 @@ class BlueprintHandoffAdapter extends HandoffSourceAdapter<BlueprintAdapterInput
   readonly source: HandoffSource = 'blueprint'
 
   extractIntent(input: BlueprintAdapterInput): string {
-    const { blueprint } = input
+    const { blueprint, intentSpec } = input
+    if (intentSpec) {
+      return `${intentSpec.titlePrefix}: ${blueprint.title}`
+    }
     if (blueprint.status === 'complete') {
       return `Blueprint complete: ${blueprint.title} — apply build results`
     }

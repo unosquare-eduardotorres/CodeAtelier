@@ -17,6 +17,12 @@
 import { readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import log from 'electron-log/main'
+import {
+  getTreeSitter,
+  loadLanguage,
+  releaseParserRuntime,
+  type TsLanguage
+} from './tree-sitter-parser'
 import type { RepomapTag } from '../db/repositories/code-graph-tag.repository'
 
 /** A tag that remembers which `.scm` capture produced it. */
@@ -113,19 +119,14 @@ function getQueryPath(lang: string): string | null {
   return null
 }
 
-function getWasmPath(lang: string): string {
-  const wasmsDir = path.dirname(require.resolve('tree-sitter-wasms/package.json'))
-  return path.join(wasmsDir, 'out', `tree-sitter-${lang}.wasm`)
-}
-
 // ── Parser lifecycle ────────────────────────────────────────────────────────
+//
+// Grammar loading and `Parser.init()` live in ./tree-sitter-parser so indexing
+// and complexity analysis share ONE Emscripten module and one grammar cache.
 
 type WebTreeSitter = typeof import('web-tree-sitter')
-type TsLanguage = InstanceType<WebTreeSitter['Language']>
 type TsQuery = InstanceType<WebTreeSitter['Query']>
 
-let treeSitterModule: WebTreeSitter | null = null
-const languageCache = new Map<string, TsLanguage>()
 const queryCache = new Map<string, TsQuery | null>()
 
 /**
@@ -158,37 +159,10 @@ export function getQueryDiagnostics(): QueryDiagnostic[] {
 
 /** Reset cached grammars/queries — called after indexing releases the parser. */
 export function releaseTypedParser(): void {
-  languageCache.clear()
   queryCache.clear()
   queryDiagnostics.clear()
   unavailableLogged = false
-  treeSitterModule = null
-}
-
-async function getTreeSitter(): Promise<WebTreeSitter> {
-  if (!treeSitterModule) {
-    // `Parser.init()` must run on the instance we hand back. repomap-mcp's
-    // initParser() only initialises the copy Vite bundled into *its* chunk; in
-    // the packaged app this dynamic import resolves to a different module
-    // instance whose Emscripten `Module` is still undefined, so `Language.load`
-    // fails with "Cannot read properties of undefined (reading
-    // 'loadWebAssemblyModule')" and every language falls back to untyped tags.
-    // web-tree-sitter memoises its own binding, so re-initialising the same
-    // instance is a no-op rather than a second Emscripten module.
-    const mod = await import('web-tree-sitter')
-    await mod.Parser.init()
-    treeSitterModule = mod
-  }
-  return treeSitterModule
-}
-
-async function loadLanguage(lang: string): Promise<TsLanguage> {
-  const cached = languageCache.get(lang)
-  if (cached) return cached
-  const { Language } = await getTreeSitter()
-  const language = await Language.load(getWasmPath(lang))
-  languageCache.set(lang, language)
-  return language
+  releaseParserRuntime()
 }
 
 /**

@@ -73,6 +73,11 @@ export interface Workspace {
   isGitRepo: boolean
   constitutionMd?: string
   constitutionVersion?: string
+  /**
+   * Set only on shadow rows: the real workspace this row scopes an index for.
+   * Shadows back a worktree's own code-graph index and never appear in the UI.
+   */
+  shadowOfWorkspaceId?: string
 }
 
 export interface Conversation {

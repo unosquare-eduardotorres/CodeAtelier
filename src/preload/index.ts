@@ -96,6 +96,11 @@ import type {
   CodeAnchor
 } from '../shared/handoff-types'
 import type { BlueprintBranchOptions } from '../shared/blueprint-types'
+import type {
+  BlueprintHandoffIntent,
+  BlueprintBranchMode,
+  BlueprintHandoffOptions
+} from '../shared/blueprint-handoff'
 
 const api = {
   // ── Workspace ──
@@ -3026,6 +3031,25 @@ const api = {
 
   blueprintDelete: (args: { id: string }): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_DELETE, args),
+
+  blueprintHandoffToChat: (args: {
+    workspaceId: string
+    blueprintId: string
+    intent?: BlueprintHandoffIntent
+    branchMode?: BlueprintBranchMode
+  }): Promise<{
+    conversationId: string
+    title: string
+    branchName: string | null
+    inheritedTrack: boolean
+    stagedMessage: string
+  }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_HANDOFF_TO_CHAT, args),
+
+  blueprintHandoffOptions: (args: {
+    workspaceId: string
+    blueprintId: string
+  }): Promise<BlueprintHandoffOptions> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_HANDOFF_OPTIONS, args),
 
   blueprintGetConstitution: (args: {
     workspaceId: string

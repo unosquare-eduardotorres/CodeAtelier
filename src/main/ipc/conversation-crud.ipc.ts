@@ -43,7 +43,13 @@ const log = chatIpcLogger
 // Extracted handlers
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-async function handleCreateConversation(args: {
+/**
+ * Exported so other features can hand work to a chat without reimplementing
+ * this. Everything after `conversationRepository.create` — specialist defaults,
+ * source-branch capture, branch creation, the takeover — is behaviour a chat is
+ * expected to have, and a second copy of it is a second place to forget one.
+ */
+export async function handleCreateConversation(args: {
   workspaceId: string
   title?: string
   mode?: ConversationMode
@@ -68,6 +74,14 @@ async function handleCreateConversation(args: {
    * track system exists to prevent.
    */
   takeover?: boolean
+  /**
+   * Observe what the take-over actually did.
+   *
+   * Callers that describe the result to a user (Blueprint → Chat) cannot infer
+   * it: a branch name surviving on the conversation says the ref was reused, not
+   * that a working tree changed hands.
+   */
+  onTakeover?: (outcome: BranchTakeoverResult) => void
 }): Promise<ReturnType<typeof conversationRepository.create>> {
   const ch = IPC_CHANNELS.CHAT_CREATE_CONVERSATION
   const {
@@ -226,11 +240,35 @@ async function handleCreateConversation(args: {
   }
 
   if (takeover && conversation.branchName) {
-    takeOverHeldBranch(conversation.id, workspaceId, conversation.branchName)
+    const outcome = takeOverHeldBranch(conversation.id, workspaceId, conversation.branchName)
+    args.onTakeover?.(outcome)
+
+    if (outcome.kind === 'busy') {
+      // The chat was created moments ago, in this call, and nothing references it
+      // yet. Leaving it behind would put a chat in the sidebar that failed to get
+      // the one thing it was created for.
+      try {
+        conversationRepository.delete(conversation.id)
+      } catch (e) {
+        log.warn('[takeover] could not roll back the new conversation:', e)
+      }
+      throw new Error(outcome.message)
+    }
   }
 
   return conversation
 }
+
+/** What a branch take-over actually did. */
+export type BranchTakeoverResult =
+  /** The working tree changed hands, files and all. */
+  | { kind: 'transferred'; path: string }
+  /** Nobody held the branch, or we already did. */
+  | { kind: 'not-held' }
+  /** A track row outlived its directory — a fresh tree gets built on first turn. */
+  | { kind: 'stale'; reason: string }
+  /** The holder is mid-turn; the caller must surface this rather than degrade. */
+  | { kind: 'busy'; message: string }
 
 /**
  * Hand a branch — and the directory it is checked out in — to a new chat.
@@ -244,14 +282,17 @@ async function handleCreateConversation(args: {
  * and nothing is copied, so the chat opens on exactly the files the previous
  * owner left, uncommitted ones included, with `node_modules` still linked.
  *
- * Not caught here: a busy holder must reach the user. Being told "the blueprint
- * is still running" is the entire reason the busy probe exists, and silently
- * degrading to a fresh worktree would put the chat somewhere other than where
- * the user asked for.
+ * Reports rather than decides. A busy holder must reach the user — being told
+ * "the blueprint is still running" is the entire reason the busy probe exists —
+ * but whether that means rolling the conversation back is the caller's call.
  */
-function takeOverHeldBranch(conversationId: string, workspaceId: string, branchName: string): void {
+function takeOverHeldBranch(
+  conversationId: string,
+  workspaceId: string,
+  branchName: string
+): BranchTakeoverResult {
   const holder = trackRepository.findByBranch(workspaceId, branchName)
-  if (!holder || holder.ownerId === conversationId) return
+  if (!holder || holder.ownerId === conversationId) return { kind: 'not-held' }
 
   const outcome = trackService.transferOwner(holder.id, {
     ownerKind: 'chat',
@@ -263,23 +304,17 @@ function takeOverHeldBranch(conversationId: string, workspaceId: string, branchN
       `[takeover] chat ${conversationId} took ${branchName} from ` +
         `${holder.ownerKind}:${holder.ownerId ?? '—'} at ${outcome.track.path}`
     )
-    return
+    return { kind: 'transferred', path: outcome.track.path }
   }
 
   if (outcome.reason === 'busy') {
     const who = outcome.holder.label ?? outcome.holder.ownerId ?? 'other work'
-    // The chat was created moments ago, in this call, and nothing references it
-    // yet. Leaving it behind would put a chat in the sidebar that failed to get
-    // the one thing it was created for.
-    try {
-      conversationRepository.delete(conversationId)
-    } catch (e) {
-      log.warn('[takeover] could not roll back the new conversation:', e)
-    }
-    throw new Error(
-      `${who} is using "${branchName}" right now — ${outcome.because}. ` +
+    return {
+      kind: 'busy',
+      message:
+        `${who} is using "${branchName}" right now — ${outcome.because}. ` +
         `Try again once it is idle, or pick another branch.`
-    )
+    }
   }
 
   // 'no-tree' or 'absent': the bookkeeping outlived the directory. Nothing to
@@ -289,6 +324,7 @@ function takeOverHeldBranch(conversationId: string, workspaceId: string, branchN
     `[takeover] chat ${conversationId} could not inherit ${branchName} ` +
       `(${outcome.reason}) — a new working tree will be created for it`
   )
+  return { kind: 'stale', reason: outcome.reason }
 }
 
 /**

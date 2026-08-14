@@ -236,6 +236,38 @@ export function verifyTaskFileClaims(
 }
 
 /**
+ * BUILD's task verification, with both roots named rather than positional.
+ *
+ * `verifyTaskFileClaims` takes the primary checkout as an *optional fifth*
+ * argument. BUILD omitted it, so every claim naming an absolute path in the
+ * primary tree resolved `outside` and was reported as `missingClaimed` — which
+ * is how a blueprint whose tasks all completed still failed its build phase
+ * (R007: "1 claimed missing" for a file that existed in both trees). Planned
+ * paths are recorded as absolute primary-tree paths, so agents naturally claim
+ * them back in that form.
+ *
+ * Requiring both roots as named fields makes that omission a type error instead
+ * of a silent verification failure.
+ */
+export function verifyBuildTaskFiles(opts: {
+  /** The worktree BUILD is writing into — the root claims are resolved against. */
+  executionPath: string
+  /** The primary checkout. Absolute paths under it are re-rooted onto `executionPath`. */
+  workspacePath: string
+  completion: Record<string, unknown> | null
+  plannedFiles: string[]
+  taskStartedAt?: number
+}): TaskVerificationResult {
+  return verifyTaskFileClaims(
+    opts.executionPath,
+    opts.completion,
+    opts.plannedFiles,
+    opts.taskStartedAt,
+    opts.workspacePath
+  )
+}
+
+/**
  * Scan all 'complete' tasks for a blueprint and collect files missing from disk.
  * When a task has `completionJson`, only files the agent *claimed* to create/modify
  * are treated as hard failures (`missingClaimed`). Planned-but-not-claimed files

@@ -16,11 +16,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { execSync } from 'node:child_process'
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, extname, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { z } from 'zod'
 import { truncateToolOutput } from './output-cap'
 import { LibraryDocService } from '../services/library-doc.service'
+import {
+  analyzeTreeSitterComplexity,
+  complexityEngineFor,
+  ALL_SUPPORTED_EXTENSIONS,
+  MAX_FILES_PER_SCAN
+} from '../services/complexity-analyzer'
 
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
@@ -174,7 +180,102 @@ export function parseComplexityMessage(
   return { file: filePath, function: funcName, line: msg.line, column: msg.column, complexity }
 }
 
-const SUPPORTED_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'])
+/** Run the ESLint `complexity` rule over paths and keep scores >= threshold. */
+function collectEslintComplexity(paths: string[], threshold: number): ComplexityResult[] {
+  const { stdout } = runEslint(
+    ['--format', 'json', '--rule', `'{"complexity": ["warn", {"max": 0}]}'`, quotePaths(paths)],
+    WORKSPACE_PATH
+  )
+  const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+  const results: ComplexityResult[] = []
+  for (const diag of diagnostics) {
+    for (const msg of diag.messages) {
+      const parsed = parseComplexityMessage(msg, diag.filePath)
+      if (parsed && parsed.complexity >= threshold) results.push(parsed)
+    }
+  }
+  return results
+}
+
+/** Tree-sitter engine for C#/Java/Python. Never throws — issues become notes. */
+async function collectTreeSitterComplexity(
+  paths: string[],
+  threshold: number
+): Promise<{ results: ComplexityResult[]; notes: string[] }> {
+  const notes: string[] = []
+  try {
+    const scan = await analyzeTreeSitterComplexity(paths, WORKSPACE_PATH)
+    if (scan.truncated) {
+      notes.push(`⚠️ Capped at ${MAX_FILES_PER_SCAN} files — narrow the path for full coverage.`)
+    }
+    if (scan.failures.length > 0) {
+      const first = scan.failures[0]
+      notes.push(
+        `⚠️ ${scan.failures.length} file(s) could not be parsed (e.g. ${first.file}: ${first.error}).`
+      )
+    }
+    const results = scan.results
+      .filter((r) => r.complexity >= threshold)
+      .map((r) => ({
+        file: r.file,
+        function: r.function,
+        line: r.line,
+        column: r.column,
+        complexity: r.complexity
+      }))
+    return { results, notes }
+  } catch (err) {
+    notes.push(
+      `⚠️ Tree-sitter complexity unavailable: ${err instanceof Error ? err.message : String(err)}`
+    )
+    return { results: [], notes }
+  }
+}
+
+/** Shared report body — identical format for both engines, so a mixed-language
+ *  directory produces ONE table and REVIEW/VERIFY can still diff baselines. */
+function formatComplexityReport(
+  args: { path: string; threshold: number; maxResults: number },
+  results: ComplexityResult[],
+  notes: string[]
+): string {
+  results.sort((a, b) => b.complexity - a.complexity)
+  const capped = results.slice(0, args.maxResults)
+
+  const lines: string[] = [
+    `## Cyclomatic Complexity Analysis`,
+    ``,
+    `**Path:** ${args.path}`,
+    `**Threshold:** ${args.threshold}`,
+    `**Functions above threshold:** ${results.length}`,
+    ``
+  ]
+
+  if (capped.length === 0) {
+    lines.push(`✅ No functions exceed complexity ${args.threshold}.`)
+  } else {
+    lines.push('| Complexity | Function | File | Line |')
+    lines.push('|------------|----------|------|------|')
+    for (const r of capped) {
+      const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
+      const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
+      lines.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
+    }
+
+    if (results.length > args.maxResults) {
+      lines.push(``, `_...and ${results.length - args.maxResults} more above threshold_`)
+    }
+
+    const avg = results.reduce((s, r) => s + r.complexity, 0) / results.length
+    lines.push(
+      ``,
+      `**Summary:** avg=${avg.toFixed(1)}, max=${results[0].complexity}, total=${results.length} functions above threshold`
+    )
+  }
+
+  if (notes.length > 0) lines.push(``, ...notes)
+  return lines.join('\n')
+}
 
 async function handleAnalyzeComplexity(args: {
   path: string
@@ -182,119 +283,99 @@ async function handleAnalyzeComplexity(args: {
   maxResults: number
 }): Promise<{ isError?: boolean; content: Array<{ type: 'text'; text: string }> }> {
   const targetPath = sanitizePath(args.path)
+  const ext = extname(targetPath).toLowerCase()
 
-  // Check for non-JS/TS files (single file mode)
-  if (targetPath.includes('.')) {
-    const ext = '.' + targetPath.split('.').pop()!.toLowerCase()
-    if (!SUPPORTED_EXTENSIONS.has(ext)) {
+  // Single file: route by extension. A path with no extension is treated as a
+  // directory and fans out to BOTH engines.
+  if (ext) {
+    const engine = complexityEngineFor(targetPath)
+    if (!engine) {
       return {
         content: [
           {
             type: 'text' as const,
-            text: `[analyze_complexity] Language not supported: ${ext}\nCurrently supports: ${[...SUPPORTED_EXTENSIONS].join(', ')}\n\nFuture: tree-sitter based analysis for Python, Rust, Go, etc.`
+            text: `[analyze_complexity] Language not supported: ${ext}\nCurrently supports: ${ALL_SUPPORTED_EXTENSIONS.join(', ')}`
+          }
+        ]
+      }
+    }
+    if (engine === 'tree-sitter') {
+      const { results, notes } = await collectTreeSitterComplexity([targetPath], args.threshold)
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: truncateToolOutput(formatComplexityReport(args, results, notes), 15_000)
+          }
+        ]
+      }
+    }
+
+    // JS/TS — unchanged ESLint path, including its error semantics.
+    if (!checkEslintAvailable()) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `[analyze_complexity] ESLint not available via npx. Complexity analysis requires ESLint.`
+          }
+        ]
+      }
+    }
+    try {
+      const results = collectEslintComplexity([targetPath], args.threshold)
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: truncateToolOutput(formatComplexityReport(args, results, []), 15_000)
+          }
+        ]
+      }
+    } catch (err) {
+      if (err instanceof EslintConfigError) {
+        return {
+          content: [{ type: 'text' as const, text: `[analyze_complexity] ⚠️ ${err.message}` }]
+        }
+      }
+      return {
+        isError: true,
+        content: [
+          {
+            type: 'text' as const,
+            text: `[analyze_complexity] Error: ${err instanceof Error ? err.message : String(err)}`
           }
         ]
       }
     }
   }
+
+  // Directory — may hold both language families, so run both engines and merge.
+  const results: ComplexityResult[] = []
+  const notes: string[] = []
 
   if (!checkEslintAvailable()) {
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: `[analyze_complexity] ESLint not available via npx. Complexity analysis requires ESLint.`
-        }
-      ]
+    notes.push('⚠️ ESLint not available via npx — JS/TS functions were not scored.')
+  } else {
+    try {
+      results.push(...collectEslintComplexity([targetPath], args.threshold))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      notes.push(`⚠️ ESLint (JS/TS) could not run: ${msg.slice(0, 300)}`)
     }
   }
 
-  try {
-    // Run ESLint with complexity rule at max:0 to report ALL functions
-    const { stdout } = runEslint(
-      [
-        '--format',
-        'json',
-        '--rule',
-        `'{"complexity": ["warn", {"max": 0}]}'`,
-        quotePaths([targetPath])
-      ],
-      WORKSPACE_PATH
-    )
+  const treeSitter = await collectTreeSitterComplexity([targetPath], args.threshold)
+  results.push(...treeSitter.results)
+  notes.push(...treeSitter.notes)
 
-    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
-    const results: ComplexityResult[] = []
-
-    for (const diag of diagnostics) {
-      for (const msg of diag.messages) {
-        const parsed = parseComplexityMessage(msg, diag.filePath)
-        if (parsed && parsed.complexity >= args.threshold) {
-          results.push(parsed)
-        }
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: truncateToolOutput(formatComplexityReport(args, results, notes), 15_000)
       }
-    }
-
-    // Sort by complexity descending
-    results.sort((a, b) => b.complexity - a.complexity)
-    const capped = results.slice(0, args.maxResults)
-
-    // Build output
-    const lines: string[] = [
-      `## Cyclomatic Complexity Analysis`,
-      ``,
-      `**Path:** ${args.path}`,
-      `**Threshold:** ${args.threshold}`,
-      `**Functions above threshold:** ${results.length}`,
-      ``
     ]
-
-    if (capped.length === 0) {
-      lines.push(`✅ No functions exceed complexity ${args.threshold}.`)
-    } else {
-      lines.push('| Complexity | Function | File | Line |')
-      lines.push('|------------|----------|------|------|')
-      for (const r of capped) {
-        const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
-        const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
-        lines.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
-      }
-
-      if (results.length > args.maxResults) {
-        lines.push(``, `_...and ${results.length - args.maxResults} more above threshold_`)
-      }
-
-      // Summary stats
-      const avg = results.reduce((s, r) => s + r.complexity, 0) / results.length
-      lines.push(
-        ``,
-        `**Summary:** avg=${avg.toFixed(1)}, max=${results[0].complexity}, total=${results.length} functions above threshold`
-      )
-    }
-
-    return {
-      content: [{ type: 'text' as const, text: truncateToolOutput(lines.join('\n'), 15_000) }]
-    }
-  } catch (err) {
-    // Graceful degradation for config errors — non-alarming message
-    if (err instanceof EslintConfigError) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: `[analyze_complexity] ⚠️ ${err.message}`
-          }
-        ]
-      }
-    }
-    return {
-      isError: true,
-      content: [
-        {
-          type: 'text' as const,
-          text: `[analyze_complexity] Error: ${err instanceof Error ? err.message : String(err)}`
-        }
-      ]
-    }
   }
 }
 
@@ -899,6 +980,162 @@ async function handleEslintRules(args: {
  */
 const STRUCTURAL_SYMBOL_KINDS = ['interface', 'type']
 
+/**
+ * Split scan paths by which complexity engine can read them.
+ *
+ * A path with no extension is a directory and may hold both language families,
+ * so it goes to BOTH lists. Without this partition every path was handed to
+ * ESLint, which is why a pure C# tree failed the whole lint+complexity section.
+ */
+export function partitionPathsByEngine(paths: string[]): {
+  eslint: string[]
+  treeSitter: string[]
+} {
+  const eslint: string[] = []
+  const treeSitter: string[] = []
+  for (const p of paths) {
+    const ext = extname(p).toLowerCase()
+    if (!ext) {
+      eslint.push(p)
+      treeSitter.push(p)
+      continue
+    }
+    const engine = complexityEngineFor(p)
+    if (engine === 'eslint') eslint.push(p)
+    else if (engine === 'tree-sitter') treeSitter.push(p)
+  }
+  return { eslint, treeSitter }
+}
+
+interface LintIssue {
+  file: string
+  line: number
+  severity: number
+  rule: string
+}
+
+/**
+ * C# lint baseline. Only runs when the scan actually contains `.cs` paths, and
+ * reports its own cause on failure — REVIEW §7 asks WHICH baseline is missing,
+ * so "no SDK" and "no .csproj" must not collapse into one message.
+ */
+async function runAuditDotnetLint(paths: string[], maxResults: number): Promise<string[]> {
+  const csharpPaths = paths.filter((p) => extname(p).toLowerCase() === '.cs' || !extname(p))
+  if (csharpPaths.length === 0) return []
+
+  const section: string[] = []
+  try {
+    const { runDotnetLint, describeFailure } = await import('../services/dotnet-lint')
+    const absPaths = csharpPaths.map((p) => (isAbsolute(p) ? p : join(WORKSPACE_PATH, p)))
+    const result = runDotnetLint(absPaths, WORKSPACE_PATH)
+
+    if (!result.ok) {
+      section.push(
+        `### C# Lint (dotnet format)\n⚠️ No baseline: ${describeFailure(result.failure!, result.project)}.\n`
+      )
+      return section
+    }
+
+    section.push(`### C# Lint (${result.diagnostics.length} diagnostics via dotnet format)`)
+    if (result.diagnostics.length === 0) {
+      section.push('✅ All files pass.\n')
+    } else {
+      section.push('| Rule | File | Line | Description |')
+      section.push('|------|------|------|-------------|')
+      for (const d of result.diagnostics.slice(0, maxResults)) {
+        section.push(`| ${d.id} | ${d.file} | ${d.line} | ${d.description} |`)
+      }
+      if (result.diagnostics.length > maxResults) {
+        section.push(`_...and ${result.diagnostics.length - maxResults} more_`)
+      }
+      section.push('')
+    }
+    return section
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    section.push(`### C# Lint (dotnet format)\n⚠️ Error: ${msg.slice(0, 300)}\n`)
+    return section
+  }
+}
+
+/** ESLint half of the audit: lint issues + JS/TS complexity in one pass. */
+function runAuditEslint(
+  paths: string[],
+  threshold: number,
+  maxResults: number
+): { section: string[]; complexity: ComplexityResult[] } {
+  const section: string[] = []
+
+  if (paths.length === 0) {
+    section.push('### ESLint\n⏭️ No JS/TS files in scope — ESLint skipped.\n')
+    return { section, complexity: [] }
+  }
+  if (!checkEslintAvailable()) {
+    section.push('### ESLint\n⚠️ ESLint not available via npx.\n')
+    return { section, complexity: [] }
+  }
+
+  try {
+    const { stdout } = runEslint(
+      ['--format', 'json', '--rule', `'{"complexity": ["warn", {"max": 0}]}'`, quotePaths(paths)],
+      WORKSPACE_PATH
+    )
+    const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+
+    const lintIssues: LintIssue[] = []
+    const complexity: ComplexityResult[] = []
+    for (const diag of diagnostics) {
+      for (const msg of diag.messages) {
+        if (msg.ruleId === 'complexity') {
+          const parsed = parseComplexityMessage(msg, diag.filePath)
+          if (parsed && parsed.complexity >= threshold) complexity.push(parsed)
+        } else if (msg.ruleId) {
+          lintIssues.push({
+            file: diag.filePath.replace(WORKSPACE_PATH + '/', ''),
+            line: msg.line,
+            severity: msg.severity,
+            rule: msg.ruleId
+          })
+        }
+      }
+    }
+
+    const errors = lintIssues.filter((i) => i.severity === 2)
+    const warnings = lintIssues.filter((i) => i.severity === 1)
+    section.push(
+      `### ESLint (${errors.length} errors, ${warnings.length} warnings across ${diagnostics.length} files)`
+    )
+    if (lintIssues.length === 0) {
+      section.push('✅ All files pass.\n')
+    } else {
+      section.push('| Severity | Rule | File | Line |')
+      section.push('|----------|------|------|------|')
+      for (const i of lintIssues.slice(0, maxResults)) {
+        const sev = i.severity === 2 ? '❌' : '⚠️'
+        section.push(`| ${sev} | ${i.rule} | ${i.file} | ${i.line} |`)
+      }
+      if (lintIssues.length > maxResults) {
+        section.push(`_...and ${lintIssues.length - maxResults} more_`)
+      }
+      section.push('')
+    }
+    return { section, complexity }
+  } catch (err) {
+    if (err instanceof EslintConfigError) {
+      section.push(`### ESLint\n⚠️ ${err.message}\n`)
+    } else {
+      const msg = err instanceof Error ? err.message : String(err)
+      const hint = !checkEslintAvailable()
+        ? ' ESLint is not available via npx.'
+        : msg.includes('exit code 2')
+          ? ' ESLint could not parse the project config. Check eslint.config.* for syntax errors.'
+          : ''
+      section.push(`### ESLint\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
+    }
+    return { section, complexity: [] }
+  }
+}
+
 async function handleAuditScan(args: {
   paths: string[]
   complexityThreshold: number
@@ -906,107 +1143,44 @@ async function handleAuditScan(args: {
   includeTypeDeclarations?: boolean
 }): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const sections: string[] = ['## Audit Scan Results\n']
+  const targetPaths = args.paths.map(sanitizePath)
+  const { eslint: eslintPaths, treeSitter: treeSitterPaths } = partitionPathsByEngine(targetPaths)
 
-  // ── 1. Run ESLint with complexity rule (single pass for lint + complexity) ──
-  if (!checkEslintAvailable()) {
-    sections.push(
-      `### ESLint + Complexity\n⚠️ ESLint not available via npx. Complexity analysis requires ESLint.\n`
-    )
-  } else
-    try {
-      const targetPaths = args.paths.map(sanitizePath)
-      const { stdout } = runEslint(
-        [
-          '--format',
-          'json',
-          '--rule',
-          `'{"complexity": ["warn", {"max": 0}]}'`,
-          quotePaths(targetPaths)
-        ],
-        WORKSPACE_PATH
-      )
-      const diagnostics: EslintDiagnostic[] = JSON.parse(stdout)
+  // ── 1a. ESLint (JS/TS only) — lint issues + their complexity in one pass ──
+  const eslintRun = runAuditEslint(eslintPaths, args.complexityThreshold, args.maxResults)
+  sections.push(...eslintRun.section)
 
-      // Split lint issues from complexity issues
-      const lintIssues: Array<{
-        file: string
-        line: number
-        severity: number
-        rule: string
-      }> = []
-      const complexityResults: ComplexityResult[] = []
+  // ── 1b. Tree-sitter complexity (C#/Java/Python), merged into ONE table ──
+  const complexityResults: ComplexityResult[] = [...eslintRun.complexity]
+  const complexityNotes: string[] = []
+  if (treeSitterPaths.length > 0) {
+    const treeSitter = await collectTreeSitterComplexity(treeSitterPaths, args.complexityThreshold)
+    complexityResults.push(...treeSitter.results)
+    complexityNotes.push(...treeSitter.notes)
+  }
 
-      for (const diag of diagnostics) {
-        for (const msg of diag.messages) {
-          if (msg.ruleId === 'complexity') {
-            const parsed = parseComplexityMessage(msg, diag.filePath)
-            if (parsed && parsed.complexity >= args.complexityThreshold) {
-              complexityResults.push(parsed)
-            }
-          } else if (msg.ruleId) {
-            lintIssues.push({
-              file: diag.filePath.replace(WORKSPACE_PATH + '/', ''),
-              line: msg.line,
-              severity: msg.severity,
-              rule: msg.ruleId
-            })
-          }
-        }
-      }
-
-      // ESLint section
-      const errors = lintIssues.filter((i) => i.severity === 2)
-      const warnings = lintIssues.filter((i) => i.severity === 1)
-      sections.push(
-        `### ESLint (${errors.length} errors, ${warnings.length} warnings across ${diagnostics.length} files)`
-      )
-      if (lintIssues.length === 0) {
-        sections.push('✅ All files pass.\n')
-      } else {
-        sections.push('| Severity | Rule | File | Line |')
-        sections.push('|----------|------|------|------|')
-        for (const i of lintIssues.slice(0, args.maxResults)) {
-          const sev = i.severity === 2 ? '❌' : '⚠️'
-          sections.push(`| ${sev} | ${i.rule} | ${i.file} | ${i.line} |`)
-        }
-        if (lintIssues.length > args.maxResults) {
-          sections.push(`_...and ${lintIssues.length - args.maxResults} more_`)
-        }
-        sections.push('')
-      }
-
-      // Complexity section
-      complexityResults.sort((a, b) => b.complexity - a.complexity)
-      const cappedComplexity = complexityResults.slice(0, args.maxResults)
-      sections.push(
-        `### Complexity (${complexityResults.length} functions above threshold ${args.complexityThreshold})`
-      )
-      if (cappedComplexity.length === 0) {
-        sections.push(`✅ No functions exceed complexity ${args.complexityThreshold}.\n`)
-      } else {
-        sections.push('| Score | Function | File | Line |')
-        sections.push('|-------|----------|------|------|')
-        for (const r of cappedComplexity) {
-          const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
-          const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
-          sections.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
-        }
-        sections.push('')
-      }
-    } catch (err) {
-      if (err instanceof EslintConfigError) {
-        // Graceful degradation — config issue, not a crash
-        sections.push(`### ESLint + Complexity\n⚠️ ${err.message}\n`)
-      } else {
-        const msg = err instanceof Error ? err.message : String(err)
-        const hint = !checkEslintAvailable()
-          ? ' ESLint is not available via npx.'
-          : msg.includes('exit code 2')
-            ? ' ESLint could not parse the project config. Check eslint.config.* for syntax errors.'
-            : ''
-        sections.push(`### ESLint + Complexity\n⚠️ Error: ${msg.slice(0, 300)}${hint}\n`)
-      }
+  complexityResults.sort((a, b) => b.complexity - a.complexity)
+  sections.push(
+    `### Complexity (${complexityResults.length} functions above threshold ${args.complexityThreshold})`
+  )
+  if (complexityResults.length === 0) {
+    sections.push(`✅ No functions exceed complexity ${args.complexityThreshold}.\n`)
+  } else {
+    sections.push('| Score | Function | File | Line |')
+    sections.push('|-------|----------|------|------|')
+    for (const r of complexityResults.slice(0, args.maxResults)) {
+      const flag = r.complexity > 20 ? '🔴' : r.complexity > 10 ? '🟡' : '🔵'
+      const relFile = r.file.replace(WORKSPACE_PATH + '/', '')
+      sections.push(`| ${flag} ${r.complexity} | ${r.function} | ${relFile} | ${r.line} |`)
     }
+    sections.push('')
+  }
+  if (complexityNotes.length > 0) sections.push(...complexityNotes, '')
+
+  // ── 1c. C# lint baseline via `dotnet format` ──
+  if (treeSitterPaths.length > 0) {
+    sections.push(...(await runAuditDotnetLint(treeSitterPaths, args.maxResults)))
+  }
 
   // ── 2. Dead code via code-graph (if available) ──
   if (WORKSPACE_ID) {
@@ -1045,7 +1219,7 @@ async function handleAuditScan(args: {
   }
 
   // ── Summary if both sub-scans failed ──
-  const eslintFailed = sections.some((s) => s.includes('### ESLint + Complexity\n⚠️'))
+  const eslintFailed = sections.some((s) => s.includes('### ESLint\n⚠️'))
   const deadCodeFailed = sections.some((s) => s.includes('### Dead Code\n⚠️'))
 
   if (eslintFailed && deadCodeFailed) {

@@ -1,0 +1,56 @@
+[
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "b4ee756f-d555-499c-8aa0-d7bc04131e2b"
+      },
+      "Id": "458e6a8c-d787-4b48-9d8e-c84d10b1cebc"
+    },
+    "FileName": "Program.cs",
+    "FilePath": "/tmp/fixture-app/Program.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 7,
+        "CharNumber": 18,
+        "DiagnosticId": "IDE0059",
+        "FormatDescription": "info IDE0059: Unnecessary assignment of a value to 'unused'"
+      }
+    ]
+  },
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "b4ee756f-d555-499c-8aa0-d7bc04131e2b"
+      },
+      "Id": "458e6a8c-d787-4b48-9d8e-c84d10b1cebc"
+    },
+    "FileName": "Program.cs",
+    "FilePath": "/tmp/fixture-app/Program.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 3,
+        "CharNumber": 31,
+        "DiagnosticId": "IDE0060",
+        "FormatDescription": "info IDE0060: Remove unused parameter 'args'"
+      }
+    ]
+  },
+  {
+    "DocumentId": {
+      "ProjectId": {
+        "Id": "b4ee756f-d555-499c-8aa0-d7bc04131e2b"
+      },
+      "Id": "0f4a55f0-2bfa-4a4c-bd6f-3ac3e1c4a111"
+    },
+    "FileName": "Widget.cs",
+    "FilePath": "/tmp/fixture-app/Models/Widget.cs",
+    "FileChanges": [
+      {
+        "LineNumber": 12,
+        "CharNumber": 5,
+        "DiagnosticId": "IDE0055",
+        "FormatDescription": "warning IDE0055: Fix formatting"
+      }
+    ]
+  }
+]

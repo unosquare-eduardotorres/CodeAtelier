@@ -23,13 +23,14 @@
 
 import { writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { app } from 'electron'
 import log from 'electron-log/main'
 import type { ConversationMode } from '../../shared/types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
+import { workspaceRepository } from '../db/repositories/workspace.repository'
 import { mountExternalIntegrations } from './cli-mcp-config-builders'
 import { resolveActiveIntegrationEnvs } from './integration-credentials'
 
@@ -199,22 +200,41 @@ export class CliMcpConfigWriter {
 
     // ── Code Graph ──
     //
-    // Deliberately the PRIMARY tree, not the execution tree. The graph is one
-    // index per repository; re-indexing a full copy per track would cost more
-    // than the staleness is worth. The trade is that an agent in a worktree
-    // sees an index that predates its own edits — acceptable for "where is X
-    // defined", and the reason the per-tree tools below exist for anything
-    // that has to be current.
+    // Scoped to the tree the agent is actually working in.
+    //
+    // This used to point at the primary tree on the theory that an index is one
+    // per repository and a worktree only drifts by its own uncommitted edits.
+    // That holds for a worktree on the same branch; it is badly wrong for a
+    // track, which is on a branch of its own. A blueprint track whose branch
+    // carried 78 source files against a primary tree holding 14 asked the graph
+    // "where is this component defined" and got nothing back — and because
+    // `hasPersistedIndex()` counts the whole workspace, the "no index, use Grep"
+    // hint never fired either. The agent could not tell an empty answer from a
+    // blind one and fell back to raw `grep -rn` for the rest of the run.
+    //
+    // A shadow workspace row gives the worktree its own index under the key the
+    // graph is already keyed by, so nothing downstream needs to know it exists.
     if (featureFlags.repomapEnabled && workspaceId) {
+      const inTrack = executionPath !== workspacePath
+      let graphScopeId = workspaceId
+      if (inTrack) {
+        try {
+          graphScopeId = workspaceRepository.ensureShadow(
+            workspaceId,
+            executionPath,
+            basename(executionPath)
+          ).id
+        } catch (err) {
+          // Fall back to the primary scope rather than losing the server: a
+          // stale index is worse than it was, but no index at all is worse still.
+          log.warn(`[cli-mcp-config] shadow scope failed for ${executionPath}:`, err)
+        }
+      }
       const codeGraphEnv: Record<string, string> = {
-        WORKSPACE_ID: workspaceId,
-        WORKSPACE_PATH: workspacePath,
+        WORKSPACE_ID: graphScopeId,
+        WORKSPACE_PATH: inTrack ? executionPath : workspacePath,
         DB_PATH: dbDir
       }
-      // Only when the two differ — the server turns this into a one-line caveat
-      // on each tool description, and an agent in the primary tree should not
-      // pay tokens for a warning that does not apply to it.
-      if (executionPath !== workspacePath) codeGraphEnv.EXECUTION_PATH = executionPath
       servers['code-graph'] = {
         command: 'node',
         args: [join(serverBasePath, 'code-graph-server.js')],

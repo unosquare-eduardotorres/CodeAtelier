@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
 import { rendererLog } from '@renderer/utils/logger'
-import { detectPlanIntent, detectComplexTask } from '@renderer/utils/plan-intent-detector'
+import { shouldAutoSwitchToPlan } from '@renderer/utils/plan-intent-detector'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
 import { useWorkspaceStore } from './workspace.store'
 import { useTodoStore } from './todo.store'
@@ -163,7 +163,7 @@ export interface ChatState {
   sendMessage: (
     text: string,
     attachments?: string[],
-    options?: { hidden?: boolean; skipOptimizer?: boolean }
+    options?: { hidden?: boolean; skipOptimizer?: boolean; skipModeDetection?: boolean }
   ) => Promise<void>
   appendStreamChunk: (
     conversationId: string,
@@ -246,6 +246,15 @@ export interface ChatState {
   ) => Promise<CompleteResult>
   closeConversation: (id: string) => Promise<void>
 
+  /**
+   * A handoff whose message is staged in the composer, awaiting the user's Send.
+   *
+   * Marked rather than inferred from a non-empty draft: an ordinary half-typed
+   * message is also a non-empty draft, and only a handoff should be announced.
+   */
+  stagedHandoff: { conversationId: string; sourceLabel: string } | null
+  setStagedHandoff: (staged: { conversationId: string; sourceLabel: string } | null) => void
+
   // Draft text per conversation (persists across tab switches)
   draftTexts: Record<string, string>
   setDraftText: (conversationId: string, text: string) => void
@@ -278,8 +287,8 @@ export interface ChatState {
     blockedConvTitle: string | undefined
     retryText: string
     retryAttachments?: string[]
-    /** Preserve hidden/skipOptimizer so retry replays them */
-    retryOptions?: { hidden?: boolean; skipOptimizer?: boolean }
+    /** Preserve hidden/skipOptimizer/skipModeDetection so retry replays them */
+    retryOptions?: { hidden?: boolean; skipOptimizer?: boolean; skipModeDetection?: boolean }
     /** MULTI-CHAT-06: Track the optimistic message ID so we can remove it on dismiss */
     optimisticMessageId?: string
   } | null
@@ -372,6 +381,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     event: null,
     conversationId: null
   },
+  stagedHandoff: previousChatState?.stagedHandoff ?? null,
   draftTexts: previousChatState?.draftTexts ?? {},
   contextUsages: previousChatState?.contextUsages ?? {},
   effortLevels: previousChatState?.effortLevels ?? {},
@@ -897,7 +907,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: async (
     text: string,
     attachments?: string[],
-    options?: { hidden?: boolean; skipOptimizer?: boolean }
+    options?: { hidden?: boolean; skipOptimizer?: boolean; skipModeDetection?: boolean }
   ) => {
     const {
       activeConversation,
@@ -964,10 +974,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // MSG-RELOAD-01: Bump generation so any in-flight DB reload is discarded
       internals.bumpGeneration()
 
-      // Auto-detect plan intent in build mode → switch to plan
+      // Auto-detect plan intent in build mode → switch to plan.
+      // skipModeDetection opts UI-generated sends out: they are not user intent
+      // (see shouldAutoSwitchToPlan).
       if (
-        activeConversation.mode === 'build' &&
-        (detectPlanIntent(text) || detectComplexTask(text))
+        shouldAutoSwitchToPlan({
+          mode: activeConversation.mode,
+          text,
+          skipModeDetection: options?.skipModeDetection
+        })
       ) {
         await updateMode('plan')
         // GAP-C-FIX: Bail if selectConversation (or createConversation) fired during
@@ -1559,6 +1574,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         : { phase: 'idle' as const, from: null, event: null, conversationId: null }
     })),
 
+  setStagedHandoff: (staged) => set({ stagedHandoff: staged }),
+
   // ── Draft text per conversation ──
   setDraftText: (conversationId: string, text: string) =>
     set((state) => ({
@@ -1691,6 +1708,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       turnLimitReached: null,
       sessionRecovery: null,
       autoModeSwitchPill: null,
+      stagedHandoff: null,
       draftTexts: {},
       contextUsages: {},
       effortLevels: {},
@@ -1728,6 +1746,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       turnLimitReached: null,
       sessionRecovery: null,
       autoModeSwitchPill: null,
+      stagedHandoff: null,
       draftTexts: {},
       contextUsages: {},
       effortLevels: {},
@@ -1770,6 +1789,7 @@ export const useChatActions = (): Pick<
   | 'skipAllQuestions'
   | 'setDraftText'
   | 'clearDraftText'
+  | 'setStagedHandoff'
   | 'loadContextUsage'
   | 'reorderConversations'
   | 'setConversationState'
@@ -1805,6 +1825,7 @@ export const useChatActions = (): Pick<
       skipAllQuestions: s.skipAllQuestions,
       setDraftText: s.setDraftText,
       clearDraftText: s.clearDraftText,
+      setStagedHandoff: s.setStagedHandoff,
       loadContextUsage: s.loadContextUsage,
       reorderConversations: s.reorderConversations,
       setConversationState: s.setConversationState,

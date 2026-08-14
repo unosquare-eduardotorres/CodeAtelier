@@ -9,7 +9,12 @@ import {
   describe,
   summaryAsync
 } from '../../../../../../main/services/__tests__/test-harness'
-import { isBuildRunning, isPlanLocked, type ExecutionLike } from '../build-bar-visibility'
+import {
+  isBuildRunning,
+  isPlanLocked,
+  derivePlanBarState,
+  type ExecutionLike
+} from '../build-bar-visibility'
 
 function exec(phaseStatuses: string[], opts: { completedAt?: number } = {}): ExecutionLike {
   return {
@@ -145,6 +150,119 @@ describe('isPlanLocked', () => {
   test('omitting buildIdle preserves the previous behaviour', () => {
     assert.equal(isPlanLocked({ planAction: undefined, execution: exec(['started']) }), true)
     assert.equal(isPlanLocked({ planAction: undefined, execution: exec(['completed']) }), false)
+  })
+})
+
+describe('derivePlanBarState', () => {
+  const base = { planAction: undefined, execution: undefined }
+
+  test('a fresh plan is actionable', () => {
+    assert.deepEqual(derivePlanBarState(base), { kind: 'actionable' })
+  })
+
+  test('a running phase is building', () => {
+    assert.deepEqual(derivePlanBarState({ ...base, execution: exec(['in_progress']) }), {
+      kind: 'building'
+    })
+  })
+
+  test('a stale in-flight phase past the idle window is no longer building', () => {
+    assert.deepEqual(
+      derivePlanBarState({ ...base, execution: exec(['in_progress']), buildIdle: true }),
+      { kind: 'actionable' }
+    )
+  })
+
+  test('a live stream is working, not invisible', () => {
+    assert.deepEqual(derivePlanBarState({ ...base, isStreaming: true }), { kind: 'working' })
+  })
+
+  test('REGRESSION: isStreaming stuck true still yields a rendered state', () => {
+    // The restart-only bug: `!planLocked && !isStreaming` rendered NOTHING here,
+    // and buildIdle could never arm to release it. Every state must be nameable.
+    const state = derivePlanBarState({
+      planAction: 'build',
+      execution: exec(['in_progress']),
+      isStreaming: true,
+      buildIdle: false
+    })
+    assert.equal(state.kind, 'building')
+  })
+
+  test('a pending permission or question outranks a plain live stream', () => {
+    assert.deepEqual(derivePlanBarState({ ...base, isStreaming: true, awaitingInput: true }), {
+      kind: 'awaiting_input'
+    })
+  })
+
+  test('a stalled stream is stalled, not working', () => {
+    // STALL-DETECT-03 already tracks this; the bar must surface it rather than
+    // sitting on a spinner that never resolves.
+    assert.deepEqual(derivePlanBarState({ ...base, isStreaming: true, stalled: true }), {
+      kind: 'stalled'
+    })
+  })
+
+  test('a genuinely running build outranks the stall flag', () => {
+    assert.deepEqual(
+      derivePlanBarState({ ...base, execution: exec(['in_progress']), stalled: true }),
+      { kind: 'building' }
+    )
+  })
+
+  test('clicking is NOT terminal — an actioned plan can be re-actioned', () => {
+    assert.deepEqual(derivePlanBarState({ ...base, planAction: 'build' }), {
+      kind: 'actioned',
+      action: 'build'
+    })
+  })
+
+  test('non-build actions report themselves', () => {
+    for (const action of ['refine', 'save_as_idea', 'council']) {
+      assert.deepEqual(derivePlanBarState({ ...base, planAction: action }), {
+        kind: 'actioned',
+        action
+      })
+    }
+  })
+
+  test('a completed build for THIS plan is done', () => {
+    assert.deepEqual(
+      derivePlanBarState({
+        planAction: 'build',
+        execution: exec(['completed'], { completedAt: 123 })
+      }),
+      { kind: 'done' }
+    )
+  })
+
+  test('a build summary marks done even without completedAt', () => {
+    // completedAt only exists on a live IPC completion — always absent after a
+    // reload, which is why the summary block is the durable terminal signal.
+    assert.deepEqual(derivePlanBarState({ ...base, buildSummarySeen: true }), { kind: 'done' })
+  })
+
+  test('REGRESSION: a NEW plan after a completed build is actionable, not done', () => {
+    // The execution record is per-conversation and outlives the build. Keying
+    // `done` off completedAt alone would mark every later plan as finished.
+    assert.deepEqual(
+      derivePlanBarState({
+        planAction: undefined,
+        execution: exec(['completed'], { completedAt: 123 })
+      }),
+      { kind: 'actionable' }
+    )
+  })
+
+  test('a completed build that starts streaming again is working, not done', () => {
+    assert.deepEqual(
+      derivePlanBarState({
+        planAction: 'build',
+        execution: exec(['completed'], { completedAt: 123 }),
+        isStreaming: true
+      }),
+      { kind: 'working' }
+    )
   })
 })
 

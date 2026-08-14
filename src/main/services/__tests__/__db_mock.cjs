@@ -588,6 +588,18 @@ const repos = {
     'updateNote',
     'getUnresolvedCount'
   ]),
+  trackRepository: stubRepo([
+    'create',
+    'findById',
+    'findByOwner',
+    'findByBranch',
+    'findByWorkspace',
+    'adoptOwner',
+    'touch',
+    'markRetained',
+    'markRemoving',
+    'deleteById'
+  ]),
   coreAgentAliasRepository: stubRepo(['findAll', 'upsert']),
   coreAgentPromptRepository: stubRepo(['findAll', 'findByRoleAndMode', 'upsert', 'resetToDefault'])
 }

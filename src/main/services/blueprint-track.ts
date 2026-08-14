@@ -245,5 +245,46 @@ export async function ensureBlueprintTrack(params: {
  * when BUILD never had a track or the track has since been landed.
  */
 export function resolveBlueprintTrack(blueprintId: string, workspacePath: string): ExecutionTarget {
-  return trackService.resolveTrack('blueprint', blueprintId, workspacePath)
+  const target = trackService.resolveTrack('blueprint', blueprintId, workspacePath)
+  if (!target.isolated) warnIfHandedOff(blueprintId, workspacePath)
+  return target
+}
+
+/**
+ * Say so when a blueprint fell back to the primary tree because it gave its
+ * branch away.
+ *
+ * `resolveTrack` looks up by owner, and a Blueprint → Chat handoff reassigns the
+ * track row to the chat. From here that is indistinguishable from "never had a
+ * track", so a resumed or re-verified blueprint quietly runs in the workspace
+ * checkout while its output sits on a branch someone else is holding — VERIFY
+ * then grades the wrong tree. Nothing here can safely take the branch back (the
+ * chat may be mid-turn), but the log line turns a silent wrong answer into a
+ * traceable one.
+ */
+function warnIfHandedOff(blueprintId: string, workspacePath: string): void {
+  try {
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) return
+
+    const choice = readBranchChoice(blueprint.settingsJson ?? {})
+    const branchName =
+      choice.mode === 'fork' && choice.name
+        ? choice.name
+        : choice.mode === 'takeover' && choice.branch
+          ? choice.branch
+          : blueprintTrackBranch(blueprintId, blueprint.title)
+
+    const holder = trackRepository.findByBranch(blueprint.workspaceId, branchName)
+    if (!holder || (holder.ownerKind === 'blueprint' && holder.ownerId === blueprintId)) return
+
+    trackLog.warn(
+      `[resolve] blueprint ${blueprintId} is running in ${workspacePath}, but its branch ` +
+        `${branchName} is held by ${holder.ownerKind}:${holder.ownerId ?? '—'} at ${holder.path}. ` +
+        `Output written here will not join the work on that branch.`
+    )
+  } catch (err) {
+    // Diagnostics must never break the execution path they describe.
+    trackLog.debug(`[resolve] hand-off check failed for ${blueprintId}: ${(err as Error).message}`)
+  }
 }

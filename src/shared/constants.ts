@@ -637,6 +637,10 @@ export const IPC_CHANNELS = {
   BLUEPRINT_LIST: 'blueprint:list',
   BLUEPRINT_DELETE: 'blueprint:delete',
   BLUEPRINT_CANCEL: 'blueprint:cancel',
+  /** Hand a finished blueprint — its branch, worktree and context — to a new chat. */
+  BLUEPRINT_HANDOFF_TO_CHAT: 'blueprint:handoffToChat',
+  /** Who holds the blueprint's branch, so the handoff UI can offer a real choice. */
+  BLUEPRINT_HANDOFF_OPTIONS: 'blueprint:handoffOptions',
 
   BLUEPRINT_ADVANCE_PHASE: 'blueprint:advancePhase',
   BLUEPRINT_SKIP_PHASE: 'blueprint:skipPhase',

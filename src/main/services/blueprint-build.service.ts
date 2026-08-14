@@ -13,7 +13,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { normalize } from 'node:path'
+import { basename, normalize } from 'node:path'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -42,7 +42,7 @@ import {
   parseDiscoveriesBlock,
   asStringArray
 } from './blueprint-artifact-parsers'
-import { verifyTaskFileClaims } from './blueprint-task-verification'
+import { verifyBuildTaskFiles } from './blueprint-task-verification'
 import { blueprintService } from './blueprint.service'
 import { codeGraphService } from './code-graph.service'
 import {
@@ -51,6 +51,7 @@ import {
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
+import { workspaceRepository } from '../db/repositories/workspace.repository'
 import { runPreflightChecks, buildPreflightDiscoveries } from './blueprint-preflight.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import { ensureBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
@@ -394,12 +395,32 @@ export class BlueprintBuildService extends EventEmitter {
 
       bpLog.info(`[startBuildPhase] ${sortedWaves.length} waves, ${totalTasks} tasks total`)
 
-      // 3b. Bootstrap code-graph index if none exists — ensures Wave 1+ agents
+      // 3b. Bootstrap the code-graph index if none exists — ensures Wave 1+ agents
       // get a populated graph for code-graph tool calls.
-      if (!codeGraphService.hasPersistedIndex(workspaceId)) {
+      //
+      // Indexed against the tree BUILD will actually run in, under its own scope
+      // when that is a track. The track is on its own branch, so the primary
+      // tree's index describes a different set of files entirely — which is how
+      // agents ended up grepping by hand for components the graph had never seen.
+      const graphScopeId =
+        executionPath === workspacePath
+          ? workspaceId
+          : (() => {
+              try {
+                return workspaceRepository.ensureShadow(
+                  workspaceId,
+                  executionPath,
+                  basename(executionPath)
+                ).id
+              } catch (err) {
+                bpLog.warn(`[startBuildPhase] Shadow index scope failed (non-fatal):`, err)
+                return workspaceId
+              }
+            })()
+      if (!codeGraphService.hasPersistedIndex(graphScopeId)) {
         try {
-          bpLog.info(`[startBuildPhase] Bootstrapping code-graph index for ${workspaceId}`)
-          await codeGraphService.indexWorkspace(workspaceId, workspacePath)
+          bpLog.info(`[startBuildPhase] Bootstrapping code-graph index for ${graphScopeId}`)
+          await codeGraphService.indexWorkspace(graphScopeId, executionPath)
           bpLog.info(`[startBuildPhase] Code-graph bootstrap complete`)
         } catch (err) {
           bpLog.warn(`[startBuildPhase] Code-graph bootstrap failed (non-fatal):`, err)
@@ -1615,12 +1636,16 @@ export class BlueprintBuildService extends EventEmitter {
         // FIX-3: Pass tDispatch as taskStartedAt for mtime freshness checking.
         // Claimed paths are resolved against this root and anything escaping it
         // is rejected, so the wrong root fails every claim in the task.
-        const verification = verifyTaskFileClaims(
+        // The primary checkout is passed as the secondary root: planned paths are
+        // recorded as absolute paths in it, so claims naming them must be re-rooted
+        // onto the worktree rather than reported missing (R007).
+        const verification = verifyBuildTaskFiles({
           executionPath,
+          workspacePath,
           completion,
-          task.filePathsJson,
-          tDispatch
-        )
+          plannedFiles: task.filePathsJson,
+          taskStartedAt: tDispatch
+        })
 
         // BP-EVIDENCE-ONLY-SOFTPASS: Defense-in-depth for verification/evidence-only tasks.
         // When verification fails with stale-only or no-fresh-file (no files actually absent)

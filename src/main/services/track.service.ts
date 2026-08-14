@@ -448,6 +448,18 @@ export class TrackService {
     return this.resolveTrack('chat', conversationId, primaryPath)
   }
 
+  /**
+   * Why this track's owner could not hand it over right now, or null when idle.
+   *
+   * The same question `transferOwner` asks itself, exposed so a UI can say "the
+   * blueprint is still building" *before* offering a button that would fail.
+   * Retained tracks have no owner to be busy.
+   */
+  busyReasonFor(track: WorkTrack): string | null {
+    if (!track.ownerId) return null
+    return busyProbes.get(track.ownerKind)?.(track.ownerId) ?? null
+  }
+
   list(workspaceId: string): WorkTrack[] {
     return trackRepository.findByWorkspace(workspaceId)
   }

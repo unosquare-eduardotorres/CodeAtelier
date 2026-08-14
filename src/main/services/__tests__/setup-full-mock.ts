@@ -78,6 +78,7 @@ const REPO_NAME_MAP: Record<string, string> = {
   e2eTestRun: 'e2eTestRunRepository',
   e2eTestResult: 'e2eTestResultRepository',
   handoff: 'handoffRepository',
+  track: 'trackRepository',
   bug: 'bugRepository',
   coreAgentAlias: 'coreAgentAliasRepository',
   coreAgentPrompt: 'coreAgentPromptRepository'

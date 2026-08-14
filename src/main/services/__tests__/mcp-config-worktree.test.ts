@@ -52,7 +52,7 @@ if (!gitAvailable || !Writer) {
   const WriterClass = Writer
 
   describe('MCP config in a worktree', () => {
-    test('per-tree servers point at the worktree; the graph index does not', async () => {
+    test('per-tree servers point at the worktree, the graph included', async () => {
       const root = await mkdtemp(join(tmpdir(), 'mcp-wt-'))
       const repo = join(root, 'repo')
       const worktree = join(root, 'wt')
@@ -103,12 +103,15 @@ if (!gitAvailable || !Writer) {
         assert.equal(servers['process-manager'].env?.WORKSPACE_PATH, worktree)
         assert.equal(servers['control-actions'].env?.WORKSPACE_PATH, worktree)
 
-        // Shared: one index per repository, by design — and it says so.
-        assert.equal(servers['code-graph'].env?.WORKSPACE_PATH, repo)
-        assert.equal(servers['code-graph'].env?.EXECUTION_PATH, worktree)
+        // The graph follows the agent as well. A track is on its own branch, so
+        // the primary tree's index describes files the agent cannot see and
+        // omits the ones it is editing — `only-in-worktree.ts` above being the
+        // whole point. It is scoped rather than shared.
+        assert.equal(servers['code-graph'].env?.WORKSPACE_PATH, worktree)
+        assert.equal(servers['code-graph'].env?.EXECUTION_PATH, undefined)
+        assert.ok(servers['code-graph'].env?.WORKSPACE_ID, 'the graph still needs a scope id')
 
-        // Workspace identity is untouched by any of this.
-        assert.equal(servers['code-graph'].env?.WORKSPACE_ID, 'ws-wt')
+        // Everything else keyed by workspace identity is untouched by this.
         assert.equal(servers['memory'].env?.WORKSPACE_ID, 'ws-wt')
 
         // The primary tree's own config must be a different file, or one of the

@@ -1,5 +1,6 @@
 export { default as BuildActionBar } from './BuildActionBar'
-export { isBuildRunning, isPlanLocked } from './build-bar-visibility'
+export { isBuildRunning, isPlanLocked, derivePlanBarState } from './build-bar-visibility'
+export type { PlanBarState, PlanBarStateInput } from './build-bar-visibility'
 export { RootCausesList, ComplexityIndicator, RiskDot, PhasesList } from './PlanHelpers'
 export { usePlanMemos } from './usePlanMemos'
 export { buildSectionMap } from './TaskPlanSections'

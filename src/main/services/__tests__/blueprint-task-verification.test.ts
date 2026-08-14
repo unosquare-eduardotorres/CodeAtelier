@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { test, describe, summaryAsync } from './test-harness'
 import {
   verifyTaskFileClaims,
+  verifyBuildTaskFiles,
   scanCompletedTaskFiles,
   applyDeterministicFileCheck
 } from '../blueprint-task-verification'
@@ -557,6 +558,55 @@ describe('verifyTaskFileClaims — planned path in the main checkout re-roots on
       )
       assert.equal(result.ok, true)
       assert.deepEqual(result.missingClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+})
+
+describe('verifyBuildTaskFiles — BUILD passes both roots', () => {
+  test('R007: an absolute primary-tree claim is re-rooted, not reported missing', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      // The exact production shape: the blueprint records planned paths as
+      // absolute primary-tree paths, the agent claims one back, and the file
+      // exists in the worktree BUILD actually wrote in.
+      const planned = join(main, 'blueprints/bp-1/spec.md')
+      mkdirSync(join(worktree, 'blueprints/bp-1'), { recursive: true })
+      writeFileSync(join(worktree, 'blueprints/bp-1/spec.md'), '# spec')
+
+      const result = verifyBuildTaskFiles({
+        executionPath: worktree,
+        workspacePath: main,
+        completion: { filesModified: [planned] },
+        plannedFiles: [planned]
+      })
+
+      assert.equal(result.ok, true, 'a file present in the execution tree must verify')
+      assert.deepEqual(result.missingClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(main)
+      cleanupTmpWorkspace(worktree)
+    }
+  })
+
+  test('a claim absent from BOTH trees is still a hard failure', () => {
+    const main = makeTmpWorkspace()
+    const worktree = makeTmpWorkspace()
+    try {
+      const planned = join(main, 'src/never-written.ts')
+
+      const result = verifyBuildTaskFiles({
+        executionPath: worktree,
+        workspacePath: main,
+        completion: { filesCreated: [planned] },
+        plannedFiles: [planned]
+      })
+
+      assert.equal(result.ok, false, 're-rooting must not become a blanket pass')
+      assert.deepEqual(result.missingClaimed, [planned])
     } finally {
       cleanupTmpWorkspace(main)
       cleanupTmpWorkspace(worktree)

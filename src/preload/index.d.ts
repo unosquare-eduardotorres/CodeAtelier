@@ -116,6 +116,11 @@ import type {
   TrackLandingMode
 } from '../shared/track-types'
 import type { BlueprintBranchOptions } from '../shared/blueprint-types'
+import type {
+  BlueprintHandoffIntent,
+  BlueprintBranchMode,
+  BlueprintHandoffOptions
+} from '../shared/blueprint-handoff'
 
 interface Api {
   // Workspace
@@ -1568,6 +1573,22 @@ interface Api {
   blueprintList: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
   blueprintCancel: (args: { workspaceId: string }) => Promise<{ cancelled: boolean }>
   blueprintDelete: (args: { id: string }) => Promise<{ deleted: boolean }>
+  blueprintHandoffToChat: (args: {
+    workspaceId: string
+    blueprintId: string
+    intent?: BlueprintHandoffIntent
+    branchMode?: BlueprintBranchMode
+  }) => Promise<{
+    conversationId: string
+    title: string
+    branchName: string | null
+    inheritedTrack: boolean
+    stagedMessage: string
+  }>
+  blueprintHandoffOptions: (args: {
+    workspaceId: string
+    blueprintId: string
+  }) => Promise<BlueprintHandoffOptions>
   blueprintGetConstitution: (args: {
     workspaceId: string
   }) => Promise<{ constitutionMd: string | null; constitutionVersion: string } | null>

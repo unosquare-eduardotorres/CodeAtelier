@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 143
+export const CURRENT_SCHEMA_VERSION = 144
 
 export interface Migration {
   version: number
@@ -4277,6 +4277,41 @@ export const migrations: Migration[] = [
       db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN skipped_by_user_at TEXT`)
 
       dbLogger.info('[migration-143] ✓ Added blueprint_tasks.skipped_by_user_at')
+    }
+  },
+
+  // ── Migration 144: per-track code-graph index scope ──
+  {
+    version: 144,
+    name: 'workspace-shadow-for-track-index',
+    up: (db) => {
+      // The code graph is keyed by workspace_id, so a workspace has exactly one
+      // index — built from the primary checkout. An agent working in a track's
+      // worktree is usually on a *different branch*, whose files that index has
+      // never seen: asking "where is X defined" returns nothing, and because
+      // `hasPersistedIndex()` is a workspace-wide count it still reports the
+      // workspace as indexed, so no "unindexed, use Grep" hint fires either.
+      // The agent gets a silent empty answer and falls back to raw `grep -rn`.
+      //
+      // A shadow workspace row per worktree gives that tree its own index under
+      // the existing key, so none of the graph tables, repositories or the MCP
+      // server need to learn about tracks. Shadows are excluded from findAll()
+      // and are not user-visible; they exist only to scope an index.
+      //
+      // Self-referencing FK with CASCADE so deleting the real workspace takes
+      // its shadows (and, through them, their graph rows) with it.
+      db.exec(`
+        ALTER TABLE workspaces
+          ADD COLUMN shadow_of_workspace_id TEXT
+          REFERENCES workspaces(id) ON DELETE CASCADE
+      `)
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_workspaces_shadow_of
+          ON workspaces(shadow_of_workspace_id)
+      `)
+
+      dbLogger.info('[migration-144] ✓ Added workspaces.shadow_of_workspace_id')
     }
   }
 ]

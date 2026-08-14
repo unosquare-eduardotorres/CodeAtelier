@@ -219,7 +219,10 @@ describe('Code Analysis — sanitizePath logic', () => {
 })
 
 describe('Code Analysis — SUPPORTED_EXTENSIONS logic', () => {
-  const SUPPORTED = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'])
+  // Imported from the routing table the handler uses, not re-declared: a local
+  // copy stayed green for months while asserting `.py` was unsupported.
+  const { ESLINT_EXTENSIONS: SUPPORTED, complexityEngineFor } =
+    require('../complexity-analyzer') as typeof import('../complexity-analyzer')
 
   test('supports_typescript', () => {
     assert.ok(SUPPORTED.has('.ts'))
@@ -235,16 +238,23 @@ describe('Code Analysis — SUPPORTED_EXTENSIONS logic', () => {
     assert.ok(SUPPORTED.has('.cjs'))
   })
 
-  test('does_not_support_python', () => {
+  test('python_routes_to_tree_sitter_not_eslint', () => {
     assert.ok(!SUPPORTED.has('.py'))
+    assert.equal(complexityEngineFor('src/main.py'), 'tree-sitter')
+  })
+
+  test('csharp_routes_to_tree_sitter', () => {
+    assert.equal(complexityEngineFor('src/Service.cs'), 'tree-sitter')
   })
 
   test('does_not_support_rust', () => {
     assert.ok(!SUPPORTED.has('.rs'))
+    assert.equal(complexityEngineFor('src/main.rs'), null)
   })
 
   test('does_not_support_go', () => {
     assert.ok(!SUPPORTED.has('.go'))
+    assert.equal(complexityEngineFor('src/main.go'), null)
   })
 })
 
