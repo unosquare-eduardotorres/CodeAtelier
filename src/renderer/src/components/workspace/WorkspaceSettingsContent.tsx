@@ -13,6 +13,7 @@ import RepositorySettingsTab from './RepositorySettingsTab'
 import TracksSettingsTab from './TracksSettingsTab'
 import CodeIntelligencePage from './CodeIntelligencePage'
 import IntegrationsPage from './IntegrationsPage'
+import { JiraTicketsPage } from './jira'
 import SpecialistPage from './SpecialistPage'
 import HealthPage from './HealthPage'
 import GoalPage from './GoalPage'
@@ -124,7 +125,7 @@ export default function WorkspaceSettingsContent({
 
   return (
     <div
-      className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${tab === 'ideas' && activeGrill ? 'overflow-hidden' : 'overflow-y-auto'}`}
+      className={`flex-1 flex flex-col bg-surface-raised min-w-0 ${(tab === 'ideas' && activeGrill) || tab === 'jira' ? 'overflow-hidden' : 'overflow-y-auto'}`}
     >
       {tab === 'specialist' && <SpecialistPage />}
       {tab === 'health' && (
@@ -237,6 +238,16 @@ export default function WorkspaceSettingsContent({
         />
       )}
       {tab === 'blueprints' && <BlueprintPage onNavigateToChat={onNavigateToChat} />}
+      {/* Bounded like the team tab: the page scrolls its list and detail panes
+          itself, which only works if its height is constrained here. */}
+      {tab === 'jira' && (
+        <div className="flex-1 min-h-0 flex">
+          <JiraTicketsPage
+            onNavigateToChat={onNavigateToChat}
+            onNavigateToBlueprints={() => onSettingsTabChange?.('blueprints')}
+          />
+        </div>
+      )}
       {tab === 'memory' && <MemorySettingsPage />}
       {tab === 'documents' && <DocumentsPage />}
       {tab === 'tokens' && <TokenUsagePage />}

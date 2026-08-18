@@ -27,3 +27,6 @@ coverage/
 
 # Build lock (build-mac.sh / build-win.sh concurrency guard)
 .build-lock/
+
+# TypeScript incremental build state (emitted by tsc -p tsconfig.*.json)
+*.tsbuildinfo

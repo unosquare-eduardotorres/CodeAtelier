@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Jira MCP Server — bundled, first-party, read-only.
+ * Jira MCP Server — bundled, first-party.
  *
  * Bundled rather than shelled out to a published server because the target
  * environment is Windows on a corporate VPN: `npx <pkg>` needs npmjs.org at
  * spawn time, and `npx.cmd` does not spawn without a shell on Windows.
  *
- * Exposes: get_issue, search_issues. Nothing mutates Jira.
+ * Exposes: get_issue, search_issues (read) and add_comment (write). Commenting
+ * is the only mutation — status, assignee and fields are never touched, and the
+ * registry withholds add_comment in plan mode.
  *
  * Environment variables (injected by resolveIntegrationEnv):
  *   JIRA_BASE_URL   — https://client.atlassian.net or https://jira.client.internal
@@ -24,10 +26,12 @@ import {
   ISSUE_FIELDS,
   ISSUE_KEY_RE,
   apiUrl,
+  buildCommentBody,
   buildHeaders,
   buildSearchRequest,
   formatIssue,
   formatSearchRows,
+  issueBrowseUrl,
   jiraConfigFromEnv,
   mapHttpStatus,
   mapNetworkError
@@ -79,6 +83,10 @@ async function jiraRequest(
     if (!response.ok) {
       throw new JiraUserError(mapHttpStatus(response.status, cfg.baseUrl).message)
     }
+
+    // 204 No Content is a valid success for write endpoints, and calling
+    // .json() on an empty body throws.
+    if (response.status === 204) return null
 
     // Parsed separately: a body that is not JSON is a Jira/proxy problem, and
     // mapNetworkError would mislabel it as "Could not reach Jira".
@@ -143,6 +151,34 @@ server.tool(
       return textResult(
         truncateToolOutput(JSON.stringify(formatSearchRows(raw as never), null, 2), 20_000)
       )
+    } catch (err) {
+      return textResult(err instanceof Error ? err.message : String(err))
+    }
+  }
+)
+
+server.tool(
+  'add_comment',
+  'Post a comment on a Jira issue — a progress note, a summary of what was implemented, or a question for the reporter. Only call it when the user asks you to comment. Cannot change status, assignee or any other field.',
+  {
+    issueKey: z.string().describe('Jira issue key, e.g. PROJ-123'),
+    body: z.string().describe('Comment text. Blank lines separate paragraphs.')
+  },
+  async (args) => {
+    const issueKey = args.issueKey.trim().toUpperCase()
+    if (!ISSUE_KEY_RE.test(issueKey)) {
+      return textResult(`Invalid issue key "${args.issueKey}". Expected a format like PROJ-123.`)
+    }
+    if (args.body.trim().length === 0) {
+      return textResult('Comment body is empty — nothing was posted.')
+    }
+    try {
+      const cfg = requireConfig()
+      await jiraRequest(apiUrl(cfg.baseUrl, `issue/${issueKey}/comment`), {
+        method: 'POST',
+        body: buildCommentBody(cfg.baseUrl, args.body.trim())
+      })
+      return textResult(`Comment posted on ${issueKey}: ${issueBrowseUrl(cfg.baseUrl, issueKey)}`)
     } catch (err) {
       return textResult(err instanceof Error ? err.message : String(err))
     }

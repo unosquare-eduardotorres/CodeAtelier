@@ -20,7 +20,8 @@ import {
   Landmark,
   ClipboardList,
   BookOpen,
-  FlaskConical
+  FlaskConical,
+  SquareKanban
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
@@ -33,6 +34,7 @@ export type SettingsTab =
   | 'ideas'
   | 'plans'
   | 'blueprints'
+  | 'jira'
   | 'models'
   | 'repository'
   | 'tracks'
@@ -88,6 +90,13 @@ export const SETTINGS_MENU: {
     label: 'Blueprints',
     icon: BookOpen,
     iconColor: 'text-emerald-400',
+    group: 'tools'
+  },
+  {
+    id: 'jira',
+    label: 'Jira',
+    icon: SquareKanban,
+    iconColor: 'text-blue-400',
     group: 'tools'
   },
   // ── Configuration (settings) ──

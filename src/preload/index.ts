@@ -5,6 +5,11 @@ import type {
   IntegrationCredentialStatus
 } from '../shared/integration-credentials.types'
 import type {
+  JiraCreateBlueprintsResult,
+  JiraIssueDetail,
+  JiraSearchResult
+} from '../shared/jira.types'
+import type {
   Workspace,
   Conversation,
   ConversationMode,
@@ -248,6 +253,28 @@ const api = {
     integrationId: string
   }): Promise<{ success: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.INTEGRATION_CLEAR_CREDENTIALS, args),
+
+  // ── Jira tickets panel ──
+  jiraSearchIssues: (args: {
+    workspaceId: string
+    jql: string
+    maxResults?: number
+  }): Promise<JiraSearchResult> => ipcRenderer.invoke(IPC_CHANNELS.JIRA_SEARCH_ISSUES, args),
+
+  jiraGetIssue: (args: { workspaceId: string; issueKey: string }): Promise<JiraIssueDetail> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_GET_ISSUE, args),
+
+  jiraAddComment: (args: {
+    workspaceId: string
+    issueKey: string
+    body: string
+  }): Promise<{ success: true }> => ipcRenderer.invoke(IPC_CHANNELS.JIRA_ADD_COMMENT, args),
+
+  jiraCreateBlueprints: (args: {
+    workspaceId: string
+    issueKeys: string[]
+  }): Promise<JiraCreateBlueprintsResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_CREATE_BLUEPRINTS, args),
 
   getMessages: (args: { conversationId: string }): Promise<Message[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.CHAT_GET_MESSAGES, args),

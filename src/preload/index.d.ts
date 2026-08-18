@@ -3,6 +3,11 @@ import type {
   IntegrationCredentialStatus
 } from '../shared/integration-credentials.types'
 import type {
+  JiraCreateBlueprintsResult,
+  JiraIssueDetail,
+  JiraSearchResult
+} from '../shared/jira.types'
+import type {
   Workspace,
   Conversation,
   ConversationMode,
@@ -230,6 +235,21 @@ interface Api {
     workspaceId: string
     integrationId: string
   }) => Promise<{ success: boolean }>
+  jiraSearchIssues: (args: {
+    workspaceId: string
+    jql: string
+    maxResults?: number
+  }) => Promise<JiraSearchResult>
+  jiraGetIssue: (args: { workspaceId: string; issueKey: string }) => Promise<JiraIssueDetail>
+  jiraAddComment: (args: {
+    workspaceId: string
+    issueKey: string
+    body: string
+  }) => Promise<{ success: true }>
+  jiraCreateBlueprints: (args: {
+    workspaceId: string
+    issueKeys: string[]
+  }) => Promise<JiraCreateBlueprintsResult>
   getMessages: (args: { conversationId: string }) => Promise<Message[]>
   getTodos: (args: { conversationId: string }) => Promise<
     Array<{

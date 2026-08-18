@@ -15,6 +15,17 @@ const CATEGORIES = [
 const CATEGORY_HEADER_THRESHOLD = 5
 
 /**
+ * Integrations that own a dedicated workspace tab and manage their own setup
+ * there. Rendering them here as well would give the same toggle two homes that
+ * can show stale state relative to each other.
+ */
+const INTEGRATIONS_WITH_OWN_TAB = new Set(['jira'])
+
+const LISTED_INTEGRATIONS = EXTERNAL_MCP_INTEGRATIONS.filter(
+  (i) => !INTEGRATIONS_WITH_OWN_TAB.has(i.id)
+)
+
+/**
  * Integrations page — workspace settings tab for managing external MCP servers.
  * Each integration can be enabled/disabled per workspace. When enabled, a toggle
  * pill appears in the chat UI for per-message activation.
@@ -47,7 +58,7 @@ export default function IntegrationsPage(): React.JSX.Element {
 
   // Check CLI availability — bundled servers ship with the app, nothing to look up
   useEffect(() => {
-    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+    for (const integration of LISTED_INTEGRATIONS) {
       if (integration.bundledServerEntry) continue
       window.api
         .checkExternalMcp({ command: integration.command })
@@ -70,7 +81,7 @@ export default function IntegrationsPage(): React.JSX.Element {
   // Load stored credential state — drives the "configured" badge and toggle gate
   useEffect(() => {
     if (!activeWorkspace) return
-    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+    for (const integration of LISTED_INTEGRATIONS) {
       if (!integration.credentialFields?.length) continue
       window.api
         .getIntegrationCredentialStatus({
@@ -113,9 +124,7 @@ export default function IntegrationsPage(): React.JSX.Element {
     [activeWorkspace, settings]
   )
 
-  const renderCard = (
-    integration: (typeof EXTERNAL_MCP_INTEGRATIONS)[number]
-  ): React.JSX.Element => (
+  const renderCard = (integration: (typeof LISTED_INTEGRATIONS)[number]): React.JSX.Element => (
     <IntegrationCard
       key={integration.id}
       integration={integration}
@@ -133,7 +142,7 @@ export default function IntegrationsPage(): React.JSX.Element {
   // Category headers cost a row each and say nothing while every category holds
   // a single item — two headers over two integrations, one of them "OTHER".
   // They earn their place once the list is long enough to need scanning.
-  const showCategories = EXTERNAL_MCP_INTEGRATIONS.length >= CATEGORY_HEADER_THRESHOLD
+  const showCategories = LISTED_INTEGRATIONS.length >= CATEGORY_HEADER_THRESHOLD
 
   return (
     <div data-testid="integrations-page" className="p-6 space-y-4 max-w-4xl">
@@ -141,7 +150,7 @@ export default function IntegrationsPage(): React.JSX.Element {
 
       {showCategories ? (
         CATEGORIES.map((cat) => {
-          const integrations = EXTERNAL_MCP_INTEGRATIONS.filter((i) => i.category === cat.key)
+          const integrations = LISTED_INTEGRATIONS.filter((i) => i.category === cat.key)
           if (integrations.length === 0) return null
           return (
             <div key={cat.key}>
@@ -153,8 +162,13 @@ export default function IntegrationsPage(): React.JSX.Element {
           )
         })
       ) : (
-        <div className="space-y-2">{EXTERNAL_MCP_INTEGRATIONS.map(renderCard)}</div>
+        <div className="space-y-2">{LISTED_INTEGRATIONS.map(renderCard)}</div>
       )}
+
+      <p className="text-[11px] text-text-muted border border-dashed border-border-subtle rounded-lg px-3 py-2">
+        Jira lives in its own <span className="text-text-secondary font-medium">Jira</span> tab —
+        connect it and browse tickets from there.
+      </p>
 
       <p className="text-[11px] text-text-muted border border-dashed border-border-subtle rounded-lg px-3 py-2">
         More coming soon — Playwright, Docker, Supabase, Sentry. Each auto-renders here and as a

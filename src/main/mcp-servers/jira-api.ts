@@ -10,6 +10,7 @@
  *   - API version: Cloud uses /rest/api/3, DC/Server has no v3 → /rest/api/2
  *   - Search: Cloud removed POST /search in 2025 → GET /search/jql
  *   - Description: Cloud returns ADF (a document tree), DC returns wiki markup
+ *   - Comments: Cloud accepts only ADF on write, DC accepts a plain string
  */
 
 export type JiraAuthMode = 'cloud-token' | 'pat' | 'basic'
@@ -49,6 +50,11 @@ export function apiVersion(baseUrl: string): '2' | '3' {
 /** Absolute URL for a REST path, e.g. apiUrl(cfg, 'myself'). */
 export function apiUrl(baseUrl: string, path: string): string {
   return `${normalizeBaseUrl(baseUrl)}/rest/api/${apiVersion(baseUrl)}/${path}`
+}
+
+/** Web UI deep link for an issue — what "Open in Jira" navigates to. */
+export function issueBrowseUrl(baseUrl: string, issueKey: string): string {
+  return `${normalizeBaseUrl(baseUrl)}/browse/${issueKey}`
 }
 
 /**
@@ -318,6 +324,44 @@ export const ISSUE_FIELDS = [
 
 /** Fields requested for search_issues. */
 export const SEARCH_FIELDS = ['summary', 'status', 'issuetype', 'assignee', 'updated'].join(',')
+
+/**
+ * Request body for `POST /issue/{key}/comment`.
+ *
+ * Cloud's v3 endpoint rejects a plain string with a 400 — it wants Atlassian
+ * Document Format. Server / DC's v2 endpoint wants the plain string and cannot
+ * parse ADF, so the shape has to follow the same host check the read path uses.
+ *
+ * Blank lines split paragraphs; ADF forbids an empty `content` array on a
+ * paragraph node, so empty lines are dropped rather than emitted as empty
+ * paragraphs. Text is never trusted as markup — it goes in as literal text
+ * nodes, so a comment containing `{code}` or `@here` cannot inject formatting.
+ */
+export function buildCommentBody(baseUrl: string, text: string): string {
+  if (!isCloudHost(baseUrl)) return JSON.stringify({ body: text })
+
+  const paragraphs = text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter((block) => block.length > 0)
+    .map((block) => ({
+      type: 'paragraph',
+      content: [{ type: 'text', text: block }]
+    }))
+
+  return JSON.stringify({
+    body: {
+      type: 'doc',
+      version: 1,
+      // A doc with no content is invalid ADF. An all-whitespace comment is
+      // rejected upstream, but the fallback keeps this helper total.
+      content:
+        paragraphs.length > 0
+          ? paragraphs
+          : [{ type: 'paragraph', content: [{ type: 'text', text: text.trim() || '—' }] }]
+    }
+  })
+}
 
 /**
  * Search endpoint URL. Jira Cloud removed `POST /rest/api/3/search` in 2025 and

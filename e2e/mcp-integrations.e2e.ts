@@ -133,33 +133,6 @@ test.describe('MCP Integrations', () => {
     expect(hasToggle).toBeTruthy()
   })
 
-  test('jira card is addressable by id and renders its credentials form', async ({
-    electronPage: page
-  }) => {
-    await navigateToIntegrations(page)
-
-    // Scoped by id rather than `.first()`: the generic card selector always lands
-    // on Maestro (category `testing` renders before `other`).
-    const jiraCard = page.locator('[data-testid="integration-card-jira"]')
-    const hasJira = await jiraCard.isVisible({ timeout: 5_000 }).catch(() => false)
-
-    if (!hasJira) {
-      test.skip()
-      return
-    }
-
-    await expect(jiraCard).toContainText(/jira/i)
-
-    // The credentials form only renders with a workspace open; when it is there,
-    // it must be inside this card and not a sibling's.
-    const form = jiraCard.locator('[data-testid="integration-credentials-form"]')
-    const hasForm = await form.isVisible({ timeout: 3_000 }).catch(() => false)
-    if (hasForm) {
-      const inputs = form.locator('input, select')
-      expect(await inputs.count()).toBeGreaterThan(0)
-    }
-  })
-
   test('CLI availability indicator shows status', async ({ electronPage: page }) => {
     await navigateToIntegrations(page)
 

@@ -150,7 +150,7 @@ interface OpenCodeConfig {
     /** Glob patterns to ignore from file watching */
     ignore?: string[]
   }
-  /** C-6/A-3: Shell path — OpenCode ≤1.17.x expects a string, not an object */
+  /** C-6/A-3: Shell path — OpenCode expects a string, not an object (verified through 1.18.x) */
   shell?: string
   /** Server configuration — CORS origins, mDNS, etc. */
   server?: {
@@ -320,7 +320,7 @@ export class OpenCodeConfigWriter {
     const compaction = this.buildCompactionConfig(contextTier)
 
     // ── #8: Shell environment injection ──
-    // OpenCode ≤1.17.x doesn't support shell.env objects — inject env vars
+    // OpenCode doesn't support shell.env objects (verified through 1.18.x) — inject env vars
     // into process.env so the OpenCode server (and its Bash tool calls) inherit them.
     const shellEnv = this.buildShellEnvironment(opts)
     for (const [key, value] of Object.entries(shellEnv)) {
@@ -356,16 +356,18 @@ export class OpenCodeConfigWriter {
       // E-9: websearch/webfetch enabled via workspace feature flag.
       tools: {
         question: false,
-        // B-5: skill must be a boolean in OpenCode ≤1.17.x schema.
-        // Cannot selectively disable individual skills via config — use
+        // B-5: skill must be a boolean here — the tools map is
+        // additionalProperties:boolean (verified through 1.18.x).
+        // Cannot selectively disable individual skills via this map — use
         // instructions to tell the agent not to run customize-opencode.
+        // (1.18 adds permission.skill / skills.paths for finer control; unused.)
         skill: true,
         ...(opts.webSearchEnabled ? { websearch: true, webfetch: true } : {})
       },
       permission,
       compaction,
       snapshot: true,
-      // A-3: Shell path — OpenCode ≤1.17.x expects a string, not an object.
+      // A-3: Shell path — OpenCode expects a string, not an object (verified through 1.18.x).
       // Env vars for Bash tool calls are inherited from the server process
       // environment (set in buildShellEnvironment → process.env injection).
       shell: process.platform === 'win32' ? 'pwsh' : '/bin/bash'

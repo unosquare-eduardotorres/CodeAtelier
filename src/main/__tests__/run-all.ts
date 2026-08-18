@@ -659,6 +659,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/jira-connection-test.test',
   '../services/__tests__/external-mcp-mount.test',
   '../services/__tests__/ipc-integrations-handlers.test',
+  '../services/__tests__/jira-tickets.test',
   '../mcp-servers/__tests__/jira-server.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/workspace-switch-streams.test',

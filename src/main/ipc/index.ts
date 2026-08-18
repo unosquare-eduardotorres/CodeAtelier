@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron'
 import { registerWorkspaceIpc } from './workspace.ipc'
 import { registerIntegrationsIpc } from './integrations.ipc'
+import { registerJiraIpc } from './jira.ipc'
 import { registerChatIpc } from './chat.ipc'
 import { registerAgentIpc } from './agent.ipc'
 import { registerAgentLifecycleIpc } from './agent-lifecycle.ipc'
@@ -62,6 +63,7 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
 
   registerWorkspaceIpc()
   registerIntegrationsIpc()
+  registerJiraIpc()
   registerChatIpc(mainWindow)
   registerAgentIpc(mainWindow)
   registerAgentLifecycleIpc(mainWindow)

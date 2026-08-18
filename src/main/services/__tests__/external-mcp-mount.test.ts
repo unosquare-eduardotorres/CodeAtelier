@@ -161,12 +161,23 @@ describe('mountExternalMcps — bundled server entry', () => {
 // ── Tool exposure ──
 
 describe('mountExternalMcps — tool exposure', () => {
-  test('plan mode exposes the read-only tool set', () => {
+  test('plan mode exposes the read tools', () => {
     withShellEnv(SHELL_JIRA, () => {
       const result = build({ mode: 'plan', externalMcpActive: { jira: true } })
-      for (const name of MCP_TOOLS.JIRA._ALL_NAMES) {
+      for (const name of [MCP_TOOLS.JIRA.GET_ISSUE.name, MCP_TOOLS.JIRA.SEARCH_ISSUES.name]) {
         assert.ok(result.allowedTools?.includes(name), `${name} missing from plan-mode allowlist`)
       }
+    })
+  })
+
+  test('plan mode withholds add_comment — planning must not write to Jira', () => {
+    withShellEnv(SHELL_JIRA, () => {
+      const result = build({ mode: 'plan', externalMcpActive: { jira: true } })
+      assert.equal(
+        result.allowedTools?.includes(MCP_TOOLS.JIRA.ADD_COMMENT.name),
+        false,
+        'add_comment mutates a shared ticket; it must never be reachable while planning'
+      )
     })
   })
 

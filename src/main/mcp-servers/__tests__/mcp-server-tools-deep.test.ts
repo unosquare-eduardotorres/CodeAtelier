@@ -161,17 +161,28 @@ describe('MCP integrations — structure', () => {
     }
   })
 
-  test('jira_is_registered_as_a_bundled_read_only_integration', () => {
+  test('jira_is_registered_as_a_bundled_integration', () => {
     const jira = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'jira')
     assert.ok(jira, 'jira should be registered')
     assert.equal(jira!.bundledServerEntry, 'jira-server')
     assert.equal(jira!.supportsConnectionTest, true)
     assert.equal(jira!.toolNames.length, jira!.toolCount)
-    assert.deepEqual(
-      jira!.planModeToolNames,
-      jira!.toolNames,
-      'both jira tools are read-only and must be available in plan mode'
+  })
+
+  test('jira_plan_mode_excludes_the_only_write_tool', () => {
+    // add_comment posts to a shared ticket. Planning is exploratory and may be
+    // re-run, so the write tool is withheld there while the two read tools stay.
+    const jira = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'jira')!
+    assert.ok(
+      jira.toolNames.includes('mcp__jira__add_comment'),
+      'add_comment is available in build mode'
     )
+    assert.equal(
+      jira.planModeToolNames.includes('mcp__jira__add_comment'),
+      false,
+      'add_comment must not be reachable in plan mode'
+    )
+    assert.deepEqual(jira.planModeToolNames, ['mcp__jira__get_issue', 'mcp__jira__search_issues'])
   })
 
   test('plan_mode_tools_are_a_subset_of_all_tools', () => {

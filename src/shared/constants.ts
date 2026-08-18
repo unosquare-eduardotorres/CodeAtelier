@@ -578,6 +578,12 @@ export const IPC_CHANNELS = {
   INTEGRATION_GET_CREDENTIAL_STATUS: 'integration:getCredentialStatus',
   INTEGRATION_TEST_CONNECTION: 'integration:testConnection',
   INTEGRATION_CLEAR_CREDENTIALS: 'integration:clearCredentials',
+
+  // Jira tickets panel — direct REST, independent of the MCP server
+  JIRA_SEARCH_ISSUES: 'jira:searchIssues',
+  JIRA_GET_ISSUE: 'jira:getIssue',
+  JIRA_ADD_COMMENT: 'jira:addComment',
+  JIRA_CREATE_BLUEPRINTS: 'jira:createBlueprints',
   CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
   CHAT_UPDATE_TONE: 'chat:updateTone',
   CHAT_UPDATE_ROUTING: 'chat:updateRouting',
@@ -2007,7 +2013,8 @@ export const MCP_TOOLS = {
   }),
   JIRA: mcpServer('jira', {
     GET_ISSUE: mcpTool('jira', 'get_issue', 'Jira · get_issue'),
-    SEARCH_ISSUES: mcpTool('jira', 'search_issues', 'Jira · search_issues')
+    SEARCH_ISSUES: mcpTool('jira', 'search_issues', 'Jira · search_issues'),
+    ADD_COMMENT: mcpTool('jira', 'add_comment', 'Jira · add_comment')
   })
 } as const
 
@@ -2530,7 +2537,7 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     id: 'jira',
     displayName: 'Jira',
     description:
-      'Read tickets, search with JQL, and pull acceptance criteria straight from your Jira board.',
+      'Read tickets, search with JQL, pull acceptance criteria, and post comments back to your Jira board.',
     icon: 'SquareKanban',
     // Bundled first-party server — `command`/`args` are replaced at mount time
     // with `node <serverBasePath>/jira-server.js`. Never resolved from PATH.
@@ -2556,13 +2563,14 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     },
     supportsConnectionTest: true,
     tokenImpact: 'low',
-    toolCount: 2,
+    toolCount: 3,
     prerequisite: 'Jira site URL + API token (or a PAT for Server / Data Center)',
     docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/',
     category: 'other',
     toolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
-    // Both tools are read-only — available in plan mode too.
-    planModeToolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
+    // add_comment writes to Jira, so plan mode gets only the two read tools —
+    // planning must never leave a trail on someone else's ticket.
+    planModeToolNames: [MCP_TOOLS.JIRA.GET_ISSUE.name, MCP_TOOLS.JIRA.SEARCH_ISSUES.name],
 
     credentialFields: [
       {
@@ -2628,7 +2636,7 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     ],
 
     longDescription:
-      'Connect your Jira board so the agent can read the ticket it is working on. Instead of pasting acceptance criteria into chat, point the agent at an issue key — it pulls the summary, description, status, assignee and recent comments, and can run JQL searches to find related work. Read-only: nothing in Jira is ever modified.',
+      'Connect your Jira board so the agent can read the ticket it is working on. Instead of pasting acceptance criteria into chat, point the agent at an issue key — it pulls the summary, description, status, assignee and recent comments, and can run JQL searches to find related work. It can also post a comment back when work lands. Comments are the only write: status, assignee and fields are never modified.',
 
     useCases: [
       {
@@ -2661,7 +2669,9 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
       mcp__jira__get_issue:
         'Fetches one issue by key (e.g. PROJ-123) — summary, status, assignee, reporter, priority, labels, description and the most recent comments. This is the "read the ticket" action.',
       mcp__jira__search_issues:
-        'Runs a JQL query and returns compact rows (key, summary, status, assignee). Use it to find related tickets, sprint contents, or everything matching a label.'
+        'Runs a JQL query and returns compact rows (key, summary, status, assignee). Use it to find related tickets, sprint contents, or everything matching a label.',
+      mcp__jira__add_comment:
+        'Posts a comment on an issue — progress notes, a summary of what was implemented, or a question for the reporter. The only tool that writes to Jira; disabled in plan mode.'
     },
 
     workflowSteps: [
@@ -2683,7 +2693,7 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
       {
         step: 'Enable + use',
         description:
-          'Toggle Jira ON, activate the pill in a chat, then reference issue keys naturally: "summarise PROJ-123".'
+          'Toggle Jira ON, then open the Jira tab to browse tickets — or reference issue keys naturally in chat: "summarise PROJ-123".'
       }
     ]
   }
