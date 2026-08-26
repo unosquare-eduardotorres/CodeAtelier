@@ -33,6 +33,21 @@ export type BlueprintPriority = 'P1' | 'P2' | 'P3'
 
 export type BlueprintTaskStatus = 'pending' | 'running' | 'complete' | 'failed' | 'skipped'
 
+/**
+ * How a task was closed, as opposed to merely that it closed. Kept off `status`
+ * on purpose: `blueprint_tasks.status` carries a CHECK constraint, so a new
+ * status value costs a table rebuild and every switch in main/preload/renderer.
+ */
+export type BlueprintTaskOutcomeKind =
+  /** Claimed files exist and were written during this run. */
+  | 'verified'
+  /** Claimed files exist, but none could be proven fresh. Passed with a warning. */
+  | 'unproven'
+  /** Agent declared the files already correct and deliberately did not rewrite them. */
+  | 'preexisting'
+  /** A human closed the task out — the work is done, just not provable here. */
+  | 'accepted_by_user'
+
 // ── Core Entities ──
 
 export interface Blueprint {
@@ -85,13 +100,25 @@ export interface BlueprintTask {
   executorRunId: string | null
   startedAt: string | null
   completedAt: string | null
-  completionJson: { filesCreated: string[]; filesModified: string[] } | null
+  completionJson: {
+    filesCreated: string[]
+    filesModified: string[]
+    filesVerifiedUnchanged?: string[]
+  } | null
   /**
    * ISO timestamp of a deliberate user skip, or null. Separate from `status`
    * because the failure cascade writes `status = 'skipped'` on its own and a
    * retry resets `status` — neither may forge or erase a human decision.
    */
   skippedByUserAt: string | null
+  /**
+   * Why the last attempt failed, persisted rather than emitted-and-forgotten.
+   * Survives the retry reset so the next attempt can be told what went wrong.
+   */
+  failureReason: string | null
+  outcomeKind: BlueprintTaskOutcomeKind | null
+  /** Optional human note recorded when a task is accepted as done. */
+  resolutionNote: string | null
 }
 
 // ── Composite / Joined Types ──

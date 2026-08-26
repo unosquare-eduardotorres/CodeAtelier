@@ -282,4 +282,8 @@ if (!dbReady) {
   })
 }
 
-void summaryAsync()
+// summaryAsync() calls process.exit() — only run it as the entry point, or the
+// shared runner is terminated mid-list.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

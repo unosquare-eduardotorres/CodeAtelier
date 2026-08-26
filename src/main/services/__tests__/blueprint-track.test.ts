@@ -67,8 +67,13 @@ if (!gitAvailable || !dbContext) {
   ]
   const { trackRepository } = trackRepoMod
   const { trackService, registerTrackBusyProbe } = trackMod
-  const { ensureBlueprintTrack, resolveBlueprintTrack, blueprintTrackBranch, blueprintTrackOwner } =
-    blueprintTrackMod
+  const {
+    ensureBlueprintTrack,
+    resolveBlueprintTrack,
+    reserveBlueprintBranch,
+    blueprintTrackBranch,
+    blueprintTrackOwner
+  } = blueprintTrackMod
   const { verifyTaskFileClaims } = require('../blueprint-task-verification')
 
   /**
@@ -128,6 +133,23 @@ if (!gitAvailable || !dbContext) {
       .prepare('UPDATE blueprints SET settings_json = ? WHERE id = ?')
       .run(JSON.stringify({ branchChoice: choice }), bpId)
   }
+
+  /** Overwrite a blueprint's whole settings blob. */
+  function setSettings(bpId: string, settings: Record<string, unknown>): void {
+    db()
+      .prepare('UPDATE blueprints SET settings_json = ? WHERE id = ?')
+      .run(JSON.stringify(settings), bpId)
+  }
+
+  function readSettings(bpId: string): Record<string, unknown> {
+    const row = db().prepare('SELECT settings_json FROM blueprints WHERE id = ?').get(bpId) as {
+      settings_json: string | null
+    }
+    return row.settings_json ? JSON.parse(row.settings_json) : {}
+  }
+
+  const localBranches = async (dir: string): Promise<string[]> =>
+    (await simpleGit(dir).branchLocal()).all
 
   const headOf = async (dir: string): Promise<string> =>
     (await simpleGit(dir).revparse(['--abbrev-ref', 'HEAD'])).trim()
@@ -346,6 +368,225 @@ if (!gitAvailable || !dbContext) {
     test('a title of pure punctuation still yields a usable branch', () => {
       const name = blueprintTrackBranch('cccccccc3333', '!!! ???')
       assert.match(name, /^blueprint\/[a-z0-9-]+$/)
+    })
+  })
+
+  // ── Reservation at start ───────────────────────────────────────────
+  //
+  // The branch used to appear at BUILD, three phases after the user pressed
+  // Start, so for most of a run there was no answer to "where is this going?".
+
+  describe('reserving the branch when the run starts', () => {
+    test('creates the ref without moving the checkout, and persists the name', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(name, blueprintTrackBranch(bpId, 'Add retry to uploads'))
+        assert.ok((await localBranches(dir)).includes(name as string), 'the ref exists')
+        assert.equal(await headOf(dir), 'main', 'the shared HEAD did not move')
+        assert.equal(await statusOf(dir), '', 'nothing was checked out')
+        assert.equal(readSettings(bpId).branchName, name)
+      })
+    })
+
+    test('a Jira blueprint is named after its ticket', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        db()
+          .prepare('UPDATE blueprints SET title = ? WHERE id = ?')
+          .run('MUL-2336: Rename hotel billing detail', bpId)
+        setSettings(bpId, { jiraIssueKey: 'MUL-2336' })
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(name, 'feature/MUL-2336-rename-hotel-billing-detail')
+        assert.ok((await localBranches(dir)).includes(name as string))
+        // The key must survive the round-trip through settings_json.
+        assert.equal(readSettings(bpId).jiraIssueKey, 'MUL-2336')
+      })
+    })
+
+    test('is idempotent — a second call keeps the name already reserved', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const first = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        const second = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        assert.equal(second, first)
+      })
+    })
+
+    test('fork cuts the ref from the branch that was chosen, not from HEAD', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const git = simpleGit(dir)
+        // release/1.0 stays at the first commit while main moves on, so "cut
+        // from the right base" is actually observable.
+        await git.raw(['branch', 'release/1.0'])
+        await writeFile(join(dir, 'later.txt'), 'main moved on\n')
+        await git.add('.')
+        await git.commit('main moves ahead')
+
+        setBranchChoice(bpId, { mode: 'fork', branch: 'release/1.0' })
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.ok(name)
+        assert.equal(
+          (await git.revparse([name as string])).trim(),
+          (await git.revparse(['release/1.0'])).trim()
+        )
+        assert.notEqual(
+          (await git.revparse([name as string])).trim(),
+          (await git.revparse(['main'])).trim()
+        )
+      })
+    })
+
+    test('takeover reserves the branch it inherits, creating nothing new', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        await simpleGit(dir).raw(['branch', 'feat/existing'])
+        setBranchChoice(bpId, { mode: 'takeover', branch: 'feat/existing' })
+        const before = await localBranches(dir)
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(name, 'feat/existing')
+        assert.deepEqual(await localBranches(dir), before, 'no new ref was created')
+        assert.equal(readSettings(bpId).branchName, 'feat/existing')
+      })
+    })
+
+    test('a name already in use is disambiguated rather than fought over', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        db().prepare('UPDATE blueprints SET title = ? WHERE id = ?').run('MUL-7: Fix billing', bpId)
+        setSettings(bpId, { jiraIssueKey: 'MUL-7' })
+        await simpleGit(dir).raw(['branch', 'feature/MUL-7-fix-billing'])
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(name, 'feature/MUL-7-fix-billing-2')
+      })
+    })
+
+    test('the name reserved at start survives a later title rewrite', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const reserved = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        // Specify routinely rewrites the title. Recomputing the name from it
+        // would hand `ensureTrack` a different branch for the same owner, which
+        // it reads as a stale track and rebuilds somewhere else.
+        db()
+          .prepare('UPDATE blueprints SET title = ? WHERE id = ?')
+          .run('Something Specify decided to call it instead', bpId)
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(target.isolated, true)
+        assert.equal(target.branchName, reserved)
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    test('reserves nothing when the workspace opted out of auto-branching', async () => {
+      await withBlueprint(
+        async ({ dir, wsId, bpId }) => {
+          const before = await localBranches(dir)
+          const name = await reserveBlueprintBranch({
+            blueprintId: bpId,
+            workspaceId: wsId,
+            workspacePath: dir
+          })
+          assert.equal(name, null)
+          assert.deepEqual(await localBranches(dir), before)
+          assert.equal(readSettings(bpId).branchName, undefined)
+        },
+        { gitAutoBranch: false }
+      )
+    })
+
+    test('reserves nothing when the blueprint runs in the workspace checkout', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        setBranchChoice(bpId, { mode: 'primary' })
+        const before = await localBranches(dir)
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(name, null)
+        assert.deepEqual(await localBranches(dir), before)
+      })
+    })
+
+    test('a repository with no commits reserves nothing rather than throwing', async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'bp-reserve-empty-'))
+      const wsId = `bp-reserve-ws-${seq++}`
+      try {
+        await simpleGit(dir).init(['--initial-branch=main'])
+        db()
+          .prepare('INSERT INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)')
+          .run(wsId, `Empty workspace ${wsId}`, dir)
+        const bp = db()
+          .prepare(
+            `INSERT INTO blueprints (workspace_id, title, description)
+             VALUES (?, ?, ?) RETURNING id`
+          )
+          .get(wsId, 'Scaffold a new project', 'desc') as { id: string }
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bp.id,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        assert.equal(name, null)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+
+    test('a missing workspace degrades to null instead of failing the run', async () => {
+      const name = await reserveBlueprintBranch({
+        blueprintId: 'no-such-blueprint',
+        workspaceId: 'no-such-workspace',
+        workspacePath: join(tmpdir(), 'definitely-not-a-repo')
+      })
+      assert.equal(name, null)
     })
   })
 

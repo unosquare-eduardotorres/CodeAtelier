@@ -4,9 +4,9 @@
  */
 
 import { useMemo, useCallback } from 'react'
-import { Wrench, Download, RefreshCw, CheckCheck } from 'lucide-react'
+import { Wrench, Download, RefreshCw, CheckCheck, BookOpen, MessageSquare } from 'lucide-react'
 import { useAuditStore } from '@renderer/store'
-import type { AuditTrackId, AuditFinding } from '../../../../shared/types'
+import type { AuditTrackId, AuditFinding, AuditFindingHandoff } from '../../../../shared/types'
 
 type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low' | 'info'
 
@@ -31,6 +31,8 @@ interface CompletedFindingsListProps {
   summary: string | null | undefined
   onToggleFinding: (finding: AuditFinding) => void
   onConvertToChat: () => void
+  /** Route the selected findings into a new blueprint instead of a chat. */
+  onConvertToBlueprint?: () => void
   onRerunTrack: (trackId: AuditTrackId) => void
   onAutoFix: (finding: AuditFinding, trackName: string) => void
   onClearSelected?: () => void
@@ -48,6 +50,7 @@ export default function CompletedFindingsList({
   summary,
   onToggleFinding,
   onConvertToChat,
+  onConvertToBlueprint,
   onRerunTrack,
   onAutoFix,
   onClearSelected,
@@ -56,6 +59,7 @@ export default function CompletedFindingsList({
   const selectedIds = useMemo(() => new Set(selectedFindings.map((f) => f.id)), [selectedFindings])
   const isAnyRerunning = !!rerunningTrackId
   const selectAllInTrack = useAuditStore((s) => s.selectAllInTrack)
+  const findingHandoffs = useAuditStore((s) => s.findingHandoffs)
 
   const filterFindings = useCallback(
     (items: AuditFinding[]): AuditFinding[] => {
@@ -124,13 +128,25 @@ export default function CompletedFindingsList({
               </button>
             )}
           </div>
-          <button
-            onClick={onConvertToChat}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-primary/10 text-primary-text hover:bg-primary/20 transition-colors"
-          >
-            <Wrench size={12} />
-            Fix {selectedFindings.length} Selected in Chat
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={onConvertToChat}
+              className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-primary/10 text-primary-text hover:bg-primary/20 transition-colors"
+            >
+              <MessageSquare size={12} />
+              Fix {selectedFindings.length} Selected in Chat
+            </button>
+            {onConvertToBlueprint && (
+              <button
+                onClick={onConvertToBlueprint}
+                title="Create a blueprint from these findings — planned, tasked and verified before build"
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors"
+              >
+                <BookOpen size={12} />
+                Fix {selectedFindings.length} Selected in Blueprint
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -182,6 +198,7 @@ export default function CompletedFindingsList({
                     <span className="text-xs font-medium text-text-primary truncate">
                       {finding.title}
                     </span>
+                    <HandoffBadge handoff={findingHandoffs[finding.id]} />
                   </div>
                   <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">
                     {finding.description}
@@ -294,6 +311,43 @@ export default function CompletedFindingsList({
         </button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Marks a finding that was already routed somewhere for remediation.
+ *
+ * Advisory, not a lock: the user can hand the same finding off again (a chat
+ * that went nowhere, a blueprint that was discarded), so this only says the
+ * work was started, never that it is done.
+ */
+function HandoffBadge({
+  handoff
+}: {
+  handoff: AuditFindingHandoff | undefined
+}): React.JSX.Element | null {
+  if (!handoff) return null
+  const isBlueprint = handoff.target === 'blueprint'
+  // SQLite writes `datetime('now')` as a space-separated UTC string with no zone
+  // marker, which Date() would read as local time and display hours adrift.
+  const when = new Date(
+    handoff.createdAt.includes('T') ? handoff.createdAt : `${handoff.createdAt.replace(' ', 'T')}Z`
+  )
+  return (
+    <span
+      data-testid="finding-handoff-badge"
+      title={`Already handed off to ${isBlueprint ? 'a blueprint' : 'chat'}${
+        handoff.refTitle ? ` — ${handoff.refTitle}` : ''
+      } on ${when.toLocaleString()}. You can hand it off again.`}
+      className={`flex-shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded ${
+        isBlueprint
+          ? 'bg-emerald-500/10 text-emerald-400'
+          : 'bg-surface-overlay text-text-secondary'
+      }`}
+    >
+      {isBlueprint ? <BookOpen size={9} /> : <MessageSquare size={9} />}
+      Handed off
+    </span>
   )
 }
 

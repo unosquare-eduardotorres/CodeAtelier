@@ -21,7 +21,6 @@ setupElectronStub()
 // Exported pure functions & constants (direct import, no class needed)
 // ═══════════════════════════════════════════════════════════════════════════
 
-let EVIDENCE_ONLY_RX: RegExp
 let abortAwareSleep: (ms: number, signal?: AbortSignal) => Promise<void>
 let BlueprintBuildService: any
 let blueprintBuildService: any
@@ -29,7 +28,6 @@ let loaded = false
 
 try {
   const mod = require('../blueprint-build.service')
-  EVIDENCE_ONLY_RX = mod.EVIDENCE_ONLY_RX
   abortAwareSleep = mod.abortAwareSleep
   BlueprintBuildService = mod.BlueprintBuildService
   blueprintBuildService = mod.blueprintBuildService
@@ -39,67 +37,12 @@ try {
   console.log(`  (${(err as Error).message?.split('\n')[0]})`)
 }
 
-// ─── EVIDENCE_ONLY_RX ─────────────────────────────────────────────────────
+// EVIDENCE_ONLY_RX was deleted — a stale-only verification result is now decided
+// by the `unproven` verdict plus write activity, not by matching the task
+// description. See blueprint-task-verification.test.ts ("verdict matrix").
+// ─────────────────────────────────────────────────────
 
 if (loaded) {
-  describe('EVIDENCE_ONLY_RX — regex tests', () => {
-    test('matches "re-run verification checks"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('re-run verification checks'))
-    })
-
-    test('matches "rerun verify with evidence"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('rerun verify with evidence'))
-    })
-
-    test('matches "verification pass"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('verify pass'))
-    })
-
-    test('matches "verification evidence"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('verification evidence'))
-    })
-
-    test('matches "evidence eslint"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('evidence for eslint'))
-    })
-
-    test('matches "evidence tsc"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('evidence tsc analysis'))
-    })
-
-    test('matches "evidence vitest"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('evidence vitest results'))
-    })
-
-    test('matches "evidence complexity"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('evidence complexity analysis'))
-    })
-
-    test('matches "evidence dead_code"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('evidence dead_code'))
-    })
-
-    test('matches "evidence deadcode"', () => {
-      assert.ok(EVIDENCE_ONLY_RX.test('evidence deadcode'))
-    })
-
-    test('does NOT match regular task description', () => {
-      assert.ok(!EVIDENCE_ONLY_RX.test('implement user authentication'))
-    })
-
-    test('does NOT match "create a new component"', () => {
-      assert.ok(!EVIDENCE_ONLY_RX.test('create a new component'))
-    })
-
-    test('does NOT match empty string', () => {
-      assert.ok(!EVIDENCE_ONLY_RX.test(''))
-    })
-
-    test('does NOT match partial "verify" without qualifying context', () => {
-      assert.ok(!EVIDENCE_ONLY_RX.test('verify the build'))
-    })
-  })
-
   // ─── abortAwareSleep ─────────────────────────────────────────────────────
 
   describe('abortAwareSleep — basic behavior', () => {

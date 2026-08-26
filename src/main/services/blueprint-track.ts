@@ -25,6 +25,11 @@ import { workspaceRepository } from '../db/repositories/workspace.repository'
 import { blueprintRepository } from '../db/repositories/blueprint.repository'
 import type { ExecutionTarget } from '../../shared/track-types'
 import type { BlueprintBranchChoice } from '../../shared/blueprint-types'
+import {
+  buildBlueprintBranchName,
+  readBlueprintBranchName,
+  readJiraIssueKey
+} from '../../shared/blueprint-branch-name'
 
 const trackLog = log.scope('blueprint-track')
 
@@ -100,6 +105,100 @@ export async function repoHasCommits(repoPath: string): Promise<boolean> {
   }
 }
 
+/** Merge the resolved branch name into a blueprint's settings blob. */
+function persistBranchName(
+  blueprintId: string,
+  settings: Record<string, unknown> | undefined,
+  branchName: string
+): void {
+  blueprintRepository.update(blueprintId, {
+    settingsJson: { ...(settings ?? {}), branchName }
+  })
+}
+
+/**
+ * Name a blueprint's branch, and create the ref, when the run starts.
+ *
+ * The branch used to appear at BUILD — three phases and often an hour after the
+ * user pressed Start — which meant that for most of a run there was no answer
+ * to "where is this work going?", and the status bar's workspace branch filled
+ * the gap with the wrong one.
+ *
+ * Only the ref is created: `git branch <name>`, never a checkout and never a
+ * worktree. That is the chat precedent, it costs milliseconds, and it leaves
+ * the shared HEAD where it is — moving it would redirect anything else running
+ * in the primary tree. The worktree still materialises at BUILD.
+ *
+ * Returns the reserved name, or null when this workspace/blueprint should not
+ * have one. Never throws: a run must not fail because a ref could not be made.
+ */
+export async function reserveBlueprintBranch(params: {
+  blueprintId: string
+  workspaceId: string
+  workspacePath: string
+}): Promise<string | null> {
+  const { blueprintId, workspaceId, workspacePath } = params
+
+  try {
+    // Same three opt-outs `ensureBlueprintTrack` applies, for the same reasons.
+    const settings = workspaceRepository.getSettings(workspaceId)
+    if (settings.gitAutoBranch === false) return null
+
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) return null
+
+    // Idempotent: a resumed or restarted blueprint keeps the name it already
+    // has, because that is the name its track (and possibly its commits) use.
+    const existing = readBlueprintBranchName(blueprint.settingsJson)
+    if (existing) return existing
+
+    const choice = readBranchChoice(blueprint.settingsJson ?? {})
+    if (choice.mode === 'primary') return null
+    if (!(await repoHasCommits(workspacePath))) return null
+
+    // Takeover names nothing new — the whole point is to inherit a branch that
+    // exists, with whatever its current holder left in the tree.
+    if (choice.mode === 'takeover' && choice.branch) {
+      persistBranchName(blueprintId, blueprint.settingsJson, choice.branch)
+      return choice.branch
+    }
+
+    const git = simpleGit(workspacePath)
+    const local = await git.branchLocal()
+    const taken = new Set<string>(local.all)
+    for (const track of trackRepository.findByWorkspace(workspaceId)) {
+      if (track.branchName) taken.add(track.branchName)
+    }
+
+    const baseBranch = choice.mode === 'fork' ? choice.branch : undefined
+    const branchName =
+      choice.mode === 'fork' && choice.name
+        ? choice.name
+        : buildBlueprintBranchName({
+            title: blueprint.title,
+            jiraIssueKey: readJiraIssueKey(blueprint.settingsJson),
+            blueprintId,
+            taken
+          })
+
+    if (local.all.includes(branchName)) {
+      trackLog.info(`[reserve] blueprint ${blueprintId} reuses existing branch ${branchName}`)
+    } else {
+      await git.raw(baseBranch ? ['branch', branchName, baseBranch] : ['branch', branchName])
+      trackLog.info(`[reserve] blueprint ${blueprintId} → ${branchName} (created, not checked out)`)
+    }
+
+    persistBranchName(blueprintId, blueprint.settingsJson, branchName)
+    return branchName
+  } catch (err) {
+    trackLog.warn(
+      `[reserve] blueprint ${blueprintId}: could not reserve a branch ` +
+        `(${(err as Error).message}) — BUILD will resolve one instead`
+    )
+    return null
+  }
+}
+
 /**
  * Give a blueprint run its own working tree, or say why it could not have one.
  *
@@ -153,7 +252,13 @@ export async function ensureBlueprintTrack(params: {
       return primary('this repository has no commits yet')
     }
 
-    const autoName = blueprintTrackBranch(blueprintId, blueprint?.title)
+    // The name resolved at start wins over anything recomputed here.
+    // `ensureTrack` treats a different branch name for the same owner as a
+    // stale track and rebuilds it, so recomputing from a title that Specify (or
+    // the user) has since edited would silently relocate a live run.
+    const autoName =
+      readBlueprintBranchName(blueprint?.settingsJson) ??
+      blueprintTrackBranch(blueprintId, blueprint?.title)
     let branchName = autoName
     let baseBranch: string | undefined
 
@@ -269,11 +374,12 @@ function warnIfHandedOff(blueprintId: string, workspacePath: string): void {
 
     const choice = readBranchChoice(blueprint.settingsJson ?? {})
     const branchName =
-      choice.mode === 'fork' && choice.name
-        ? choice.name
-        : choice.mode === 'takeover' && choice.branch
-          ? choice.branch
-          : blueprintTrackBranch(blueprintId, blueprint.title)
+      choice.mode === 'takeover' && choice.branch
+        ? choice.branch
+        : (readBlueprintBranchName(blueprint.settingsJson) ??
+          (choice.mode === 'fork' && choice.name
+            ? choice.name
+            : blueprintTrackBranch(blueprintId, blueprint.title)))
 
     const holder = trackRepository.findByBranch(blueprint.workspaceId, branchName)
     if (!holder || (holder.ownerKind === 'blueprint' && holder.ownerId === blueprintId)) return

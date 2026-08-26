@@ -5,11 +5,11 @@
  *   - Footer renders in active conversation
  *   - Prompt suggestion button is visible in idle state
  *   - Thinking indicator shows during streaming response
- *   - Stop confirm dialog triggers on stop
+ *   - Stop acts immediately, with no confirmation dialog
  *   - Footer content updates on mode change
  *   - Auto-mode switch pill visibility
  *
- * Covers orphan testids: message-list-footer, stop-confirm-dialog
+ * Covers orphan testids: message-list-footer
  *
  * Navigation: Active conversation with message history.
  *
@@ -112,34 +112,23 @@ test.describe('MessageListFooter', () => {
     await expect(chatPanel).toBeVisible()
   })
 
-  test('stop confirm dialog triggers on stop action', async ({ electronPage: page }) => {
+  test('stop acts immediately — no confirmation dialog stands between', async ({
+    electronPage: page
+  }) => {
     const ready = await navigateToConversation(page)
     if (!ready) {
       test.skip()
       return
     }
 
-    // The stop-confirm-dialog testid is in MessageInputDialogs
-    // It appears when user clicks stop during streaming
+    // Stop used to open a confirm dialog, which put a modal in front of the one
+    // action a user wants to take without ceremony. Nothing should render it.
     const stopConfirmDialog = page.locator('[data-testid="stop-confirm-dialog"]')
+    await expect(stopConfirmDialog).toHaveCount(0)
 
-    // The dialog is conditionally rendered — normally not visible
-    const isVisible = await stopConfirmDialog.isVisible({ timeout: 2_000 }).catch(() => false)
-
-    // In idle state, the dialog should not be visible
-    if (!isVisible) {
-      // Verify the chat panel and input area are functional
-      const chatPage = new ChatPage(page)
-      const isInputEnabled = await chatPage.isInputEnabled()
-      expect(isInputEnabled || true).toBe(true)
-    }
-
-    // If visible during an active stream, verify dialog structure
-    if (isVisible) {
-      await expect(stopConfirmDialog).toBeVisible()
-    }
-
-    expect(true).toBe(true)
+    const chatPage = new ChatPage(page)
+    const isInputEnabled = await chatPage.isInputEnabled()
+    expect(isInputEnabled || true).toBe(true)
   })
 
   test('footer content updates on mode change', async ({ electronPage: page }) => {

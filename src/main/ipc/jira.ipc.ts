@@ -10,9 +10,12 @@
  */
 
 import { ipcMain } from 'electron'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
+  JiraAttachment,
   JiraCreateBlueprintsResult,
   JiraIssueDetail,
   JiraSearchResult
@@ -25,9 +28,21 @@ import {
 } from '../../shared/jira-format'
 import { validateSender } from './validate-sender'
 import { optionalNumber, requireObject, requireString, requireStringArray } from './validate-args'
-import { JiraRequestError, addComment, getIssue, searchIssues } from '../services/jira-rest.service'
+import {
+  JiraRequestError,
+  addComment,
+  downloadAttachment,
+  getIssue,
+  searchIssues
+} from '../services/jira-rest.service'
 import { blueprintService } from '../services/blueprint.service'
 import { blueprintRepository } from '../db/repositories/blueprint.repository'
+import { getManagedDocsDir } from './blueprint.ipc'
+import {
+  MAX_ATTACHMENT_BYTES,
+  safeAttachmentFilename,
+  selectAttachments
+} from '../services/jira-attachments'
 
 const jiraIpcLog = log.scope('jira-ipc')
 
@@ -39,6 +54,49 @@ const MAX_BULK_ISSUES = 25
 
 /** How far back the duplicate scan looks. Older blueprints are not re-checked. */
 const DUPLICATE_SCAN_LIMIT = 500
+
+/**
+ * Download an issue's attachments into the blueprint's managed docs directory
+ * and return them as reference documents.
+ *
+ * The managed directory is the same one copy-on-attach uses, so these files are
+ * already covered by the loader whitelist and by the cleanup that runs when the
+ * blueprint is deleted.
+ *
+ * A failed download is logged and skipped: losing one screenshot is a far
+ * better outcome than failing the whole ticket conversion.
+ */
+async function importAttachments(
+  workspaceId: string,
+  blueprintId: string,
+  attachments: JiraAttachment[]
+): Promise<Array<{ type: string; path: string; name: string }>> {
+  const wanted = selectAttachments(attachments)
+  if (wanted.length === 0) return []
+
+  const dir = getManagedDocsDir(workspaceId, blueprintId)
+  mkdirSync(dir, { recursive: true })
+
+  const docs: Array<{ type: string; path: string; name: string }> = []
+  for (const [i, attachment] of wanted.entries()) {
+    try {
+      const bytes = await downloadAttachment(
+        workspaceId,
+        attachment.contentUrl,
+        MAX_ATTACHMENT_BYTES
+      )
+      // Index prefix: two attachments on one ticket may share a filename.
+      const dest = join(dir, `${i}-${safeAttachmentFilename(attachment.filename)}`)
+      writeFileSync(dest, bytes)
+      docs.push({ type: 'file', path: dest, name: attachment.filename })
+    } catch (err) {
+      jiraIpcLog.warn(
+        `Attachment "${attachment.filename}" skipped: ${err instanceof Error ? err.message : String(err)}`
+      )
+    }
+  }
+  return docs
+}
 
 /**
  * Re-throw with a user-facing message.
@@ -167,6 +225,27 @@ export function registerJiraIpc(): void {
               jiraUrl: issue.browseUrl
             }
           })
+
+          // Attachments need the blueprint id to know where to land, so they
+          // are fetched after create and folded back into settings_json.
+          const referenceDocuments = await importAttachments(
+            workspaceId,
+            blueprint.id,
+            issue.attachments ?? []
+          )
+          if (referenceDocuments.length > 0) {
+            blueprintRepository.update(blueprint.id, {
+              settingsJson: {
+                jiraIssueKey: issue.key,
+                jiraUrl: issue.browseUrl,
+                referenceDocuments
+              }
+            })
+            jiraIpcLog.info(
+              `Imported ${referenceDocuments.length} attachment(s) for ${issue.key} → ${blueprint.id}`
+            )
+          }
+
           result.created.push({ issueKey: issue.key, blueprintId: blueprint.id, title })
         } catch (err) {
           const message =

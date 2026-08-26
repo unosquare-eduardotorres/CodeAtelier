@@ -65,6 +65,12 @@ From previous artifacts:
    - Test tasks come after the code they test
    - Test tasks reference specific files
 
+5. **Acceptance criteria name the source of truth, never a discovered count**
+   - Write "every command in `<dir>` is present", not "all 78 commands"
+   - Counts and file totals drift between planning and execution, and a stale
+     number fails work that is actually correct
+   - The same applies to line numbers, totals and "N of M" phrasing
+
 ## Wave Assignment
 
 After generating all tasks, assign execution waves:
@@ -76,6 +82,11 @@ After generating all tasks, assign execution waves:
 **File ownership rule**: Same-wave tasks must have zero file overlap.
 If two tasks in the same wave modify the same file, bump the later
 task to the next wave.
+
+**Read ownership rule**: ownership covers reads, not just writes. A task that
+validates, tests or gates another task's output must declare `dependsOn` for
+every task it checks — or be placed in a later wave. Without it the gate runs
+against half-applied edits and reports a failure that does not exist.
 
 **Parallel markers**: Tasks in the same wave with different files
 get the [P] marker — they can execute concurrently.
@@ -100,6 +111,8 @@ Before completing, verify:
 - [ ] No task modifies more than 5 files
 - [ ] Wave dependencies are acyclic
 - [ ] Same-wave tasks have no file overlap
+- [ ] No acceptance criterion contains a hard-coded count or file total
+- [ ] Every validating/gating task declares `dependsOn` for what it checks
 - [ ] Total tasks reasonable (5-30 for typical features)
 
 ## Discoveries

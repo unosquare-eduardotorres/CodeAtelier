@@ -16,7 +16,19 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { buildCommentBody, issueBrowseUrl } from '../../mcp-servers/jira-api'
+import {
+  buildCommentBody,
+  flattenAdf,
+  formatAttachments,
+  issueBrowseUrl
+} from '../../mcp-servers/jira-api'
+import {
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS_PER_ISSUE,
+  safeAttachmentFilename,
+  selectAttachments
+} from '../jira-attachments'
+import type { JiraAttachment } from '../../../shared/jira.types'
 import {
   buildJiraChatPrompt,
   formatIssueBrief,
@@ -41,7 +53,19 @@ function issue(overrides: Partial<JiraIssueDetail> = {}): JiraIssueDetail {
     labels: ['billing', 'regression'],
     description: 'Totals are computed before discounts are applied.',
     comments: [],
+    attachments: [],
     browseUrl: `${CLOUD}/browse/PROJ-42`,
+    ...overrides
+  }
+}
+
+function attachment(overrides: Partial<JiraAttachment> = {}): JiraAttachment {
+  return {
+    id: '10001',
+    filename: 'screenshot.png',
+    mimeType: 'image/png',
+    size: 1024,
+    contentUrl: `${CLOUD}/secure/attachment/10001/screenshot.png`,
     ...overrides
   }
 }
@@ -193,6 +217,163 @@ describe('jira-format — formatIssueBrief', () => {
   test('no comments means no comments section', () => {
     assert.doesNotMatch(formatIssueBrief(issue({ comments: [] })), /Recent comments/)
   })
+
+  test('attachments are named so image placeholders can be resolved', () => {
+    const brief = formatIssueBrief(
+      issue({
+        attachments: [
+          attachment({ filename: 'checkout-total.png' }),
+          attachment({ filename: 'server.log' })
+        ]
+      })
+    )
+    assert.match(brief, /### Attachments/)
+    assert.match(brief, /- checkout-total\.png/)
+    assert.match(brief, /- server\.log/)
+  })
+
+  test('the credentialed download URL never reaches the brief', () => {
+    const brief = formatIssueBrief(
+      issue({
+        attachments: [attachment({ contentUrl: `${CLOUD}/secure/attachment/10001/shot.png` })]
+      })
+    )
+    assert.doesNotMatch(brief, /secure\/attachment/)
+  })
+
+  test('no attachments means no attachments section', () => {
+    assert.doesNotMatch(formatIssueBrief(issue({ attachments: [] })), /### Attachments/)
+  })
+})
+
+// ── Attachments ──
+
+describe('jira-api — flattenAdf media nodes', () => {
+  test('an inline image leaves a placeholder instead of vanishing', () => {
+    const adf = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'Repro steps below.' }] },
+        {
+          type: 'mediaSingle',
+          content: [{ type: 'media', attrs: { id: 'abc-123', type: 'file' } }]
+        },
+        { type: 'paragraph', content: [{ type: 'text', text: 'See the red banner.' }] }
+      ]
+    }
+    const text = flattenAdf(adf)
+    assert.match(text, /Repro steps below\./)
+    assert.match(text, /\[image: see attachments\]/)
+    assert.match(text, /See the red banner\./)
+  })
+
+  test('alt text is preferred when Jira supplies it', () => {
+    const text = flattenAdf({ type: 'media', attrs: { alt: 'totals-bug.png' } })
+    assert.equal(text, '[image: totals-bug.png]')
+  })
+})
+
+describe('jira-api — formatAttachments', () => {
+  test('shapes the fields the importer needs', () => {
+    const shaped = formatAttachments([
+      {
+        id: 10001,
+        filename: 'shot.png',
+        mimeType: 'image/png',
+        size: 2048,
+        content: `${CLOUD}/secure/attachment/10001/shot.png`
+      }
+    ])
+    assert.deepEqual(shaped, [
+      {
+        id: '10001',
+        filename: 'shot.png',
+        mimeType: 'image/png',
+        size: 2048,
+        contentUrl: `${CLOUD}/secure/attachment/10001/shot.png`
+      }
+    ])
+  })
+
+  test('entries without a filename or content URL are dropped, not half-built', () => {
+    const shaped = formatAttachments([
+      { filename: 'no-url.png' },
+      { content: `${CLOUD}/x` },
+      null,
+      'nonsense'
+    ])
+    assert.deepEqual(shaped, [])
+  })
+
+  test('a missing attachment field is an empty list, not a throw', () => {
+    assert.deepEqual(formatAttachments(undefined), [])
+  })
+})
+
+describe('jira-attachments — safeAttachmentFilename', () => {
+  test('traversal sequences cannot escape the managed directory', () => {
+    assert.equal(safeAttachmentFilename('../../../etc/passwd'), 'passwd')
+    assert.equal(safeAttachmentFilename('..\\..\\windows\\system32\\cmd.exe'), 'cmd.exe')
+  })
+
+  test('a name that reduces to nothing gets a fallback', () => {
+    assert.equal(safeAttachmentFilename('..'), 'attachment')
+    assert.equal(safeAttachmentFilename('/'), 'attachment')
+  })
+
+  test('shell-significant and unicode characters are neutralised', () => {
+    assert.equal(safeAttachmentFilename('rm -rf $HOME;.png'), 'rm_-rf__HOME_.png')
+    assert.doesNotMatch(safeAttachmentFilename('scénario échec.png'), /[^A-Za-z0-9._-]/)
+  })
+
+  test('the extension survives clipping of an absurdly long name', () => {
+    const clipped = safeAttachmentFilename(`${'a'.repeat(400)}.png`)
+    assert.ok(clipped.endsWith('.png'))
+    assert.ok(clipped.length <= 120)
+  })
+})
+
+describe('jira-attachments — selectAttachments', () => {
+  test('keeps readable formats and drops the rest', () => {
+    const picked = selectAttachments([
+      attachment({ filename: 'shot.PNG' }),
+      attachment({ filename: 'spec.pdf' }),
+      attachment({ filename: 'demo.mp4' }),
+      attachment({ filename: 'dump.zip' }),
+      attachment({ filename: 'notes' })
+    ])
+    assert.deepEqual(
+      picked.map((a) => a.filename),
+      ['shot.PNG', 'spec.pdf']
+    )
+  })
+
+  test('a file Jira already reports as oversized is not fetched', () => {
+    const picked = selectAttachments([
+      attachment({ filename: 'huge.png', size: MAX_ATTACHMENT_BYTES + 1 }),
+      attachment({ filename: 'fine.png', size: MAX_ATTACHMENT_BYTES })
+    ])
+    assert.deepEqual(
+      picked.map((a) => a.filename),
+      ['fine.png']
+    )
+  })
+
+  test('an unknown size is still fetched — the download enforces the cap', () => {
+    const picked = selectAttachments([attachment({ filename: 'shot.png', size: undefined })])
+    assert.equal(picked.length, 1)
+  })
+
+  test('a ticket with many attachments is capped', () => {
+    const many = Array.from({ length: MAX_ATTACHMENTS_PER_ISSUE + 5 }, (_, i) =>
+      attachment({ filename: `shot-${i}.png` })
+    )
+    assert.equal(selectAttachments(many).length, MAX_ATTACHMENTS_PER_ISSUE)
+  })
+
+  test('no attachments is an empty list', () => {
+    assert.deepEqual(selectAttachments([]), [])
+  })
 })
 
 describe('jira-format — buildJiraChatPrompt', () => {
@@ -271,4 +452,8 @@ describe('jira.types — JIRA_MAX_JQL_CHARS', () => {
   })
 })
 
-void summaryAsync()
+// summaryAsync() calls process.exit() — only run it as the entry point, or the
+// shared runner is terminated mid-list.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

@@ -1,14 +1,9 @@
-import { ConfirmDialog } from '@renderer/components/common'
 import CompleteDialog from '../CompleteDialog'
 import CloseDialog from '../CloseDialog'
 import RewindDialog from '../RewindDialog'
 import SpecialistWarningDialog, { type SpecialistWarningType } from '../SpecialistWarningDialog'
 
 interface MessageInputDialogsProps {
-  // Stop confirm
-  showStopConfirm: boolean
-  onStopConfirm: () => Promise<void>
-  onStopCancel: () => void
   // Complete dialog
   showCompleteDialog: boolean
   conversationTitle: string
@@ -39,9 +34,6 @@ interface MessageInputDialogsProps {
 }
 
 export default function MessageInputDialogs({
-  showStopConfirm,
-  onStopConfirm,
-  onStopCancel,
   showCompleteDialog,
   conversationTitle,
   conversationId,
@@ -63,19 +55,10 @@ export default function MessageInputDialogs({
 }: MessageInputDialogsProps): React.JSX.Element {
   return (
     <div data-testid="message-input-dialogs">
-      <div data-testid="stop-confirm-dialog">
-        <ConfirmDialog
-          isOpen={showStopConfirm}
-          title="Stop Generation"
-          message="Are you sure you want to stop the current response? The AI will stop generating immediately."
-          confirmLabel="Stop"
-          cancelLabel="Continue"
-          variant="danger"
-          onConfirm={onStopConfirm}
-          onCancel={onStopCancel}
-        />
-      </div>
-
+      {/* Stop takes effect on click — confirming it cost a round-trip through a
+          modal at the one moment the user wants something to happen now, and
+          the action is not destructive: it truncates a response that can be
+          re-sent. */}
       <CompleteDialog
         isOpen={showCompleteDialog}
         conversationTitle={conversationTitle}

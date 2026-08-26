@@ -179,6 +179,67 @@ describe('blueprint.ipc — deep body (P26)', () => {
     }
   })
 
+  // ─── blueprint:update — branch choice ────────────────────────────────────
+  //
+  // The choice is written straight into settings_json and read back by the
+  // track layer to decide what gets checked out and what gets taken over, so an
+  // unvalidated mode would reach git as an instruction.
+  test('blueprint:update rejects an unknown branch mode', async () => {
+    bpRepo.findById.mockReturnValue({
+      id: 'bp-1',
+      status: 'draft',
+      workspaceId: 'ws-1',
+      settingsJson: {}
+    })
+
+    const result = await tryInvokeHandler('blueprint:update', {
+      blueprintId: 'bp-1',
+      branchChoice: { mode: 'rm-rf' }
+    })
+
+    assert.equal(result.ok, false, 'an unknown mode must not be persisted')
+    assert.match(String((result as { error: Error }).error.message), /branchChoice\.mode/)
+  })
+
+  test('blueprint:update merges a branch choice without dropping other settings', async () => {
+    bpRepo.findById.mockReturnValue({
+      id: 'bp-1',
+      status: 'draft',
+      workspaceId: 'ws-1',
+      settingsJson: { jiraIssueKey: 'MUL-2336' }
+    })
+    bpRepo.update.mockReturnValue({ id: 'bp-1' })
+
+    const result = await tryInvokeHandler('blueprint:update', {
+      blueprintId: 'bp-1',
+      branchChoice: { mode: 'takeover', branch: 'feat/existing' }
+    })
+
+    assert.equal(result.ok, true)
+    const [, data] = bpRepo.update.lastCall as [string, { settingsJson: Record<string, unknown> }]
+    assert.deepEqual(data.settingsJson, {
+      jiraIssueKey: 'MUL-2336',
+      branchChoice: { mode: 'takeover', branch: 'feat/existing', name: undefined }
+    })
+  })
+
+  test('blueprint:update refuses to edit a blueprint that has already run', async () => {
+    bpRepo.findById.mockReturnValue({
+      id: 'bp-1',
+      status: 'active',
+      workspaceId: 'ws-1',
+      settingsJson: {}
+    })
+
+    const result = await tryInvokeHandler('blueprint:update', {
+      blueprintId: 'bp-1',
+      branchChoice: { mode: 'primary' }
+    })
+
+    assert.equal(result.ok, false)
+    assert.match(String((result as { error: Error }).error.message), /only draft blueprints/)
+  })
+
   // ─── blueprint:getRunning ────────────────────────────────────────────────
   test('blueprint:getRunning returns running blueprints', async () => {
     const result = await tryInvokeHandler('blueprint:getRunning', { workspaceId: 'ws-1' })

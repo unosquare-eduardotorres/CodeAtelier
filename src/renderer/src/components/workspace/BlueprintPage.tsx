@@ -11,6 +11,7 @@ import { PHASE_ICONS, type PhaseIconKey } from './blueprints/phase-icons'
 import BlueprintChatView, { BlueprintQuestionFooter } from './blueprints/BlueprintChatView'
 import BlueprintExecutionPanel from './blueprints/BlueprintExecutionPanel'
 import { BlueprintRunHeader } from './blueprints/BlueprintRunHeader'
+import { readBlueprintBranchName } from './blueprints/detail/reference-docs'
 import { BlueprintDetailView } from './blueprints/detail/BlueprintDetailView'
 import { BlueprintInputView } from './blueprints/BlueprintInputView'
 import { BlueprintDeliverablesView } from './blueprints/BlueprintDeliverablesView'
@@ -185,6 +186,7 @@ function BlueprintActiveView({
         isRunning={isRunning}
         currentPhase={currentPhase}
         blueprintTitle={blueprintTitle}
+        branchName={readBlueprintBranchName(currentBlueprint?.settingsJson)}
         pipelineStartedAt={pipelineStartedAt}
         phaseDurations={phaseDurations}
         phaseStartedAt={phaseStartedAt}

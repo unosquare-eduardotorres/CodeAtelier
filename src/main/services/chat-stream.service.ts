@@ -1430,6 +1430,40 @@ export class ChatStreamService {
   }
 
   /**
+   * What to do about a 'complete' that arrived after the lifecycle was already
+   * torn down.
+   *
+   * `!lifecycle.isActive` was standing in for four different situations, and the
+   * blanket early-return it guarded was correct for two of them and silently
+   * dropped the renderer's only terminal signal for the other two.
+   */
+  private classifyOrphanedCompletion(
+    ctx: StreamContext,
+    lifecycle: ConversationLifecycle
+  ): 'stopped' | 'deleted' | 'superseded' | 'finalize' {
+    // stop() already saved a '⏹ stopped' message AND sent COMPLETE.
+    if (this.stoppedConversations.has(ctx.conversationId)) return 'stopped'
+
+    // CHAT-FINALIZE-DELETE-01, made explicit: the original reason for the guard.
+    // Persisting into a deleted conversation is what it existed to prevent —
+    // test that directly rather than through the lifecycle proxy.
+    try {
+      if (!conversationRepository.findById(ctx.conversationId)) return 'deleted'
+    } catch {
+      return 'deleted' // cannot prove it still exists → do not write
+    }
+
+    // registry.get() returns only *active* lifecycles (it evicts stale entries),
+    // so a different instance here means a newer turn owns this conversation.
+    // Its own COMPLETE will free the renderer, and ours would be dropped on
+    // requestId mismatch anyway.
+    const current = lifecycleRegistry.get(ctx.conversationId)
+    if (current && current !== lifecycle) return 'superseded'
+
+    return 'finalize'
+  }
+
+  /**
    * Persist the streamed message to DB, process memory blocks, and notify renderer.
    * Extracted from the onComplete closure — all error paths transition the state machine.
    */
@@ -1449,7 +1483,12 @@ export class ChatStreamService {
     // current lifecycle. If a new stream started (superseding this one), the
     // lifecycle's requestId will have changed. Skip to avoid corrupting the
     // new stream's state machine.
-    if (lifecycle.requestId !== ctx.requestId) {
+    //
+    // A disposed lifecycle has requestId === null (abort()/complete() null it):
+    // this turn ending, not a different turn taking over. Only a live, *different*
+    // requestId is a genuine supersession — treating disposal as one dropped the
+    // renderer's only terminal signal.
+    if (lifecycle.requestId !== null && lifecycle.requestId !== ctx.requestId) {
       log.info(
         `[PIPELINE:finalize-orphaned] requestId mismatch ` +
           `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping`
@@ -1649,8 +1688,11 @@ export class ChatStreamService {
     if (lifecycle.requestId === ctx.requestId) {
       conversationStateMachine.transition('chatAgentComplete', ctx.conversationId)
     } else {
+      // A disposed lifecycle needs no transition: abort() already force-reset the
+      // state machine. A mismatched live requestId means a newer turn owns it.
       log.info(
-        `[PIPELINE:finalize-orphaned-transition] requestId mismatch after DB write ` +
+        `[PIPELINE:finalize-orphaned-transition] lifecycle ` +
+          `${lifecycle.requestId === null ? 'disposed' : 'requestId mismatch'} after DB write ` +
           `(lifecycle=${lifecycle.requestId} ctx=${ctx.requestId}) — skipping transition`
       )
     }
@@ -1759,12 +1801,26 @@ export class ChatStreamService {
       // and delete-then-complete scenarios. isActive is false when abortController
       // is null — which happens after both abort() and complete().
       if (this.stoppedConversations.has(ctx.conversationId) || !lifecycle.isActive) {
-        // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics on abort-triggered completion.
-        // Idempotent if stop() already called completeStreamMetrics.
-        completeStreamMetrics(ctx.conversationId, 'aborted')
-        cleanupListeners()
-        resolveDone()
-        return
+        const disposition = this.classifyOrphanedCompletion(ctx, lifecycle)
+        if (disposition !== 'finalize') {
+          log.info(
+            `[PIPELINE:complete-orphaned] disposition=${disposition} ` +
+              `conversationId=${ctx.conversationId} requestId=${ctx.requestId}`
+          )
+          // CHAT-METRICS-ABORT-ORPHAN-01: Clean up metrics on abort-triggered completion.
+          // Idempotent if stop() already called completeStreamMetrics.
+          completeStreamMetrics(ctx.conversationId, 'aborted')
+          cleanupListeners()
+          resolveDone()
+          return
+        }
+        // 'finalize': the conversation still exists, nothing newer owns it, and the
+        // turn's text has never been written anywhere. Fall through — the renderer is
+        // otherwise stuck on isStreaming until its 2-minute watchdog fires.
+        log.warn(
+          `[PIPELINE:complete-orphaned] disposition=finalize — lifecycle disposed before ` +
+            `'complete' arrived; persisting and signalling anyway. conversationId=${ctx.conversationId}`
+        )
       }
 
       this.finalizeStreamMessage(ctx, lifecycle)

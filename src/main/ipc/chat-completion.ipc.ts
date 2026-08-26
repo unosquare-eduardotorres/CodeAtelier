@@ -1,6 +1,6 @@
 import { ipcMain, app } from 'electron'
-import { join, resolve, sep } from 'node:path'
-import { writeFileSync, mkdirSync, rmSync } from 'node:fs'
+import { join, resolve, sep, basename } from 'node:path'
+import { writeFileSync, mkdirSync, rmSync, copyFileSync, statSync, readdirSync } from 'node:fs'
 import simpleGit from 'simple-git'
 import { conversationRepository, messageRepository, workspaceRepository } from '../db/repositories'
 import { chatAgentService, fileService } from '../services'
@@ -18,6 +18,7 @@ import { chatIpcLogger } from '../logger'
 import { validateSender } from './validate-sender'
 import { requireObject, requireString, optionalString } from './validate-args'
 import { completeStreamMetrics } from './chunk-router'
+import { getManagedDocsRoot, COPY_ON_ATTACH_MAX_BYTES } from './blueprint.ipc'
 
 const log = chatIpcLogger
 
@@ -32,6 +33,37 @@ function cleanupChatImages(conversationId: string): void {
     rmSync(imageDir, { recursive: true, force: true })
   } catch {
     /* best effort — directory may not exist */
+  }
+}
+
+/** Scope names are used as a directory segment — no separators, no traversal. */
+const SCOPE_RE = /^[\w-]+$/
+
+/** Image extensions the staging handler accepts (mirrors renderer IMAGE_REGEX). */
+const STAGED_IMAGE_RE = /\.(png|jpg|jpeg|gif|webp)$/i
+
+/**
+ * Drop orphaned blueprint staging dirs at boot.
+ *
+ * No draft form can be open at startup, so every `blueprint-draft-*` scope is
+ * left over from a previous run (or a crash). Also clears the two fixed-name
+ * scopes used before staging became per-draft, which leaked on every paste.
+ */
+function sweepStagedImages(): void {
+  try {
+    const root = join(app.getPath('userData'), 'chat-images')
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const isOrphan =
+        entry.name.startsWith('blueprint-draft-') ||
+        entry.name === 'blueprint-input' ||
+        entry.name === 'blueprint-draft-edit'
+      if (isOrphan) {
+        rmSync(join(root, entry.name), { recursive: true, force: true })
+      }
+    }
+  } catch {
+    /* best effort — chat-images may not exist yet */
   }
 }
 
@@ -350,6 +382,8 @@ async function handleChatComplete(args: {
 }
 
 export function registerChatCompletionIpc(): void {
+  sweepStagedImages()
+
   ipcMain.handle(IPC_CHANNELS.CHAT_CLOSE, async (event, rawArgs: unknown) => {
     validateSender(event)
     const closeArgs = requireObject(rawArgs, IPC_CHANNELS.CHAT_CLOSE)
@@ -481,14 +515,56 @@ Respond with ONLY the PR description, no preamble.`
     const args = requireObject(rawArgs, IPC_CHANNELS.READ_IMAGE_BASE64)
     const filePath = requireString(args, 'filePath', IPC_CHANNELS.READ_IMAGE_BASE64)
 
-    // Security: only allow reading from chat-images directory
-    const chatImagesDir = join(app.getPath('userData'), 'chat-images')
+    // Security: confine reads to the directories the app itself writes images into.
+    // chat-images    — clipboard pastes and chat attachments
+    // blueprint-docs — copy-on-attach and Jira attachment imports
+    const allowedRoots = [join(app.getPath('userData'), 'chat-images'), getManagedDocsRoot()]
     const resolved = resolve(filePath)
-    if (!resolved.startsWith(chatImagesDir + sep) && resolved !== chatImagesDir) {
-      throw new Error('Access denied: file is outside chat-images directory')
+    const allowed = allowedRoots.some(
+      (root) => resolved === root || resolved.startsWith(root + sep)
+    )
+    if (!allowed) {
+      throw new Error('Access denied: file is outside the allowed image directories')
     }
 
     const { base64, mimeType } = fileService.readImageAsBase64(resolved)
     return `data:${mimeType};base64,${base64}`
+  })
+
+  // A dropped image still lives wherever the user dropped it from, which
+  // READ_IMAGE_BASE64 refuses to read — so it cannot be previewed before the
+  // owning record exists. Copy it into a draft-scoped staging dir (an allowed
+  // root) and hand back that path; CLEAR_STAGED_IMAGES disposes of the scope.
+  ipcMain.handle(IPC_CHANNELS.STAGE_IMAGE_FILE, async (event, rawArgs: unknown) => {
+    const ch = IPC_CHANNELS.STAGE_IMAGE_FILE
+    validateSender(event)
+    const args = requireObject(rawArgs, ch)
+    const scope = requireString(args, 'scope', ch)
+    const sourcePath = requireString(args, 'sourcePath', ch)
+
+    if (!SCOPE_RE.test(scope)) throw new Error(`${ch}: invalid scope format`)
+    if (!STAGED_IMAGE_RE.test(sourcePath)) throw new Error(`${ch}: not an image file`)
+
+    const stat = statSync(sourcePath)
+    if (stat.size > COPY_ON_ATTACH_MAX_BYTES) {
+      throw new Error(`${ch}: file too large (${stat.size} bytes)`)
+    }
+
+    const stagingDir = join(app.getPath('userData'), 'chat-images', scope)
+    mkdirSync(stagingDir, { recursive: true })
+    // basename() strips any directory component from the source name, so the
+    // destination can only land inside stagingDir.
+    const destPath = join(stagingDir, `${Date.now()}-${basename(sourcePath)}`)
+    copyFileSync(sourcePath, destPath)
+    return destPath
+  })
+
+  ipcMain.handle(IPC_CHANNELS.CLEAR_STAGED_IMAGES, async (event, rawArgs: unknown) => {
+    const ch = IPC_CHANNELS.CLEAR_STAGED_IMAGES
+    validateSender(event)
+    const scope = requireString(requireObject(rawArgs, ch), 'scope', ch)
+    if (!SCOPE_RE.test(scope)) throw new Error(`${ch}: invalid scope format`)
+    cleanupChatImages(scope)
+    return { cleared: true }
   })
 }

@@ -92,6 +92,8 @@ interface HealthDetailPanelProps {
   onToggleFinding: (finding: AuditFinding) => void
   onSelectTrack: (trackId: AuditTrackId) => void
   onConvertToChat: () => void
+  /** Route the selected findings into a new blueprint instead of a chat. */
+  onConvertToBlueprint?: () => void
   onRerunTrack: (trackId: AuditTrackId) => void
   onAutoFix: (finding: AuditFinding, trackName: string) => void
   onClearSelected?: () => void
@@ -111,6 +113,7 @@ export default function HealthDetailPanel({
   onToggleFinding,
   onSelectTrack,
   onConvertToChat,
+  onConvertToBlueprint,
   onRerunTrack,
   onAutoFix,
   onClearSelected,
@@ -370,6 +373,7 @@ export default function HealthDetailPanel({
           summary={result?.summary}
           onToggleFinding={onToggleFinding}
           onConvertToChat={onConvertToChat}
+          onConvertToBlueprint={onConvertToBlueprint}
           onRerunTrack={onRerunTrack}
           onAutoFix={onAutoFix}
           onClearSelected={onClearSelected}

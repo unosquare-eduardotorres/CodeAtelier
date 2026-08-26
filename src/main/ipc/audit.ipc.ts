@@ -13,12 +13,19 @@ import type {
   AuditMode,
   AuditTrackId,
   AuditFinding,
+  AuditFindingHandoff,
+  AuditHandoffTarget,
   AuditRun,
   AuditPlanRecord,
   AuditSelectedSkills,
   LLMProvider,
   AgentStatus
 } from '../../shared/types'
+import {
+  buildAuditBlueprintTitle,
+  deriveBlueprintPriority,
+  formatAuditFindingsBrief
+} from '../../shared/audit-blueprint-format'
 import type { StreamChunk } from '../services/agent-base.service'
 import {
   formatDirectFindings,
@@ -30,6 +37,7 @@ import { randomUUID } from 'node:crypto'
 import { createTimedCleanupMap } from './listener-cleanup'
 import {
   auditRepository,
+  auditHandoffRepository,
   auditPlanRepository,
   conversationRepository,
   conversationSpecialistRepository,
@@ -38,7 +46,8 @@ import {
   specialistRepository
 } from '../db/repositories'
 import { workspaceRepository } from '../db/repositories'
-import { requireObject, requireString } from './validate-args'
+import { blueprintService } from '../services/blueprint.service'
+import { requireObject, requireString, requireStringArray, optionalString } from './validate-args'
 import type { HandoffEnvelope } from '../../shared/handoff-types'
 import { buildConversationModelSnapshot } from '../services/model-config.service'
 import { auditPlanGeneratorService } from '../services/audit-plan-generator.service'
@@ -57,6 +66,12 @@ import { resolveWorkspaceName } from './resolve-workspace-name'
 import log from 'electron-log'
 
 const auditLog = log.scope('audit-ipc')
+
+/**
+ * Ceiling for one Audit → Blueprint handoff. Past this the requirement document
+ * stops fitting a single Specify pass and the batch should be split.
+ */
+const MAX_BLUEPRINT_FINDINGS = 50
 
 // ── Public entry point ──────────────────────────────────────────────────────
 
@@ -700,6 +715,16 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
           messageRepository.create(conv.id, 'user', contextMessage)
           conversationIds.push(conv.id)
 
+          // Mark the findings this conversation consumed, so the findings list
+          // can show they have already been routed somewhere.
+          auditHandoffRepository.record({
+            auditRunId,
+            findingIds: result.findings.filter((f) => f.severity !== 'info').map((f) => f.id),
+            target: 'chat',
+            refId: conv.id,
+            refTitle: title
+          })
+
           // Record handoff event
           const envelope: HandoffEnvelope = {
             id: randomUUID(),
@@ -784,6 +809,16 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
         messageRepository.create(conv.id, 'user', contextMessage)
         conversationIds.push(conv.id)
 
+        auditHandoffRepository.record({
+          auditRunId,
+          findingIds: completedResults.flatMap((r) =>
+            r.findings.filter((f) => f.severity !== 'info').map((f) => f.id)
+          ),
+          target: 'chat',
+          refId: conv.id,
+          refTitle: title
+        })
+
         // Record handoff event
         const envelope: HandoffEnvelope = {
           id: randomUUID(),
@@ -835,6 +870,157 @@ function registerAuditHandoffHandlers(_mainWindow: BrowserWindow): void {
       }
 
       return { conversationIds, count: conversationIds.length }
+    }
+  )
+
+  // ── audit:handoffToBlueprint — turn selected findings into one blueprint ──
+  //
+  // The blueprint pipeline (specify → clarify → plan → tasks → review → build →
+  // verify) is the right target for a large batch: chat has no task breakdown
+  // or verification gate, which is what a ten-finding remediation needs.
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_HANDOFF_TO_BLUEPRINT,
+    (event, rawArgs: unknown): { blueprintId: string; title: string; findingCount: number } => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.AUDIT_HANDOFF_TO_BLUEPRINT
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const auditRunId = requireString(args, 'auditRunId', ch)
+      const findingIds = requireStringArray(args, 'findingIds', ch)
+
+      const run = auditRepository.findRunById(auditRunId)
+      if (!run || run.workspaceId !== workspaceId) {
+        throw new Error(`${ch}: audit run ${auditRunId} not found for workspace ${workspaceId}`)
+      }
+
+      // Resolve the findings from the persisted run rather than trusting a
+      // renderer-supplied payload, and so a stale selection referencing a
+      // re-run track quietly drops instead of seeding an empty blueprint.
+      const wanted = new Set(findingIds)
+      const findings = run.results.flatMap((r) => r.findings.filter((f) => wanted.has(f.id)))
+      if (findings.length === 0) {
+        throw new Error(`${ch}: none of the selected findings belong to run ${auditRunId}`)
+      }
+      if (findings.length > MAX_BLUEPRINT_FINDINGS) {
+        throw new Error(
+          `${ch}: too many findings (${findings.length}); select at most ${MAX_BLUEPRINT_FINDINGS}.`
+        )
+      }
+
+      const title = buildAuditBlueprintTitle(findings)
+      const blueprint = blueprintService.create({
+        workspaceId,
+        title,
+        description: formatAuditFindingsBrief(findings, { auditRunId }),
+        priority: deriveBlueprintPriority(findings),
+        settingsJson: {
+          sourceAuditRunId: auditRunId,
+          sourceAuditFindingIds: findings.map((f) => f.id)
+        }
+      })
+
+      auditHandoffRepository.record({
+        auditRunId,
+        findingIds: findings.map((f) => f.id),
+        target: 'blueprint',
+        refId: blueprint.id,
+        refTitle: title
+      })
+
+      const envelope: HandoffEnvelope = {
+        id: randomUUID(),
+        version: 1,
+        source: 'audit',
+        target: 'blueprint',
+        workspaceId,
+        intent: `Fix ${findings.length} audit finding(s) through the blueprint pipeline`,
+        originalGoal: title,
+        contextSummary: `Audit findings selected from run ${auditRunId}`,
+        completedWork: [],
+        remainingWork: findings.map((f) => ({
+          title: f.title,
+          description: f.description,
+          priority:
+            f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium'
+        })),
+        decisions: [],
+        constraints: [],
+        risks: [],
+        artifacts: [{ type: 'finding', path: auditRunId, description: `Audit run ${auditRunId}` }],
+        suggestedTools: [],
+        suggestedSkills: [],
+        filesToReadFirst: findings
+          .filter((f) => f.filePath)
+          .map((f) => f.filePath!)
+          .slice(0, 10),
+        commandsToRunFirst: [],
+        sourceSessionId: auditRunId,
+        confidence: 0.8,
+        priority: 'medium',
+        createdAt: new Date().toISOString(),
+        createdBy: 'user'
+      }
+      handoffRepository.create(envelope)
+
+      auditLog.info(
+        `[audit:handoff] Created blueprint ${blueprint.id} from ${findings.length} finding(s) of run ${auditRunId}`
+      )
+
+      return { blueprintId: blueprint.id, title, findingCount: findings.length }
+    }
+  )
+
+  // ── audit:recordFindingHandoff — mark findings as already routed ──
+  //
+  // The chat handoffs build their conversation in the renderer (pendingFixContext),
+  // so they cannot record the marker where the conversation is created; they call
+  // this instead.
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_RECORD_FINDING_HANDOFF,
+    (event, rawArgs: unknown): AuditFindingHandoff[] => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.AUDIT_RECORD_FINDING_HANDOFF
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const auditRunId = requireString(args, 'auditRunId', ch)
+      const findingIds = requireStringArray(args, 'findingIds', ch)
+      const target = requireString(args, 'target', ch)
+      const refId = optionalString(args, 'refId', ch)
+      const refTitle = optionalString(args, 'refTitle', ch)
+
+      if (target !== 'chat' && target !== 'blueprint') {
+        throw new Error(`${ch}: target must be 'chat' or 'blueprint', got '${target}'`)
+      }
+
+      const run = auditRepository.findRunById(auditRunId)
+      if (!run || run.workspaceId !== workspaceId) {
+        throw new Error(`${ch}: audit run ${auditRunId} not found for workspace ${workspaceId}`)
+      }
+
+      // Only mark ids that actually exist in the run — a stale selection must not
+      // leave orphan markers that no finding row can ever clear.
+      const known = new Set(run.results.flatMap((r) => r.findings.map((f) => f.id)))
+      const valid = findingIds.filter((id) => known.has(id))
+      if (valid.length === 0) return []
+
+      return auditHandoffRepository.record({
+        auditRunId,
+        findingIds: valid,
+        target: target as AuditHandoffTarget,
+        refId,
+        refTitle
+      })
+    }
+  )
+
+  // ── audit:getFindingHandoffs — markers for one run ──
+  ipcMain.handle(
+    IPC_CHANNELS.AUDIT_GET_FINDING_HANDOFFS,
+    (event, rawArgs: unknown): AuditFindingHandoff[] => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.AUDIT_GET_FINDING_HANDOFFS
+      const auditRunId = requireString(requireObject(rawArgs, ch), 'auditRunId', ch)
+      return auditHandoffRepository.findByRun(auditRunId)
     }
   )
 }

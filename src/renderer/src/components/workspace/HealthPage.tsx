@@ -26,6 +26,8 @@ interface HealthPageProps {
   onNavigateToCouncil?: () => void
   /** Switch to the Goals tab. */
   onNavigateToGoals?: () => void
+  /** Switch to the Blueprints tab — used after an Audit → Blueprint handoff. */
+  onNavigateToBlueprints?: () => void
 }
 
 export default function HealthPage({
@@ -33,7 +35,8 @@ export default function HealthPage({
   onFixInNewChat,
   onSendPlanToGrill,
   onNavigateToCouncil,
-  onNavigateToGoals
+  onNavigateToGoals,
+  onNavigateToBlueprints
 }: HealthPageProps): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const {
@@ -42,6 +45,7 @@ export default function HealthPage({
     isPaused,
     rerunningTrackId,
     selectedFindings,
+    findingHandoffs,
     loadLatest,
     cancelAudit,
     pauseAudit,
@@ -80,8 +84,16 @@ export default function HealthPage({
     onNavigateToGoals
   })
 
-  // Audit → Chat handoff orchestration
-  const handoff = useAuditHandoff(workspaceId, currentRun, onFixInNewChat, onNavigateToChat)
+  // Audit → Chat / Blueprint handoff orchestration
+  const handoff = useAuditHandoff(
+    workspaceId,
+    currentRun,
+    onFixInNewChat,
+    onNavigateToChat,
+    onNavigateToBlueprints
+  )
+
+  const handedOffCount = selectedFindings.filter((f) => findingHandoffs[f.id]).length
 
   const {
     completedCount,
@@ -264,6 +276,7 @@ export default function HealthPage({
           onToggleFinding={toggleFinding}
           onSelectTrack={actions.handleSelectTrack}
           onConvertToChat={actions.handleConvert}
+          onConvertToBlueprint={handoff.handleFixInBlueprint}
           onRerunTrack={actions.handleRerunTrack}
           onAutoFix={actions.handleAutoFix}
           onClearSelected={clearSelectedFindings}
@@ -295,9 +308,13 @@ export default function HealthPage({
         <SelectionTrayBar
           count={selectedFindings.length}
           auditorCount={auditorCount}
+          handedOffCount={handedOffCount}
           isGenerating={false}
+          isHandingOff={handoff.isHandingOff}
+          handoffError={handoff.handoffError}
           onBuildPlan={actions.handleBuildPlan}
           onFixInChat={handoff.handleFixInChat}
+          onFixInBlueprint={handoff.handleFixInBlueprint}
           onClear={clearSelectedFindings}
         />
       )}

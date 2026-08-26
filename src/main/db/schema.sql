@@ -491,6 +491,21 @@ CREATE TABLE IF NOT EXISTS audit_results (
 
 CREATE INDEX IF NOT EXISTS idx_audit_results_run ON audit_results(audit_run_id);
 
+-- Which findings were already routed somewhere for remediation, and where.
+-- Scoped to a run because finding ids are regenerated on every audit.
+CREATE TABLE IF NOT EXISTS audit_finding_handoffs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+  finding_id TEXT NOT NULL,
+  target TEXT NOT NULL CHECK (target IN ('chat', 'blueprint')),
+  ref_id TEXT,
+  ref_title TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_finding_handoffs_run
+  ON audit_finding_handoffs(audit_run_id);
+
 -- Grill sessions: persistent grill evaluation state
 CREATE TABLE IF NOT EXISTS grill_sessions (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

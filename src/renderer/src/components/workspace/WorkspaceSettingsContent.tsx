@@ -135,6 +135,7 @@ export default function WorkspaceSettingsContent({
           onSendPlanToGrill={onSendPlanToGrill}
           onNavigateToCouncil={() => onSettingsTabChange?.('council')}
           onNavigateToGoals={() => onSettingsTabChange?.('goals')}
+          onNavigateToBlueprints={() => onSettingsTabChange?.('blueprints')}
         />
       )}
       {tab === 'goals' && <GoalPage onNavigateToChat={onNavigateToChat} />}

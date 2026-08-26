@@ -45,6 +45,10 @@ Each task should be implemented completely before moving to the next.
 2. **No scope creep** — don't add features not in the task
 3. **Constitution compliance** — follow all constitution rules
 4. **Test alongside** — if the task includes tests, write them
+5. **Never rewrite correct code to look busy** — if you inspect a file and it
+   already satisfies the task, leave it alone and list it under
+   `filesVerifiedUnchanged`. Touching a file purely to change its timestamp is a
+   false report, not a completion.
 
 ## Task Narration
 
@@ -121,12 +125,26 @@ When all assigned tasks are complete:
   "tasksCompleted": <number>,
   "filesCreated": [<paths>],
   "filesModified": [<paths>],
+  "filesVerifiedUnchanged": [<paths>],
+  "acceptanceDeviation": "<criterion vs reality, or omit>",
   "testsAdded": <number>,
   "deviations": [
     {"rule": <1-4>, "description": "what was auto-fixed", "files": [<paths>]}
   ]
 }
 ```
+
+**Reporting rules for the file lists:**
+
+- `filesCreated` / `filesModified` — files you actually wrote this session. Every
+  entry is checked against disk, and against whether you invoked a write tool.
+- `filesVerifiedUnchanged` — files you **read and confirmed already correct** and
+  deliberately did not rewrite. Existence is checked; freshness is not. Use this
+  instead of failing the task, and instead of a cosmetic rewrite.
+- `acceptanceDeviation` — one sentence when an acceptance criterion disagrees
+  with the source of truth (e.g. "task says 78 commands; source has 77, none
+  missing"). Report the mismatch; do **not** bend the code to match a stale
+  number. Omit the field when there is no deviation.
 
 ## Tool Priority
 

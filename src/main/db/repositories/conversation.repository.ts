@@ -233,6 +233,20 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     return row?.summary ?? undefined
   }
 
+  /**
+   * Read the handoff context this conversation was created with.
+   *
+   * A fact about the conversation's origin, not a one-shot queue — it is never
+   * cleared, so a rebuilt or poisoned session can re-learn where the work came
+   * from on its next cold start.
+   */
+  getHandoffContext(conversationId: string): string | null {
+    const row = this.db()
+      .prepare('SELECT handoff_context FROM conversations WHERE id = ?')
+      .get(conversationId) as { handoff_context: string | null } | undefined
+    return row?.handoff_context ?? null
+  }
+
   /** Update handoff context injected when switching providers mid-chat */
   updateHandoffContext(conversationId: string, handoffContext: string | null): void {
     this.db()

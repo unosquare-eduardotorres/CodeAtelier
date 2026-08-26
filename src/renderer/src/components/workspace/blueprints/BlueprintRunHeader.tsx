@@ -16,7 +16,8 @@ import {
   Target,
   Wrench,
   Zap,
-  ClipboardList
+  ClipboardList,
+  GitBranch
 } from 'lucide-react'
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
 import { formatPhaseDuration } from '@renderer/store/blueprint.store'
@@ -69,6 +70,8 @@ export interface BlueprintRunHeaderProps {
   isRunning: boolean
   currentPhase: BlueprintPhaseType | null
   blueprintTitle: string | null
+  /** The branch this run works on, once it has been reserved. */
+  branchName?: string | null
   pipelineStartedAt: number | null
   phaseDurations: Partial<Record<BlueprintPhaseType, number>>
   phaseStartedAt: number | null
@@ -95,6 +98,7 @@ export function BlueprintRunHeader({
   isRunning,
   currentPhase,
   blueprintTitle,
+  branchName,
   pipelineStartedAt,
   phaseDurations: _phaseDurations,
   phaseStartedAt,
@@ -170,6 +174,18 @@ export function BlueprintRunHeader({
                 </span>
               </>
             )}
+          </span>
+        )}
+
+        {/* Branch — the run's own, not the workspace checkout the status bar shows */}
+        {branchName && (
+          <span
+            data-testid="blueprint-run-branch"
+            title={`This blueprint works on ${branchName}`}
+            className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-mono rounded-md bg-surface-inset text-text-secondary max-w-[220px] flex-shrink-0"
+          >
+            <GitBranch size={12} className="flex-shrink-0" />
+            <span className="truncate">{branchName}</span>
           </span>
         )}
 

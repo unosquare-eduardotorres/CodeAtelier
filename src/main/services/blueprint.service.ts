@@ -793,8 +793,19 @@ export class BlueprintService extends EventEmitter {
    * where neither can touch it.
    *
    * Reversible — `skipped: false` clears it.
+   *
+   * The same lane closes out a *failed* task the human has verified externally.
+   * That is deliberate: `skipped + skipped_by_user_at` is sticky across retries,
+   * carries no file claims for VERIFY to demand, and needs no new `status` value
+   * (which would cost a table rebuild). `outcomeKind = 'accepted_by_user'` is
+   * what lets the UI tell "I checked this, it's done" apart from "never ran".
    */
-  setTaskUserSkipped(blueprintId: string, taskId: string, skipped: boolean): BlueprintTask {
+  setTaskUserSkipped(
+    blueprintId: string,
+    taskId: string,
+    skipped: boolean,
+    note?: string | null
+  ): BlueprintTask {
     const task = blueprintTaskRepository
       .findByBlueprint(blueprintId)
       .find((t) => t.taskId === taskId)
@@ -802,15 +813,24 @@ export class BlueprintService extends EventEmitter {
       throw new Error(`Task ${taskId} not found for blueprint ${blueprintId}`)
     }
 
-    const updated = blueprintTaskRepository.setUserSkipped(task.id, skipped)
+    const updated = blueprintTaskRepository.setUserSkipped(task.id, skipped, note)
     if (!updated) {
       throw new Error(`Failed to ${skipped ? 'skip' : 'unskip'} task ${taskId}`)
+    }
+
+    // Closing out a failed task is an acceptance, not a skip — record which.
+    let final = updated
+    if (skipped && task.status === 'failed') {
+      final =
+        blueprintTaskRepository.setOutcome(task.id, { outcomeKind: 'accepted_by_user' }) ?? final
+    } else if (!skipped && task.outcomeKind === 'accepted_by_user') {
+      final = blueprintTaskRepository.setOutcome(task.id, { outcomeKind: null }) ?? final
     }
 
     bpLog.info(
       `[setTaskUserSkipped] Blueprint ${blueprintId} — task ${taskId} ${skipped ? 'skipped by user' : 'un-skipped'}`
     )
-    return updated
+    return final
   }
 
   /**

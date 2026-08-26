@@ -139,7 +139,6 @@ function VoiceMicButton({
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type -- inferred hook return type is complex
 function useMessageInputDialogs(activeConversation: { id?: string; title?: string } | null) {
-  const [showStopConfirm, setShowStopConfirm] = useState(false)
   const [showCompleteDialog, setShowCompleteDialog] = useState(false)
   const [showCloseConfirm, setShowCloseConfirm] = useState(false)
   const [showRewindDialog, setShowRewindDialog] = useState(false)
@@ -147,9 +146,8 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   const [showBackgroundTasks, setShowBackgroundTasks] = useState(false)
   const { stopGeneration, completeConversation, closeConversation } = useChatActions()
 
-  const handleStopConfirm = useCallback(async () => {
+  const handleStop = useCallback(async () => {
     await stopGeneration()
-    setShowStopConfirm(false)
   }, [stopGeneration])
 
   const handleCompleteConfirm = useCallback(
@@ -175,8 +173,6 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
   }, [activeConversation, closeConversation])
 
   return {
-    showStopConfirm,
-    setShowStopConfirm,
     showCompleteDialog,
     setShowCompleteDialog,
     showCloseConfirm,
@@ -187,8 +183,7 @@ function useMessageInputDialogs(activeConversation: { id?: string; title?: strin
     setShowIdeaPopover,
     showBackgroundTasks,
     setShowBackgroundTasks,
-    handleStopConfirm,
-    handleStopCancel: useCallback(() => setShowStopConfirm(false), []),
+    handleStop,
     conversationTitle: activeConversation?.title ?? 'Untitled',
     dialogConversationId: activeConversation?.id ?? '',
     handleCompleteConfirm,
@@ -516,7 +511,7 @@ export default function MessageInput({
             was no way out. CHAT_STOP in main is unconditional and always works. */}
         {(isStreaming || isSending) && (
           <button
-            onClick={() => dialogs.setShowStopConfirm(true)}
+            onClick={() => void dialogs.handleStop()}
             className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
             aria-label="Stop generation"
             title="Stop generation"
@@ -584,9 +579,6 @@ export default function MessageInput({
       </div>
 
       <MessageInputDialogs
-        showStopConfirm={dialogs.showStopConfirm}
-        onStopConfirm={dialogs.handleStopConfirm}
-        onStopCancel={dialogs.handleStopCancel}
         showCompleteDialog={dialogs.showCompleteDialog}
         conversationTitle={dialogs.conversationTitle}
         conversationId={dialogs.dialogConversationId}

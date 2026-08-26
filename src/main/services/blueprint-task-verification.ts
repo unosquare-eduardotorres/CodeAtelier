@@ -14,10 +14,27 @@ import { resolve, relative, isAbsolute } from 'node:path'
 import { asStringArray } from './blueprint-artifact-parsers'
 
 export interface TaskVerificationResult {
-  /** Verification passed — all claimed files confirmed on disk. */
+  /** Verification passed — no evidence of absence. Equivalent to `verdict !== 'fail'`. */
   ok: boolean
+  /**
+   * Three-way outcome. `ok` collapses the last two, which is the whole point of
+   * keeping this field separate:
+   * - `pass`     — every claim confirmed, and fresh when freshness was checked.
+   * - `unproven` — every claimed file exists, but none of the stale ones can be
+   *   proven to have been written by *this* run. Absence of proof, not proof of
+   *   absence (R007) — the caller decides, using write-tool activity.
+   * - `fail`     — evidence of absence: a claimed file is not on disk, or the
+   *   R029 signature (no completion block and nothing checkable exists).
+   */
+  verdict: 'pass' | 'unproven' | 'fail'
   /** Claimed filesCreated/filesModified entries absent from disk → HARD FAIL. */
   missingClaimed: string[]
+  /**
+   * Files the agent declared as `filesVerifiedUnchanged` — inspected and already
+   * correct, deliberately not rewritten. Existence is required (a missing one
+   * lands in `missingClaimed`); freshness is not, by definition.
+   */
+  preexistingClaimed: string[]
   /** Planned filePathsJson entries we looked for and did not find → warning only (plans drift). */
   missingPlanned: string[]
   /**
@@ -51,11 +68,16 @@ type Resolution = { kind: 'inside'; path: string } | { kind: 'outside' }
  * - A refused **planned** path lands in `unverifiablePlanned`, never in
  *   `missingPlanned` — we cannot report a file absent from a tree we are not
  *   allowed to look at.
- * - `ok = false` when:
- *   - Any claimed `filesCreated`/`filesModified` entry is missing on disk, **or**
+ * - `verdict = 'fail'` (and `ok = false`) when:
+ *   - Any claimed `filesCreated`/`filesModified`/`filesVerifiedUnchanged` entry is
+ *     missing on disk, **or**
  *   - No completion block was parsed AND at least one planned path was actually
  *     checkable AND **none** of the checkable ones exist (the R029 signature:
  *     zero output, zero files).
+ * - `verdict = 'unproven'` when every claimed file exists but at least one is
+ *   stale. Stale is not evidence of absence — an agent that inspected correct
+ *   code and declined to rewrite it produces exactly this shape. `ok` stays true;
+ *   BUILD pairs it with write-tool activity before deciding.
  * - No completion block but planned files DO exist → `ok = true` (agent worked,
  *   forgot the block — current lenient behavior preserved).
  * - No claims + nothing checkable → `unverifiable: true, ok: true` (integration/
@@ -64,8 +86,8 @@ type Resolution = { kind: 'inside'; path: string } | { kind: 'outside' }
  *
  * @param taskStartedAt  Optional epoch ms. When provided, claimed files must also
  *   have `mtimeMs >= taskStartedAt - 60_000` (clock-skew allowance). Stale files
- *   → `staleClaimed` → `ok = false`. Omit for verify-phase scans where legitimately-
- *   unmodified files are common.
+ *   → `staleClaimed` → `verdict = 'unproven'`. Omit for verify-phase scans where
+ *   legitimately-unmodified files are common.
  * @param mainRepoPath  Optional. The workspace's primary checkout, when execution
  *   happens in a worktree of it. Absolute paths under it are re-rooted onto
  *   `workspacePath` before the guard.
@@ -81,6 +103,7 @@ export function verifyTaskFileClaims(
   const missingPlanned: string[] = []
   const unverifiablePlanned: string[] = []
   const staleClaimed: string[] = []
+  const preexistingClaimed: string[] = []
 
   // FIX-3: Freshness threshold — files must have been written during this task execution.
   // 60-second clock-skew allowance for filesystem/OS timing discrepancies.
@@ -90,9 +113,21 @@ export function verifyTaskFileClaims(
   const claimedCreated = asStringArray(completion?.filesCreated)
   const claimedModified = asStringArray(completion?.filesModified)
   const allClaimed = [...claimedCreated, ...claimedModified]
+  // Declared inspected-and-already-correct. Checked for existence, never freshness —
+  // "I read it and it was right" is a claim about content, not about mtime.
+  const declaredUnchanged = asStringArray(completion?.filesVerifiedUnchanged)
 
   // ── Case 1: Completion block exists with file claims → verify each one ──
-  if (allClaimed.length > 0) {
+  if (allClaimed.length > 0 || declaredUnchanged.length > 0) {
+    for (const filePath of declaredUnchanged) {
+      const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
+      if (res.kind === 'outside' || !existsSync(res.path)) {
+        missingClaimed.push(filePath)
+      } else {
+        preexistingClaimed.push(filePath)
+      }
+    }
+
     for (const filePath of allClaimed) {
       // A claim about a path outside our roots stays a hard failure: the agent
       // asserted it wrote that file, and we cannot confirm the assertion.
@@ -115,7 +150,7 @@ export function verifyTaskFileClaims(
 
     // Also check planned files for drift warnings (non-fatal)
     for (const filePath of plannedFiles) {
-      if (allClaimed.includes(filePath)) continue
+      if (allClaimed.includes(filePath) || declaredUnchanged.includes(filePath)) continue
       const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)
       if (res.kind === 'outside') {
         unverifiablePlanned.push(filePath)
@@ -124,9 +159,17 @@ export function verifyTaskFileClaims(
       }
     }
 
+    // A missing claim is evidence of absence → fail. A stale-only result is not:
+    // the file the agent named is on disk, we simply cannot prove this run wrote
+    // it. Collapsing those two into one boolean is what failed correct work.
+    const verdict: 'pass' | 'unproven' | 'fail' =
+      missingClaimed.length > 0 ? 'fail' : staleClaimed.length > 0 ? 'unproven' : 'pass'
+
     return {
-      ok: missingClaimed.length === 0 && staleClaimed.length === 0,
+      ok: verdict !== 'fail',
+      verdict,
       missingClaimed,
+      preexistingClaimed,
       missingPlanned,
       unverifiablePlanned,
       staleClaimed,
@@ -139,7 +182,9 @@ export function verifyTaskFileClaims(
     // No claims + no planned files → unverifiable (integration/wiring task)
     return {
       ok: true,
+      verdict: 'pass',
       missingClaimed: [],
+      preexistingClaimed: [],
       missingPlanned: [],
       unverifiablePlanned: [],
       staleClaimed: [],
@@ -171,7 +216,9 @@ export function verifyTaskFileClaims(
     // files exist → the agent produced nothing
     return {
       ok: false,
+      verdict: 'fail',
       missingClaimed: [],
+      preexistingClaimed: [],
       missingPlanned,
       unverifiablePlanned,
       staleClaimed: [],
@@ -183,7 +230,9 @@ export function verifyTaskFileClaims(
     // Nothing was checkable — pass, but flag it so the caller can surface it.
     return {
       ok: true,
+      verdict: 'pass',
       missingClaimed: [],
+      preexistingClaimed: [],
       missingPlanned,
       unverifiablePlanned,
       staleClaimed: [],
@@ -214,7 +263,9 @@ export function verifyTaskFileClaims(
     if (!anyFresh && anyCheckable) {
       return {
         ok: false,
+        verdict: 'fail',
         missingClaimed: [],
+        preexistingClaimed: [],
         missingPlanned,
         unverifiablePlanned,
         staleClaimed: [],
@@ -227,7 +278,9 @@ export function verifyTaskFileClaims(
   // → agent worked, just forgot the completion block
   return {
     ok: true,
+    verdict: 'pass',
     missingClaimed: [],
+    preexistingClaimed: [],
     missingPlanned,
     unverifiablePlanned,
     staleClaimed: [],
@@ -291,7 +344,11 @@ export function scanCompletedTaskFiles(
     taskId: string
     status: string
     filePathsJson: string[]
-    completionJson?: { filesCreated: string[]; filesModified: string[] } | null
+    completionJson?: {
+      filesCreated: string[]
+      filesModified: string[]
+      filesVerifiedUnchanged?: string[]
+    } | null
   }>,
   mainRepoPath?: string
 ): Map<string, { missingClaimed: string[]; driftFiles: string[] }> {
@@ -306,9 +363,12 @@ export function scanCompletedTaskFiles(
 
     if (task.completionJson) {
       // Has completion data → check CLAIMED files against disk (hard failure)
+      // filesVerifiedUnchanged is a claim about existence too — "I read it and it
+      // was already correct" is false if the file is not there.
       const claimed = [
         ...(task.completionJson.filesCreated ?? []),
-        ...(task.completionJson.filesModified ?? [])
+        ...(task.completionJson.filesModified ?? []),
+        ...(task.completionJson.filesVerifiedUnchanged ?? [])
       ]
       for (const filePath of claimed) {
         const res = resolveAndGuard(workspacePath, filePath, mainRepoPath)

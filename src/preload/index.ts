@@ -56,6 +56,8 @@ import type {
   AuditTrackId,
   AuditSelectedSkills,
   AuditFinding,
+  AuditFindingHandoff,
+  AuditHandoffTarget,
   AuditProgressEvent,
   AuditResult,
   AuditStreamChunkEvent,
@@ -100,7 +102,7 @@ import type {
   ArtifactRef,
   CodeAnchor
 } from '../shared/handoff-types'
-import type { BlueprintBranchOptions } from '../shared/blueprint-types'
+import type { BlueprintBranchOptions, BlueprintBranchChoice } from '../shared/blueprint-types'
 import type {
   BlueprintHandoffIntent,
   BlueprintBranchMode,
@@ -171,6 +173,12 @@ const api = {
 
   readImageBase64: (args: { filePath: string }): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.READ_IMAGE_BASE64, args),
+
+  stageImageFile: (args: { scope: string; sourcePath: string }): Promise<string> =>
+    ipcRenderer.invoke(IPC_CHANNELS.STAGE_IMAGE_FILE, args),
+
+  clearStagedImages: (args: { scope: string }): Promise<{ cleared: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CLEAR_STAGED_IMAGES, args),
 
   // ── Chat ──
   sendMessage: (args: {
@@ -2165,6 +2173,26 @@ const api = {
   }): Promise<{ conversationIds: string[]; count: number }> =>
     ipcRenderer.invoke(IPC_CHANNELS.AUDIT_HANDOFF_TO_CHAT, args),
 
+  auditHandoffToBlueprint: (args: {
+    workspaceId: string
+    auditRunId: string
+    findingIds: string[]
+  }): Promise<{ blueprintId: string; title: string; findingCount: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_HANDOFF_TO_BLUEPRINT, args),
+
+  auditRecordFindingHandoff: (args: {
+    workspaceId: string
+    auditRunId: string
+    findingIds: string[]
+    target: AuditHandoffTarget
+    refId?: string
+    refTitle?: string
+  }): Promise<AuditFindingHandoff[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_RECORD_FINDING_HANDOFF, args),
+
+  auditGetFindingHandoffs: (args: { auditRunId: string }): Promise<AuditFindingHandoff[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.AUDIT_GET_FINDING_HANDOFFS, args),
+
   auditRerunTrack: (args: {
     workspaceId: string
     trackId: AuditTrackId
@@ -3056,6 +3084,14 @@ const api = {
   blueprintCancel: (args: { workspaceId: string }): Promise<{ cancelled: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CANCEL, args),
 
+  blueprintUpdate: (args: {
+    blueprintId: string
+    title?: string
+    description?: string
+    referenceDocuments?: Array<{ type: string; path: string; name?: string }>
+    branchChoice?: BlueprintBranchChoice
+  }): Promise<unknown> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_UPDATE, args),
+
   blueprintDelete: (args: { id: string }): Promise<{ deleted: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_DELETE, args),
 
@@ -3101,12 +3137,13 @@ const api = {
   }): Promise<{ retrying: boolean; phase: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RETRY_PHASE, args),
 
-  /** Skip (or un-skip) one build task. The mark survives retries. */
+  /** Skip (or un-skip) one build task, optionally with a note. The mark survives retries. */
   blueprintSkipTask: (args: {
     blueprintId: string
     taskId: string
     skipped?: boolean
-  }): Promise<{ skipped: boolean; skippedAt: string | null }> =>
+    note?: string
+  }): Promise<{ skipped: boolean; skippedAt: string | null; outcomeKind: string | null }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_SKIP_TASK, args),
 
   blueprintAcknowledgeReview: (args: { blueprintId: string }): Promise<{ acknowledged: boolean }> =>

@@ -53,6 +53,7 @@ export type {
 
 export { AuditRepository, auditRepository } from './audit.repository'
 export { AuditPlanRepository, auditPlanRepository } from './audit-plan.repository'
+export { AuditHandoffRepository, auditHandoffRepository } from './audit-handoff.repository'
 export { GrillSessionRepository, grillSessionRepository } from './grill-session.repository'
 export type { GrillSession, GrillSessionStatus } from './grill-session.repository'
 export { PlanRepository, planRepository } from './plan.repository'

@@ -27,51 +27,13 @@ import { useClipboardImagePaste, MAX_IMAGE_ATTACHMENTS, IMAGE_REGEX } from '@ren
 import { extractUrls, mergeUrlRefs } from './url-detector'
 import ReferenceDocList from './ReferenceDocList'
 import ImagePreviewThumbnail from '../../chat/ImagePreviewThumbnail'
+import { DROPZONE_ACCEPT } from './attachment-formats'
+import { newDraftScope, stageDroppedImages, clearDraftScope } from './image-staging'
 
 // ── Constants ──
 
-/** userData/chat-images/<scope>/ dir for images pasted into the blueprint form */
-const BLUEPRINT_IMAGE_SCOPE = 'blueprint-input'
-
 const LARGE_PASTE_THRESHOLD = 2000
 const CHAR_COUNT_THRESHOLD = 500
-
-const ACCEPTED_EXTENSIONS = [
-  '.txt',
-  '.md',
-  '.json',
-  '.ts',
-  '.tsx',
-  '.js',
-  '.jsx',
-  '.py',
-  '.sql',
-  '.yml',
-  '.yaml',
-  '.csv',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.pdf',
-  '.doc',
-  '.docx',
-  '.html',
-  '.xml',
-  '.toml',
-  '.env',
-  '.sh',
-  '.rs',
-  '.go',
-  '.java',
-  '.kt',
-  '.swift',
-  '.rb',
-  '.php',
-  '.css',
-  '.scss'
-]
 
 const SUPPORTED_FORMAT_CHIPS = [
   { label: 'PDF', color: 'text-red-400 border-red-400/30' },
@@ -118,6 +80,13 @@ export function BlueprintInputView({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const modalTextareaRef = useRef<HTMLTextAreaElement>(null)
 
+  // Per-mount staging dir under userData/chat-images/ for pasted and dropped
+  // images, so they preview before the blueprint exists. Cleared on unmount:
+  // by then either the blueprint was created (blueprint:create copies the
+  // attachments into its managed docs dir before resolving) or abandoned.
+  const [draftScope] = useState(newDraftScope)
+  useEffect(() => () => clearDraftScope(draftScope), [draftScope])
+
   // Sync initial values when they change (onboard flow)
   useEffect(() => {
     if (initialTitle) setTitle(initialTitle)
@@ -152,9 +121,9 @@ export function BlueprintInputView({
   // ── File drop handler ──
   const imageCount = imageAttachments.length
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    async (acceptedFiles: File[]) => {
       const newFiles: ReferenceDocument[] = []
-      const newImages: string[] = []
+      const droppedImages: string[] = []
       let imgCount = imageCount
 
       for (const f of acceptedFiles) {
@@ -163,7 +132,7 @@ export function BlueprintInputView({
 
         if (IMAGE_REGEX.test(filePath)) {
           if (imgCount >= MAX_IMAGE_ATTACHMENTS) continue
-          newImages.push(filePath)
+          droppedImages.push(filePath)
           imgCount++
         } else {
           const name = filePath.split('/').pop() || filePath.split('\\').pop() || filePath
@@ -178,11 +147,14 @@ export function BlueprintInputView({
           return [...prev, ...unique]
         })
       }
-      if (newImages.length > 0) {
-        setImageAttachments((prev) => [...prev, ...newImages])
+      if (droppedImages.length > 0) {
+        // Only images are staged — other drops keep their original path and are
+        // copied by copy-on-attach at create time, as they always have been.
+        const staged = await stageDroppedImages(draftScope, droppedImages)
+        setImageAttachments((prev) => [...prev, ...staged])
       }
     },
-    [imageCount]
+    [imageCount, draftScope]
   )
 
   // ── Clipboard paste (images; large-text paste is detected in onChange) ──
@@ -190,10 +162,7 @@ export function BlueprintInputView({
     setImageAttachments((prev) => [...prev, filePath])
   }, [])
   const handlePaste = useClipboardImagePaste({
-    // Stable scope dir — saved filenames are already timestamped, so a
-    // per-mount Date.now() suffix only fragmented the folder (and is impure
-    // during render).
-    conversationId: BLUEPRINT_IMAGE_SCOPE,
+    conversationId: draftScope,
     imageCount,
     onImageSaved: handleImageSaved
   })
@@ -203,13 +172,7 @@ export function BlueprintInputView({
     onDrop,
     noClick: true,
     noKeyboard: true,
-    accept: ACCEPTED_EXTENSIONS.reduce(
-      (acc, ext) => {
-        acc[`application/${ext.slice(1)}`] = [ext]
-        return acc
-      },
-      {} as Record<string, string[]>
-    )
+    accept: DROPZONE_ACCEPT
   })
 
   // ── Remove handlers ──

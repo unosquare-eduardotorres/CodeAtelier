@@ -188,6 +188,15 @@ export function flattenAdf(value: unknown): string {
   if (node.type === 'hardBreak') return '\n'
   if (node.type === 'text') return node.text ?? ''
 
+  // Media nodes carry no text and no children, so the default branch used to
+  // return '' and the image vanished without trace — leaving briefs that say
+  // "see the red banner below" with nothing below. A placeholder keeps the
+  // reference honest; the bytes arrive separately as reference documents.
+  if (node.type === 'media' || node.type === 'mediaInline') {
+    const attrs = (value as { attrs?: { alt?: string; id?: string } }).attrs
+    return `[image: ${attrs?.alt || 'see attachments'}]`
+  }
+
   const inner = Array.isArray(node.content) ? node.content.map(flattenAdf).join('') : ''
 
   switch (node.type) {
@@ -208,6 +217,49 @@ export function flattenAdf(value: unknown): string {
 interface JiraIssueRaw {
   key?: string
   fields?: Record<string, unknown>
+}
+
+/**
+ * Shape the `attachment` field into the subset we act on.
+ *
+ * `content` is an authenticated download URL, not a public one — pasting it
+ * into a prompt yields a 401, so it is only ever consumed by a request that
+ * carries the same credentials as the issue fetch.
+ */
+export function formatAttachments(raw: unknown): Array<{
+  id: string
+  filename: string
+  mimeType?: string
+  size?: number
+  contentUrl: string
+}> {
+  if (!Array.isArray(raw)) return []
+  const shaped: Array<{
+    id: string
+    filename: string
+    mimeType?: string
+    size?: number
+    contentUrl: string
+  }> = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue
+    const a = entry as {
+      id?: unknown
+      filename?: unknown
+      mimeType?: unknown
+      size?: unknown
+      content?: unknown
+    }
+    if (typeof a.filename !== 'string' || typeof a.content !== 'string') continue
+    shaped.push({
+      id: String(a.id ?? ''),
+      filename: a.filename,
+      ...(typeof a.mimeType === 'string' ? { mimeType: a.mimeType } : {}),
+      ...(typeof a.size === 'number' ? { size: a.size } : {}),
+      contentUrl: a.content
+    })
+  }
+  return shaped
 }
 
 function nameOf(value: unknown): string | undefined {
@@ -256,7 +308,8 @@ export function formatIssue(
       description.length > maxDescription
         ? `${description.slice(0, maxDescription)}\n[...description truncated...]`
         : description,
-    comments
+    comments,
+    attachments: formatAttachments(f.attachment)
   }
 }
 
@@ -319,7 +372,8 @@ export const ISSUE_FIELDS = [
   'created',
   'updated',
   'description',
-  'comment'
+  'comment',
+  'attachment'
 ].join(',')
 
 /** Fields requested for search_issues. */

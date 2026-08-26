@@ -9,6 +9,8 @@ import type {
   AuditMode,
   AuditTrackId,
   AuditFinding,
+  AuditFindingHandoff,
+  AuditHandoffTarget,
   AuditProgressEvent,
   AuditResult,
   AuditStreamChunkEvent,
@@ -80,6 +82,11 @@ interface AuditState {
   rerunningTrackId: AuditTrackId | null
   liveStreamText: Record<string, string> // trackId → live text (legacy, still used by progress)
   selectedFindings: AuditFinding[] // for "Fix in Chat" / Build Plan
+  /**
+   * findingId → most recent handoff for that finding in the current run.
+   * Drives the "already handed off" marker; empty for runs nobody has routed.
+   */
+  findingHandoffs: Record<string, AuditFindingHandoff>
   pendingFixContext: {
     title: string
     description: string
@@ -122,6 +129,18 @@ interface AuditState {
     } | null
   ) => void
   convertFindings: (workspaceId: string) => Promise<string> // returns conversationId
+  loadFindingHandoffs: (auditRunId: string) => Promise<void>
+  recordFindingHandoff: (args: {
+    workspaceId: string
+    findingIds: string[]
+    target: AuditHandoffTarget
+    refId?: string
+    refTitle?: string
+  }) => Promise<void>
+  handoffToBlueprint: (
+    workspaceId: string,
+    findingIds: string[]
+  ) => Promise<{ blueprintId: string; title: string; findingCount: number }>
   handleProgress: (data: AuditProgressEvent) => void
   handleResult: (data: AuditResult) => void
   handleComplete: (data: AuditRun) => void
@@ -141,6 +160,7 @@ export const useAuditStore = create<AuditState>((set, get) => {
     rerunningTrackId: null,
     liveStreamText: {},
     selectedFindings: [],
+    findingHandoffs: {},
     pendingFixContext: null,
     currentPlan: null,
     isGeneratingPlan: false,
@@ -156,8 +176,10 @@ export const useAuditStore = create<AuditState>((set, get) => {
         liveStreamText: {},
         perTrackStreaming: {},
         selectedFindings: [],
+        findingHandoffs: {},
         currentPlan: null
       })
+      void get().loadFindingHandoffs(run.id)
     },
 
     loadLatest: async (workspaceId) => {
@@ -170,8 +192,10 @@ export const useAuditStore = create<AuditState>((set, get) => {
         set({
           currentRun: run,
           isRunning: !isTerminal,
+          findingHandoffs: {},
           ...(isTerminal ? { rerunningTrackId: null } : {})
         })
+        if (run) await get().loadFindingHandoffs(run.id)
       } catch (error) {
         rendererLog.error('Failed to load latest audit:', error)
       }
@@ -348,6 +372,59 @@ export const useAuditStore = create<AuditState>((set, get) => {
       return result.conversationId
     },
 
+    loadFindingHandoffs: async (auditRunId) => {
+      try {
+        const handoffs = await window.api.auditGetFindingHandoffs({ auditRunId })
+        // Newest first from the repository, so the first row per finding wins.
+        const byFinding: Record<string, AuditFindingHandoff> = {}
+        for (const h of handoffs) {
+          if (!byFinding[h.findingId]) byFinding[h.findingId] = h
+        }
+        set((s) => (s.currentRun?.id === auditRunId ? { findingHandoffs: byFinding } : s))
+      } catch (error) {
+        // The marker is an affordance, not the action — never block a handoff on it.
+        rendererLog.error('Failed to load audit finding handoffs:', error)
+      }
+    },
+
+    recordFindingHandoff: async ({ workspaceId, findingIds, target, refId, refTitle }) => {
+      const runId = get().currentRun?.id
+      if (!runId || findingIds.length === 0) return
+      try {
+        const created = await window.api.auditRecordFindingHandoff({
+          workspaceId,
+          auditRunId: runId,
+          findingIds,
+          target,
+          refId,
+          refTitle
+        })
+        set((s) => {
+          if (s.currentRun?.id !== runId) return s
+          const next = { ...s.findingHandoffs }
+          for (const h of created) next[h.findingId] = h
+          return { findingHandoffs: next }
+        })
+      } catch (error) {
+        rendererLog.error('Failed to record audit finding handoff:', error)
+      }
+    },
+
+    handoffToBlueprint: async (workspaceId, findingIds) => {
+      const runId = get().currentRun?.id
+      if (!runId) throw new Error('No audit run loaded')
+      if (findingIds.length === 0) throw new Error('No findings selected')
+
+      const result = await window.api.auditHandoffToBlueprint({
+        workspaceId,
+        auditRunId: runId,
+        findingIds
+      })
+      await get().loadFindingHandoffs(runId)
+      set({ selectedFindings: [] })
+      return result
+    },
+
     handleProgress: (data) => {
       set((s) => {
         // Update live stream text
@@ -453,6 +530,7 @@ export const useAuditStore = create<AuditState>((set, get) => {
         liveStreamText: {},
         perTrackStreaming: {},
         selectedFindings: [],
+        findingHandoffs: {},
         pendingFixContext: null,
         currentPlan: null,
         isGeneratingPlan: false

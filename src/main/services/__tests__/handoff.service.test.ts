@@ -728,7 +728,10 @@ describe('blueprintAdapter.toEnvelope', () => {
           startedAt: '2024-01-01',
           completedAt: '2024-01-01',
           completionJson: null,
-          skippedByUserAt: null
+          skippedByUserAt: null,
+          failureReason: null,
+          outcomeKind: null,
+          resolutionNote: null
         },
         {
           id: 't2',
@@ -745,7 +748,10 @@ describe('blueprintAdapter.toEnvelope', () => {
           startedAt: null,
           completedAt: null,
           completionJson: null,
-          skippedByUserAt: null
+          skippedByUserAt: null,
+          failureReason: null,
+          outcomeKind: null,
+          resolutionNote: null
         }
       ]
     }

@@ -90,6 +90,7 @@ export function useHealthPageActions(opts: UseHealthPageActionsOpts): HealthPage
     rerunTrack,
     clearSelectedFindings,
     setPendingFixContext,
+    recordFindingHandoff,
     generatePlan,
     clearPlan,
     reset,
@@ -181,9 +182,25 @@ export function useHealthPageActions(opts: UseHealthPageActionsOpts): HealthPage
       title: `🔧 Fix ${findings.length} audit finding${findings.length > 1 ? 's' : ''}`,
       description: `The following audit findings need to be addressed:\n\n${findingsContext}\n\nPlease analyze these findings and propose a plan to fix them.`
     })
+    // Mark them as routed. The conversation is created downstream from
+    // pendingFixContext, so there is no id to link back to yet.
+    if (workspaceId) {
+      void recordFindingHandoff({
+        workspaceId,
+        findingIds: findings.map((f) => f.id),
+        target: 'chat'
+      })
+    }
     clearSelectedFindings()
     onFixInNewChat()
-  }, [selectedFindings, setPendingFixContext, clearSelectedFindings, onFixInNewChat])
+  }, [
+    selectedFindings,
+    workspaceId,
+    setPendingFixContext,
+    recordFindingHandoff,
+    clearSelectedFindings,
+    onFixInNewChat
+  ])
 
   const handleAutoFix = useCallback(
     (finding: AuditFinding, trackName: string) => {
@@ -199,9 +216,16 @@ export function useHealthPageActions(opts: UseHealthPageActionsOpts): HealthPage
         title: `🔧 Fix: ${finding.title}`,
         description
       })
+      if (workspaceId) {
+        void recordFindingHandoff({
+          workspaceId,
+          findingIds: [finding.id],
+          target: 'chat'
+        })
+      }
       onFixInNewChat()
     },
-    [setPendingFixContext, onFixInNewChat]
+    [workspaceId, setPendingFixContext, recordFindingHandoff, onFixInNewChat]
   )
 
   // ── Run management ──

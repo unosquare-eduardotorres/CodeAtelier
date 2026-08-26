@@ -239,6 +239,24 @@ describe('appendMcpToolGuidance', () => {
     assert.ok(out.includes('list_devices'), 'Full Maestro should mention list_devices')
   })
 
+  test('Jira guidance follows the jira integration toggle', () => {
+    const flags = {
+      repomapEnabled: false,
+      semanticSearchEnabled: false,
+      githubConfigured: false
+    }
+    const on = appendMcpToolGuidance('BASE', 1, {
+      ...flags,
+      externalMcpActive: { jira: true }
+    })
+    assert.ok(on.includes('## Jira'), 'an active Jira integration should carry its guidance')
+    assert.ok(on.includes('mcp__jira__add_comment'))
+
+    // The tools are not mounted, so describing them would invent a capability.
+    const off = appendMcpToolGuidance('BASE', 1, { ...flags, externalMcpActive: { jira: false } })
+    assert.ok(!off.includes('## Jira'))
+  })
+
   test('idempotent when block already present in base prompt', () => {
     const base = 'BASE\n\n## Code Graph Tools\n(already here)'
     const out = appendMcpToolGuidance(base, 1, {

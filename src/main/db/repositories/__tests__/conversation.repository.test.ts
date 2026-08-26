@@ -93,6 +93,21 @@ if (!env) {
       assert.equal(conversationRepository.getSessionId(conv.id), 'session-123')
     })
 
+    test('updateHandoffContext() and getHandoffContext() round-trip', () => {
+      const conv = conversationRepository.create(wsId, 'Handoff Test')
+      assert.equal(conversationRepository.getHandoffContext(conv.id), null)
+
+      conversationRepository.updateHandoffContext(conv.id, '[Handoff: blueprint → chat] continue')
+      assert.equal(
+        conversationRepository.getHandoffContext(conv.id),
+        '[Handoff: blueprint → chat] continue'
+      )
+    })
+
+    test('getHandoffContext() returns null for an unknown conversation', () => {
+      assert.equal(conversationRepository.getHandoffContext('no-such-conversation'), null)
+    })
+
     test('updatePrInfo() sets PR fields', () => {
       const conv = conversationRepository.create(wsId, 'PR Test')
       conversationRepository.updatePrInfo(conv.id, 'https://github.com/pr/1', 1, 'feat/branch')

@@ -159,6 +159,32 @@ describe('composeHandoffMessage', () => {
     )
   })
 
+  test('a Jira-born chat is told which ticket it answers to', () => {
+    // Without this the key only arrives inside the decisions dump, where it
+    // reads as trivia rather than as the requirement of record.
+    const msg = composeHandoffMessage({
+      contextMarkdown: 'ctx',
+      spec,
+      branchName: 'feature/MUL-2336-rename-billing',
+      inheritedTrack: true,
+      jiraIssueKey: 'MUL-2336'
+    })
+    assert.ok(msg.includes('MUL-2336'))
+    assert.ok(msg.includes('mcp__jira__get_issue'), 'must name the tool that reads the ticket')
+    assert.ok(msg.includes('mcp__jira__add_comment'), 'must name the tool that answers the ticket')
+  })
+
+  test('a blueprint with no Jira origin says nothing about Jira', () => {
+    const msg = composeHandoffMessage({
+      contextMarkdown: 'ctx',
+      spec,
+      branchName: 'blueprint/x-1',
+      inheritedTrack: true
+    })
+    assert.ok(!msg.includes('Jira'), 'no ticket means no Jira instructions to follow')
+    assert.ok(!msg.includes('mcp__jira__'))
+  })
+
   test('inheritedTrack without a branch degrades to the checkout wording', () => {
     // Defensive: the two are derived separately in the IPC layer.
     const msg = composeHandoffMessage({

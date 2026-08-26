@@ -27,7 +27,8 @@ import type {
   Blueprint,
   BlueprintWithDetails,
   BlueprintPhaseType,
-  BlueprintTaskStatus
+  BlueprintTaskStatus,
+  BlueprintBranchChoice
 } from '../../../shared/blueprint-types'
 import type { ToolActivity } from '../../../shared/types'
 import type { BlueprintMachineState } from '../../../shared/blueprint-snapshot-types'
@@ -92,6 +93,43 @@ const recentlyCancelledIds = new Set<string>()
  * (inside registerListeners) can access it.
  */
 const remediationPendingAt = new Map<string, number>()
+
+/**
+ * State a fresh pipeline run starts from. Shared by startBlueprint (create then
+ * run) and startExistingBlueprint (run an existing draft) so the two entry
+ * points cannot drift — a missed field here reappears as stale phase output or
+ * a dropped event.
+ */
+function freshRunState(workspaceId: string): Partial<BlueprintState> {
+  return {
+    isRunning: true,
+    activeWorkspaceId: workspaceId,
+    chatMessages: [],
+    clarifyRound: 0,
+    phaseStreamText: {},
+    phaseStreamEvents: {},
+    phaseDurations: {},
+    phaseStartTimestamps: {},
+    phaseStartedAt: null,
+    lastChunkAt: null,
+    clarifyAwaitingInput: false,
+    clarifyFindings: null,
+    clarifyQuestions: null,
+    clarifyGateReady: false,
+    clarifyBlueprintId: null,
+    currentGoal: null,
+    taskGoals: {},
+    runningTasks: {},
+    phaseCompletions: {},
+    totalTaskCount: 0,
+    totalWaves: 0,
+    pendingApproval: null,
+    currentWave: null,
+    waveTasks: {},
+    orphanedBlueprint: null,
+    lastError: null
+  }
+}
 
 /** Tracks the last workspace ID that triggered a reset — prevents same-workspace re-mount from wiping transcript */
 let lastResetWorkspaceId: string | null = null
@@ -259,6 +297,16 @@ interface BlueprintState {
     priority?: string
     settingsJson?: Record<string, unknown>
   }) => Promise<void>
+  /** Start the pipeline for a blueprint that already exists (a draft). */
+  startExistingBlueprint: (blueprintId: string, workspaceId: string) => Promise<void>
+  /** Edit a draft's title / description / attachments before it runs. */
+  updateDraft: (params: {
+    blueprintId: string
+    title?: string
+    description?: string
+    referenceDocuments?: Array<{ type: string; path: string; name?: string }>
+    branchChoice?: BlueprintBranchChoice
+  }) => Promise<void>
   cancelBlueprint: (workspaceId: string) => Promise<string | null>
   respondToApproval: (blueprintId: string, approved: boolean, feedback?: string) => Promise<void>
   rerunPreflight: (blueprintId: string, workspaceId: string) => Promise<void>
@@ -392,40 +440,16 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
 
       useBlueprintStreamStore.getState().reset()
       useBlueprintLaneStore.getState().resetAll()
-      set({
-        isRunning: true,
-        activeWorkspaceId: params.workspaceId,
-        chatMessages: [],
-        clarifyRound: 0,
-        phaseStreamText: {},
-        phaseStreamEvents: {},
-        phaseDurations: {},
-        phaseStartTimestamps: {},
-        phaseStartedAt: null,
-        lastChunkAt: null,
-        clarifyAwaitingInput: false,
-        clarifyFindings: null,
-        clarifyQuestions: null,
-        clarifyGateReady: false,
-        clarifyBlueprintId: null,
-        currentGoal: null,
-        taskGoals: {},
-        runningTasks: {},
-        phaseCompletions: {},
-        totalTaskCount: 0,
-        totalWaves: 0,
-        pendingApproval: null,
-        currentWave: null,
-        waveTasks: {},
-        orphanedBlueprint: null,
-        lastError: null
-      })
+      set(freshRunState(params.workspaceId))
 
       // Auto-start the specify phase
       await window.api.blueprintStartSpecify({
         blueprintId: result.id,
         workspaceId: params.workspaceId
       })
+      // Re-read: startSpecify reserves the run's branch, and the load above ran
+      // before it existed.
+      void get().loadBlueprint(result.id)
     } catch (error) {
       rendererLog.error('Failed to start blueprint:', error)
       const errorMsg = error instanceof Error ? error.message : String(error)
@@ -434,6 +458,43 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         activeWorkspaceId: null,
         lastError: { blueprintId: '', message: errorMsg }
       })
+      throw error
+    }
+  },
+
+  startExistingBlueprint: async (blueprintId: string, workspaceId: string) => {
+    // Same entry conditions as startBlueprint, minus the create: a draft was
+    // already persisted (Jira conversion, or a saved edit) and only needs the
+    // specify phase kicked off.
+    recentlyCancelledIds.delete(blueprintId)
+    useBlueprintStreamStore.getState().reset()
+    useBlueprintLaneStore.getState().resetAll()
+    // Set running state BEFORE the await — main emits phaseStart within a few
+    // ms and the workspace guard drops the event if activeWorkspaceId is unset.
+    set(freshRunState(workspaceId))
+    try {
+      await window.api.blueprintStartSpecify({ blueprintId, workspaceId })
+      void get().loadBlueprint(blueprintId)
+    } catch (error) {
+      rendererLog.error('Failed to start draft blueprint:', error)
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      set({
+        isRunning: false,
+        activeWorkspaceId: null,
+        lastError: { blueprintId, message: errorMsg }
+      })
+      throw error
+    }
+  },
+
+  updateDraft: async (params) => {
+    try {
+      await window.api.blueprintUpdate(params)
+      await get().loadBlueprint(params.blueprintId)
+      const workspaceId = get().activeWorkspaceId ?? get().currentBlueprint?.workspaceId
+      if (workspaceId) void get().loadHistory(workspaceId)
+    } catch (error) {
+      rendererLog.error('Failed to update draft blueprint:', error)
       throw error
     }
   },

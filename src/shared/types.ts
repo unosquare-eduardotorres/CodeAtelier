@@ -1992,6 +1992,28 @@ export interface AuditPlan {
   requirementDocument: string
 }
 
+/** Where a set of audit findings was routed for remediation. */
+export type AuditHandoffTarget = 'chat' | 'blueprint'
+
+/**
+ * Record that a finding was handed off for remediation.
+ *
+ * Findings get a fresh UUID on every run, so these rows are scoped to one run:
+ * re-running an auditor legitimately clears the indicator, because the new
+ * findings have not been worked on. Handing the same finding off twice is
+ * allowed — the UI shows the most recent target and lets the user do it again.
+ */
+export interface AuditFindingHandoff {
+  id: string
+  auditRunId: string
+  findingId: string
+  target: AuditHandoffTarget
+  /** Conversation / blueprint id, when the target was created eagerly. */
+  refId: string | null
+  refTitle: string | null
+  createdAt: string
+}
+
 /** A persisted audit plan with its DB identity. */
 export interface AuditPlanRecord {
   id: string

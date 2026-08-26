@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 144
+export const CURRENT_SCHEMA_VERSION = 146
 
 export interface Migration {
   version: number
@@ -4312,6 +4312,65 @@ export const migrations: Migration[] = [
       `)
 
       dbLogger.info('[migration-144] ✓ Added workspaces.shadow_of_workspace_id')
+    }
+  },
+  {
+    version: 145,
+    name: 'audit-finding-handoffs',
+    up: (db) => {
+      // A finding that has already been sent to chat or turned into a blueprint
+      // looks identical to one nobody has touched, so the same work gets handed
+      // off twice. Recording the handoff lets the list mark it.
+      //
+      // Keyed by run: finding ids are regenerated on every audit, so a re-run
+      // legitimately starts from a clean slate. Rows are not unique per finding
+      // — handing the same finding off again is allowed, and the newest row wins.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS audit_finding_handoffs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          audit_run_id TEXT NOT NULL REFERENCES audit_runs(id) ON DELETE CASCADE,
+          finding_id TEXT NOT NULL,
+          target TEXT NOT NULL CHECK (target IN ('chat', 'blueprint')),
+          ref_id TEXT,
+          ref_title TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_audit_finding_handoffs_run
+          ON audit_finding_handoffs(audit_run_id)
+      `)
+
+      dbLogger.info('[migration-145] ✓ Created audit_finding_handoffs')
+    }
+  },
+  {
+    version: 146,
+    name: 'blueprint-task-outcome',
+    up: (db) => {
+      // A failed build task recorded only `status = 'failed'`. The reason was
+      // computed, emitted as a transient event and then dropped, so after a
+      // reload nothing on disk said *why* — reconstructing intent meant opening
+      // SQLite by hand. Retry inherited the same blindness: it reset the row to
+      // 'pending' with no memory of the previous verdict and walked the agent
+      // into the identical trap.
+      //
+      // `outcome_kind` records how the task was closed rather than merely that
+      // it closed: 'verified' (claims fresh on disk), 'unproven' (claims exist,
+      // freshness unprovable), 'preexisting' (declared already-correct),
+      // 'accepted_by_user' (a human closed it out). It is deliberately NOT a new
+      // `status` value — status carries a CHECK constraint, so a sixth value
+      // means a full table rebuild plus every enum in main, preload and renderer.
+      //
+      // Three additive ALTERs, no rebuild: ignoring the columns reverts the change.
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN failure_reason TEXT`)
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN outcome_kind TEXT`)
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN resolution_note TEXT`)
+
+      dbLogger.info(
+        '[migration-146] ✓ Added blueprint_tasks.failure_reason / outcome_kind / resolution_note'
+      )
     }
   }
 ]

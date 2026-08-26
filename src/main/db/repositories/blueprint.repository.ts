@@ -17,6 +17,7 @@ import type {
   BlueprintPhaseType,
   BlueprintPhaseStatus,
   BlueprintTaskStatus,
+  BlueprintTaskOutcomeKind,
   BlueprintPriority
 } from '../../../shared/blueprint-types'
 
@@ -67,6 +68,9 @@ interface BlueprintTaskRow {
   completed_at: string | null
   completion_json: string | null
   skipped_by_user_at: string | null
+  failure_reason: string | null
+  outcome_kind: string | null
+  resolution_note: string | null
 }
 
 // ── Row Mappers ──
@@ -119,11 +123,15 @@ function mapTaskRow(row: BlueprintTaskRow): BlueprintTask {
     executorRunId: row.executor_run_id,
     startedAt: row.started_at,
     completedAt: row.completed_at,
-    completionJson: safeParseJSON<{ filesCreated: string[]; filesModified: string[] } | null>(
-      row.completion_json,
-      null
-    ),
-    skippedByUserAt: row.skipped_by_user_at ?? null
+    completionJson: safeParseJSON<{
+      filesCreated: string[]
+      filesModified: string[]
+      filesVerifiedUnchanged?: string[]
+    } | null>(row.completion_json, null),
+    skippedByUserAt: row.skipped_by_user_at ?? null,
+    failureReason: row.failure_reason ?? null,
+    outcomeKind: (row.outcome_kind as BlueprintTaskOutcomeKind | null) ?? null,
+    resolutionNote: row.resolution_note ?? null
   }
 }
 
@@ -595,14 +603,49 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
    * `false` clears the column, so a mistaken skip is not permanent.
    * Leaves `status` alone: the skip decision and the execution state are
    * separate facts.
+   *
+   * `note` is the operator's reason. Clearing the skip clears the note too — a
+   * note without a decision attached is misleading.
    */
-  setUserSkipped(id: string, skipped: boolean): BlueprintTask | undefined {
+  setUserSkipped(id: string, skipped: boolean, note?: string | null): BlueprintTask | undefined {
     const row = this.db()
       .prepare(
-        `UPDATE blueprint_tasks SET skipped_by_user_at = ${skipped ? "datetime('now')" : 'NULL'}
-         WHERE id = ? RETURNING *`
+        `UPDATE blueprint_tasks
+            SET skipped_by_user_at = ${skipped ? "datetime('now')" : 'NULL'},
+                resolution_note = ?
+          WHERE id = ? RETURNING *`
       )
-      .get(id) as BlueprintTaskRow | undefined
+      .get(skipped ? (note ?? null) : null, id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  /**
+   * Persist how a task closed. `failureReason` survives the retry reset
+   * (retryPhase only rewrites `status`) so the next attempt can be told what
+   * the previous verdict was instead of re-entering the same trap.
+   */
+  setOutcome(
+    id: string,
+    outcome: {
+      failureReason?: string | null
+      outcomeKind?: BlueprintTaskOutcomeKind | null
+    }
+  ): BlueprintTask | undefined {
+    const sets: string[] = []
+    const values: Array<string | null> = []
+    if ('failureReason' in outcome) {
+      sets.push('failure_reason = ?')
+      values.push(outcome.failureReason ?? null)
+    }
+    if ('outcomeKind' in outcome) {
+      sets.push('outcome_kind = ?')
+      values.push(outcome.outcomeKind ?? null)
+    }
+    if (sets.length === 0) return this.findById(id)
+
+    const row = this.db()
+      .prepare(`UPDATE blueprint_tasks SET ${sets.join(', ')} WHERE id = ? RETURNING *`)
+      .get(...values, id) as BlueprintTaskRow | undefined
     return row ? mapTaskRow(row) : undefined
   }
 
@@ -629,10 +672,14 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
       .run(blueprintId).changes
   }
 
-  /** Persist per-task completion data (filesCreated/filesModified) for verify-phase disk checks. */
+  /** Persist per-task completion data (claimed + declared-unchanged files) for verify-phase disk checks. */
   setCompletion(
     id: string,
-    completion: { filesCreated: string[]; filesModified: string[] }
+    completion: {
+      filesCreated: string[]
+      filesModified: string[]
+      filesVerifiedUnchanged?: string[]
+    }
   ): BlueprintTask | undefined {
     const row = this.db()
       .prepare(`UPDATE blueprint_tasks SET completion_json = ? WHERE id = ? RETURNING *`)

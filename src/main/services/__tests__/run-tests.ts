@@ -361,6 +361,7 @@ const TEST_FILES: string[] = [
   // ─── Blueprint → Chat handoff (intents, seed message, adapter intent) ───
   './blueprint-chat-handoff.test',
   './blueprint-handoff-options.test',
+  './handoff-context-injection.test',
   // ─── Blueprint Verify Extractor (post-hoc structured extraction) ───
   './blueprint-verify-extractor.test',
   // ─── OS Notification Service (dispatch routing, rate limiting, preferences) ───
@@ -386,6 +387,7 @@ const TEST_FILES: string[] = [
   './ipc-track-handlers.test',
   './mcp-config-worktree.test',
   './blueprint-track.test',
+  './blueprint-branch-name.test',
   './landing.service.test',
   './track-claims.test',
   './lent-branch.test',
@@ -399,6 +401,7 @@ const TEST_FILES: string[] = [
   // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
   './blueprint-task-verification.test',
   './blueprint-task-user-skip.test',
+  './blueprint-dependson-scheduling.test',
   // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───
   './blueprint-send-outcome.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
@@ -658,11 +661,34 @@ const TEST_FILES: string[] = [
   // ─── Build Now kickoff must not re-trigger the build → plan auto-switch ───
   '../../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
   // ─── Chat header naming (project specialist, raw agent ids) ───
-  '../../../renderer/src/components/chat/__tests__/message-identity.test'
+  '../../../renderer/src/components/chat/__tests__/message-identity.test',
+  // ─── Audit → Blueprint handoff formatting ───
+  './audit-blueprint-handoff.test',
+  // ─── Round 3: e2e-testing behavioral coverage ───
+  './e2e-assertions-behavior.test',
+  './e2e-service-runners-behavior.test',
+  './e2e-runners-chat-checkpoint.test',
+  './e2e-runners-mpa-grill-audit.test',
+  './e2e-runners-idea-specialist.test',
+  './e2e-runner-preflight.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout
 // for tests near the end of the array.
+
+// ─── Stray-rejection guard ───
+// A fire-and-forget call inside one test that rejects with nobody awaiting it is
+// an *unhandled rejection*, and Node's default policy for those is to throw —
+// which kills this process mid-loop and silently abandons every file that had
+// not been imported yet. That is not hypothetical: 36 rejections of
+// `Error: Please check update first` (electron-updater, from the auto-update
+// tests) were truncating this run at file 342 of 522, so 179 files never ran and
+// contributed no coverage at all. A stray rejection is worth reporting, but it
+// must never decide how much of the suite executes.
+const strayRejections: unknown[] = []
+process.on('unhandledRejection', (reason) => {
+  strayRejections.push(reason)
+})
 
 // ─── Dynamic import loop with per-file error isolation ───
 // Wrapped in async IIFE because the project is CJS (no top-level await).
@@ -703,6 +729,18 @@ void (async () => {
   console.log(
     `[run-tests] all ${TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`
   )
+
+  if (strayRejections.length > 0) {
+    const kinds = new Map<string, number>()
+    for (const r of strayRejections) {
+      const key = r instanceof Error ? `${r.name}: ${r.message}` : String(r)
+      kinds.set(key, (kinds.get(key) ?? 0) + 1)
+    }
+    console.warn(
+      `\n[run-tests] ${strayRejections.length} unhandled rejection(s) were absorbed so the run could finish:`
+    )
+    for (const [kind, count] of kinds) console.warn(`  ${count}x ${kind}`)
+  }
 
   // Await every async test queued by the harness before printing the aggregate
   // summary and exiting. Individual test files guard their own summaryAsync()

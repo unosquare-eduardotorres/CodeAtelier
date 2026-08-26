@@ -970,6 +970,16 @@ export class AgentSessionService extends AgentBaseService {
       }
     }
 
+    // Handoff context: where this conversation came from (a blueprint today,
+    // other sources later). Placed after both blocks above because they derive
+    // from `effectiveMessage` — injecting earlier would be overwritten by the
+    // local-LLM branch.
+    enrichedMessage = this.injectHandoffContext({
+      conversationId,
+      message: enrichedMessage,
+      sessionId
+    })
+
     // Per-turn memory injection: prepend relevant facts
     try {
       if (this.workspaceId) {
@@ -2529,6 +2539,40 @@ export class AgentSessionService extends AgentBaseService {
       /* non-fatal — proceed without context */
     }
     return params.message
+  }
+
+  /**
+   * Prepend the conversation's handoff context, if it has one.
+   *
+   * A handed-over conversation is created with the full envelope staged in the
+   * composer, but the user is free to delete that draft and type their own first
+   * message — this column is what survives it.
+   *
+   * Cold start only: with a live CLI session to resume, the model already has the
+   * history. The column is never cleared, so a rebuilt session re-learns the
+   * origin; cost is bounded by the 500-char cap on the compact render.
+   */
+  private injectHandoffContext(params: {
+    conversationId: string
+    message: string
+    sessionId?: string
+  }): string {
+    if (params.sessionId) return params.message
+    try {
+      const handoff = conversationRepository.getHandoffContext(params.conversationId)
+      // The staged first message already carries the STANDARD render of the same
+      // envelope; `## Handoff:` is its heading (target-adapters.ts) and appears in
+      // no other message we compose. A false positive costs 500 duplicated
+      // characters — a false negative would cost the context.
+      if (!handoff || params.message.includes('## Handoff:')) return params.message
+      this.log.info(
+        `[handoff:context-injected] conversationId=${params.conversationId} len=${handoff.length}`
+      )
+      return `## Handoff Context\n${handoff}\n\n## Current Request\n${params.message}`
+    } catch {
+      /* non-fatal — proceed without it */
+      return params.message
+    }
   }
 
   /**

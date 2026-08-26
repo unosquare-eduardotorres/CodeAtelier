@@ -123,6 +123,60 @@ if (!env) {
       const cleared = blueprintTaskRepository.setUserSkipped(task.id, false)
       assert.equal(cleared.skippedByUserAt, null)
     })
+
+    test('a note round-trips, and un-skipping clears it', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const task = findTask(blueprintId, 'T001')
+
+      const skipped = blueprintTaskRepository.setUserSkipped(task.id, true, 'verified by hand')
+      assert.equal(skipped.resolutionNote, 'verified by hand')
+
+      // A note without a decision attached to it would be misleading.
+      const cleared = blueprintTaskRepository.setUserSkipped(task.id, false)
+      assert.equal(cleared.resolutionNote, null)
+    })
+  })
+
+  // ════════════════════════════════════════════════════════════════
+  // Outcome columns (migration 146)
+  // ════════════════════════════════════════════════════════════════
+
+  describe('BlueprintTaskRepository.setOutcome', () => {
+    test('new tasks start with no outcome recorded', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'pending' }])
+      const task = findTask(blueprintId, 'T001')
+      assert.equal(task.failureReason, null)
+      assert.equal(task.outcomeKind, null)
+      assert.equal(task.resolutionNote, null)
+    })
+
+    test('a failure reason survives the retry reset to pending', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const task = findTask(blueprintId, 'T001')
+      blueprintTaskRepository.setOutcome(task.id, {
+        failureReason: 'verification failed — 3 stale'
+      })
+
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
+
+      const after = findTask(blueprintId, 'T001')
+      assert.equal(after.status, 'pending', 'retry re-queues the task')
+      assert.equal(
+        after.failureReason,
+        'verification failed — 3 stale',
+        'the reason must reach the next attempt — otherwise it walks into the same trap'
+      )
+    })
+
+    test('partial updates leave the other columns alone', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const task = findTask(blueprintId, 'T001')
+
+      blueprintTaskRepository.setOutcome(task.id, { failureReason: 'boom' })
+      const onlyKind = blueprintTaskRepository.setOutcome(task.id, { outcomeKind: 'unproven' })
+      assert.equal(onlyKind.failureReason, 'boom')
+      assert.equal(onlyKind.outcomeKind, 'unproven')
+    })
   })
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -140,6 +194,33 @@ if (!env) {
       const unskipped = blueprintService.setTaskUserSkipped(blueprintId, 'T007', false)
       assert.equal(unskipped.skippedByUserAt, null)
       assert.equal(findTask(blueprintId, 'T007').skippedByUserAt, null)
+    })
+
+    test('accepting a FAILED task records it as accepted_by_user, with the note', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T005', status: 'failed' }])
+
+      const accepted = blueprintService.setTaskUserSkipped(
+        blueprintId,
+        'T005',
+        true,
+        'applied manually'
+      )
+      assert.ok(accepted.skippedByUserAt)
+      assert.equal(accepted.outcomeKind, 'accepted_by_user')
+      assert.equal(accepted.resolutionNote, 'applied manually')
+      assert.equal(accepted.status, 'failed', 'status is untouched — no new status value')
+
+      // Reopening it must not leave the row claiming a human accepted it.
+      const reopened = blueprintService.setTaskUserSkipped(blueprintId, 'T005', false)
+      assert.equal(reopened.outcomeKind, null)
+      assert.equal(reopened.skippedByUserAt, null)
+    })
+
+    test('skipping a PENDING task is a skip, not an acceptance', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T006', status: 'pending' }])
+      const skipped = blueprintService.setTaskUserSkipped(blueprintId, 'T006', true)
+      assert.ok(skipped.skippedByUserAt)
+      assert.equal(skipped.outcomeKind, null, 'never ran ≠ verified externally')
     })
 
     test('throws for a task that does not belong to the blueprint', () => {
@@ -239,4 +320,8 @@ if (!env) {
   })
 }
 
-void summaryAsync()
+// summaryAsync() calls process.exit() — only run it as the entry point, or the
+// shared runner is terminated mid-list.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
+}

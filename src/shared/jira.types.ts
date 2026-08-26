@@ -32,6 +32,22 @@ export interface JiraComment {
   body: string
 }
 
+/**
+ * One file attached to an issue.
+ *
+ * `contentUrl` requires the same auth headers as the issue fetch — it is a
+ * main-process download handle, never something to hand to the renderer or a
+ * model as a link.
+ */
+export interface JiraAttachment {
+  id: string
+  filename: string
+  mimeType?: string
+  /** Bytes, as reported by Jira. */
+  size?: number
+  contentUrl: string
+}
+
 /** Full issue detail — the shape `formatIssue` returns. */
 export interface JiraIssueDetail {
   key: string
@@ -48,6 +64,7 @@ export interface JiraIssueDetail {
   updated?: string
   description: string
   comments: JiraComment[]
+  attachments: JiraAttachment[]
   /** Deep link into the Jira web UI, e.g. https://acme.atlassian.net/browse/PROJ-1 */
   browseUrl: string
 }

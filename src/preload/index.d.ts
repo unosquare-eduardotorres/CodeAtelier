@@ -63,6 +63,8 @@ import type {
   AuditTrackId,
   AuditSelectedSkills,
   AuditFinding,
+  AuditFindingHandoff,
+  AuditHandoffTarget,
   AuditProgressEvent,
   AuditResult,
   AuditStreamChunkEvent,
@@ -120,7 +122,7 @@ import type {
   LandingPreview,
   TrackLandingMode
 } from '../shared/track-types'
-import type { BlueprintBranchOptions } from '../shared/blueprint-types'
+import type { BlueprintBranchOptions, BlueprintBranchChoice } from '../shared/blueprint-types'
 import type {
   BlueprintHandoffIntent,
   BlueprintBranchMode,
@@ -170,6 +172,8 @@ interface Api {
   }) => Promise<{ success: boolean }>
   saveClipboardImage: (args: { dataUrl: string; conversationId: string }) => Promise<string>
   readImageBase64: (args: { filePath: string }) => Promise<string>
+  stageImageFile: (args: { scope: string; sourcePath: string }) => Promise<string>
+  clearStagedImages: (args: { scope: string }) => Promise<{ cleared: boolean }>
 
   // Chat
   sendMessage: (args: {
@@ -1253,6 +1257,20 @@ interface Api {
     trackIds?: AuditTrackId[]
     mode: 'consolidated' | 'split'
   }) => Promise<{ conversationIds: string[]; count: number }>
+  auditHandoffToBlueprint: (args: {
+    workspaceId: string
+    auditRunId: string
+    findingIds: string[]
+  }) => Promise<{ blueprintId: string; title: string; findingCount: number }>
+  auditRecordFindingHandoff: (args: {
+    workspaceId: string
+    auditRunId: string
+    findingIds: string[]
+    target: AuditHandoffTarget
+    refId?: string
+    refTitle?: string
+  }) => Promise<AuditFindingHandoff[]>
+  auditGetFindingHandoffs: (args: { auditRunId: string }) => Promise<AuditFindingHandoff[]>
   auditRerunTrack: (args: {
     workspaceId: string
     trackId: AuditTrackId
@@ -1592,6 +1610,13 @@ interface Api {
   blueprintGetDetails: (args: { id: string }) => Promise<unknown>
   blueprintList: (args: { workspaceId: string; limit?: number }) => Promise<unknown[]>
   blueprintCancel: (args: { workspaceId: string }) => Promise<{ cancelled: boolean }>
+  blueprintUpdate: (args: {
+    blueprintId: string
+    title?: string
+    description?: string
+    referenceDocuments?: Array<{ type: string; path: string; name?: string }>
+    branchChoice?: BlueprintBranchChoice
+  }) => Promise<unknown>
   blueprintDelete: (args: { id: string }) => Promise<{ deleted: boolean }>
   blueprintHandoffToChat: (args: {
     workspaceId: string
@@ -1628,7 +1653,8 @@ interface Api {
     blueprintId: string
     taskId: string
     skipped?: boolean
-  }) => Promise<{ skipped: boolean; skippedAt: string | null }>
+    note?: string
+  }) => Promise<{ skipped: boolean; skippedAt: string | null; outcomeKind: string | null }>
   blueprintAcknowledgeReview: (args: { blueprintId: string }) => Promise<{ acknowledged: boolean }>
   blueprintGetTranscript: (args: { blueprintId: string; afterSeq?: number }) => Promise<
     Array<{

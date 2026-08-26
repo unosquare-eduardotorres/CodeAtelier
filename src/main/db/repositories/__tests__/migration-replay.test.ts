@@ -818,6 +818,53 @@ if (!env) {
     })
   })
 
+  describe('Migration Replay — v146 blueprint task outcome columns', () => {
+    test('adds_outcome_columns_leaving_existing_rows_null', () => {
+      const db = createSchemaDb()
+      try {
+        // Stop one migration short, seed a failed task, then apply v146 — the
+        // upgrade path a user with an already-failed blueprint takes.
+        runBatch(db, 1, 145)
+
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repo_path) VALUES ('ws-1', 'test', '/tmp/test')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprints (id, workspace_id, title) VALUES ('bp-1', 'ws-1', 'BP')`
+        ).run()
+        db.prepare(
+          `INSERT INTO blueprint_tasks (id, blueprint_id, task_id, description, status)
+           VALUES ('t-1', 'bp-1', 'T001', 'pre-existing failed task', 'failed')`
+        ).run()
+
+        runBatch(db, 146, 146)
+
+        const cols = getColumnNames(db, 'blueprint_tasks')
+        assert.ok(cols.includes('failure_reason'), 'failure_reason added')
+        assert.ok(cols.includes('outcome_kind'), 'outcome_kind added')
+        assert.ok(cols.includes('resolution_note'), 'resolution_note added')
+
+        const row = db.prepare(`SELECT * FROM blueprint_tasks WHERE id = 't-1'`).get() as Record<
+          string,
+          unknown
+        >
+        assert.equal(row.failure_reason, null, 'no reason is invented for historical failures')
+        assert.equal(row.outcome_kind, null)
+        assert.equal(row.resolution_note, null)
+        assert.equal(row.status, 'failed', 'status untouched by the migration')
+
+        // Additive ALTERs — no table rebuild, so the cascade must be intact.
+        db.prepare(`DELETE FROM blueprints WHERE id = 'bp-1'`).run()
+        const remaining = db
+          .prepare(`SELECT COUNT(*) as n FROM blueprint_tasks WHERE blueprint_id = 'bp-1'`)
+          .get() as { n: number }
+        assert.equal(remaining.n, 0, 'blueprint delete still cascades to tasks')
+      } finally {
+        db.close()
+      }
+    })
+  })
+
   describe('Migration Replay — invariants', () => {
     test('all_migration_versions_are_sequential', () => {
       for (let i = 0; i < migrations.length; i++) {

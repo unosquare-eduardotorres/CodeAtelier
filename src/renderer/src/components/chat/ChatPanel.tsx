@@ -317,7 +317,11 @@ function FloatingPillBar({
           integration={integration}
           active={!!conversation.mcpOverrides?.[integration.id]}
           onToggle={() => onMcpToggle(integration.id)}
-          disabled={isStreaming}
+          // Deliberately not disabled while streaming, unlike effort: overrides
+          // are read at send time, so toggling mid-turn affects the next
+          // message — which is exactly what the pill's tooltip promises, and
+          // the only way to switch an integration on for a chat that started
+          // without it.
         />
       ))}
     </div>

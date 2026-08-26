@@ -173,7 +173,10 @@ if (auditOk) {
       'audit:convertFindings',
       'audit:exportMarkdown',
       'audit:exportPlanMarkdown',
-      'audit:handoffToChat'
+      'audit:handoffToChat',
+      'audit:handoffToBlueprint',
+      'audit:recordFindingHandoff',
+      'audit:getFindingHandoffs'
     ]) {
       test(`registers ${ch}`, () => {
         assert.ok(capturedHandlers.has(ch))
@@ -215,6 +218,29 @@ if (auditOk) {
 
     test('audit:handoffToChat rejects missing workspaceId', async () => {
       const r = await tryInvokeHandler('audit:handoffToChat', {})
+      assert.equal(r.ok, false)
+    })
+
+    test('audit:handoffToBlueprint rejects missing findingIds', async () => {
+      const r = await tryInvokeHandler('audit:handoffToBlueprint', {
+        workspaceId: 'w1',
+        auditRunId: 'r1'
+      })
+      assert.equal(r.ok, false)
+    })
+
+    test('audit:recordFindingHandoff rejects an unknown target', async () => {
+      const r = await tryInvokeHandler('audit:recordFindingHandoff', {
+        workspaceId: 'w1',
+        auditRunId: 'r1',
+        findingIds: ['f1'],
+        target: 'goals'
+      })
+      assert.equal(r.ok, false)
+    })
+
+    test('audit:getFindingHandoffs rejects missing auditRunId', async () => {
+      const r = await tryInvokeHandler('audit:getFindingHandoffs', {})
       assert.equal(r.ok, false)
     })
   })

@@ -179,6 +179,63 @@ export async function getIssue(workspaceId: string, issueKey: string): Promise<J
   }
 }
 
+/**
+ * Download one attachment's bytes.
+ *
+ * Separate from `jiraRequest` because that helper parses JSON and this returns
+ * binary. The URL comes from Jira's own attachment record rather than being
+ * constructed, and is checked against the configured site so a hostile issue
+ * payload cannot redirect the credentialed request somewhere else.
+ */
+export async function downloadAttachment(
+  workspaceId: string,
+  contentUrl: string,
+  maxBytes: number
+): Promise<Buffer> {
+  const config = requireConfig(workspaceId)
+
+  let target: URL
+  let site: URL
+  try {
+    target = new URL(contentUrl)
+    site = new URL(config.baseUrl)
+  } catch {
+    throw new JiraRequestError('Attachment URL is malformed.')
+  }
+  if (target.origin !== site.origin) {
+    throw new JiraRequestError(
+      `Attachment is hosted on ${target.host}, not the configured Jira site. Refusing to send credentials there.`
+    )
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const response = await net.fetch(target.toString(), {
+      method: 'GET',
+      headers: buildHeaders(config),
+      signal: controller.signal
+    })
+    if (!response.ok) {
+      throw new JiraRequestError(mapHttpStatus(response.status, config.baseUrl).message)
+    }
+    const bytes = Buffer.from(await response.arrayBuffer())
+    // Jira's reported size is advisory; this is the check that actually bounds
+    // what lands on disk.
+    if (bytes.byteLength > maxBytes) {
+      throw new JiraRequestError(
+        `Attachment is ${bytes.byteLength} bytes, over the ${maxBytes}-byte limit.`
+      )
+    }
+    return bytes
+  } catch (err) {
+    if (err instanceof JiraRequestError) throw err
+    throw new JiraRequestError(mapNetworkError(err).message)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 /** Post a comment on an issue. The only write this service performs. */
 export async function addComment(
   workspaceId: string,

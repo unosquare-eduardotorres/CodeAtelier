@@ -18,7 +18,7 @@ setupFullMock()
 // reaches the mocked phase repo.
 evictFromCache('blueprint-build.service', 'blueprint.service')
 const mod = require('../blueprint-build.service')
-const { BlueprintBuildService, EVIDENCE_ONLY_RX, abortAwareSleep, blueprintBuildService } = mod
+const { BlueprintBuildService, abortAwareSleep, blueprintBuildService } = mod
 
 // ── Repos ──
 const bpRepo = getMockRepo('blueprint')
@@ -33,14 +33,10 @@ describe('BlueprintBuildService — deep body (P26)', () => {
   })
 
   // ─── Exported constants & utilities ──────────────────────────────────────
-  test('EVIDENCE_ONLY_RX matches evidence-only task descriptions', () => {
-    assert.ok(EVIDENCE_ONLY_RX.test('re-run verify after applying fixes'))
-    assert.ok(EVIDENCE_ONLY_RX.test('Re-Run verification pass'))
-    assert.ok(EVIDENCE_ONLY_RX.test('verification evidence for eslint'))
-    assert.ok(EVIDENCE_ONLY_RX.test('evidence of eslint passing'))
-    assert.ok(!EVIDENCE_ONLY_RX.test('implement the auth module'))
-    assert.ok(!EVIDENCE_ONLY_RX.test('write unit tests'))
-  })
+  // EVIDENCE_ONLY_RX was deleted — stale-only verification results are now
+  // decided by the `unproven` verdict plus write activity, not by matching the
+  // task description against a regex. Coverage lives in
+  // blueprint-task-verification.test.ts ("verdict matrix").
 
   test('abortAwareSleep resolves after delay', async () => {
     const start = Date.now()

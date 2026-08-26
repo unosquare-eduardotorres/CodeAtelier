@@ -119,6 +119,10 @@ export const IPC_CHANNELS = {
   DIALOG_SELECT_DIRECTORY: 'dialog:selectDirectory',
   SAVE_CLIPBOARD_IMAGE: 'dialog:saveClipboardImage',
   READ_IMAGE_BASE64: 'dialog:readImageBase64',
+  /** Copy a dropped image into a draft-scoped staging dir so it can be previewed */
+  STAGE_IMAGE_FILE: 'dialog:stageImageFile',
+  /** Delete a whole staging scope (draft cancelled or committed) */
+  CLEAR_STAGED_IMAGES: 'dialog:clearStagedImages',
 
   // Specialists
   SPECIALIST_LIST: 'specialist:list',
@@ -528,6 +532,9 @@ export const IPC_CHANNELS = {
   AUDIT_GENERATE_PLAN: 'audit:generatePlan',
   AUDIT_GET_PLANS: 'audit:getPlans',
   AUDIT_HANDOFF_TO_CHAT: 'audit:handoffToChat',
+  AUDIT_HANDOFF_TO_BLUEPRINT: 'audit:handoffToBlueprint',
+  AUDIT_RECORD_FINDING_HANDOFF: 'audit:recordFindingHandoff',
+  AUDIT_GET_FINDING_HANDOFFS: 'audit:getFindingHandoffs',
 
   // Plan Hub (unified plan registry)
   PLAN_GET_ALL: 'plan:getAll',
@@ -641,6 +648,8 @@ export const IPC_CHANNELS = {
   BLUEPRINT_GET: 'blueprint:get',
   BLUEPRINT_GET_DETAILS: 'blueprint:getDetails',
   BLUEPRINT_LIST: 'blueprint:list',
+  /** Edit a draft's title / description / attachments before the pipeline runs. */
+  BLUEPRINT_UPDATE: 'blueprint:update',
   BLUEPRINT_DELETE: 'blueprint:delete',
   BLUEPRINT_CANCEL: 'blueprint:cancel',
   /** Hand a finished blueprint — its branch, worktree and context — to a new chat. */

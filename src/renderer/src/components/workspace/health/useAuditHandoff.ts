@@ -1,14 +1,19 @@
 /**
- * useAuditHandoff — Orchestrates the Audit → Chat handoff flow.
+ * useAuditHandoff — Orchestrates the Audit → Chat / Blueprint handoff flows.
  *
  * Provides handlers for:
  *   - "Send All to Chat" (consolidated mode)
  *   - "Split by Track" (opens track picker, then creates N conversations)
  *   - "Fix in Chat" from the selection tray (uses pendingFixContext pattern)
+ *   - "Fix in Blueprint" from the selection tray (creates a blueprint)
+ *
+ * Every handoff records a marker against the findings it consumed, so the
+ * findings list can show which ones have already been worked on.
  */
 
 import { useState, useCallback } from 'react'
 import { useAuditStore, useChatStore } from '@renderer/store'
+import { unwrapIpcError } from '@renderer/store/code-changes-errors'
 import { AUDIT_TRACKS } from '../../../../../shared/constants'
 import type { AuditRun, AuditTrackId } from '../../../../../shared/types'
 import {
@@ -19,6 +24,10 @@ import {
 
 interface UseAuditHandoffResult {
   showTrackPicker: boolean
+  /** True while a blueprint is being created from the selection. */
+  isHandingOff: boolean
+  /** Why the last blueprint handoff failed, for display next to the action. */
+  handoffError: string | null
   trackPickerOptions: Array<{
     id: AuditTrackId
     name: string
@@ -30,17 +39,28 @@ interface UseAuditHandoffResult {
   handleSplitConfirm: (trackIds: AuditTrackId[]) => Promise<void>
   handleCloseTrackPicker: () => void
   handleFixInChat: () => void
+  handleFixInBlueprint: () => Promise<void>
 }
 
 export function useAuditHandoff(
   workspaceId: string | undefined,
   currentRun: AuditRun | null,
   onFixInNewChat: () => void,
-  onNavigateToChat?: () => void
+  onNavigateToChat?: () => void,
+  onNavigateToBlueprints?: () => void
 ): UseAuditHandoffResult {
   const [showTrackPicker, setShowTrackPicker] = useState(false)
+  const [isHandingOff, setIsHandingOff] = useState(false)
+  const [handoffError, setHandoffError] = useState<string | null>(null)
 
-  const { selectedFindings, clearSelectedFindings, setPendingFixContext } = useAuditStore()
+  const {
+    selectedFindings,
+    clearSelectedFindings,
+    setPendingFixContext,
+    recordFindingHandoff,
+    loadFindingHandoffs,
+    handoffToBlueprint
+  } = useAuditStore()
 
   // Derive track options for the picker
   const trackPickerOptions = (currentRun?.results ?? [])
@@ -61,6 +81,10 @@ export function useAuditHandoff(
     )
 
     if (completedResults.length === 0) return
+
+    const handedOffIds = completedResults.flatMap((r) =>
+      r.findings.filter((f) => f.severity !== 'info').map((f) => f.id)
+    )
 
     if (completedResults.length === 1) {
       // Single track → direct findings
@@ -85,8 +109,12 @@ export function useAuditHandoff(
       })
     }
 
+    // The conversation is created downstream from pendingFixContext, so there is
+    // no id to link yet — the marker records that the work was routed, not where.
+    void recordFindingHandoff({ workspaceId, findingIds: handedOffIds, target: 'chat' })
+
     onFixInNewChat()
-  }, [currentRun, workspaceId, setPendingFixContext, onFixInNewChat])
+  }, [currentRun, workspaceId, setPendingFixContext, recordFindingHandoff, onFixInNewChat])
 
   // "Split by Track" — open the track picker
   const handleSplitByTrack = useCallback(() => {
@@ -108,12 +136,15 @@ export function useAuditHandoff(
         })
         // Force sidebar to reload with newly created conversations
         await useChatStore.getState().loadConversations(workspaceId)
+        // The main process recorded the markers against the conversations it
+        // created, so pull them rather than guessing at ids here.
+        await loadFindingHandoffs(currentRun.id)
         onNavigateToChat?.()
       } catch (err) {
         console.error('[audit-handoff] Split handoff failed:', err)
       }
     },
-    [workspaceId, currentRun, onNavigateToChat]
+    [workspaceId, currentRun, loadFindingHandoffs, onNavigateToChat]
   )
 
   const handleCloseTrackPicker = useCallback(() => {
@@ -139,17 +170,62 @@ export function useAuditHandoff(
       autoSend: true,
       sourceAuditRunId: currentRun?.id
     })
+    if (workspaceId) {
+      void recordFindingHandoff({
+        workspaceId,
+        findingIds: selectedFindings.map((f) => f.id),
+        target: 'chat'
+      })
+    }
+
     clearSelectedFindings()
     onFixInNewChat()
-  }, [selectedFindings, currentRun, setPendingFixContext, clearSelectedFindings, onFixInNewChat])
+  }, [
+    selectedFindings,
+    currentRun,
+    workspaceId,
+    setPendingFixContext,
+    recordFindingHandoff,
+    clearSelectedFindings,
+    onFixInNewChat
+  ])
+
+  // "Fix in Blueprint" from selection tray — one blueprint for the whole batch.
+  // Unlike chat, the blueprint is created in the main process up front, so the
+  // marker can point at the real blueprint id.
+  const handleFixInBlueprint = useCallback(async () => {
+    if (!workspaceId || selectedFindings.length === 0 || isHandingOff) return
+
+    setIsHandingOff(true)
+    setHandoffError(null)
+    try {
+      await handoffToBlueprint(
+        workspaceId,
+        selectedFindings.map((f) => f.id)
+      )
+      onNavigateToBlueprints?.()
+    } catch (err) {
+      console.error('[audit-handoff] Blueprint handoff failed:', err)
+      // Silence here reads as a dead button — the batch cap in particular is
+      // something the user can act on by selecting fewer findings.
+      setHandoffError(
+        err instanceof Error ? unwrapIpcError(err.message) : 'Could not create the blueprint.'
+      )
+    } finally {
+      setIsHandingOff(false)
+    }
+  }, [workspaceId, selectedFindings, isHandingOff, handoffToBlueprint, onNavigateToBlueprints])
 
   return {
     showTrackPicker,
+    isHandingOff,
+    handoffError,
     trackPickerOptions,
     handleSendAllToChat,
     handleSplitByTrack,
     handleSplitConfirm,
     handleCloseTrackPicker,
-    handleFixInChat
+    handleFixInChat,
+    handleFixInBlueprint
   }
 }

@@ -129,6 +129,15 @@ Use testID selectors. Add assertVisible sync points after navigation taps.`
 
 export const MAESTRO_GUIDANCE_PROMPT_LEAN = MAESTRO_GUIDANCE_PROMPT
 
+export const JIRA_GUIDANCE_PROMPT = `## Jira
+
+mcp__jira__get_issue (one ticket by key), mcp__jira__search_issues (JQL), mcp__jira__add_comment.
+When a ticket key is in play, read the ticket before acting — the chat title is a summary, not the requirement.
+add_comment writes to a ticket the whole team reads: Build mode only, and only when the user asks for it.
+Comment once at the end with the outcome rather than narrating each step.`
+
+export const JIRA_GUIDANCE_PROMPT_LEAN = JIRA_GUIDANCE_PROMPT
+
 export const PROCESS_MANAGER_GUIDANCE_PROMPT = `## Background Processes
 For long-running commands that don't exit (dev servers, watchers, tunnels):
 - Use \`run_background\` instead of Bash — it returns immediately with PID and initial output.

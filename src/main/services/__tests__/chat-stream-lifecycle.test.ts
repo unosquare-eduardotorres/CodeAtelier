@@ -65,6 +65,10 @@ interface ChatStreamServiceInternal {
     rejectDone: (err: Error) => void
   ): void
   finalizeStreamMessage(ctx: StreamContext, lifecycle: ConversationLifecycle): Promise<void>
+  classifyOrphanedCompletion(
+    ctx: StreamContext,
+    lifecycle: ConversationLifecycle
+  ): 'stopped' | 'deleted' | 'superseded' | 'finalize'
   enqueueMemoryExtraction(ctx: StreamContext): void
   forceResetIfStuck(): void
   // Consolidated busy-state authority — acquireStreamLock and both stall
@@ -118,6 +122,8 @@ function createTestService(overrides?: {
     setupStreamTimers: undefined as unknown as ChatStreamServiceInternal['setupStreamTimers'],
     finalizeStreamMessage:
       undefined as unknown as ChatStreamServiceInternal['finalizeStreamMessage'],
+    classifyOrphanedCompletion:
+      undefined as unknown as ChatStreamServiceInternal['classifyOrphanedCompletion'],
     enqueueMemoryExtraction:
       undefined as unknown as ChatStreamServiceInternal['enqueueMemoryExtraction'],
     forceResetIfStuck: undefined as unknown as ChatStreamServiceInternal['forceResetIfStuck'],
@@ -143,6 +149,7 @@ function createTestService(overrides?: {
   svc.resolveStreamIdentity = proto.resolveStreamIdentity.bind(svc)
   svc.setupStreamTimers = proto.setupStreamTimers.bind(svc)
   svc.finalizeStreamMessage = proto.finalizeStreamMessage.bind(svc)
+  svc.classifyOrphanedCompletion = proto.classifyOrphanedCompletion.bind(svc)
   svc.enqueueMemoryExtraction = proto.enqueueMemoryExtraction.bind(svc)
   svc.forceResetIfStuck = proto.forceResetIfStuck.bind(svc)
   svc.describeBusy = proto.describeBusy.bind(svc)
@@ -1375,6 +1382,310 @@ describe('setupStreamTimers — stale lifecycle guards', () => {
       }
 
       assert.equal(armed, 0, 'stale reset must be a no-op')
+    }))
+})
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Q. Orphaned completion — the swallowed terminal signal
+//
+// A 'complete' that lands after the lifecycle was torn down used to be dropped
+// wholesale: no DB write, and — worse — no chat:messageComplete. The renderer
+// stayed on isStreaming until its 2-minute watchdog fired, leaving the plan bar
+// disabled with the turn's text never persisted.
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('classifyOrphanedCompletion', () => {
+  const { conversationRepository } = require('../../db/repositories') as {
+    conversationRepository: { findById: (id: string) => unknown }
+  }
+
+  const withFindById = async (
+    impl: (id: string) => unknown,
+    fn: () => void | Promise<void>
+  ): Promise<void> => {
+    const original = conversationRepository.findById
+    conversationRepository.findById = impl as typeof conversationRepository.findById
+    try {
+      await fn()
+    } finally {
+      conversationRepository.findById = original
+    }
+  }
+
+  const makeCtx = (conversationId: string, requestId: string): StreamContext => ({
+    conversationId,
+    requestId,
+    streamingRole: 'specialist',
+    phase: 'specialist-responding',
+    specialistMeta: undefined,
+    adapterAgentId: 'specialist',
+    workspacePath: undefined,
+    workspaceId: 'ws-owner',
+    streamedContent: 'Plan text',
+    planInjected: false
+  })
+
+  test("stop() already handled it → 'stopped'", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = new ConversationLifecycle()
+      svc.stoppedConversations.add('conv-stopped')
+
+      await withFindById(
+        () => ({ id: 'conv-stopped' }),
+        () => {
+          assert.equal(
+            svc.classifyOrphanedCompletion(makeCtx('conv-stopped', 'req-1'), lifecycle),
+            'stopped'
+          )
+        }
+      )
+    }))
+
+  test("conversation no longer exists → 'deleted'", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = new ConversationLifecycle()
+
+      await withFindById(
+        () => undefined,
+        () => {
+          assert.equal(
+            svc.classifyOrphanedCompletion(makeCtx('conv-gone', 'req-1'), lifecycle),
+            'deleted'
+          )
+        }
+      )
+    }))
+
+  test("repository lookup throws → 'deleted' (never write on doubt)", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+      const lifecycle = new ConversationLifecycle()
+
+      await withFindById(
+        () => {
+          throw new Error('no database')
+        },
+        () => {
+          assert.equal(
+            svc.classifyOrphanedCompletion(makeCtx('conv-nodb', 'req-1'), lifecycle),
+            'deleted'
+          )
+        }
+      )
+    }))
+
+  test("a newer live lifecycle owns the conversation → 'superseded'", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // Ours: already torn down. Registry: a different, still-active instance.
+      const ours = new ConversationLifecycle()
+      ours.begin('conv-superseded')
+      const ctx = makeCtx('conv-superseded', ours.requestId!)
+      ours.complete()
+      lifecycleRegistry.begin('conv-superseded')
+
+      await withFindById(
+        () => ({ id: 'conv-superseded' }),
+        () => {
+          assert.equal(svc.classifyOrphanedCompletion(ctx, ours), 'superseded')
+        }
+      )
+
+      lifecycleRegistry.abort('conv-superseded', 'test-cleanup')
+    }))
+
+  test("conversation alive, nothing newer owns it → 'finalize'", () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      const lifecycle = lifecycleRegistry.begin('conv-orphan-finalize')
+      const ctx = makeCtx('conv-orphan-finalize', lifecycle.requestId!)
+      lifecycle.complete() // disposed before 'complete' arrived
+
+      await withFindById(
+        () => ({ id: 'conv-orphan-finalize' }),
+        () => {
+          assert.equal(
+            svc.classifyOrphanedCompletion(ctx, lifecycle),
+            'finalize',
+            'a disposed-but-otherwise-healthy turn must be finalized, not dropped'
+          )
+        }
+      )
+    }))
+
+  test('the registry entry still being ours is not a supersession', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      const svc = createTestService()
+
+      // Live lifecycle, still the registry's entry for this conversation.
+      const lifecycle = lifecycleRegistry.begin('conv-same-instance')
+      const ctx = makeCtx('conv-same-instance', lifecycle.requestId!)
+
+      await withFindById(
+        () => ({ id: 'conv-same-instance' }),
+        () => {
+          assert.equal(svc.classifyOrphanedCompletion(ctx, lifecycle), 'finalize')
+        }
+      )
+
+      lifecycleRegistry.abort('conv-same-instance', 'test-cleanup')
+    }))
+})
+
+describe('finalizeStreamMessage — disposed lifecycle', () => {
+  const { messageRepository } = require('../../db/repositories') as {
+    messageRepository: {
+      create: (...args: unknown[]) => { id: string }
+      updateToolActivities: (...args: unknown[]) => void
+    }
+  }
+
+  let originalCreate: typeof messageRepository.create
+
+  beforeEach(() => {
+    originalCreate = messageRepository.create
+  })
+
+  const restoreRepo = () => {
+    messageRepository.create = originalCreate
+  }
+
+  test('persists and sends COMPLETE when the lifecycle was disposed mid-turn', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      conversationStateMachine.transition('sendMessage', 'conv-disposed')
+      const lifecycle = lifecycleRegistry.begin('conv-disposed')
+      const requestId = lifecycle.requestId!
+
+      // The turn is torn down (workspace switch / delete / service dispose)
+      // *before* the executor's 'complete' lands. requestId is nulled by dispose.
+      lifecycle.complete()
+      assert.equal(lifecycle.requestId, null, 'disposal nulls requestId')
+
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      const createSpy_ = createSpy<unknown[], { id: string }>(() => ({ id: 'msg-disposed' }))
+      messageRepository.create = createSpy_ as unknown as typeof messageRepository.create
+
+      const ctx: StreamContext = {
+        conversationId: 'conv-disposed',
+        requestId,
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
+        specialistMeta: undefined,
+        adapterAgentId: 'specialist',
+        workspacePath: undefined,
+        workspaceId: 'ws-owner',
+        streamedContent: 'The plan the user never saw',
+        planInjected: false
+      }
+
+      await svc.finalizeStreamMessage(ctx, lifecycle)
+      restoreRepo()
+
+      // Persist FIRST — the renderer reloads from the DB right after COMPLETE,
+      // so a signal-only fix would wipe the text back off the screen.
+      assert.equal(createSpy_.callCount, 1, 'message must be persisted')
+      assert.equal(createSpy_.calls[0][2], 'The plan the user never saw', 'content saved')
+
+      const completeMsg = mainWindow.sentMessages.find((m) => m.channel === 'chat:messageComplete')
+      assert.ok(completeMsg, 'COMPLETE must be sent — this is the renderer’s only exit')
+      const data = completeMsg!.data as { requestId?: string; workspaceId?: string }
+      assert.equal(
+        data.requestId,
+        requestId,
+        'must carry ctx.requestId or the renderer drops it on mismatch'
+      )
+      assert.equal(data.workspaceId, 'ws-owner', 'must carry the owning workspace')
+
+      resetGlobals()
+    }))
+
+  test('CHAT-FINALIZE-ORPHAN-01: still skips when a different LIVE requestId owns the lifecycle', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      conversationStateMachine.transition('sendMessage', 'conv-superseded-finalize')
+      const lifecycle = lifecycleRegistry.begin('conv-superseded-finalize')
+
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      const createSpy_ = createSpy<unknown[], { id: string }>(() => ({ id: 'msg-should-not-save' }))
+      messageRepository.create = createSpy_ as unknown as typeof messageRepository.create
+
+      const ctx: StreamContext = {
+        conversationId: 'conv-superseded-finalize',
+        requestId: 'req-stale-previous-turn',
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
+        specialistMeta: undefined,
+        adapterAgentId: 'specialist',
+        workspacePath: undefined,
+        workspaceId: 'ws-owner',
+        streamedContent: 'Output from a superseded turn',
+        planInjected: false
+      }
+
+      await svc.finalizeStreamMessage(ctx, lifecycle)
+      restoreRepo()
+
+      assert.equal(createSpy_.callCount, 0, 'must not write into the newer turn')
+      assert.equal(
+        mainWindow.sentMessages.filter((m) => m.channel === 'chat:messageComplete').length,
+        0,
+        'must not send a COMPLETE the renderer would drop anyway'
+      )
+
+      lifecycleRegistry.abort('conv-superseded-finalize', 'test-cleanup')
+    }))
+
+  test('CHAT-STOP-COMPLETE-RACE-01: still skips when stop() already handled the conversation', () =>
+    runExclusive(async () => {
+      resetGlobals()
+      conversationStateMachine.transition('sendMessage', 'conv-stopped-finalize')
+      const lifecycle = lifecycleRegistry.begin('conv-stopped-finalize')
+      const requestId = lifecycle.requestId!
+      lifecycle.complete()
+
+      const mainWindow = mockMainWindow()
+      const svc = createTestService({ mainWindow })
+      svc.stoppedConversations.add('conv-stopped-finalize')
+      const createSpy_ = createSpy<unknown[], { id: string }>(() => ({ id: 'msg-dupe' }))
+      messageRepository.create = createSpy_ as unknown as typeof messageRepository.create
+
+      const ctx: StreamContext = {
+        conversationId: 'conv-stopped-finalize',
+        requestId,
+        streamingRole: 'specialist',
+        phase: 'specialist-responding',
+        specialistMeta: undefined,
+        adapterAgentId: 'specialist',
+        workspacePath: undefined,
+        workspaceId: 'ws-owner',
+        streamedContent: 'Content stop() already saved as stopped',
+        planInjected: false
+      }
+
+      await svc.finalizeStreamMessage(ctx, lifecycle)
+      restoreRepo()
+
+      assert.equal(createSpy_.callCount, 0, 'no duplicate save alongside stop()’s message')
+      assert.equal(
+        mainWindow.sentMessages.filter((m) => m.channel === 'chat:messageComplete').length,
+        0,
+        'stop() already sent its own COMPLETE'
+      )
+
+      resetGlobals()
     }))
 })
 

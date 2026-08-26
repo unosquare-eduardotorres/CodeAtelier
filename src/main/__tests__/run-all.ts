@@ -406,6 +406,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/ipc-track-handlers.test',
   '../services/__tests__/mcp-config-worktree.test',
   '../services/__tests__/blueprint-track.test',
+  '../services/__tests__/blueprint-branch-name.test',
   '../services/__tests__/landing.service.test',
   '../services/__tests__/track-claims.test',
   '../services/__tests__/lent-branch.test',
@@ -559,6 +560,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/handoff-redaction-p27.test',
   '../services/__tests__/mpa-prompts-p27.test',
   '../services/__tests__/audit-discovery-p27.test',
+  // ─── Audit → Blueprint handoff formatting ───
+  '../services/__tests__/audit-blueprint-handoff.test',
   '../services/__tests__/agent-executor-factory-p27.test',
   '../services/__tests__/handoff-adapters-p27.test',
   '../services/__tests__/one-shot-local-p27.test',
@@ -614,6 +617,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-prompt-loader.test',
   '../services/__tests__/blueprint-task-verification.test',
   '../services/__tests__/blueprint-task-user-skip.test',
+  '../services/__tests__/blueprint-dependson-scheduling.test',
   '../services/__tests__/btw.test',
   '../services/__tests__/budget-exceeded-error.test',
   '../services/__tests__/budget-preflight.test',
@@ -634,6 +638,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/handoff.service.test',
   '../services/__tests__/blueprint-chat-handoff.test',
   '../services/__tests__/blueprint-handoff-options.test',
+  '../services/__tests__/handoff-context-injection.test',
   '../services/__tests__/heuristic-description-batch.test',
   '../services/__tests__/json-utils.test',
   '../services/__tests__/language-detector.test',
@@ -694,7 +699,14 @@ const SERVICE_TEST_FILES: string[] = [
   '../ipc/__tests__/tool-chunk-progress.test',
   '../../shared/__tests__/db-time.test',
   // ─── Truncated plan block: nested fence inside a JSON string value ───
-  '../../shared/__tests__/fenced-block.test'
+  '../../shared/__tests__/fenced-block.test',
+  // ─── Round 3: e2e-testing behavioral coverage ───
+  '../services/__tests__/e2e-assertions-behavior.test',
+  '../services/__tests__/e2e-service-runners-behavior.test',
+  '../services/__tests__/e2e-runners-chat-checkpoint.test',
+  '../services/__tests__/e2e-runners-mpa-grill-audit.test',
+  '../services/__tests__/e2e-runners-idea-specialist.test',
+  '../services/__tests__/e2e-runner-preflight.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -757,12 +769,30 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/mpa-artifact.repository.test',
   '../db/repositories/__tests__/turn-usage.repository.test',
   '../db/repositories/__tests__/user-profile.repository.test',
-  '../db/repositories/__tests__/track.repository.test'
+  '../db/repositories/__tests__/track.repository.test',
+  // ─── Audit finding handoff markers (migration 145) ───
+  '../db/repositories/__tests__/audit-handoff.repository.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───
 // Wrapped in async IIFE because the project is CJS (no top-level await).
 const ALL_TEST_FILES = [...SERVICE_TEST_FILES, ...REPO_TEST_FILES]
+
+// ─── Stray-rejection guard ───
+// A fire-and-forget call inside one test that rejects with nobody awaiting it is
+// an *unhandled rejection*, and Node's default policy for those is to throw —
+// which kills this process mid-loop and silently abandons every file that had
+// not been imported yet. That is not hypothetical: 36 rejections of
+// `Error: Please check update first` (electron-updater, from the auto-update
+// tests) were truncating this run two thirds of the way through the list, so the
+// files after it never executed and reported zero coverage — which made
+// `npm run test:cov` swing between 56% and 70% on an unchanged tree. A stray
+// rejection is worth reporting, but it must never decide how much of the suite
+// runs, nor how much coverage the run appears to have.
+const strayRejections: unknown[] = []
+process.on('unhandledRejection', (reason) => {
+  strayRejections.push(reason)
+})
 
 void (async () => {
   let loadFailures = 0
@@ -796,6 +826,18 @@ void (async () => {
   console.log(
     `[run-all] all ${ALL_TEST_FILES.length} test modules loaded (${loadFailures} load failure(s))`
   )
+
+  if (strayRejections.length > 0) {
+    const kinds = new Map<string, number>()
+    for (const r of strayRejections) {
+      const key = r instanceof Error ? `${r.name}: ${r.message}` : String(r)
+      kinds.set(key, (kinds.get(key) ?? 0) + 1)
+    }
+    console.warn(
+      `\n[run-all] ${strayRejections.length} unhandled rejection(s) were absorbed so the run could finish:`
+    )
+    for (const [kind, count] of kinds) console.warn(`  ${count}x ${kind}`)
+  }
 
   // Single summary at the end — awaits all pending async tests, prints totals,
   // and exits with code 1 on any failure.

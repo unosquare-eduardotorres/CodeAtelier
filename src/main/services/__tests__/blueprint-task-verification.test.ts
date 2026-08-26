@@ -16,7 +16,6 @@ import {
   scanCompletedTaskFiles,
   applyDeterministicFileCheck
 } from '../blueprint-task-verification'
-import { EVIDENCE_ONLY_RX } from '../blueprint-build.service'
 import { RERUN_VERIFY_RX, GENERIC_REMEDIATION_TASK_DESC } from '../blueprint-verify.service'
 
 // ── Temp workspace helper ──
@@ -426,8 +425,8 @@ describe('applyDeterministicFileCheck — drift-only does NOT downgrade status',
 // FIX-3: mtime freshness tests
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe('verifyTaskFileClaims — stale-mtime claimed file → fail', () => {
-  test('claimed file exists but is stale (mtime before taskStartedAt) → ok: false, staleClaimed populated', () => {
+describe('verifyTaskFileClaims — stale-mtime claimed file → unproven, not fail', () => {
+  test('claimed file exists but is stale (mtime before taskStartedAt) → verdict unproven, ok stays true', () => {
     const wp = makeTmpWorkspace()
     try {
       mkdirSync(join(wp, 'src'), { recursive: true })
@@ -444,7 +443,10 @@ describe('verifyTaskFileClaims — stale-mtime claimed file → fail', () => {
         ['src/old.ts'],
         taskStartedAt
       )
-      assert.equal(result.ok, false)
+      // The file the agent named is on disk — we simply cannot prove this run
+      // wrote it. Evidence of absence is what fails; absence of evidence is not.
+      assert.equal(result.verdict, 'unproven')
+      assert.equal(result.ok, true)
       assert.equal(result.missingClaimed.length, 0)
       assert.deepEqual(result.staleClaimed, ['src/old.ts'])
     } finally {
@@ -470,6 +472,7 @@ describe('verifyTaskFileClaims — fresh file passes with taskStartedAt', () => 
         taskStartedAt
       )
       assert.equal(result.ok, true)
+      assert.equal(result.verdict, 'pass')
       assert.equal(result.staleClaimed.length, 0)
       assert.equal(result.missingClaimed.length, 0)
     } finally {
@@ -512,6 +515,7 @@ describe('verifyTaskFileClaims — lenient path with taskStartedAt requires fres
       const taskStartedAt = Date.now()
       const result = verifyTaskFileClaims(wp, null, ['src/old.ts'], taskStartedAt)
       assert.equal(result.ok, false)
+      assert.equal(result.verdict, 'fail')
     } finally {
       cleanupTmpWorkspace(wp)
     }
@@ -718,53 +722,160 @@ describe('scanCompletedTaskFiles — re-rooting and unverifiable paths', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// BP-EVIDENCE-ONLY-SOFTPASS: Evidence-only task soft-pass regex tests
+// BP-VERIFY-UNPROVEN-01: the verdict matrix
 // ═══════════════════════════════════════════════════════════════════════
 
-// GAP-5 FIX: Import regexes from source modules instead of re-declaring.
-// EVIDENCE_ONLY_RX from blueprint-build.service.ts
-// RERUN_VERIFY_RX from blueprint-verify.service.ts
+// The predecessor of this block tested EVIDENCE_ONLY_RX — a regex over the task
+// *description* that soft-passed stale-only failures for anything reading like
+// "re-run verify". That decided pass/fail by prose. The verdict decides it by
+// evidence, so the regex and its tests are gone.
+// RERUN_VERIFY_RX (below) still lives in blueprint-verify.service.ts.
 
-describe('EVIDENCE_ONLY_RX — matches evidence/verification task descriptions', () => {
-  test('matches "Re-run the full verify pass with evidence: eslint, tsc, vitest"', () => {
-    assert.ok(
-      EVIDENCE_ONLY_RX.test(
-        'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'
+/** Backdate a file's mtime so the freshness check sees it as stale. */
+function makeStale(path: string): void {
+  const { utimesSync } = require('node:fs')
+  const tenMinAgo = new Date(Date.now() - 10 * 60_000)
+  utimesSync(path, tenMinAgo, tenMinAgo)
+}
+
+describe('verifyTaskFileClaims — verdict matrix', () => {
+  test('one stale + one fresh claim → unproven (any stale claim is unproven)', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      mkdirSync(join(wp, 'src'), { recursive: true })
+      writeFileSync(join(wp, 'src/old.ts'), 'stale')
+      makeStale(join(wp, 'src/old.ts'))
+      writeFileSync(join(wp, 'src/new.ts'), 'fresh')
+
+      const result = verifyTaskFileClaims(
+        wp,
+        { filesCreated: ['src/new.ts'], filesModified: ['src/old.ts'] },
+        [],
+        Date.now()
       )
-    )
+      assert.equal(result.verdict, 'unproven')
+      assert.equal(result.ok, true)
+      assert.deepEqual(result.staleClaimed, ['src/old.ts'])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
 
-  // GAP-4: bare "Run" (without "Re-") no longer matches — accepted tradeoff
-  test('does NOT match bare "Run verification with all evidence" (GAP-4)', () => {
-    assert.equal(EVIDENCE_ONLY_RX.test('Run verification with all evidence'), false)
+  test('a missing claim alongside a stale one → fail (absence outranks staleness)', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      mkdirSync(join(wp, 'src'), { recursive: true })
+      writeFileSync(join(wp, 'src/old.ts'), 'stale')
+      makeStale(join(wp, 'src/old.ts'))
+
+      const result = verifyTaskFileClaims(
+        wp,
+        { filesCreated: ['src/gone.ts'], filesModified: ['src/old.ts'] },
+        [],
+        Date.now()
+      )
+      assert.equal(result.verdict, 'fail')
+      assert.equal(result.ok, false)
+      assert.deepEqual(result.missingClaimed, ['src/gone.ts'])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
 
-  test('matches "Re-run verification with all evidence"', () => {
-    assert.ok(EVIDENCE_ONLY_RX.test('Re-run verification with all evidence'))
+  test('filesVerifiedUnchanged on a stale file → pass (freshness is not checked)', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      mkdirSync(join(wp, 'src'), { recursive: true })
+      writeFileSync(join(wp, 'src/already-right.ts'), 'correct')
+      makeStale(join(wp, 'src/already-right.ts'))
+
+      const result = verifyTaskFileClaims(
+        wp,
+        { filesVerifiedUnchanged: ['src/already-right.ts'] },
+        [],
+        Date.now()
+      )
+      assert.equal(result.verdict, 'pass')
+      assert.deepEqual(result.preexistingClaimed, ['src/already-right.ts'])
+      assert.deepEqual(result.staleClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
 
-  test('matches "re-run verify pass"', () => {
-    assert.ok(EVIDENCE_ONLY_RX.test('re-run verify pass'))
+  test('filesVerifiedUnchanged naming an absent file → fail (existence IS checked)', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      const result = verifyTaskFileClaims(
+        wp,
+        { filesVerifiedUnchanged: ['src/never-existed.ts'] },
+        [],
+        Date.now()
+      )
+      assert.equal(result.verdict, 'fail')
+      assert.deepEqual(result.missingClaimed, ['src/never-existed.ts'])
+      assert.deepEqual(result.preexistingClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
 
-  test('matches "verification pass with evidence"', () => {
-    assert.ok(EVIDENCE_ONLY_RX.test('verification pass with evidence'))
+  test('a file declared unchanged is not also reported as planned drift', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      mkdirSync(join(wp, 'src'), { recursive: true })
+      writeFileSync(join(wp, 'src/a.ts'), 'correct')
+      makeStale(join(wp, 'src/a.ts'))
+
+      const result = verifyTaskFileClaims(
+        wp,
+        { filesVerifiedUnchanged: ['src/a.ts'] },
+        ['src/a.ts'],
+        Date.now()
+      )
+      assert.equal(result.verdict, 'pass')
+      assert.deepEqual(result.missingPlanned, [])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
 
-  test('matches "verify evidence for eslint"', () => {
-    assert.ok(EVIDENCE_ONLY_RX.test('evidence from eslint checks'))
-  })
+  test('verify-phase scan (no taskStartedAt) is unaffected — stale claims still pass', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      mkdirSync(join(wp, 'src'), { recursive: true })
+      writeFileSync(join(wp, 'src/old.ts'), 'stale')
+      makeStale(join(wp, 'src/old.ts'))
 
-  test('does NOT match normal code task: "Add error handling to auth service"', () => {
-    assert.equal(EVIDENCE_ONLY_RX.test('Add error handling to auth service'), false)
+      const result = verifyTaskFileClaims(wp, { filesModified: ['src/old.ts'] }, [])
+      assert.equal(result.verdict, 'pass')
+      assert.deepEqual(result.staleClaimed, [])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
+})
 
-  test('does NOT match "Fix TypeScript type errors in user.ts"', () => {
-    assert.equal(EVIDENCE_ONLY_RX.test('Fix TypeScript type errors in user.ts'), false)
-  })
-
-  test('does NOT match "Implement user registration endpoint"', () => {
-    assert.equal(EVIDENCE_ONLY_RX.test('Implement user registration endpoint'), false)
+describe('scanCompletedTaskFiles — filesVerifiedUnchanged is an existence claim', () => {
+  test('declared-unchanged file missing on disk → missingClaimed', () => {
+    const wp = makeTmpWorkspace()
+    try {
+      const result = scanCompletedTaskFiles(wp, [
+        {
+          taskId: 'T001',
+          status: 'complete',
+          filePathsJson: [],
+          completionJson: {
+            filesCreated: [],
+            filesModified: [],
+            filesVerifiedUnchanged: ['src/gone.ts']
+          }
+        }
+      ])
+      assert.deepEqual(result.get('T001')!.missingClaimed, ['src/gone.ts'])
+    } finally {
+      cleanupTmpWorkspace(wp)
+    }
   })
 })
 
@@ -799,96 +910,42 @@ describe('RERUN_VERIFY_RX — matches circular re-run-verify task descriptions',
   })
 })
 
-describe('evidence-only soft-pass — stale-only + evidence description → should soft-pass', () => {
-  test('stale-only verification + evidence task description → qualifies for soft-pass', () => {
+describe('unproven verdict — replaces the description-matched soft-pass', () => {
+  test('a stale-only code task now reaches BUILD as unproven, not as a failure', () => {
     const wp = makeTmpWorkspace()
     try {
       mkdirSync(join(wp, 'src'), { recursive: true })
       writeFileSync(join(wp, 'src/old.ts'), 'stale content')
-      const { utimesSync } = require('node:fs')
-      const tenMinAgo = new Date(Date.now() - 10 * 60_000)
-      utimesSync(join(wp, 'src/old.ts'), tenMinAgo, tenMinAgo)
+      makeStale(join(wp, 'src/old.ts'))
 
-      const taskStartedAt = Date.now()
+      // The old rule soft-passed this only if the *description* read like
+      // "re-run verify". A plain implementation task with identical evidence
+      // hard-failed. Both now produce the same verdict — BUILD decides using
+      // write-tool activity, which is the direct measurement.
       const result = verifyTaskFileClaims(
         wp,
         { filesCreated: ['src/old.ts'] },
         ['src/old.ts'],
-        taskStartedAt
+        Date.now()
       )
-      // Verification fails (stale)
-      assert.equal(result.ok, false)
+      assert.equal(result.verdict, 'unproven')
+      assert.equal(result.ok, true)
       assert.equal(result.staleClaimed.length, 1)
-      // But no files are actually missing
       assert.equal(result.missingClaimed.length, 0)
       assert.equal(result.missingPlanned.length, 0)
-
-      // This is the soft-pass condition:
-      const description =
-        'Re-run the full verify pass with evidence: eslint, tsc, vitest, complexity, dead code'
-      const isEvidenceOnly =
-        !result.ok &&
-        result.missingClaimed.length === 0 &&
-        result.missingPlanned.length === 0 &&
-        EVIDENCE_ONLY_RX.test(description)
-      assert.equal(isEvidenceOnly, true, 'should qualify for evidence-only soft-pass')
     } finally {
       cleanupTmpWorkspace(wp)
     }
   })
-})
 
-describe('evidence-only soft-pass — stale-only + code task → still hard-fails', () => {
-  test('stale-only verification + normal code task description → does NOT qualify', () => {
-    const wp = makeTmpWorkspace()
-    try {
-      mkdirSync(join(wp, 'src'), { recursive: true })
-      writeFileSync(join(wp, 'src/old.ts'), 'stale content')
-      const { utimesSync } = require('node:fs')
-      const tenMinAgo = new Date(Date.now() - 10 * 60_000)
-      utimesSync(join(wp, 'src/old.ts'), tenMinAgo, tenMinAgo)
-
-      const taskStartedAt = Date.now()
-      const result = verifyTaskFileClaims(
-        wp,
-        { filesCreated: ['src/old.ts'] },
-        ['src/old.ts'],
-        taskStartedAt
-      )
-      assert.equal(result.ok, false)
-      assert.equal(result.staleClaimed.length, 1)
-
-      // Normal code task—should NOT qualify
-      const description = 'Implement user registration endpoint'
-      const isEvidenceOnly =
-        !result.ok &&
-        result.missingClaimed.length === 0 &&
-        result.missingPlanned.length === 0 &&
-        EVIDENCE_ONLY_RX.test(description)
-      assert.equal(isEvidenceOnly, false, 'normal code tasks must NOT qualify for soft-pass')
-    } finally {
-      cleanupTmpWorkspace(wp)
-    }
-  })
-})
-
-describe('evidence-only soft-pass — missing files + evidence description → still fails', () => {
-  test('missing claimed files + evidence description → does NOT qualify for soft-pass', () => {
+  test('missing claimed files stay a hard fail regardless of description', () => {
     const wp = makeTmpWorkspace()
     try {
       // src/a.ts does not exist
       const result = verifyTaskFileClaims(wp, { filesCreated: ['src/a.ts'] }, ['src/a.ts'])
+      assert.equal(result.verdict, 'fail')
       assert.equal(result.ok, false)
       assert.equal(result.missingClaimed.length, 1)
-
-      // Even with an evidence description, missing files are NOT soft-passed
-      const description = 'Re-run the full verify pass with evidence'
-      const isEvidenceOnly =
-        !result.ok &&
-        (result.missingClaimed.length as number) === 0 &&
-        (result.missingPlanned.length as number) === 0 &&
-        EVIDENCE_ONLY_RX.test(description)
-      assert.equal(isEvidenceOnly, false, 'missing claimed files must NOT qualify for soft-pass')
     } finally {
       cleanupTmpWorkspace(wp)
     }

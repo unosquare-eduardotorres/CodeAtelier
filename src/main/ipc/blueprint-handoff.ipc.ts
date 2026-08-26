@@ -30,6 +30,7 @@ import { conversationRepository } from '../db/repositories'
 import { handleCreateConversation } from './conversation-crud.ipc'
 import type { BranchTakeoverResult } from './conversation-crud.ipc'
 import { readBranchChoice, blueprintTrackBranch } from '../services/blueprint-track'
+import { readBlueprintBranchName, readJiraIssueKey } from '../../shared/blueprint-branch-name'
 import {
   resolveHandoffIntent,
   isBlueprintHandoffIntent,
@@ -71,8 +72,12 @@ export interface BlueprintHandoffResult {
  */
 export function blueprintBranchCandidate(blueprint: BlueprintWithDetails): string {
   const choice = readBranchChoice(blueprint.settingsJson ?? {})
-  if (choice.mode === 'fork' && choice.name) return choice.name
   if (choice.mode === 'takeover' && choice.branch) return choice.branch
+  // The name reserved when the run started, if it got that far — recomputing it
+  // from a title Specify has since rewritten would name a branch nobody has.
+  const reserved = readBlueprintBranchName(blueprint.settingsJson)
+  if (reserved) return reserved
+  if (choice.mode === 'fork' && choice.name) return choice.name
   return blueprintTrackBranch(blueprint.id, blueprint.title)
 }
 
@@ -175,6 +180,8 @@ export async function executeBlueprintHandoffToChat(args: {
 
   const title = `${spec.titlePrefix}: ${blueprint.title}`.slice(0, 500)
 
+  const jiraIssueKey = readJiraIssueKey(blueprint.settingsJson)
+
   // Derived from what the transfer actually did, never inferred from the branch
   // name surviving: a track row that outlived its directory reuses the ref and
   // builds a fresh tree, which is emphatically not "the files are already here".
@@ -186,6 +193,11 @@ export async function executeBlueprintHandoffToChat(args: {
       workspaceId,
       title,
       mode: spec.mode,
+      // A chat that exists because of a ticket should be able to answer to it.
+      // Safe unconditionally: the executor ANDs this with the workspace toggle
+      // and skips the mount when credentials are incomplete. Gated on the key
+      // only so non-Jira blueprints do not carry the tool schemas.
+      mcpOverrides: jiraIssueKey ? { jira: true } : undefined,
       branchName: branchName ?? undefined,
       // No branch means the chat belongs in the workspace checkout, which is
       // where a blueprint without a track left its output.
@@ -209,7 +221,8 @@ export async function executeBlueprintHandoffToChat(args: {
     spec,
     branchName: conversation.branchName ?? null,
     inheritedTrack,
-    unclaimedBranch: conversation.branchName ? null : options.branchName
+    unclaimedBranch: conversation.branchName ? null : options.branchName,
+    jiraIssueKey
   })
 
   conversationRepository.updateHandoffContext(conversation.id, action.handoffContextCompact)

@@ -41,9 +41,11 @@ import { createAccumulator } from '../services/blueprint-agent-accumulator'
 import type {
   BlueprintPhaseType,
   BlueprintArtifact,
-  BlueprintPriority
+  BlueprintPriority,
+  BlueprintBranchChoice
 } from '../../shared/blueprint-types'
 import { runPreflightChecks } from '../services/blueprint-preflight.service'
+import { reserveBlueprintBranch } from '../services/blueprint-track'
 
 const bpLog = log.scope('blueprint-ipc')
 
@@ -52,10 +54,10 @@ const bpLog = log.scope('blueprint-ipc')
 // ── Phase 5.1: Managed docs directory for copy-on-attach ──
 
 /** Max file size for copy-on-attach (25MB) */
-const COPY_ON_ATTACH_MAX_BYTES = 25 * 1024 * 1024
+export const COPY_ON_ATTACH_MAX_BYTES = 25 * 1024 * 1024
 
 /** Root directory for managed blueprint reference docs */
-function getManagedDocsRoot(): string {
+export function getManagedDocsRoot(): string {
   return join(app.getPath('userData'), 'blueprint-docs')
 }
 
@@ -86,6 +88,12 @@ function copyOnAttach(
       if (normDoc.startsWith(normWs) || normDoc === normalize(workspacePath)) return doc
     }
 
+    // Already living in this blueprint's managed dir — this is an edit
+    // re-submitting attachments it was handed. Copying again would duplicate
+    // the bytes under a fresh index prefix on every save.
+    const managedDir = getManagedDocsDir(workspaceId, blueprintId)
+    if (normalize(doc.path).startsWith(normalize(managedDir) + sep)) return doc
+
     try {
       const stat = statSync(doc.path)
       if (stat.size > COPY_ON_ATTACH_MAX_BYTES) {
@@ -95,7 +103,6 @@ function copyOnAttach(
         return doc
       }
 
-      const managedDir = getManagedDocsDir(workspaceId, blueprintId)
       mkdirSync(managedDir, { recursive: true })
       // BASENAME-COLLISION-FIX: Prefix with map index to prevent two docs
       // with the same basename (e.g. both named spec.pdf) from silently
@@ -109,6 +116,72 @@ function copyOnAttach(
       return doc
     }
   })
+}
+
+/** Reference-doc kinds the attachment list accepts. */
+const REFERENCE_DOC_TYPES = new Set(['file', 'workspace-file', 'url'])
+
+/** Ceiling on attachments per blueprint — the edit form has no other bound. */
+const MAX_REFERENCE_DOCS = 50
+
+/** Generous next to git's own limits, tight enough to reject a pasted blob. */
+const MAX_BRANCH_NAME_LENGTH = 255
+
+/**
+ * Validate an untrusted `referenceDocuments` payload from the renderer.
+ * Bad entries are rejected outright rather than dropped: a silently missing
+ * attachment is worse than a failed save the user can retry.
+ */
+function parseReferenceDocuments(
+  raw: unknown,
+  ch: string
+): Array<{ type: string; path: string; name?: string }> {
+  if (!Array.isArray(raw)) throw new Error(`${ch}: referenceDocuments must be an array`)
+  if (raw.length > MAX_REFERENCE_DOCS) {
+    throw new Error(`${ch}: too many attachments (${raw.length}); max ${MAX_REFERENCE_DOCS}`)
+  }
+  return raw.map((entry, i) => {
+    if (!entry || typeof entry !== 'object') {
+      throw new Error(`${ch}: referenceDocuments[${i}] must be an object`)
+    }
+    const doc = entry as Record<string, unknown>
+    if (typeof doc.type !== 'string' || !REFERENCE_DOC_TYPES.has(doc.type)) {
+      throw new Error(`${ch}: referenceDocuments[${i}].type is not a known document type`)
+    }
+    if (typeof doc.path !== 'string' || !doc.path.trim()) {
+      throw new Error(`${ch}: referenceDocuments[${i}].path must be a non-empty string`)
+    }
+    return {
+      type: doc.type,
+      path: doc.path,
+      name: typeof doc.name === 'string' ? doc.name : undefined
+    }
+  })
+}
+
+/**
+ * Validate a branch choice arriving from the renderer.
+ *
+ * Written straight into `settings_json` and read back by the track layer to
+ * decide what gets checked out and what gets taken over, so the mode is
+ * whitelisted and the branch name is length-capped rather than trusted.
+ */
+function parseBranchChoice(raw: unknown, ch: string): BlueprintBranchChoice {
+  if (!raw || typeof raw !== 'object') throw new Error(`${ch}: branchChoice must be an object`)
+  const choice = raw as Record<string, unknown>
+  const mode = choice.mode
+  if (mode !== 'auto' && mode !== 'fork' && mode !== 'takeover' && mode !== 'primary') {
+    throw new Error(`${ch}: branchChoice.mode must be auto, fork, takeover or primary`)
+  }
+  const readBranch = (key: 'branch' | 'name'): string | undefined => {
+    const value = choice[key]
+    if (value === undefined || value === null || value === '') return undefined
+    if (typeof value !== 'string' || value.length > MAX_BRANCH_NAME_LENGTH) {
+      throw new Error(`${ch}: branchChoice.${key} must be a branch name`)
+    }
+    return value
+  }
+  return { mode, branch: readBranch('branch'), name: readBranch('name') }
 }
 
 /**
@@ -232,6 +305,63 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     return blueprintService.listBlueprints(workspaceId, limit)
   })
 
+  // ── blueprint:update — Edit a draft before it runs ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_UPDATE, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_UPDATE
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+    const title = optionalString(args, 'title', ch)
+    const description = optionalString(args, 'description', ch)
+
+    const existing = blueprintRepository.findById(blueprintId)
+    if (!existing) throw new Error(`${ch}: blueprint ${blueprintId} not found`)
+
+    // Drafts only. Once a phase has run, its artifacts were derived from this
+    // text — rewriting it afterwards would leave the run describing something
+    // the blueprint no longer says.
+    if (existing.status !== 'draft') {
+      throw new Error(
+        `${ch}: only draft blueprints can be edited (this one is "${existing.status}")`
+      )
+    }
+
+    const data: { title?: string; description?: string; settingsJson?: Record<string, unknown> } =
+      {}
+
+    if (title !== undefined) {
+      const trimmed = title.trim()
+      if (!trimmed) throw new Error(`${ch}: title cannot be empty`)
+      data.title = trimmed
+    }
+    if (description !== undefined) data.description = description
+
+    // Branch choice and attachments both live in settingsJson, so they merge
+    // into one object — writing them separately would drop whichever went first.
+    let settings = existing.settingsJson
+    if (args.branchChoice !== undefined) {
+      settings = { ...settings, branchChoice: parseBranchChoice(args.branchChoice, ch) }
+      data.settingsJson = settings
+    }
+
+    // `referenceDocuments` is absent when the caller only edited text, and an
+    // empty array when the user removed the last attachment — those are
+    // different intents, so only an actual array touches settingsJson.
+    if (args.referenceDocuments !== undefined) {
+      const docs = parseReferenceDocuments(args.referenceDocuments, ch)
+      const ws = workspaceRepository.findById(existing.workspaceId)
+      const rewritten = copyOnAttach(existing.workspaceId, blueprintId, docs, ws?.repoPath)
+      data.settingsJson = { ...settings, referenceDocuments: rewritten }
+    }
+
+    if (Object.keys(data).length === 0) return existing
+
+    const updated = blueprintRepository.update(blueprintId, data)
+    bpLog.info(`[blueprint-update] Updated draft ${blueprintId}: ${Object.keys(data).join(', ')}`)
+    return updated ?? existing
+  })
+
   // ── blueprint:delete — Delete a blueprint ──
 
   ipcMain.handle(IPC_CHANNELS.BLUEPRINT_DELETE, (event, rawArgs: unknown) => {
@@ -319,8 +449,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const taskId = requireString(args, 'taskId', ch)
     // Default true so a bare { blueprintId, taskId } skips; pass false to clear.
     const skipped = args.skipped === undefined ? true : args.skipped === true
-    const task = blueprintService.setTaskUserSkipped(blueprintId, taskId, skipped)
-    return { skipped: task.skippedByUserAt != null, skippedAt: task.skippedByUserAt }
+    // Optional operator note. Validated like branchChoice: wrong type is dropped,
+    // never coerced, and capped so the renderer cannot write an unbounded column.
+    const note = typeof args.note === 'string' ? args.note.trim().slice(0, 500) || null : null
+    const task = blueprintService.setTaskUserSkipped(blueprintId, taskId, skipped, note)
+    return {
+      skipped: task.skippedByUserAt != null,
+      skippedAt: task.skippedByUserAt,
+      outcomeKind: task.outcomeKind
+    }
   })
 
   // ── blueprint:rewindPhase — Rewind to a previous phase ──
@@ -638,7 +775,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
 
   // ── blueprint:startSpecify — Start the SPECIFY phase ──
 
-  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, (event, rawArgs: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_START_SPECIFY, async (event, rawArgs: unknown) => {
     validateSender(event)
     const ch = IPC_CHANNELS.BLUEPRINT_START_SPECIFY
     const args = requireObject(rawArgs, ch)
@@ -662,6 +799,15 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const referenceDocuments = extractReferenceDocuments(
       blueprint.settingsJson as Record<string, unknown> | null
     )
+
+    // Name and create the run's branch before any phase starts, so the UI can
+    // show it from Specify onwards instead of only after BUILD. Awaited (it is
+    // a ref, not a worktree — milliseconds) and never throws.
+    await reserveBlueprintBranch({
+      blueprintId,
+      workspaceId,
+      workspacePath: workspace.repoPath
+    })
 
     // Start the SPECIFY phase (non-blocking)
     blueprintSpecService

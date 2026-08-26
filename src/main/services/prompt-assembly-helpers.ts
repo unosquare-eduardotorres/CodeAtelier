@@ -14,6 +14,7 @@ import {
   IMAGE_ATTACHMENTS_PROMPT,
   LIBRARY_DOCS_GUIDANCE_PROMPT,
   MAESTRO_GUIDANCE_PROMPT,
+  JIRA_GUIDANCE_PROMPT,
   MEMORY_PROTOCOL_PROMPT,
   PROCESS_MANAGER_GUIDANCE_PROMPT,
   RECALL_TOOLS_PROMPT,
@@ -133,6 +134,11 @@ const GUIDANCE_SECTIONS: GuidanceSection[] = [
     marker: '## Maestro',
     flag: (f) => !!f.externalMcpActive?.['maestro'],
     prompt: MAESTRO_GUIDANCE_PROMPT
+  },
+  {
+    marker: '## Jira',
+    flag: (f) => !!f.externalMcpActive?.['jira'],
+    prompt: JIRA_GUIDANCE_PROMPT
   },
   // ESLint: only entry where lean differs (full includes "Warnings OK; errors are NOT")
   {

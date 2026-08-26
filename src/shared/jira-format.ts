@@ -56,6 +56,15 @@ export function formatIssueBrief(issue: JiraIssueDetail): string {
     )
   }
 
+  // Named so the `[image: ...]` placeholders the description carries can be
+  // matched to files. The files themselves arrive as reference documents; the
+  // Jira URL is credentialed and useless to the agent.
+  if (issue.attachments?.length) {
+    sections.push(
+      `### Attachments\n\n${issue.attachments.map((a) => `- ${a.filename}`).join('\n')}`
+    )
+  }
+
   return sections.join('\n\n')
 }
 

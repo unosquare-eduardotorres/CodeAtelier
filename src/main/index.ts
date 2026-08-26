@@ -1,3 +1,7 @@
+// MUST be first: pins app.getName() before any import resolves a userData path.
+// Reordering this below another import re-opens the store-flipping bug that
+// presented as "the update wiped my workspaces and credentials".
+import './app-identity'
 import log, { dbLogger } from './logger'
 import { startVitals, stopVitals, setVitalsProviders, vitalsLog } from './main-vitals'
 import { openCodeExecutor } from './services/opencode-executor'
@@ -111,9 +115,8 @@ locateOpenCodeCli()
     log.error('[OpenCode CLI] Location check failed:', err)
   })
 
-// Fix dock tooltip: Electron defaults to "Electron" in dev mode.
-// Must be set before app.whenReady().
-app.setName('Code Atelier')
+// App name (and therefore the userData directory) is pinned in ./app-identity,
+// imported first so it cannot lose a race with the logger or the DB module.
 
 // ── Single-instance lock: prevent multiple instances opening the same DB ──
 // Two Electron processes writing to the same SQLite file (5+ GB) cause

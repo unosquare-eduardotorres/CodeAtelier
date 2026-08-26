@@ -29,10 +29,19 @@ export interface HandoffMessageParams {
    * when it is actually on a branch someone else is holding.
    */
   unclaimedBranch?: string | null
+  /**
+   * The Jira ticket the blueprint was imported from, when it had one.
+   *
+   * The key already reaches the chat, but only as one line in the decisions
+   * dump — which tells the agent the number without telling it the ticket is
+   * something it is expected to read and answer to.
+   */
+  jiraIssueKey?: string
 }
 
 export function composeHandoffMessage(params: HandoffMessageParams): string {
-  const { contextMarkdown, spec, branchName, inheritedTrack, unclaimedBranch } = params
+  const { contextMarkdown, spec, branchName, inheritedTrack, unclaimedBranch, jiraIssueKey } =
+    params
   const lines: string[] = [contextMarkdown.trimEnd(), '', '### Where this work lives', '']
 
   // Which of these three is true changes the agent's first move, and it cannot
@@ -59,6 +68,15 @@ export function composeHandoffMessage(params: HandoffMessageParams): string {
     lines.push(
       `The blueprint ran in the workspace checkout rather than a branch of its own, so its ` +
         `output is already in the working tree you are in.`
+    )
+  }
+
+  if (jiraIssueKey) {
+    lines.push(
+      '',
+      `This work started from Jira ticket \`${jiraIssueKey}\`, which is the requirement of ` +
+        `record — read it with \`mcp__jira__get_issue\` rather than inferring it from the title, ` +
+        `and use \`mcp__jira__add_comment\` to post back to it when asked.`
     )
   }
 

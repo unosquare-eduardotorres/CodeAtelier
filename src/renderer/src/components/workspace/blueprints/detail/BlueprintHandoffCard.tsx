@@ -17,7 +17,17 @@
  */
 
 import { useState, useEffect, useCallback, type JSX } from 'react'
-import { MessageSquarePlus, Loader2, AlertTriangle, GitBranch, ArrowRight } from 'lucide-react'
+import {
+  MessageSquarePlus,
+  Loader2,
+  AlertTriangle,
+  GitBranch,
+  ArrowRight,
+  Search,
+  Play,
+  GitPullRequest,
+  type LucideIcon
+} from 'lucide-react'
 import { BLUEPRINT_HANDOFF_INTENTS } from '../../../../../../shared/blueprint-handoff'
 import type {
   BlueprintHandoffIntent,
@@ -27,11 +37,29 @@ import type {
 import { useChatStore } from '@renderer/store/chat.store'
 import { rendererLog } from '@renderer/utils/logger'
 
+/**
+ * Icons live here rather than on the shared intent spec: the shared table is the
+ * contract between the message main composes and the label the renderer shows,
+ * and a lucide component is neither.
+ */
+const INTENT_ICONS: Record<BlueprintHandoffIntent, LucideIcon> = {
+  continue: ArrowRight,
+  review: Search,
+  run: Play,
+  ship: GitPullRequest
+}
+
 interface BlueprintHandoffCardProps {
   blueprintId: string
   blueprintTitle: string
   workspaceId: string | null
   onNavigateToChat?: () => void
+  /**
+   * Loud treatment. A finished blueprint is the expected moment to hand over, so
+   * it gets the accent card; a run with merely one finished phase stays quiet,
+   * because handing over mid-run is the unusual case.
+   */
+  prominent?: boolean
 }
 
 /** Strip Electron's `Error invoking remote method 'x':` prefix off IPC rejections. */
@@ -44,7 +72,8 @@ export function BlueprintHandoffCard({
   blueprintId,
   blueprintTitle,
   workspaceId,
-  onNavigateToChat
+  onNavigateToChat,
+  prominent = false
 }: BlueprintHandoffCardProps): JSX.Element | null {
   const [options, setOptions] = useState<BlueprintHandoffOptions | null>(null)
   const [branchMode, setBranchMode] = useState<BlueprintBranchMode>('take')
@@ -141,12 +170,26 @@ export function BlueprintHandoffCard({
   const busy = options?.busyReason ?? null
 
   return (
-    <div className="bg-surface-raised rounded-xl border border-border-subtle p-4 space-y-3">
+    <div
+      className={
+        prominent
+          ? 'rounded-xl border border-accent/20 bg-accent/5 p-4 space-y-3'
+          : 'bg-surface-raised rounded-xl border border-border-subtle p-4 space-y-3'
+      }
+    >
       <div className="flex items-center gap-2">
         <MessageSquarePlus size={14} className="text-accent" />
-        <span className="text-xs font-semibold text-text-primary">Continue in Chat</span>
+        <span
+          className={
+            prominent
+              ? 'text-sm font-medium text-accent'
+              : 'text-xs font-semibold text-text-primary'
+          }
+        >
+          Continue in Chat
+        </span>
       </div>
-      <p className="text-[11px] text-text-muted">
+      <p className={prominent ? 'text-xs text-accent opacity-80' : 'text-[11px] text-text-muted'}>
         Hands this blueprint&apos;s branch, working tree and context to a new conversation. The
         first message is staged for you to review — nothing is sent automatically.
       </p>
@@ -222,21 +265,39 @@ export function BlueprintHandoffCard({
       )}
 
       <div className="grid grid-cols-2 gap-2">
-        {BLUEPRINT_HANDOFF_INTENTS.map((spec) => (
-          <button
-            key={spec.id}
-            type="button"
-            disabled={pending !== null}
-            onClick={() => void handoff(spec.id)}
-            className="flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg border border-border-subtle text-left transition-colors hover:bg-surface-overlay/50 hover:border-accent/40 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary/50 outline-none"
-          >
-            <span className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
-              {pending === spec.id && <Loader2 size={11} className="animate-spin" />}
-              {spec.label}
-            </span>
-            <span className="text-[10px] text-text-muted">{spec.description}</span>
-          </button>
-        ))}
+        {BLUEPRINT_HANDOFF_INTENTS.map((spec) => {
+          // One of the four is the next step; the other three are alternatives.
+          // Four identical ghost buttons made the user pick by reading.
+          const isPrimary = spec.id === 'continue'
+          const Icon = INTENT_ICONS[spec.id]
+          return (
+            <button
+              key={spec.id}
+              type="button"
+              disabled={pending !== null}
+              onClick={() => void handoff(spec.id)}
+              className={`flex flex-col items-start gap-0.5 px-3 py-2 rounded-lg text-left transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary/50 outline-none ${
+                isPrimary
+                  ? 'bg-accent text-white hover:bg-accent/80'
+                  : 'border border-border-default bg-surface-overlay/60 text-text-primary hover:bg-surface-float'
+              }`}
+            >
+              <span className="flex items-center gap-1.5 text-xs font-medium">
+                {pending === spec.id ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : (
+                  <Icon size={11} className="flex-shrink-0" />
+                )}
+                {spec.label}
+              </span>
+              <span
+                className={isPrimary ? 'text-[10px] opacity-80' : 'text-[10px] text-text-muted'}
+              >
+                {spec.description}
+              </span>
+            </button>
+          )
+        })}
       </div>
 
       {error && (

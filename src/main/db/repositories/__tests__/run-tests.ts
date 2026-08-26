@@ -60,6 +60,9 @@ import './memory-bootstrap.repository.test'
 // ─── Per-conversation git worktrees (migration 139) ───
 import './track.repository.test'
 
+// ─── Audit finding handoff markers (migration 145) ───
+import './audit-handoff.repository.test'
+
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

@@ -10,7 +10,7 @@
  *   └─ PhaseJourney (accordion list of all phases) ───────────────┘
  */
 
-import { useState, useMemo, type JSX } from 'react'
+import { useState, useMemo, useRef, useCallback, type JSX } from 'react'
 import {
   StopCircle,
   Clock,
@@ -20,8 +20,10 @@ import {
   ChevronDown,
   AlertTriangle,
   MessageSquareText,
+  MessageSquarePlus,
   UserCheck,
-  CheckCircle2
+  CheckCircle2,
+  GitBranch
 } from 'lucide-react'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
 import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
@@ -35,6 +37,9 @@ import { OutcomeSummary } from './OutcomeSummary'
 import { BlueprintHandoffCard } from './BlueprintHandoffCard'
 import { getOutcomeStats, formatDuration } from './phase-summaries'
 import { findArtifact } from '../deliverables/artifact-helpers'
+import { BlueprintAttachments } from './BlueprintAttachments'
+import { extractReferenceDocs, readBlueprintBranchName } from './reference-docs'
+import { DraftPanel } from './DraftPanel'
 
 // ── Markdown Description Block (collapsible) ──
 
@@ -101,8 +106,19 @@ export function BlueprintDetailView({
   // All hooks must be called before any early returns (Rules of Hooks)
   const bp = currentBlueprint
   const isComplete = bp?.status === 'complete'
+  const isDraft = bp?.status === 'draft'
+  const referenceDocs = useMemo(() => (bp ? extractReferenceDocs(bp.settingsJson) : []), [bp])
+  const branchName = bp ? readBlueprintBranchName(bp.settingsJson) : null
   const outcomeStats = isComplete && bp ? getOutcomeStats(bp.phases, bp.tasks) : null
   const isGapsFound = isComplete && outcomeStats?.verifyStatus === 'gaps_found'
+
+  // The handoff card sits below the phase banners — roughly a screen down on a
+  // finished run. The header button scrolls to it rather than duplicating the
+  // intent picker: one place to choose an intent, two places to find it.
+  const handoffCardRef = useRef<HTMLDivElement>(null)
+  const scrollToHandoff = useCallback(() => {
+    handoffCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [])
 
   // Extract human verification items from verify artifact
   const humanVerificationItems = useMemo(() => {
@@ -158,11 +174,34 @@ export function BlueprintDetailView({
         <div className="flex items-center gap-2 flex-wrap">
           <h4 className="text-sm font-semibold text-text-primary">{bp.title}</h4>
           <StatusBadge status={bp.status} />
+          {/* The run's own branch. Absent until the run starts, and deliberately
+              distinct from the status bar, which shows the workspace checkout. */}
+          {branchName && (
+            <span
+              data-testid="blueprint-branch-chip"
+              title={`This blueprint works on ${branchName}`}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-mono rounded bg-surface-inset text-text-secondary max-w-[240px]"
+            >
+              <GitBranch size={10} className="flex-shrink-0" />
+              <span className="truncate">{branchName}</span>
+            </span>
+          )}
           {totalDuration && (
             <span className="text-[10px] text-text-muted flex items-center gap-1">
               <Clock size={10} />
               {totalDuration}
             </span>
+          )}
+          {isComplete && (
+            <button
+              type="button"
+              data-testid="blueprint-handoff-jump"
+              onClick={scrollToHandoff}
+              className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium text-accent hover:bg-accent/10 rounded-lg transition-colors"
+            >
+              <MessageSquarePlus size={11} />
+              Continue in chat
+            </button>
           )}
         </div>
         {bp.description && <DescriptionBlock description={bp.description} />}
@@ -185,6 +224,12 @@ export function BlueprintDetailView({
             )}
         </div>
       </div>
+
+      {/* ── Draft: edit + start, the only actions a never-run blueprint has ── */}
+      {isDraft && <DraftPanel blueprint={bp} workspaceId={workspaceId} />}
+
+      {/* ── Attachments (drafts render their own copy inside DraftPanel) ── */}
+      {!isDraft && <BlueprintAttachments documents={referenceDocs} />}
 
       {/* ── Outcome Summary (complete runs only) ── */}
       {outcomeStats && <OutcomeSummary stats={outcomeStats} />}
@@ -395,12 +440,15 @@ export function BlueprintDetailView({
 
       {/* ── Continue in Chat (only once the run has produced something to hand over) ── */}
       {!isRunning && bp.phases.some((p) => p.status === 'complete') && (
-        <BlueprintHandoffCard
-          blueprintId={bp.id}
-          blueprintTitle={bp.title}
-          workspaceId={workspaceId}
-          onNavigateToChat={onNavigateToChat}
-        />
+        <div ref={handoffCardRef}>
+          <BlueprintHandoffCard
+            blueprintId={bp.id}
+            blueprintTitle={bp.title}
+            workspaceId={workspaceId}
+            onNavigateToChat={onNavigateToChat}
+            prominent={isComplete}
+          />
+        </div>
       )}
 
       {/* ── Phase Journey (replaces flat Phases + Tasks lists) ── */}

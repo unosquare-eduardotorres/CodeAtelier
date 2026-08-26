@@ -25,6 +25,7 @@ import {
 } from './blueprint-phase-watchdog'
 import type {
   BlueprintTask,
+  BlueprintTaskOutcomeKind,
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload,
@@ -63,10 +64,6 @@ const TASK_TIMEOUT_MS = 30 * 60_000 // 30 min per task
 // ── Overload retry constants ──
 const OVERLOAD_MAX_RETRIES = 2 // 3 total attempts per task
 const OVERLOAD_BACKOFF_BASE_MS = 60_000 // 60s, then 120s (exponential)
-
-/** Matches evidence-only / re-run-verify task descriptions for soft-pass gating. Exported for tests (GAP-5). */
-export const EVIDENCE_ONLY_RX =
-  /\bre-?run\b.*\b(verify|verification)\b|\bverif\w+ (pass|evidence)\b|\bevidence.*(eslint|tsc|vitest|complexity|dead.?code)/i
 
 /**
  * Abort-aware sleep: resolves after `ms` OR rejects immediately if the signal
@@ -131,6 +128,8 @@ interface TaskResult {
   timing?: TaskTiming
   /** When success=false, the reason for failure (session outcome or 'no-write-activity'). */
   failureReason?: string
+  /** How the task closed — persisted so a reload still explains the outcome. */
+  outcomeKind?: BlueprintTaskOutcomeKind
 }
 
 /** In-flight task metadata for the parallel scheduler. */
@@ -770,6 +769,29 @@ export class BlueprintBuildService extends EventEmitter {
       return merged
     }
 
+    /**
+     * BP-DEPENDSON-DISPATCH-01: a task that declares dependencies must not start
+     * while any of them is unfinished *in this wave*.
+     *
+     * The tasks phase has always emitted `dependsOn` and the repository has
+     * always persisted it, but the scheduler only ever guarded on file *writes*.
+     * A gate task — one that reads and validates what its wave-mates produce —
+     * declares no overlapping files, so it dispatched alongside them and tested
+     * against half-applied edits.
+     *
+     * Only declared dependencies serialize; `[P]` and the file-overlap guard are
+     * untouched.
+     */
+    const blockedByDep = (task: BlueprintTask): boolean => {
+      const deps = task.dependsOnJson
+      if (!deps?.length) return false
+      return deps.some(
+        (id) =>
+          id !== task.taskId &&
+          (inFlight.has(id) || pending.some((p) => p.taskId === id && !dispatched.has(p.taskId)))
+      )
+    }
+
     /** Update runningTasks snapshot on blueprint service (G3). */
     const syncRunningTasks = (): void => {
       const running: Record<string, { taskId: string; description: string }> = {}
@@ -814,6 +836,13 @@ export class BlueprintBuildService extends EventEmitter {
             dispatched.add(task.taskId)
             scanStart++
             if (scanStart === pendingIdx + 1) pendingIdx = scanStart
+            continue
+          }
+
+          // Declared-dependency guard — checked before the file guards so a gate
+          // task waits for what it validates even when it declares no files.
+          if (blockedByDep(task)) {
+            scanStart++
             continue
           }
 
@@ -885,8 +914,14 @@ export class BlueprintBuildService extends EventEmitter {
           pendingIdx++
         }
         if (pendingIdx < pending.length && !draining) {
-          // Advance past any skipped tasks by dispatching next one exclusively
-          const nextTask = pending[pendingIdx]
+          // Advance past any skipped tasks by dispatching next one exclusively.
+          // Prefer the first task whose declared dependencies are all settled —
+          // otherwise this fallback would undo the dependsOn guard. If every
+          // remaining task is blocked (a dependency cycle the validator missed),
+          // take the head anyway: a wrong order beats a hung wave.
+          const nextTask =
+            pending.slice(pendingIdx).find((t) => !dispatched.has(t.taskId) && !blockedByDep(t)) ??
+            pending[pendingIdx]
           const taskFiles = normalizePaths(nextTask.filePathsJson)
           this.dispatchTask({
             task: nextTask,
@@ -903,7 +938,7 @@ export class BlueprintBuildService extends EventEmitter {
           dispatched.add(nextTask.taskId)
           if (taskFiles.size === 0) exclusiveInFlight = true
           syncRunningTasks()
-          pendingIdx++
+          if (nextTask.taskId === pending[pendingIdx].taskId) pendingIdx++
         } else {
           break
         }
@@ -1220,9 +1255,17 @@ export class BlueprintBuildService extends EventEmitter {
       // Persist per-task completion data so the verify-phase disk check can
       // distinguish claimed files (hard failure) from planned-but-not-claimed
       // files (drift — informational only).
+      const verifiedUnchanged = asStringArray(taskResult.completion?.filesVerifiedUnchanged)
       blueprintTaskRepository.setCompletion(task.id, {
         filesCreated: created,
-        filesModified: modified
+        filesModified: modified,
+        ...(verifiedUnchanged.length > 0 ? { filesVerifiedUnchanged: verifiedUnchanged } : {})
+      })
+
+      // Record how it closed and clear any reason left over from a prior attempt.
+      blueprintTaskRepository.setOutcome(task.id, {
+        outcomeKind: taskResult.outcomeKind ?? 'verified',
+        failureReason: null
       })
 
       // BP-DISC-01: Accumulate per-task discoveries (merge on completion)
@@ -1242,10 +1285,12 @@ export class BlueprintBuildService extends EventEmitter {
     } else {
       blueprintTaskRepository.updateStatus(task.id, 'failed')
       // BP-TASK-FAILURE-REASON: Collect per-task failure reasons for UI surfacing
-      result.taskFailures.push({
-        taskId: task.taskId,
-        reason: taskResult.failureReason ?? 'unknown'
-      })
+      const reason = taskResult.failureReason ?? 'unknown'
+      result.taskFailures.push({ taskId: task.taskId, reason })
+      // Persist it too — the event is transient, so without this a reload leaves
+      // nothing on disk explaining why the task is red, and the retry that
+      // follows has no idea what it is walking back into.
+      blueprintTaskRepository.setOutcome(task.id, { failureReason: reason, outcomeKind: null })
     }
 
     this.safeEmit('waveTaskComplete', {
@@ -1454,7 +1499,8 @@ export class BlueprintBuildService extends EventEmitter {
     const taskContext = this.buildTaskContext(
       task,
       params.priorDiscoveries,
-      priorPartial?.contentMd
+      priorPartial?.contentMd,
+      task.failureReason
     )
 
     // Create adapter + session
@@ -1647,26 +1693,49 @@ export class BlueprintBuildService extends EventEmitter {
           taskStartedAt: tDispatch
         })
 
-        // BP-EVIDENCE-ONLY-SOFTPASS: Defense-in-depth for verification/evidence-only tasks.
-        // When verification fails with stale-only or no-fresh-file (no files actually absent)
-        // AND the task description matches a verification/evidence pattern, soft-pass it.
-        // These tasks (e.g. "Re-run the full verify pass with evidence") modify no files
-        // by design, so the mtime-freshness net always rejects them. The remediation loop
-        // already re-runs verify — a build-wave verify task is redundant.
-        // GAP-4 FIX: Dropped bare `run` alternative — only match `re-run`/`rerun` to
-        // avoid false soft-pass on tasks like "Run migrations and verify schema".
-        // Regex exported at module level as EVIDENCE_ONLY_RX (GAP-5).
-        const isEvidenceOnlyTask =
-          !verification.ok &&
-          verification.missingClaimed.length === 0 &&
-          verification.missingPlanned.length === 0 &&
-          EVIDENCE_ONLY_RX.test(task.description)
+        // BP-ACCEPTANCE-DEVIATION-01: an acceptance criterion that baked in a
+        // count discovered while planning ("all 78 commands") fails correct work
+        // when the source has since drifted. The agent reports the mismatch
+        // instead of failing on it — it surfaces as a warning for VERIFY and the
+        // human, not as a red task.
+        const acceptanceDeviation =
+          typeof completion?.acceptanceDeviation === 'string'
+            ? completion.acceptanceDeviation.trim()
+            : ''
+        if (acceptanceDeviation) {
+          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+          if (buildPhase) {
+            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+              type: 'verification-warning',
+              contentMd:
+                `## Task ${task.taskId} — acceptance criterion deviates from the source\n\n` +
+                `${acceptanceDeviation}\n`
+            })
+          }
+          taskDiscoveries.push(`Task ${task.taskId} acceptance deviation: ${acceptanceDeviation}`)
+        }
 
-        if (isEvidenceOnlyTask) {
+        // FIX-2: No-write-activity hard-fail rule (hoisted — the unproven branch
+        // below needs it too). A completion that claims files while the session
+        // invoked no write-capable tool and no Bash is describing a prior run's
+        // output, not this one. This is the *direct* measurement of "did the agent
+        // work"; mtime freshness is only a proxy for it.
+        const claimedFiles =
+          asStringArray(completion?.filesCreated).length +
+          asStringArray(completion?.filesModified).length
+        const hasPlannedFiles = task.filePathsJson?.length > 0
+        const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
+
+        // BP-VERIFY-UNPROVEN-01: "exists but not provably fresh" is not "missing".
+        // An agent that inspects code, finds it already correct and declines to
+        // rewrite it produces stale-only claims — identical on disk to an agent
+        // that did nothing. The two are separated by write activity, not by mtime,
+        // and not (as before) by pattern-matching the task description.
+        if (verification.verdict === 'unproven' && !noWriteActivity) {
           bpLog.warn(
-            `[executeTask] Task ${task.taskId} verification soft-pass — ` +
-              `evidence-only task with ${verification.staleClaimed.length} stale file(s), ` +
-              `no missing files. Description: "${task.description.slice(0, 120)}"`
+            `[executeTask] Task ${task.taskId} verification UNPROVEN — ` +
+              `${verification.staleClaimed.length} claimed file(s) exist but are not fresh; ` +
+              `session made ${writeToolCalls} write call(s) and ${bashCalls} Bash call(s) — passing with warning`
           )
           // Append a warning artifact (not failure) so it's visible in Deliverables
           const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
@@ -1674,22 +1743,26 @@ export class BlueprintBuildService extends EventEmitter {
             blueprintPhaseRepository.appendArtifact(buildPhase.id, {
               type: 'verification-warning',
               contentMd:
-                `## Task ${task.taskId} — verification soft-pass (evidence-only)\n\n` +
-                `This task is a verification/evidence-gathering task that modifies no files by design.\n` +
-                `The file-freshness check found ${verification.staleClaimed.length} stale file(s) but ` +
-                `no files are actually missing — treated as passed with warning.\n\n` +
-                (verification.staleClaimed.length > 0
-                  ? `**Stale files (${verification.staleClaimed.length}):**\n` +
-                    verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
-                    '\n'
-                  : '')
+                `## Task ${task.taskId} — completed, freshness unproven\n\n` +
+                `Every file this task claimed is present on disk, but ` +
+                `${verification.staleClaimed.length} of them were not modified during this run. ` +
+                `The session did perform write activity, so the task is treated as complete ` +
+                `— VERIFY still checks the same files.\n\n` +
+                `**Unproven files (${verification.staleClaimed.length}):**\n` +
+                verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
+                '\n'
             })
           }
-          taskResult = { success: true, completion, discoveries: taskDiscoveries }
+          taskDiscoveries.push(
+            `Task ${task.taskId}: ${verification.staleClaimed.length} claimed file(s) exist but were unmodified this run — verify their content.`
+          )
+          taskResult = {
+            success: true,
+            completion,
+            discoveries: taskDiscoveries,
+            outcomeKind: 'unproven'
+          }
         } else if (!verification.ok) {
-          const n =
-            asStringArray(completion?.filesCreated).length +
-            asStringArray(completion?.filesModified).length
           const missingList =
             verification.missingClaimed.length > 0
               ? verification.missingClaimed
@@ -1736,10 +1809,8 @@ export class BlueprintBuildService extends EventEmitter {
             text:
               `⚠ Task ${task.taskId} marked FAILED — ` +
               (verification.missingClaimed.length > 0
-                ? `claimed ${n} file(s), ${verification.missingClaimed.length} missing on disk`
-                : verification.staleClaimed.length > 0
-                  ? `${verification.staleClaimed.length} claimed file(s) stale on disk`
-                  : `no output files found (${verification.missingPlanned.length} planned files absent)`),
+                ? `claimed ${claimedFiles} file(s), ${verification.missingClaimed.length} missing on disk`
+                : `no output files found (${verification.missingPlanned.length} planned files absent)`),
             kind: 'system'
           })
 
@@ -1767,16 +1838,11 @@ export class BlueprintBuildService extends EventEmitter {
             failureReason: verifyFailReason
           }
         } else {
-          // FIX-2: No-write-activity hard-fail rule.
-          // If the completion claims filesCreated/filesModified BUT the session never
-          // invoked a write-capable tool, the files on disk are stale from a prior run.
+          // If the completion claims files BUT the session never invoked a
+          // write-capable tool, the files on disk are stale from a prior run.
           // Also fail when no completion + zero write calls + task has planned files.
-          const claimedFiles =
-            asStringArray(completion?.filesCreated).length +
-            asStringArray(completion?.filesModified).length
-          const hasPlannedFiles = task.filePathsJson?.length > 0
-          const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
-
+          // This is the guard that keeps the R029 hole shut now that stale-only
+          // claims no longer hard-fail on their own.
           if (noWriteActivity && (claimedFiles > 0 || (!completion && hasPlannedFiles))) {
             bpLog.error(
               `[executeTask] Task ${task.taskId} FAILED — no-write-activity: ` +
@@ -1796,7 +1862,15 @@ export class BlueprintBuildService extends EventEmitter {
               failureReason: 'no-write-activity'
             }
           } else {
-            taskResult = { success: true, completion, discoveries: taskDiscoveries }
+            taskResult = {
+              success: true,
+              completion,
+              discoveries: taskDiscoveries,
+              outcomeKind:
+                verification.preexistingClaimed.length > 0 && claimedFiles === 0
+                  ? 'preexisting'
+                  : 'verified'
+            }
           }
         }
       } // end of sendOutcome === 'ok' else block
@@ -1884,7 +1958,8 @@ export class BlueprintBuildService extends EventEmitter {
   private buildTaskContext(
     task: BlueprintTask,
     priorDiscoveries?: string[],
-    priorAttemptOutput?: string
+    priorAttemptOutput?: string,
+    priorFailureReason?: string | null
   ): string {
     const lines: string[] = [
       `**Task ID**: ${task.taskId}`,
@@ -1927,6 +2002,21 @@ export class BlueprintBuildService extends EventEmitter {
       lines.push('')
       lines.push(
         'Build on this work — do NOT restart from scratch. Re-read modified files to verify state.'
+      )
+    }
+
+    // BP-RETRY-REASON-01: retryPhase resets status to 'pending' but keeps the
+    // reason. Without telling the agent what the previous verdict was, a retry
+    // re-enters the identical trap — most often by rewriting files that were
+    // already correct just to move their mtime.
+    if (priorFailureReason) {
+      lines.push('')
+      lines.push(`**⚠️ Previous attempt failed**: ${priorFailureReason}`)
+      lines.push(
+        'If a file this task covers is already correct, do NOT rewrite it to look busy — ' +
+          'list it under `filesVerifiedUnchanged` in the completion block instead. ' +
+          'If an acceptance criterion disagrees with the source, record the mismatch in ' +
+          '`acceptanceDeviation` rather than forcing the code to match it.'
       )
     }
 
