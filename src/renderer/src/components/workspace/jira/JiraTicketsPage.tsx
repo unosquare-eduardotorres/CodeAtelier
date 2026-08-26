@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
   BookOpen,
+  ChevronDown,
   Loader2,
   MessageSquare,
+  RefreshCw,
   Search,
   Settings2,
   SquareKanban
@@ -12,13 +14,17 @@ import { Button } from '@renderer/components/common/ui'
 import { useChatActions, useWorkspaceStore } from '@renderer/store'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../../../../shared/constants'
 import type { IntegrationCredentialStatus } from '../../../../../shared/integration-credentials.types'
-import type { JiraCreateBlueprintsResult } from '../../../../../shared/jira.types'
-import { JIRA_QUICK_FILTERS } from '../../../../../shared/jira.types'
+import type { JiraCreateBlueprintsResult, JiraTransition } from '../../../../../shared/jira.types'
+import { JIRA_MAX_BULK_ISSUES, JIRA_MAX_LOADED_ROWS } from '../../../../../shared/jira.types'
 import { buildJiraChatPrompt } from '../../../../../shared/jira-format'
 import { IntegrationCard } from '../integrations'
 import JiraTicketList from './JiraTicketList'
 import JiraTicketDetail from './JiraTicketDetail'
+import JiraListControls from './JiraListControls'
+import JiraScopeControls from './JiraScopeControls'
+import JiraFilterChips from './JiraFilterChips'
 import { useJiraTickets } from './useJiraTickets'
+import { useJiraKeyboard } from './useJiraKeyboard'
 
 /** The Jira entry in the integration registry — drives the connection card. */
 const JIRA_INTEGRATION = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'jira')!
@@ -26,12 +32,25 @@ const JIRA_INTEGRATION = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'jira')!
 /** Jira is a bundled server, so there is no CLI to probe on PATH. */
 const BUNDLED_CLI_STATUS = { checked: true, found: true }
 
+/** Transition that means "I have started this", if the workflow offers one. */
+function findInProgress(transitions: JiraTransition[]): JiraTransition | null {
+  return (
+    transitions.find(
+      (t) => /in\s*progress/i.test(t.toStatus ?? '') || /in\s*progress/i.test(t.name)
+    ) ?? null
+  )
+}
+
 /**
  * Jira tickets panel.
  *
  * Owns Jira setup as well as browsing: the credential form used to live on the
  * Integrations page, but a user who comes here to find a ticket and discovers
  * Jira is not connected should not have to go looking for another tab.
+ *
+ * There is deliberately no auto-refresh. Polling a corporate Jira behind a VPN
+ * is how a workspace gets rate-limited, so the list carries an "as of" stamp and
+ * a refresh button instead.
  */
 export default function JiraTicketsPage({
   onNavigateToChat,
@@ -52,12 +71,37 @@ export default function JiraTicketsPage({
   const [busy, setBusy] = useState<null | 'blueprints' | 'chat'>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [conversionResult, setConversionResult] = useState<JiraCreateBlueprintsResult | null>(null)
+  // Both are stamped with the ticket they belong to rather than reset on
+  // selection change: changing the selection then implicitly un-ticks the box
+  // and drops the stale transition, with no effect writing state to do it.
+  const [transitionFor, setTransitionFor] = useState<{
+    issueKey: string
+    transition: JiraTransition | null
+  } | null>(null)
+  const [moveIssueKey, setMoveIssueKey] = useState<string | null>(null)
+
+  const filterInputRef = useRef<HTMLInputElement | null>(null)
 
   const isConnected = credentialStatus?.configured === true
 
   const tickets = useJiraTickets(workspaceId, isConnected)
   const selectedCount = tickets.selectedKeys.size
   const selectedKeyList = useMemo(() => [...tickets.selectedKeys], [tickets.selectedKeys])
+  /** The one selected ticket, or null — the chat handoff only works on one. */
+  const singleKey = selectedKeyList.length === 1 ? selectedKeyList[0] : null
+
+  const inProgressTransition =
+    singleKey !== null && transitionFor?.issueKey === singleKey ? transitionFor.transition : null
+  const moveToInProgress = singleKey !== null && moveIssueKey === singleKey
+
+  useJiraKeyboard({
+    enabled: isConnected,
+    filterInputRef,
+    cursorKey: tickets.cursorKey,
+    onMove: tickets.moveCursor,
+    onToggle: tickets.toggleSelected,
+    onOpen: tickets.setActiveKey
+  })
 
   // ── Credential + settings state (shared with the connection card) ──
 
@@ -106,6 +150,27 @@ export default function JiraTicketsPage({
     []
   )
 
+  // ── "Move to In Progress" opt-in, for the single-ticket chat handoff ──
+
+  useEffect(() => {
+    if (!workspaceId || singleKey === null) return
+    let cancelled = false
+    window.api
+      .jiraListTransitions({ workspaceId, issueKey: singleKey })
+      .then((transitions) => {
+        if (!cancelled) {
+          setTransitionFor({ issueKey: singleKey, transition: findInProgress(transitions) })
+        }
+      })
+      // No transitions readable means no checkbox — never an error banner.
+      .catch(() => {
+        if (!cancelled) setTransitionFor({ issueKey: singleKey, transition: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, singleKey])
+
   // ── Conversions ──
 
   const handleCreateBlueprints = async (): Promise<void> => {
@@ -126,6 +191,8 @@ export default function JiraTicketsPage({
         ...result.created.map((c) => c.issueKey),
         ...result.skipped.map((s) => s.issueKey)
       ])
+      // Badge the newly converted rows without a re-search.
+      void tickets.reloadConverted()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to create blueprints.')
     } finally {
@@ -134,12 +201,25 @@ export default function JiraTicketsPage({
   }
 
   const handleStartChat = async (): Promise<void> => {
-    if (!workspaceId || selectedKeyList.length !== 1) return
-    const issueKey = selectedKeyList[0]
+    if (!workspaceId || singleKey === null) return
+    const issueKey = singleKey
     setBusy('chat')
     setActionError(null)
     try {
       const issue = await window.api.jiraGetIssue({ workspaceId, issueKey })
+
+      // The status move happens first and on its own: if the workflow rejects
+      // it, nothing has been created yet and the user can retry or untick the
+      // box. Doing it after the chat exists would leave a half-done handoff
+      // behind an error the navigation immediately hides.
+      if (moveToInProgress && inProgressTransition) {
+        await window.api.jiraTransitionIssue({
+          workspaceId,
+          issueKey,
+          transitionId: inProgressTransition.id
+        })
+      }
+
       // IPC directly rather than the store action: the store's createConversation
       // returns void and bails without setting state when another switch races
       // it, which would send the brief into whichever chat happened to be active.
@@ -174,6 +254,10 @@ export default function JiraTicketsPage({
       </div>
     )
   }
+
+  const loadedCount = tickets.issues.length
+  const visibleCount = tickets.visibleIssues.length
+  const atRowCeiling = loadedCount >= JIRA_MAX_LOADED_ROWS
 
   return (
     <div data-testid="jira-tickets-page" className="flex-1 flex min-h-0">
@@ -248,21 +332,39 @@ export default function JiraTicketsPage({
                 </Button>
               </form>
 
-              <div className="flex flex-wrap gap-1.5">
-                {JIRA_QUICK_FILTERS.map((filter) => (
-                  <button
-                    key={filter.id}
-                    type="button"
-                    onClick={() => {
-                      tickets.setJql(filter.jql)
-                      void tickets.search(filter.jql)
-                    }}
-                    className="text-[11px] px-2 py-0.5 rounded-full border border-border-subtle text-text-secondary hover:border-accent hover:text-accent transition-colors"
-                  >
-                    {filter.label}
-                  </button>
-                ))}
-              </div>
+              <JiraFilterChips
+                savedFilters={tickets.savedFilters}
+                onApply={(jql) => {
+                  tickets.setJql(jql)
+                  void tickets.search(jql)
+                }}
+                onSave={tickets.saveCurrentFilter}
+                onRemove={tickets.removeSavedFilter}
+              />
+
+              <JiraScopeControls
+                projects={tickets.projects}
+                projectKey={tickets.projectKey}
+                onProjectChange={tickets.selectProject}
+                boards={tickets.boards}
+                boardId={tickets.boardId}
+                onBoardChange={tickets.selectBoard}
+                sprints={tickets.sprints}
+                sprintId={tickets.sprintId}
+                onSprintChange={tickets.selectSprint}
+              />
+
+              <JiraListControls
+                filterText={tickets.filterText}
+                onFilterChange={tickets.setFilterText}
+                filterInputRef={filterInputRef}
+                sortField={tickets.sortField}
+                sortDir={tickets.sortDir}
+                onSortChange={tickets.setSort}
+                isServerSorted={tickets.isServerSorted}
+                grouped={tickets.grouped}
+                onGroupedChange={tickets.setGrouped}
+              />
             </>
           )}
         </div>
@@ -271,7 +373,7 @@ export default function JiraTicketsPage({
         {isConnected && selectedCount > 0 && (
           <div
             data-testid="jira-selection-toolbar"
-            className="mx-6 mb-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-surface-overlay px-3 py-2 shrink-0"
+            className="mx-6 mb-3 flex items-center gap-2 flex-wrap rounded-lg border border-accent/30 bg-surface-overlay px-3 py-2 shrink-0"
           >
             <span className="text-xs text-text-primary font-medium">{selectedCount} selected</span>
             <Button
@@ -306,9 +408,31 @@ export default function JiraTicketsPage({
               )}
               Chat + branch
             </Button>
+
+            {/* Opt-in, never implicit: this writes to a ticket the whole team
+                reads, and the target status is named on the label. */}
+            {selectedCount === 1 && inProgressTransition && (
+              <label className="flex items-center gap-1 text-[11px] text-text-secondary">
+                <input
+                  type="checkbox"
+                  data-testid="jira-move-in-progress"
+                  checked={moveToInProgress}
+                  onChange={(e) => setMoveIssueKey(e.target.checked ? singleKey : null)}
+                />
+                Move to “{inProgressTransition.toStatus ?? inProgressTransition.name}”
+              </label>
+            )}
+
             <Button size="xs" variant="ghost" onClick={tickets.clearSelection}>
               Clear
             </Button>
+
+            {tickets.selectionAtCap && (
+              <span className="text-[11px] text-text-muted" data-testid="jira-selection-cap-note">
+                Capped at {JIRA_MAX_BULK_ISSUES} — each ticket costs one Jira request.
+              </span>
+            )}
+
             {!settings.jiraAvailable && (
               <span className="text-[11px] text-text-muted" data-testid="jira-tools-off-note">
                 Jira is off for this workspace — the chat gets the ticket, but no Jira tools.
@@ -377,11 +501,11 @@ export default function JiraTicketsPage({
               <AlertTriangle size={12} className="text-warning mt-0.5 shrink-0" />
               <span>{tickets.error}</span>
             </div>
-          ) : tickets.isLoading && tickets.issues.length === 0 ? (
+          ) : tickets.isLoading && loadedCount === 0 ? (
             <div className="flex items-center gap-2 text-[11px] text-text-muted">
               <Loader2 size={12} className="animate-spin" /> Searching Jira…
             </div>
-          ) : tickets.issues.length === 0 ? (
+          ) : loadedCount === 0 ? (
             <p className="text-xs text-text-secondary">
               {tickets.hasSearched
                 ? 'No tickets matched that query.'
@@ -389,24 +513,74 @@ export default function JiraTicketsPage({
             </p>
           ) : (
             <>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-text-muted">
-                  {tickets.result?.total !== undefined
-                    ? `${tickets.issues.length} of ${tickets.result.total}`
-                    : `${tickets.issues.length} ticket${tickets.issues.length === 1 ? '' : 's'}`}
-                  {tickets.result?.hasMore ? ' · more available — narrow the JQL' : ''}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-[11px] text-text-muted" data-testid="jira-result-count">
+                  {visibleCount === loadedCount
+                    ? `${loadedCount} loaded`
+                    : `${visibleCount} of ${loadedCount} loaded`}
+                  {tickets.result?.total !== undefined ? ` · ${tickets.result.total} match` : ''}
+                  {tickets.fetchedAt
+                    ? ` · as of ${new Date(tickets.fetchedAt).toLocaleTimeString()}`
+                    : ''}
                 </span>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  data-testid="jira-refresh"
+                  onClick={() => void tickets.refresh()}
+                  disabled={tickets.isLoading}
+                  title="Re-run the query — nothing polls Jira on its own"
+                >
+                  <RefreshCw size={11} className={tickets.isLoading ? 'animate-spin' : ''} />
+                  Refresh
+                </Button>
                 <Button size="xs" variant="ghost" onClick={tickets.selectAll} className="ml-auto">
                   Select all
                 </Button>
               </div>
+
+              {visibleCount === 0 && (
+                <p className="text-xs text-text-secondary">
+                  No loaded ticket matches “{tickets.filterText}”.
+                  {tickets.canLoadMore ? ' More pages exist — load them or narrow the JQL.' : ''}
+                </p>
+              )}
+
               <JiraTicketList
-                issues={tickets.issues}
+                issues={tickets.visibleIssues}
+                groups={tickets.groups}
                 selectedKeys={tickets.selectedKeys}
                 activeKey={tickets.activeKey}
+                cursorKey={tickets.cursorKey}
+                convertedKeys={tickets.convertedKeys}
                 onToggleSelected={tickets.toggleSelected}
                 onOpenDetail={tickets.setActiveKey}
+                onOpenBlueprint={onNavigateToBlueprints}
               />
+
+              {tickets.canLoadMore && (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  data-testid="jira-load-more"
+                  onClick={() => void tickets.loadMore()}
+                  disabled={tickets.isLoadingMore}
+                >
+                  {tickets.isLoadingMore ? (
+                    <Loader2 size={11} className="animate-spin" />
+                  ) : (
+                    <ChevronDown size={11} />
+                  )}
+                  Load 50 more
+                </Button>
+              )}
+
+              {atRowCeiling && (
+                <p className="text-[11px] text-text-muted" data-testid="jira-row-ceiling">
+                  Showing the first {JIRA_MAX_LOADED_ROWS} rows. Narrow the JQL to see the rest —
+                  past this point more rows stop being a list and start being a scroll.
+                </p>
+              )}
             </>
           )}
         </div>

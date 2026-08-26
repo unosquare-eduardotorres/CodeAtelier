@@ -5,9 +5,14 @@ import type {
   IntegrationCredentialStatus
 } from '../shared/integration-credentials.types'
 import type {
+  JiraBoard,
   JiraCreateBlueprintsResult,
+  JiraCurrentUser,
   JiraIssueDetail,
-  JiraSearchResult
+  JiraProject,
+  JiraSearchResult,
+  JiraSprint,
+  JiraTransition
 } from '../shared/jira.types'
 import type {
   Workspace,
@@ -44,6 +49,7 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   EmbeddingModelStatus,
+  ModelsRuntimeStatus,
   OllamaStatus,
   PullProgress,
   IndexingState,
@@ -267,7 +273,36 @@ const api = {
     workspaceId: string
     jql: string
     maxResults?: number
+    /** Opaque `nextCursor` from a previous page; omit for the first page. */
+    cursor?: string
   }): Promise<JiraSearchResult> => ipcRenderer.invoke(IPC_CHANNELS.JIRA_SEARCH_ISSUES, args),
+
+  jiraListProjects: (args: { workspaceId: string }): Promise<JiraProject[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_LIST_PROJECTS, args),
+
+  jiraListBoards: (args: { workspaceId: string; projectKey: string }): Promise<JiraBoard[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_LIST_BOARDS, args),
+
+  jiraListSprints: (args: { workspaceId: string; boardId: number }): Promise<JiraSprint[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_LIST_SPRINTS, args),
+
+  /** issueKey → blueprint id, for tickets already converted in this workspace. */
+  jiraConvertedKeys: (args: { workspaceId: string }): Promise<Record<string, string>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_CONVERTED_KEYS, args),
+
+  jiraAssignToMe: (args: { workspaceId: string; issueKey: string }): Promise<JiraCurrentUser> =>
+    ipcRenderer.invoke(IPC_CHANNELS.JIRA_ASSIGN_TO_ME, args),
+
+  jiraListTransitions: (args: {
+    workspaceId: string
+    issueKey: string
+  }): Promise<JiraTransition[]> => ipcRenderer.invoke(IPC_CHANNELS.JIRA_LIST_TRANSITIONS, args),
+
+  jiraTransitionIssue: (args: {
+    workspaceId: string
+    issueKey: string
+    transitionId: string
+  }): Promise<{ success: true }> => ipcRenderer.invoke(IPC_CHANNELS.JIRA_TRANSITION_ISSUE, args),
 
   jiraGetIssue: (args: { workspaceId: string; issueKey: string }): Promise<JiraIssueDetail> =>
     ipcRenderer.invoke(IPC_CHANNELS.JIRA_GET_ISSUE, args),
@@ -1684,8 +1719,14 @@ const api = {
   }): Promise<EmbeddingModelStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_CHECK_STATUS, args),
 
-  embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }): Promise<void> =>
-    ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE, args),
+  embeddingInitialize: (args?: {
+    baseUrl?: string
+    apiKey?: string
+    workspaceId?: string
+  }): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.EMBEDDING_INITIALIZE, args),
+
+  modelsRuntimeStatus: (args: { workspaceId: string }): Promise<ModelsRuntimeStatus> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MODELS_RUNTIME_STATUS, args),
 
   onEmbeddingModelReady: (callback: () => void): (() => void) => {
     const handler = (): void => callback()

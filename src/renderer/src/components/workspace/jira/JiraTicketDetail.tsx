@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { AlertTriangle, ExternalLink, Loader2, MessageSquarePlus, X } from 'lucide-react'
 import { Button } from '@renderer/components/common/ui'
 import type { JiraIssueDetail } from '../../../../../shared/jira.types'
+import JiraIssueActions from './JiraIssueActions'
 
 /**
  * Read-side detail for one ticket, plus the comment composer — the one place
@@ -43,6 +44,16 @@ export default function JiraTicketDetail({
       cancelled = true
     }
   }, [workspaceId, issueKey])
+
+  /** Re-read the issue so an assignee or status change is visible immediately. */
+  const reload = (): void => {
+    window.api
+      .jiraGetIssue({ workspaceId, issueKey })
+      .then(setIssue)
+      .catch((err: unknown) =>
+        console.warn('[JiraTicketDetail] Non-fatal: reload after write failed:', err)
+      )
+  }
 
   const handlePostComment = async (): Promise<void> => {
     const body = comment.trim()
@@ -128,6 +139,8 @@ export default function JiraTicketDetail({
                 </div>
               )}
             </div>
+
+            <JiraIssueActions workspaceId={workspaceId} issueKey={issueKey} onChanged={reload} />
 
             <section>
               <h5 className="text-[11px] font-semibold uppercase tracking-wider text-text-muted mb-1">

@@ -3,9 +3,14 @@ import type {
   IntegrationCredentialStatus
 } from '../shared/integration-credentials.types'
 import type {
+  JiraBoard,
   JiraCreateBlueprintsResult,
+  JiraCurrentUser,
   JiraIssueDetail,
-  JiraSearchResult
+  JiraProject,
+  JiraSearchResult,
+  JiraSprint,
+  JiraTransition
 } from '../shared/jira.types'
 import type {
   Workspace,
@@ -48,6 +53,7 @@ import type {
   SpecialistTokenEstimate,
   AppPreferences,
   EmbeddingModelStatus,
+  ModelsRuntimeStatus,
   SemanticSearchResult,
   OllamaStatus,
   OmlxExtendedStatus,
@@ -243,7 +249,22 @@ interface Api {
     workspaceId: string
     jql: string
     maxResults?: number
+    cursor?: string
   }) => Promise<JiraSearchResult>
+  jiraListProjects: (args: { workspaceId: string }) => Promise<JiraProject[]>
+  jiraListBoards: (args: { workspaceId: string; projectKey: string }) => Promise<JiraBoard[]>
+  jiraListSprints: (args: { workspaceId: string; boardId: number }) => Promise<JiraSprint[]>
+  jiraConvertedKeys: (args: { workspaceId: string }) => Promise<Record<string, string>>
+  jiraAssignToMe: (args: { workspaceId: string; issueKey: string }) => Promise<JiraCurrentUser>
+  jiraListTransitions: (args: {
+    workspaceId: string
+    issueKey: string
+  }) => Promise<JiraTransition[]>
+  jiraTransitionIssue: (args: {
+    workspaceId: string
+    issueKey: string
+    transitionId: string
+  }) => Promise<{ success: true }>
   jiraGetIssue: (args: { workspaceId: string; issueKey: string }) => Promise<JiraIssueDetail>
   jiraAddComment: (args: {
     workspaceId: string
@@ -1032,7 +1053,12 @@ interface Api {
     apiKey?: string
     workspaceId?: string
   }) => Promise<EmbeddingModelStatus>
-  embeddingInitialize: (args?: { baseUrl?: string; apiKey?: string }) => Promise<void>
+  embeddingInitialize: (args?: {
+    baseUrl?: string
+    apiKey?: string
+    workspaceId?: string
+  }) => Promise<void>
+  modelsRuntimeStatus: (args: { workspaceId: string }) => Promise<ModelsRuntimeStatus>
   onEmbeddingModelReady: (callback: () => void) => () => void
   onEmbeddingModelError: (callback: (error: string) => void) => () => void
 

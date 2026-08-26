@@ -651,6 +651,7 @@ const TEST_FILES: string[] = [
   './external-mcp-mount.test',
   './ipc-integrations-handlers.test',
   './jira-tickets.test',
+  './jira-list-view.test',
   '../../mcp-servers/__tests__/jira-server.test',
   // ─── Plan section icon ids ───
   '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test',

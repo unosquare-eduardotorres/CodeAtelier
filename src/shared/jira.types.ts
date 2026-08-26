@@ -21,8 +21,14 @@ export interface JiraIssueRow {
   status?: string
   type?: string
   assignee: string
+  /** Priority name as configured on this instance, e.g. "Highest" / "Blocker". */
+  priority?: string
+  /** Epic or parent issue key, when the issue has one. */
+  parentKey?: string
   /** ISO timestamp from Jira */
   updated?: string
+  /** ISO timestamp from Jira */
+  created?: string
 }
 
 /** A single comment on an issue, flattened to plain text. */
@@ -81,6 +87,50 @@ export interface JiraSearchResult {
   count: number
   total?: number
   hasMore?: boolean
+  /**
+   * Opaque handle for the next page — `nextPageToken` on Cloud, the next
+   * `startAt` offset rendered as a string on Server / DC. Absent when the last
+   * page has been reached. Callers pass it back verbatim; nothing but the
+   * request builder may interpret it.
+   */
+  nextCursor?: string
+}
+
+/** A Jira project, as returned by the project list endpoint. */
+export interface JiraProject {
+  id: string
+  key: string
+  name: string
+}
+
+/** An Agile board. Only available where Jira Software is licensed. */
+export interface JiraBoard {
+  id: number
+  name: string
+  type?: string
+}
+
+/** A sprint on a board. */
+export interface JiraSprint {
+  id: number
+  name: string
+  state?: string
+}
+
+/** One workflow transition available on an issue right now. */
+export interface JiraTransition {
+  id: string
+  name: string
+  /** Status the issue lands in if this transition is executed. */
+  toStatus?: string
+}
+
+/** The account the stored credentials belong to. */
+export interface JiraCurrentUser {
+  displayName: string
+  /** `accountId` on Cloud, `name` on Server / DC — whichever the assign API wants. */
+  accountId?: string
+  name?: string
 }
 
 /** Per-ticket outcome of a bulk convert-to-blueprint run. */
@@ -143,3 +193,20 @@ export const JIRA_DEFAULT_JQL = JIRA_QUICK_FILTERS[0].jql
  * this; the cap exists so a runaway renderer cannot post an unbounded string.
  */
 export const JIRA_MAX_JQL_CHARS = 2000
+
+/**
+ * Ceiling on how many rows "Load more" will accumulate in the renderer.
+ *
+ * Ten pages. A deliberately broad JQL against a large instance would otherwise
+ * pull thousands of rows into React state and make the list the slowest thing
+ * in the app; past this point the answer is a narrower query, not more paging.
+ */
+export const JIRA_MAX_LOADED_ROWS = 500
+
+/**
+ * Largest selection the bulk convert-to-blueprint action accepts.
+ *
+ * Mirrored from the IPC handler's own guard so the toolbar can cap the
+ * selection with a visible reason instead of letting the call be rejected.
+ */
+export const JIRA_MAX_BULK_ISSUES = 25

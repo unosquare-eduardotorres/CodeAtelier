@@ -104,4 +104,76 @@ test.describe('Jira Tickets panel', () => {
     await expect(page.locator('[data-testid="jira-search-submit"]')).toBeVisible()
     await expect(page.getByRole('button', { name: 'My open tickets' })).toBeVisible()
   })
+
+  test('list controls render once connected', async ({ electronPage: page }) => {
+    if (!(await navigateToJira(page))) {
+      test.skip()
+      return
+    }
+
+    const controls = page.locator('[data-testid="jira-list-controls"]')
+    if (!(await controls.isVisible({ timeout: 3_000 }).catch(() => false))) {
+      // Unconfigured machine — the browse half of the panel is hidden by design.
+      test.skip()
+      return
+    }
+
+    // The filter, the sort field and the direction toggle are the three controls
+    // that turn "whatever Jira returned" into a queue you can work from.
+    await expect(page.locator('[data-testid="jira-filter-input"]')).toBeVisible()
+    await expect(page.locator('[data-testid="jira-sort-field"]')).toBeVisible()
+    await expect(page.locator('[data-testid="jira-sort-dir"]')).toBeVisible()
+    await expect(page.locator('[data-testid="jira-group-toggle"]')).toBeVisible()
+
+    // Sorting is a local operation while the whole result set is loaded, so
+    // changing it must not clear the list or raise a search error.
+    await page.locator('[data-testid="jira-sort-field"]').selectOption('priority')
+    await page.waitForTimeout(500)
+    await expect(page.locator('[data-testid="jira-search-error"]')).toHaveCount(0)
+  })
+
+  test('project scope control renders once connected', async ({ electronPage: page }) => {
+    if (!(await navigateToJira(page))) {
+      test.skip()
+      return
+    }
+
+    const scope = page.locator('[data-testid="jira-scope-controls"]')
+    if (!(await scope.isVisible({ timeout: 3_000 }).catch(() => false))) {
+      test.skip()
+      return
+    }
+
+    // One project control, always present. Board and sprint are deliberately
+    // absent unless the Agile API answered — Jira Core 404s it.
+    await expect(page.locator('[data-testid="jira-project-select"]')).toBeVisible()
+    await expect(page.locator('[data-testid="jira-project-select"]')).toContainText(/all projects/i)
+  })
+
+  test('filter input narrows the loaded rows without a network round trip', async ({
+    electronPage: page
+  }) => {
+    if (!(await navigateToJira(page))) {
+      test.skip()
+      return
+    }
+
+    const list = page.locator('[data-testid="jira-ticket-list"]')
+    if (!(await list.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      // No credentials, or a query that returned nothing — either way there are
+      // no rows to filter and the assertion would be vacuous.
+      test.skip()
+      return
+    }
+
+    await page.locator('[data-testid="jira-filter-input"]').fill('zzzznomatch')
+    await page.waitForTimeout(300)
+    await expect(page.locator('[data-testid="jira-tickets-page"]')).toContainText(
+      /no loaded ticket matches/i
+    )
+
+    await page.locator('[data-testid="jira-filter-input"]').fill('')
+    await page.waitForTimeout(300)
+    await expect(list).toBeVisible()
+  })
 })

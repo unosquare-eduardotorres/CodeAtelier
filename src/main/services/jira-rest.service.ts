@@ -17,16 +17,36 @@
 
 import { net } from 'electron'
 import log from 'electron-log/main'
-import type { JiraIssueDetail, JiraIssueRow, JiraSearchResult } from '../../shared/jira.types'
+import type {
+  JiraBoard,
+  JiraCurrentUser,
+  JiraIssueDetail,
+  JiraIssueRow,
+  JiraProject,
+  JiraSearchResult,
+  JiraSprint,
+  JiraTransition
+} from '../../shared/jira.types'
 import {
   ISSUE_FIELDS,
   ISSUE_KEY_RE,
   apiUrl,
+  buildAssigneeBody,
+  buildBoardsRequest,
   buildCommentBody,
   buildHeaders,
+  buildProjectsRequest,
   buildSearchRequest,
+  buildSprintsRequest,
+  buildTransitionBody,
+  extractJiraErrorText,
+  formatBoards,
+  formatCurrentUser,
   formatIssue,
+  formatProjects,
   formatSearchRows,
+  formatSprints,
+  formatTransitions,
   issueBrowseUrl,
   mapHttpStatus,
   mapNetworkError,
@@ -51,7 +71,19 @@ const UI_MAX_DESCRIPTION_CHARS = 50_000
  * Anything else is logged and replaced with a generic string, so a stack trace
  * or a URL carrying credentials never reaches the renderer.
  */
-export class JiraRequestError extends Error {}
+export class JiraRequestError extends Error {
+  /**
+   * HTTP status, when the failure was one. Carried so callers can degrade on a
+   * specific code — the Agile API simply does not exist on Jira Core, and a 404
+   * there means "no boards", not "something broke".
+   */
+  constructor(
+    message: string,
+    readonly status?: number
+  ) {
+    super(message)
+  }
+}
 
 /**
  * Resolve the workspace's stored Jira credentials into a config.
@@ -86,7 +118,7 @@ function requireConfig(workspaceId: string): JiraConfig {
 async function jiraRequest(
   config: JiraConfig,
   url: string,
-  init: { method: 'GET' | 'POST'; body?: string }
+  init: { method: 'GET' | 'POST' | 'PUT'; body?: string }
 ): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
@@ -100,7 +132,17 @@ async function jiraRequest(
     })
 
     if (!response.ok) {
-      throw new JiraRequestError(mapHttpStatus(response.status, config.baseUrl).message)
+      const mapped = mapHttpStatus(response.status, config.baseUrl)
+      // Jira explains a rejected JQL clause in the body; "Jira returned HTTP
+      // 400." on its own tells the user nothing they can fix. 401/403 keep the
+      // mapped token guidance, which is more actionable than Jira's generic
+      // "Client must be authenticated".
+      const detail =
+        response.status === 401 || response.status === 403 ? null : await readErrorDetail(response)
+      throw new JiraRequestError(
+        detail ? `${mapped.message} ${detail}` : mapped.message,
+        response.status
+      )
     }
 
     // 204 No Content is a valid success for some write endpoints, and calling
@@ -125,39 +167,169 @@ async function jiraRequest(
   }
 }
 
-/** Run a JQL query and return compact rows for the ticket list. */
+/** Jira's own error text for a failed response, or null if the body has none. */
+async function readErrorDetail(response: { json(): Promise<unknown> }): Promise<string | null> {
+  try {
+    return extractJiraErrorText(await response.json())
+  } catch {
+    // A proxy or SSO page answering with HTML lands here — nothing to add.
+    return null
+  }
+}
+
+/**
+ * Issue an Agile (Jira Software) request, or return null when the API is absent.
+ *
+ * Jira Core has no Agile API and answers 404; some Data Center deployments
+ * answer 403 for accounts without the Software licence. Neither is a fault the
+ * user can act on, and surfacing it as an error would break a panel whose board
+ * picker is optional — so the caller hides the control instead.
+ */
+async function agileRequest(config: JiraConfig, url: string): Promise<unknown | null> {
+  try {
+    return await jiraRequest(config, url, { method: 'GET' })
+  } catch (err) {
+    if (err instanceof JiraRequestError && (err.status === 404 || err.status === 403)) {
+      jiraLog.info(`Agile API unavailable (HTTP ${err.status}) — board controls stay hidden`)
+      return null
+    }
+    throw err
+  }
+}
+
+/**
+ * Run a JQL query and return compact rows for the ticket list.
+ *
+ * `cursor` comes from a previous result's `nextCursor` and is passed straight
+ * back to the request builder — Cloud's is an opaque token, DC's is an offset,
+ * and nothing outside `buildSearchRequest` needs to know which.
+ */
 export async function searchIssues(
   workspaceId: string,
   jql: string,
-  maxResults = 25
+  maxResults = 25,
+  cursor?: string
 ): Promise<JiraSearchResult> {
   const config = requireConfig(workspaceId)
   const capped = Math.min(Math.max(Math.trunc(maxResults) || 1, 1), MAX_RESULTS_CAP)
 
-  const request = buildSearchRequest(config.baseUrl, jql, capped)
+  const request = buildSearchRequest(config.baseUrl, jql, capped, cursor)
   const raw = await jiraRequest(config, request.url, {
     method: request.method,
     ...(request.body ? { body: request.body } : {})
   })
 
   const shaped = formatSearchRows(raw as never)
-  jiraLog.info(`search returned ${shaped.count} issue(s)`)
+  jiraLog.info(`search returned ${shaped.count} issue(s)${cursor ? ' (continuation)' : ''}`)
 
   return {
     issues: shaped.issues as unknown as JiraIssueRow[],
     count: shaped.count,
     ...(shaped.total === undefined ? {} : { total: shaped.total }),
-    ...(shaped.hasMore === undefined ? {} : { hasMore: shaped.hasMore })
+    ...(shaped.hasMore === undefined ? {} : { hasMore: shaped.hasMore }),
+    ...(shaped.nextCursor === undefined ? {} : { nextCursor: shaped.nextCursor })
   }
 }
 
-/** Fetch one issue with description and recent comments. */
-export async function getIssue(workspaceId: string, issueKey: string): Promise<JiraIssueDetail> {
+/** Projects visible to the account — one page, ordered by recent activity. */
+export async function listProjects(workspaceId: string): Promise<JiraProject[]> {
+  const config = requireConfig(workspaceId)
+  const request = buildProjectsRequest(config.baseUrl)
+  const raw = await jiraRequest(config, request.url, { method: request.method })
+  return formatProjects(raw)
+}
+
+/** Boards for one project, or [] where the Agile API is not available. */
+export async function listBoards(workspaceId: string, projectKey: string): Promise<JiraBoard[]> {
+  const config = requireConfig(workspaceId)
+  const request = buildBoardsRequest(config.baseUrl, projectKey)
+  const raw = await agileRequest(config, request.url)
+  return raw === null ? [] : formatBoards(raw)
+}
+
+/** Active and future sprints on a board, or [] where Agile is not available. */
+export async function listSprints(workspaceId: string, boardId: number): Promise<JiraSprint[]> {
+  const config = requireConfig(workspaceId)
+  const request = buildSprintsRequest(config.baseUrl, boardId)
+  const raw = await agileRequest(config, request.url)
+  return raw === null ? [] : formatSprints(raw)
+}
+
+/** The account the stored credentials belong to — who "assign to me" means. */
+export async function getCurrentUser(workspaceId: string): Promise<JiraCurrentUser> {
+  const config = requireConfig(workspaceId)
+  const raw = await jiraRequest(config, apiUrl(config.baseUrl, 'myself'), { method: 'GET' })
+  return formatCurrentUser(raw)
+}
+
+/** Validate an issue key or throw a message the panel can render verbatim. */
+function requireIssueKey(issueKey: string): string {
   const key = issueKey.trim().toUpperCase()
   if (!ISSUE_KEY_RE.test(key)) {
     throw new JiraRequestError(`Invalid issue key "${issueKey}". Expected a format like PROJ-123.`)
   }
+  return key
+}
 
+/**
+ * Assign an issue to the account behind the stored credentials.
+ *
+ * The identity is re-read rather than cached: a workspace whose token was
+ * swapped for a service account would otherwise keep assigning to whoever set
+ * it up first.
+ */
+export async function assignToMe(workspaceId: string, issueKey: string): Promise<JiraCurrentUser> {
+  const key = requireIssueKey(issueKey)
+  const config = requireConfig(workspaceId)
+  const user = await getCurrentUser(workspaceId)
+
+  await jiraRequest(config, apiUrl(config.baseUrl, `issue/${key}/assignee`), {
+    method: 'PUT',
+    body: buildAssigneeBody(config.baseUrl, user)
+  })
+  jiraLog.info(`Assigned ${key} to ${user.displayName}`)
+  return user
+}
+
+/**
+ * Transitions this workflow allows on the issue right now.
+ *
+ * Ids are per-workflow, so this is the only way to know what "In Progress"
+ * means for a given project.
+ */
+export async function listTransitions(
+  workspaceId: string,
+  issueKey: string
+): Promise<JiraTransition[]> {
+  const key = requireIssueKey(issueKey)
+  const config = requireConfig(workspaceId)
+  const raw = await jiraRequest(config, apiUrl(config.baseUrl, `issue/${key}/transitions`), {
+    method: 'GET'
+  })
+  return formatTransitions(raw)
+}
+
+/** Execute one workflow transition. */
+export async function transitionIssue(
+  workspaceId: string,
+  issueKey: string,
+  transitionId: string
+): Promise<void> {
+  const key = requireIssueKey(issueKey)
+  const id = transitionId.trim()
+  if (id.length === 0) throw new JiraRequestError('No transition selected.')
+
+  const config = requireConfig(workspaceId)
+  await jiraRequest(config, apiUrl(config.baseUrl, `issue/${key}/transitions`), {
+    method: 'POST',
+    body: buildTransitionBody(id)
+  })
+  jiraLog.info(`Transitioned ${key} via transition ${id}`)
+}
+
+/** Fetch one issue with description and recent comments. */
+export async function getIssue(workspaceId: string, issueKey: string): Promise<JiraIssueDetail> {
+  const key = requireIssueKey(issueKey)
   const config = requireConfig(workspaceId)
   const raw = await jiraRequest(
     config,
@@ -242,10 +414,7 @@ export async function addComment(
   issueKey: string,
   body: string
 ): Promise<void> {
-  const key = issueKey.trim().toUpperCase()
-  if (!ISSUE_KEY_RE.test(key)) {
-    throw new JiraRequestError(`Invalid issue key "${issueKey}". Expected a format like PROJ-123.`)
-  }
+  const key = requireIssueKey(issueKey)
   const text = body.trim()
   if (text.length === 0) {
     throw new JiraRequestError('Comment is empty.')

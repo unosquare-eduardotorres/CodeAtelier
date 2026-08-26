@@ -403,6 +403,8 @@ export const IPC_CHANNELS = {
   EMBEDDING_INITIALIZE: 'embedding:initialize',
   EMBEDDING_MODEL_READY: 'embedding:modelReady',
   EMBEDDING_MODEL_ERROR: 'embedding:modelError',
+  /** Live runtime state of embeddings + chat routing (what is loaded, not what is saved) */
+  MODELS_RUNTIME_STATUS: 'models:runtimeStatus',
 
   // Ollama — @deprecated for semantic search (still used by Local LLM chat backend)
   OLLAMA_CHECK_STATUS: 'ollama:checkStatus',
@@ -591,6 +593,13 @@ export const IPC_CHANNELS = {
   JIRA_GET_ISSUE: 'jira:getIssue',
   JIRA_ADD_COMMENT: 'jira:addComment',
   JIRA_CREATE_BLUEPRINTS: 'jira:createBlueprints',
+  JIRA_LIST_PROJECTS: 'jira:listProjects',
+  JIRA_LIST_BOARDS: 'jira:listBoards',
+  JIRA_LIST_SPRINTS: 'jira:listSprints',
+  JIRA_CONVERTED_KEYS: 'jira:convertedKeys',
+  JIRA_ASSIGN_TO_ME: 'jira:assignToMe',
+  JIRA_LIST_TRANSITIONS: 'jira:listTransitions',
+  JIRA_TRANSITION_ISSUE: 'jira:transitionIssue',
   CHAT_UPDATE_MCP_OVERRIDES: 'chat:update-mcp-overrides',
   CHAT_UPDATE_TONE: 'chat:updateTone',
   CHAT_UPDATE_ROUTING: 'chat:updateRouting',
@@ -2023,7 +2032,9 @@ export const MCP_TOOLS = {
   JIRA: mcpServer('jira', {
     GET_ISSUE: mcpTool('jira', 'get_issue', 'Jira · get_issue'),
     SEARCH_ISSUES: mcpTool('jira', 'search_issues', 'Jira · search_issues'),
-    ADD_COMMENT: mcpTool('jira', 'add_comment', 'Jira · add_comment')
+    ADD_COMMENT: mcpTool('jira', 'add_comment', 'Jira · add_comment'),
+    ASSIGN_ISSUE: mcpTool('jira', 'assign_issue', 'Jira · assign_issue'),
+    TRANSITION_ISSUE: mcpTool('jira', 'transition_issue', 'Jira · transition_issue')
   })
 } as const
 
@@ -2115,6 +2126,15 @@ export const OLLAMA_DEFAULT_PORT = 11434 as const
 
 /** Default oMLX connection (Apple Silicon native) */
 export const OMLX_DEFAULT_PORT = 8000 as const
+
+/**
+ * Backend to assume when a workspace has never persisted `localLlmBackend`.
+ * oMLX only runs on Apple Silicon, so defaulting to it anywhere else makes
+ * local embeddings unreachable (Windows/Linux have Ollama only).
+ */
+export function defaultLocalLlmBackend(isAppleSilicon: boolean): 'omlx' | 'ollama' {
+  return isAppleSilicon ? 'omlx' : 'ollama'
+}
 
 /**
  * Skill filenames that are ALWAYS injected into every prompt — specialist
@@ -2572,13 +2592,14 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
     },
     supportsConnectionTest: true,
     tokenImpact: 'low',
-    toolCount: 3,
+    toolCount: 5,
     prerequisite: 'Jira site URL + API token (or a PAT for Server / Data Center)',
     docsUrl: 'https://developer.atlassian.com/cloud/jira/platform/rest/v3/',
     category: 'other',
     toolNames: [...MCP_TOOLS.JIRA._ALL_NAMES],
-    // add_comment writes to Jira, so plan mode gets only the two read tools —
-    // planning must never leave a trail on someone else's ticket.
+    // add_comment, assign_issue and transition_issue all write to a tracker the
+    // whole team reads, so plan mode gets only the two read tools — planning
+    // must never leave a trail on someone else's ticket.
     planModeToolNames: [MCP_TOOLS.JIRA.GET_ISSUE.name, MCP_TOOLS.JIRA.SEARCH_ISSUES.name],
 
     credentialFields: [
@@ -2680,7 +2701,11 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
       mcp__jira__search_issues:
         'Runs a JQL query and returns compact rows (key, summary, status, assignee). Use it to find related tickets, sprint contents, or everything matching a label.',
       mcp__jira__add_comment:
-        'Posts a comment on an issue — progress notes, a summary of what was implemented, or a question for the reporter. The only tool that writes to Jira; disabled in plan mode.'
+        'Posts a comment on an issue — progress notes, a summary of what was implemented, or a question for the reporter. Writes to Jira; disabled in plan mode.',
+      mcp__jira__assign_issue:
+        'Assigns an issue to the account behind the stored credentials — the "I am picking this up" action. Writes to Jira; disabled in plan mode.',
+      mcp__jira__transition_issue:
+        'Moves an issue through its workflow, e.g. to In Progress. Called without a transition name it lists what the workflow allows, because transition ids differ per project. Writes to Jira; disabled in plan mode.'
     },
 
     workflowSteps: [

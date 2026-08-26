@@ -16,24 +16,41 @@ import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
   JiraAttachment,
+  JiraBoard,
   JiraCreateBlueprintsResult,
+  JiraCurrentUser,
   JiraIssueDetail,
-  JiraSearchResult
+  JiraProject,
+  JiraSearchResult,
+  JiraSprint,
+  JiraTransition
 } from '../../shared/jira.types'
-import { JIRA_MAX_JQL_CHARS } from '../../shared/jira.types'
+import { JIRA_MAX_BULK_ISSUES, JIRA_MAX_JQL_CHARS } from '../../shared/jira.types'
 import {
   formatIssueBrief,
   indexBlueprintsByJiraKey,
   mapJiraPriority
 } from '../../shared/jira-format'
 import { validateSender } from './validate-sender'
-import { optionalNumber, requireObject, requireString, requireStringArray } from './validate-args'
+import {
+  optionalNumber,
+  optionalString,
+  requireObject,
+  requireString,
+  requireStringArray
+} from './validate-args'
 import {
   JiraRequestError,
   addComment,
+  assignToMe,
   downloadAttachment,
   getIssue,
-  searchIssues
+  listBoards,
+  listProjects,
+  listSprints,
+  listTransitions,
+  searchIssues,
+  transitionIssue
 } from '../services/jira-rest.service'
 import { blueprintService } from '../services/blueprint.service'
 import { blueprintRepository } from '../db/repositories/blueprint.repository'
@@ -49,8 +66,12 @@ const jiraIpcLog = log.scope('jira-ipc')
 /** Longest comment we will forward. Jira itself caps around 32k characters. */
 const MAX_COMMENT_CHARS = 30_000
 
-/** Bulk-convert ceiling — each ticket costs one Jira round trip. */
-const MAX_BULK_ISSUES = 25
+/**
+ * Bulk-convert ceiling — each ticket costs one Jira round trip.
+ * Shared with the renderer so the toolbar can cap the selection with a visible
+ * reason instead of letting the call be rejected after the click.
+ */
+const MAX_BULK_ISSUES = JIRA_MAX_BULK_ISSUES
 
 /** How far back the duplicate scan looks. Older blueprints are not re-checked. */
 const DUPLICATE_SCAN_LIMIT = 500
@@ -122,13 +143,139 @@ export function registerJiraIpc(): void {
       const workspaceId = requireString(args, 'workspaceId', ch)
       const jql = requireString(args, 'jql', ch)
       const maxResults = optionalNumber(args, 'maxResults', ch)
+      const cursor = optionalString(args, 'cursor', ch)
 
       if (jql.length > JIRA_MAX_JQL_CHARS) {
         throw new Error(`Query too long: ${jql.length} characters (max ${JIRA_MAX_JQL_CHARS}).`)
       }
 
       try {
-        return await searchIssues(workspaceId, jql, maxResults ?? 25)
+        return await searchIssues(workspaceId, jql, maxResults ?? 25, cursor)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Projects (scoping dropdown) ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_LIST_PROJECTS,
+    async (event, rawArgs: unknown): Promise<JiraProject[]> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_LIST_PROJECTS
+      const workspaceId = requireString(requireObject(rawArgs, ch), 'workspaceId', ch)
+      try {
+        return await listProjects(workspaceId)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Boards for a project (Agile API — absent on Jira Core) ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_LIST_BOARDS,
+    async (event, rawArgs: unknown): Promise<JiraBoard[]> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_LIST_BOARDS
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const projectKey = requireString(args, 'projectKey', ch)
+      try {
+        return await listBoards(workspaceId, projectKey)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Sprints on a board ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_LIST_SPRINTS,
+    async (event, rawArgs: unknown): Promise<JiraSprint[]> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_LIST_SPRINTS
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const boardId = optionalNumber(args, 'boardId', ch)
+      if (boardId === undefined) throw new Error(`${ch}: field 'boardId' must be a finite number`)
+      try {
+        return await listSprints(workspaceId, boardId)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Which tickets already have a blueprint ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_CONVERTED_KEYS,
+    async (event, rawArgs: unknown): Promise<Record<string, string>> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_CONVERTED_KEYS
+      const workspaceId = requireString(requireObject(rawArgs, ch), 'workspaceId', ch)
+
+      try {
+        // Same query the bulk convert already runs to dedupe. Surfacing it up
+        // front is what turns "already converted" from a line in the result box
+        // after the click into a badge on the row before it.
+        const index = indexBlueprintsByJiraKey(
+          blueprintRepository.findByWorkspace(workspaceId, DUPLICATE_SCAN_LIMIT)
+        )
+        return Object.fromEntries(index)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Assign an issue to the credentialed account ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_ASSIGN_TO_ME,
+    async (event, rawArgs: unknown): Promise<JiraCurrentUser> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_ASSIGN_TO_ME
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const issueKey = requireString(args, 'issueKey', ch)
+      try {
+        return await assignToMe(workspaceId, issueKey)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Workflow transitions available on an issue ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_LIST_TRANSITIONS,
+    async (event, rawArgs: unknown): Promise<JiraTransition[]> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_LIST_TRANSITIONS
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const issueKey = requireString(args, 'issueKey', ch)
+      try {
+        return await listTransitions(workspaceId, issueKey)
+      } catch (err) {
+        throw toUserFacing(err, ch)
+      }
+    }
+  )
+
+  // ── Execute a workflow transition ──
+  ipcMain.handle(
+    IPC_CHANNELS.JIRA_TRANSITION_ISSUE,
+    async (event, rawArgs: unknown): Promise<{ success: true }> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.JIRA_TRANSITION_ISSUE
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+      const issueKey = requireString(args, 'issueKey', ch)
+      const transitionId = requireString(args, 'transitionId', ch)
+      try {
+        await transitionIssue(workspaceId, issueKey, transitionId)
+        return { success: true }
       } catch (err) {
         throw toUserFacing(err, ch)
       }

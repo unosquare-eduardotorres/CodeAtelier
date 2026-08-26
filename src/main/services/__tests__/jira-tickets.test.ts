@@ -17,11 +17,35 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import {
+  SEARCH_FIELDS,
+  agileUrl,
+  buildAssigneeBody,
+  buildBoardsRequest,
   buildCommentBody,
+  buildProjectsRequest,
+  buildSearchRequest,
+  buildSprintsRequest,
+  buildTransitionBody,
+  extractJiraErrorText,
   flattenAdf,
   formatAttachments,
+  formatBoards,
+  formatCurrentUser,
+  formatProjects,
+  formatSearchRows,
+  formatSprints,
+  formatTransitions,
   issueBrowseUrl
 } from '../../mcp-servers/jira-api'
+import {
+  applyOrderBy,
+  applyProjectScope,
+  applySprintScope,
+  orderByOf,
+  readProjectScope,
+  readSprintScope,
+  stripOrderBy
+} from '../../../shared/jira-jql'
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_ISSUE,
@@ -449,6 +473,386 @@ describe('jira.types — JIRA_MAX_JQL_CHARS', () => {
     )}) AND resolution = Unresolved ORDER BY updated DESC`
     assert.ok(realistic.length < JIRA_MAX_JQL_CHARS)
     assert.ok('x'.repeat(JIRA_MAX_JQL_CHARS + 1).length > JIRA_MAX_JQL_CHARS)
+  })
+})
+
+// ── JQL rewriting ──
+
+describe('jira-jql — ORDER BY', () => {
+  test('applyOrderBy replaces an existing clause rather than appending a second', () => {
+    // Every quick-filter chip ships its own ORDER BY, so this path is hit the
+    // moment anyone sorts after clicking one. Two ORDER BY clauses is a 400.
+    const chip = 'assignee = currentUser() AND sprint in openSprints() ORDER BY rank ASC'
+    const next = applyOrderBy(chip, 'priority', 'desc')
+    assert.equal(
+      next,
+      'assignee = currentUser() AND sprint in openSprints() ORDER BY priority DESC'
+    )
+    assert.equal(next.toLowerCase().split('order by').length - 1, 1)
+  })
+
+  test('a query with no ordering gets one appended', () => {
+    assert.equal(
+      applyOrderBy('project = CHR', 'updated', 'desc'),
+      'project = CHR ORDER BY updated DESC'
+    )
+  })
+
+  test('an empty query yields a bare ORDER BY, which is valid JQL', () => {
+    assert.equal(applyOrderBy('', 'key', 'asc'), 'ORDER BY key ASC')
+  })
+
+  test('an ORDER BY inside a quoted literal is not mistaken for syntax', () => {
+    const jql = 'summary ~ "order by monday" ORDER BY updated DESC'
+    assert.equal(stripOrderBy(jql), 'summary ~ "order by monday"')
+    assert.equal(orderByOf(jql), 'ORDER BY updated DESC')
+  })
+
+  test('"border" does not read as an ORDER BY', () => {
+    assert.equal(stripOrderBy('summary ~ border'), 'summary ~ border')
+  })
+
+  test('Rank keeps its capital — the JQL field is spelled that way', () => {
+    assert.equal(applyOrderBy('project = CHR', 'rank', 'asc'), 'project = CHR ORDER BY Rank ASC')
+  })
+})
+
+describe('jira-jql — applyProjectScope', () => {
+  test('replaces an existing project clause instead of ANDing a second one', () => {
+    // `project = CHR AND project = NSLJD` matches nothing at all.
+    assert.equal(
+      applyProjectScope('project = NSLJD AND resolution = Unresolved ORDER BY updated DESC', 'CHR'),
+      'project = "CHR" AND resolution = Unresolved ORDER BY updated DESC'
+    )
+  })
+
+  test('adds a scope to a query that had none, keeping the ordering', () => {
+    assert.equal(
+      applyProjectScope('assignee = currentUser() ORDER BY rank ASC', 'CHR'),
+      'project = "CHR" AND assignee = currentUser() ORDER BY rank ASC'
+    )
+  })
+
+  test('null clears the scope and leaves the rest of the query intact', () => {
+    assert.equal(
+      applyProjectScope('project = CHR AND resolution = Unresolved ORDER BY updated DESC', null),
+      'resolution = Unresolved ORDER BY updated DESC'
+    )
+  })
+
+  test('clearing the only clause leaves a bare ORDER BY rather than an empty string', () => {
+    assert.equal(
+      applyProjectScope('project = CHR ORDER BY updated DESC', null),
+      'ORDER BY updated DESC'
+    )
+  })
+
+  test('a top-level OR is parenthesised, not dissected', () => {
+    // Dropping a branch of an OR silently changes which issues the query means,
+    // so the user-s query is preserved whole and narrowed.
+    assert.equal(
+      applyProjectScope('labels = urgent OR assignee = currentUser()', 'CHR'),
+      'project = "CHR" AND (labels = urgent OR assignee = currentUser())'
+    )
+  })
+
+  test('the key is sanitised, so the dropdown cannot smuggle in a clause', () => {
+    assert.equal(
+      applyProjectScope('resolution = Unresolved', 'CHR" OR key = "X-1'),
+      'project = "CHRORKEYX1" AND resolution = Unresolved'
+    )
+  })
+
+  test('readProjectScope reports what the query actually carries', () => {
+    assert.equal(readProjectScope('project = "CHR" AND resolution = Unresolved'), 'CHR')
+    assert.equal(readProjectScope('project = CHR ORDER BY updated DESC'), 'CHR')
+    // Two projects is not one project, and the dropdown must not claim otherwise.
+    assert.equal(readProjectScope('project in (CHR, NSLJD)'), null)
+    assert.equal(readProjectScope('resolution = Unresolved'), null)
+  })
+})
+
+describe('jira-jql — applySprintScope', () => {
+  test('replaces `sprint in openSprints()` from the shipped chip', () => {
+    // ANDing a sprint id onto openSprints() returns nothing whenever the sprint
+    // is not the currently open one.
+    assert.equal(
+      applySprintScope(
+        'assignee = currentUser() AND sprint in openSprints() ORDER BY rank ASC',
+        42
+      ),
+      'sprint = 42 AND assignee = currentUser() ORDER BY rank ASC'
+    )
+  })
+
+  test('null clears any sprint constraint', () => {
+    assert.equal(applySprintScope('sprint = 42 AND project = "CHR"', null), 'project = "CHR"')
+  })
+
+  test('only digits survive, so the id cannot carry syntax', () => {
+    assert.equal(
+      applySprintScope('project = "CHR"', '42) OR (key = X-1'),
+      'sprint = 421 AND project = "CHR"'
+    )
+  })
+
+  test('readSprintScope round-trips a single-value clause', () => {
+    assert.equal(readSprintScope(applySprintScope('project = "CHR"', 42)), '42')
+    assert.equal(readSprintScope('sprint in openSprints()'), null)
+  })
+})
+
+// ── Search request + pagination ──
+
+describe('jira-api — buildSearchRequest cursor plumbing', () => {
+  test('Cloud puts an opaque nextPageToken in the query string', () => {
+    const request = buildSearchRequest(CLOUD, 'project = CHR', 50, 'opaque-token-abc')
+    assert.equal(request.method, 'GET')
+    assert.ok(request.url.includes('search/jql'))
+    assert.ok(new URL(request.url).searchParams.get('nextPageToken') === 'opaque-token-abc')
+    assert.equal(request.body, undefined)
+  })
+
+  test('Cloud omits the token entirely on the first page', () => {
+    const request = buildSearchRequest(CLOUD, 'project = CHR', 50)
+    assert.equal(new URL(request.url).searchParams.get('nextPageToken'), null)
+  })
+
+  test('Server/DC puts the cursor in the POST body as a numeric startAt', () => {
+    const request = buildSearchRequest(DC, 'project = CHR', 50, '100')
+    assert.equal(request.method, 'POST')
+    assert.equal(JSON.parse(request.body!).startAt, 100)
+  })
+
+  test('Server/DC starts at 0 when there is no cursor, and never at NaN', () => {
+    assert.equal(JSON.parse(buildSearchRequest(DC, 'x', 50).body!).startAt, 0)
+    assert.equal(JSON.parse(buildSearchRequest(DC, 'x', 50, 'garbage').body!).startAt, 0)
+  })
+
+  test('the requested fields include what the list sorts and renders by', () => {
+    // A priority sort against rows that never carried a priority always reports
+    // "unknown", which looks like a broken sort rather than a missing field.
+    for (const field of [
+      'summary',
+      'status',
+      'issuetype',
+      'assignee',
+      'priority',
+      'parent',
+      'updated',
+      'created'
+    ]) {
+      assert.ok(SEARCH_FIELDS.split(',').includes(field), `${field} must be requested`)
+    }
+  })
+})
+
+describe('jira-api — formatSearchRows', () => {
+  const issue = {
+    key: 'CHR-40',
+    fields: {
+      summary: 'Checkout total ignores discounts',
+      status: { name: 'In Progress' },
+      issuetype: { name: 'Bug' },
+      assignee: { displayName: 'Josh Lane' },
+      priority: { name: 'Highest' },
+      parent: { key: 'CHR-1' },
+      updated: '2026-06-01T00:00:00.000Z',
+      created: '2026-01-01T00:00:00.000Z'
+    }
+  }
+
+  test('carries priority, parentKey and created onto the row', () => {
+    const shaped = formatSearchRows({ issues: [issue] })
+    assert.equal(shaped.issues[0].priority, 'Highest')
+    assert.equal(shaped.issues[0].parentKey, 'CHR-1')
+    assert.equal(shaped.issues[0].created, '2026-01-01T00:00:00.000Z')
+  })
+
+  test('a missing priority or parent is undefined, not "undefined"', () => {
+    const shaped = formatSearchRows({ issues: [{ key: 'CHR-2', fields: { summary: 's' } }] })
+    assert.equal(shaped.issues[0].priority, undefined)
+    assert.equal(shaped.issues[0].parentKey, undefined)
+    assert.equal(shaped.issues[0].assignee, 'Unassigned')
+  })
+
+  test('Cloud: nextPageToken becomes the cursor and total stays absent', () => {
+    const shaped = formatSearchRows({ issues: [issue], nextPageToken: 'tok' })
+    assert.equal(shaped.nextCursor, 'tok')
+    assert.equal(shaped.hasMore, true)
+    assert.equal(shaped.total, undefined)
+  })
+
+  test('Cloud: isLast true means no cursor', () => {
+    const shaped = formatSearchRows({ issues: [issue], isLast: true })
+    assert.equal(shaped.hasMore, false)
+    assert.equal(shaped.nextCursor, undefined)
+  })
+
+  test('Server/DC: the next cursor is startAt + page length', () => {
+    const shaped = formatSearchRows({ issues: [issue], startAt: 50, total: 1240 })
+    assert.equal(shaped.nextCursor, '51')
+    assert.equal(shaped.hasMore, true)
+    assert.equal(shaped.total, 1240)
+  })
+
+  test('Server/DC: the last page reports no cursor', () => {
+    const shaped = formatSearchRows({ issues: [issue], startAt: 9, total: 10 })
+    assert.equal(shaped.nextCursor, undefined)
+    assert.equal(shaped.hasMore, false)
+  })
+
+  test('a null or malformed response does not throw', () => {
+    assert.equal(formatSearchRows(null).count, 0)
+    assert.equal(formatSearchRows(undefined).count, 0)
+    assert.equal(formatSearchRows({}).count, 0)
+  })
+})
+
+// ── Projects, boards and sprints ──
+
+describe('jira-api — projects', () => {
+  test('Cloud uses the paginated project/search ordered by activity', () => {
+    const request = buildProjectsRequest(CLOUD)
+    assert.ok(request.url.includes('/rest/api/3/project/search'))
+    assert.equal(new URL(request.url).searchParams.get('orderBy'), 'lastIssueUpdatedTime')
+  })
+
+  test('Server/DC uses the plain unpaginated project endpoint', () => {
+    const request = buildProjectsRequest(DC)
+    assert.equal(request.url, `${DC}/rest/api/2/project`)
+  })
+
+  test('formatProjects reads Cloud-s { values } wrapper', () => {
+    const projects = formatProjects({ values: [{ id: '1', key: 'CHR', name: 'Chronicle' }] })
+    assert.deepEqual(projects, [{ id: '1', key: 'CHR', name: 'Chronicle' }])
+  })
+
+  test('formatProjects reads Server/DC-s bare array', () => {
+    const projects = formatProjects([{ id: 7, key: 'NSLJD', name: 'Nightshade' }])
+    assert.deepEqual(projects, [{ id: '7', key: 'NSLJD', name: 'Nightshade' }])
+  })
+
+  test('entries without a key are dropped, and a missing name falls back to the key', () => {
+    const projects = formatProjects([{ id: '1' }, { key: 'CHR' }, null, 'nonsense'])
+    assert.deepEqual(projects, [{ id: 'CHR', key: 'CHR', name: 'CHR' }])
+  })
+
+  test('an unexpected shape yields an empty list rather than throwing', () => {
+    assert.deepEqual(formatProjects(null), [])
+    assert.deepEqual(formatProjects({ nope: true }), [])
+  })
+})
+
+describe('jira-api — boards and sprints', () => {
+  test('the Agile API is unversioned and identical on both deployments', () => {
+    // Deliberately bypasses apiUrl-s v2/v3 selection.
+    assert.equal(agileUrl(CLOUD, 'board'), `${CLOUD}/rest/agile/1.0/board`)
+    assert.equal(agileUrl(DC, 'board'), `${DC}/rest/agile/1.0/board`)
+  })
+
+  test('boards are always scoped to a project', () => {
+    const request = buildBoardsRequest(CLOUD, 'CHR')
+    assert.equal(new URL(request.url).searchParams.get('projectKeyOrId'), 'CHR')
+  })
+
+  test('sprints ask only for active and future — closed sprints are not work to pick up', () => {
+    const request = buildSprintsRequest(CLOUD, 12)
+    assert.ok(request.url.includes('/board/12/sprint'))
+    assert.equal(new URL(request.url).searchParams.get('state'), 'active,future')
+  })
+
+  test('a non-numeric board id cannot escape into the path', () => {
+    assert.ok(buildSprintsRequest(CLOUD, '12/../../issue').url.includes('/board/12/sprint'))
+  })
+
+  test('formatBoards and formatSprints drop entries with no numeric id', () => {
+    assert.deepEqual(
+      formatBoards({ values: [{ id: 1, name: 'CHR board', type: 'scrum' }, { name: 'x' }] }),
+      [{ id: 1, name: 'CHR board', type: 'scrum' }]
+    )
+    assert.deepEqual(
+      formatSprints({ values: [{ id: 5, name: 'Sprint 5', state: 'active' }, {}] }),
+      [{ id: 5, name: 'Sprint 5', state: 'active' }]
+    )
+    assert.deepEqual(formatBoards(null), [])
+    assert.deepEqual(formatSprints({}), [])
+  })
+})
+
+// ── Writes ──
+
+describe('jira-api — assignee and transitions', () => {
+  test('Cloud identifies the assignee by accountId, Server/DC by name', () => {
+    // Sending the wrong one is a 400 on every write, and it survives testing
+    // against a single Jira instance.
+    assert.deepEqual(JSON.parse(buildAssigneeBody(CLOUD, { accountId: 'abc', name: 'jlane' })), {
+      accountId: 'abc'
+    })
+    assert.deepEqual(JSON.parse(buildAssigneeBody(DC, { accountId: 'abc', name: 'jlane' })), {
+      name: 'jlane'
+    })
+  })
+
+  test('an unknown identity sends null rather than the string "undefined"', () => {
+    assert.deepEqual(JSON.parse(buildAssigneeBody(CLOUD, {})), { accountId: null })
+  })
+
+  test('formatCurrentUser handles both Cloud accountId and DC key/name', () => {
+    assert.deepEqual(formatCurrentUser({ displayName: 'Josh Lane', accountId: 'abc' }), {
+      displayName: 'Josh Lane',
+      accountId: 'abc'
+    })
+    assert.deepEqual(formatCurrentUser({ name: 'jlane', key: 'jlane' }), {
+      displayName: 'jlane',
+      accountId: 'jlane',
+      name: 'jlane'
+    })
+    assert.equal(formatCurrentUser(null).displayName, 'your account')
+  })
+
+  test('transitions are shaped with their target status, never a bare id', () => {
+    const transitions = formatTransitions({
+      transitions: [{ id: 21, name: 'Start work', to: { name: 'In Progress' } }, { name: 'no id' }]
+    })
+    assert.deepEqual(transitions, [{ id: '21', name: 'Start work', toStatus: 'In Progress' }])
+  })
+
+  test('the transition body wraps the id the way Jira expects', () => {
+    assert.deepEqual(JSON.parse(buildTransitionBody('21')), { transition: { id: '21' } })
+  })
+})
+
+// ── Error text ──
+
+describe('jira-api — extractJiraErrorText', () => {
+  test('surfaces the JQL clause Jira rejected', () => {
+    // Without this a syntax error reads as a bare "Jira returned HTTP 400."
+    assert.equal(
+      extractJiraErrorText({
+        errorMessages: ["Error in the JQL Query: The character '#' is a reserved JQL character."]
+      }),
+      "Error in the JQL Query: The character '#' is a reserved JQL character."
+    )
+  })
+
+  test('field-keyed errors are labelled with their field', () => {
+    assert.equal(
+      extractJiraErrorText({ errors: { project: 'No project could be found.' } }),
+      'project: No project could be found.'
+    )
+  })
+
+  test('falls back to a bare message, and to null when there is nothing to say', () => {
+    assert.equal(extractJiraErrorText({ message: 'Boom' }), 'Boom')
+    assert.equal(extractJiraErrorText({}), null)
+    assert.equal(extractJiraErrorText(null), null)
+    assert.equal(extractJiraErrorText('<html>login</html>'), null)
+  })
+
+  test('long bodies are truncated — this text goes straight into the UI', () => {
+    const long = extractJiraErrorText({ errorMessages: ['x'.repeat(2000)] })
+    assert.ok(long !== null && long.length <= 501)
   })
 })
 

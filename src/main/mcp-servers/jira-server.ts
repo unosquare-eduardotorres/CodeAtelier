@@ -6,9 +6,11 @@
  * environment is Windows on a corporate VPN: `npx <pkg>` needs npmjs.org at
  * spawn time, and `npx.cmd` does not spawn without a shell on Windows.
  *
- * Exposes: get_issue, search_issues (read) and add_comment (write). Commenting
- * is the only mutation — status, assignee and fields are never touched, and the
- * registry withholds add_comment in plan mode.
+ * Exposes: get_issue, search_issues (read) plus add_comment, assign_issue and
+ * transition_issue (write). Every write is withheld in plan mode by the
+ * registry — planning must never leave a trail on someone else's ticket. No
+ * tool edits issue fields; the writes are limited to the three actions a person
+ * takes when they pick work up.
  *
  * Environment variables (injected by resolveIntegrationEnv):
  *   JIRA_BASE_URL   — https://client.atlassian.net or https://jira.client.internal
@@ -26,11 +28,15 @@ import {
   ISSUE_FIELDS,
   ISSUE_KEY_RE,
   apiUrl,
+  buildAssigneeBody,
   buildCommentBody,
   buildHeaders,
   buildSearchRequest,
+  buildTransitionBody,
+  formatCurrentUser,
   formatIssue,
   formatSearchRows,
+  formatTransitions,
   issueBrowseUrl,
   jiraConfigFromEnv,
   mapHttpStatus,
@@ -67,7 +73,7 @@ function requireConfig(): NonNullable<typeof config> {
  */
 async function jiraRequest(
   url: string,
-  init: { method: 'GET' | 'POST'; body?: string }
+  init: { method: 'GET' | 'POST' | 'PUT'; body?: string }
 ): Promise<unknown> {
   const cfg = requireConfig()
   const controller = new AbortController()
@@ -179,6 +185,88 @@ server.tool(
         body: buildCommentBody(cfg.baseUrl, args.body.trim())
       })
       return textResult(`Comment posted on ${issueKey}: ${issueBrowseUrl(cfg.baseUrl, issueKey)}`)
+    } catch (err) {
+      return textResult(err instanceof Error ? err.message : String(err))
+    }
+  }
+)
+
+server.tool(
+  'assign_issue',
+  'Assigns a Jira issue to the account behind the configured credentials — the "I am picking this up" action. Only call it when the user asks to take or claim a ticket. Cannot assign to anyone else, and cannot change any other field.',
+  {
+    issueKey: z.string().describe('Jira issue key, e.g. PROJ-123')
+  },
+  async (args) => {
+    const issueKey = args.issueKey.trim().toUpperCase()
+    if (!ISSUE_KEY_RE.test(issueKey)) {
+      return textResult(`Invalid issue key "${args.issueKey}". Expected a format like PROJ-123.`)
+    }
+    try {
+      const cfg = requireConfig()
+      // Read the identity rather than caching it: Cloud wants an accountId and
+      // Server / DC wants a username, and only /myself knows which this is.
+      const user = formatCurrentUser(
+        await jiraRequest(apiUrl(cfg.baseUrl, 'myself'), { method: 'GET' })
+      )
+      await jiraRequest(apiUrl(cfg.baseUrl, `issue/${issueKey}/assignee`), {
+        method: 'PUT',
+        body: buildAssigneeBody(cfg.baseUrl, user)
+      })
+      return textResult(`${issueKey} assigned to ${user.displayName}.`)
+    } catch (err) {
+      return textResult(err instanceof Error ? err.message : String(err))
+    }
+  }
+)
+
+server.tool(
+  'transition_issue',
+  "Moves a Jira issue through its workflow, e.g. to In Progress or Done. Call it with no transition to list what this issue's workflow currently allows — transition ids and names differ per project, so they can never be assumed. Only call it when the user asks to move a ticket.",
+  {
+    issueKey: z.string().describe('Jira issue key, e.g. PROJ-123'),
+    transition: z
+      .string()
+      .optional()
+      .describe('Transition or target status name, e.g. "In Progress". Omit to list the options.')
+  },
+  async (args) => {
+    const issueKey = args.issueKey.trim().toUpperCase()
+    if (!ISSUE_KEY_RE.test(issueKey)) {
+      return textResult(`Invalid issue key "${args.issueKey}". Expected a format like PROJ-123.`)
+    }
+    try {
+      const cfg = requireConfig()
+      const url = apiUrl(cfg.baseUrl, `issue/${issueKey}/transitions`)
+      const available = formatTransitions(await jiraRequest(url, { method: 'GET' }))
+
+      if (available.length === 0) {
+        return textResult(
+          `${issueKey} has no transitions available to this account — the workflow or permissions do not allow a move from its current status.`
+        )
+      }
+
+      const describeOptions = (): string =>
+        available.map((t) => `- ${t.name}${t.toStatus ? ` → ${t.toStatus}` : ''}`).join('\n')
+
+      const wanted = (args.transition ?? '').trim().toLowerCase()
+      if (wanted.length === 0) {
+        return textResult(`Transitions available on ${issueKey}:\n${describeOptions()}`)
+      }
+
+      const match = available.find(
+        (t) => t.name.toLowerCase() === wanted || (t.toStatus ?? '').toLowerCase() === wanted
+      )
+      if (!match) {
+        return textResult(
+          `No transition named "${args.transition}" on ${issueKey}. Available:\n${describeOptions()}`
+        )
+      }
+
+      await jiraRequest(url, { method: 'POST', body: buildTransitionBody(match.id) })
+      return textResult(
+        `${issueKey} moved via "${match.name}"${match.toStatus ? ` → ${match.toStatus}` : ''}.`
+      )
     } catch (err) {
       return textResult(err instanceof Error ? err.message : String(err))
     }

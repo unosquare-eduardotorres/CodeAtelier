@@ -16,6 +16,7 @@ import type { IntegrationConnectionResult } from '../../shared/integration-crede
 import {
   apiUrl,
   buildHeaders,
+  formatCurrentUser,
   isCloudHost,
   mapHttpStatus,
   mapNetworkError,
@@ -77,22 +78,18 @@ export async function testJiraConnection(config: JiraConfig): Promise<Integratio
       return { ok: false, code: mapped.code, message: mapped.message }
     }
 
-    const body = (await response.json()) as {
-      displayName?: string
-      name?: string
-      accountId?: string
-      key?: string
-    }
+    // Same shaper the panel's "assign to me" uses, so the identity this test
+    // reports and the identity a write lands on cannot drift apart.
+    const user = formatCurrentUser(await response.json())
     const deploymentType = isCloudHost(config.baseUrl) ? 'Jira Cloud' : 'Jira Server / Data Center'
-    const displayName = body.displayName ?? body.name ?? 'your account'
 
     return {
       ok: true,
       code: 'ok',
-      message: `Connected as ${displayName} (${deploymentType})`,
+      message: `Connected as ${user.displayName} (${deploymentType})`,
       details: {
-        displayName,
-        accountId: body.accountId ?? body.key,
+        displayName: user.displayName,
+        accountId: user.accountId,
         deploymentType
       }
     }
