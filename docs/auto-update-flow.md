@@ -261,21 +261,45 @@ platform's channel manifest to point at them.
 
 ```mermaid
 flowchart LR
-    A["npm run build:release"] --> B["build:mac<br/>bumps version, packages zip + dmg"]
+    A["npm run build:release<br/>scripts/release.sh"] --> Z["bump once<br/>1.0.74 → 1.0.75"]
+    Z --> B["build:mac<br/>packages zip + dmg"]
     B --> C["publish → 1.0.75/mac/<br/>rewrites latest-mac.yml"]
-    C --> D["build:win<br/>reuses version, packages setup.exe"]
+    C --> D["build:win<br/>packages setup.exe"]
     D --> E["publish → 1.0.75/win/<br/>rewrites latest.yml"]
-    E --> F["Client reads its own channel<br/>via the loopback feed server"]
+    E --> V["verify BOTH channels = 1.0.75<br/>fatal if not"]
+    V --> T["commit + tag v1.0.75"]
+    T --> F["Client reads its own channel<br/>via the loopback feed server"]
     F --> G["Banner: Update available"]
 
     classDef step fill:#1e3a5f,stroke:#4a90d9,color:#ffffff
     classDef feed fill:#2d1e4f,stroke:#8b5cf6,color:#ffffff
     classDef user fill:#1a3c34,stroke:#10b981,color:#ffffff
+    classDef gate fill:#4c1d3d,stroke:#c084fc,color:#ffffff
 
-    class A,B,D step
+    class A,B,D,Z step
     class C,E,F feed
+    class V,T gate
     class G user
 ```
+
+### One bump per release, owned by `release.sh`
+
+The patch bump used to live in `build-mac.sh`, which made the version a side
+effect of building one platform. That produced two recurring failures:
+
+- `build:mac` alone advanced the version and published only the mac channel, so
+  Windows clients were offered the previous version indefinitely.
+- Rebuilding to debug bumped again, minting versions that shipped but were never
+  committed — **1.0.72 and 1.0.79 are in `dist/` and in nobody's git history.**
+
+Now `scripts/release.sh` owns the single bump, and the platform scripts build
+whatever `package.json` already says. `release.sh` also:
+
+- refuses to run on a dirty tree, so the tag it writes actually describes what
+  shipped (`ALLOW_DIRTY=1` builds without committing or tagging);
+- **reverts the bump if the release fails**, so a dead build no longer burns a
+  version number;
+- treats a channel that is not on the new version as **fatal**, not advisory.
 
 ### Each channel is a single-version pointer
 
@@ -303,10 +327,14 @@ per-channel summary so a half-finished release cannot pass unnoticed:
     Release both platforms in one command: npm run build:release
 ```
 
-Use `npm run build:release` to advance both channels in one command — `build:mac`
-first, because it owns the version bump, then `build:win`, which reuses it. The
-warning is advisory, never fatal: shipping one platform is a legitimate choice,
-it just must be a deliberate one.
+Use `npm run build:release` to advance both channels in one command. Inside a
+release this warning is upgraded to a hard failure (Step 4 above) — a release is
+not a release until every platform can actually be offered it.
+
+Running `npm run build:mac` or `npm run build:win` on their own stays legitimate
+and stays advisory: that is the catch-up path when one channel has fallen
+behind, and neither script bumps, so building Windows alone lands it on exactly
+the version macOS already published.
 
 ---
 

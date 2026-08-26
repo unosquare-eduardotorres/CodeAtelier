@@ -1,6 +1,6 @@
 {
   "name": "code-atelier",
-  "version": "1.0.82",
+  "version": "1.0.83",
   "description": "Code Atelier — Where Craft Meets Code",
   "main": "./out/main/index.js",
   "author": "example.com",
@@ -20,7 +20,7 @@
     "build:unpack": "npm run build && electron-builder --dir",
     "build:win": "bash scripts/build-win.sh",
     "build:mac": "bash scripts/build-mac.sh",
-    "build:release": "npm run build:mac && npm run build:win",
+    "build:release": "bash scripts/release.sh",
     "build:linux": "electron-vite build && node scripts/verify-build-assets.mjs && electron-builder --linux",
     "test:unit": "tsx src/main/services/__tests__/run-tests.ts",
     "test:repo": "tsx src/main/db/repositories/__tests__/run-tests.ts",

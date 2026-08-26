@@ -12,8 +12,9 @@
 #
 # IMPORTANT: A trap guarantees dev-dependency restoration even if the build fails.
 #
-# NOTE: Does NOT bump version — run build:mac first for version bumps,
-# or pass BUMP_VERSION=1 to bump here.
+# NOTE: Does NOT bump the version — scripts/release.sh owns the single bump per
+# release. Run this alone to build Windows at whatever version package.json
+# already carries (the catch-up path when one channel has fallen behind).
 set -euo pipefail
 
 if [ "${NODE_ENV:-}" = "production" ]; then
@@ -65,15 +66,13 @@ echo "▸ Step 1: Build (typecheck + electron-vite)"
 npm run build
 
 echo ""
-if [ "${BUMP_VERSION:-}" = "1" ]; then
-  echo "▸ Step 1b: Bump patch version"
-  OLD_VERSION="$(node -p "require('./package.json').version")"
-  npm version patch --no-git-tag-version >/dev/null
-  NEW_VERSION="$(node -p "require('./package.json').version")"
-  echo "  Version bumped: ${OLD_VERSION} → ${NEW_VERSION}"
-else
-  echo "▸ Step 1b: Skip version bump (use BUMP_VERSION=1 to enable)"
-  echo "  Current version: $(node -p "require('./package.json').version")"
+echo "▸ Step 1b: Version"
+# Never bumps — see the header. BUMP_VERSION used to do it here, which meant a
+# release could advance the version twice (once per platform) and land mac and
+# Windows on different numbers.
+echo "  Building v$(node -p "require('./package.json').version") (bumps belong to scripts/release.sh)"
+if [ -n "${BUMP_VERSION:-}" ]; then
+  echo "  ⓘ BUMP_VERSION is no longer read — use npm run build:release to bump."
 fi
 
 echo ""

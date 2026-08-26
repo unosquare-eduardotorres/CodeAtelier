@@ -99,19 +99,20 @@ echo "▸ Step 1: Build (typecheck + electron-vite)"
 npm run build
 
 echo ""
-echo "▸ Step 1b: Bump patch version"
-# Persistent patch bump. --no-git-tag-version skips git commit/tag AND the
-# clean-working-tree check, updating package.json + package-lock.json in place.
-# The bumped package.json is captured by the Step 2d backup and restored by the
-# EXIT trap, so the new version survives the build (ready to commit later).
-# Escape hatch: SKIP_VERSION_BUMP=1 npm run build:mac  (re-build without bumping).
-if [ "${SKIP_VERSION_BUMP:-}" = "1" ]; then
-  echo "  SKIP_VERSION_BUMP=1 — keeping version $(node -p "require('./package.json').version")"
-else
-  OLD_VERSION="$(node -p "require('./package.json').version")"
-  npm version patch --no-git-tag-version >/dev/null
-  NEW_VERSION="$(node -p "require('./package.json').version")"
-  echo "  Version bumped: ${OLD_VERSION} → ${NEW_VERSION}"
+echo "▸ Step 1b: Version"
+# This script does NOT bump. A version identifies a *release*, not a platform
+# build, and while the bump lived here it produced two distinct failures:
+#
+#   1. `build:mac` alone advanced the version and published only the mac
+#      channel, leaving every Windows client offered the previous version
+#      indefinitely (exactly the 1.0.82 / 1.0.83 split this replaced).
+#   2. Rebuilding to debug minted version numbers that were never shipped and
+#      never committed — 1.0.72 and 1.0.79 are both missing from git history.
+#
+# scripts/release.sh owns the single bump per release.
+echo "  Building v$(node -p "require('./package.json').version") (bumps belong to scripts/release.sh)"
+if [ -n "${SKIP_VERSION_BUMP:-}" ]; then
+  echo "  ⓘ SKIP_VERSION_BUMP is no longer read — this script never bumps now."
 fi
 
 echo ""
