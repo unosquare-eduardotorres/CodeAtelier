@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import {
   useModelConfig,
   ProviderCards,
+  RuntimeStatusCard,
   ModelRolesSection,
   ConversationDefaultsSection
 } from './model-config'
@@ -22,16 +23,16 @@ export default function ModelConfigTab(): React.JSX.Element {
     }
   }, [modelsViewIntent, setModelsViewIntent, config])
 
-  // ── Unsaved-changes navigation guard (scoped to connection draft) ──
+  // ── Unsaved-changes navigation guard (covers the whole Local Models card) ──
   const setUnsavedGuard = useSettingsStore((s) => s.setUnsavedGuard)
   const clearUnsavedGuard = useSettingsStore((s) => s.clearUnsavedGuard)
 
-  const isDirtyRef = useRef(config.isConnectionDirty)
-  isDirtyRef.current = config.isConnectionDirty
-  const saveRef = useRef(config.saveConnection)
-  saveRef.current = config.saveConnection
-  const discardRef = useRef(config.discardConnection)
-  discardRef.current = config.discardConnection
+  const isDirtyRef = useRef(config.isLocalModelsDirty)
+  isDirtyRef.current = config.isLocalModelsDirty
+  const saveRef = useRef(config.saveLocalModels)
+  saveRef.current = config.saveLocalModels
+  const discardRef = useRef(config.discardLocalModels)
+  discardRef.current = config.discardLocalModels
 
   useEffect(() => {
     setUnsavedGuard({
@@ -59,6 +60,12 @@ export default function ModelConfigTab(): React.JSX.Element {
           chats keep their own settings
         </p>
 
+        {/* ── What the running app is actually using ── */}
+        <RuntimeStatusCard
+          workspaceId={config.activeWorkspace.id}
+          refreshKey={config.localModelsSavedAt}
+        />
+
         {/* ── Provider Connections ── */}
         <div className="flex items-center gap-2 mb-3">
           <h3 className="text-sm text-text-secondary uppercase tracking-wider font-medium">
@@ -70,8 +77,8 @@ export default function ModelConfigTab(): React.JSX.Element {
           openCodeCliStatus={config.openCodeCliStatus}
           localLlmBackend={config.localLlmBackend}
           onBackendChange={config.setLocalLlmBackend}
-          connectionDraft={config.connectionDraft}
-          isConnectionDirty={config.isConnectionDirty}
+          localModelsDraft={config.localModelsDraft}
+          isLocalModelsDirty={config.isLocalModelsDirty}
           localStatus={config.localStatus}
           connectionTesting={config.connectionTesting}
           modelLoading={config.modelLoading}
@@ -83,8 +90,8 @@ export default function ModelConfigTab(): React.JSX.Element {
           onPortChange={config.setLocalPort}
           onApiKeyChange={config.setLocalApiKey}
           onContextWindowChange={config.setLocalContextWindow}
-          onSaveConnection={config.saveConnection}
-          onDiscardConnection={config.discardConnection}
+          onSaveLocalModels={config.saveLocalModels}
+          onDiscardLocalModels={config.discardLocalModels}
           onTestConnection={() => config.testConnection()}
           onAutoTest={config.scheduleAutoTest}
           onLocalModelSelect={config.handleLocalModelSelect}

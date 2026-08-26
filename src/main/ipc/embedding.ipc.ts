@@ -1,12 +1,35 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
-import { IPC_CHANNELS, OMLX_DEFAULT_PORT, OLLAMA_DEFAULT_PORT } from '../../shared/constants'
+import {
+  IPC_CHANNELS,
+  OMLX_DEFAULT_PORT,
+  OLLAMA_DEFAULT_PORT,
+  defaultLocalLlmBackend
+} from '../../shared/constants'
 import { localEmbeddingProvider } from '../services/local-embedding.provider'
 import { omlxManager } from '../services/omlx-manager.service'
 import { ollamaManager } from '../services/ollama-manager.service'
 import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
-import type { EmbeddingModelStatus, LocalLLMBackend } from '../../shared/types'
+import type {
+  EmbeddingModelStatus,
+  LocalLLMBackend,
+  ModelRoleMap,
+  ModelsRuntimeStatus,
+  RuntimeRoleAssignment
+} from '../../shared/types'
+
+const PLATFORM_DEFAULT_BACKEND = defaultLocalLlmBackend(
+  process.platform === 'darwin' && process.arch === 'arm64'
+)
+
+function readRole(
+  roles: ModelRoleMap,
+  key: 'specialist:plan' | 'specialist:build'
+): RuntimeRoleAssignment | null {
+  const role = roles[key]
+  return role ? { provider: role.provider, modelId: role.modelId } : null
+}
 
 export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
   // Forward oMLX embedding events to the renderer
@@ -33,13 +56,15 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
       // Resolve config: explicit args → workspace settings → defaults
       let resolvedBaseUrl = args?.baseUrl
       let resolvedApiKey = args?.apiKey
-      let activeBackend: LocalLLMBackend = 'omlx'
+      // Must match configureForWorkspace's fallback, or this reports the oMLX
+      // branch on machines the facade actually put on Ollama.
+      let activeBackend: LocalLLMBackend = PLATFORM_DEFAULT_BACKEND
       let ollamaEmbModel: string | null = null
 
       if (args?.workspaceId) {
         try {
           const settings = workspaceRepository.getSettings(args.workspaceId)
-          activeBackend = (settings?.localLlmBackend as LocalLLMBackend) ?? 'omlx'
+          activeBackend = (settings?.localLlmBackend as LocalLLMBackend) ?? PLATFORM_DEFAULT_BACKEND
           ollamaEmbModel = (settings?.ollamaEmbeddingModel as string) ?? null
           if (!resolvedBaseUrl) {
             const host = (settings?.localHost as string) ?? '127.0.0.1'
@@ -112,9 +137,74 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.EMBEDDING_INITIALIZE,
-    async (event, args?: { baseUrl?: string; apiKey?: string }) => {
+    async (event, args?: { baseUrl?: string; apiKey?: string; workspaceId?: string }) => {
       validateSender(event)
+      // Without this the "Check Connection" button probes whatever the global
+      // facade happens to hold, which is a different question from the one the
+      // user is asking ("does MY workspace's embedding config work?").
+      if (args?.workspaceId) {
+        localEmbeddingProvider.configureForWorkspace(args.workspaceId)
+      }
       await localEmbeddingProvider.initialize(args?.baseUrl, args?.apiKey)
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MODELS_RUNTIME_STATUS,
+    async (event, args: { workspaceId: string }): Promise<ModelsRuntimeStatus> => {
+      validateSender(event)
+
+      let settings: Record<string, unknown> = {}
+      try {
+        settings = (workspaceRepository.getSettings(args.workspaceId) ?? {}) as Record<
+          string,
+          unknown
+        >
+      } catch {
+        // Fall through to defaults — status is diagnostic, never fatal
+      }
+
+      const savedBackend = (settings.localLlmBackend as LocalLLMBackend) ?? PLATFORM_DEFAULT_BACKEND
+      const savedModelName = (settings.ollamaEmbeddingModel as string) ?? ''
+      const activeBackend = localEmbeddingProvider.activeBackend
+      const activeModelName = localEmbeddingProvider.activeModelName
+
+      // oMLX picks its embedding model server-side, so only the Ollama branch
+      // has a saved model name to compare against.
+      const drift =
+        savedBackend !== activeBackend ||
+        (savedBackend === 'ollama' && savedModelName !== activeModelName)
+
+      const host = (settings.localHost as string) ?? '127.0.0.1'
+      const savedPort = settings.localPort as number | undefined
+      const ollamaUrl = `http://${host}:${savedBackend === 'ollama' && savedPort ? savedPort : OLLAMA_DEFAULT_PORT}`
+      const omlxUrl = `http://${host}:${savedBackend === 'omlx' && savedPort ? savedPort : OMLX_DEFAULT_PORT}`
+
+      const [ollamaProbe, omlxProbe] = await Promise.allSettled([
+        ollamaManager.checkStatus(ollamaUrl),
+        omlxManager.checkStatus(omlxUrl, settings.localApiKey as string | undefined)
+      ])
+
+      const roles = (settings.modelRoles as ModelRoleMap) ?? {}
+
+      return {
+        embedding: {
+          activeBackend,
+          activeModelName,
+          ready: localEmbeddingProvider.isReady,
+          savedBackend,
+          savedModelName,
+          drift
+        },
+        chat: {
+          plan: readRole(roles, 'specialist:plan'),
+          build: readRole(roles, 'specialist:build')
+        },
+        reachability: {
+          ollamaRunning: ollamaProbe.status === 'fulfilled' && ollamaProbe.value.running,
+          omlxRunning: omlxProbe.status === 'fulfilled' && omlxProbe.value.running
+        }
+      }
     }
   )
 }

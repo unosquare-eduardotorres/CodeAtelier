@@ -425,6 +425,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/executor-derivation.test',
   // ─── Local embedding provider facade (oMLX/Ollama routing) ───
   '../services/__tests__/local-embedding-provider.test',
+  // ─── Embedding ↔ workspace alignment (singleton facade re-pointing) ───
+  '../ipc/__tests__/embedding-workspace-alignment.test',
+  // ─── Local Models card draft (dirty rules + changed-keys-only save payload) ───
+  '../../renderer/src/components/workspace/model-config/__tests__/local-models-draft.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   '../services/__tests__/validate-args-pure.test',
   '../services/__tests__/stream-helper-deep.test',

@@ -27,13 +27,18 @@ import log from 'electron-log/main'
 import { omlxEmbeddingProvider } from './omlx-embedding.service'
 import { ollamaManager } from './ollama-manager.service'
 import { workspaceRepository } from '../db/repositories'
-import { OLLAMA_DEFAULT_PORT } from '../../shared/constants'
+import { OLLAMA_DEFAULT_PORT, defaultLocalLlmBackend } from '../../shared/constants'
 import type { LocalLLMBackend } from '../../shared/types'
 
 const embLog = log.scope('LocalEmbedding')
 
+/** Platform-derived fallback backend — mirrors PlatformInfo.isAppleSilicon. */
+function defaultLocalBackend(): LocalLLMBackend {
+  return defaultLocalLlmBackend(process.platform === 'darwin' && process.arch === 'arm64')
+}
+
 class LocalEmbeddingProvider extends EventEmitter {
-  private backend: LocalLLMBackend = 'omlx'
+  private backend: LocalLLMBackend = defaultLocalBackend()
   private ollamaModel = ''
   private ollamaBaseUrl = 'http://127.0.0.1:11434'
   private _ollamaReady = false
@@ -62,6 +67,11 @@ class LocalEmbeddingProvider extends EventEmitter {
     return this.backend === 'omlx' ? omlxEmbeddingProvider.activeModelName : this.ollamaModel
   }
 
+  /** The backend the facade is currently routing to (runtime state, not settings). */
+  get activeBackend(): LocalLLMBackend {
+    return this.backend
+  }
+
   // ── Configuration ──
 
   /**
@@ -72,20 +82,26 @@ class LocalEmbeddingProvider extends EventEmitter {
     if (backend === this.backend) return
     embLog.info(`[setBackend] Switching embedding backend: ${this.backend} → ${backend}`)
     this.backend = backend
+    // A backend switch invalidates the Ollama readiness probe — otherwise
+    // omlx → ollama → omlx → ollama round-trips keep a stale ready flag and
+    // `_initOllama()` short-circuits without re-verifying the model.
+    this._ollamaReady = false
   }
 
   /**
    * Set the Ollama embedding model name (e.g. 'bge-m3', 'nomic-embed-text').
+   * An empty string clears the selection — the user deselecting a model must
+   * propagate, otherwise the running facade keeps embedding with the old one.
    */
   setOllamaEmbeddingModel(model: string): void {
-    if (model && model !== this.ollamaModel) {
-      embLog.info(
-        `[setOllamaModel] Embedding model changed: ${this.ollamaModel || '(none)'} → ${model}`
-      )
-      this.ollamaModel = model
-      // Mark not-ready so next call triggers re-initialization
-      this._ollamaReady = false
-    }
+    const next = model ?? ''
+    if (next === this.ollamaModel) return
+    embLog.info(
+      `[setOllamaModel] Embedding model changed: ${this.ollamaModel || '(none)'} → ${next || '(none)'}`
+    )
+    this.ollamaModel = next
+    // Mark not-ready so next call triggers re-initialization
+    this._ollamaReady = false
   }
 
   /**
@@ -106,15 +122,16 @@ class LocalEmbeddingProvider extends EventEmitter {
   configureForWorkspace(workspaceId: string): void {
     try {
       const settings = workspaceRepository.getSettings(workspaceId)
-      const backend = (settings?.localLlmBackend as LocalLLMBackend) ?? 'omlx'
+      const backend = (settings?.localLlmBackend as LocalLLMBackend) ?? defaultLocalBackend()
       this.setBackend(backend)
 
       if (backend === 'ollama') {
         const host = (settings?.localHost as string) ?? '127.0.0.1'
         const port = (settings?.localPort as number) ?? OLLAMA_DEFAULT_PORT
         this.setOllamaBaseUrl(`http://${host}:${port}`)
-        const embModel = (settings?.ollamaEmbeddingModel as string) ?? ''
-        if (embModel) this.setOllamaEmbeddingModel(embModel)
+        // Applied unconditionally: an empty value means the user cleared the
+        // selection and that must reach the facade (see setOllamaEmbeddingModel).
+        this.setOllamaEmbeddingModel((settings?.ollamaEmbeddingModel as string) ?? '')
       }
     } catch (err) {
       embLog.warn('[configureForWorkspace] Failed to read workspace settings:', err)

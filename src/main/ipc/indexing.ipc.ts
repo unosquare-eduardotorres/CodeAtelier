@@ -4,6 +4,7 @@ import { statSync } from 'node:fs'
 import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { vectorSearchService } from '../services/vector-search.service'
+import { localEmbeddingProvider } from '../services/local-embedding.provider'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 import { workspaceRepository, codeChunkRepository } from '../db/repositories'
@@ -36,6 +37,11 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     if (!workspace) throw new Error('Workspace not found')
 
     const settings = workspaceRepository.getSettings(workspace.id)
+
+    // The embedding facade is a global singleton ("last-configured workspace
+    // wins"). Re-point it at THIS workspace before indexing, otherwise chunks
+    // get embedded by whichever backend another workspace last selected.
+    localEmbeddingProvider.configureForWorkspace(args.workspaceId)
 
     // Get repomap tags via tree-sitter (dynamic import for lazy loading)
     const { getTags, initParser } =
@@ -167,6 +173,10 @@ export function registerIndexingIpc(mainWindow: BrowserWindow): void {
     IPC_CHANNELS.SEMANTIC_SEARCH_QUERY,
     async (event, args: { workspaceId: string; query: string; nResults?: number }) => {
       validateSender(event)
+      // Same singleton alignment as INDEXING_START: the query is embedded with
+      // whatever backend the facade currently holds, which may belong to a
+      // different workspace (or to startup state predating the user's choice).
+      localEmbeddingProvider.configureForWorkspace(args.workspaceId)
       return vectorSearchService.search(args.workspaceId, args.query, {
         nResults: args.nResults ?? 5
       })

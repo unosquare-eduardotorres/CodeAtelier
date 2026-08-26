@@ -416,6 +416,10 @@ const TEST_FILES: string[] = [
   './executor-derivation.test',
   // ─── Local embedding provider facade (oMLX/Ollama routing) ───
   './local-embedding-provider.test',
+  // ─── Embedding ↔ workspace alignment (singleton facade re-pointing) ───
+  '../../ipc/__tests__/embedding-workspace-alignment.test',
+  // ─── Local Models card draft (dirty rules + changed-keys-only save payload) ───
+  '../../../renderer/src/components/workspace/model-config/__tests__/local-models-draft.test',
   // ─── Process Manager MCP server (ring buffer, tool registry, mode gating) ───
   './process-manager.test',
   './background-task-watcher.test',

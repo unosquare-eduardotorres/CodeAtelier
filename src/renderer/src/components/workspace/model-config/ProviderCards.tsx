@@ -26,7 +26,8 @@ import { useToastStore } from '@renderer/store'
 import { OMLX_DEFAULT_PORT } from '../../../../../shared/constants'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
 import type { LocalLLMBackend, OmlxExtendedStatus, PlatformInfo } from '../../../../../shared/types'
-import type { ClaudeCliStatus, ConnectionDraft } from './useModelConfig'
+import type { ClaudeCliStatus } from './useModelConfig'
+import type { LocalModelsDraft } from './local-models-draft'
 import LocalModelSelector from '../LocalModelSelector'
 
 // ─── Status Dot ──────────────────────────────────────────
@@ -312,8 +313,8 @@ function OpenCodeCard({ status }: OpenCodeCardProps): React.JSX.Element {
 interface OmlxProviderCardProps {
   localLlmBackend: LocalLLMBackend
   onBackendChange: (backend: LocalLLMBackend) => void
-  connectionDraft: ConnectionDraft
-  isConnectionDirty: boolean
+  localModelsDraft: LocalModelsDraft
+  isLocalModelsDirty: boolean
   localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
   modelLoading: string | null
@@ -325,8 +326,8 @@ interface OmlxProviderCardProps {
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
   onContextWindowChange: (value: number | undefined) => void
-  onSaveConnection: () => void
-  onDiscardConnection: () => void
+  onSaveLocalModels: () => void
+  onDiscardLocalModels: () => void
   onTestConnection: () => void
   onAutoTest: () => void
   onLocalModelSelect: (modelId: string) => void
@@ -342,8 +343,8 @@ const EMBEDDING_MODEL_PATTERN = /embed|bge|minilm|nomic|e5-|gte-|mxbai-embed/i
 function OmlxProviderCard({
   localLlmBackend,
   onBackendChange,
-  connectionDraft,
-  isConnectionDirty,
+  localModelsDraft: connectionDraft,
+  isLocalModelsDirty,
   localStatus,
   connectionTesting,
   modelLoading: _modelLoading,
@@ -355,8 +356,8 @@ function OmlxProviderCard({
   onPortChange,
   onApiKeyChange,
   onContextWindowChange,
-  onSaveConnection,
-  onDiscardConnection: _onDiscardConnection,
+  onSaveLocalModels,
+  onDiscardLocalModels,
   onTestConnection,
   onAutoTest,
   onLocalModelSelect,
@@ -631,12 +632,20 @@ function OmlxProviderCard({
                   </select>
                 )
               })()}
-              {ollamaEmbeddingModel && (
-                <p className="mt-1.5 flex items-center gap-1.5 text-xs text-success">
-                  <CheckCircle2 size={10} />
-                  <span>{ollamaEmbeddingModel} — Used for Semantic Search</span>
-                </p>
-              )}
+              {ollamaEmbeddingModel &&
+                (isLocalModelsDirty ? (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-400">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    <span>
+                      {ollamaEmbeddingModel} — will be used for Semantic Search after saving
+                    </span>
+                  </p>
+                ) : (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-success">
+                    <CheckCircle2 size={10} />
+                    <span>{ollamaEmbeddingModel} — Used for Semantic Search</span>
+                  </p>
+                ))}
             </SettingsCard>
           </div>
         </div>
@@ -674,26 +683,32 @@ function OmlxProviderCard({
         </SettingsCard>
       </div>
 
-      {/* ── Footer: Save connection ── */}
+      {/* ── Footer: Save the whole card (tab + connection + both model pickers) ── */}
       <div className="mt-3 flex items-center gap-3">
-        {isConnectionDirty ? (
+        {isLocalModelsDirty ? (
           <>
             <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              Unsaved
+              Unsaved changes
             </span>
             <button
-              onClick={onSaveConnection}
+              onClick={onSaveLocalModels}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-primary hover:bg-primary-hover transition-colors"
             >
               <Save size={12} />
-              Save connection
+              Save local models
+            </button>
+            <button
+              onClick={onDiscardLocalModels}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-text-secondary border border-border-default hover:bg-surface-hover transition-colors"
+            >
+              Discard
             </button>
           </>
         ) : (
           <span className="inline-flex items-center gap-1 text-xs text-text-muted">
             <CheckCircle2 size={10} className="text-success" />
-            Connection saved
+            All local model settings saved
           </span>
         )}
       </div>
@@ -708,8 +723,8 @@ export interface ProviderCardsProps {
   openCodeCliStatus: { available: boolean; version?: string } | null
   localLlmBackend: LocalLLMBackend
   onBackendChange: (backend: LocalLLMBackend) => void
-  connectionDraft: ConnectionDraft
-  isConnectionDirty: boolean
+  localModelsDraft: LocalModelsDraft
+  isLocalModelsDirty: boolean
   localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
   modelLoading: string | null
@@ -721,8 +736,8 @@ export interface ProviderCardsProps {
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
   onContextWindowChange: (value: number | undefined) => void
-  onSaveConnection: () => void
-  onDiscardConnection: () => void
+  onSaveLocalModels: () => void
+  onDiscardLocalModels: () => void
   onTestConnection: () => void
   onAutoTest: () => void
   onLocalModelSelect: (modelId: string) => void
@@ -744,8 +759,8 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
       <OmlxProviderCard
         localLlmBackend={props.localLlmBackend}
         onBackendChange={props.onBackendChange}
-        connectionDraft={props.connectionDraft}
-        isConnectionDirty={props.isConnectionDirty}
+        localModelsDraft={props.localModelsDraft}
+        isLocalModelsDirty={props.isLocalModelsDirty}
         localStatus={props.localStatus}
         connectionTesting={props.connectionTesting}
         modelLoading={props.modelLoading}
@@ -757,8 +772,8 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
         onPortChange={props.onPortChange}
         onApiKeyChange={props.onApiKeyChange}
         onContextWindowChange={props.onContextWindowChange}
-        onSaveConnection={props.onSaveConnection}
-        onDiscardConnection={props.onDiscardConnection}
+        onSaveLocalModels={props.onSaveLocalModels}
+        onDiscardLocalModels={props.onDiscardLocalModels}
         onTestConnection={props.onTestConnection}
         onAutoTest={props.onAutoTest}
         onLocalModelSelect={props.onLocalModelSelect}

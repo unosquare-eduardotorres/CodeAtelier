@@ -1571,6 +1571,42 @@ export interface EmbeddingModelStatus {
   ollamaEmbeddingModel?: string | null
 }
 
+/** One resolved chat role — provider + model actually routed to. */
+export interface RuntimeRoleAssignment {
+  provider: LLMProvider
+  modelId: string
+}
+
+/**
+ * What the running app is using *right now*, as opposed to what is persisted
+ * in workspace settings. The gap between the two (`drift`) is invisible in a
+ * settings-only view and is what makes a saved-but-unapplied config look broken.
+ */
+export interface ModelsRuntimeStatus {
+  embedding: {
+    /** Backend the global facade is routing to at this moment */
+    activeBackend: EmbeddingBackend
+    /** Model the facade currently holds — '' when none */
+    activeModelName: string
+    /** Facade has completed a successful readiness probe */
+    ready: boolean
+    /** Backend persisted in this workspace's settings */
+    savedBackend: EmbeddingBackend
+    /** Embedding model persisted in this workspace's settings — '' when none */
+    savedModelName: string
+    /** Saved config differs from what is loaded — renderer shows "Save to apply" */
+    drift: boolean
+  }
+  chat: {
+    plan: RuntimeRoleAssignment | null
+    build: RuntimeRoleAssignment | null
+  }
+  reachability: {
+    ollamaRunning: boolean
+    omlxRunning: boolean
+  }
+}
+
 // ── Ollama ──
 export interface OllamaStatus {
   installed: boolean

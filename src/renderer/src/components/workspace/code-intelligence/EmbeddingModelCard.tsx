@@ -8,19 +8,24 @@ interface EmbeddingModelCardProps {
   embeddingStatus: EmbeddingModelStatus | null
   isAppleSilicon: boolean | null // null = loading
   onNavigateToModels: () => void
+  /** Required so the probe tests THIS workspace's config, not the global facade's current state */
+  workspaceId: string | undefined
 }
 
 export default function EmbeddingModelCard({
   embeddingStatus,
   isAppleSilicon,
-  onNavigateToModels
+  onNavigateToModels,
+  workspaceId
 }: EmbeddingModelCardProps): React.JSX.Element {
   const [isChecking, setIsChecking] = useState(false)
 
   const handleCheckConnection = async (): Promise<void> => {
     setIsChecking(true)
     try {
-      await window.api.embeddingInitialize()
+      // Without workspaceId this probes whatever backend the singleton facade
+      // last happened to hold — a different question from the one being asked.
+      await window.api.embeddingInitialize({ workspaceId })
     } catch {
       // Error will surface via embedding events
     }

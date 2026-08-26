@@ -12,6 +12,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { localEmbeddingProvider } from '../local-embedding.provider'
 import { workspaceRepository } from '../../db/repositories'
+import { defaultLocalLlmBackend } from '../../../shared/constants'
 
 /**
  * `localEmbeddingProvider` is a process-wide singleton. When an earlier test
@@ -77,6 +78,63 @@ describe('LocalEmbeddingProvider — backend switching', () => {
     // Should not throw
     localEmbeddingProvider.setOllamaBaseUrl('http://192.168.1.100:11434')
     localEmbeddingProvider.setOllamaBaseUrl('') // resets to default
+  })
+
+  test('activeBackend getter reflects the selected backend', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    assert.equal(localEmbeddingProvider.activeBackend, 'ollama')
+    localEmbeddingProvider.setBackend('omlx')
+    assert.equal(localEmbeddingProvider.activeBackend, 'omlx')
+  })
+
+  /**
+   * Regression: `setOllamaEmbeddingModel` used to ignore empty input, so a user
+   * deselecting the model in the UI could never clear the running facade — it
+   * kept embedding with the previous model forever.
+   */
+  test('setOllamaEmbeddingModel applies an empty value (clears the selection)', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    localEmbeddingProvider.setOllamaEmbeddingModel('bge-m3')
+    assert.equal(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.setOllamaEmbeddingModel('')
+    assert.equal(localEmbeddingProvider.activeModelName, '', 'empty value must propagate')
+
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  /**
+   * Regression: a backend switch left `_ollamaReady` stale, so an
+   * omlx → ollama round-trip could short-circuit `_initOllama()` and skip
+   * re-verifying that the model is still present.
+   */
+  test('setBackend resets the Ollama ready flag', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    localEmbeddingProvider.setOllamaEmbeddingModel('bge-m3')
+    // Simulate a previously-successful probe (the flag is private and only
+    // reachable through a live Ollama server).
+    ;(localEmbeddingProvider as any)._ollamaReady = true
+    assert.equal(localEmbeddingProvider.isReady, true, 'precondition: ready')
+
+    localEmbeddingProvider.setBackend('omlx')
+    localEmbeddingProvider.setBackend('ollama')
+
+    assert.equal(localEmbeddingProvider.isReady, false, 'ready flag must not survive a switch')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+})
+
+describe('defaultLocalLlmBackend — platform fallback', () => {
+  test('Apple Silicon defaults to omlx', () => {
+    assert.equal(defaultLocalLlmBackend(true), 'omlx')
+  })
+
+  /** oMLX cannot run off Apple Silicon — defaulting to it there makes
+   *  embeddings unreachable on Windows/Linux no matter what the user picks. */
+  test('everything else defaults to ollama', () => {
+    assert.equal(defaultLocalLlmBackend(false), 'ollama')
   })
 })
 
@@ -235,6 +293,64 @@ describe('LocalEmbeddingProvider — configureForWorkspace', () => {
     // Back on oMLX, activeModelName delegates to omlxEmbeddingProvider and must
     // no longer report the Ollama model.
     assert.notEqual(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  test('clears the model when settings no longer name one', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    localEmbeddingProvider.setOllamaEmbeddingModel('bge-m3')
+    dropLeakedListeners()
+
+    withSettings({ localLlmBackend: 'ollama', ollamaEmbeddingModel: '' }, () => {
+      localEmbeddingProvider.configureForWorkspace('ws-cleared')
+    })
+
+    assert.equal(
+      localEmbeddingProvider.activeModelName,
+      '',
+      'a cleared selection must reach the facade'
+    )
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  test('does not apply the Ollama model when the backend is omlx', () => {
+    localEmbeddingProvider.setBackend('ollama')
+    localEmbeddingProvider.setOllamaEmbeddingModel('bge-m3')
+    dropLeakedListeners()
+
+    // oMLX selects its embedding model server-side; the Ollama model name in
+    // settings is not its business.
+    withSettings({ localLlmBackend: 'omlx', ollamaEmbeddingModel: 'nomic-embed-text' }, () => {
+      localEmbeddingProvider.configureForWorkspace('ws-omlx')
+    })
+
+    localEmbeddingProvider.setBackend('ollama')
+    assert.equal(localEmbeddingProvider.activeModelName, 'bge-m3')
+
+    localEmbeddingProvider.dispose()
+    localEmbeddingProvider.setBackend('omlx')
+  })
+
+  /**
+   * Only fully discriminating off Apple Silicon (where the old hardcoded
+   * 'omlx' fallback was the bug); on Apple Silicon both agree by definition.
+   */
+  test('falls back to the platform default when no backend is persisted', () => {
+    const expected = defaultLocalLlmBackend(
+      process.platform === 'darwin' && process.arch === 'arm64'
+    )
+    localEmbeddingProvider.setBackend(expected === 'omlx' ? 'ollama' : 'omlx')
+    dropLeakedListeners()
+
+    withSettings({}, () => {
+      localEmbeddingProvider.configureForWorkspace('ws-no-backend')
+    })
+
+    assert.equal(localEmbeddingProvider.activeBackend, expected)
 
     localEmbeddingProvider.dispose()
     localEmbeddingProvider.setBackend('omlx')

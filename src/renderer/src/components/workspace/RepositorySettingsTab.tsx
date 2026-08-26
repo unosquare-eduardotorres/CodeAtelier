@@ -104,11 +104,12 @@ export default function RepositorySettingsTab(): React.JSX.Element {
 
   const handleToggleSetting = async (key: string, value: boolean): Promise<void> => {
     if (!activeWorkspace) return
-    const updated = { ...settings, [key]: value }
-    setSettings(updated)
+    setSettings((prev) => ({ ...prev, [key]: value }))
+    // Send ONLY the changed key — main merges over the stored settings, so
+    // posting this page's snapshot would revert keys other pages have written.
     await window.api.updateWorkspaceSettings({
       workspaceId: activeWorkspace.id,
-      settings: updated
+      settings: { [key]: value }
     })
   }
 

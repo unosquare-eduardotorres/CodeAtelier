@@ -121,14 +121,16 @@ export default function CodeIntelligencePage({
   const handleToggleSetting = useCallback(
     async (key: string, value: boolean): Promise<void> => {
       if (!activeWorkspace) return
-      const updated = { ...settings, [key]: value }
-      setSettings(updated)
+      setSettings((prev) => ({ ...prev, [key]: value }))
+      // Send ONLY the changed key. Main merges over the stored settings, so
+      // posting our mount-time snapshot would revert anything another page
+      // (e.g. the embedding model on Model Configuration) wrote since then.
       await window.api.updateWorkspaceSettings({
         workspaceId: activeWorkspace.id,
-        settings: updated
+        settings: { [key]: value }
       })
     },
-    [activeWorkspace, settings]
+    [activeWorkspace]
   )
 
   // ── Code Graph toggle ──
@@ -230,6 +232,7 @@ export default function CodeIntelligencePage({
         embeddingStatus={embeddingStatus}
         isAppleSilicon={platformInfo?.isAppleSilicon ?? null}
         onNavigateToModels={() => onNavigateToModels?.()}
+        workspaceId={activeWorkspace?.id}
       />
 
       <PromptOptimizerCard
