@@ -35,7 +35,8 @@ import type {
   CreateBlueprintParams,
   PhaseContext,
   BlueprintPhaseCompletion,
-  GrillDecisionForBlueprint
+  GrillDecisionForBlueprint,
+  BlueprintRevisionRequest
 } from '../../shared/blueprint-types'
 import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../shared/blueprint-types'
 import { BlueprintStateMachine } from './blueprint-state-machine'
@@ -50,6 +51,11 @@ import { resolveAssignment, buildResolveOpts } from './model-config.service'
 export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 
 const bpLog = log.scope('blueprint')
+
+/** Per-request cap. Long enough for a real paragraph, short enough to stay quotable. */
+const MAX_REVISION_FEEDBACK_CHARS = 2000
+/** Ledger cap — a negotiation this long has a bigger problem than prompt size. */
+const MAX_REVISION_REQUESTS = 20
 
 // ── Phase-aware artifact relevance map ──
 // Controls which artifact *types* each phase receives from prior phases.
@@ -90,6 +96,14 @@ function parseGrillDecisions(raw: unknown): GrillDecisionForBlueprint[] | undefi
 
 // ── Per-Workspace Pipeline State ──
 
+/**
+ * The approval gate, as held in memory and published on the snapshot.
+ *
+ * `blueprintId` lives here rather than being read off the snapshot's own
+ * `blueprintId`, which markPipelineStopped() nulls while the gate is still up.
+ */
+export type PendingApproval = NonNullable<BlueprintPipelineSnapshot['pendingApproval']>
+
 interface BlueprintPipelineState {
   running: boolean
   blueprintId: string | null
@@ -97,12 +111,7 @@ interface BlueprintPipelineState {
   abortController: AbortController | null
   // M2: Additional fields for snapshot sync
   phaseStartedAt: number | null
-  pendingApproval: {
-    planSummary: string
-    completion?: Record<string, unknown>
-    reviewMarkdown?: string
-    preflight?: { result: Record<string, unknown>; overridden: boolean }
-  } | null
+  pendingApproval: PendingApproval | null
   lastError: string | null
   waveState: {
     wave: number
@@ -221,27 +230,14 @@ export class BlueprintService extends EventEmitter {
   }
 
   /** Set pending approval state (from review service). */
-  setPendingApproval(
-    workspaceId: string,
-    approval: {
-      planSummary: string
-      completion?: Record<string, unknown>
-      reviewMarkdown?: string
-      preflight?: { result: Record<string, unknown>; overridden: boolean }
-    } | null
-  ): void {
+  setPendingApproval(workspaceId: string, approval: PendingApproval | null): void {
     const state = this.getOrCreatePipeline(workspaceId)
     state.pendingApproval = approval
     this.publishSnapshot(workspaceId)
   }
 
   /** Get pending approval state (for preflight re-run updates). */
-  getPendingApproval(workspaceId: string): {
-    planSummary: string
-    completion?: Record<string, unknown>
-    reviewMarkdown?: string
-    preflight?: { result: Record<string, unknown>; overridden: boolean }
-  } | null {
+  getPendingApproval(workspaceId: string): PendingApproval | null {
     const state = this.getOrCreatePipeline(workspaceId)
     return state.pendingApproval
   }
@@ -1190,9 +1186,25 @@ export class BlueprintService extends EventEmitter {
       )
       try {
         mkdirSync(artifactDir, { recursive: true })
-        for (const a of previousArtifacts) {
-          if (a.type.endsWith('-partial') || a.type === 'discoveries') continue
-          const relativePath = `blueprints/${blueprint.shortName || blueprint.id}/${a.type}.md`
+        // Paths are keyed by artifact type, so two artifacts of the same type
+        // would write to the same file: the second overwrites the first, and
+        // the first's filePath then points at content that is not its own.
+        // Number the OLDER ones and leave the canonical <type>.md to the newest —
+        // review-phase.md tells the agent to Read exactly spec.md / plan.md /
+        // tasks.md, so the current artifact has to own the unsuffixed path.
+        // Three plans give plan-1.md, plan-2.md, plan.md.
+        const writable = previousArtifacts.filter(
+          (a) => !a.type.endsWith('-partial') && a.type !== 'discoveries'
+        )
+        const totalByType = new Map<string, number>()
+        for (const a of writable) totalByType.set(a.type, (totalByType.get(a.type) ?? 0) + 1)
+
+        const seenByType = new Map<string, number>()
+        for (const a of writable) {
+          const nth = (seenByType.get(a.type) ?? 0) + 1
+          seenByType.set(a.type, nth)
+          const suffix = nth === totalByType.get(a.type) ? '' : `-${nth}`
+          const relativePath = `blueprints/${blueprint.shortName || blueprint.id}/${a.type}${suffix}.md`
           const absPath = resolve(workspacePath, relativePath)
           const content =
             a.contentMd ??
@@ -1223,8 +1235,94 @@ export class BlueprintService extends EventEmitter {
       blueprintDir: `blueprints/${blueprint.shortName || blueprint.id}`,
       grillDecisions,
       workspaceDocs,
-      retryContext
+      retryContext,
+      revisionRequests: this.getRevisionRequests(blueprintId)
     }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  //  REVISION LEDGER — what the human asked to change, and whether it stuck
+  // ══════════════════════════════════════════════════════════════════════
+
+  /** Every change request on this blueprint, oldest first. */
+  getRevisionRequests(blueprintId: string): BlueprintRevisionRequest[] {
+    const blueprint = blueprintRepository.findById(blueprintId)
+    const raw = blueprint?.settingsJson?.revisionRequests
+    if (!Array.isArray(raw)) return []
+    // Runtime-validated: settingsJson is a free-form bag and this feeds a prompt.
+    return raw.filter(
+      (r): r is BlueprintRevisionRequest =>
+        !!r &&
+        typeof r === 'object' &&
+        typeof (r as BlueprintRevisionRequest).feedback === 'string' &&
+        (r as BlueprintRevisionRequest).feedback.length > 0
+    )
+  }
+
+  /**
+   * Record a human change request. Returns the stored entry.
+   *
+   * Appended rather than replaced: the agent must see round 1 when acting on
+   * round 3, or it re-litigates decisions that were already settled.
+   */
+  appendRevisionRequest(
+    blueprintId: string,
+    params: {
+      phase: BlueprintPhaseType
+      feedback: string
+      disposition: 'revised' | 'rewound'
+    }
+  ): BlueprintRevisionRequest | null {
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) return null
+
+    const feedback = params.feedback.trim()
+    if (!feedback) return null
+
+    const existing = this.getRevisionRequests(blueprintId)
+    // Derive the round from the highest round already recorded, not from the
+    // list length: the ledger is capped, so once it is full every subsequent
+    // request would otherwise be numbered the same.
+    const highestRound = existing.reduce(
+      (max, r) => (typeof r.round === 'number' && r.round > max ? r.round : max),
+      0
+    )
+    const truncated = feedback.length > MAX_REVISION_FEEDBACK_CHARS
+    const entry: BlueprintRevisionRequest = {
+      round: highestRound + 1,
+      at: new Date().toISOString(),
+      phase: params.phase,
+      feedback: feedback.slice(0, MAX_REVISION_FEEDBACK_CHARS),
+      disposition: params.disposition,
+      ...(truncated ? { truncated: true } : {})
+    }
+
+    // Cap the ledger so a long negotiation cannot crowd the artifacts out of
+    // the prompt. The oldest entries drop first; round numbers stay truthful.
+    const next = [...existing, entry].slice(-MAX_REVISION_REQUESTS)
+
+    blueprintRepository.update(blueprintId, {
+      settingsJson: { ...blueprint.settingsJson, revisionRequests: next }
+    })
+
+    bpLog.info(
+      `[appendRevisionRequest] Blueprint ${blueprintId} — round ${entry.round} ` +
+        `(${entry.disposition}) on ${entry.phase}: ${feedback.slice(0, 120)}`
+    )
+    return entry
+  }
+
+  /** Mark the newest request's disposition — used when a revision turn fails and we fall back to a rewind. */
+  setLatestRevisionDisposition(blueprintId: string, disposition: 'revised' | 'rewound'): void {
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) return
+    const existing = this.getRevisionRequests(blueprintId)
+    if (existing.length === 0) return
+    const next = [...existing]
+    next[next.length - 1] = { ...next[next.length - 1], disposition }
+    blueprintRepository.update(blueprintId, {
+      settingsJson: { ...blueprint.settingsJson, revisionRequests: next }
+    })
   }
 
   /**
@@ -1652,6 +1750,7 @@ export class BlueprintService extends EventEmitter {
 
       // Rebuild pendingApproval (in-memory) from persisted artifacts
       this.setPendingApproval(workspaceId, {
+        blueprintId,
         planSummary,
         completion: completion ?? undefined,
         reviewMarkdown: reviewArtifact?.contentMd || undefined,

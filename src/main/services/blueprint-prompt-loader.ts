@@ -16,7 +16,8 @@ import log from 'electron-log'
 import type {
   BlueprintPhaseType,
   PhaseContext,
-  BlueprintArtifact
+  BlueprintArtifact,
+  BlueprintRevisionRequest
 } from '../../shared/blueprint-types'
 
 const promptLog = log.scope('blueprint-prompt-loader')
@@ -338,6 +339,46 @@ function formatRetryContext(ctx: NonNullable<PhaseContext['retryContext']>): str
   return lines.join('\n')
 }
 
+// ── Revision Feedback Formatter ──
+
+/**
+ * Render the human's outstanding change requests.
+ *
+ * Deliberately separate from {{RETRY_CONTEXT}}: that block is failure-shaped
+ * ("the previous attempt FAILED", "**Error:**"), and telling an agent its work
+ * failed when a human simply wants it different produces apology and a rewrite
+ * from scratch rather than a targeted edit. A change request is not an error.
+ *
+ * All rounds are shown, oldest first — the agent must not re-litigate a decision
+ * that was settled two rounds ago just because the newest note did not repeat it.
+ */
+function formatRevisionFeedback(requests: BlueprintRevisionRequest[]): string {
+  const lines = [
+    `\n<revision_requests>`,
+    `## ✍️ The human has requested changes (${requests.length} round${requests.length > 1 ? 's' : ''})`,
+    '',
+    'These are direct instructions from the person who owns this work. They are',
+    'requirements, not suggestions, and they outrank your own earlier choices.',
+    'Every round below still applies unless a later round contradicts it.',
+    ''
+  ]
+
+  for (const r of requests) {
+    lines.push(`### Round ${r.round} — on the ${r.phase} output (${r.at})`)
+    lines.push(r.feedback)
+    lines.push('')
+  }
+
+  lines.push(
+    'Address every point above. If you believe a request is mistaken or infeasible,',
+    'say so explicitly and explain why — do NOT silently ignore it or quietly do',
+    'something else, which reads to the human as the feedback having been dropped.',
+    '</revision_requests>'
+  )
+
+  return lines.join('\n')
+}
+
 // ── Variable Replacement ──
 
 function replaceVariables(
@@ -380,6 +421,11 @@ function replaceVariables(
       .replace(
         '{{RETRY_CONTEXT}}',
         context.retryContext ? formatRetryContext(context.retryContext) : ''
+      )
+      // Human change requests — every round, on every re-run of the phase
+      .replace(
+        '{{REVISION_FEEDBACK}}',
+        context.revisionRequests?.length ? formatRevisionFeedback(context.revisionRequests) : ''
       )
   )
 }

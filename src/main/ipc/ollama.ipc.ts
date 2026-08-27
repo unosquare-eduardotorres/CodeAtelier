@@ -74,17 +74,17 @@ export function registerOllamaIpc(mainWindow: BrowserWindow): void {
 
   ipcMain.handle(
     IPC_CHANNELS.OMLX_LOAD_MODEL,
-    async (event, args: { modelId: string; baseUrl?: string; apiKey?: string }) => {
+    async (event, args?: { modelId?: string; baseUrl?: string; apiKey?: string }) => {
       validateSender(event)
-      await omlxManager.loadModel(args.modelId, args.baseUrl, args.apiKey)
+      await omlxManager.loadModel(args?.modelId ?? '', args?.baseUrl, args?.apiKey)
     }
   )
 
   ipcMain.handle(
     IPC_CHANNELS.OMLX_UNLOAD_MODEL,
-    async (event, args: { modelId: string; baseUrl?: string; apiKey?: string }) => {
+    async (event, args?: { modelId?: string; baseUrl?: string; apiKey?: string }) => {
       validateSender(event)
-      await omlxManager.unloadModel(args.modelId, args.baseUrl, args.apiKey)
+      await omlxManager.unloadModel(args?.modelId ?? '', args?.baseUrl, args?.apiKey)
     }
   )
 }

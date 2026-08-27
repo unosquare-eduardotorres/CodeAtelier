@@ -217,10 +217,23 @@ class OmlxManagerService {
   }
 
   /**
+   * Guard against callers passing an absent model id. Without this,
+   * `encodeURIComponent(undefined)` yields the literal string "undefined" and the
+   * request still goes out as `/admin/api/models/undefined/load`, which 404s and
+   * floods the oMLX server log.
+   */
+  private assertModelId(modelId: string, action: string): void {
+    if (typeof modelId !== 'string' || modelId.trim() === '') {
+      throw new Error(`Cannot ${action} model: modelId is required`)
+    }
+  }
+
+  /**
    * Load a downloaded model into memory via the admin API.
    * Model loading can take 10-30s for large models, so we use a 60s timeout.
    */
   async loadModel(modelId: string, baseUrl?: string, apiKey?: string): Promise<void> {
+    this.assertModelId(modelId, 'load')
     const url = this.resolveBaseUrl(baseUrl)
     log.info(`[OmlxManager] Loading model: ${modelId}`)
 
@@ -249,6 +262,7 @@ class OmlxManagerService {
    * Unload a model from memory via the admin API.
    */
   async unloadModel(modelId: string, baseUrl?: string, apiKey?: string): Promise<void> {
+    this.assertModelId(modelId, 'unload')
     const url = this.resolveBaseUrl(baseUrl)
     log.info(`[OmlxManager] Unloading model: ${modelId}`)
 

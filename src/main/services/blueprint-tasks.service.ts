@@ -193,7 +193,10 @@ export class BlueprintTasksService extends EventEmitter {
 
       // 8. Save phase artifact
       if (tasksPhase) {
-        blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        // Replace, not append — same reason as PLAN: acceptRevision() rewinds to
+        // TASKS and re-runs this phase, so appending would leave two 'tasks'
+        // artifacts and REVIEW would receive both.
+        blueprintPhaseRepository.replaceArtifactOfType(tasksPhase.id, 'tasks', {
           type: 'tasks',
           contentMd: text,
           contentJson: tasksJson ?? undefined

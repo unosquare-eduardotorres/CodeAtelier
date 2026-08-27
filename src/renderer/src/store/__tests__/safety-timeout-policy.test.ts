@@ -1,11 +1,13 @@
 /**
  * The renderer's 2-minute safety watchdog — when it may act.
  *
- * The watchdog is the last defence against a wedged main process, and every
- * time it fired in the field it was recovering a genuine backend death. It has
- * exactly one blind spot: an open `ask_user` gate has no backend timeout by
- * design (a human may take arbitrarily long), so silence there proves nothing
- * and the card must not be ripped out from under the user.
+ * The watchdog is the last defence against a wedged main process. It used to
+ * tear down on silence alone, on the premise that every field occurrence was a
+ * genuine backend death. That premise was falsified: a background conversation
+ * running a long tool emitted only `toolActivity` chunks, which never reset the
+ * timer, and the teardown clears `activeRequestId` — so the two further minutes
+ * main streamed were all rejected and the turn's output was destroyed. Main is
+ * now consulted on every timeout.
  *
  * The load-bearing property is the last group: nothing short of main positively
  * claiming the stream may stop a teardown.
@@ -14,88 +16,40 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../../../main/services/__tests__/test-harness'
-import { needsBackendConfirmation, resolveSafetyTimeout } from '../chat-action-utils'
+import { resolveSafetyTimeout } from '../chat-action-utils'
 
 const base = {
   stillStreaming: true,
-  isActiveConversation: true,
-  hasOpenQuestion: false,
   backendOwnsStream: null as boolean | null
 }
-
-describe('needsBackendConfirmation', () => {
-  test('only an open question on the active conversation costs a round-trip', () => {
-    assert.equal(
-      needsBackendConfirmation({ isActiveConversation: true, hasOpenQuestion: true }),
-      true
-    )
-    assert.equal(
-      needsBackendConfirmation({ isActiveConversation: true, hasOpenQuestion: false }),
-      false
-    )
-  })
-
-  test('a background conversation is never deferred', () => {
-    // pendingQuestions is active-conversation state — a background timeout has
-    // no card on screen to protect.
-    assert.equal(
-      needsBackendConfirmation({ isActiveConversation: false, hasOpenQuestion: true }),
-      false
-    )
-  })
-})
 
 describe('resolveSafetyTimeout', () => {
   test('a conversation that stopped streaming is left alone', () => {
     assert.equal(resolveSafetyTimeout({ ...base, stillStreaming: false }), 'ignore')
   })
 
-  test('ordinary silence tears down with no round-trip', () => {
-    assert.equal(resolveSafetyTimeout(base), 'teardown')
-  })
-
-  test('an open gate defers while main still owns the stream', () => {
-    assert.equal(
-      resolveSafetyTimeout({ ...base, hasOpenQuestion: true, backendOwnsStream: true }),
-      'defer'
-    )
+  test('silence defers while main still owns the stream', () => {
+    assert.equal(resolveSafetyTimeout({ ...base, backendOwnsStream: true }), 'defer')
   })
 })
 
 describe('resolveSafetyTimeout — the watchdog still bites', () => {
-  test('an open gate is cleared once main no longer owns the stream', () => {
-    assert.equal(
-      resolveSafetyTimeout({ ...base, hasOpenQuestion: true, backendOwnsStream: false }),
-      'teardown'
-    )
+  test('a stream main no longer owns is torn down', () => {
+    assert.equal(resolveSafetyTimeout({ ...base, backendOwnsStream: false }), 'teardown')
   })
 
   test('a failed streaming-state query does not disarm the watchdog', () => {
     // backendStillOwns() reports a throw as false: an unreachable main process
     // is the exact wedge this timer exists to recover from.
-    assert.equal(
-      resolveSafetyTimeout({ ...base, hasOpenQuestion: true, backendOwnsStream: false }),
-      'teardown'
-    )
-  })
-
-  test('a gate on a background conversation never defers, whatever main says', () => {
-    assert.equal(
-      resolveSafetyTimeout({
-        ...base,
-        isActiveConversation: false,
-        hasOpenQuestion: true,
-        backendOwnsStream: true
-      }),
-      'teardown'
-    )
+    assert.equal(resolveSafetyTimeout({ ...base, backendOwnsStream: false }), 'teardown')
   })
 
   test('an unconsulted backend never defers', () => {
-    assert.equal(
-      resolveSafetyTimeout({ ...base, hasOpenQuestion: true, backendOwnsStream: null }),
-      'teardown'
-    )
+    assert.equal(resolveSafetyTimeout({ ...base, backendOwnsStream: null }), 'teardown')
+  })
+
+  test('ignore wins over defer — a finished conversation is never re-armed', () => {
+    assert.equal(resolveSafetyTimeout({ stillStreaming: false, backendOwnsStream: true }), 'ignore')
   })
 })
 

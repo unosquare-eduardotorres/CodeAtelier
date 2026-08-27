@@ -75,6 +75,75 @@ void (async () => {
     })
   })
 
+  // ── Executor heartbeat → renderer keepalive ────────────────────────────────
+  // The executor emits `{type:'status', content:'heartbeat'}` between NDJSON
+  // messages purely to prove the CLI is alive. It must never reach the
+  // transcript, but dropping it discarded the one liveness signal that tracks
+  // real CLI output — leaving the renderer's watchdog dependent on a 30s
+  // setInterval that main-thread work can starve.
+
+  type Sent = { channel: string; payload: Record<string, unknown> }
+
+  const makeRecordingCtx = (conversationId: string): { ctx: RouteCtx; sent: Sent[] } => {
+    const sent: Sent[] = []
+    const ctx = {
+      mainWindow: {
+        isDestroyed: () => false,
+        webContents: {
+          send: (channel: string, payload: Record<string, unknown>) => {
+            sent.push({ channel, payload })
+          }
+        }
+      },
+      conversationId,
+      role: 'specialist',
+      contentAccumulator: { value: '' }
+    } as unknown as RouteCtx
+    return { ctx, sent }
+  }
+
+  describe('chunk-router › status heartbeat', () => {
+    test('forwards a heartbeat as a keepalive on the chunk channel', () => {
+      const { ctx, sent } = makeRecordingCtx('conv-heartbeat-1')
+      routeChunk(ctx, { type: 'status', content: 'heartbeat' } as RouteChunk)
+      flushTextBatcher('conv-heartbeat-1')
+
+      assert.equal(sent.length, 1)
+      assert.equal(sent[0].channel, 'chat:messageChunk')
+      assert.equal(sent[0].payload.keepalive, true)
+      assert.equal(sent[0].payload.conversationId, 'conv-heartbeat-1')
+    })
+
+    test('a heartbeat never leaks into the transcript', () => {
+      const { ctx, sent } = makeRecordingCtx('conv-heartbeat-2')
+      routeChunk(ctx, { type: 'status', content: 'heartbeat' } as RouteChunk)
+      flushTextBatcher('conv-heartbeat-2')
+
+      assert.equal(ctx.contentAccumulator.value, '')
+      // No text payload — the renderer's keepalive branch returns before rendering.
+      assert.equal(sent[0].payload.chunk, undefined)
+    })
+
+    test('an ordinary status still renders as italic text and accumulates', () => {
+      const { ctx, sent } = makeRecordingCtx('conv-heartbeat-3')
+      routeChunk(ctx, { type: 'status', content: 'Compacting context' } as RouteChunk)
+      flushTextBatcher('conv-heartbeat-3')
+
+      assert.equal(ctx.contentAccumulator.value, '\n\n_Compacting context_\n\n')
+      assert.equal(sent.length, 1)
+      assert.equal(sent[0].payload.keepalive, undefined)
+    })
+
+    test('an empty status sends nothing', () => {
+      const { ctx, sent } = makeRecordingCtx('conv-heartbeat-4')
+      routeChunk(ctx, { type: 'status', content: '' } as RouteChunk)
+      flushTextBatcher('conv-heartbeat-4')
+
+      assert.equal(sent.length, 0)
+      assert.equal(ctx.contentAccumulator.value, '')
+    })
+  })
+
   // ── StreamMetricsAggregator ──────────────────────────────────────────────
 
   describe('chunk-router › StreamMetricsAggregator › completionRate', () => {

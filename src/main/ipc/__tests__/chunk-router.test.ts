@@ -114,10 +114,21 @@ describe('chunk-router › routeChunk synchronous dispatch', () => {
     assert.match(c.contentAccumulator.value, /Indexing files/)
   })
 
-  test('status "heartbeat" is suppressed (no send)', () => {
+  test('status "heartbeat" is forwarded as a keepalive, never as text', () => {
+    // The executor emits this between NDJSON messages purely to prove the CLI is
+    // alive. Dropping it discarded the one liveness signal that tracks real CLI
+    // output, leaving the renderer's watchdog on a 30s timer that main-thread
+    // work can starve. It must reach the renderer — but only as a keepalive.
     const { window, send } = mockWindow()
-    routeChunk(ctx('c-hb', window), { type: 'status', content: 'heartbeat' } as StreamChunk)
-    assert.equal(send.callCount, 0)
+    const c = ctx('c-hb', window)
+    routeChunk(c, { type: 'status', content: 'heartbeat' } as StreamChunk)
+
+    assert.equal(send.callCount, 1)
+    assert.equal(send.lastCall?.[0], IPC_CHANNELS.CHAT_MESSAGE_CHUNK)
+    const payload = send.lastCall?.[1] as { keepalive?: boolean; chunk?: string }
+    assert.equal(payload.keepalive, true)
+    assert.equal(payload.chunk, undefined)
+    assert.equal(c.contentAccumulator.value, '')
   })
 
   test('unknown chunk type is ignored without throwing or sending', () => {

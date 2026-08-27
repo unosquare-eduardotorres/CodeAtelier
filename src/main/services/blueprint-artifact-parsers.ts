@@ -7,7 +7,11 @@
  */
 
 import log from 'electron-log'
-import type { BlueprintPhaseCompletion, BlueprintPhaseType } from '../../shared/blueprint-types'
+import type {
+  BlueprintPhaseCompletion,
+  BlueprintPhaseType,
+  BlueprintPlanRevision
+} from '../../shared/blueprint-types'
 
 // Re-export shared parsers so existing main-process imports keep working
 export { parseBlueprintPlan, parseBlueprintTasks } from '../../shared/blueprint-artifact-parsers'
@@ -44,6 +48,48 @@ export function parseDiscoveriesBlock(text: string): string[] | null {
 
     return entries.length > 0 ? entries : null
   } catch {
+    return null
+  }
+}
+
+/**
+ * Parse a ```blueprint-plan-revision``` block emitted by a plan-revision turn.
+ *
+ * `planMarkdown` is the load-bearing field — a revision that does not carry a
+ * complete revised plan is not a revision, so it is rejected rather than
+ * half-applied. `concerns` is kept even when the plan is unchanged: an agent
+ * pushing back on a request is a legitimate outcome the human needs to see.
+ */
+export function parsePlanRevisionBlock(text: string): BlueprintPlanRevision | null {
+  // Same guard as parsePhaseCompletionBlock — don't run a regex over a corrupted
+  // multi-megabyte stream.
+  if (text.length > 500_000) {
+    bpLog.warn(`[parsePlanRevisionBlock] Input too large (${text.length} chars) — skipping`)
+    return null
+  }
+
+  try {
+    const match = text.match(/```blueprint-plan-revision\s*\n([\s\S]*?)\n```/)
+    if (!match?.[1]) return null
+
+    const parsed: unknown = JSON.parse(match[1])
+    if (!parsed || typeof parsed !== 'object') return null
+    const obj = parsed as Record<string, unknown>
+
+    const planMarkdown = typeof obj.planMarkdown === 'string' ? obj.planMarkdown.trim() : ''
+    if (!planMarkdown) {
+      bpLog.warn('[parsePlanRevisionBlock] Block present but planMarkdown missing/empty')
+      return null
+    }
+
+    return {
+      summary: typeof obj.summary === 'string' ? obj.summary.trim() : '',
+      changes: asStringArray(obj.changes),
+      concerns: asStringArray(obj.concerns),
+      planMarkdown
+    }
+  } catch (err) {
+    bpLog.warn(`[parsePlanRevisionBlock] Malformed block: ${String(err)}`)
     return null
   }
 }

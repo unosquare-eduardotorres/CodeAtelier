@@ -7,10 +7,10 @@
 
 import { type JSX } from 'react'
 import { CheckCircle2, AlertTriangle, XCircle } from 'lucide-react'
-import type { BlueprintPhase } from '../../../../../../shared/blueprint-types'
+import type { BlueprintPhase, BlueprintArtifact } from '../../../../../../shared/blueprint-types'
 import { PHASE_ICONS } from '../phase-icons'
 import { DeliverableHeader, MetricTile, DiscoveriesSection, CappedMarkdownBlock } from './shared'
-import { findArtifact, extractDiscoveries } from './artifact-helpers'
+import { findArtifact, findAllArtifacts, extractDiscoveries } from './artifact-helpers'
 
 // ── Helpers ──
 
@@ -90,6 +90,43 @@ function FindingsBar({
   )
 }
 
+// ── Plan Revisions ──
+
+/**
+ * The negotiation at the approval gate, not just its outcome.
+ *
+ * `plan-revision` artifacts are append-only: the plan artifact itself holds
+ * only the current plan, so this is where the round-by-round history lives.
+ */
+function PlanRevisionsSection({
+  artifacts
+}: {
+  artifacts: BlueprintArtifact[]
+}): JSX.Element | null {
+  const revisions = findAllArtifacts(artifacts, 'plan-revision')
+  if (revisions.length === 0) return null
+
+  return (
+    <div className="mb-6">
+      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+        Plan Revisions ({revisions.length})
+      </h3>
+      {revisions.map((r, i) => {
+        const round = (r.contentJson?.round as number) ?? i + 1
+        return r.contentMd ? (
+          <CappedMarkdownBlock
+            key={`${round}-${i}`}
+            content={r.contentMd}
+            label={`Revision round ${round}`}
+            maxH="max-h-[400px]"
+            className={i === 0 ? '' : 'mt-3'}
+          />
+        ) : null
+      })}
+    </div>
+  )
+}
+
 // ── Component ──
 
 export function ReviewDeliverable({
@@ -136,6 +173,7 @@ export function ReviewDeliverable({
       <div>
         <DeliverableHeader config={config} summary="Review completed" duration={duration} />
         <CappedMarkdownBlock content={review.contentMd} label="Review Details" className="" />
+        <PlanRevisionsSection artifacts={phase.artifactsJson} />
       </div>
     )
   }
@@ -231,6 +269,9 @@ export function ReviewDeliverable({
           maxH="max-h-[500px]"
         />
       )}
+
+      {/* The change requests and what the agent did with them */}
+      <PlanRevisionsSection artifacts={phase.artifactsJson} />
 
       {/* Discoveries */}
       <DiscoveriesSection discoveries={discoveries} />

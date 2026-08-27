@@ -20,6 +20,8 @@
 
 {{RETRY_CONTEXT}}
 
+{{REVISION_FEEDBACK}}
+
 ## Your Task
 
 Create a detailed implementation plan from the specification. The plan bridges

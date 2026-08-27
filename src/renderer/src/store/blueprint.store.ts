@@ -220,6 +220,8 @@ interface BlueprintState {
     planSummary: string
     completion?: Record<string, unknown>
     reviewMarkdown?: string
+    /** The revised plan from the last revision turn (not a review report). */
+    revisedPlanMarkdown?: string
     preflight?: {
       result: {
         checks: Array<{
@@ -1347,23 +1349,32 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       rendererLog.info(`[blueprint] Approval needed for ${data.blueprintId}`)
       // Commit stream before the gate so transcript is finalized
       commitStreamAsAgentMessage()
-      set((state) => ({
-        pendingApproval: {
-          blueprintId: data.blueprintId,
-          planSummary: data.planSummary,
-          completion: data.completion ? (data.completion as Record<string, unknown>) : undefined,
-          reviewMarkdown: data.reviewMarkdown,
-          preflight: data.preflight
-        },
-        chatMessages: [
-          ...state.chatMessages,
-          {
-            type: 'system' as const,
-            content: 'Awaiting approval — review the plan before building',
-            timestamp: Date.now()
-          }
-        ]
-      }))
+      set((state) => {
+        // A revision round re-raises the gate that is already on screen. Only a
+        // newly raised gate is worth a system message — repeating "awaiting
+        // approval" after every round just pushes the gate up the transcript.
+        const isRefresh = state.pendingApproval?.blueprintId === data.blueprintId
+        return {
+          pendingApproval: {
+            blueprintId: data.blueprintId,
+            planSummary: data.planSummary,
+            completion: data.completion ? (data.completion as Record<string, unknown>) : undefined,
+            reviewMarkdown: data.reviewMarkdown,
+            revisedPlanMarkdown: data.revisedPlanMarkdown,
+            preflight: data.preflight
+          },
+          chatMessages: isRefresh
+            ? state.chatMessages
+            : [
+                ...state.chatMessages,
+                {
+                  type: 'system' as const,
+                  content: 'Awaiting approval — review the plan before building',
+                  timestamp: Date.now()
+                }
+              ]
+        }
+      })
     })
 
     // ── Preflight result (re-run updates) ──
@@ -1557,10 +1568,13 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         // Approval state
         pendingApproval: snap.pendingApproval
           ? {
-              blueprintId: snap.blueprintId ?? '',
+              // From the gate, not from snap.blueprintId — the pipeline's id is
+              // nulled by markPipelineStopped() while the gate is still up.
+              blueprintId: snap.pendingApproval.blueprintId,
               planSummary: snap.pendingApproval.planSummary,
               completion: snap.pendingApproval.completion,
               reviewMarkdown: snap.pendingApproval.reviewMarkdown,
+              revisedPlanMarkdown: snap.pendingApproval.revisedPlanMarkdown,
               // IPC boundary types preflight.result as Record<string,unknown> but runtime data
               // matches the strongly-typed PreflightResult shape used by the store
               preflight: snap.pendingApproval.preflight as NonNullable<

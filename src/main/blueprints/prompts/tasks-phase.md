@@ -20,6 +20,8 @@
 
 {{RETRY_CONTEXT}}
 
+{{REVISION_FEEDBACK}}
+
 ## Workspace Context
 
 <workspace_docs>

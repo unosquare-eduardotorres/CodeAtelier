@@ -144,6 +144,19 @@ export function mockService(servicePath: string, mockObj: any): void {
 }
 
 /**
+ * Drop a single service mock registered by `mockService()`.
+ *
+ * `serviceMocks` is process-global and `restoreFullMock()` deliberately leaves
+ * it populated, so a mock registered by one file is still consulted by the next
+ * file that calls `setupFullMock()`. Files that only need a service stubbed
+ * while their own modules load should unregister it afterwards rather than
+ * leave it to hijack a later file's `require()`.
+ */
+export function unmockService(servicePath: string): void {
+  serviceMocks.delete(servicePath)
+}
+
+/**
  * Create a mock service object with createSpy() methods.
  */
 export function createMockService(methods: string[]): any {

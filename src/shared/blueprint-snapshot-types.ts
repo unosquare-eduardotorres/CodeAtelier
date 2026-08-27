@@ -35,9 +35,24 @@ export interface BlueprintPipelineSnapshot {
   clarifyFindings: ClarifyFindingsBlock | null
   clarifyQuestions: ClarifyQuestionsBlock | null
   pendingApproval: {
+    /**
+     * The blueprint this gate belongs to, carried on the gate itself.
+     *
+     * Deliberately not read from `snapshot.blueprintId`: markPipelineStopped()
+     * nulls the pipeline's identity in REVIEW's `finally`, so any snapshot
+     * published afterwards would hand the renderer a gate with no blueprint.
+     */
+    blueprintId: string
     planSummary: string
     completion?: Record<string, unknown>
     reviewMarkdown?: string
+    /**
+     * The revised plan from the last revision turn. Kept separate from
+     * `reviewMarkdown` so the gate can label it "Revised Plan" — rendering a
+     * plan under "Full Review Report" tells the human it was reviewed when it
+     * has not been.
+     */
+    revisedPlanMarkdown?: string
     preflight?: { result: Record<string, unknown>; overridden: boolean }
   } | null
   wave: { wave: number; taskCount: number; tasks: Record<string, BlueprintTaskStatus> } | null

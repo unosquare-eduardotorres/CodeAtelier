@@ -160,17 +160,30 @@ if (loaded) {
     })
   })
 
-  describe('safety timeout — an open question gate', () => {
-    test('main is not consulted when no question is open', async () => {
-      const { internals, backendCalls } = harness(
+  describe('safety timeout — main is consulted before any teardown', () => {
+    test('ordinary silence still asks main whether it owns the stream', async () => {
+      // Silence alone is not evidence of death: a background conversation
+      // running a long tool emits only toolActivity chunks. Tearing down on
+      // silence killed a stream main went on to serve for another two minutes.
+      const { internals, state, backendCalls } = harness(
         'conv-gate-1',
         { streamingContent: 'x' },
         async () => true
       )
 
-      await internals.handleSafetyTimeout('conv-gate-1')
+      try {
+        await internals.handleSafetyTimeout('conv-gate-1')
 
-      assert.equal(backendCalls(), 0, 'ordinary silence must not pay for an IPC round-trip')
+        assert.equal(backendCalls(), 1, 'main was never asked before tearing the stream down')
+        assert.equal(
+          state.streamingConversationIds.has('conv-gate-1'),
+          true,
+          'a stream main still owns was torn down'
+        )
+      } finally {
+        // The defer path re-arms a 2-minute timer.
+        internals.clearSafetyTimer('conv-gate-1')
+      }
     })
 
     test('a live gate survives — the card is not cleared', async () => {

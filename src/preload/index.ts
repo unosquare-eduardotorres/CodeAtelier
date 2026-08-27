@@ -3086,6 +3086,36 @@ const api = {
   }): Promise<{ iterated: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CLARIFY_ITERATE, args),
 
+  /**
+   * One round of "change this" at the approval gate. Resolves with ok:false and
+   * a message when the turn could not run — the feedback is saved either way.
+   */
+  blueprintPlanReviseSend: (args: {
+    blueprintId: string
+    feedback: string
+  }): Promise<
+    | { ok: true; revision: import('../shared/blueprint-types').BlueprintPlanRevision }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_SEND, args),
+
+  /**
+   * Accept the revised plan and re-derive TASKS → REVIEW (PLAN is not re-run).
+   * Resolves with accepted:false when the blueprint is no longer at the gate or
+   * a revision turn is still running — the re-derivation itself is async.
+   */
+  blueprintPlanReviseAccept: (args: {
+    blueprintId: string
+  }): Promise<{ accepted: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_ACCEPT, args),
+
+  /** The revision ledger for this blueprint, plus whether a turn is in flight. */
+  blueprintPlanReviseHistory: (args: {
+    blueprintId: string
+  }): Promise<{
+    requests: import('../shared/blueprint-types').BlueprintRevisionRequest[]
+    revising: boolean
+  }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_HISTORY, args),
+
   blueprintStartPlan: (args: {
     blueprintId: string
     workspaceId: string
@@ -3402,6 +3432,7 @@ const api = {
       planSummary: string
       completion?: Record<string, unknown>
       reviewMarkdown?: string
+      revisedPlanMarkdown?: string
     }) => void
   ): (() => void) => {
     const handler = (
@@ -3413,6 +3444,7 @@ const api = {
         planSummary: string
         completion?: Record<string, unknown>
         reviewMarkdown?: string
+        revisedPlanMarkdown?: string
         preflight?: {
           result: {
             checks: Array<{
@@ -3533,9 +3565,11 @@ const api = {
       clarifyFindings: unknown
       clarifyQuestions: unknown
       pendingApproval: {
+        blueprintId: string
         planSummary: string
         completion?: Record<string, unknown>
         reviewMarkdown?: string
+        revisedPlanMarkdown?: string
         preflight?: { result: Record<string, unknown>; overridden: boolean }
       } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
@@ -3563,9 +3597,11 @@ const api = {
     clarifyFindings: unknown
     clarifyQuestions: unknown
     pendingApproval: {
+      blueprintId: string
       planSummary: string
       completion?: Record<string, unknown>
       reviewMarkdown?: string
+      revisedPlanMarkdown?: string
       preflight?: { result: Record<string, unknown>; overridden: boolean }
     } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null

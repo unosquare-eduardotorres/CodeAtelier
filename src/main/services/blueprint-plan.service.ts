@@ -193,7 +193,11 @@ export class BlueprintPlanService extends EventEmitter {
 
       // 8. Save artifacts
       if (planPhase) {
-        blueprintPhaseRepository.appendArtifact(planPhase.id, {
+        // Replace, not append: there is exactly one authoritative plan at any
+        // moment. A re-run (retry, or the rewind that follows Accept & Re-derive)
+        // used to leave a second 'plan' artifact behind, and assemblePhaseContext()
+        // then handed TASKS two contradictory plans with nothing to choose between.
+        blueprintPhaseRepository.replaceArtifactOfType(planPhase.id, 'plan', {
           type: 'plan',
           contentMd: text,
           contentJson: planJson ?? undefined

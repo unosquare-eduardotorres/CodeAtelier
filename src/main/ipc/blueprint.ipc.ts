@@ -22,6 +22,7 @@ import { blueprintService } from '../services/blueprint.service'
 import { blueprintSpecService } from '../services/blueprint-spec.service'
 import { blueprintPlanService } from '../services/blueprint-plan.service'
 import { blueprintTasksService } from '../services/blueprint-tasks.service'
+import { blueprintPlanRevisionService } from '../services/blueprint-plan-revision.service'
 import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
@@ -472,6 +473,85 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     return { rewound: true }
   })
 
+  // ── blueprint:planReviseSend — One round of "change this" at the approval gate ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_SEND, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_SEND
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+    const feedback = requireString(args, 'feedback', ch)
+
+    const blueprint = blueprintService.getBlueprint(blueprintId)
+    if (!blueprint) throw new Error(`${ch}: blueprint ${blueprintId} not found`)
+    const workspace = workspaceRepository.findById(blueprint.workspaceId)
+    if (!workspace) throw new Error(`${ch}: workspace not found for blueprint ${blueprintId}`)
+
+    const result = await blueprintPlanRevisionService.requestChanges({
+      blueprintId,
+      workspaceId: blueprint.workspaceId,
+      workspacePath: workspace.repoPath,
+      feedback
+    })
+
+    // A failed turn is NOT an IPC error: the feedback is on the ledger either
+    // way, and the renderer needs to say so rather than show a red toast that
+    // implies the text was lost.
+    return result.ok
+      ? { ok: true as const, revision: result.revision }
+      : { ok: false as const, error: result.error }
+  })
+
+  // ── blueprint:planReviseAccept — Take the revised plan, re-derive TASKS → REVIEW ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_ACCEPT, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_ACCEPT
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+
+    const blueprint = blueprintService.getBlueprint(blueprintId)
+    if (!blueprint) throw new Error(`${ch}: blueprint ${blueprintId} not found`)
+    const workspace = workspaceRepository.findById(blueprint.workspaceId)
+    if (!workspace) throw new Error(`${ch}: workspace not found for blueprint ${blueprintId}`)
+
+    // Ask before firing: the re-derivation is non-blocking, so a refusal that
+    // happened inside it would be invisible to the renderer and leave the
+    // Accept button spinning on a gate that is going nowhere.
+    const blocked = blueprintPlanRevisionService.acceptBlockedReason(
+      blueprintId,
+      blueprint.workspaceId
+    )
+    if (blocked) return { accepted: false as const, error: blocked }
+
+    // Non-blocking: TASKS → REVIEW is minutes of work and the renderer follows
+    // it through the existing phase events.
+    blueprintPlanRevisionService
+      .acceptRevision({
+        blueprintId,
+        workspaceId: blueprint.workspaceId,
+        workspacePath: workspace.repoPath
+      })
+      .catch((err) => {
+        bpLog.error('[blueprint:planReviseAccept] Re-derivation failed:', err)
+      })
+
+    return { accepted: true as const }
+  })
+
+  // ── blueprint:planReviseHistory — The revision ledger, for the gate UI ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_HISTORY, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_PLAN_REVISE_HISTORY
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+    return {
+      requests: blueprintService.getRevisionRequests(blueprintId),
+      revising: blueprintPlanRevisionService.isRevising(blueprintId)
+    }
+  })
+
   // ── blueprint:buildPrompt — Build system prompt for a phase ──
 
   ipcMain.handle(IPC_CHANNELS.BLUEPRINT_BUILD_PROMPT, async (event, rawArgs: unknown) => {
@@ -576,6 +656,12 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       throw new Error(`${ch}: field 'approved' must be a boolean`)
     }
     const approved = args.approved
+    // BP-REVISION-LEDGER-01: this used to be dropped on the floor. The gate
+    // collected it, the store sent it, the handler never read it — so "Request
+    // Changes" rewound the pipeline with no record of what the human asked for,
+    // and the re-run had nothing to act on.
+    const feedback =
+      typeof args.feedback === 'string' && args.feedback.trim() ? args.feedback.trim() : null
 
     if (approved) {
       // Drive state machine: awaiting-approval → idle
@@ -635,6 +721,17 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       }
     } else {
       // Not approved — rewind to plan phase for iteration
+      // Record the request BEFORE rewinding. The ledger lives on the blueprint,
+      // not on phase context_snapshot, precisely because rewindToPhase() nulls
+      // every snapshot from the target forward.
+      if (feedback) {
+        blueprintService.appendRevisionRequest(blueprintId, {
+          phase: 'review',
+          feedback,
+          disposition: 'rewound'
+        })
+      }
+
       // Drive state machine: awaiting-approval → idle (so rewind can start fresh)
       const rejBlueprint = blueprintService.getBlueprint(blueprintId)
       if (rejBlueprint) {
@@ -644,7 +741,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         machine.transition('approvalResponded')
       }
       blueprintService.rewindToPhase(blueprintId, 'plan')
-      bpLog.info(`[blueprint:approvalRespond] Blueprint ${blueprintId} — rejected, rewound to plan`)
+      bpLog.info(
+        `[blueprint:approvalRespond] Blueprint ${blueprintId} — rejected, rewound to plan` +
+          (feedback ? ` (feedback recorded, ${feedback.length} chars)` : ' (no feedback given)')
+      )
     }
 
     // MEM-BP-APPROVAL-01: Write approval/rejection as a direct decision fact.
@@ -667,7 +767,12 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
             workspaceId: bpForFact.workspaceId,
             category: 'decision',
             title: `Blueprint ${decision}: ${bpForFact.title}`,
-            content: `Plan was ${decision} by the user.\n\n### Plan Summary\n${planSummary}`,
+            // The feedback is the single most valuable part of a rejection —
+            // it is the only record of WHY a human said no.
+            content:
+              `Plan was ${decision} by the user.\n\n` +
+              (feedback ? `### Requested Changes\n${feedback}\n\n` : '') +
+              `### Plan Summary\n${planSummary}`,
             tags: ['blueprint', `blueprint:${blueprintId}`, decision],
             sourceType: 'blueprint',
             sourceRef: blueprintId,
@@ -1558,6 +1663,29 @@ function wireOnceEventForwarding(): void {
         /* non-fatal */
       }
     }
+  )
+
+  // ── BlueprintPlanRevisionService events (approval-gate revision loop) ──
+  // The revision turn streams through the same phase channels as REVIEW, so the
+  // transcript the human is watching keeps updating instead of going silent for
+  // the length of the turn.
+  forward(
+    blueprintPlanRevisionService as unknown as EventEmitterLike,
+    'phaseProgress',
+    IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS
+  )
+  forward(
+    blueprintPlanRevisionService as unknown as EventEmitterLike,
+    'phaseArtifact',
+    IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
+    'revision-event'
+  )
+  forwardStatus(blueprintPlanRevisionService as unknown as EventEmitterLike)
+  forward(
+    blueprintPlanRevisionService as unknown as EventEmitterLike,
+    'approvalNeeded',
+    IPC_CHANNELS.BLUEPRINT_APPROVAL_NEEDED,
+    'revision-event'
   )
 
   // ── BlueprintVerifyService events (Phase 7: Verify) ──

@@ -185,6 +185,13 @@ function handleMessageChunk(data: MessageChunkPayload, actions: ChatActions): vo
     return
   }
 
+  // LIVENESS-ANY-CHUNK: any chunk for this conversation proves main is alive.
+  // Reset the 2-min watchdog before any active/background branching — a
+  // background conversation running a long tool emits only toolActivity chunks,
+  // which take the else-branch below and reset the stall timer but not the
+  // watchdog, so it was force-reset while demonstrably working.
+  if (data.conversationId) streamingInternals.resetSafetyTimer(data.conversationId)
+
   const activeConvId = useChatStore.getState().activeConversation?.id
   const isActive = isActiveConversationEvent(data.conversationId, activeConvId)
 

@@ -55,6 +55,7 @@ import { grillPersistenceController } from './services/grill-persistence.control
 import { auditAgentService } from './services/audit-agent.service'
 import { mpaOrchestrationService } from './services/mpa-orchestration.service'
 import { councilService } from './services/council.service'
+import { blueprintPlanRevisionService } from './services/blueprint-plan-revision.service'
 import { setupTrayMenu, teardownTrayMenu } from './tray-menu'
 
 import { initFileWatcherHandler } from './services/file-watcher.handler'
@@ -929,6 +930,14 @@ app.on('before-quit', async (event) => {
       await councilService.shutdown()
     } catch (e) {
       log.debug('Council shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup blueprint plan-revision turns (clears the in-flight guard so a
+    // turn interrupted by quit cannot leave the gate locked on next launch)
+    try {
+      await blueprintPlanRevisionService.shutdown()
+    } catch (e) {
+      log.debug('Blueprint plan-revision shutdown error (expected during quit):', e)
     }
 
     // Cleanup memory feed (cancel in-progress claude -p summarizer)

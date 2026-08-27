@@ -1681,6 +1681,20 @@ interface Api {
     skipped?: boolean
     note?: string
   }) => Promise<{ skipped: boolean; skippedAt: string | null; outcomeKind: string | null }>
+  blueprintPlanReviseSend: (args: {
+    blueprintId: string
+    feedback: string
+  }) => Promise<
+    | { ok: true; revision: import('../shared/blueprint-types').BlueprintPlanRevision }
+    | { ok: false; error: string }
+  >
+  blueprintPlanReviseAccept: (args: {
+    blueprintId: string
+  }) => Promise<{ accepted: boolean; error?: string }>
+  blueprintPlanReviseHistory: (args: { blueprintId: string }) => Promise<{
+    requests: import('../shared/blueprint-types').BlueprintRevisionRequest[]
+    revising: boolean
+  }>
   blueprintAcknowledgeReview: (args: { blueprintId: string }) => Promise<{ acknowledged: boolean }>
   blueprintGetTranscript: (args: { blueprintId: string; afterSeq?: number }) => Promise<
     Array<{
@@ -1781,6 +1795,7 @@ interface Api {
       planSummary: string
       completion?: Record<string, unknown>
       reviewMarkdown?: string
+      revisedPlanMarkdown?: string
       preflight?: {
         result: {
           checks: Array<{
@@ -1843,9 +1858,11 @@ interface Api {
       clarifyFindings: unknown
       clarifyQuestions: unknown
       pendingApproval: {
+        blueprintId: string
         planSummary: string
         completion?: Record<string, unknown>
         reviewMarkdown?: string
+        revisedPlanMarkdown?: string
         preflight?: { result: Record<string, unknown>; overridden: boolean }
       } | null
       wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
@@ -1866,9 +1883,11 @@ interface Api {
     clarifyFindings: unknown
     clarifyQuestions: unknown
     pendingApproval: {
+      blueprintId: string
       planSummary: string
       completion?: Record<string, unknown>
       reviewMarkdown?: string
+      revisedPlanMarkdown?: string
       preflight?: { result: Record<string, unknown>; overridden: boolean }
     } | null
     wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null

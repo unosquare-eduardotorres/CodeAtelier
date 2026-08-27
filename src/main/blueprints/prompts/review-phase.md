@@ -22,6 +22,8 @@ _If any artifacts above appear truncated, use `Read` on the file paths listed in
 
 {{RETRY_CONTEXT}}
 
+{{REVISION_FEEDBACK}}
+
 ## Your Task
 
 Perform a comprehensive cross-artifact analysis of the blueprint's spec, plan,

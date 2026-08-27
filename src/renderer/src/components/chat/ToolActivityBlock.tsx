@@ -135,8 +135,10 @@ function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Ele
         <span className="text-[13px] font-medium flex-shrink-0 text-text-secondary">
           {getToolDisplayName(activity.toolName)}
         </span>
+        {/* No fixed cap on the path: it truncates at whatever width the row
+            actually has, so a wider window reveals more of it. */}
         {activity.filePath && (
-          <span className="font-mono text-[12px] truncate max-w-[240px] text-text-muted">
+          <span className="font-mono text-[12px] truncate min-w-0 text-text-muted">
             {activity.filePath}
           </span>
         )}
@@ -318,7 +320,7 @@ export default function ToolActivityBlock({
   if (errorCount > 0) summaryParts.push(`${errorCount} failed`)
 
   return (
-    <div data-testid="tool-activity-block" className="my-2 overflow-hidden">
+    <div data-testid="tool-activity-block" className="my-2 w-full overflow-hidden">
       {/* Header toggle */}
       <button
         onClick={() => setIsExpanded(!isExpanded)}

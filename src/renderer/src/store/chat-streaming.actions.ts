@@ -17,11 +17,7 @@ import {
 } from '@renderer/utils/stream-segment-accumulator'
 import type { ConversationPhase, Message, ToolActivity } from '../../../shared/types'
 import type { StreamSegment } from '@renderer/utils/stream-segment-accumulator'
-import {
-  needsBackendConfirmation,
-  resolveSafetyTimeout,
-  type PerConversationStreamState
-} from './chat-action-utils'
+import { resolveSafetyTimeout, type PerConversationStreamState } from './chat-action-utils'
 import type { ChatState, PendingToolPermission } from './chat.store'
 import { findPlanBlock } from '@renderer/components/chat/plan-detection'
 import { usePlanExecutionStore } from './plan-execution.store'
@@ -344,8 +340,13 @@ export class ChatStreamingInternals {
    * Fired when a conversation has shown no sign of life for two minutes.
    *
    * This watchdog is the last defence against a wedged main process, so it
-   * stays — every observed occurrence in the field was a genuine backend death
-   * (main-process exception → keepalives stopped) and it recovered the UI.
+   * stays — but it no longer tears down on silence alone. A background
+   * conversation running a long tool emitted only `toolActivity` chunks, which
+   * did not reset this timer; the teardown clears `activeRequestId`, so the two
+   * further minutes main streamed were all rejected and the turn's output was
+   * destroyed. Main is now asked whether it still owns the stream before
+   * anything is torn down. A throw counts as "gone", so a genuinely unreachable
+   * main process still triggers recovery.
    */
   private async handleSafetyTimeout(convId: string): Promise<void> {
     const get = this.storeGet
@@ -358,28 +359,20 @@ export class ChatStreamingInternals {
     // in streamingConversationIds forever (permanent sidebar spinner ghost).
     if (!get().streamingConversationIds.has(convId)) return
 
-    const isActiveConversation = get().activeConversation?.id === convId
-    const hasOpenQuestion = !!get().pendingQuestions
-
-    // SAFETY-GATE-ALIVE: an open ask_user gate is the one case where silence
-    // proves nothing, so ask main whether the request is really dead before
-    // clearing the card. Everything else tears down with no round-trip.
-    const backendOwnsStream = needsBackendConfirmation({ isActiveConversation, hasOpenQuestion })
-      ? await this.backendStillOwns(convId)
-      : null
+    // SAFETY-GATE-ALIVE: silence proves nothing on its own — ask main whether
+    // the request is really dead before tearing anything down.
+    const backendOwnsStream = await this.backendStillOwns(convId)
 
     const outcome = resolveSafetyTimeout({
       // Re-read: state can have moved on across the await above.
       stillStreaming: get().streamingConversationIds.has(convId),
-      isActiveConversation,
-      hasOpenQuestion,
       backendOwnsStream
     })
     if (outcome === 'ignore') return
     if (outcome === 'defer') {
       rendererLog.warn(
         `Safety timeout: conversation ${convId} silent for 2 minutes but main still owns the ` +
-          `stream and a question is open — re-arming instead of clearing the card`
+          `stream — re-arming instead of tearing it down`
       )
       this.resetSafetyTimer(convId)
       return

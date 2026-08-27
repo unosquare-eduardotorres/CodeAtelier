@@ -671,6 +671,10 @@ export const IPC_CHANNELS = {
   /** Per-task user skip — survives retry (BP-TASK-USER-SKIP-01). */
   BLUEPRINT_SKIP_TASK: 'blueprint:skipTask',
   BLUEPRINT_REWIND_PHASE: 'blueprint:rewindPhase',
+  /** Plan-revision loop at the approval gate (BP-REVISION-LEDGER-01). */
+  BLUEPRINT_PLAN_REVISE_SEND: 'blueprint:planReviseSend',
+  BLUEPRINT_PLAN_REVISE_ACCEPT: 'blueprint:planReviseAccept',
+  BLUEPRINT_PLAN_REVISE_HISTORY: 'blueprint:planReviseHistory',
   BLUEPRINT_BUILD_PROMPT: 'blueprint:buildPrompt',
   BLUEPRINT_SAVE_ARTIFACT: 'blueprint:saveArtifact',
   BLUEPRINT_GET_ARTIFACTS: 'blueprint:getArtifacts',

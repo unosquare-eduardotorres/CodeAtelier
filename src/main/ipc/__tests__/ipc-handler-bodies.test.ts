@@ -22,6 +22,7 @@ import {
   mockEvent,
   tryInvokeHandler
 } from '../../services/__tests__/setup-full-mock'
+import { installLocalLlmServiceMocks } from './local-llm-service-mocks'
 
 // Install the full mock BEFORE any IPC module is imported
 setupFullMock()
@@ -257,9 +258,23 @@ describe('IPC handler bodies — zero-coverage files', () => {
   })
 
   test('ollama handlers execute', async () => {
-    await testHandlersForModule('ollama', '../ollama.ipc', true, {
-      '*': { model: 'llama3', tag: 'latest' }
-    })
+    // Invoked for real, these handlers delete a live Ollama model, start a
+    // multi-GB pull, and `open -a` both desktop apps — so stub the singletons
+    // for the duration of the sweep.
+    const dispose = installLocalLlmServiceMocks()
+    try {
+      // The omlx admin channels take `modelId`, not `model` — without an
+      // explicit entry the sweep sent `undefined`, which `encodeURIComponent`
+      // turned into the literal string "undefined" in the request path.
+      const omlxAdminArgs = { modelId: 'test-model' }
+      await testHandlersForModule('ollama', '../ollama.ipc', true, {
+        'omlx:loadModel': omlxAdminArgs,
+        'omlx:unloadModel': omlxAdminArgs,
+        '*': { model: 'llama3', tag: 'latest' }
+      })
+    } finally {
+      dispose()
+    }
   })
 
   test('code-graph handlers execute', async () => {
@@ -269,9 +284,16 @@ describe('IPC handler bodies — zero-coverage files', () => {
   })
 
   test('embedding handlers execute', async () => {
-    await testHandlersForModule('embedding', '../embedding.ipc', true, {
-      '*': { workspaceId: 'ws-1' }
-    })
+    // embedding.ipc probes oMLX/Ollama through the same singletons — stub them
+    // so the sweep doesn't reach a live server.
+    const dispose = installLocalLlmServiceMocks()
+    try {
+      await testHandlersForModule('embedding', '../embedding.ipc', true, {
+        '*': { workspaceId: 'ws-1' }
+      })
+    } finally {
+      dispose()
+    }
   })
 })
 

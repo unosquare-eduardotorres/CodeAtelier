@@ -59,7 +59,12 @@ interface StreamingTranscriptProps<T> {
 
   /** Scroll container classes (defaults to a roomy chat layout). */
   className?: string
-  /** Inner content-width wrapper classes. */
+  /**
+   * Inner content-width wrapper classes. Defaults to full width — the
+   * transcript fills whatever the layout gives it, and readable measure is
+   * enforced per-bubble (see BUBBLE_SIZE_CLASSES.proseMax) rather than by
+   * narrowing the whole column, which also narrowed tool output.
+   */
   innerClassName?: string
   /** Extra deps that should also trigger an auto-scroll (e.g. phase). */
   scrollDeps?: ReadonlyArray<unknown>
@@ -82,7 +87,7 @@ export default function StreamingTranscript<T>({
   header,
   footer,
   className = 'overflow-y-auto px-6 py-6',
-  innerClassName = 'max-w-3xl mx-auto space-y-4',
+  innerClassName = 'w-full space-y-4',
   scrollDeps = []
 }: StreamingTranscriptProps<T>): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)

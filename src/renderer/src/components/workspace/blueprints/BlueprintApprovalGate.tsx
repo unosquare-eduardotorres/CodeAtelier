@@ -1,4 +1,4 @@
-import { useState, type JSX } from 'react'
+import { useState, useEffect, useRef, type JSX } from 'react'
 import {
   CheckCircle,
   MessageSquare,
@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Terminal,
   Key,
-  Globe
+  Globe,
+  FileText
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -47,19 +48,41 @@ interface PreflightDataUI {
 }
 
 interface BlueprintApprovalGateProps {
+  /** Needed to run the revision loop directly against the main process. */
+  blueprintId: string
   planSummary: string
   /** Structured phase completion metrics (coverage, findings, recommendation, etc.) */
   completion?: Record<string, unknown>
   /** Full review report markdown (detailed findings, gaps, risks) */
   reviewMarkdown?: string
+  /**
+   * The revised plan from the last revision turn. Rendered under its own
+   * heading — a plan shown as a review report claims a review it has not had.
+   */
+  revisedPlanMarkdown?: string
   /** Preflight check results (environment validation). */
   preflight?: PreflightDataUI
   /** Callback to re-run preflight checks. */
   onRerunPreflight?: () => void
   onApprove: () => void
+  /** Hard reject — rewinds the pipeline to PLAN. Feedback is still recorded. */
   onReject: (feedback: string) => void
   onCancel: () => void
 }
+
+/** One entry in the revision ledger, as returned by the main process. */
+interface RevisionRequestUI {
+  round: number
+  at: string
+  phase: string
+  feedback: string
+  disposition: 'revised' | 'rewound'
+  /** The text was longer than the per-request cap and was cut before storing. */
+  truncated?: boolean
+}
+
+/** How often to re-check a turn started by a previous mount of this gate. */
+const REVISION_POLL_MS = 3000
 
 // ── Recommendation Badge ──
 
@@ -152,9 +175,11 @@ function PreflightCheckRow({ check }: { check: PreflightCheckUI }): JSX.Element 
 }
 
 export default function BlueprintApprovalGate({
+  blueprintId,
   planSummary,
   completion,
   reviewMarkdown,
+  revisedPlanMarkdown,
   preflight,
   onRerunPreflight,
   onApprove,
@@ -163,7 +188,103 @@ export default function BlueprintApprovalGate({
 }: BlueprintApprovalGateProps): JSX.Element {
   const [showFeedback, setShowFeedback] = useState(false)
   const [feedback, setFeedback] = useState('')
+  // ── Revision loop state ──
+  const [history, setHistory] = useState<RevisionRequestUI[]>([])
+  const [revising, setRevising] = useState(false)
+  const [revisionError, setRevisionError] = useState<string | null>(null)
+  const [lastRevision, setLastRevision] = useState<{
+    summary: string
+    changes: string[]
+    concerns: string[]
+  } | null>(null)
+  const [accepting, setAccepting] = useState(false)
+
+  // Load the ledger once per gate. Rounds survive restarts, so a reopened gate
+  // must show what was already asked — otherwise the human retypes feedback the
+  // agent has already acted on.
+  const [loadedFor, setLoadedFor] = useState<string | null>(null)
+  if (loadedFor !== blueprintId) {
+    setLoadedFor(blueprintId)
+    void window.api
+      .blueprintPlanReviseHistory({ blueprintId })
+      .then((r) => {
+        setHistory(r.requests as RevisionRequestUI[])
+        setRevising(r.revising)
+      })
+      .catch(() => {
+        /* the gate still works without history */
+      })
+  }
+
+  // A turn started before this mount (or before a reload) leaves `revising`
+  // true with nothing local to resolve it, which would disable the send button
+  // forever. Poll the main process until it says the turn is done.
+  const ownTurn = useRef(false)
+  useEffect(() => {
+    if (!revising || ownTurn.current) return
+    const id = setInterval(() => {
+      void window.api
+        .blueprintPlanReviseHistory({ blueprintId })
+        .then((r) => {
+          setHistory(r.requests as RevisionRequestUI[])
+          if (!r.revising) setRevising(false)
+        })
+        .catch(() => {
+          /* transient — the next tick tries again */
+        })
+    }, REVISION_POLL_MS)
+    return () => clearInterval(id)
+  }, [revising, blueprintId])
+
+  const sendRevision = async (): Promise<void> => {
+    const text = feedback.trim()
+    if (!text || revising) return
+    ownTurn.current = true
+    setRevising(true)
+    setRevisionError(null)
+    try {
+      const res = await window.api.blueprintPlanReviseSend({ blueprintId, feedback: text })
+      const fresh = await window.api.blueprintPlanReviseHistory({ blueprintId })
+      setHistory(fresh.requests as RevisionRequestUI[])
+      if (res.ok) {
+        setLastRevision({
+          summary: res.revision.summary,
+          changes: res.revision.changes,
+          concerns: res.revision.concerns
+        })
+        setFeedback('')
+        setShowFeedback(false)
+      } else {
+        // Not a lost message — the ledger kept it. Say so precisely.
+        setRevisionError(res.error)
+      }
+    } catch (err) {
+      setRevisionError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRevising(false)
+      ownTurn.current = false
+    }
+  }
+
+  const acceptRevision = async (): Promise<void> => {
+    setAccepting(true)
+    setRevisionError(null)
+    try {
+      const res = await window.api.blueprintPlanReviseAccept({ blueprintId })
+      // On success the gate is dismissed by the snapshot, so `accepting` stays
+      // true until this card unmounts. A refusal has no such signal — clear it
+      // here or the button spins forever on a gate that is going nowhere.
+      if (!res.accepted) {
+        setRevisionError(res.error ?? 'Could not accept the revision.')
+        setAccepting(false)
+      }
+    } catch (err) {
+      setRevisionError(err instanceof Error ? err.message : String(err))
+      setAccepting(false)
+    }
+  }
   const [reportExpanded, setReportExpanded] = useState(false)
+  const [revisedPlanExpanded, setRevisedPlanExpanded] = useState(false)
   // D13: default expanded only when there are issues (reduces noise for all-pass)
   const [preflightExpanded, setPreflightExpanded] = useState(
     () => !!(preflight?.result.hasBlockers || preflight?.result.hasWarnings)
@@ -190,6 +311,7 @@ export default function BlueprintApprovalGate({
 
   const hasStructuredData = !!completion
   const hasReport = !!reviewMarkdown
+  const hasRevisedPlan = !!revisedPlanMarkdown
 
   return (
     <div className="space-y-4">
@@ -211,6 +333,24 @@ export default function BlueprintApprovalGate({
           <X size={16} />
         </button>
       </div>
+
+      {/* ── Post-revision state ──
+          The revision turn drops `completion` on purpose: coverage and finding
+          counts describe a review of the plan that just changed. Say what is
+          actually true instead of re-showing them. */}
+      {hasRevisedPlan && !hasStructuredData && (
+        <div
+          className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 px-3 py-2"
+          data-testid="blueprint-revision-pending-banner"
+        >
+          <RefreshCw size={13} className="text-info flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] text-text-secondary">
+            <span className="font-medium text-text-primary">Plan revised — re-review pending.</span>{' '}
+            Coverage and findings from the previous review no longer describe this plan. Accept to
+            re-derive tasks and re-run the review against it.
+          </p>
+        </div>
+      )}
 
       {/* ── Metrics Row (from structured completion) ── */}
       {hasStructuredData && (
@@ -310,7 +450,12 @@ export default function BlueprintApprovalGate({
             ) : (
               <ChevronRight size={14} className="text-text-muted" />
             )}
-            <span className="text-xs font-semibold text-text-primary">Full Review Report</span>
+            {/* After a revision the report describes the plan that was replaced,
+                so it is labelled as such rather than as a review of what is on
+                screen — its findings still matter, but they are not current. */}
+            <span className="text-xs font-semibold text-text-primary">
+              {hasRevisedPlan ? 'Review of the pre-revision plan' : 'Full Review Report'}
+            </span>
             <span className="text-[10px] text-text-muted ml-auto">
               {reportExpanded ? 'Collapse' : 'Expand to see detailed findings, gaps, and risks'}
             </span>
@@ -328,6 +473,45 @@ export default function BlueprintApprovalGate({
               >
                 <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                   {stripBlueprintBlocks(reviewMarkdown!)}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Revised Plan (collapsible markdown) ── */}
+      {hasRevisedPlan && (
+        <div className="rounded-lg border border-border-subtle overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setRevisedPlanExpanded(!revisedPlanExpanded)}
+            className="w-full flex items-center gap-2 px-3 py-2 bg-surface-overlay hover:bg-surface-hover/50 transition-colors text-left"
+          >
+            {revisedPlanExpanded ? (
+              <ChevronDown size={14} className="text-text-muted" />
+            ) : (
+              <ChevronRight size={14} className="text-text-muted" />
+            )}
+            <FileText size={14} className="text-info" />
+            <span className="text-xs font-semibold text-text-primary">Revised Plan</span>
+            <span className="text-[10px] text-text-muted ml-auto">
+              {revisedPlanExpanded ? 'Collapse' : 'Expand to read the plan you are approving'}
+            </span>
+          </button>
+          {revisedPlanExpanded && (
+            <div className="bg-surface-base border-t border-border-subtle p-3 max-h-96 overflow-y-auto">
+              <div
+                className="prose prose-sm max-w-none text-text-body
+                prose-headings:text-text-primary prose-headings:font-semibold prose-headings:text-sm
+                prose-p:leading-relaxed prose-p:text-sm
+                prose-code:font-mono prose-code:text-xs prose-code:bg-surface-overlay prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-accent prose-code:before:content-none prose-code:after:content-none
+                prose-strong:text-text-primary prose-strong:font-semibold
+                prose-li:text-sm prose-li:text-text-body
+              "
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
+                  {stripBlueprintBlocks(revisedPlanMarkdown!)}
                 </ReactMarkdown>
               </div>
             </div>
@@ -420,6 +604,88 @@ export default function BlueprintApprovalGate({
         </div>
       )}
 
+      {/* Revision transcript — what has already been asked, and what became of it */}
+      {history.length > 0 && (
+        <div className="space-y-2" data-testid="blueprint-revision-history">
+          <h4 className="text-[11px] font-semibold text-text-muted uppercase tracking-wider">
+            Change requests ({history.length})
+          </h4>
+          {history.map((r) => (
+            <div
+              key={`${r.round}-${r.at}`}
+              className="rounded-lg border border-border-subtle bg-surface-base px-3 py-2"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-[10px] font-semibold text-text-muted">Round {r.round}</span>
+                <span
+                  className={`text-[10px] px-1.5 py-0 rounded-full border ${
+                    r.disposition === 'revised'
+                      ? 'bg-success/10 text-success border-success/30'
+                      : 'bg-warning/10 text-warning border-warning/30'
+                  }`}
+                  title={
+                    r.disposition === 'revised'
+                      ? 'The plan was revised in place from this request'
+                      : 'Saved — will be applied on the next full run of the plan'
+                  }
+                >
+                  {r.disposition === 'revised' ? 'Applied' : 'Queued'}
+                </span>
+                <span className="text-[10px] text-text-muted ml-auto">
+                  {new Date(r.at).toLocaleString()}
+                </span>
+              </div>
+              <p className="text-xs text-text-secondary whitespace-pre-wrap">{r.feedback}</p>
+              {r.truncated && (
+                <p className="text-[10px] text-warning mt-1">
+                  Trimmed to fit — the agent saw only the text shown above.
+                </p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Outcome of the most recent revision turn */}
+      {lastRevision && (
+        <div
+          className="rounded-lg border border-success/30 bg-success/5 px-3 py-2 space-y-1"
+          data-testid="blueprint-revision-result"
+        >
+          <p className="text-xs text-text-primary font-medium">
+            Plan revised — {lastRevision.summary || 'see the report above'}
+          </p>
+          {lastRevision.changes.length > 0 && (
+            <ul className="text-[11px] text-text-secondary list-disc list-inside">
+              {lastRevision.changes.map((c, i) => (
+                <li key={i}>{c}</li>
+              ))}
+            </ul>
+          )}
+          {lastRevision.concerns.length > 0 && (
+            <div className="pt-1">
+              <p className="text-[11px] font-medium text-warning">Agent pushed back:</p>
+              <ul className="text-[11px] text-text-secondary list-disc list-inside">
+                {lastRevision.concerns.map((c, i) => (
+                  <li key={i}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <p className="text-[11px] text-text-muted pt-1">
+            Keep iterating, or accept to re-derive tasks and re-review against this plan.
+          </p>
+        </div>
+      )}
+
+      {/* A turn that could not run. The text was still saved — say so. */}
+      {revisionError && (
+        <div className="flex items-start gap-2 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2">
+          <AlertTriangle size={13} className="text-warning flex-shrink-0 mt-0.5" />
+          <p className="text-[11px] text-text-secondary">{revisionError}</p>
+        </div>
+      )}
+
       {/* Feedback Input */}
       {showFeedback && (
         <div className="space-y-2">
@@ -429,23 +695,45 @@ export default function BlueprintApprovalGate({
             placeholder="What should be changed? Be specific about what needs to be revised..."
             rows={3}
             autoFocus
-            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-info resize-none"
+            disabled={revising}
+            className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:ring-1 focus:ring-info resize-none disabled:opacity-60"
           />
-          <div className="flex justify-end gap-2">
+          <div className="flex items-center justify-end gap-2">
             <button
               type="button"
               onClick={() => setShowFeedback(false)}
-              className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors"
+              disabled={revising}
+              className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary transition-colors disabled:opacity-50"
             >
               Cancel
             </button>
+            {/* Full rewind stays available and stays explicit — it costs a full
+                plan → tasks → review cycle, so it should never be the accident. */}
             <button
               type="button"
               onClick={() => feedback.trim() && onReject(feedback.trim())}
-              disabled={!feedback.trim()}
-              className="px-3 py-1.5 text-xs font-medium text-white bg-button-primary-bg hover:bg-button-primary-hover rounded-lg transition-colors disabled:opacity-50"
+              disabled={!feedback.trim() || revising}
+              title="Discard this plan and re-plan from scratch with your feedback (slow — re-runs plan, tasks and review)"
+              className="px-3 py-1.5 text-xs text-text-secondary hover:text-text-primary border border-border-subtle rounded-lg transition-colors disabled:opacity-50"
             >
-              Send Feedback & Revise
+              Re-plan from scratch
+            </button>
+            <button
+              type="button"
+              onClick={() => void sendRevision()}
+              disabled={!feedback.trim() || revising}
+              data-testid="blueprint-revision-send"
+              title="Revise this plan in place — the agent keeps its current context"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-button-primary-bg hover:bg-button-primary-hover rounded-lg transition-colors disabled:opacity-50"
+            >
+              {revising ? (
+                <>
+                  <RefreshCw size={12} className="animate-spin" />
+                  Revising…
+                </>
+              ) : (
+                'Send & Revise Plan'
+              )}
             </button>
           </div>
         </div>
@@ -457,15 +745,38 @@ export default function BlueprintApprovalGate({
           <button
             type="button"
             onClick={() => setShowFeedback(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary bg-surface-base hover:bg-surface-hover border border-border-subtle rounded-lg transition-colors"
+            disabled={revising || accepting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-text-secondary hover:text-text-primary bg-surface-base hover:bg-surface-hover border border-border-subtle rounded-lg transition-colors disabled:opacity-50"
           >
             <MessageSquare size={14} />
             Request Changes
           </button>
+          {/* Only offered once a revision actually landed — re-deriving against an
+              unchanged plan is pure cost. `revisedPlanMarkdown` comes from the
+              snapshot, so the offer survives a reload; `lastRevision` alone is
+              local state and would strand a reloaded user with no way to accept. */}
+          {(lastRevision || hasRevisedPlan) && (
+            <button
+              type="button"
+              onClick={() => void acceptRevision()}
+              disabled={accepting || revising}
+              data-testid="blueprint-revision-accept"
+              title="Re-run tasks and review against the revised plan (the plan phase is not re-run)"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-text-primary bg-surface-base hover:bg-surface-hover border border-info/40 rounded-lg transition-colors disabled:opacity-50"
+            >
+              {accepting ? (
+                <RefreshCw size={14} className="animate-spin" />
+              ) : (
+                <CheckCircle size={14} />
+              )}
+              Accept & Re-derive Tasks
+            </button>
+          )}
           <button
             type="button"
             onClick={onApprove}
-            className={`flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white rounded-lg transition-colors ${
+            disabled={revising || accepting}
+            className={`flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white rounded-lg transition-colors disabled:opacity-50 ${
               preflight?.result.hasBlockers
                 ? 'bg-warning hover:bg-warning/80'
                 : 'bg-success hover:bg-success/80'

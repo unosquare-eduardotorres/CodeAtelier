@@ -580,7 +580,7 @@ export default function BlueprintChatView({
           </>
         }
         scrollDeps={[isStreaming, messages.length, activeLaneCount]}
-        innerClassName="max-w-7xl w-full mx-auto space-y-4"
+        innerClassName="w-full space-y-4"
       />
     </div>
   )

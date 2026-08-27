@@ -78,6 +78,7 @@ function BlueprintActiveView({
     planSummary: string
     completion?: Record<string, unknown>
     reviewMarkdown?: string
+    revisedPlanMarkdown?: string
     preflight?: {
       result: {
         checks: Array<{
@@ -246,9 +247,11 @@ function BlueprintActiveView({
                         className="bg-surface-raised rounded-xl border border-info/30 p-4"
                       >
                         <BlueprintApprovalGate
+                          blueprintId={pendingApproval.blueprintId}
                           planSummary={pendingApproval.planSummary}
                           completion={pendingApproval.completion}
                           reviewMarkdown={pendingApproval.reviewMarkdown}
+                          revisedPlanMarkdown={pendingApproval.revisedPlanMarkdown}
                           preflight={pendingApproval.preflight}
                           onRerunPreflight={onRerunPreflight}
                           onApprove={onApprove}
@@ -507,7 +510,7 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
         if (useWorkspaceStore.getState().activeWorkspace?.id !== workspaceId) return
 
         const state = useBlueprintStore.getState()
-        /* eslint-disable react-hooks/set-state-in-effect -- intentional conditional restore */
+
         // Priority 1: pendingOnboard handled by its own effect (skip here)
         // Priority 2: pipeline running → active view (getEffectiveView handles via isRunning)
         if (state.isRunning && state.currentBlueprint?.id) {
@@ -527,7 +530,6 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
         // Priority 4: landing
         setSelectedId(null)
         setViewState('landing')
-        /* eslint-enable react-hooks/set-state-in-effect */
       })
     } else {
       /* eslint-disable react-hooks/set-state-in-effect -- intentional reset */

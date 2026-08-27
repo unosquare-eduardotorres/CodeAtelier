@@ -11,8 +11,14 @@ import {
   mockMainWindow,
   tryInvokeHandler
 } from '../../services/__tests__/setup-full-mock'
+import { installLocalLlmServiceMocks } from './local-llm-service-mocks'
 
 setupFullMock()
+
+// Stub the local-LLM singletons before ollama.ipc/embedding.ipc are required.
+// Unstubbed, these tests delete Ollama models, start model downloads, launch
+// oMLX.app and Ollama.app, and 404-flood the oMLX server log.
+const disposeLocalLlmMocks = installLocalLlmServiceMocks()
 
 let ollamaLoaded = false
 let embeddingLoaded = false
@@ -32,6 +38,10 @@ try {
 } catch (err) {
   console.log(`⚠ embedding.ipc load failed: ${(err as Error).message?.split('\n')[0]}`)
 }
+
+// Both modules have captured the stubbed singletons — drop the registrations so
+// they can't hijack a later file's require() in the unified run.
+disposeLocalLlmMocks()
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ollama.ipc.ts

@@ -270,6 +270,7 @@ export class BlueprintReviewService extends EventEmitter {
       const planSummary = this.buildApprovalSummary(completion ?? null)
       // M2: Track approval state for snapshot sync
       blueprintService.setPendingApproval(workspaceId, {
+        blueprintId,
         planSummary,
         completion: completion ? (completion as Record<string, unknown>) : undefined,
         reviewMarkdown: text || undefined,

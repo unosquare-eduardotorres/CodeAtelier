@@ -305,7 +305,7 @@ describe('BlueprintService.assertMachineConsistency', () => {
     const machine = svc.getMachine('ws-w5')
     machine.transition('approvalNeeded')
     // Set approval state but clear running
-    svc.setPendingApproval('ws-w5', { planSummary: 'test' })
+    svc.setPendingApproval('ws-w5', { blueprintId: 'bp-w5', planSummary: 'test' })
     svc.markPipelineStopped('ws-w5')
     // Force back to awaiting approval
     machine.transition('startPhase', { blueprintId: 'bp-w5', phase: 'review' })

@@ -402,6 +402,7 @@ const TEST_FILES: string[] = [
   './blueprint-task-verification.test',
   './blueprint-task-user-skip.test',
   './blueprint-dependson-scheduling.test',
+  './blueprint-plan-revision.test',
   // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───
   './blueprint-send-outcome.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───

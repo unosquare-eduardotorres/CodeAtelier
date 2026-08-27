@@ -661,7 +661,19 @@ const SUPPRESSED_STATUS_VALUES: ReadonlySet<string> = new Set([
 function handleStatus(ctx: ChunkRouterContext, chunk: StreamChunk): void {
   // Flush pending text before status messages
   textBatcher.flush(ctx.conversationId)
-  if (!chunk.content || chunk.content === 'heartbeat') return
+  if (!chunk.content) return
+
+  // HEARTBEAT-KEEPALIVE: the executor emits this between NDJSON messages purely
+  // to prove the CLI is alive (cli-executor.ts, HeartbeatMonitor). It must not
+  // render as text, but dropping it discarded the one liveness signal that
+  // tracks real CLI output — leaving the renderer's watchdog dependent on a 30s
+  // setInterval that main-thread indexing can starve. Forward it as a keepalive
+  // instead: handleMessageChunk's `data.keepalive` branch consumes it and
+  // returns before any rendering.
+  if (chunk.content === 'heartbeat') {
+    safeSend(ctx, IPC_CHANNELS.CHAT_MESSAGE_CHUNK, { ...basePayload(ctx), keepalive: true })
+    return
+  }
 
   // Guard: non-string content (e.g., object coerced via template literal)
   if (typeof chunk.content !== 'string') return

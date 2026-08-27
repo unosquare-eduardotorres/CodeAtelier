@@ -92,15 +92,29 @@ function FilePathLink({ filePath }: { filePath: string }): React.JSX.Element {
   )
 }
 
-/** Bubble size classes — controlled by user preference */
+/**
+ * Bubble size classes — controlled by user preference.
+ *
+ * `userMax` stays a percentage so user messages keep reading as a narrower,
+ * right-aligned column distinct from the agent's.
+ *
+ * `proseMax` is an absolute cap applied to the bubble itself. It exists because
+ * the transcript is now full-width: a percentage alone would grow without limit
+ * on a wide monitor. Prose has a readable measure — past roughly 1300px the eye
+ * loses the line on the return sweep — so text stays capped while tool output
+ * (file paths, diffs, command results) is free to use the whole width. The cap
+ * scales with the size preference so the setting still means something;
+ * `medium` matches the 80rem the transcript used to be capped at, leaving the
+ * default reading width unchanged.
+ */
 const BUBBLE_SIZE_CLASSES: Record<
   ChatBubbleSize,
-  { text: string; userMax: string; aiMax: string }
+  { text: string; userMax: string; proseMax: string }
 > = {
-  small: { text: 'text-xs leading-relaxed', userMax: 'max-w-[70%]', aiMax: 'max-w-[88%]' },
-  medium: { text: 'text-sm leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[90%]' },
-  large: { text: 'text-sm leading-relaxed', userMax: 'max-w-[80%]', aiMax: 'max-w-[92%]' },
-  xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', aiMax: 'max-w-[92%]' }
+  small: { text: 'text-xs leading-relaxed', userMax: 'max-w-[70%]', proseMax: 'max-w-[64rem]' },
+  medium: { text: 'text-sm leading-relaxed', userMax: 'max-w-[75%]', proseMax: 'max-w-[80rem]' },
+  large: { text: 'text-sm leading-relaxed', userMax: 'max-w-[80%]', proseMax: 'max-w-[88rem]' },
+  xl: { text: 'text-base leading-relaxed', userMax: 'max-w-[75%]', proseMax: 'max-w-[96rem]' }
 }
 
 // Module-level constants — stable references, never recreated on render
@@ -190,7 +204,7 @@ interface BubbleContentBodyProps {
   message: Message
   isUser: boolean
   aiBubbleClass: string
-  sizeClasses: { text: string; userMax: string; aiMax: string }
+  sizeClasses: { text: string; userMax: string; proseMax: string }
   hasStructuredContent: boolean
   /** Whether this message's plan card is the latest (non-superseded) plan */
   isLatestPlan?: boolean
@@ -241,7 +255,7 @@ function BubbleContentBody({
       data-testid="message-bubble-content"
       className={`rounded shadow-sm ${
         isUser
-          ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${isGrillActivation ? 'border-grill' : 'border-primary'}`
+          ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${sizeClasses.proseMax} ${isGrillActivation ? 'border-grill' : 'border-primary'}`
           : aiBubbleClass
       }`}
     >
@@ -407,9 +421,12 @@ function MessageBubbleInner({
   /** True when the message contains a structured block that MessageCardRenderer handles */
   const hasStructuredContent = buildSummaryData != null || _planContent != null
 
-  /** Shared AI bubble styles */
-  const aiBubbleClass =
-    'rounded-md px-4 py-3 bg-surface-overlay text-text-body border-l-2 border-primary/50 shadow-sm overflow-hidden min-w-0'
+  /**
+   * Shared AI bubble styles. The prose cap lives here because this same string
+   * is the root class for both the plain-markdown bubble and every
+   * MessageCardRenderer variant — capping it once covers both paths.
+   */
+  const aiBubbleClass = `rounded-md px-4 py-3 bg-surface-overlay text-text-body border-l-2 border-primary/50 shadow-sm overflow-hidden min-w-0 ${sizeClasses.proseMax}`
 
   return (
     <div
@@ -430,7 +447,9 @@ function MessageBubbleInner({
         className={`flex flex-col min-w-0 ${
           isUser
             ? `${_planContent ? 'max-w-[95%]' : sizeClasses.userMax} items-end`
-            : `${_planContent ? 'max-w-[95%]' : sizeClasses.aiMax} items-start`
+            : // Full width so tool output can use it all; the bubble inside caps
+              // its own prose via aiBubbleClass.
+              'w-full items-start'
         }`}
       >
         <div className={`flex flex-col mb-1 px-1 ${isUser ? 'items-end' : 'items-start'}`}>

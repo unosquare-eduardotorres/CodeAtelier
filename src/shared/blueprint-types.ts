@@ -241,6 +241,15 @@ export interface PhaseContext {
   grillDecisions?: GrillDecisionForBlueprint[]
   /** Pre-loaded workspace docs (CLAUDE.md, README.md, package.json, PLAN.md) for prompt injection */
   workspaceDocs?: string
+  /**
+   * Every change the human has asked for on this blueprint, oldest first.
+   *
+   * Threaded into PLAN/TASKS/REVIEW on every run — not just the next one. A
+   * re-run that cannot see round 1's feedback happily regresses the thing you
+   * agreed two rounds ago, which is indistinguishable from the agent ignoring
+   * you.
+   */
+  revisionRequests?: BlueprintRevisionRequest[]
   /** Structured retry context — populated only when retrying a failed phase */
   retryContext?: {
     attempt: number
@@ -251,6 +260,45 @@ export interface PhaseContext {
     tasksCompleted: number
     totalTasks: number
   }
+}
+
+/**
+ * One human "change this" on a blueprint plan.
+ *
+ * Lives on `blueprints.settingsJson`, deliberately NOT on
+ * `blueprint_phases.contextSnapshot`: rewindToPhase() nulls every snapshot from
+ * the target phase forward, so a snapshot-stored request would be erased by the
+ * very rewind it is meant to survive.
+ */
+export interface BlueprintRevisionRequest {
+  /** 1-based round number — how many times the human has asked for changes. */
+  round: number
+  /** ISO timestamp of the request. */
+  at: string
+  /** The phase whose output was being judged when the request was made. */
+  phase: BlueprintPhaseType
+  /** Verbatim human text. Never summarised — the wording is the requirement. */
+  feedback: string
+  /** How it was handled: an in-place plan revision, or a full rewind to PLAN. */
+  disposition: 'revised' | 'rewound'
+  /**
+   * True when the text was longer than the per-request cap and was cut.
+   * Surfaced at the gate: silently truncating a requirement and then acting on
+   * the remainder is the same failure as dropping it, only harder to notice.
+   */
+  truncated?: boolean
+}
+
+/** Result of one plan-revision turn at the approval gate. */
+export interface BlueprintPlanRevision {
+  /** One or two sentences: what changed and why. */
+  summary: string
+  /** One bullet per concrete change. */
+  changes: string[]
+  /** Agent pushback — why a request may be mistaken or infeasible. Empty when none. */
+  concerns: string[]
+  /** The COMPLETE revised plan, not a diff. Absent/empty ⇒ the turn is rejected. */
+  planMarkdown: string
 }
 
 export interface GrillDecisionForBlueprint {
@@ -351,6 +399,12 @@ export interface BlueprintApprovalNeededPayload {
   completion?: BlueprintPhaseCompletion
   /** Full review report markdown (detailed findings, gaps, risks) */
   reviewMarkdown?: string
+  /**
+   * The revised plan, when this gate was re-raised by a revision turn.
+   * Never folded into `reviewMarkdown`: a plan shown as a review report claims
+   * a review that has not happened yet.
+   */
+  revisedPlanMarkdown?: string
 }
 
 export interface BlueprintWaveStartPayload {
