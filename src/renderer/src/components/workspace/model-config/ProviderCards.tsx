@@ -18,7 +18,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Save,
   AlertTriangle
 } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
@@ -28,6 +27,7 @@ import { copyTextToClipboard } from '@renderer/utils/clipboard'
 import type { LocalLLMBackend, OmlxExtendedStatus, PlatformInfo } from '../../../../../shared/types'
 import type { ClaudeCliStatus } from './useModelConfig'
 import type { LocalModelsDraft } from './local-models-draft'
+import { localBackendLabel } from './model-roles-assignment'
 import LocalModelSelector from '../LocalModelSelector'
 
 // ─── Status Dot ──────────────────────────────────────────
@@ -51,20 +51,26 @@ function ConnectionStatusChips({
   connectionTesting,
   localHost,
   localPort,
-  isRemoteServer
+  isRemoteServer,
+  backend
 }: {
   localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
   localHost: string
   localPort: number
   isRemoteServer: boolean
+  backend: LocalLLMBackend
 }): React.JSX.Element | null {
+  // The card serves both backends; naming the wrong one is how "Connected · oMLX"
+  // came to be shown to users sitting on the Ollama tab.
+  const backendName = localBackendLabel(backend)
+
   if (connectionTesting) {
     return (
       <div className="flex items-center gap-2 flex-wrap">
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-base border border-border-subtle text-xs text-text-secondary">
           <Loader2 size={11} className="animate-spin" />
-          Connecting to oMLX…
+          Connecting to {backendName}…
         </span>
       </div>
     )
@@ -125,23 +131,26 @@ function ConnectionStatusChips({
   const modelCount = localStatus.models.length
   const allModels =
     'allModels' in localStatus && localStatus.allModels ? localStatus.allModels : null
-  const embeddingModel = allModels?.find((m) => m.loaded && m.modelType === 'embedding')
+  const hasEmbeddingModel =
+    backend === 'ollama'
+      ? (localStatus.modelDetails ?? []).some((m) => m.capability === 'embedding')
+      : !!allModels?.find((m) => m.loaded && m.modelType === 'embedding')
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-success/10 border border-success/20 text-xs text-success">
         <span className="w-1.5 h-1.5 rounded-full bg-success" />
-        Connected · oMLX
+        Connected · {backendName}
       </span>
       {modelCount > 0 && (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-base border border-border-subtle text-xs text-text-secondary">
           {modelCount} model{modelCount !== 1 ? 's' : ''} loaded
         </span>
       )}
-      {embeddingModel && (
+      {hasEmbeddingModel && (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-xs text-cyan-400">
           <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-          Embeddings ready
+          Embedding model available
         </span>
       )}
       {modelCount === 0 && (
@@ -161,7 +170,7 @@ function ConnectionStatusChips({
           )}
         </span>
       )}
-      {localStatus.running && !embeddingModel && modelCount > 0 && (
+      {localStatus.running && !hasEmbeddingModel && modelCount > 0 && (
         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-base border border-border-subtle text-xs text-text-muted">
           💡 Load an embedding model for Semantic Search
         </span>
@@ -314,7 +323,8 @@ interface OmlxProviderCardProps {
   localLlmBackend: LocalLLMBackend
   onBackendChange: (backend: LocalLLMBackend) => void
   localModelsDraft: LocalModelsDraft
-  isLocalModelsDirty: boolean
+  /** The embedding model specifically is unsaved (not the whole tab) */
+  isEmbeddingModelDirty: boolean
   localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
   modelLoading: string | null
@@ -326,8 +336,6 @@ interface OmlxProviderCardProps {
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
   onContextWindowChange: (value: number | undefined) => void
-  onSaveLocalModels: () => void
-  onDiscardLocalModels: () => void
   onTestConnection: () => void
   onAutoTest: () => void
   onLocalModelSelect: (modelId: string) => void
@@ -337,14 +345,11 @@ interface OmlxProviderCardProps {
   onOllamaEmbeddingModelChange: (model: string) => void
 }
 
-/** Heuristic: filter Ollama models likely to be embedding models */
-const EMBEDDING_MODEL_PATTERN = /embed|bge|minilm|nomic|e5-|gte-|mxbai-embed/i
-
 function OmlxProviderCard({
   localLlmBackend,
   onBackendChange,
   localModelsDraft: connectionDraft,
-  isLocalModelsDirty,
+  isEmbeddingModelDirty,
   localStatus,
   connectionTesting,
   modelLoading: _modelLoading,
@@ -356,8 +361,6 @@ function OmlxProviderCard({
   onPortChange,
   onApiKeyChange,
   onContextWindowChange,
-  onSaveLocalModels,
-  onDiscardLocalModels,
   onTestConnection,
   onAutoTest,
   onLocalModelSelect,
@@ -408,7 +411,7 @@ function OmlxProviderCard({
       <ProviderCardHeader
         icon={<Cpu size={16} className="text-text-secondary" />}
         name="Local Models"
-        sublabel={localLlmBackend === 'omlx' ? 'Apple Silicon or remote server' : 'Ollama'}
+        sublabel={localLlmBackend === 'omlx' ? 'oMLX — Apple Silicon or remote server' : 'Ollama'}
         statusDot={statusDot}
         statusText={statusText}
       />
@@ -472,6 +475,7 @@ function OmlxProviderCard({
                 localHost={connectionDraft.localHost}
                 localPort={connectionDraft.localPort}
                 isRemoteServer={isRemoteServer}
+                backend={localLlmBackend}
               />
             </div>
           </div>
@@ -561,6 +565,9 @@ function OmlxProviderCard({
               <LocalModelSelector
                 selectedModel={localModel}
                 installedModels={localStatus?.models ?? []}
+                modelDetails={localStatus?.modelDetails}
+                embeddingModel={ollamaEmbeddingModel}
+                onSelectEmbedding={onOllamaEmbeddingModelChange}
                 backend="ollama"
                 onSelect={onLocalModelSelect}
                 onLoadModel={() => {}}
@@ -583,69 +590,33 @@ function OmlxProviderCard({
             </SettingsCard>
           )}
 
-          {/* ── Embedding Model Dropdown ── */}
+          {/* ── Which model Semantic Search will use ── */}
           <div className="mt-3">
             <SettingsCard>
-              <h4 className="text-sm font-medium text-text-primary mb-1">Embedding Model</h4>
-              <p className="text-xs text-text-muted mb-2">
-                Used for Semantic Search. Select an embedding model from your Ollama instance.
-              </p>
-              {(() => {
-                const allModels = localStatus?.models ?? []
-                const embeddingCandidates = allModels.filter((m) => EMBEDDING_MODEL_PATTERN.test(m))
-                const otherModels = allModels.filter((m) => !EMBEDDING_MODEL_PATTERN.test(m))
-                // Ensure the persisted model always appears as an option even before
-                // the connection test completes (prevents dropdown showing "Select...")
-                const persistedNotInList =
-                  ollamaEmbeddingModel && !allModels.includes(ollamaEmbeddingModel)
-                return (
-                  <select
-                    value={ollamaEmbeddingModel}
-                    onChange={(e) => onOllamaEmbeddingModelChange(e.target.value)}
-                    className="w-full bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
-                  >
-                    <option value="">Select embedding model…</option>
-                    {persistedNotInList && (
-                      <option value={ollamaEmbeddingModel}>{ollamaEmbeddingModel}</option>
-                    )}
-                    {embeddingCandidates.length > 0 && (
-                      <optgroup label="Embedding Models">
-                        {embeddingCandidates.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {otherModels.length > 0 && (
-                      <optgroup label="Other Models">
-                        {otherModels.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {allModels.length === 0 && !persistedNotInList && (
-                      <option disabled>No models found — check Ollama connection</option>
-                    )}
-                  </select>
-                )
-              })()}
-              {ollamaEmbeddingModel &&
-                (isLocalModelsDirty ? (
-                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-amber-400">
+              <h4 className="text-sm font-medium text-text-primary mb-1">Semantic Search</h4>
+              {ollamaEmbeddingModel ? (
+                isEmbeddingModelDirty ? (
+                  <p className="flex items-center gap-1.5 text-xs text-amber-400">
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
-                    <span>
-                      {ollamaEmbeddingModel} — will be used for Semantic Search after saving
-                    </span>
+                    <span>{ollamaEmbeddingModel} — will be used for embeddings after saving</span>
                   </p>
                 ) : (
-                  <p className="mt-1.5 flex items-center gap-1.5 text-xs text-success">
+                  <p className="flex items-center gap-1.5 text-xs text-success">
                     <CheckCircle2 size={10} />
-                    <span>{ollamaEmbeddingModel} — Used for Semantic Search</span>
+                    <span>{ollamaEmbeddingModel} — used for embeddings</span>
                   </p>
-                ))}
+                )
+              ) : (
+                <p className="text-xs text-text-muted">
+                  No embedding model chosen. Pick one under{' '}
+                  <span className="text-text-secondary font-medium">Embedding models</span> above —
+                  or run{' '}
+                  <code className="px-1 py-0.5 rounded bg-surface-overlay text-text-primary">
+                    ollama pull nomic-embed-text
+                  </code>{' '}
+                  if you have none installed.
+                </p>
+              )}
             </SettingsCard>
           </div>
         </div>
@@ -682,36 +653,6 @@ function OmlxProviderCard({
           </div>
         </SettingsCard>
       </div>
-
-      {/* ── Footer: Save the whole card (tab + connection + both model pickers) ── */}
-      <div className="mt-3 flex items-center gap-3">
-        {isLocalModelsDirty ? (
-          <>
-            <span className="inline-flex items-center gap-1.5 text-xs text-amber-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-              Unsaved changes
-            </span>
-            <button
-              onClick={onSaveLocalModels}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-primary hover:bg-primary-hover transition-colors"
-            >
-              <Save size={12} />
-              Save local models
-            </button>
-            <button
-              onClick={onDiscardLocalModels}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-text-secondary border border-border-default hover:bg-surface-hover transition-colors"
-            >
-              Discard
-            </button>
-          </>
-        ) : (
-          <span className="inline-flex items-center gap-1 text-xs text-text-muted">
-            <CheckCircle2 size={10} className="text-success" />
-            All local model settings saved
-          </span>
-        )}
-      </div>
     </div>
   )
 }
@@ -724,7 +665,8 @@ export interface ProviderCardsProps {
   localLlmBackend: LocalLLMBackend
   onBackendChange: (backend: LocalLLMBackend) => void
   localModelsDraft: LocalModelsDraft
-  isLocalModelsDirty: boolean
+  /** The embedding model specifically is unsaved (not the whole tab) */
+  isEmbeddingModelDirty: boolean
   localStatus: OmlxExtendedStatus | null
   connectionTesting: boolean
   modelLoading: string | null
@@ -736,8 +678,6 @@ export interface ProviderCardsProps {
   onPortChange: (port: number) => void
   onApiKeyChange: (key: string) => void
   onContextWindowChange: (value: number | undefined) => void
-  onSaveLocalModels: () => void
-  onDiscardLocalModels: () => void
   onTestConnection: () => void
   onAutoTest: () => void
   onLocalModelSelect: (modelId: string) => void
@@ -760,7 +700,7 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
         localLlmBackend={props.localLlmBackend}
         onBackendChange={props.onBackendChange}
         localModelsDraft={props.localModelsDraft}
-        isLocalModelsDirty={props.isLocalModelsDirty}
+        isEmbeddingModelDirty={props.isEmbeddingModelDirty}
         localStatus={props.localStatus}
         connectionTesting={props.connectionTesting}
         modelLoading={props.modelLoading}
@@ -772,8 +712,6 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
         onPortChange={props.onPortChange}
         onApiKeyChange={props.onApiKeyChange}
         onContextWindowChange={props.onContextWindowChange}
-        onSaveLocalModels={props.onSaveLocalModels}
-        onDiscardLocalModels={props.onDiscardLocalModels}
         onTestConnection={props.onTestConnection}
         onAutoTest={props.onAutoTest}
         onLocalModelSelect={props.onLocalModelSelect}

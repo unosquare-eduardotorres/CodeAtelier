@@ -2,10 +2,12 @@ import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
 import {
   IPC_CHANNELS,
+  MODEL_ROLE_ROWS,
   OMLX_DEFAULT_PORT,
   OLLAMA_DEFAULT_PORT,
   defaultLocalLlmBackend
 } from '../../shared/constants'
+import { resolveAssignment } from '../services/model-config.service'
 import { localEmbeddingProvider } from '../services/local-embedding.provider'
 import { omlxManager } from '../services/omlx-manager.service'
 import { ollamaManager } from '../services/ollama-manager.service'
@@ -13,10 +15,13 @@ import { workspaceRepository } from '../db/repositories'
 import { validateSender } from './validate-sender'
 import type {
   EmbeddingModelStatus,
+  LLMProvider,
   LocalLLMBackend,
+  ModelOverrides,
   ModelRoleMap,
   ModelsRuntimeStatus,
-  RuntimeRoleAssignment
+  RuntimeRoleAssignment,
+  RuntimeRoleRow
 } from '../../shared/types'
 
 const PLATFORM_DEFAULT_BACKEND = defaultLocalLlmBackend(
@@ -29,6 +34,49 @@ function readRole(
 ): RuntimeRoleAssignment | null {
   const role = roles[key]
   return role ? { provider: role.provider, modelId: role.modelId } : null
+}
+
+/**
+ * Resolve every routable role through the same chain the runtime uses, so the
+ * "In Use" panel reports what will actually run — including the roles nobody
+ * ever set, which is most of them on a fresh workspace.
+ */
+function resolveRoleRows(opts: {
+  modelRoles: ModelRoleMap
+  modelOverrides: ModelOverrides
+  workspaceProvider: LLMProvider
+  workspaceBackend: LocalLLMBackend
+  /** Models each reachable server listed; null when it could not be asked. */
+  installed: Record<LocalLLMBackend, string[] | null>
+}): RuntimeRoleRow[] {
+  return MODEL_ROLE_ROWS.map((row): RuntimeRoleRow => {
+    const resolved = resolveAssignment({
+      action: row.primaryAction,
+      modelRoles: opts.modelRoles,
+      modelOverrides: opts.modelOverrides,
+      workspaceProvider: opts.workspaceProvider,
+      workspaceBackend: opts.workspaceBackend
+    })
+
+    let available = true
+    if (resolved.provider === 'local-llm') {
+      const backend = resolved.localBackend ?? opts.workspaceBackend
+      const models = opts.installed[backend]
+      // null means the server never answered — we cannot claim the model is gone
+      if (models) available = models.includes(resolved.modelId)
+    }
+
+    return {
+      action: row.primaryAction,
+      group: row.group,
+      label: row.label,
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      localBackend: resolved.localBackend,
+      source: resolved.source,
+      available
+    }
+  })
 }
 
 export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
@@ -187,6 +235,11 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
 
       const roles = (settings.modelRoles as ModelRoleMap) ?? {}
 
+      const listed = (
+        probe: PromiseSettledResult<{ running: boolean; models: string[] }>
+      ): string[] | null =>
+        probe.status === 'fulfilled' && probe.value.running ? probe.value.models : null
+
       return {
         embedding: {
           activeBackend,
@@ -200,6 +253,13 @@ export function registerEmbeddingIpc(mainWindow: BrowserWindow): void {
           plan: readRole(roles, 'specialist:plan'),
           build: readRole(roles, 'specialist:build')
         },
+        roles: resolveRoleRows({
+          modelRoles: roles,
+          modelOverrides: (settings.modelOverrides as ModelOverrides) ?? {},
+          workspaceProvider: (settings.llmProvider as LLMProvider) ?? 'claude',
+          workspaceBackend: savedBackend,
+          installed: { ollama: listed(ollamaProbe), omlx: listed(omlxProbe) }
+        }),
         reachability: {
           ollamaRunning: ollamaProbe.status === 'fulfilled' && ollamaProbe.value.running,
           omlxRunning: omlxProbe.status === 'fulfilled' && omlxProbe.value.running

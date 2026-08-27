@@ -39,7 +39,8 @@ test.describe('Model Config Detail', () => {
     const chrome = new AppChrome(page)
     await chrome.navigateToTab('settings')
     const settingsNav = new SettingsNav(page)
-    await settingsNav.navigateToSettingsTab('models')
+    // The editable controls are on the Configure tab; "In Use" is read-only.
+    await settingsNav.navigateToModelsConfigure()
     await page.waitForTimeout(1_000)
     return true
   }

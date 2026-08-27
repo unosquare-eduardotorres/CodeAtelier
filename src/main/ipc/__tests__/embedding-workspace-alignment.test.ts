@@ -17,6 +17,8 @@ import {
   mockMainWindow,
   tryInvokeHandler
 } from '../../services/__tests__/setup-full-mock'
+import { MODEL_ROLE_ROWS } from '../../../shared/constants'
+import type { RuntimeRoleRow } from '../../../shared/types'
 
 setupFullMock()
 
@@ -112,6 +114,63 @@ if (embeddingLoaded) {
       assert.ok('plan' in status.chat && 'build' in status.chat)
       assert.equal(typeof status.reachability.ollamaRunning, 'boolean')
       assert.equal(typeof status.reachability.omlxRunning, 'boolean')
+    })
+
+    /**
+     * The panel used to report two chat roles. The other twelve were routed and
+     * invisible, so "which model is doing this?" had no answer anywhere in the
+     * app for audit, grill, council, blueprint or any background task.
+     */
+    test('resolves every role in the shared catalogue, not just chat', async () => {
+      const r = await tryInvokeHandler('models:runtimeStatus', { workspaceId: 'ws-1' })
+      assert.ok(r.ok)
+      const roles = (r.result as { roles: RuntimeRoleRow[] }).roles
+
+      assert.equal(
+        roles.length,
+        MODEL_ROLE_ROWS.length,
+        'every routable role must be reported'
+      )
+      assert.deepEqual(
+        roles.map((role) => role.action),
+        MODEL_ROLE_ROWS.map((row) => row.primaryAction)
+      )
+    })
+
+    /** Provenance is the part that says "you chose this" vs "you never set it". */
+    test('every role carries a resolution source and a concrete model', async () => {
+      const r = await tryInvokeHandler('models:runtimeStatus', { workspaceId: 'ws-1' })
+      assert.ok(r.ok)
+      const roles = (r.result as { roles: RuntimeRoleRow[] }).roles
+
+      for (const role of roles) {
+        assert.ok(
+          ['roles', 'override', 'default', 'fallback'].includes(role.source),
+          `${role.action} has no resolution source`
+        )
+        assert.ok(role.modelId.length > 0, `${role.action} resolved to an empty model id`)
+        assert.equal(typeof role.available, 'boolean')
+        assert.ok(role.label.length > 0)
+      }
+    })
+
+    /**
+     * An unreachable server tells us nothing about whether a model exists.
+     * Flagging every role as missing when Ollama is simply stopped would bury
+     * the one case that matters.
+     */
+    test('roles are not flagged unavailable merely because no server answered', async () => {
+      const r = await tryInvokeHandler('models:runtimeStatus', { workspaceId: 'ws-1' })
+      assert.ok(r.ok)
+      const status = r.result as {
+        roles: RuntimeRoleRow[]
+        reachability: { ollamaRunning: boolean; omlxRunning: boolean }
+      }
+      if (status.reachability.ollamaRunning || status.reachability.omlxRunning) return
+      assert.ok(
+        status.roles.every((role) => role.available),
+        'nothing is known to be missing when nothing was reachable'
+      )
     })
   })
 }

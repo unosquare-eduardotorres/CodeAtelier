@@ -421,6 +421,9 @@ const TEST_FILES: string[] = [
   '../../ipc/__tests__/embedding-workspace-alignment.test',
   // ─── Local Models card draft (dirty rules + changed-keys-only save payload) ───
   '../../../renderer/src/components/workspace/model-config/__tests__/local-models-draft.test',
+  // ─── Ollama model capability detection (3-tier chain + digest-keyed cache) ───
+  './ollama-capability-detection.test',
+  '../../../renderer/src/components/workspace/model-config/__tests__/model-roles-assignment.test',
   // ─── Process Manager MCP server (ring buffer, tool registry, mode gating) ───
   './process-manager.test',
   './background-task-watcher.test',

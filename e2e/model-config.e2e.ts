@@ -34,10 +34,37 @@ test.describe('Model Configuration', () => {
     return true
   }
 
+  /** Every editable control lives behind the Configure tab. */
   async function navigateToModels(page: import('@playwright/test').Page): Promise<boolean> {
     const nav = new SettingsNav(page)
-    return nav.navigateToSettingsTab('models')
+    return nav.navigateToModelsConfigure()
   }
+
+  test('models page opens on the read-only In Use tab', async ({ electronPage: page }) => {
+    const ready = await ensureWorkspaceReady(page)
+    if (!ready) {
+      test.skip()
+      return
+    }
+
+    const nav = new SettingsNav(page)
+    const navigated = await nav.navigateToSettingsTab('models')
+    if (!navigated) {
+      test.skip()
+      return
+    }
+
+    const inUse = page.locator('[data-testid="models-in-use"]')
+    const hasInUse = await inUse.isVisible({ timeout: 5_000 }).catch(() => false)
+    if (!hasInUse) {
+      test.skip()
+      return
+    }
+
+    // Read-only by construction: the editable surface must not be mounted here
+    await expect(page.locator('[data-testid="model-config-configure"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="models-tab-configure"]')).toBeVisible()
+  })
 
   test('model config tab renders with provider cards', async ({ electronPage: page }) => {
     const ready = await ensureWorkspaceReady(page)

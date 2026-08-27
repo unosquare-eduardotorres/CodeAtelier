@@ -10,23 +10,23 @@
  */
 
 import { useState, useMemo, useCallback } from 'react'
-import {
-  ChevronDown,
-  ChevronRight,
-  Layers,
-  CheckCircle2,
-  AlertTriangle,
-  AlertCircle,
-  Lock
-} from 'lucide-react'
+import { ChevronDown, ChevronRight, Layers, AlertTriangle, AlertCircle, Lock } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
-import { AVAILABLE_MODELS, DEFAULT_MODEL_CONFIG } from '../../../../../shared/constants'
+import { DEFAULT_MODEL_CONFIG, MODEL_ROLE_ROWS } from '../../../../../shared/constants'
 import type {
   LLMProvider,
+  LocalLLMBackend,
   ModelAction,
   ModelRoleAssignment,
-  ModelRoleMap
+  ModelRoleMap,
+  ModelRoleRowDef
 } from '../../../../../shared/types'
+import {
+  buildAssignment,
+  buildModelOptions,
+  localBackendLabel,
+  type ModelOption
+} from './model-roles-assignment'
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -34,177 +34,42 @@ export interface ModelRolesSectionProps {
   modelRoles: ModelRoleMap
   claudeModelOverrides: Record<string, string>
   workspaceProvider: LLMProvider
-  /** oMLX chat-capable models from last connection test */
+  /** Chat-capable models from the last connection test (embedding models excluded) */
   omlxModels: string[]
-  /** Instant-persist callback: persists both roles + overrides immediately */
+  /**
+   * The local backend the user is actually on. Recorded on every local-llm
+   * assignment — hardcoding it wrote Ollama users' routing down as oMLX.
+   */
+  localBackend: LocalLLMBackend
+  /** Persists both roles + overrides */
   onModelRolesChange: (roles: ModelRoleMap, overrides: Record<string, string>) => void
   /** Workspace-level fallback model */
   fallbackModel: string | undefined
-  /** Instant-persist callback for fallback model */
+  /** Persists the fallback model */
   onFallbackModelChange: (modelId: string) => void
 }
 
 // ─── Role Definitions ────────────────────────────────────
 
-interface RoleRowDef {
-  label: string
-  description: string
-  actions: ModelAction[]
-  primaryAction: ModelAction
-}
+/** The catalogue is shared with main so both enumerate the same roles. */
+const rolesInGroup = (group: ModelRoleRowDef['group']): ModelRoleRowDef[] =>
+  MODEL_ROLE_ROWS.filter((r) => r.group === group)
 
-const CHAT_ROLES: RoleRowDef[] = [
-  {
-    label: 'Plan',
-    description: 'Analysis, brainstorming, code review, and planning',
-    actions: ['specialist:plan', 'specialist:plan'],
-    primaryAction: 'specialist:plan'
-  },
-  {
-    label: 'Build',
-    description: 'Code generation, file edits, and implementation',
-    actions: ['specialist:build', 'specialist:build'],
-    primaryAction: 'specialist:build'
-  },
-  {
-    label: 'Background',
-    description: 'Activation and lightweight tasks',
-    actions: ['haiku', 'activation'],
-    primaryAction: 'haiku'
-  }
-]
-
-const BLUEPRINT_ROLES: RoleRowDef[] = [
-  {
-    label: 'Plan',
-    description: 'Specify, clarify, plan, tasks, and review phases',
-    actions: [
-      'blueprint:specify',
-      'blueprint:clarify',
-      'blueprint:plan',
-      'blueprint:tasks',
-      'blueprint:review'
-    ],
-    primaryAction: 'blueprint:specify'
-  },
-  {
-    label: 'Build',
-    description: 'Code generation and implementation phase',
-    actions: ['blueprint:build'],
-    primaryAction: 'blueprint:build'
-  },
-  {
-    label: 'Verify',
-    description: 'Adversarial verification of build output',
-    actions: ['blueprint:verify'],
-    primaryAction: 'blueprint:verify'
-  }
-]
-
-const QUALITY_ROLES: RoleRowDef[] = [
-  {
-    label: 'Audit',
-    description: 'Post-implementation code audit',
-    actions: ['audit'],
-    primaryAction: 'audit'
-  },
-  {
-    label: 'Grill',
-    description: 'Adversarial design review sessions',
-    actions: ['grill', 'grill:plan'],
-    primaryAction: 'grill'
-  }
-]
-
-const COUNCIL_ROLES: RoleRowDef[] = [
-  {
-    label: 'Council Member',
-    description: 'Multi-advisor deliberation (×5 parallel)',
-    actions: ['council-member'],
-    primaryAction: 'council-member'
-  },
-  {
-    label: 'Council Chairman',
-    description: 'Synthesize advisor verdicts into final decision',
-    actions: ['council-chairman'],
-    primaryAction: 'council-chairman'
-  }
-]
-
-const BACKGROUND_ROLES: RoleRowDef[] = [
-  {
-    label: 'Memory Extraction',
-    description: 'Extract facts from conversations into workspace memory',
-    actions: ['memoryFeed'],
-    primaryAction: 'memoryFeed'
-  },
-  {
-    label: 'Commit Message',
-    description: 'Generate git commit messages from diffs',
-    actions: ['commit-message'],
-    primaryAction: 'commit-message'
-  },
-  {
-    label: 'Conversation Condense',
-    description: 'Compress conversation context before compaction',
-    actions: ['condense'],
-    primaryAction: 'condense'
-  },
-  {
-    label: 'Prompt Optimization',
-    description: 'Background prompt quality tuning',
-    actions: ['prompt:optimize'],
-    primaryAction: 'prompt:optimize'
-  }
-]
-
-// ─── Model Option Helpers ────────────────────────────────
-
-interface ModelOption {
-  id: string
-  label: string
-  provider: LLMProvider
-  group: 'claude' | 'local'
-  unavailable?: boolean
-}
-
-function buildModelOptions(omlxModels: string[]): ModelOption[] {
-  const options: ModelOption[] = AVAILABLE_MODELS.map((m) => ({
-    id: m.id,
-    label: m.label,
-    provider: 'claude' as const,
-    group: 'claude' as const
-  }))
-
-  for (const model of omlxModels) {
-    options.push({
-      id: model,
-      label: model,
-      provider: 'local-llm',
-      group: 'local'
-    })
-  }
-
-  return options
-}
-
-/** Build assignment from option id */
-function buildAssignment(opt: ModelOption): ModelRoleAssignment {
-  return {
-    provider: opt.provider,
-    modelId: opt.id,
-    ...(opt.provider === 'local-llm' ? { localBackend: 'omlx' as const } : {})
-  }
-}
+const CHAT_ROLES = rolesInGroup('chat')
+const BLUEPRINT_ROLES = rolesInGroup('blueprint')
+const QUALITY_ROLES = rolesInGroup('quality')
+const COUNCIL_ROLES = rolesInGroup('council')
+const BACKGROUND_ROLES = rolesInGroup('background')
 
 // ─── Role Row Component ─────────────────────────────────
 
 interface RoleRowProps {
-  role: RoleRowDef
+  role: ModelRoleRowDef
   modelRoles: ModelRoleMap
   claudeModelOverrides: Record<string, string>
   workspaceProvider: LLMProvider
   modelOptions: ModelOption[]
+  localBackend: LocalLLMBackend
   onAssign: (actions: ModelAction[], assignment: ModelRoleAssignment | null) => void
 }
 
@@ -214,6 +79,7 @@ function RoleRow({
   claudeModelOverrides,
   workspaceProvider,
   modelOptions,
+  localBackend,
   onAssign
 }: RoleRowProps): React.JSX.Element {
   // Resolve effective model
@@ -259,10 +125,10 @@ function RoleRow({
     (optId: string) => {
       const opt = modelOptions.find((o) => o.id === optId)
       if (opt) {
-        onAssign(role.actions, buildAssignment(opt))
+        onAssign(role.actions, buildAssignment(opt, localBackend))
       }
     },
-    [modelOptions, onAssign, role.actions]
+    [modelOptions, onAssign, role.actions, localBackend]
   )
 
   return (
@@ -286,7 +152,7 @@ function RoleRow({
           ))}
         </optgroup>
         {(localOptions.length > 0 || isUnavailable) && (
-          <optgroup label="Local (oMLX)">
+          <optgroup label={`Local (${localBackendLabel(localBackend)})`}>
             {localOptions.map((opt) => (
               <option key={opt.id} value={opt.id}>
                 {opt.id}
@@ -323,6 +189,7 @@ export default function ModelRolesSection({
   claudeModelOverrides,
   workspaceProvider,
   omlxModels,
+  localBackend,
   onModelRolesChange,
   fallbackModel,
   onFallbackModelChange
@@ -412,9 +279,9 @@ export default function ModelRolesSection({
       const opt = modelOptions.find((o) => o.id === optId)
       if (!opt) return
       const allActions = BLUEPRINT_ROLES.flatMap((r) => r.actions)
-      handleAssign(allActions, buildAssignment(opt))
+      handleAssign(allActions, buildAssignment(opt, localBackend))
     },
-    [modelOptions, handleAssign]
+    [modelOptions, handleAssign, localBackend]
   )
 
   return (
@@ -426,8 +293,7 @@ export default function ModelRolesSection({
           Model Routing
         </h3>
         <span className="inline-flex items-center gap-1 text-xs text-text-muted ml-auto">
-          <CheckCircle2 size={10} className="text-success" />
-          Saves automatically · applies to all providers
+          Applies to all providers · saved with the rest of this tab
         </span>
       </div>
 
@@ -449,6 +315,7 @@ export default function ModelRolesSection({
                 claudeModelOverrides={claudeModelOverrides}
                 workspaceProvider={workspaceProvider}
                 modelOptions={modelOptions}
+                localBackend={localBackend}
                 onAssign={handleAssign}
               />
             ))}
@@ -488,7 +355,7 @@ export default function ModelRolesSection({
                   ))}
                 </optgroup>
                 {(localOptions.length > 0 || isBlueprintUnavailable) && (
-                  <optgroup label="Local (oMLX)">
+                  <optgroup label={`Local (${localBackendLabel(localBackend)})`}>
                     {localOptions.map((opt) => (
                       <option key={opt.id} value={opt.id}>
                         {opt.id}
@@ -532,6 +399,7 @@ export default function ModelRolesSection({
                   claudeModelOverrides={claudeModelOverrides}
                   workspaceProvider={workspaceProvider}
                   modelOptions={modelOptions}
+                  localBackend={localBackend}
                   onAssign={handleAssign}
                 />
               ))}
@@ -553,6 +421,7 @@ export default function ModelRolesSection({
                 claudeModelOverrides={claudeModelOverrides}
                 workspaceProvider={workspaceProvider}
                 modelOptions={modelOptions}
+                localBackend={localBackend}
                 onAssign={handleAssign}
               />
             ))}
@@ -573,6 +442,7 @@ export default function ModelRolesSection({
                 claudeModelOverrides={claudeModelOverrides}
                 workspaceProvider={workspaceProvider}
                 modelOptions={modelOptions}
+                localBackend={localBackend}
                 onAssign={handleAssign}
               />
             ))}
@@ -599,6 +469,7 @@ export default function ModelRolesSection({
                 claudeModelOverrides={claudeModelOverrides}
                 workspaceProvider={workspaceProvider}
                 modelOptions={modelOptions}
+                localBackend={localBackend}
                 onAssign={handleAssign}
               />
             ))}
@@ -643,7 +514,7 @@ export default function ModelRolesSection({
                 ))}
               </optgroup>
               {(localOptions.length > 0 || isFallbackUnavailable) && (
-                <optgroup label="Local (oMLX)">
+                <optgroup label={`Local (${localBackendLabel(localBackend)})`}>
                   {localOptions.map((opt) => (
                     <option key={opt.id} value={opt.id}>
                       {opt.id}
@@ -669,11 +540,8 @@ export default function ModelRolesSection({
       {/* ── Embeddings pointer ── */}
       <div className="px-1">
         <p className="text-xs text-text-muted">
-          Embeddings model is managed in{' '}
-          <span className="text-text-secondary font-medium">
-            Code Intelligence → Embedding Model
-          </span>
-          .
+          Embeddings are chosen alongside the other local models, under{' '}
+          <span className="text-text-secondary font-medium">Models available</span>.
         </p>
       </div>
     </div>

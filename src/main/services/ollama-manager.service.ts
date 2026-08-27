@@ -1,6 +1,53 @@
 import { EventEmitter } from 'node:events'
 import log from 'electron-log/main'
-import type { OllamaStatus, PullProgress } from '../../shared/types'
+import type {
+  ModelCapability,
+  OllamaModelInfo,
+  OllamaStatus,
+  PullProgress
+} from '../../shared/types'
+
+/** One entry of /api/tags, reduced to the fields that say anything useful. */
+export interface OllamaTagEntry {
+  name: string
+  digest: string
+  family?: string
+}
+
+/**
+ * Families that only ever produce embeddings. Deliberately one-directional:
+ * a family we don't recognise proves nothing about chat capability, because
+ * embedding models routinely share a base family with chat models
+ * (EmbeddingGemma reports family 'gemma3'). Asserting chat from a non-bert
+ * family would trade one confident lie for another.
+ */
+const EMBEDDING_FAMILIES = new Set(['bert', 'nomic-bert', 'nomic_bert', 'xlm-roberta'])
+
+/** Last-resort match, used only when the server told us nothing. */
+const EMBEDDING_NAME_PATTERN = /embed|bge|minilm|nomic|e5-|gte-|mxbai/i
+
+/** Total wall-clock budget for the whole /api/show fan-out. */
+const CAPABILITY_PROBE_BUDGET_MS = 3_000
+
+/** Tier 1 — /api/show `capabilities`. Authoritative; absent on older Ollama. */
+export function capabilityFromApiShow(capabilities?: string[] | null): ModelCapability | null {
+  if (!capabilities || capabilities.length === 0) return null
+  if (capabilities.includes('embedding')) return 'embedding'
+  if (capabilities.includes('vision')) return 'vision'
+  if (capabilities.includes('completion')) return 'chat'
+  return null
+}
+
+/** Tier 2 — `details.family` from /api/tags. Only ever resolves embedding. */
+export function capabilityFromFamily(family?: string): ModelCapability | null {
+  if (!family) return null
+  return EMBEDDING_FAMILIES.has(family.toLowerCase()) ? 'embedding' : null
+}
+
+/** Tier 3 — the model's name. Always tagged 'name-heuristic' so the UI hedges. */
+export function capabilityFromName(name: string): ModelCapability {
+  return EMBEDDING_NAME_PATTERN.test(name) ? 'embedding' : 'chat'
+}
 
 /**
  * Singleton service for managing Ollama — detect installation, pull models
@@ -17,6 +64,12 @@ class OllamaManagerService extends EventEmitter {
   private defaultBaseUrl = 'http://127.0.0.1:11434'
   // SVC-13: Per-model abort controllers to prevent concurrent pulls from cancelling the wrong model
   private readonly pullControllers = new Map<string, AbortController>()
+  /**
+   * Authoritative capabilities only, keyed `${baseUrl}::${name}::${digest}`.
+   * The digest changes when a tag is re-pulled, so a re-pulled model is
+   * re-probed rather than answered from a stale entry.
+   */
+  private readonly capabilityCache = new Map<string, OllamaModelInfo>()
 
   /** Build the base URL from host:port or use provided URL */
   private resolveBaseUrl(baseUrl?: string): string {
@@ -80,14 +133,106 @@ class OllamaManagerService extends EventEmitter {
         signal: AbortSignal.timeout(5000)
       })
       if (tagsRes.ok) {
-        const data = (await tagsRes.json()) as { models?: { name: string }[] }
-        status.models = (data.models ?? []).map((m) => m.name)
+        const data = (await tagsRes.json()) as {
+          models?: { name: string; digest?: string; details?: { family?: string } }[]
+        }
+        // `details.family` arrives free in this response and is the only type
+        // signal /api/tags carries — dropping it is what left the UI guessing.
+        const tags: OllamaTagEntry[] = (data.models ?? []).map((m) => ({
+          name: m.name,
+          digest: m.digest ?? '',
+          family: m.details?.family
+        }))
+        status.models = tags.map((t) => t.name)
+        try {
+          status.modelDetails = await this.classifyModels(tags, url)
+        } catch (error) {
+          // Capability detection is advisory — never fail a status check over it
+          log.warn('[OllamaManager] Capability detection failed:', error)
+        }
       }
     } catch (error) {
       log.warn('[OllamaManager] Failed to fetch model tags:', error)
     }
 
     return status
+  }
+
+  /**
+   * Ask Ollama what a model can do. Returns null on anything other than a
+   * successful response carrying `capabilities` — including 404s from Ollama
+   * versions that predate the field, which is the normal case, not an error.
+   */
+  private async showModel(
+    model: string,
+    baseUrl: string,
+    signal: AbortSignal
+  ): Promise<string[] | null> {
+    try {
+      const res = await fetch(`${baseUrl}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+        signal
+      })
+      if (!res.ok) return null
+      const data = (await res.json()) as { capabilities?: string[] }
+      return data.capabilities ?? null
+    } catch {
+      // Timed out, aborted by the shared budget, or unparseable — fall through
+      return null
+    }
+  }
+
+  /**
+   * Resolve each model's capability through the three-tier chain.
+   *
+   * /api/show is one request per model, so the fan-out is issued in parallel
+   * under a single shared budget: a slow server degrades every model to tiers
+   * 2–3 at once rather than serialising 40 timeouts.
+   */
+  async classifyModels(tags: OllamaTagEntry[], baseUrl?: string): Promise<OllamaModelInfo[]> {
+    const url = this.resolveBaseUrl(baseUrl)
+    if (tags.length === 0) return []
+    const budget = AbortSignal.timeout(CAPABILITY_PROBE_BUDGET_MS)
+
+    return Promise.all(
+      tags.map(async (tag): Promise<OllamaModelInfo> => {
+        const key = `${url}::${tag.name}::${tag.digest}`
+        const cached = this.capabilityCache.get(key)
+        if (cached) return cached
+
+        const info = await this.classifyOne(tag, url, budget)
+        // Only authoritative answers are cached. Caching a name-based guess made
+        // during a timeout would pin that guess for the rest of the process,
+        // long after the server became reachable again.
+        if (info.detectedVia !== 'name-heuristic') {
+          this.capabilityCache.set(key, info)
+        }
+        return info
+      })
+    )
+  }
+
+  private async classifyOne(
+    tag: OllamaTagEntry,
+    baseUrl: string,
+    budget: AbortSignal
+  ): Promise<OllamaModelInfo> {
+    const base = { name: tag.name, digest: tag.digest, family: tag.family }
+
+    const fromShow = capabilityFromApiShow(await this.showModel(tag.name, baseUrl, budget))
+    if (fromShow) return { ...base, capability: fromShow, detectedVia: 'api-show' }
+
+    const fromFamily = capabilityFromFamily(tag.family)
+    if (fromFamily) return { ...base, capability: fromFamily, detectedVia: 'family' }
+
+    return { ...base, capability: capabilityFromName(tag.name), detectedVia: 'name-heuristic' }
+  }
+
+  /** Drop cached capabilities — exposed for tests and after a model removal. */
+  clearCapabilityCache(): void {
+    this.capabilityCache.clear()
   }
 
   /**

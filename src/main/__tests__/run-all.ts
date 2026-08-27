@@ -429,6 +429,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../ipc/__tests__/embedding-workspace-alignment.test',
   // ─── Local Models card draft (dirty rules + changed-keys-only save payload) ───
   '../../renderer/src/components/workspace/model-config/__tests__/local-models-draft.test',
+  // ─── Ollama model capability detection (3-tier chain + digest-keyed cache) ───
+  '../services/__tests__/ollama-capability-detection.test',
+  '../../renderer/src/components/workspace/model-config/__tests__/model-roles-assignment.test',
   // ─── Phase 22: Coverage Mega-Push — pure functions, IPC validation, MCP helpers ───
   '../services/__tests__/validate-args-pure.test',
   '../services/__tests__/stream-helper-deep.test',

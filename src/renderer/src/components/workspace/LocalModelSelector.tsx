@@ -11,12 +11,15 @@ import {
   Loader2,
   Power,
   PowerOff,
-  Eye
+  Eye,
+  AlertTriangle
 } from 'lucide-react'
 import { RECOMMENDED_LOCAL_MODELS, resolveModelId } from '../../../../shared/constants'
 import type {
   LocalLLMBackend,
   MemoryTier,
+  ModelCapability,
+  OllamaModelInfo,
   OmlxModelDetail,
   RecommendedLocalModel
 } from '../../../../shared/types'
@@ -26,6 +29,12 @@ interface LocalModelSelectorProps {
   installedModels: string[]
   /** All models from oMLX admin API (downloaded + loaded). Undefined when admin API unavailable. */
   downloadedModels?: OmlxModelDetail[]
+  /** Per-model capability from Ollama. Undefined when the backend isn't Ollama. */
+  modelDetails?: OllamaModelInfo[]
+  /** Model currently used for Semantic Search embeddings ('' when none). */
+  embeddingModel?: string
+  /** Pick a model for Semantic Search embeddings. */
+  onSelectEmbedding?: (modelId: string) => void
   backend: LocalLLMBackend
   onSelect: (modelId: string) => void
   onPull: (modelId: string) => void
@@ -62,14 +71,60 @@ const TYPE_BADGE_CLASSES: Record<string, { label: string; classes: string }> = {
   embedding: { label: 'EMB', classes: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' },
   vlm: { label: 'VLM', classes: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
   reranker: { label: 'RERANK', classes: 'bg-slate-500/10 text-slate-400 border-slate-500/20' },
-  llm: { label: 'LLM', classes: 'bg-green-500/10 text-green-400 border-green-500/20' }
+  llm: { label: 'LLM', classes: 'bg-green-500/10 text-green-400 border-green-500/20' },
+  unknown: { label: 'TYPE ?', classes: 'bg-slate-500/10 text-slate-400 border-slate-500/20' }
 }
 
+/**
+ * Badge for a model whose type the server reported.
+ *
+ * Deliberately no default to 'llm': an untyped model used to render a green LLM
+ * badge, which is how `bge-m3` came to be presented as a chat model.
+ */
 function ModelTypeBadge({ modelType }: { modelType?: string }): React.JSX.Element {
-  const config = TYPE_BADGE_CLASSES[modelType ?? 'llm'] ?? TYPE_BADGE_CLASSES.llm
+  const config = TYPE_BADGE_CLASSES[modelType ?? 'unknown'] ?? TYPE_BADGE_CLASSES.unknown
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.classes}`}>
       {config.label}
+    </span>
+  )
+}
+
+const CAPABILITY_BADGE: Record<ModelCapability, { label: string; classes: string }> = {
+  chat: { label: 'CHAT', classes: 'bg-green-500/10 text-green-400 border-green-500/20' },
+  vision: { label: 'VISION', classes: 'bg-purple-500/10 text-purple-400 border-purple-500/20' },
+  embedding: { label: 'EMB', classes: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' },
+  unknown: { label: 'TYPE ?', classes: 'bg-slate-500/10 text-slate-400 border-slate-500/20' }
+}
+
+/**
+ * Badge for a detected Ollama capability, which states how it was decided.
+ *
+ * A name-based guess is drawn dimmed and labelled "assumed" rather than asserted
+ * — older Ollama has no /api/show capabilities, and a confident wrong answer is
+ * worse than an honest hedge.
+ */
+function CapabilityBadge({ info }: { info?: OllamaModelInfo }): React.JSX.Element {
+  const capability = info?.capability ?? 'unknown'
+  const assumed = !info || info.detectedVia === 'name-heuristic'
+  const config = CAPABILITY_BADGE[capability]
+  const title = !info
+    ? 'Type unknown — the server did not report one'
+    : info.detectedVia === 'api-show'
+      ? `Reported by Ollama (/api/show)`
+      : info.detectedVia === 'family'
+        ? `Inferred from model family "${info.family}"`
+        : 'Assumed from the model name — this Ollama build does not report capabilities'
+
+  return (
+    <span
+      title={title}
+      className={`text-xs px-1.5 py-0.5 rounded-full border font-medium ${config.classes} ${
+        assumed ? 'opacity-60' : ''
+      }`}
+    >
+      {config.label}
+      {assumed && capability !== 'unknown' && <span className="ml-0.5 font-normal">?</span>}
     </span>
   )
 }
@@ -90,6 +145,57 @@ function groupModelsByType(models: OmlxModelDetail[]): Map<string, OmlxModelDeta
 function isModelInstalled(modelId: string, installedModels: string[]): boolean {
   return installedModels.some(
     (m) => m === modelId || m === `${modelId}:latest` || m.startsWith(`${modelId}:`)
+  )
+}
+
+// ─── Installed Model Row (capability-aware) ──────────────
+
+/**
+ * One installed local model.
+ *
+ * `selected` and the click target mean different things per list: in the chat
+ * list this is the chat model, in the embedding list it is the Semantic Search
+ * model. An embedding model is never offered as a chat model — choosing one was
+ * a no-op that looked like a successful choice.
+ */
+function InstalledModelRow({
+  modelId,
+  info,
+  detail,
+  selected,
+  onSelect
+}: {
+  modelId: string
+  info?: OllamaModelInfo
+  detail?: OmlxModelDetail
+  selected: boolean
+  onSelect: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      data-testid="installed-model-row"
+      onClick={onSelect}
+      className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
+        selected
+          ? 'border-primary bg-primary-muted'
+          : 'border-border-subtle hover:bg-surface-overlay'
+      }`}
+    >
+      <div className="flex items-center gap-2 min-w-0">
+        {selected ? (
+          <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center shrink-0">
+            <Check size={10} className="text-white" />
+          </div>
+        ) : (
+          <div className="w-4 h-4 rounded-full border-2 border-border-default shrink-0" />
+        )}
+        <span className="text-sm font-medium text-text-primary truncate">{modelId}</span>
+        <CapabilityBadge info={info} />
+        {detail?.estimatedSize && (
+          <span className="text-xs text-text-muted shrink-0">{detail.estimatedSize}</span>
+        )}
+      </div>
+    </button>
   )
 }
 
@@ -351,6 +457,9 @@ export default function LocalModelSelector({
   selectedModel,
   installedModels,
   downloadedModels,
+  modelDetails,
+  embeddingModel,
+  onSelectEmbedding,
   backend,
   onSelect,
   onPull,
@@ -428,6 +537,18 @@ export default function LocalModelSelector({
   const hasServerModels = downloadedModels && downloadedModels.length > 0
   const modelGroups = hasServerModels ? groupModelsByType(downloadedModels) : null
 
+  // ── Capability split (Ollama path) ──
+  const infoByName = new Map((modelDetails ?? []).map((i) => [i.name, i]))
+  const isEmbedding = (modelId: string): boolean =>
+    infoByName.get(modelId)?.capability === 'embedding'
+  // Anything not *known* to be an embedding model stays selectable for chat:
+  // hiding a model we merely failed to classify is its own kind of lie.
+  const chatModels = installedModels.filter((m) => !isEmbedding(m))
+  const embeddingModels = installedModels.filter(isEmbedding)
+  // A saved embedding model the server no longer lists must stay visible, or
+  // the setting silently disappears while remaining in force.
+  const savedEmbeddingMissing = !!embeddingModel && !installedModels.includes(embeddingModel)
+
   return (
     <div data-testid="local-model-selector" className="space-y-4">
       {/* ── Section A: Server Models (primary — when admin API data is available) ── */}
@@ -467,50 +588,77 @@ export default function LocalModelSelector({
           </div>
         </div>
       ) : (
-        /* ── Fallback: Installed Models (when no admin API data) ── */
-        <div>
-          <label className="text-xs font-medium text-text-secondary">Model</label>
-          {installedModels.length > 0 ? (
-            <div className="space-y-1.5 mt-2">
-              {installedModels.map((modelId) => {
-                const detail = getDownloadedModel(modelId)
-                const modelType = detail?.modelType
-                return (
-                  <button
-                    key={modelId}
-                    onClick={() => onSelect(modelId)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
-                      selectedModel === modelId
-                        ? 'border-primary bg-primary-muted'
-                        : 'border-border-subtle hover:bg-surface-overlay'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      {selectedModel === modelId ? (
-                        <div className="w-4 h-4 rounded-full bg-primary flex items-center justify-center">
-                          <Check size={10} className="text-white" />
-                        </div>
-                      ) : (
-                        <div className="w-4 h-4 rounded-full border-2 border-border-default" />
-                      )}
-                      <span className="text-sm font-medium text-text-primary">{modelId}</span>
-                      <ModelTypeBadge modelType={modelType} />
-                      <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-500/10 text-green-400 font-medium">
-                        loaded
-                      </span>
-                      {detail ? (
-                        <span className="text-xs text-text-muted">{detail.estimatedSize}</span>
-                      ) : null}
-                    </div>
-                  </button>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="text-xs text-text-muted mt-2">
-              No models loaded. Download one from the recommendations below, or enter a custom model
-              name.
+        /* ── Installed models, split by what they can actually do ── */
+        <div className="space-y-4">
+          {/* Chat models */}
+          <div>
+            <label className="text-xs font-medium text-text-secondary">Chat models</label>
+            <p className="text-xs text-text-muted mt-0.5 mb-2">
+              Used for conversations and every routed role.
             </p>
+            {chatModels.length > 0 ? (
+              <div className="space-y-1.5">
+                {chatModels.map((modelId) => (
+                  <InstalledModelRow
+                    key={modelId}
+                    modelId={modelId}
+                    info={infoByName.get(modelId)}
+                    detail={getDownloadedModel(modelId)}
+                    selected={selectedModel === modelId}
+                    onSelect={() => onSelect(modelId)}
+                  />
+                ))}
+              </div>
+            ) : installedModels.length > 0 ? (
+              <p
+                data-testid="no-chat-models"
+                className="text-xs text-amber-400 border border-amber-500/20 bg-amber-500/10 rounded-lg px-3 py-2"
+              >
+                No chat models installed — only embedding models are available. Run{' '}
+                <code className="text-text-primary">ollama pull qwen2.5-coder</code> to add one.
+              </p>
+            ) : (
+              <p className="text-xs text-text-muted">
+                No models found. Download one from the recommendations below, or enter a custom
+                model name.
+              </p>
+            )}
+          </div>
+
+          {/* Embedding models — chosen here, at the point of decision */}
+          {(embeddingModels.length > 0 || savedEmbeddingMissing) && onSelectEmbedding && (
+            <div data-testid="embedding-model-list">
+              <label className="text-xs font-medium text-text-secondary">Embedding models</label>
+              <p className="text-xs text-text-muted mt-0.5 mb-2">
+                One of these powers Semantic Search. They cannot answer a chat turn.
+              </p>
+              <div className="space-y-1.5">
+                {embeddingModels.map((modelId) => (
+                  <InstalledModelRow
+                    key={modelId}
+                    modelId={modelId}
+                    info={infoByName.get(modelId)}
+                    detail={getDownloadedModel(modelId)}
+                    selected={embeddingModel === modelId}
+                    onSelect={() => onSelectEmbedding(modelId)}
+                  />
+                ))}
+                {savedEmbeddingMissing && (
+                  <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-amber-500/20 bg-amber-500/10">
+                    <AlertTriangle size={12} className="text-amber-400 shrink-0" />
+                    <span className="text-xs text-amber-300 truncate">
+                      {embeddingModel} — saved, but not on this server
+                    </span>
+                    <button
+                      onClick={() => onSelectEmbedding('')}
+                      className="ml-auto text-xs text-text-muted hover:text-text-secondary shrink-0"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}

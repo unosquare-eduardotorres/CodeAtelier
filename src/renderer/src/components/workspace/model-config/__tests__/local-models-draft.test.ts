@@ -18,9 +18,15 @@ import {
 } from '../../../../../../main/services/__tests__/test-harness'
 import {
   changedLocalModelsSettings,
+  changedRoutingSettings,
+  countUnsavedChanges,
   defaultLocalModelsDraft,
+  defaultRoutingDraft,
+  deriveProvider,
   localModelsDraftsEqual,
-  type LocalModelsDraft
+  routingDraftsEqual,
+  type LocalModelsDraft,
+  type RoutingDraft
 } from '../local-models-draft'
 
 function saved(): LocalModelsDraft {
@@ -157,6 +163,229 @@ describe('defaultLocalModelsDraft', () => {
     assert.equal(localModelsDraftsEqual(defaultLocalModelsDraft(), defaultLocalModelsDraft()), true)
     assert.deepEqual(
       changedLocalModelsSettings(defaultLocalModelsDraft(), defaultLocalModelsDraft()),
+      {}
+    )
+  })
+})
+
+// ─── Routing draft ──────────────────────────────────
+
+function savedRouting(): RoutingDraft {
+  return {
+    modelRoles: {
+      'specialist:plan': { provider: 'claude', modelId: 'claude-opus-5' }
+    },
+    modelOverrides: { 'specialist:plan': 'claude-opus-5' },
+    fallbackModel: 'claude-sonnet-5',
+    communicationTone: 'default'
+  }
+}
+
+describe('routingDraftsEqual — dirty computation', () => {
+  test('an untouched routing draft is clean', () => {
+    assert.equal(routingDraftsEqual(savedRouting(), savedRouting()), true)
+  })
+
+  /**
+   * Role maps are rebuilt on every edit, so a reference comparison would report
+   * every render as dirty and a shallow one would miss a changed model id.
+   */
+  test('an equal-but-not-identical role map is clean', () => {
+    const a = savedRouting()
+    const b = savedRouting()
+    assert.notEqual(a.modelRoles, b.modelRoles)
+    assert.equal(routingDraftsEqual(a, b), true)
+  })
+
+  test('routing a role to a different model is dirty', () => {
+    const persisted = savedRouting()
+    const draft: RoutingDraft = {
+      ...persisted,
+      modelRoles: { 'specialist:plan': { provider: 'claude', modelId: 'claude-sonnet-5' } }
+    }
+    assert.equal(routingDraftsEqual(draft, persisted), false)
+  })
+
+  /** The exact defect #5 shape: same model, different backend recorded. */
+  test('the same local model on a different backend is dirty', () => {
+    const persisted: RoutingDraft = {
+      ...savedRouting(),
+      modelRoles: {
+        'specialist:plan': { provider: 'local-llm', modelId: 'qwen3:8b', localBackend: 'omlx' }
+      }
+    }
+    const draft: RoutingDraft = {
+      ...persisted,
+      modelRoles: {
+        'specialist:plan': { provider: 'local-llm', modelId: 'qwen3:8b', localBackend: 'ollama' }
+      }
+    }
+    assert.equal(routingDraftsEqual(draft, persisted), false)
+  })
+
+  test('adding a role that was previously unset is dirty', () => {
+    const persisted = savedRouting()
+    const draft: RoutingDraft = {
+      ...persisted,
+      modelRoles: {
+        ...persisted.modelRoles,
+        audit: { provider: 'claude', modelId: 'claude-opus-5' }
+      }
+    }
+    assert.equal(routingDraftsEqual(draft, persisted), false)
+  })
+
+  test('changing the fallback model or the tone is dirty', () => {
+    const persisted = savedRouting()
+    assert.equal(
+      routingDraftsEqual({ ...persisted, fallbackModel: 'claude-opus-5' }, persisted),
+      false
+    )
+    assert.equal(
+      routingDraftsEqual({ ...persisted, communicationTone: 'brutal' }, persisted),
+      false
+    )
+  })
+})
+
+describe('changedRoutingSettings — save payload', () => {
+  test('emits nothing when the routing draft is clean', () => {
+    assert.deepEqual(changedRoutingSettings(savedRouting(), savedRouting(), 'ollama'), {})
+  })
+
+  test('a tone change emits only the tone', () => {
+    const persisted = savedRouting()
+    assert.deepEqual(
+      changedRoutingSettings({ ...persisted, communicationTone: 'brutal' }, persisted, 'ollama'),
+      { communicationTone: 'brutal' }
+    )
+  })
+
+  /**
+   * `llmProvider` is what the backend reads for anything not routed per-action.
+   * Leaving it stale is how a workspace ends up routed to a local model while
+   * still reporting `claude`.
+   */
+  test('routing to a local model carries llmProvider and the active backend', () => {
+    const persisted = savedRouting()
+    const draft: RoutingDraft = {
+      ...persisted,
+      modelRoles: {
+        'specialist:plan': { provider: 'local-llm', modelId: 'qwen3:8b', localBackend: 'ollama' }
+      }
+    }
+    const payload = changedRoutingSettings(draft, persisted, 'ollama')
+    assert.equal(payload.llmProvider, 'local-llm')
+    assert.equal(payload.localLlmBackend, 'ollama')
+    assert.ok('modelRoles' in payload)
+  })
+
+  test('routing back to Claude does not record a local backend', () => {
+    const persisted: RoutingDraft = {
+      ...savedRouting(),
+      modelRoles: {
+        'specialist:plan': { provider: 'local-llm', modelId: 'qwen3:8b', localBackend: 'ollama' }
+      }
+    }
+    const payload = changedRoutingSettings(savedRouting(), persisted, 'ollama')
+    assert.equal(payload.llmProvider, 'claude')
+    assert.equal('localLlmBackend' in payload, false)
+  })
+
+  test('a cleared fallback is sent as null, not dropped', () => {
+    const persisted = savedRouting()
+    const payload = changedRoutingSettings(
+      { ...persisted, fallbackModel: undefined },
+      persisted,
+      'omlx'
+    )
+    assert.ok('fallbackModel' in payload)
+    assert.equal(payload.fallbackModel, null)
+  })
+
+  test('an untouched aspect never appears in the payload', () => {
+    const persisted = savedRouting()
+    const payload = changedRoutingSettings(
+      { ...persisted, fallbackModel: 'claude-opus-5' },
+      persisted,
+      'omlx'
+    )
+    assert.deepEqual(Object.keys(payload), ['fallbackModel'])
+  })
+})
+
+describe('discarding the routing draft', () => {
+  test('restoring from persisted clears both the dirty flag and the payload', () => {
+    const persisted = savedRouting()
+    const draft: RoutingDraft = { ...persisted, communicationTone: 'brutal' }
+    assert.equal(routingDraftsEqual(draft, persisted), false)
+
+    const discarded = { ...persisted }
+    assert.equal(routingDraftsEqual(discarded, persisted), true)
+    assert.deepEqual(changedRoutingSettings(discarded, persisted, 'ollama'), {})
+  })
+})
+
+describe('deriveProvider', () => {
+  test('reads the plan role', () => {
+    assert.equal(
+      deriveProvider({
+        'specialist:plan': { provider: 'local-llm', modelId: 'qwen3:8b', localBackend: 'ollama' }
+      }),
+      'local-llm'
+    )
+  })
+
+  test('an unrouted plan role means Claude', () => {
+    assert.equal(deriveProvider({}), 'claude')
+  })
+})
+
+describe('countUnsavedChanges — what the save bar reports', () => {
+  const clean = (): {
+    local: { draft: LocalModelsDraft; persisted: LocalModelsDraft }
+    routing: { draft: RoutingDraft; persisted: RoutingDraft }
+  } => ({
+    local: { draft: saved(), persisted: saved() },
+    routing: { draft: savedRouting(), persisted: savedRouting() }
+  })
+
+  test('reports zero when nothing is pending', () => {
+    const s = clean()
+    assert.equal(countUnsavedChanges(s.local, s.routing), 0)
+  })
+
+  test('counts connection and routing edits together', () => {
+    const s = clean()
+    s.local.draft = { ...s.local.draft, localPort: 9999 }
+    s.routing.draft = { ...s.routing.draft, communicationTone: 'brutal' }
+    assert.equal(countUnsavedChanges(s.local, s.routing), 2)
+  })
+
+  /**
+   * One routing edit is one decision. `llmProvider` and `localLlmBackend` ride
+   * along in the payload as consequences; counting them would report "3 unsaved
+   * changes" for a single dropdown.
+   */
+  test('one routing edit counts once, not once per emitted key', () => {
+    const s = clean()
+    s.routing.draft = {
+      ...s.routing.draft,
+      modelRoles: {
+        'specialist:plan': { provider: 'local-llm', modelId: 'qwen3:8b', localBackend: 'ollama' }
+      }
+    }
+    const payload = changedRoutingSettings(s.routing.draft, s.routing.persisted, 'ollama')
+    assert.ok(Object.keys(payload).length > 1, 'the payload does carry consequences')
+    assert.equal(countUnsavedChanges(s.local, s.routing), 1)
+  })
+})
+
+describe('defaultRoutingDraft', () => {
+  test('is self-consistent (a fresh draft is not dirty against itself)', () => {
+    assert.equal(routingDraftsEqual(defaultRoutingDraft(), defaultRoutingDraft()), true)
+    assert.deepEqual(
+      changedRoutingSettings(defaultRoutingDraft(), defaultRoutingDraft(), 'omlx'),
       {}
     )
   })

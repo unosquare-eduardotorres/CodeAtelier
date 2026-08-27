@@ -879,6 +879,130 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   condense: 'claude-haiku-4-5-20251001'
 } as const
 
+/**
+ * The routable roles, in display order.
+ *
+ * Single source of truth: the renderer builds its routing dropdowns from this,
+ * and main resolves the same list for the "In Use" panel. Before this existed
+ * the two enumerated roles independently, so the panel could report on two chat
+ * roles while twelve others were routed with nothing surfacing them.
+ */
+export const MODEL_ROLE_ROWS: readonly import('./types').ModelRoleRowDef[] = [
+  {
+    group: 'chat',
+    label: 'Plan',
+    description: 'Analysis, brainstorming, code review, and planning',
+    actions: ['specialist:plan'],
+    primaryAction: 'specialist:plan'
+  },
+  {
+    group: 'chat',
+    label: 'Build',
+    description: 'Code generation, file edits, and implementation',
+    actions: ['specialist:build'],
+    primaryAction: 'specialist:build'
+  },
+  {
+    group: 'chat',
+    label: 'Background',
+    description: 'Activation and lightweight tasks',
+    actions: ['haiku', 'activation'],
+    primaryAction: 'haiku'
+  },
+  {
+    group: 'blueprint',
+    label: 'Plan',
+    description: 'Specify, clarify, plan, tasks, and review phases',
+    actions: [
+      'blueprint:specify',
+      'blueprint:clarify',
+      'blueprint:plan',
+      'blueprint:tasks',
+      'blueprint:review'
+    ],
+    primaryAction: 'blueprint:specify'
+  },
+  {
+    group: 'blueprint',
+    label: 'Build',
+    description: 'Code generation and implementation phase',
+    actions: ['blueprint:build'],
+    primaryAction: 'blueprint:build'
+  },
+  {
+    group: 'blueprint',
+    label: 'Verify',
+    description: 'Adversarial verification of build output',
+    actions: ['blueprint:verify'],
+    primaryAction: 'blueprint:verify'
+  },
+  {
+    group: 'quality',
+    label: 'Audit',
+    description: 'Post-implementation code audit',
+    actions: ['audit'],
+    primaryAction: 'audit'
+  },
+  {
+    group: 'quality',
+    label: 'Grill',
+    description: 'Adversarial design review sessions',
+    actions: ['grill', 'grill:plan'],
+    primaryAction: 'grill'
+  },
+  {
+    group: 'council',
+    label: 'Council Member',
+    description: 'Multi-advisor deliberation (×5 parallel)',
+    actions: ['council-member'],
+    primaryAction: 'council-member'
+  },
+  {
+    group: 'council',
+    label: 'Council Chairman',
+    description: 'Synthesize advisor verdicts into final decision',
+    actions: ['council-chairman'],
+    primaryAction: 'council-chairman'
+  },
+  {
+    group: 'background',
+    label: 'Memory Extraction',
+    description: 'Extract facts from conversations into workspace memory',
+    actions: ['memoryFeed'],
+    primaryAction: 'memoryFeed'
+  },
+  {
+    group: 'background',
+    label: 'Commit Message',
+    description: 'Generate git commit messages from diffs',
+    actions: ['commit-message'],
+    primaryAction: 'commit-message'
+  },
+  {
+    group: 'background',
+    label: 'Conversation Condense',
+    description: 'Compress conversation context before compaction',
+    actions: ['condense'],
+    primaryAction: 'condense'
+  },
+  {
+    group: 'background',
+    label: 'Prompt Optimization',
+    description: 'Background prompt quality tuning',
+    actions: ['prompt:optimize'],
+    primaryAction: 'prompt:optimize'
+  }
+] as const
+
+/** Section headings for MODEL_ROLE_ROWS groups. */
+export const MODEL_ROLE_GROUP_LABELS: Record<import('./types').ModelRoleGroup, string> = {
+  chat: 'Chat',
+  blueprint: 'Blueprint',
+  quality: 'Quality & Review',
+  council: 'Council',
+  background: 'Background Tasks'
+}
+
 // ── Role Groups (retained for Phase 2 role assignments) ──
 
 import type { ActionGroup } from './types'

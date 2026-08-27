@@ -3,16 +3,21 @@ import { useWorkspaceStore, useToastStore } from '@renderer/store'
 import {
   OMLX_DEFAULT_PORT,
   OLLAMA_DEFAULT_PORT,
-  COMMUNICATION_TONES,
   defaultLocalLlmBackend
 } from '../../../../../shared/constants'
 import {
   DEFAULT_LOCAL_MODEL,
   LOCAL_MODELS_DEFAULT_HOST,
   changedLocalModelsSettings,
+  changedRoutingSettings,
+  countUnsavedChanges,
   defaultLocalModelsDraft,
+  defaultRoutingDraft,
+  deriveProvider,
   localModelsDraftsEqual,
-  type LocalModelsDraft
+  routingDraftsEqual,
+  type LocalModelsDraft,
+  type RoutingDraft
 } from './local-models-draft'
 import type {
   CommunicationTone,
@@ -42,7 +47,12 @@ export interface ModelConfigState {
   // Local Models card — one draft for the whole card (explicit save)
   localModelsDraft: LocalModelsDraft
   localModelsPersisted: LocalModelsDraft
+  /** True when anything on the Configure tab is unsaved — connection or routing */
   isLocalModelsDirty: boolean
+  /** How many distinct decisions are unsaved, for the save bar */
+  unsavedChangeCount: number
+  /** Specifically the embedding model is unsaved — narrower than the tab flag */
+  isEmbeddingModelDirty: boolean
   /** Bumped on every successful save — consumers re-read live runtime status */
   localModelsSavedAt: number
   // Persisted workspace settings (instant-save)
@@ -86,12 +96,12 @@ export interface ModelConfigActions {
   setLocalContextWindow: (value: number | undefined) => void
   handleLocalModelSelect: (modelId: string) => void
   handleOllamaEmbeddingModelChange: (model: string) => void
-  // Local Models draft save/discard
+  // Save/discard — covers connection AND routing in one write
   saveLocalModels: () => Promise<void>
   discardLocalModels: () => void
-  // Instant-persist actions
-  handleModelRolesChange: (roles: ModelRoleMap, overrides: Record<string, string>) => Promise<void>
-  handleFallbackModelChange: (modelId: string) => Promise<void>
+  // Routing draft mutations (land on Save, like everything else on the tab)
+  handleModelRolesChange: (roles: ModelRoleMap, overrides: Record<string, string>) => void
+  handleFallbackModelChange: (modelId: string) => void
   // oMLX model management
   handleLoadOmlxModel: (modelId: string) => Promise<void>
   handleUnloadOmlxModel: (modelId: string) => Promise<void>
@@ -104,7 +114,7 @@ export interface ModelConfigActions {
   scheduleAutoTest: () => void
   // Workspace setting actions
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
-  handleToneChange: (tone: CommunicationTone) => Promise<void>
+  handleToneChange: (tone: CommunicationTone) => void
 }
 
 // ─── Pure Helpers ─────────────────────────────────────────
@@ -124,6 +134,25 @@ async function persistWorkspaceSetting(
   updates: Record<string, unknown>
 ): Promise<void> {
   await window.api.updateWorkspaceSettings({ workspaceId, settings: updates })
+}
+
+/**
+ * Probe whichever local server the user is actually on.
+ *
+ * The Ollama tab used to be probed through `omlxCheckStatus`, which falls back
+ * to the OpenAI-compatible /v1/models. That returns bare model ids and no type,
+ * so every Ollama model reached the UI as an untyped name and was rendered as a
+ * chat model. `ollamaCheckStatus` uses /api/tags + /api/show and carries real
+ * capabilities.
+ */
+function probeLocalServer(
+  backend: LocalLLMBackend,
+  baseUrl: string,
+  apiKey?: string
+): Promise<OmlxExtendedStatus> {
+  return backend === 'ollama'
+    ? window.api.ollamaCheckStatus({ baseUrl })
+    : window.api.omlxCheckStatus({ baseUrl, apiKey })
 }
 
 // ─── Connection Test Hook ─────────────────────────────────
@@ -154,12 +183,14 @@ function useConnectionTest(opts: {
       setConnectionTesting(true)
       const h = host ?? opts.localHost
       const p = port ?? opts.localPort
+      const name = opts.localLlmBackend === 'ollama' ? 'Ollama' : 'oMLX'
       try {
         const baseUrl = `http://${h}:${p}`
-        const status = await window.api.omlxCheckStatus({
+        const status = await probeLocalServer(
+          opts.localLlmBackend,
           baseUrl,
-          apiKey: opts.localApiKey || undefined
-        })
+          opts.localApiKey || undefined
+        )
         setLocalStatus(status)
 
         if (!silent) {
@@ -168,17 +199,17 @@ function useConnectionTest(opts: {
             addToast({
               message:
                 mc > 0
-                  ? `Connected to oMLX — ${mc} model${mc !== 1 ? 's' : ''} available`
-                  : 'Connected to oMLX — no models loaded yet',
+                  ? `Connected to ${name} — ${mc} model${mc !== 1 ? 's' : ''} available`
+                  : `Connected to ${name} — no models loaded yet`,
               type: mc > 0 ? 'success' : 'info'
             })
           } else if (status.installed) {
             addToast({
-              message: 'oMLX is installed but not running. Start it and try again.',
+              message: `${name} is installed but not running. Start it and try again.`,
               type: 'error'
             })
           } else {
-            addToast({ message: `Could not reach oMLX at ${h}:${p}`, type: 'error' })
+            addToast({ message: `Could not reach ${name} at ${h}:${p}`, type: 'error' })
           }
         }
 
@@ -192,7 +223,7 @@ function useConnectionTest(opts: {
         setLocalStatus(fallback)
         if (!silent) {
           addToast({
-            message: `Connection failed — oMLX is not reachable at ${h}:${p}`,
+            message: `Connection failed — ${name} is not reachable at ${h}:${p}`,
             type: 'error'
           })
         }
@@ -201,7 +232,7 @@ function useConnectionTest(opts: {
         setConnectionTesting(false)
       }
     },
-    [opts.localHost, opts.localPort, opts.localApiKey, addToast]
+    [opts.localHost, opts.localPort, opts.localApiKey, opts.localLlmBackend, addToast]
   )
 
   // Auto-test on mount when local-llm is the default provider OR Ollama backend is active
@@ -213,8 +244,7 @@ function useConnectionTest(opts: {
       if (opts.defaultProvider === 'local-llm' || opts.localLlmBackend === 'ollama') {
         setConnectionTesting(true)
         const baseUrl = `http://${opts.localHost}:${opts.localPort}`
-        window.api
-          .omlxCheckStatus({ baseUrl, apiKey: opts.localApiKey || undefined })
+        probeLocalServer(opts.localLlmBackend, baseUrl, opts.localApiKey || undefined)
           .then((status) => setLocalStatus(status))
           .catch(() =>
             setLocalStatus({
@@ -258,15 +288,10 @@ function useConnectionTest(opts: {
 
 function useWorkspaceSettingActions(activeWorkspace: Workspace | null): {
   costPreference: CostPreference
-  communicationTone: CommunicationTone
   setCostPreference: React.Dispatch<React.SetStateAction<CostPreference>>
-  setCommunicationTone: React.Dispatch<React.SetStateAction<CommunicationTone>>
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
-  handleToneChange: (tone: CommunicationTone) => Promise<void>
 } {
-  const addToast = useToastStore((s) => s.addToast)
   const [costPreference, setCostPreference] = useState<CostPreference>('balanced')
-  const [communicationTone, setCommunicationTone] = useState<CommunicationTone>('default')
 
   const handleCostPreferenceChange = async (pref: CostPreference): Promise<void> => {
     setCostPreference(pref)
@@ -275,25 +300,7 @@ function useWorkspaceSettingActions(activeWorkspace: Workspace | null): {
     }
   }
 
-  const handleToneChange = async (tone: CommunicationTone): Promise<void> => {
-    setCommunicationTone(tone)
-    if (activeWorkspace) {
-      await persistWorkspaceSetting(activeWorkspace.id, { communicationTone: tone })
-      addToast({
-        message: `Communication tone set to ${COMMUNICATION_TONES.find((t) => t.id === tone)?.label ?? tone}`,
-        type: 'info'
-      })
-    }
-  }
-
-  return {
-    costPreference,
-    communicationTone,
-    setCostPreference,
-    setCommunicationTone,
-    handleCostPreferenceChange,
-    handleToneChange
-  }
+  return { costPreference, setCostPreference, handleCostPreferenceChange }
 }
 
 // ─── Main Hook ────────────────────────────────────────────
@@ -309,11 +316,10 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     useState<LocalModelsDraft>(defaultLocalModelsDraft)
   const [localModelsSavedAt, setLocalModelsSavedAt] = useState(0)
 
-  // ── Instant-persist workspace settings ──
+  // ── Routing draft (routing + fallback + tone — saved with the connection) ──
+  const [routingDraft, setRoutingDraft] = useState<RoutingDraft>(defaultRoutingDraft)
+  const [routingPersisted, setRoutingPersisted] = useState<RoutingDraft>(defaultRoutingDraft)
   const [defaultProvider, setDefaultProvider] = useState<LLMProvider>('claude')
-  const [modelRoles, setModelRoles] = useState<ModelRoleMap>({})
-  const [claudeModelOverrides, setClaudeModelOverrides] = useState<Record<string, string>>({})
-  const [fallbackModel, setFallbackModel] = useState<string | undefined>(undefined)
 
   // ── Platform + Claude CLI ──
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
@@ -324,11 +330,28 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   } | null>(null)
   const [modelLoading, setModelLoading] = useState<string | null>(null)
 
-  // Derived — a single dirty flag for the whole card, so the backend tab can
-  // no longer be silently unsaved just because host/port happen to match.
+  // Derived — a single dirty flag for the whole tab, so the backend tab can
+  // no longer be silently unsaved just because host/port happen to match, and
+  // routing can no longer save behind the user's back.
   const isLocalModelsDirty = useMemo(
-    () => !localModelsDraftsEqual(localModelsDraft, localModelsPersisted),
-    [localModelsDraft, localModelsPersisted]
+    () =>
+      !localModelsDraftsEqual(localModelsDraft, localModelsPersisted) ||
+      !routingDraftsEqual(routingDraft, routingPersisted),
+    [localModelsDraft, localModelsPersisted, routingDraft, routingPersisted]
+  )
+
+  // Narrower than the tab-wide flag on purpose: the "will be used after saving"
+  // hint is about the embedding model, and a routing edit must not make it lie.
+  const isEmbeddingModelDirty =
+    localModelsDraft.ollamaEmbeddingModel !== localModelsPersisted.ollamaEmbeddingModel
+
+  const unsavedChangeCount = useMemo(
+    () =>
+      countUnsavedChanges(
+        { draft: localModelsDraft, persisted: localModelsPersisted },
+        { draft: routingDraft, persisted: routingPersisted }
+      ),
+    [localModelsDraft, localModelsPersisted, routingDraft, routingPersisted]
   )
 
   // ── Sub-hooks ──
@@ -367,15 +390,17 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
       .then(([settings, platform]) => {
         // Workspace preferences (delegated to sub-hook)
         wsSettings.setCostPreference((settings.costPreference as CostPreference) || 'balanced')
-        wsSettings.setCommunicationTone(
-          (settings.communicationTone as CommunicationTone) ?? 'default'
-        )
 
-        // Instant-persist settings
         setDefaultProvider((settings.llmProvider as LLMProvider) ?? 'claude')
-        setModelRoles((settings.modelRoles as ModelRoleMap) ?? {})
-        setClaudeModelOverrides((settings.modelOverrides as Record<string, string>) ?? {})
-        setFallbackModel((settings.fallbackModel as string) ?? undefined)
+
+        const loadedRouting: RoutingDraft = {
+          modelRoles: (settings.modelRoles as ModelRoleMap) ?? {},
+          modelOverrides: (settings.modelOverrides as Record<string, string>) ?? {},
+          fallbackModel: (settings.fallbackModel as string) ?? undefined,
+          communicationTone: (settings.communicationTone as CommunicationTone) ?? 'default'
+        }
+        setRoutingPersisted(loadedRouting)
+        setRoutingDraft(loadedRouting)
 
         // Restore saved backend tab.  When no tab is persisted yet, default to
         // omlx on Apple Silicon and ollama elsewhere — oMLX cannot run off
@@ -455,16 +480,21 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     []
   )
 
-  // ── Save the whole Local Models card in one write ──
+  // ── Save the whole tab in one write ──
   const saveLocalModels = useCallback(async () => {
     if (!activeWorkspace) return
-    const changed = changedLocalModelsSettings(localModelsDraft, localModelsPersisted)
+    const changed = {
+      ...changedLocalModelsSettings(localModelsDraft, localModelsPersisted),
+      ...changedRoutingSettings(routingDraft, routingPersisted, localModelsDraft.localLlmBackend)
+    }
     if (Object.keys(changed).length === 0) return
     try {
       await persistWorkspaceSetting(activeWorkspace.id, changed)
       setLocalModelsPersisted({ ...localModelsDraft })
+      setRoutingPersisted({ ...routingDraft })
+      setDefaultProvider(deriveProvider(routingDraft.modelRoles))
       setLocalModelsSavedAt(Date.now())
-      addToast({ message: 'Local model settings saved', type: 'success' })
+      addToast({ message: 'Model settings saved', type: 'success' })
 
       // Main re-points the embedding facade on settings change, but does not
       // re-probe it. Kick a probe so the "In use" panel reflects the new model
@@ -475,53 +505,40 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         })
       }
     } catch (err) {
-      console.error('Failed to save local model settings:', err)
-      addToast({ message: 'Failed to save local model settings', type: 'error' })
+      console.error('Failed to save model settings:', err)
+      addToast({ message: 'Failed to save model settings', type: 'error' })
     }
-  }, [activeWorkspace, localModelsDraft, localModelsPersisted, addToast])
+  }, [
+    activeWorkspace,
+    localModelsDraft,
+    localModelsPersisted,
+    routingDraft,
+    routingPersisted,
+    addToast
+  ])
 
-  // ── Discard the Local Models draft ──
+  // ── Discard everything on the tab ──
   const discardLocalModels = useCallback(() => {
     setLocalModelsDraft({ ...localModelsPersisted })
-    addToast({ message: 'Local model changes discarded', type: 'info' })
-  }, [localModelsPersisted, addToast])
+    setRoutingDraft({ ...routingPersisted })
+    addToast({ message: 'Model changes discarded', type: 'info' })
+  }, [localModelsPersisted, routingPersisted, addToast])
 
-  // ── Instant-persist: model roles (also derives + persists llmProvider for backend compat) ──
+  // ── Routing draft setters ──
   const handleModelRolesChange = useCallback(
-    async (roles: ModelRoleMap, overrides: Record<string, string>) => {
-      if (!activeWorkspace) return
-      setModelRoles(roles)
-      setClaudeModelOverrides(overrides)
-
-      // Derive provider from plan action's provider for backend compatibility
-      const planRole = roles['specialist:plan']
-      const derived: LLMProvider = planRole?.provider ?? 'claude'
-      setDefaultProvider(derived)
-
-      await persistWorkspaceSetting(activeWorkspace.id, {
-        modelRoles: roles,
-        modelOverrides: overrides,
-        // Keep backend llmProvider in sync with routing
-        llmProvider: derived,
-        // Materialise the *saved* backend (never the unsaved draft) so routing
-        // to local-llm always has a backend recorded alongside it.
-        ...(derived === 'local-llm'
-          ? { localLlmBackend: localModelsPersisted.localLlmBackend }
-          : {})
-      })
+    (roles: ModelRoleMap, overrides: Record<string, string>) => {
+      setRoutingDraft((prev) => ({ ...prev, modelRoles: roles, modelOverrides: overrides }))
     },
-    [activeWorkspace, localModelsPersisted.localLlmBackend]
+    []
   )
 
-  // ── Instant-persist: fallback model ──
-  const handleFallbackModelChange = useCallback(
-    async (modelId: string) => {
-      if (!activeWorkspace) return
-      setFallbackModel(modelId)
-      await persistWorkspaceSetting(activeWorkspace.id, { fallbackModel: modelId })
-    },
-    [activeWorkspace]
-  )
+  const handleFallbackModelChange = useCallback((modelId: string) => {
+    setRoutingDraft((prev) => ({ ...prev, fallbackModel: modelId }))
+  }, [])
+
+  const handleToneChange = useCallback((tone: CommunicationTone) => {
+    setRoutingDraft((prev) => ({ ...prev, communicationTone: tone }))
+  }, [])
 
   // ── oMLX model load/unload ──
   const handleLoadOmlxModel = useCallback(
@@ -573,8 +590,21 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   )
 
   // ── Chat-safe model list (excludes embedding/reranker models) ──
+  // Routing a role to an embedding model produces a request the server cannot
+  // answer, so these must never reach the routing dropdowns.
   const omlxChatModels = useMemo(() => {
     const models = localStatus?.models ?? []
+
+    // Ollama: real per-model capabilities from /api/show + family + name
+    const details = localStatus?.modelDetails
+    if (details && details.length > 0) {
+      const nonChat = new Set(
+        details.filter((m) => m.capability === 'embedding').map((m) => m.name)
+      )
+      return models.filter((m) => !nonChat.has(m))
+    }
+
+    // oMLX: model types from the admin API
     const allModels: OmlxModelDetail[] | undefined =
       localStatus && 'allModels' in localStatus
         ? (localStatus as { allModels?: OmlxModelDetail[] }).allModels
@@ -587,15 +617,16 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
       )
       return models.filter((m) => !nonChat.has(m))
     }
-    // Admin API unavailable — name-based heuristic fallback
+
+    // Nothing reported a type — name-based heuristic fallback
     return models.filter((m) => !/embed|bge|rerank/i.test(m))
   }, [localStatus])
 
   // Derive provider from routing — reads plan action's provider from modelRoles
   const derivedProvider: LLMProvider = useMemo(() => {
-    const planRole = modelRoles['specialist:plan']
+    const planRole = routingDraft.modelRoles['specialist:plan']
     return planRole?.provider ?? defaultProvider
-  }, [modelRoles, defaultProvider])
+  }, [routingDraft.modelRoles, defaultProvider])
 
   const isRemoteServer =
     localModelsDraft.localHost !== '127.0.0.1' && localModelsDraft.localHost !== 'localhost'
@@ -607,17 +638,19 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     localModelsDraft,
     localModelsPersisted,
     isLocalModelsDirty,
+    unsavedChangeCount,
+    isEmbeddingModelDirty,
     localModelsSavedAt,
     defaultProvider,
     derivedProvider,
     localLlmBackend: localModelsDraft.localLlmBackend,
     localModel: localModelsDraft.localModel,
-    modelRoles,
-    claudeModelOverrides,
-    fallbackModel,
+    modelRoles: routingDraft.modelRoles,
+    claudeModelOverrides: routingDraft.modelOverrides,
+    fallbackModel: routingDraft.fallbackModel,
     ollamaEmbeddingModel: localModelsDraft.ollamaEmbeddingModel,
     costPreference: wsSettings.costPreference,
-    communicationTone: wsSettings.communicationTone,
+    communicationTone: routingDraft.communicationTone,
     platformInfo,
     claudeCliStatus,
     openCodeCliStatus,
@@ -643,7 +676,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     handleLoadOmlxModel,
     handleUnloadOmlxModel,
     handleCostPreferenceChange: wsSettings.handleCostPreferenceChange,
-    handleToneChange: wsSettings.handleToneChange,
+    handleToneChange,
     testConnection,
     scheduleAutoTest
   }

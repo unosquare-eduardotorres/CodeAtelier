@@ -119,6 +119,24 @@ export class SettingsNav {
     return false
   }
 
+  /**
+   * Open Models and switch to its Configure tab.
+   *
+   * The Models page opens on "In Use", which is read-only by design — every
+   * editable control (provider cards, routing, save bar) lives behind Configure.
+   */
+  async navigateToModelsConfigure(): Promise<boolean> {
+    if (!(await this.navigateToSettingsTab('models'))) return false
+
+    const configureTab = this.page.locator('[data-testid="models-tab-configure"]')
+    const hasTab = await configureTab.isVisible({ timeout: 3_000 }).catch(() => false)
+    if (!hasTab) return false
+
+    await configureTab.click()
+    await this.page.waitForTimeout(500)
+    return true
+  }
+
   // ── Queries ──────────────────────────────────────────────────────
 
   /** Check if the settings sidebar view is currently active. */

@@ -651,6 +651,26 @@ export type ModelAction =
   | 'pr-description'
   | 'condense'
 
+/** Which section of the routing UI a role row belongs to. */
+export type ModelRoleGroup = 'chat' | 'blueprint' | 'quality' | 'council' | 'background'
+
+/**
+ * One row of the model-routing catalogue.
+ *
+ * Shared so the "In Use" panel in main and the routing editor in the renderer
+ * enumerate the *same* roles — a role defined in only one of them is either
+ * unroutable or invisible.
+ */
+export interface ModelRoleRowDef {
+  group: ModelRoleGroup
+  label: string
+  description: string
+  /** Every action this row assigns together. */
+  actions: ModelAction[]
+  /** The action read back to display the row's current selection. */
+  primaryAction: ModelAction
+}
+
 /** Per-action model overrides stored in workspace settings_json */
 export interface ModelOverrides {
   [key: string]: string // ModelAction → model ID string
@@ -1578,6 +1598,27 @@ export interface RuntimeRoleAssignment {
 }
 
 /**
+ * One fully-resolved role for the "In Use" panel.
+ *
+ * `source` is the part that answers "why is it this model?" — 'roles' means the
+ * user chose it, anything else means it fell through to a default they never
+ * set and probably don't know about.
+ */
+export interface RuntimeRoleRow extends RuntimeRoleAssignment {
+  action: ModelAction
+  group: ModelRoleGroup
+  label: string
+  source: 'roles' | 'override' | 'default' | 'fallback'
+  localBackend?: LocalLLMBackend
+  /**
+   * False only when a reachable local server was asked and did not list this
+   * model. An unreachable server yields true — absence of evidence is not
+   * evidence of absence, and flagging every role on a stopped server is noise.
+   */
+  available: boolean
+}
+
+/**
  * What the running app is using *right now*, as opposed to what is persisted
  * in workspace settings. The gap between the two (`drift`) is invisible in a
  * settings-only view and is what makes a saved-but-unapplied config look broken.
@@ -1601,6 +1642,8 @@ export interface ModelsRuntimeStatus {
     plan: RuntimeRoleAssignment | null
     build: RuntimeRoleAssignment | null
   }
+  /** Every routable role, resolved through the same chain the runtime uses. */
+  roles: RuntimeRoleRow[]
   reachability: {
     ollamaRunning: boolean
     omlxRunning: boolean
@@ -1608,11 +1651,44 @@ export interface ModelsRuntimeStatus {
 }
 
 // ── Ollama ──
+
+/**
+ * What a local model can actually do.
+ *
+ * `unknown` is not a placeholder for "probably chat" — it means nothing told us,
+ * so the UI must not claim otherwise. Ollama's /api/tags carries no type at all,
+ * which is why every model used to render a green LLM badge.
+ */
+export type ModelCapability = 'chat' | 'embedding' | 'vision' | 'unknown'
+
+/**
+ * Which tier of the detection chain produced a capability. Drives whether the
+ * UI asserts the capability or labels it "assumed".
+ */
+export type CapabilityDetectionSource = 'api-show' | 'family' | 'name-heuristic'
+
+/** One Ollama model with everything /api/tags and /api/show told us about it. */
+export interface OllamaModelInfo {
+  name: string
+  /** Content digest — changes when the tag is re-pulled, so it keys the cache. */
+  digest: string
+  /** `details.family` from /api/tags, e.g. 'llama', 'bert', 'nomic-bert'. */
+  family?: string
+  capability: ModelCapability
+  /** How we decided — 'name-heuristic' means assumed, not known. */
+  detectedVia: CapabilityDetectionSource
+}
+
 export interface OllamaStatus {
   installed: boolean
   running: boolean
   version?: string
   models: string[]
+  /**
+   * Per-model capability. Absent when the server was unreachable — never an
+   * empty array standing in for "no models", so callers can tell the two apart.
+   */
+  modelDetails?: OllamaModelInfo[]
 }
 
 /** oMLX admin API model detail — richer than /v1/models */

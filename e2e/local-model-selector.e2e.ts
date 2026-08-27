@@ -38,7 +38,8 @@ test.describe('LocalModelSelector Deep', () => {
     page: import('@playwright/test').Page
   ): Promise<boolean> {
     const settingsNav = new SettingsNav(page)
-    const navigated = await settingsNav.navigateToSettingsTab('models')
+    // The model lists are on the Configure tab; "In Use" is read-only.
+    const navigated = await settingsNav.navigateToModelsConfigure()
     if (!navigated) return false
 
     await page.waitForTimeout(1_000)
