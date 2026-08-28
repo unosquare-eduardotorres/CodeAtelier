@@ -1092,7 +1092,7 @@ Troubleshooting:
     agents: Array<{ name: string; model?: string; mode?: string }>
     missingExpected: string[]
   }> {
-    if (!this.client) return { agents: [], missingExpected: ['DaVinci'] }
+    if (!this.client) return { agents: [], missingExpected: ['davinci'] }
     try {
       const result = await (
         this.client as Record<string, unknown> & typeof this.client
@@ -1108,7 +1108,9 @@ Troubleshooting:
       // Check that our expected agents are present
       const agentNames = new Set(agents.map((a) => a.name))
       // B-1: Include Grill and Audit subagents in expected list
-      const expectedAgents = ['DaVinci', 'Grill', 'Audit']
+      // (names are lowercase — must match the agent files' `name:` frontmatter,
+      // which opencode resolves case-sensitively against default_agent/commands)
+      const expectedAgents = ['davinci', 'Grill', 'Audit']
       const missingExpected = expectedAgents.filter((name) => !agentNames.has(name))
 
       if (missingExpected.length > 0) {
@@ -1122,7 +1124,7 @@ Troubleshooting:
       return { agents, missingExpected }
     } catch (err) {
       openCodeLog.warn(`[opencode] Agent validation failed: ${(err as Error).message}`)
-      return { agents: [], missingExpected: ['DaVinci'] }
+      return { agents: [], missingExpected: ['davinci'] }
     }
   }
 

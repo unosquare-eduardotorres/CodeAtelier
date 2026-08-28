@@ -150,7 +150,7 @@ describe('buildDaVinciContent', () => {
     const content = buildDaVinciContent(baseOpts)
     assert.ok(content.startsWith('---\n'))
     assert.ok(content.includes('model: anthropic/claude-sonnet-4-6'))
-    assert.ok(content.includes('name: DaVinci'))
+    assert.ok(content.includes('name: davinci'))
   })
 
   test('contains maxTurns and steps interpolation', () => {

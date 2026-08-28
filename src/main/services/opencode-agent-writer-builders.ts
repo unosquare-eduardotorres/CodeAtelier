@@ -100,7 +100,7 @@ export function buildDaVinciContent(opts: AgentContentOptions): string {
   const providerOptions = buildProviderOptions(opts.provider.providerId, opts.mode)
 
   return `---
-name: DaVinci
+name: davinci
 description: Expert AI development partner for Code Atelier — analyzes, plans, and builds software.
 mode: primary
 model: ${model}

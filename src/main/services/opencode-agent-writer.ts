@@ -110,7 +110,7 @@ export class OpenCodeAgentWriter {
     // F-1/F-2/F-3: Provider-specific frontmatter options
     const providerOptions = this.buildProviderOptions(opts.provider.providerId, opts.mode)
     const content = `---
-name: DaVinci
+name: davinci
 description: Expert AI development partner for Code Atelier — analyzes, plans, and builds software.
 mode: primary
 model: ${model}
