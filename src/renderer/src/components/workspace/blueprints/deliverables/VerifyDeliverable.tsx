@@ -12,7 +12,8 @@ import {
   UserCheck,
   CheckCircle2,
   XCircle,
-  ChevronDown
+  ChevronDown,
+  ScanEye
 } from 'lucide-react'
 import type { BlueprintPhase } from '../../../../../../shared/blueprint-types'
 import { PHASE_ICONS } from '../phase-icons'
@@ -175,6 +176,21 @@ export function VerifyDeliverable({
   const verify = findArtifact(phase.artifactsJson, 'verify', 'verification')
   const json = verify?.contentJson as Record<string, unknown> | undefined
 
+  // M6.1 — post-verify lead-review pass artifact (advisory whole-diff review)
+  const leadPass = findArtifact(phase.artifactsJson, 'lead-review-pass')
+  const leadPassJson = leadPass?.contentJson as
+    | {
+        findings?: Array<{
+          category?: string
+          file?: string
+          issue?: string
+          requiredChange?: string
+        }>
+        verdict?: string
+        rejected?: Array<{ reason?: string }>
+      }
+    | undefined
+
   const overallStatus = (json?.overallStatus as string) ?? 'unknown'
   const artifacts = json?.artifacts as Record<string, number> | undefined
   const keyLinks = json?.keyLinks as Record<string, number> | undefined
@@ -263,6 +279,59 @@ export function VerifyDeliverable({
         <DisplayIcon size={20} className={display.textClass} />
         <span className={`text-sm font-semibold ${display.textClass}`}>{display.label}</span>
       </div>
+
+      {/* 1b. Lead-review pass (M6.1) — advisory whole-diff review verdict */}
+      {leadPassJson && (
+        <div className="mb-6">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            <ScanEye size={12} className="inline mr-1" />
+            Lead Review Pass
+          </h3>
+          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
+            <div className="flex items-center gap-2 mb-3">
+              {leadPassJson.verdict === 'approved' ? (
+                <>
+                  <CheckCircle2 size={14} className="text-success" />
+                  <span className="text-sm font-semibold text-success">Approved</span>
+                  <span className="text-xs text-text-muted">— no findings</span>
+                </>
+              ) : (
+                <>
+                  <XCircle size={14} className="text-warning" />
+                  <span className="text-sm font-semibold text-warning">Changes Required</span>
+                  <span className="text-xs text-text-muted">
+                    — {(leadPassJson.findings ?? []).length} finding(s)
+                    {(leadPassJson.rejected ?? []).length > 0 &&
+                      `, ${(leadPassJson.rejected ?? []).length} rejected as off-rubric`}
+                  </span>
+                </>
+              )}
+            </div>
+            {(leadPassJson.findings ?? []).length > 0 && (
+              <div className="space-y-2">
+                {(leadPassJson.findings ?? []).map((f, i) => (
+                  <div
+                    key={i}
+                    className="flex flex-col gap-1 px-3 py-2 rounded-lg bg-surface-inset border border-border-subtle"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-1.5 py-0.5 rounded bg-accent/10 text-[10px] font-semibold uppercase tracking-wider text-accent">
+                        {f.category ?? 'uncategorised'}
+                      </span>
+                      {f.file && (
+                        <span className="text-[11px] font-mono text-text-muted">{f.file}</span>
+                      )}
+                    </div>
+                    {f.issue && (
+                      <span className="text-sm text-text-secondary leading-relaxed">{f.issue}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* 2. Recommendation */}
       {recommendation && (
