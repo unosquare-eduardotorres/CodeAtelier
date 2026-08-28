@@ -36,6 +36,7 @@ const MODEL_ID = 'glm-5.3'
 // (npm provider, verbatim baseURL, declared model capabilities + limits).
 const config = {
   $schema: 'https://opencode.ai/config.json',
+  default_agent: 'davinci',
   provider: {
     glm: {
       npm: '@ai-sdk/openai-compatible',
