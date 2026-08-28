@@ -13,6 +13,7 @@
  */
 
 import { EventEmitter } from 'node:events'
+import { execFileSync } from 'node:child_process'
 import { basename, normalize } from 'node:path'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
@@ -32,7 +33,8 @@ import type {
   BlueprintWaveStartPayload,
   BlueprintWaveTaskStartPayload,
   BlueprintWaveTaskCompletePayload,
-  BlueprintWaveCompletePayload
+  BlueprintWaveCompletePayload,
+  BlueprintTaskGatesPayload
 } from '../../shared/blueprint-types'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintBuildAdapter } from './role-adapters/blueprint/blueprint-build.adapter'
@@ -44,6 +46,29 @@ import {
   asStringArray
 } from './blueprint-artifact-parsers'
 import { verifyBuildTaskFiles } from './blueprint-task-verification'
+import {
+  buildGateFixInstructions,
+  captureGateBaseline,
+  runGates,
+  runWaveCommandGates,
+  type GateBaseline,
+  type GateTaskContext
+} from './blueprint-gates.service'
+import {
+  boundEvidence,
+  buildGateReport,
+  ledgerItemsFrom,
+  type GateReport,
+  type UnverifiedItem
+} from '../../shared/gate-types'
+import { normalizePath } from '../../shared/gate-analysis'
+import { resolveGateCommands } from '../../shared/gate-command-resolver'
+import type { GateCommandSet, ResolvedGateCommands } from '../../shared/gate-command-types'
+import type { WorkspaceManifests } from '../../shared/gate-command-detect'
+import { readWorkspaceManifests } from './blueprint-preflight.service'
+import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
+import { renderWorkPacket } from '../../shared/work-packet-prompt'
+import { modelConfigService } from './model-config.service'
 import { blueprintService } from './blueprint.service'
 import { codeGraphService } from './code-graph.service'
 import {
@@ -53,13 +78,25 @@ import {
 } from '../db/repositories/blueprint.repository'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
-import { runPreflightChecks, buildPreflightDiscoveries } from './blueprint-preflight.service'
+import {
+  runPreflightChecks,
+  buildPreflightDiscoveries,
+  scanGateCommands
+} from './blueprint-preflight.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import { ensureBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
 
 const bpLog = log.scope('blueprint-build')
 
 const TASK_TIMEOUT_MS = 30 * 60_000 // 30 min per task
+
+/**
+ * Builder attempts per task before the escalation ladder hands over to the
+ * lead model: the first run plus MAX_BUILDER_ATTEMPTS-1 gate-driven retries.
+ * Bounded on purpose — a weak model that cannot satisfy a gate in three tries
+ * is not going to on the fourth, and the strong model is cheaper than the loop.
+ */
+const MAX_BUILDER_ATTEMPTS = 3
 
 // ── Overload retry constants ──
 const OVERLOAD_MAX_RETRIES = 2 // 3 total attempts per task
@@ -130,6 +167,8 @@ interface TaskResult {
   failureReason?: string
   /** How the task closed — persisted so a reload still explains the outcome. */
   outcomeKind?: BlueprintTaskOutcomeKind
+  /** Verdict of the deterministic gates for the final attempt, when they ran. */
+  gateReport?: GateReport
 }
 
 /** In-flight task metadata for the parallel scheduler. */
@@ -143,6 +182,26 @@ interface InFlightEntry {
 function normalizePaths(paths: string[] | undefined): Set<string> {
   if (!paths?.length) return new Set()
   return new Set(paths.map((p) => normalize(p)))
+}
+
+/**
+ * R2.1 — manifest files whose creation/change can alter detected gate commands.
+ * A scaffold task that writes `package.json` brings the whole toolchain online;
+ * a cached "no commands" resolution would keep every later task's command
+ * gates `unverifiable` for the rest of the phase.
+ */
+const MANIFEST_FILE_PATTERNS: readonly RegExp[] = [
+  /(^|\/)package\.json$/,
+  /(^|\/)Cargo\.toml$/,
+  /(^|\/)pyproject\.toml$/,
+  /\.csproj$/,
+  /(^|\/)go\.mod$/
+]
+
+/** Does a repo-relative path name a toolchain manifest? (R2.1) */
+export function isManifestFile(path: string): boolean {
+  const norm = normalizePath(path)
+  return MANIFEST_FILE_PATTERNS.some((p) => p.test(norm))
 }
 
 /** Check whether two file sets overlap. */
@@ -159,6 +218,8 @@ export class BlueprintBuildService extends EventEmitter {
   private activeBlueprintIds = new Map<string, string>()
   /** G2: Per-task status tracking for derived workspace status. */
   private perTaskStatus = new Map<string, AgentStatus['status']>()
+  /** Per-blueprint resolved gate commands — detection walks the disk, so cache it. */
+  private gateCommandCache = new Map<string, ResolvedGateCommands>()
 
   async startBuildPhase(params: {
     blueprintId: string
@@ -234,6 +295,32 @@ export class BlueprintBuildService extends EventEmitter {
 
       blueprintRepository.updateStatus(blueprintId, 'building')
       blueprintRepository.update(blueprintId, { currentPhase: 'build' })
+
+      // M7.1 — capture the run's starting commit ONCE (first build start only).
+      // The code-review phase diffs baseline..HEAD to assemble the whole-feature
+      // diff; without this it would fall back to a merge-base guess. Stored on
+      // settingsJson so it survives retries and app restarts.
+      try {
+        const bpRec = blueprintRepository.findById(blueprintId)
+        const settings = (bpRec?.settingsJson ?? {}) as Record<string, unknown>
+        if (!settings.buildBaselineCommit) {
+          const head = execFileSync('git', ['rev-parse', 'HEAD'], {
+            cwd: executionPath,
+            encoding: 'utf-8',
+            maxBuffer: 1024 * 1024
+          }).trim()
+          if (head) {
+            blueprintRepository.update(blueprintId, {
+              settingsJson: { ...settings, buildBaselineCommit: head }
+            })
+            bpLog.info(`[startBuildPhase] Captured build baseline commit ${head.slice(0, 8)}`)
+          }
+        }
+      } catch (baselineErr) {
+        // Not a git repo / git missing — code-review degrades to merge-base or
+        // records no_git. Never blocks the build.
+        bpLog.warn('[startBuildPhase] Build baseline capture failed (non-fatal):', baselineErr)
+      }
 
       // 2. Assemble phase context (includes spec + clarify + plan + tasks + review artifacts + workspace docs)
       const phaseContext = await blueprintService.assemblePhaseContext(
@@ -1145,6 +1232,38 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
+    const waveFailedPre = draining || result.failed
+
+    // ── R3.3: wave-level G1/G2 — lint/build once per wave, attributed to the wave ──
+    // Per-task command gates were skipped (skipCommandGates) for every dispatched
+    // task; this is where they actually run, on a settled tree. A `fail` fails the
+    // wave; `unverifiable` lands in the ledger under the wave pseudo-id `W<n>`.
+    if (!waveFailedPre && dispatched.size > 0) {
+      const waveReport = await this.runWaveGates({
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        executionPath,
+        waveNum
+      })
+      if (waveReport.overall === 'fail') {
+        result.failed = true
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text:
+            `⚠ Wave ${waveNum} failed wave-level lint/build: ` +
+            waveReport.gates
+              .filter((g) => g.verdict === 'fail')
+              .map((g) => g.name)
+              .join(', ') +
+            ' — stopping build',
+          kind: 'system'
+        })
+      }
+    }
+
     const waveFailed = draining || result.failed
     const waveStatus = waveFailed ? 'failed' : 'complete'
     this.safeEmit('waveComplete', {
@@ -1208,7 +1327,7 @@ export class BlueprintBuildService extends EventEmitter {
     // Start-time snapshot of discoveries for this task
     const discoverySnapshot = [...result.discoveries]
 
-    const promise = this.executeTask({
+    const promise = this.executeTaskWithGates({
       task,
       blueprintId,
       workspaceId,
@@ -1217,10 +1336,486 @@ export class BlueprintBuildService extends EventEmitter {
       phaseContext,
       priorDiscoveries: discoverySnapshot,
       tDispatch,
-      waveNum
+      waveNum,
+      // R1.2: the wave's in-flight map, so gate-time attribution can exempt
+      // peer tasks' declared files from this task's diff.
+      inFlight
     })
 
     inFlight.set(task.taskId, { promise, files: taskFiles, task })
+  }
+
+  // ── Gate loop & escalation ladder (M2.8 / M4) ──
+
+  /**
+   * Run a task, then grade it with the deterministic gates, retrying on `fail`.
+   *
+   * The ladder is bounded by construction — worst case per task is
+   * MAX_BUILDER_ATTEMPTS builder runs plus one lead-model fix:
+   *
+   *   attempt 1 → gates fail → attempt 2 (with evidence) → gates fail
+   *     → attempt 3 (with evidence) → gates fail → lead model fixes → gates fail
+   *     → task failed, phase hard-holds on the existing failure machinery.
+   *
+   * `unverifiable` never enters the ladder: it is recorded in the ledger, warned
+   * about, and the task advances. That is the invariant the whole stack rests on.
+   */
+  private async executeTaskWithGates(params: {
+    task: BlueprintTask
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    executionPath: string
+    phaseContext: import('../../shared/blueprint-types').PhaseContext
+    priorDiscoveries: string[]
+    tDispatch: number
+    waveNum: number
+    /** R1.2: the wave scheduler's in-flight map, for peer-file exemption. */
+    inFlight?: Map<string, InFlightEntry>
+  }): Promise<TaskResult> {
+    const { task, blueprintId, workspaceId, workspacePath, executionPath } = params
+
+    const gateCtx: GateTaskContext = {
+      blueprintId,
+      taskId: task.taskId,
+      workspacePath,
+      executionPath,
+      plannedFiles: task.filePathsJson ?? [],
+      packet: task.packetJson,
+      commands: this.resolveGateCommandsFor(blueprintId, workspacePath),
+      // R3.1: manifest snapshot for per-task test targeting (M2.6 Option 2).
+      manifests: this.readManifestsCached(blueprintId, workspacePath),
+      // R3.3: lint/build run once per WAVE on the settled tree, not per task
+      // against peers' mid-flight edits.
+      skipCommandGates: true
+    }
+    this.refreshExemptFiles(gateCtx, params.inFlight)
+
+    // Captured ONCE, before the first attempt: the diff base and the red proof
+    // must describe the state the task started from, not the state a failed
+    // retry left behind (which would make attempt 2's own edits invisible).
+    let baseline: GateBaseline | null = null
+    try {
+      baseline = await captureGateBaseline(gateCtx)
+    } catch (err) {
+      // R2.3 — silent degradation fix: a thrown baseline capture used to only
+      // log, so every diff-derived gate silently went unverifiable with no
+      // ledger entry and no user-visible signal. Record it like any other
+      // unverifiable outcome: ledger entry + phaseProgress warning.
+      const detail = err instanceof Error ? err.message : String(err)
+      bpLog.warn(
+        `[gates] Baseline capture failed for ${task.taskId} — gates degrade:`,
+        detail
+      )
+      const ledgerItem: UnverifiedItem = {
+        taskId: task.taskId,
+        gate: 'write-set',
+        reason: 'analysis_unavailable',
+        detail: `baseline capture failed: ${detail}`,
+        at: new Date().toISOString()
+      }
+      blueprintRepository.appendUnverified(blueprintId, [ledgerItem])
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `⚠ Task ${task.taskId}: gate baseline could not be captured ` +
+          `(${detail}) — diff-based gates will report unproven`,
+        kind: 'system'
+      })
+    }
+
+    let gateFixInstructions: string | undefined
+    let lastResult: TaskResult | null = null
+
+    for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
+      // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
+      // command/manifest caches when a gate reports `no_command` or a task's
+      // write-set touches a toolchain manifest; without this re-read, attempt 2
+      // would grade against the same stale resolution attempt 1 saw — a
+      // scaffolded toolchain from attempt 1's session would stay invisible.
+      if (attempt > 1) {
+        gateCtx.manifests = this.readManifestsCached(blueprintId, workspacePath)
+        gateCtx.commands = this.resolveGateCommandsFor(blueprintId, workspacePath)
+      }
+
+      const result = await this.executeTask({ ...params, gateFixInstructions })
+      blueprintTaskRepository.recordAttempt(task.id)
+      lastResult = result
+
+      // A task that failed its Layer-1 file verification never reaches the gates:
+      // there is nothing to grade, and the existing failure path already explains why.
+      if (!result.success || !baseline) return result
+
+      // R1.2: peers may have dispatched/finished since the last gate run — the
+      // exemption set is refreshed at gate time, not captured at dispatch time.
+      this.refreshExemptFiles(gateCtx, params.inFlight)
+      const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
+      if (report.overall !== 'fail') return { ...result, gateReport: report }
+
+      gateFixInstructions = buildGateFixInstructions(report)
+      const failedNames = report.gates
+        .filter((g) => g.verdict === 'fail')
+        .map((g) => g.name)
+        .join(', ')
+
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `⚠ Task ${task.taskId} failed quality gate(s): ${failedNames} — ` +
+          (attempt < MAX_BUILDER_ATTEMPTS
+            ? `retrying (attempt ${attempt + 1}/${MAX_BUILDER_ATTEMPTS})`
+            : 'escalating to the lead-review model'),
+        kind: 'system'
+      })
+
+      lastResult = {
+        ...result,
+        success: false,
+        failureReason: `quality gate failed: ${failedNames}`,
+        gateReport: report
+      }
+    }
+
+    // Builder retries exhausted — one attempt by the strong model, then hard hold.
+    return this.escalateToLead({ ...params, gateCtx, baseline, gateFixInstructions, lastResult })
+  }
+
+  /**
+   * Run the gates for one attempt and persist the verdict.
+   *
+   * Persisting here rather than at the end of the ladder is deliberate: a crash
+   * mid-retry must still leave the evidence that explains what the run was doing.
+   */
+  private async gradeTask(
+    gateCtx: GateTaskContext,
+    baseline: GateBaseline,
+    task: BlueprintTask,
+    blueprintId: string,
+    workspaceId: string
+  ): Promise<GateReport> {
+    let report: GateReport
+    try {
+      report = await runGates(gateCtx, baseline)
+    } catch (err) {
+      // A crash in the gate engine must not fail the user's task. Unverifiable
+      // is the honest verdict: we do not know whether the work was good.
+      bpLog.error(`[gates] Gate run threw for ${task.taskId} — recording unverifiable:`, err)
+      report = buildGateReport([
+        {
+          name: 'build',
+          verdict: 'unverifiable',
+          reason: 'analysis_unavailable',
+          evidence: boundEvidence([err instanceof Error ? err.message : String(err)]),
+          durationMs: 0
+        }
+      ])
+    }
+
+    const ledgerItems = ledgerItemsFrom(report, task.taskId)
+    blueprintTaskRepository.setGateReport(task.id, report, ledgerItems)
+
+    // R2.1 — gate-command cache invalidation. Two triggers:
+    //   (a) a command gate could not resolve a command: the toolchain may have
+    //       appeared since the cache was built (scaffold task wrote package.json);
+    //   (b) this task's declared write-set intersects a toolchain manifest: the
+    //       toolchain may have just been created or rewritten.
+    // Invalidation is cheap (one disk scan) and self-correcting: the next task
+    // re-resolves, and if nothing changed the answer is identical.
+    const noCommand = report.gates.some(
+      (g) => g.verdict === 'unverifiable' && g.reason === 'no_command'
+    )
+    const touchedManifest = [...(task.packetJson?.allowedFiles ?? []), ...(task.filePathsJson ?? [])].some(
+      (f) => typeof f === 'string' && isManifestFile(f)
+    )
+    if (noCommand || touchedManifest) {
+      this.gateCommandCache.delete(gateCtx.blueprintId)
+      this.manifestCache.delete(gateCtx.blueprintId)
+      bpLog.info(
+        `[gates] R2.1 cache invalidation for ${gateCtx.blueprintId} ` +
+          `(${noCommand ? 'no_command' : ''}${noCommand && touchedManifest ? ' + ' : ''}${touchedManifest ? 'manifest write-set' : ''})`
+      )
+    }
+
+    if (ledgerItems.length > 0) {
+      // M4.3: unverifiable warns and continues. It taints the terminal status
+      // through the ledger; it never blocks a task or a phase.
+      blueprintRepository.appendUnverified(blueprintId, ledgerItems)
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `⚠ Task ${task.taskId}: ${ledgerItems.length} check(s) could not be verified ` +
+          `(${ledgerItems.map((i) => `${i.gate}/${i.reason}`).join(', ')}) — continuing, recorded as unproven`,
+        kind: 'system'
+      })
+    }
+
+    this.safeEmit('taskGates', {
+      blueprintId,
+      workspaceId,
+      taskId: task.taskId,
+      report
+    } satisfies BlueprintTaskGatesPayload)
+
+    return report
+  }
+
+  /**
+   * M4.2 — fixer of last resort. One attempt by the `blueprint:lead-review`
+   * model, which is a mandatory role precisely so this rung always exists.
+   */
+  private async escalateToLead(params: {
+    task: BlueprintTask
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    executionPath: string
+    phaseContext: import('../../shared/blueprint-types').PhaseContext
+    priorDiscoveries: string[]
+    tDispatch: number
+    waveNum: number
+    gateCtx: GateTaskContext
+    baseline: GateBaseline | null
+    gateFixInstructions?: string
+    lastResult: TaskResult | null
+    /** R1.2: the wave scheduler's in-flight map, for peer-file exemption. */
+    inFlight?: Map<string, InFlightEntry>
+  }): Promise<TaskResult> {
+    const { task, blueprintId, workspaceId, gateCtx, baseline, lastResult } = params
+
+    blueprintTaskRepository.setEscalatedTo(task.id, 'blueprint:lead-review')
+    bpLog.warn(
+      `[gates] Task ${task.taskId} exhausted ${MAX_BUILDER_ATTEMPTS} builder attempt(s) — escalating`
+    )
+
+    const result = await this.executeTask({
+      ...params,
+      gateFixInstructions: params.gateFixInstructions,
+      modelAction: 'blueprint:lead-review'
+    })
+    blueprintTaskRepository.recordAttempt(task.id)
+
+    if (!result.success || !baseline) {
+      return result.success ? result : (result ?? lastResult ?? result)
+    }
+
+    this.refreshExemptFiles(gateCtx, params.inFlight)
+    const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
+    if (report.overall !== 'fail') return { ...result, gateReport: report }
+
+    const failedNames = report.gates
+      .filter((g) => g.verdict === 'fail')
+      .map((g) => g.name)
+      .join(', ')
+    return {
+      ...result,
+      success: false,
+      failureReason: `quality gate failed after escalation: ${failedNames}`,
+      gateReport: report
+    }
+  }
+
+  /**
+   * R1.2 — recompute `gateCtx.exemptFiles` from the wave's current in-flight
+   * set: every OTHER task's declared files (scheduler write-set ∪ packet
+   * allowedFiles). Called at gate time because the in-flight set changes as
+   * peers dispatch and settle; a dispatch-time snapshot would go stale.
+   */
+  private refreshExemptFiles(
+    gateCtx: GateTaskContext,
+    inFlight: Map<string, InFlightEntry> | undefined
+  ): void {
+    if (!inFlight) return
+    const exempt = new Set<string>()
+    for (const [taskId, entry] of inFlight) {
+      if (taskId === gateCtx.taskId) continue
+      for (const f of entry.files) exempt.add(f)
+      for (const f of entry.task.packetJson?.allowedFiles ?? []) exempt.add(f)
+    }
+    gateCtx.exemptFiles = [...exempt]
+  }
+
+  /**
+   * R3.3 — run the wave-level command gates (lint/build/full-suite) and
+   * persist the verdict: `fail` → ledger-free hard wave failure;
+   * `unverifiable` → ledger entries under the wave pseudo-task id `W<n>` so
+   * the terminal status is tainted without blocking anything.
+   *
+   * P1.1 — the report is also appended to the build phase as a `wave-gates`
+   * artifact, so the evidence survives app reload (the in-memory `taskGates`
+   * event is transient) and the UI can render it in the build deliverable.
+   */
+  private async runWaveGates(params: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    executionPath: string
+    waveNum: number
+  }): Promise<GateReport> {
+    const { blueprintId, workspaceId, workspacePath, executionPath, waveNum } = params
+    const waveTaskId = `W${waveNum}`
+
+    const ctx: GateTaskContext = {
+      blueprintId,
+      taskId: waveTaskId,
+      workspacePath,
+      executionPath,
+      plannedFiles: [],
+      packet: null,
+      commands: this.resolveGateCommandsFor(blueprintId, workspacePath)
+    }
+
+    // P1.3 — progress pings: a full lint+build+test pass on a real repo can run
+    // for many minutes with zero output. Tell the user what is happening so the
+    // phase doesn't look hung.
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text: `Wave ${waveNum}: running lint/build/test gates — this can take a while`,
+      kind: 'system'
+    })
+
+    let report: GateReport
+    try {
+      report = await runWaveCommandGates(ctx)
+    } catch (err) {
+      bpLog.error(`[gates] Wave gate run threw for ${waveTaskId}:`, err)
+      report = buildGateReport([
+        {
+          name: 'build',
+          verdict: 'unverifiable',
+          reason: 'analysis_unavailable',
+          evidence: boundEvidence([err instanceof Error ? err.message : String(err)]),
+          durationMs: 0
+        }
+      ])
+    }
+
+    // P1.1 — persist the wave report as a build-phase artifact (mirrors the
+    // discoveries pattern). Best-effort: a DB failure here must not turn a
+    // passing wave into a failed one.
+    try {
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase) {
+        blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+          type: 'wave-gates',
+          contentJson: { wave: waveNum, report }
+        })
+      }
+    } catch (err) {
+      bpLog.warn(`[gates] Could not persist wave-gates artifact for ${waveTaskId}:`, err)
+    }
+
+    const ledgerItems = ledgerItemsFrom(report, waveTaskId)
+    if (ledgerItems.length > 0) {
+      blueprintRepository.appendUnverified(blueprintId, ledgerItems)
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `⚠ Wave ${waveNum}: ${ledgerItems.length} check(s) could not be verified ` +
+          `(${ledgerItems.map((i) => `${i.gate}/${i.reason}`).join(', ')}) — continuing, recorded as unproven`,
+        kind: 'system'
+      })
+    }
+
+    // P1.3 — completion line: name the verdict so the log reads as a story.
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text: `Wave ${waveNum} gates: ${report.overall}` +
+        ` (${report.gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`,
+      kind: 'system'
+    })
+
+    this.safeEmit('taskGates', {
+      blueprintId,
+      workspaceId,
+      taskId: waveTaskId,
+      report
+    } satisfies BlueprintTaskGatesPayload)
+
+    return report
+  }
+
+  /**
+   * R3.1 — manifest snapshot cache, invalidated together with the gate-command
+   * cache (same triggers, same lifetime): the toolchain that decides test
+   * targeting is the toolchain that decides gate commands.
+   */
+  private manifestCache = new Map<string, WorkspaceManifests>()
+
+  private readManifestsCached(blueprintId: string, workspacePath: string): WorkspaceManifests {
+    const cached = this.manifestCache.get(blueprintId)
+    if (cached) return cached
+    let manifests: WorkspaceManifests = {}
+    try {
+      manifests = readWorkspaceManifests(workspacePath)
+    } catch (err) {
+      bpLog.warn('[gates] Manifest read failed — test targeting degrades:', err)
+    }
+    this.manifestCache.set(blueprintId, manifests)
+    return manifests
+  }
+
+  /**
+   * Resolve this blueprint's gate commands once and cache them for the phase.
+   *
+   * Cached because detection walks the disk and the declaration is parsed out of
+   * the PLAN artifact — doing that per task, per retry, for every wave is pure
+   * overhead for an answer that cannot change mid-phase.
+   *
+   * R2.1 — the cache is invalidated (see `invalidateGateCommandCache`) when a
+   * command gate reports `no_command` (the toolchain may have appeared since)
+   * or when a task's write-set intersects a toolchain manifest (the toolchain
+   * may have just been created or rewritten).
+   */
+  private resolveGateCommandsFor(blueprintId: string, workspacePath: string): ResolvedGateCommands {
+    const cached = this.gateCommandCache.get(blueprintId)
+    if (cached) return cached
+    return this.rebuildGateCommandCache(blueprintId, workspacePath)
+  }
+
+  /** Re-run detection and replace the cached resolution. R2.1. */
+  private rebuildGateCommandCache(
+    blueprintId: string,
+    workspacePath: string
+  ): ResolvedGateCommands {
+    let declared: GateCommandSet = {}
+    try {
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'plan')
+      for (const artifact of planPhase?.artifactsJson ?? []) {
+        if (!artifact.contentMd) continue
+        const parsed = parseGateCommands(artifact.contentMd)
+        if (Object.keys(parsed).length > 0) declared = { ...declared, ...parsed }
+      }
+    } catch (err) {
+      bpLog.warn('[gates] Could not read declared gate commands from the PLAN artifact:', err)
+    }
+
+    const settings = workspaceRepository.getSettingsByPath(workspacePath)
+    const resolved = resolveGateCommands({
+      override: settings?.gateCommands as GateCommandSet | undefined,
+      declared,
+      detected: scanGateCommands(workspacePath)
+    })
+
+    this.gateCommandCache.set(blueprintId, resolved)
+    bpLog.info(
+      `[gates] Commands for ${blueprintId}: ` +
+        (Object.entries(resolved)
+          .map(([kind, cmd]) => `${kind}=${cmd.command} (${cmd.provenance})`)
+          .join(', ') || 'none resolved — command gates will report unverifiable')
+    )
+    return resolved
   }
 
   // ── Task Completion Handler ──
@@ -1467,6 +2062,10 @@ export class BlueprintBuildService extends EventEmitter {
     priorDiscoveries: string[]
     tDispatch: number
     waveNum: number
+    /** Set on a gate-driven retry — mechanical evidence from the failed attempt. */
+    gateFixInstructions?: string
+    /** Routes this session to a different role model (escalation). */
+    modelAction?: import('../../shared/types').ModelAction
   }): Promise<TaskResult> {
     const {
       task,
@@ -1500,7 +2099,9 @@ export class BlueprintBuildService extends EventEmitter {
       task,
       params.priorDiscoveries,
       priorPartial?.contentMd,
-      task.failureReason
+      task.failureReason,
+      params.gateFixInstructions,
+      modelConfigService.isLocalProvider(workspacePath)
     )
 
     // Create adapter + session
@@ -1508,7 +2109,8 @@ export class BlueprintBuildService extends EventEmitter {
       workspaceId,
       blueprintId,
       phaseContext,
-      taskContext
+      taskContext,
+      ...(params.modelAction ? { modelAction: params.modelAction } : {})
     })
     adapter.setGoalCondition(buildBuildGoalCondition(task.taskId, task.description), 'enforce')
 
@@ -1959,7 +2561,11 @@ export class BlueprintBuildService extends EventEmitter {
     task: BlueprintTask,
     priorDiscoveries?: string[],
     priorAttemptOutput?: string,
-    priorFailureReason?: string | null
+    priorFailureReason?: string | null,
+    /** Mechanical gate-failure instructions for a retry (M4.1). */
+    gateFixInstructions?: string,
+    /** Strictest packet wording for small-context local models. */
+    strictPacket?: boolean
   ): string {
     const lines: string[] = [
       `**Task ID**: ${task.taskId}`,
@@ -2018,6 +2624,22 @@ export class BlueprintBuildService extends EventEmitter {
           'If an acceptance criterion disagrees with the source, record the mismatch in ' +
           '`acceptanceDeviation` rather than forcing the code to match it.'
       )
+    }
+
+    // M3.3: the work packet, when the TASKS phase authored one. Placed AFTER the
+    // retry context so a retry reads "what went wrong" first and "what you may
+    // touch" second — the order in which it has to act on them.
+    const packet = renderWorkPacket(task.packetJson, { strict: strictPacket })
+    if (packet) {
+      lines.push('')
+      lines.push(packet)
+    }
+
+    // M4.1: gate evidence from the immediately preceding attempt. Last, because
+    // on a retry it is the single most important thing in the prompt.
+    if (gateFixInstructions) {
+      lines.push('')
+      lines.push(gateFixInstructions)
     }
 
     return lines.join('\n')

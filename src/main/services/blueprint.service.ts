@@ -46,7 +46,11 @@ import type {
   ClarifyQuestionsBlock
 } from '../../shared/blueprint-clarify-parsers'
 import type { BlueprintTaskStatus } from '../../shared/blueprint-types'
-import { resolveAssignment, buildResolveOpts } from './model-config.service'
+import {
+  modelConfigService,
+  resolveAssignment,
+  buildResolveOpts
+} from './model-config.service'
 
 export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 
@@ -69,6 +73,9 @@ export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> =
   tasks: new Set(['spec', 'plan']), // needs spec + plan to decompose
   review: new Set(['spec', 'plan', 'tasks', 'discoveries']), // cross-artifact analysis needs all three
   build: new Set(['plan', 'tasks', 'discoveries']), // + current wave's tasks (injected separately)
+  // Adversarial reviewer reads intent (spec/plan) and what BUILD claims it did;
+  // the diff itself is injected separately by the adapter, not as an artifact.
+  'code-review': new Set(['spec', 'plan', 'build']),
   verify: new Set(['spec', 'plan', 'build', 'discoveries']) // NOT full tasks JSON — uses build report
 }
 
@@ -708,6 +715,14 @@ export class BlueprintService extends EventEmitter {
   /**
    * Advance to the next phase in the pipeline.
    * Marks current phase as complete and activates the next one.
+   *
+   * R1.3 — interim code-review skip guard: `code-review` is an optional quality
+   * layer (OFF until a model is bound to `blueprint:code-review`). Advancing
+   * into it with the role disabled would strand the blueprint in a phase that
+   * has no runner. Instead the phase record is marked `skipped` and the advance
+   * continues to the next phase — a loop, so it also holds when the disabled
+   * phase is followed by another optional phase. Subsumed by the dedicated
+   * code-review phase service (M7) when that lands.
    */
   advancePhase(blueprintId: string): BlueprintPhase | null {
     const blueprint = blueprintRepository.findById(blueprintId)
@@ -717,7 +732,7 @@ export class BlueprintService extends EventEmitter {
 
     const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
     const currentIdx = BLUEPRINT_PHASE_ORDER.indexOf(blueprint.currentPhase)
-    const nextIdx = currentIdx + 1
+    let nextIdx = currentIdx + 1
 
     if (nextIdx >= BLUEPRINT_PHASE_ORDER.length) {
       // All phases complete
@@ -745,12 +760,42 @@ export class BlueprintService extends EventEmitter {
       }
     }
 
+    // R1.3: settle optional phases whose role is disabled — their records are
+    // marked `skipped` so the phase journey shows the layer was deliberately
+    // off — then advance past any that were settled. Scoped to advances that
+    // actually reach the code-review boundary (same as the original inline
+    // loop): unrelated advances must not consult role config. Subsumed by the
+    // dedicated code-review phase service (M7) when that lands.
+    if (BLUEPRINT_PHASE_ORDER[nextIdx] === 'code-review') {
+      this.settleOptionalPhases(blueprintId)
+      const workspacePath = workspaceRepository.findById(blueprint.workspaceId)?.repoPath
+      if (!modelConfigService.isRoleEnabled(workspacePath, 'blueprint:code-review')) {
+        while (
+          nextIdx < BLUEPRINT_PHASE_ORDER.length &&
+          BLUEPRINT_PHASE_ORDER[nextIdx] === 'code-review'
+        ) {
+          nextIdx++
+        }
+      }
+    }
+
+    if (nextIdx >= BLUEPRINT_PHASE_ORDER.length) {
+      // Every remaining phase was optional and disabled — the run is complete.
+      blueprintRepository.updateStatus(blueprintId, 'complete')
+      bpLog.info(
+        `[advancePhase] Blueprint ${blueprintId} — all remaining phases skipped/complete`
+      )
+      return null
+    }
+
     // Activate next phase
     const nextPhaseName = BLUEPRINT_PHASE_ORDER[nextIdx]
-    const nextPhaseRecord = phases.find((p) => p.phase === nextPhaseName)
-    if (!nextPhaseRecord) {
-      throw new Error(`Phase record not found for: ${nextPhaseName}`)
-    }
+    // Blueprints created before a phase existed have no row for it. Backfill
+    // rather than throw: the alternative strands every in-flight blueprint at
+    // the phase boundary with an unrecoverable "Phase record not found".
+    const nextPhaseRecord =
+      phases.find((p) => p.phase === nextPhaseName) ??
+      blueprintPhaseRepository.create({ blueprintId, phase: nextPhaseName })
 
     blueprintPhaseRepository.updateStatus(nextPhaseRecord.id, 'active')
     blueprintRepository.update(blueprintId, {
@@ -760,6 +805,51 @@ export class BlueprintService extends EventEmitter {
 
     bpLog.info(`[advancePhase] Blueprint ${blueprintId} → ${nextPhaseName}`)
     return blueprintPhaseRepository.findById(nextPhaseRecord.id) ?? null
+  }
+
+  /**
+   * R1.3 — settle optional phases whose role is disabled.
+   *
+   * `code-review` is an optional quality layer (OFF until a model is bound to
+   * `blueprint:code-review`). Any of its phase records still `pending` are
+   * marked `skipped` so the phase journey shows the layer was deliberately
+   * off — no runner exists for them. No-op when the role is enabled, when the
+   * record is missing, or when the record is already settled (`complete`,
+   * `failed`, `skipped`) — an `active` record is left alone so a running phase
+   * is never silently cancelled underneath its owner.
+   *
+   * Called from `advancePhase` (phase boundaries), from the build service's
+   * `finalizeSuccess` (the build→verify boundary bypasses `advancePhase`, so
+   * without this the code-review record dangles `pending` forever), and from
+   * `retryPhase` (skip-and-advance when resolution lands on the dead layer).
+   */
+  settleOptionalPhases(blueprintId: string): void {
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) return
+
+    const workspacePath = workspaceRepository.findById(blueprint.workspaceId)?.repoPath
+    if (modelConfigService.isRoleEnabled(workspacePath, 'blueprint:code-review')) return
+
+    const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
+    for (const candidate of phases) {
+      if (candidate.phase !== 'code-review') continue
+      if (candidate.status !== 'pending') continue
+      blueprintPhaseRepository.updateStatus(candidate.id, 'skipped')
+      bpLog.info(
+        `[settleOptionalPhases] Blueprint ${blueprintId} — code-review role disabled, phase record marked skipped`
+      )
+    }
+
+    // Blueprints created before the phase existed have no row for it. Backfill
+    // with a `skipped` record so the phase journey still shows the layer was off
+    // (same backfill advancePhase performed inline before the extraction).
+    if (!phases.some((p) => p.phase === 'code-review')) {
+      const created = blueprintPhaseRepository.create({ blueprintId, phase: 'code-review' })
+      blueprintPhaseRepository.updateStatus(created.id, 'skipped')
+      bpLog.info(
+        `[settleOptionalPhases] Blueprint ${blueprintId} — backfilled missing code-review record as skipped`
+      )
+    }
   }
 
   /**
@@ -886,6 +976,7 @@ export class BlueprintService extends EventEmitter {
       'tasking',
       'reviewing',
       'building',
+      'codeReviewing',
       'verifying'
     ])
     const isRetryable = blueprint.status === 'failed' || blueprint.status === 'cancelled'
@@ -984,6 +1075,28 @@ export class BlueprintService extends EventEmitter {
       }
     }
 
+    // R1.3 re-wire: the optional code-review layer has no runner while its
+    // role is disabled. If resolution lands on it, settle (skip) the record
+    // and re-resolve so callers dispatch a phase that can actually run —
+    // closing the silent "Unknown phase: code-review" retry failure.
+    if (targetPhase.phase === 'code-review') {
+      const workspacePath = workspaceRepository.findById(blueprint.workspaceId)?.repoPath
+      if (!modelConfigService.isRoleEnabled(workspacePath, 'blueprint:code-review')) {
+        this.settleOptionalPhases(blueprintId)
+        const phasesAfterSettle = blueprintPhaseRepository.findByBlueprint(blueprintId)
+        const nextPending = phasesAfterSettle.find(
+          (p) => p.status === 'pending' && p.phase !== 'code-review'
+        )
+        if (!nextPending) {
+          throw new Error(`No retryable phase found for blueprint ${blueprintId}`)
+        }
+        bpLog.info(
+          `[retryPhase] Blueprint ${blueprintId} — code-review role disabled, skipping to ${nextPending.phase}`
+        )
+        targetPhase = nextPending
+      }
+    }
+
     // BP-RETRY-PARTIAL-CLEANUP: Keep only the most recent partial artifact
     // from the failed attempt. Without this, repeated retries would accumulate
     // stale partials and bloat the system prompt.
@@ -1029,6 +1142,12 @@ export class BlueprintService extends EventEmitter {
           const fresh = blueprintTaskRepository.findById(task.id)
           if (fresh?.skippedByUserAt) continue
           blueprintTaskRepository.updateStatus(task.id, 'pending')
+          // R2.3 — silent-degradation fix: `resetForRetry` existed but was never
+          // called on this path, so a retried task carried its previous gate
+          // report and escalation flag into the new attempt. Clear them: the
+          // new attempt's gates will repopulate both. `attempts` stays
+          // monotonic on purpose — the UI shows max(attempts, 1) for ran tasks.
+          blueprintTaskRepository.resetForRetry(task.id)
           resetCount++
         }
       }
@@ -1630,6 +1749,7 @@ export class BlueprintService extends EventEmitter {
       'tasking',
       'reviewing',
       'building',
+      'codeReviewing',
       'verifying'
     ])
 

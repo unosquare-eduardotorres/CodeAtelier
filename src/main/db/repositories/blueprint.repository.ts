@@ -18,8 +18,11 @@ import type {
   BlueprintPhaseStatus,
   BlueprintTaskStatus,
   BlueprintTaskOutcomeKind,
-  BlueprintPriority
+  BlueprintPriority,
+  BlueprintWorkPacket
 } from '../../../shared/blueprint-types'
+import { BLUEPRINT_PHASE_ORDER } from '../../../shared/blueprint-types'
+import type { GateReport, UnverifiedItem } from '../../../shared/gate-types'
 
 // ── Row Interfaces (match SQLite schema) ──
 
@@ -38,6 +41,7 @@ interface BlueprintRow {
   created_at: string
   updated_at: string
   completed_at: string | null
+  unverified_json: string | null
 }
 
 interface BlueprintPhaseRow {
@@ -71,7 +75,15 @@ interface BlueprintTaskRow {
   failure_reason: string | null
   outcome_kind: string | null
   resolution_note: string | null
+  packet_json: string | null
+  gates_json: string | null
+  unverified_json: string | null
+  attempts: number | null
+  escalated_to: string | null
 }
+
+/** Ledger cap. A run with this many unverifiable checks has a systemic problem. */
+const MAX_LEDGER_ITEMS = 200
 
 // ── Row Mappers ──
 
@@ -90,7 +102,8 @@ function mapBlueprintRow(row: BlueprintRow): Blueprint {
     settingsJson: safeParseJSON<Record<string, unknown>>(row.settings_json, {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    completedAt: row.completed_at
+    completedAt: row.completed_at,
+    unverifiedJson: safeParseJSON<UnverifiedItem[] | null>(row.unverified_json, null)
   }
 }
 
@@ -131,7 +144,13 @@ function mapTaskRow(row: BlueprintTaskRow): BlueprintTask {
     skippedByUserAt: row.skipped_by_user_at ?? null,
     failureReason: row.failure_reason ?? null,
     outcomeKind: (row.outcome_kind as BlueprintTaskOutcomeKind | null) ?? null,
-    resolutionNote: row.resolution_note ?? null
+    resolutionNote: row.resolution_note ?? null,
+    packetJson: safeParseJSON<BlueprintWorkPacket | null>(row.packet_json, null),
+    gatesJson: safeParseJSON<GateReport | null>(row.gates_json, null),
+    unverifiedJson: safeParseJSON<UnverifiedItem[] | null>(row.unverified_json, null),
+    // Rows written before migration 149 read back as NULL, not 0.
+    attempts: row.attempts ?? 0,
+    escalatedTo: row.escalated_to ?? null
   }
 }
 
@@ -198,6 +217,36 @@ export class BlueprintRepository extends BaseRepository<BlueprintRow, Blueprint>
       ? `UPDATE blueprints SET status = ?, completed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? RETURNING *`
       : `UPDATE blueprints SET status = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`
     const row = this.db().prepare(sql).get(status, id) as BlueprintRow | undefined
+    return row ? mapBlueprintRow(row) : undefined
+  }
+
+  /**
+   * Append to the blueprint's unverified-items ledger.
+   *
+   * Append-only and de-duplicated on (taskId, gate, reason): a task retried
+   * three times against a workspace with no lint command would otherwise write
+   * the same "no lint command" line three times and make one gap look like
+   * three. Bounded so a long run cannot grow the row without limit.
+   */
+  appendUnverified(id: string, items: readonly UnverifiedItem[]): Blueprint | undefined {
+    if (items.length === 0) return this.findById(id)
+
+    const existing = this.findById(id)?.unverifiedJson ?? []
+    const seen = new Set(existing.map((i) => `${i.taskId}|${i.gate}|${i.reason}`))
+    const merged = [...existing]
+    for (const item of items) {
+      const key = `${item.taskId}|${item.gate}|${item.reason}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(item)
+      if (merged.length >= MAX_LEDGER_ITEMS) break
+    }
+
+    const row = this.db()
+      .prepare(
+        `UPDATE blueprints SET unverified_json = ?, updated_at = datetime('now') WHERE id = ? RETURNING *`
+      )
+      .get(JSON.stringify(merged), id) as BlueprintRow | undefined
     return row ? mapBlueprintRow(row) : undefined
   }
 
@@ -357,17 +406,15 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
     return mapPhaseRow(row)
   }
 
-  /** Create all 7 phase records for a new blueprint (bulk insert). */
+  /**
+   * Create one phase record per pipeline phase for a new blueprint (bulk insert).
+   *
+   * Driven by BLUEPRINT_PHASE_ORDER rather than a local list: the previous
+   * hardcoded array silently stopped covering the pipeline the moment a phase
+   * was added, leaving `advancePhase` to throw "Phase record not found".
+   */
   createAllPhases(blueprintId: string): BlueprintPhase[] {
-    const phases: BlueprintPhaseType[] = [
-      'specify',
-      'clarify',
-      'plan',
-      'tasks',
-      'review',
-      'build',
-      'verify'
-    ]
+    const phases: readonly BlueprintPhaseType[] = BLUEPRINT_PHASE_ORDER
     const stmt = this.db().prepare(
       `INSERT INTO blueprint_phases (blueprint_id, phase) VALUES (?, ?) RETURNING *`
     )
@@ -381,15 +428,11 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
   findByBlueprint(blueprintId: string): BlueprintPhase[] {
     const rows = this.db()
       .prepare(
+        // ORDER BY is generated from BLUEPRINT_PHASE_ORDER so a new phase cannot
+        // fall out of the ordering and sort as NULL (which lands it first).
         `SELECT * FROM blueprint_phases WHERE blueprint_id = ?
          ORDER BY CASE phase
-           WHEN 'specify' THEN 1
-           WHEN 'clarify' THEN 2
-           WHEN 'plan' THEN 3
-           WHEN 'tasks' THEN 4
-           WHEN 'review' THEN 5
-           WHEN 'build' THEN 6
-           WHEN 'verify' THEN 7
+           ${BLUEPRINT_PHASE_ORDER.map((p, i) => `WHEN '${p}' THEN ${i + 1}`).join('\n           ')}
          END`
       )
       .all(blueprintId) as BlueprintPhaseRow[]
@@ -684,6 +727,71 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
     const row = this.db()
       .prepare(`UPDATE blueprint_tasks SET completion_json = ? WHERE id = ? RETURNING *`)
       .get(JSON.stringify(completion), id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  // ── Quality gates (migration 149) ──
+
+  /** Store the work packet the TASKS phase authored for this task. */
+  setPacket(id: string, packet: BlueprintWorkPacket | null): BlueprintTask | undefined {
+    const row = this.db()
+      .prepare(`UPDATE blueprint_tasks SET packet_json = ? WHERE id = ? RETURNING *`)
+      .get(packet ? JSON.stringify(packet) : null, id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  /**
+   * Persist the latest gate report and the unverified items it produced.
+   *
+   * The report REPLACES the previous one (a retry's verdict supersedes the
+   * attempt it was retrying), while the ledger ACCUMULATES: an item that could
+   * not be verified on attempt 1 is still unverified even if attempt 2 passed
+   * the gates that could run.
+   */
+  setGateReport(
+    id: string,
+    report: GateReport | null,
+    unverified?: UnverifiedItem[]
+  ): BlueprintTask | undefined {
+    const existing = this.findById(id)
+    const merged = [...(existing?.unverifiedJson ?? []), ...(unverified ?? [])]
+    const row = this.db()
+      .prepare(
+        `UPDATE blueprint_tasks SET gates_json = ?, unverified_json = ? WHERE id = ? RETURNING *`
+      )
+      .get(
+        report ? JSON.stringify(report) : null,
+        merged.length > 0 ? JSON.stringify(merged) : null,
+        id
+      ) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  /** Bump the attempt counter and return the new value. */
+  recordAttempt(id: string): number {
+    const row = this.db()
+      .prepare(
+        `UPDATE blueprint_tasks SET attempts = COALESCE(attempts, 0) + 1 WHERE id = ? RETURNING attempts`
+      )
+      .get(id) as { attempts: number } | undefined
+    return row?.attempts ?? 0
+  }
+
+  /** Record which role the task was escalated to, or clear it with null. */
+  setEscalatedTo(id: string, role: string | null): BlueprintTask | undefined {
+    const row = this.db()
+      .prepare(`UPDATE blueprint_tasks SET escalated_to = ? WHERE id = ? RETURNING *`)
+      .get(role, id) as BlueprintTaskRow | undefined
+    return row ? mapTaskRow(row) : undefined
+  }
+
+  /** Reset gate state for a fresh attempt — keeps the accumulated ledger. */
+  resetForRetry(id: string): BlueprintTask | undefined {
+    const row = this.db()
+      .prepare(
+        `UPDATE blueprint_tasks SET gates_json = NULL, escalated_to = NULL WHERE id = ? RETURNING *`
+      )
+      .get(id) as BlueprintTaskRow | undefined
     return row ? mapTaskRow(row) : undefined
   }
 }

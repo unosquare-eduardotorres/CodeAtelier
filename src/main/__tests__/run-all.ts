@@ -709,6 +709,17 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/db-time.test',
   // ─── Truncated plan block: nested fence inside a JSON string value ───
   '../../shared/__tests__/fenced-block.test',
+  // ─── Blueprint quality gates (M0) ───
+  '../../shared/__tests__/gate-types.test',
+  '../../shared/__tests__/model-family.test',
+  '../../shared/__tests__/gate-commands.test',
+  '../../shared/__tests__/gate-analysis.test',
+  '../../shared/__tests__/work-packet.test',
+  '../../shared/__tests__/task-review-parsers.test',
+  '../services/__tests__/blueprint-gates.test',
+  '../services/__tests__/blueprint-gates-remediation.test',
+  '../services/__tests__/blueprint-gate-ladder.test',
+  '../services/__tests__/blueprint-wave-gates-persist.test',
   // ─── Round 3: e2e-testing behavioral coverage ───
   '../services/__tests__/e2e-assertions-behavior.test',
   '../services/__tests__/e2e-service-runners-behavior.test',

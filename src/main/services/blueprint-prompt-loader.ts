@@ -60,6 +60,7 @@ const PHASE_PROMPT_FILES: Record<BlueprintPhaseType, string> = {
   tasks: 'prompts/tasks-phase.md',
   review: 'prompts/review-phase.md',
   build: 'prompts/build-phase.md',
+  'code-review': 'prompts/code-review-phase.md',
   verify: 'prompts/verify-phase.md'
 }
 
@@ -276,6 +277,25 @@ export function buildPhaseSystemPrompt(phase: BlueprintPhaseType, context: Phase
   prompt = replaceVariables(prompt, context, template, enhancement)
 
   return prompt
+}
+
+/**
+ * Build the system prompt for the post-verify lead-review pass (M6.1).
+ *
+ * The pass is not a pipeline phase (no BlueprintPhaseType, no phase record),
+ * so it has no PHASE_PROMPT_FILES entry — this loader points at its dedicated
+ * prompt file and reuses the same context-variable replacement as the phases.
+ */
+export function buildLeadReviewPassSystemPrompt(context: PhaseContext): string {
+  let prompt = readBlueprintFile('prompts/lead-review-pass.md')
+  if (!prompt) {
+    promptLog.warn('No prompt file found for lead-review pass, using review fallback')
+    prompt = readBlueprintFile('prompts/review-phase.md')
+  }
+  if (!prompt) {
+    prompt = buildFallbackPrompt('review')
+  }
+  return replaceVariables(prompt, context, '', '')
 }
 
 /**

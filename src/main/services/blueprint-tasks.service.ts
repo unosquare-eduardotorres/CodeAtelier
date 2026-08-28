@@ -28,9 +28,11 @@ import { modelConfigService } from './model-config.service'
 import { blueprintReviewService } from './blueprint-review.service'
 import {
   blueprintRepository,
-  blueprintPhaseRepository
+  blueprintPhaseRepository,
+  blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
 import { conversationRepository } from '../db/repositories'
+import { extractWorkPacket } from '../../shared/work-packet-parser'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -348,27 +350,53 @@ export class BlueprintTasksService extends EventEmitter {
           }>
         | undefined
 
+      // Keep the raw task objects alongside the flattened ones: the work packet
+      // lives on fields that populateTasks() does not carry, and it has to be
+      // attached to the row the builder will actually be handed.
+      const rawByTaskId = new Map<string, unknown>()
+
       if (!waves?.length) {
         bpLog.warn(`[persistTasksFromJson] No waves found in tasks JSON`)
         return
       }
 
       const flatTasks = waves.flatMap((w) =>
-        w.tasks.map((t) => ({
-          taskId: t.taskId,
-          wave: w.wave,
-          description: t.description,
-          userStory: t.userStory ?? undefined,
-          files: t.files,
-          isParallel: t.isParallel,
-          dependsOn: t.dependsOn
-        }))
+        w.tasks.map((t) => {
+          rawByTaskId.set(t.taskId, t)
+          return {
+            taskId: t.taskId,
+            wave: w.wave,
+            description: t.description,
+            userStory: t.userStory ?? undefined,
+            files: t.files,
+            isParallel: t.isParallel,
+            dependsOn: t.dependsOn
+          }
+        })
       )
 
       const persisted = blueprintService.populateTasks(blueprintId, flatTasks)
+
+      // Attach work packets. A task without one still builds — its gates report
+      // `unverifiable` / `no_packet` rather than failing (M3.4).
+      let packetCount = 0
+      for (const task of persisted) {
+        const packet = extractWorkPacket(rawByTaskId.get(task.taskId))
+        if (!packet) continue
+        blueprintTaskRepository.setPacket(task.id, packet)
+        packetCount++
+      }
+
       bpLog.info(
-        `[persistTasksFromJson] Persisted ${persisted.length} tasks across ${waves.length} waves`
+        `[persistTasksFromJson] Persisted ${persisted.length} tasks across ${waves.length} waves ` +
+          `(${packetCount} with work packets)`
       )
+      if (packetCount === 0 && persisted.length > 0) {
+        bpLog.warn(
+          '[persistTasksFromJson] No task carried a work packet — the write-set, ' +
+            'test-integrity and task-test gates will all report unverifiable'
+        )
+      }
     } catch (err) {
       bpLog.error(`[persistTasksFromJson] Failed to persist tasks:`, err)
     }

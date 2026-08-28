@@ -99,10 +99,63 @@ get the [P] marker — they can execute concurrently.
 - Include user story reference: [US1], [US2], etc.
 - Include parallel marker: [P] if can run in parallel
 
+## Work Packets (REQUIRED per task)
+
+Every task carries a **work packet**: everything its builder needs, so it never has to explore the codebase. Assume the builder is a small, cheap model with no memory of this conversation and no ability to search. If it is not in the packet, it does not exist.
+
+The packet is also the machine contract. After each task runs, the system checks it deterministically:
+
+| Packet field | What the system does with it |
+|---|---|
+| `allowedFiles` | Any file changed outside this list **fails the task**. |
+| `forbiddenFiles` | Any file changed here **fails the task**. |
+| `testFiles` | Hashed before and after. Any edit, deletion, skip or test-count drop **fails the task**. |
+| `acceptanceCriteria[].howVerified` | Read by the reviewer to settle whether the task is done. |
+| `testCommand` | Run before the task (must fail) and after (must pass). |
+
+So an inaccurate packet fails correct work. Take the write-set seriously: list every file the task legitimately needs to touch, including files it creates.
+
+### Test-first
+
+**Author the failing tests as part of task generation.** Each task that changes behaviour gets a task earlier in its wave chain (or the same task) that writes the test files, and names them in `testFiles`. The builder's job is then to make a red test green — which the system can prove — rather than to self-report success, which it cannot.
+
+If a task genuinely cannot be tested (pure config, a generated file), leave `testFiles` empty and say why in the description. That task's test gate reports *unverifiable*, which is honest, rather than *pass*, which would be a lie.
+
+### Task sizing
+
+Size each task to the **builder model's** context window, not yours:
+
+- **Small window (≤64K)** — one file, or one function cluster, per task. Packets must be self-contained: paste the interfaces and the 2–3 excerpts the task depends on.
+- **Medium (≤128K)** — one coherent module per task.
+- **Large (>128K)** — a feature slice is fine.
+
+When in doubt, split. A task too small costs one extra session; a task too large costs a failed task, three retries and an escalation.
+
+### Conventions
+
+`conventions` is **3–5 rules that apply to THIS task**, not a style guide. A full convention dump crowds out the task description in a small context window.
+
 ## Output Format
 
 Emit one fenced JSON block tagged `blueprint-tasks`:
-{totalTasks, waves: [{wave, name, tasks: [{taskId, description, files, userStory, isParallel, dependsOn, includesTests}]}], userStoryPhases: [{story, title, priority, taskIds}], parallelOpportunities, mvpScope}
+{totalTasks, waves: [{wave, name, tasks: [{taskId, description, files, userStory, isParallel, dependsOn, includesTests, packet}]}], userStoryPhases: [{story, title, priority, taskIds}], parallelOpportunities, mvpScope}
+
+Where `packet` is:
+
+```
+{
+  "contextExcerpts": [{ "path": "src/db/user.repository.ts", "excerpt": "<the actual code>", "note": "the pattern to follow" }],
+  "interfaces": ["export function getUser(id: string): Promise<User | null>"],
+  "acceptanceCriteria": [{ "text": "getUser returns null for an unknown id", "howVerified": "npm test src/api/user.test.ts" }],
+  "allowedFiles": ["src/api/user.ts"],
+  "forbiddenFiles": ["src/db/schema.sql"],
+  "testFiles": ["src/api/user.test.ts"],
+  "conventions": ["Repositories return null, never throw, on a miss"],
+  "testCommand": "npm test src/api/user.test.ts"
+}
+```
+
+Every acceptance criterion **must** carry `howVerified` — a command to run or an observation to make. A criterion nobody can check is dropped by the parser.
 
 ## Validation Checks
 

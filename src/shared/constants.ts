@@ -721,6 +721,8 @@ export const IPC_CHANNELS = {
   BLUEPRINT_WAVE_TASK_START: 'blueprint:waveTaskStart',
   BLUEPRINT_WAVE_TASK_COMPLETE: 'blueprint:waveTaskComplete',
   BLUEPRINT_WAVE_COMPLETE: 'blueprint:waveComplete',
+  /** Per-task deterministic quality-gate report (main → renderer). */
+  BLUEPRINT_TASK_GATES: 'blueprint:taskGates',
 
   // Constitution
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
@@ -870,6 +872,13 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   'blueprint:build': 'claude-opus-5',
   'blueprint:verify': 'claude-opus-5',
 
+  // Blueprint quality layers. peer-review and code-review are OPTIONAL roles:
+  // these defaults only apply once a user explicitly binds them on
+  // (see OPTIONAL_MODEL_ROLE_ACTIONS in shared/model-role-binding.ts).
+  'blueprint:peer-review': 'claude-haiku-4-5-20251001',
+  'blueprint:lead-review': 'claude-opus-5',
+  'blueprint:code-review': 'claude-opus-5',
+
   // Prompt optimization
   'prompt:optimize': 'claude-haiku-4-5-20251001',
 
@@ -935,6 +944,29 @@ export const MODEL_ROLE_ROWS: readonly import('./types').ModelRoleRowDef[] = [
     description: 'Adversarial verification of build output',
     actions: ['blueprint:verify'],
     primaryAction: 'blueprint:verify'
+  },
+  {
+    group: 'quality',
+    label: 'Blueprint Peer Review',
+    description:
+      'Optional cheap per-task review after gates pass. Advisory only — leave off to skip.',
+    actions: ['blueprint:peer-review'],
+    primaryAction: 'blueprint:peer-review'
+  },
+  {
+    group: 'quality',
+    label: 'Blueprint Lead Review',
+    description: 'Per-task review against acceptance criteria, and fixer of last resort',
+    actions: ['blueprint:lead-review'],
+    primaryAction: 'blueprint:lead-review'
+  },
+  {
+    group: 'quality',
+    label: 'Blueprint Code Review',
+    description:
+      'Optional adversarial whole-diff review phase. Best decorrelated from the build model — leave off to skip.',
+    actions: ['blueprint:code-review'],
+    primaryAction: 'blueprint:code-review'
   },
   {
     group: 'quality',
@@ -1039,8 +1071,15 @@ export const ACTION_GROUPS: ActionGroup[] = [
     id: 'quality',
     label: 'Quality & Review',
     icon: '🩺',
-    description: 'Audit and adversarial grill sessions',
-    actions: ['audit', 'grill', 'grill:plan']
+    description: 'Audit, adversarial grill sessions, and blueprint review layers',
+    actions: [
+      'audit',
+      'grill',
+      'grill:plan',
+      'blueprint:peer-review',
+      'blueprint:lead-review',
+      'blueprint:code-review'
+    ]
   },
   {
     id: 'council',
@@ -1382,6 +1421,24 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Blueprint Verify',
     description: 'Adversarial verification of build output against spec',
     icon: '✅',
+    section: 'background'
+  },
+  'blueprint:peer-review': {
+    label: 'Blueprint Peer Review',
+    description: 'Optional cheap per-task review after gates pass — advisory only',
+    icon: '👥',
+    section: 'background'
+  },
+  'blueprint:lead-review': {
+    label: 'Blueprint Lead Review',
+    description: 'Per-task review against acceptance criteria, and fixer of last resort',
+    icon: '🧐',
+    section: 'background'
+  },
+  'blueprint:code-review': {
+    label: 'Blueprint Code Review',
+    description: 'Optional adversarial whole-diff review phase between BUILD and VERIFY',
+    icon: '🔎',
     section: 'background'
   },
   'prompt:optimize': {

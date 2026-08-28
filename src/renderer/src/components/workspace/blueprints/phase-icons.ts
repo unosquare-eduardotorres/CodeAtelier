@@ -11,12 +11,21 @@ import {
   ListTodo,
   SearchCheck,
   Hammer,
+  ScanEye,
   CheckCircle2,
   UserCheck,
   type LucideIcon
 } from 'lucide-react'
 
-export type PhaseIconKey = 'specify' | 'clarify' | 'plan' | 'tasks' | 'review' | 'build' | 'verify'
+export type PhaseIconKey =
+  | 'specify'
+  | 'clarify'
+  | 'plan'
+  | 'tasks'
+  | 'review'
+  | 'build'
+  | 'code-review'
+  | 'verify'
 export type GateIconKey = 'approval'
 
 export interface PhaseIconConfig {
@@ -55,6 +64,11 @@ export const PHASE_ICONS: Record<PhaseIconKey, PhaseIconConfig> = {
     icon: Hammer,
     label: 'Build',
     description: 'Execute tasks in parallel waves across the codebase'
+  },
+  'code-review': {
+    icon: ScanEye,
+    label: 'Code Review',
+    description: 'Adversarial whole-diff review by an independent model'
   },
   verify: {
     icon: CheckCircle2,

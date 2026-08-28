@@ -17,6 +17,7 @@ import type {
   ModelRoleMap,
   ResolvedAssignment
 } from '../../shared/types'
+import { isRoleDisabled } from '../../shared/model-role-binding'
 import log from 'electron-log'
 import { workspaceRepository } from '../db/repositories'
 import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
@@ -97,6 +98,25 @@ class ModelConfigService {
     // Legacy modelOverrides
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
     return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
+  }
+
+  /**
+   * Is an optional quality role switched on for this workspace?
+   *
+   * Optional roles (peer-review, code-review) are OFF until explicitly bound,
+   * and can be explicitly bound off with `{ disabled: true }`. Callers must
+   * skip the layer entirely when this returns false — never fall back to a
+   * default model, which would silently re-enable a layer the user turned off.
+   */
+  isRoleEnabled(workspacePath: string | undefined, action: ModelAction): boolean {
+    const settings = workspacePath
+      ? workspaceRepository.getSettingsByPath(workspacePath)
+      : undefined
+    return !isRoleDisabled(
+      action,
+      (settings?.modelRoles ?? undefined) as ModelRoleMap | undefined,
+      (settings?.modelOverrides ?? undefined) as ModelOverrides | undefined
+    )
   }
 
   // ── Provider awareness ──
@@ -271,6 +291,12 @@ export function resolveAssignment(opts: {
     workspaceBackend
   } = opts
 
+  // 0. Off-binding. Optional roles resolve as disabled unless explicitly bound;
+  //    any role can be explicitly bound off. A disabled assignment still carries
+  //    a modelId (so the UI can show what was turned off) but callers MUST check
+  //    `disabled` and skip the layer rather than run it.
+  const disabled = isRoleDisabled(action, modelRoles, modelOverrides)
+
   // 1. New structured model roles (highest priority)
   if (modelRoles?.[action]) {
     const role = modelRoles[action] as ModelRoleAssignment
@@ -278,7 +304,8 @@ export function resolveAssignment(opts: {
       provider: role.provider,
       modelId: role.modelId,
       localBackend: role.localBackend,
-      source: 'roles'
+      source: 'roles',
+      disabled
     }
   }
 
@@ -288,7 +315,8 @@ export function resolveAssignment(opts: {
       provider: workspaceProvider,
       modelId: modelOverrides[action],
       localBackend: workspaceProvider === 'local-llm' ? workspaceBackend : undefined,
-      source: 'override'
+      source: 'override',
+      disabled
     }
   }
 
@@ -297,7 +325,8 @@ export function resolveAssignment(opts: {
     return {
       provider: 'claude',
       modelId: DEFAULT_MODEL_CONFIG[action],
-      source: 'default'
+      source: 'default',
+      disabled
     }
   }
 
@@ -307,7 +336,8 @@ export function resolveAssignment(opts: {
     return {
       provider: 'claude',
       modelId: DEFAULT_MODEL_CONFIG[base as ModelAction],
-      source: 'fallback'
+      source: 'fallback',
+      disabled
     }
   }
 
@@ -315,7 +345,8 @@ export function resolveAssignment(opts: {
   return {
     provider: 'claude',
     modelId: DEFAULT_MODEL_CONFIG['specialist'],
-    source: 'fallback'
+    source: 'fallback',
+    disabled
   }
 }
 

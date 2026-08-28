@@ -542,11 +542,11 @@ CREATE TABLE IF NOT EXISTS blueprints (
   description TEXT DEFAULT '',
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft','specifying','clarifying','planning',
-                       'tasking','reviewing','building','verifying',
+                       'tasking','reviewing','building','codeReviewing','verifying',
                        'complete','failed','cancelled')),
   current_phase TEXT DEFAULT 'specify'
     CHECK (current_phase IN ('specify','clarify','plan','tasks',
-                              'review','build','verify')),
+                              'review','build','code-review','verify')),
   priority TEXT DEFAULT 'P1'
     CHECK (priority IN ('P1','P2','P3')),
   source_idea_id TEXT REFERENCES ideas(id) ON DELETE SET NULL,
@@ -563,7 +563,7 @@ CREATE TABLE IF NOT EXISTS blueprint_phases (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
   phase TEXT NOT NULL
-    CHECK (phase IN ('specify','clarify','plan','tasks','review','build','verify')),
+    CHECK (phase IN ('specify','clarify','plan','tasks','review','build','code-review','verify')),
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','active','complete','skipped','failed')),
   conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
@@ -590,6 +590,11 @@ CREATE TABLE IF NOT EXISTS blueprint_tasks (
   executor_run_id TEXT REFERENCES mpa_runs(id) ON DELETE SET NULL,
   started_at TEXT,
   completed_at TEXT
+  -- NOTE: every column added after this baseline lives in a migration, not here.
+  -- Migration 107 rebuilds this table with `INSERT ... SELECT *`, which is
+  -- positional: a column added to this CREATE but not to migration 107's own
+  -- column list makes fresh-database initialisation fail with a column-count
+  -- mismatch. Add new columns via ALTER in a migration only.
 );
 CREATE INDEX IF NOT EXISTS idx_bp_tasks_blueprint ON blueprint_tasks(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);

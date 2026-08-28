@@ -4,7 +4,16 @@
  */
 
 import type { ComponentType } from 'react'
-import { ClipboardList, HelpCircle, Map, ListTodo, Search, Hammer, ShieldCheck } from 'lucide-react'
+import {
+  ClipboardList,
+  HelpCircle,
+  Map,
+  ListTodo,
+  Search,
+  Hammer,
+  ScanEye,
+  ShieldCheck
+} from 'lucide-react'
 import type { BlueprintPhaseType } from '../../../../../shared/blueprint-types'
 
 export interface PhaseDisplayConfig {
@@ -64,6 +73,14 @@ export const PHASE_CONFIG: Record<BlueprintPhaseType, PhaseDisplayConfig> = {
     color: 'text-accent',
     hexColor: '#34d399',
     description: 'Execute tasks in dependency-ordered waves'
+  },
+  'code-review': {
+    label: 'Code Review',
+    agentLabel: 'Code Reviewer',
+    icon: ScanEye,
+    color: 'text-accent',
+    hexColor: '#818cf8',
+    description: 'Adversarial whole-diff review by an independent model'
   },
   verify: {
     label: 'Verify',

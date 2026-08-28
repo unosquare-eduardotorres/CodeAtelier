@@ -28,6 +28,7 @@ export type AgentRole =
   | 'blueprint-plan'
   | 'blueprint-tasks'
   | 'blueprint-review'
+  | 'blueprint-code-review'
   | 'blueprint-build'
   | 'blueprint-verify'
 
@@ -645,6 +646,13 @@ export type ModelAction =
   | 'blueprint:review'
   | 'blueprint:build'
   | 'blueprint:verify'
+  // ── Blueprint quality layers ──
+  /** Layer 3 — cheap per-task peer review. Optional: off unless explicitly bound. */
+  | 'blueprint:peer-review'
+  /** Layer 3.5 — strong per-task lead review, and fixer of last resort. */
+  | 'blueprint:lead-review'
+  /** Layer 4 — adversarial whole-diff review phase. Optional: off unless explicitly bound. */
+  | 'blueprint:code-review'
   | 'prompt:optimize'
   // ── Background one-shot actions ──
   | 'commit-message'
@@ -683,6 +691,15 @@ export interface ModelRoleAssignment {
   provider: LLMProvider
   modelId: string
   localBackend?: LocalLLMBackend
+  /**
+   * Explicit "off" binding for optional roles (`blueprint:peer-review`,
+   * `blueprint:code-review`). When true the corresponding layer/phase is
+   * skipped entirely rather than run with a fallback model.
+   *
+   * Stored as a role entry rather than an absent key so that "the user turned
+   * this off" is distinguishable from "the user never configured this".
+   */
+  disabled?: boolean
 }
 
 /**
@@ -707,6 +724,11 @@ export interface ResolvedAssignment {
   localBackend?: LocalLLMBackend
   /** Where the assignment was resolved from — for debugging & UI display */
   source: 'roles' | 'override' | 'default' | 'fallback'
+  /**
+   * True when the role is bound off (explicitly, or by an optional role having
+   * no binding at all). Callers MUST skip the layer instead of using `modelId`.
+   */
+  disabled?: boolean
 }
 
 /** Logical grouping of ModelActions for the model role assignment UI */
@@ -1869,7 +1891,7 @@ export interface ElicitationEvent {
 // ── Local LLM Provider ──
 
 /** LLM provider for a workspace */
-export type LLMProvider = 'claude' | 'local-llm'
+export type LLMProvider = 'claude' | 'local-llm' | 'glm'
 
 /** Local LLM inference backend */
 export type LocalLLMBackend = 'ollama' | 'omlx'
@@ -1950,6 +1972,14 @@ export interface WorkspaceSettings {
   githubToken?: string
   githubLogin?: string
   githubTokenType?: string
+
+  // ── Blueprint quality gates ──
+  /**
+   * Human-typed overrides for the deterministic gate commands. Highest
+   * precedence — beats both the PLAN phase's declaration and disk detection.
+   * Absent keys fall through; an absent object means "detect everything".
+   */
+  gateCommands?: import('./gate-command-types').GateCommandSet
 
   // ── Misc ──
   additionalDirectories?: string[]

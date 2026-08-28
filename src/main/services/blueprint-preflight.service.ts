@@ -17,7 +17,7 @@
  * @module blueprint-preflight
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { execFile, spawnSync, type ExecFileException } from 'node:child_process'
 import log from 'electron-log'
@@ -30,6 +30,8 @@ import type {
   PreflightResult,
   PreflightServiceDef
 } from '../../shared/preflight-types'
+import { detectGateCommands, type WorkspaceManifests } from '../../shared/gate-command-detect'
+import type { GateCommandSet } from '../../shared/gate-command-types'
 
 const pfLog = log.scope('blueprint-preflight')
 
@@ -736,11 +738,116 @@ export function buildPreflightDiscoveries(result: PreflightResult): string[] {
   return discoveries
 }
 
+// ── Gate command detection (M1.2) ──
+
+/** Depth of the walk that looks for .NET project files. Root + two levels. */
+const DOTNET_SCAN_DEPTH = 2
+/** Hard cap so a monorepo with hundreds of projects cannot stall the scan. */
+const DOTNET_SCAN_LIMIT = 40
+
+const SCAN_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  'bin',
+  'obj',
+  'dist',
+  'out',
+  'build',
+  'target',
+  '.venv',
+  'venv',
+  '__pycache__'
+])
+
+function readIfExists(path: string): string | undefined {
+  try {
+    return existsSync(path) ? readFileSync(path, 'utf-8') : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Collect `*.sln` / `*.csproj` paths relative to the workspace root. */
+function findDotnetProjects(root: string): string[] {
+  const found: string[] = []
+
+  const walk = (dir: string, relative: string, depth: number): void => {
+    if (found.length >= DOTNET_SCAN_LIMIT) return
+    let entries: import('node:fs').Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      if (found.length >= DOTNET_SCAN_LIMIT) return
+      const rel = relative ? `${relative}/${entry.name}` : entry.name
+      if (entry.isFile()) {
+        const lower = entry.name.toLowerCase()
+        if (lower.endsWith('.sln') || lower.endsWith('.csproj')) found.push(rel)
+      } else if (entry.isDirectory() && depth < DOTNET_SCAN_DEPTH) {
+        if (SCAN_SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue
+        walk(join(dir, entry.name), rel, depth + 1)
+      }
+    }
+  }
+
+  walk(root, '', 0)
+  return found
+}
+
+/**
+ * Read the workspace's toolchain manifests into the pure detector's input shape.
+ *
+ * All I/O lives here so `detectGateCommands` stays a pure function over a
+ * snapshot — the whole detection matrix is then testable without a fixture repo.
+ */
+export function readWorkspaceManifests(workspacePath: string): WorkspaceManifests {
+  let rootEntries: string[] = []
+  try {
+    rootEntries = readdirSync(workspacePath)
+  } catch {
+    return {}
+  }
+  const present = new Set(rootEntries)
+
+  return {
+    packageJson: readIfExists(join(workspacePath, 'package.json')),
+    lockfiles: rootEntries.filter((f) =>
+      ['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lockb', 'bun.lock'].includes(f)
+    ),
+    dotnetProjects: findDotnetProjects(workspacePath),
+    cargoToml: readIfExists(join(workspacePath, 'Cargo.toml')),
+    pyprojectToml: readIfExists(join(workspacePath, 'pyproject.toml')),
+    hasPytestConfig:
+      present.has('pytest.ini') || present.has('tox.ini') || present.has('setup.cfg'),
+    goMod: readIfExists(join(workspacePath, 'go.mod'))
+  }
+}
+
+/**
+ * Detect the workspace's gate commands from what is on disk.
+ *
+ * This is the LOWEST-precedence source. A blank workspace legitimately detects
+ * nothing — the affected gates then report `unverifiable`, which is the honest
+ * verdict while the toolchain does not yet exist.
+ */
+export function scanGateCommands(workspacePath: string): GateCommandSet {
+  try {
+    return detectGateCommands(readWorkspaceManifests(workspacePath))
+  } catch (err) {
+    pfLog.warn('[scanGateCommands] Detection failed — gates will report unverifiable', err)
+    return {}
+  }
+}
+
 // ── Singleton export (follows codebase convention) ──
 
 export const blueprintPreflightService = {
   runChecks: runPreflightChecks,
   detectServices: detectRequiredServices,
   buildDiscoveries: buildPreflightDiscoveries,
-  mergeChecks
+  mergeChecks,
+  scanGateCommands,
+  readWorkspaceManifests
 }

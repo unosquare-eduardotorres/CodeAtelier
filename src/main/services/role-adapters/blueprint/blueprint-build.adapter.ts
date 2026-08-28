@@ -24,21 +24,29 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
 
   private readonly phaseContext: PhaseContext
   private readonly taskContext: string
+  private readonly modelAction: ModelAction
 
   constructor(params: {
     workspaceId: string
     blueprintId: string
     phaseContext: PhaseContext
     taskContext: string
+    /**
+     * Overrides the routed model for this one session. Used by the escalation
+     * ladder to re-run a gate-failing task on `blueprint:lead-review` — same
+     * prompt, same tools, stronger model. Defaults to `blueprint:build`.
+     */
+    modelAction?: ModelAction
   }) {
     super({ workspaceId: params.workspaceId, blueprintId: params.blueprintId })
     this.phaseContext = params.phaseContext
     this.taskContext = params.taskContext
+    this.modelAction = params.modelAction ?? 'blueprint:build'
     this.agentId = `blueprint-build-${params.blueprintId}`
   }
 
   protected getModelAction(): ModelAction {
-    return 'blueprint:build'
+    return this.modelAction
   }
 
   protected buildPhaseSystemPrompt(): string {

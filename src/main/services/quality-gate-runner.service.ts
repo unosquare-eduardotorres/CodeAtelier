@@ -81,8 +81,12 @@ class QualityGateRunnerService {
    * Run all available quality gates in the given working directory.
    * Gates are executed sequentially (typecheck → lint → test) and short-circuit
    * on first failure if `failFast` is true.
+   *
+   * P2 — renamed from `runGates` to `runSpecialistGates`: the blueprint gate
+   * engine (blueprint-gates.service.ts) also exports `runGates`, and the
+   * collision made every grep/import audit ambiguous.
    */
-  async runGates(
+  async runSpecialistGates(
     cwd: string,
     opts: { failFast?: boolean; taskId?: string; agentId?: string } = {}
   ): Promise<GateRunResult> {

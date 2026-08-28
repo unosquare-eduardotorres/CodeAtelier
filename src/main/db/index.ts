@@ -25,7 +25,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 146
+export const CURRENT_SCHEMA_VERSION = 149
 
 export interface Migration {
   version: number
@@ -4371,6 +4371,198 @@ export const migrations: Migration[] = [
       dbLogger.info(
         '[migration-146] ✓ Added blueprint_tasks.failure_reason / outcome_kind / resolution_note'
       )
+    }
+  },
+  {
+    version: 147,
+    name: 'expand-llm-provider-check-for-glm',
+    disableForeignKeys: true, // CRITICAL: prevents CASCADE wipe of messages/attachments/checkpoints
+    up: (db) => {
+      // GLM was wired end-to-end in TypeScript — deriveProvider, the model
+      // snapshot, the IPC layer and the repository all pass 'glm' through
+      // untouched — but the column's CHECK constraint only admitted
+      // ('claude', 'local-llm'). Creating the very first GLM conversation
+      // therefore died at the INSERT with SQLITE_CONSTRAINT, surfacing as a
+      // generic "failed to create conversation" toast that named neither the
+      // column nor the provider.
+      //
+      // SQLite cannot ALTER a CHECK constraint — rebuild the table, same
+      // create/copy/drop/rename shape as migration 127.
+      db.exec(`
+        CREATE TABLE conversations_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT 'New Conversation',
+          mode TEXT NOT NULL DEFAULT 'plan' CHECK (mode IN ('plan', 'build', 'danger')),
+          type TEXT NOT NULL DEFAULT 'chat' CHECK (type IN ('chat', 'blueprint')),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived')),
+          summary TEXT,
+          claude_session_id TEXT,
+          pr_number INTEGER,
+          pr_url TEXT,
+          branch_name TEXT,
+          sort_order INTEGER DEFAULT 0,
+          persona_specialist_id TEXT DEFAULT NULL REFERENCES specialists(id) ON DELETE SET NULL,
+          llm_provider TEXT NOT NULL DEFAULT 'claude' CHECK (llm_provider IN ('claude', 'local-llm', 'glm')),
+          mcp_overrides_json TEXT DEFAULT '{}',
+          communication_tone TEXT DEFAULT NULL,
+          effort TEXT NOT NULL DEFAULT 'high' CHECK (effort IN ('low', 'medium', 'high', 'xhigh', 'max')),
+          preset_id TEXT DEFAULT NULL,
+          handoff_context TEXT DEFAULT NULL,
+          model_config_json TEXT DEFAULT NULL,
+          source_audit_run_id TEXT DEFAULT NULL,
+          source_branch TEXT DEFAULT NULL
+        )
+      `)
+
+      db.exec(`
+        INSERT INTO conversations_new (
+          id, workspace_id, title, mode, type, created_at, status, summary, claude_session_id,
+          pr_number, pr_url, branch_name, sort_order, persona_specialist_id, llm_provider,
+          mcp_overrides_json, communication_tone, effort, preset_id, handoff_context,
+          model_config_json, source_audit_run_id, source_branch
+        )
+        SELECT
+          id, workspace_id, title, mode, type, created_at, status, summary, claude_session_id,
+          pr_number, pr_url, branch_name, sort_order, persona_specialist_id, llm_provider,
+          mcp_overrides_json, communication_tone, effort, preset_id, handoff_context,
+          model_config_json, source_audit_run_id, source_branch
+        FROM conversations
+      `)
+
+      db.exec('DROP TABLE conversations')
+      db.exec('ALTER TABLE conversations_new RENAME TO conversations')
+
+      // Recreate indexes dropped with the old table
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id)'
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_conversations_audit_run ON conversations(source_audit_run_id) WHERE source_audit_run_id IS NOT NULL`
+      )
+
+      dbLogger.info("[migration-147] ✓ Expanded llm_provider CHECK constraint to include 'glm'")
+    }
+  },
+  {
+    version: 148,
+    name: 'blueprint-code-review-phase',
+    disableForeignKeys: true, // rebuilds `blueprints`, the CASCADE parent of phases/tasks
+    up: (db) => {
+      // The adversarial code-review layer is a real pipeline phase between BUILD
+      // and VERIFY, so it needs a row in blueprint_phases and a status on the
+      // blueprint. Both columns carry CHECK constraints that SQLite cannot ALTER,
+      // so this is the create/copy/drop/rename rebuild used by migrations 107/147.
+      //
+      // Columns are enumerated rather than `SELECT *`: the rebuild has to survive
+      // the ALTERs that earlier migrations bolted on (blueprints.completed_at),
+      // and positional copying silently mis-assigns if that order ever shifts.
+      db.exec(`
+        CREATE TABLE blueprints_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          title TEXT NOT NULL,
+          short_name TEXT NOT NULL DEFAULT '',
+          description TEXT DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'draft'
+            CHECK (status IN ('draft','specifying','clarifying','planning',
+                              'tasking','reviewing','building','codeReviewing','verifying',
+                              'complete','failed','cancelled')),
+          current_phase TEXT DEFAULT 'specify'
+            CHECK (current_phase IN ('specify','clarify','plan','tasks',
+                                     'review','build','code-review','verify')),
+          priority TEXT DEFAULT 'P1'
+            CHECK (priority IN ('P1','P2','P3')),
+          source_idea_id TEXT REFERENCES ideas(id) ON DELETE SET NULL,
+          constitution_snapshot TEXT,
+          settings_json TEXT DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          completed_at TEXT
+        )
+      `)
+
+      db.exec(`
+        INSERT INTO blueprints_new (
+          id, workspace_id, title, short_name, description, status, current_phase,
+          priority, source_idea_id, constitution_snapshot, settings_json,
+          created_at, updated_at, completed_at
+        )
+        SELECT
+          id, workspace_id, title, short_name, description, status, current_phase,
+          priority, source_idea_id, constitution_snapshot, settings_json,
+          created_at, updated_at, completed_at
+        FROM blueprints
+      `)
+
+      db.exec('DROP TABLE blueprints')
+      db.exec('ALTER TABLE blueprints_new RENAME TO blueprints')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_blueprints_workspace ON blueprints(workspace_id)')
+      db.exec('CREATE INDEX IF NOT EXISTS idx_blueprints_status ON blueprints(status)')
+
+      db.exec(`
+        CREATE TABLE blueprint_phases_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          blueprint_id TEXT NOT NULL REFERENCES blueprints(id) ON DELETE CASCADE,
+          phase TEXT NOT NULL
+            CHECK (phase IN ('specify','clarify','plan','tasks','review','build','code-review','verify')),
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','active','complete','skipped','failed')),
+          conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+          artifacts_json TEXT DEFAULT '[]',
+          context_snapshot TEXT,
+          started_at TEXT,
+          completed_at TEXT
+        )
+      `)
+
+      db.exec(`
+        INSERT INTO blueprint_phases_new (
+          id, blueprint_id, phase, status, conversation_id, artifacts_json,
+          context_snapshot, started_at, completed_at
+        )
+        SELECT
+          id, blueprint_id, phase, status, conversation_id, artifacts_json,
+          context_snapshot, started_at, completed_at
+        FROM blueprint_phases
+      `)
+
+      db.exec('DROP TABLE blueprint_phases')
+      db.exec('ALTER TABLE blueprint_phases_new RENAME TO blueprint_phases')
+      db.exec(
+        'CREATE INDEX IF NOT EXISTS idx_bp_phases_blueprint ON blueprint_phases(blueprint_id)'
+      )
+
+      dbLogger.info("[migration-148] ✓ Added 'code-review' phase and 'codeReviewing' status")
+    }
+  },
+  {
+    version: 149,
+    name: 'blueprint-quality-gates',
+    up: (db) => {
+      // Gate results were emitted over IPC and then dropped. After a reload the
+      // UI could say a task was 'complete' with no record of WHICH gates proved
+      // it — or, worse, no record that three of them reported `unverifiable` and
+      // the work shipped unproven. The ledger only means something if it survives.
+      //
+      // `packet_json` is on the task rather than parsed out of the tasks artifact
+      // on demand because the packet is the gate contract: the write-set G4
+      // enforces has to be the one the builder was given, not a re-parse of an
+      // artifact a later phase may have rewritten.
+      //
+      // Additive ALTERs — no rebuild, and ignoring the columns reverts the change.
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN packet_json TEXT`)
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN gates_json TEXT`)
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN unverified_json TEXT`)
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`)
+      db.exec(`ALTER TABLE blueprint_tasks ADD COLUMN escalated_to TEXT`)
+
+      // Blueprint-level rollup: the accumulated unverified ledger decides whether
+      // the run completes clean or completes flagged.
+      db.exec(`ALTER TABLE blueprints ADD COLUMN unverified_json TEXT`)
+
+      dbLogger.info('[migration-149] ✓ Added blueprint quality-gate columns')
     }
   }
 ]

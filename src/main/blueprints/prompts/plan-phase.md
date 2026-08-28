@@ -95,6 +95,28 @@ Emit one fenced JSON block tagged `blueprint-plan`:
 
 {{AGENT_ENHANCEMENT}}
 
+## Gate Commands (REQUIRED for new or empty workspaces)
+
+After the plan block, emit a `gate-commands` block naming the shell commands that prove this toolchain compiles, lints and tests. These are run by the system after every build task — the deterministic quality gates — and a gate with no command cannot verify anything, so it reports `unverifiable` and the work ships unproven.
+
+```gate-commands
+{
+  "build": "npm run typecheck",
+  "lint": "npm run lint",
+  "test": "npm test",
+  "smoke": "npm run smoke"
+}
+```
+
+Rules:
+
+- **If the workspace already has a toolchain, read it** — `package.json` scripts, `*.csproj`, `Cargo.toml`, `pyproject.toml` — and name the real commands. Do not invent scripts that do not exist.
+- **If the workspace is new or empty, you MUST declare the commands the toolchain WILL have**, and your plan must include the task that creates them (the `package.json`, the project file, the test harness). Gates come online progressively: early scaffolding tasks are expected to report `unverifiable`, and once the toolchain exists on disk every later task is gated.
+- Prefer a **typecheck** over a full build for `build` — same question, far cheaper, and it runs after every task.
+- `smoke` is optional: a single command that proves the thing boots. Omit it rather than guess.
+- Each value is a plain command line, or `{"command": "...", "cwd": "relative/dir"}` when it must run in a subdirectory.
+- **No shell chaining.** `&&`, `;`, `|`, backticks and `$(...)` are rejected outright. If a gate needs several steps, the repo needs a script — put creating it in the plan.
+
 ## Completion
 
 ## Discoveries

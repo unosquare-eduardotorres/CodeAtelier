@@ -6,13 +6,26 @@
  */
 
 import type { ToolActivity } from './types'
+import type { GateReport, UnverifiedItem } from './gate-types'
 
 // ── Phase & Status Enums ──
 
 import type { TrackOwnerKind } from './track-types'
 
 export type BlueprintPhaseType =
-  'specify' | 'clarify' | 'plan' | 'tasks' | 'review' | 'build' | 'verify'
+  | 'specify'
+  | 'clarify'
+  | 'plan'
+  | 'tasks'
+  | 'review'
+  | 'build'
+  /**
+   * Layer 4 — adversarial whole-diff review by an external model, between
+   * BUILD and VERIFY. Skipped (`BlueprintPhaseStatus 'skipped'`) when the
+   * `blueprint:code-review` role is bound off.
+   */
+  | 'code-review'
+  | 'verify'
 
 export type BlueprintStatus =
   | 'draft'
@@ -22,6 +35,7 @@ export type BlueprintStatus =
   | 'tasking'
   | 'reviewing'
   | 'building'
+  | 'codeReviewing'
   | 'verifying'
   | 'complete'
   | 'failed'
@@ -48,6 +62,60 @@ export type BlueprintTaskOutcomeKind =
   /** A human closed the task out — the work is done, just not provable here. */
   | 'accepted_by_user'
 
+// ── Work Packets ──
+
+/**
+ * One acceptance criterion, and the mechanical check that settles it.
+ *
+ * `howVerified` is required by contract. A criterion without one is an opinion:
+ * two models will disagree about whether it holds, and neither the gates nor
+ * the lead reviewer has anything to point at.
+ */
+export interface AcceptanceCriterion {
+  text: string
+  /** e.g. "`npm test src/foo.test.ts` passes" or "`GET /health` returns 200". */
+  howVerified: string
+}
+
+/** A pre-read code excerpt handed to the builder so it never has to explore. */
+export interface ContextExcerpt {
+  path: string
+  excerpt: string
+  /** Why this was included — keeps a weak builder from pattern-matching the wrong part. */
+  note?: string
+}
+
+/**
+ * Everything a builder needs to do ONE task without exploring the codebase.
+ *
+ * The packet is also the gate contract: `allowedFiles` is the write-set G4
+ * enforces, `testFiles` are the tests G5 protects and G6 runs, and
+ * `acceptanceCriteria` is what the lead reviewer diffs against. A task with no
+ * packet still builds — those gates just report `unverifiable` / `no_packet`.
+ */
+export interface BlueprintWorkPacket {
+  /** Pre-read snippets, pasted into the build prompt verbatim. */
+  contextExcerpts?: ContextExcerpt[]
+  /** Signatures / scaffolds to implement against. */
+  interfaces?: string[]
+  acceptanceCriteria?: AcceptanceCriterion[]
+  /** The write-set. Anything changed outside this fails G4. */
+  allowedFiles?: string[]
+  /** Explicitly off-limits paths (migrations, generated code, other tasks' files). */
+  forbiddenFiles?: string[]
+  /** Pre-authored failing tests. Modifying these fails G5. */
+  testFiles?: string[]
+  /** 3–5 task-relevant rules only — a full convention dump crowds out the task. */
+  conventions?: string[]
+  /**
+   * Runner-specific command that executes just this task's tests. Optional:
+   * without it the gates run the full resolved test command, because targeting
+   * syntax differs per runner and guessing it produces a spawn error that looks
+   * exactly like a red test.
+   */
+  testCommand?: string
+}
+
 // ── Core Entities ──
 
 export interface Blueprint {
@@ -65,6 +133,24 @@ export interface Blueprint {
   createdAt: string
   updatedAt: string
   completedAt: string | null
+  /**
+   * Accumulated ledger of checks that could not be run across the whole run.
+   * Non-empty at completion means the blueprint finished UNPROVEN, not wrong.
+   */
+  unverifiedJson: UnverifiedItem[] | null
+}
+
+/**
+ * A blueprint that finished but could not prove all of its work.
+ *
+ * Derived rather than stored: a persisted flag can drift from the ledger it
+ * describes, and there is exactly one right answer given the ledger.
+ */
+export function isCompletedWithWarnings(blueprint: {
+  status: BlueprintStatus
+  unverifiedJson: UnverifiedItem[] | null
+}): boolean {
+  return blueprint.status === 'complete' && (blueprint.unverifiedJson?.length ?? 0) > 0
 }
 
 export interface BlueprintPhase {
@@ -119,6 +205,16 @@ export interface BlueprintTask {
   outcomeKind: BlueprintTaskOutcomeKind | null
   /** Optional human note recorded when a task is accepted as done. */
   resolutionNote: string | null
+  /** Work packet authored by the TASKS phase. Null for pre-packet blueprints. */
+  packetJson: BlueprintWorkPacket | null
+  /** Last deterministic gate run for this task. */
+  gatesJson: GateReport | null
+  /** Gate checks that could not run — warnings, never blockers. */
+  unverifiedJson: UnverifiedItem[] | null
+  /** Builder attempts spent on this task, including the first. */
+  attempts: number
+  /** Role the task was escalated to after builder retries ran out, if any. */
+  escalatedTo: string | null
 }
 
 // ── Composite / Joined Types ──
@@ -432,6 +528,20 @@ export interface BlueprintWaveTaskCompletePayload {
   status: BlueprintTaskStatus
 }
 
+/**
+ * Deterministic gate verdict for one task attempt, streamed to the UI.
+ *
+ * Emitted on every attempt rather than only the last: watching a task fail the
+ * write-set gate and then pass on retry is the signal that tells a user their
+ * builder model is too weak, and only the last report would hide it.
+ */
+export interface BlueprintTaskGatesPayload {
+  blueprintId: string
+  workspaceId: string
+  taskId: string
+  report: GateReport
+}
+
 export interface BlueprintWaveCompletePayload {
   blueprintId: string
   workspaceId: string
@@ -458,6 +568,7 @@ export const BLUEPRINT_PHASE_ORDER: readonly BlueprintPhaseType[] = [
   'tasks',
   'review',
   'build',
+  'code-review',
   'verify'
 ] as const
 
@@ -469,5 +580,6 @@ export const PHASE_TO_STATUS: Record<BlueprintPhaseType, BlueprintStatus> = {
   tasks: 'tasking',
   review: 'reviewing',
   build: 'building',
+  'code-review': 'codeReviewing',
   verify: 'verifying'
 }

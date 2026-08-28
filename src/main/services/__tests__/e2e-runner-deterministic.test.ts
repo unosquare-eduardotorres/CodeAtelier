@@ -71,7 +71,9 @@ if (!dbContext) {
       assert.ok(typeof parsed.id === 'string' && parsed.id.length > 0)
       assert.equal(parsed.title, 'E2E Test Blueprint')
       assert.ok(Array.isArray(parsed.phases))
-      assert.equal(parsed.phases.length, 7)
+      // One row per BLUEPRINT_PHASE_ORDER entry — 8 since the code-review phase
+      // was added between build and verify.
+      assert.equal(parsed.phases.length, 8)
       assert.ok(
         parsed.phases.every((p: any) => typeof p.type === 'string' && typeof p.status === 'string')
       )

@@ -595,6 +595,17 @@ const TEST_FILES: string[] = [
   '../../../shared/__tests__/db-time.test',
   // ─── Truncated plan block: nested fence inside a JSON string value ───
   '../../../shared/__tests__/fenced-block.test',
+  // ─── Blueprint quality gates (M0) ───
+  '../../../shared/__tests__/gate-types.test',
+  '../../../shared/__tests__/model-family.test',
+  '../../../shared/__tests__/gate-commands.test',
+  '../../../shared/__tests__/gate-analysis.test',
+  '../../../shared/__tests__/work-packet.test',
+  '../../../shared/__tests__/task-review-parsers.test',
+  './blueprint-gates.test',
+  './blueprint-gates-remediation.test',
+  './blueprint-gate-ladder.test',
+  './blueprint-wave-gates-persist.test',
   // ─── Registry drift repair ───
   // These existed on disk and were registered in run-all.ts (so they counted
   // toward coverage) but had never been added here, so `npm run test:unit`
