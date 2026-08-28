@@ -105,9 +105,21 @@ describe('Type-only module evaluation (dynamic import)', () => {
 // ────────────────────────────────────────────────────────────────────────────
 
 describe('Blueprint runtime constants — deep', () => {
-  test('BLUEPRINT_PHASE_ORDER_has_7_phases', () => {
-    assert.equal(BLUEPRINT_PHASE_ORDER.length, 7)
-    const expected = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify']
+  // code-review sits between build and verify: the adversarial whole-diff pass.
+  test('BLUEPRINT_PHASE_ORDER_has_8_phases', () => {
+    assert.equal(BLUEPRINT_PHASE_ORDER.length, 8)
+    assert.equal(BLUEPRINT_PHASE_ORDER.indexOf('code-review'), BLUEPRINT_PHASE_ORDER.indexOf('build') + 1)
+    assert.equal(BLUEPRINT_PHASE_ORDER.indexOf('verify'), BLUEPRINT_PHASE_ORDER.indexOf('code-review') + 1)
+    const expected = [
+      'specify',
+      'clarify',
+      'plan',
+      'tasks',
+      'review',
+      'build',
+      'code-review',
+      'verify'
+    ]
     for (const phase of expected) {
       assert.ok(
         (BLUEPRINT_PHASE_ORDER as readonly string[]).includes(phase),
@@ -118,7 +130,7 @@ describe('Blueprint runtime constants — deep', () => {
 
   test('PHASE_TO_STATUS_maps_every_phase_to_a_status', () => {
     const entries = Object.entries(PHASE_TO_STATUS)
-    assert.equal(entries.length, 7)
+    assert.equal(entries.length, 8)
     for (const [phase, status] of entries) {
       assert.equal(typeof phase, 'string')
       assert.equal(typeof status, 'string')

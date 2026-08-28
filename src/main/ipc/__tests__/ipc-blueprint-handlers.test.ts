@@ -143,7 +143,7 @@ describe('Blueprint IPC — handler validation patterns', () => {
   test('BLUEPRINT_START_phase_validation', () => {
     // All phase starters need workspaceId + blueprintId
     for (const phase of BLUEPRINT_PHASE_ORDER) {
-      const channelKey = `BLUEPRINT_START_${phase.toUpperCase()}` as keyof typeof IPC_CHANNELS
+      const channelKey = `BLUEPRINT_START_${channelSuffix(phase)}` as keyof typeof IPC_CHANNELS
       const ch = IPC_CHANNELS[channelKey]
       if (!ch) continue
 
@@ -165,12 +165,21 @@ describe('Blueprint IPC — handler validation patterns', () => {
   })
 })
 
+/**
+ * Phase names are kebab-case ('code-review'); channel keys are SCREAMING_SNAKE.
+ * The old `phase.toUpperCase()` produced `BLUEPRINT_START_CODE-REVIEW`, which is
+ * not a valid key and made the multi-word phase look like a missing channel.
+ */
+function channelSuffix(phase: string): string {
+  return phase.toUpperCase().replace(/-/g, '_')
+}
+
 // ── §3: Blueprint phase order and status mapping ──────────────────────────
 
 describe('Blueprint phase infrastructure', () => {
   test('all_phases_have_corresponding_start_channel', () => {
     for (const phase of BLUEPRINT_PHASE_ORDER) {
-      const channelKey = `BLUEPRINT_START_${phase.toUpperCase()}` as keyof typeof IPC_CHANNELS
+      const channelKey = `BLUEPRINT_START_${channelSuffix(phase)}` as keyof typeof IPC_CHANNELS
       assert.ok(IPC_CHANNELS[channelKey], `Missing channel for phase: ${phase}`)
     }
   })

@@ -18,6 +18,7 @@ const BLUEPRINT_PHASE_ORDER = [
   'tasks',
   'review',
   'build',
+  'code-review',
   'verify'
 ] as const
 
@@ -34,7 +35,8 @@ const PHASE_CHAIN: Partial<Record<BlueprintPhaseType, BlueprintPhaseType | null>
   plan: 'tasks', // blueprint-plan.service.ts → startTasksPhase
   tasks: 'review', // blueprint-tasks.service.ts → startReviewPhase
   review: null, // review → approval gate (user decision, not auto-dispatch)
-  build: 'verify', // blueprint-build.service.ts → startVerifyPhase (existing)
+  build: 'code-review', // blueprint-build.service.ts → advancePhase (R1.3 skips when role disabled)
+  'code-review': 'verify', // optional quality layer — skipped unless role enabled
   verify: null // terminal phase
 }
 
@@ -61,15 +63,19 @@ describe('Blueprint phase-chain map', () => {
     assert.equal(PHASE_CHAIN.review, null)
   })
 
-  test('build_chains_to_verify', () => {
-    assert.equal(PHASE_CHAIN.build, 'verify')
+  test('build_chains_to_code_review', () => {
+    assert.equal(PHASE_CHAIN.build, 'code-review')
+  })
+
+  test('code_review_chains_to_verify', () => {
+    assert.equal(PHASE_CHAIN['code-review'], 'verify')
   })
 
   test('verify_is_terminal_no_auto_chain', () => {
     assert.equal(PHASE_CHAIN.verify, null)
   })
 
-  test('all_7_phases_have_chain_entries', () => {
+  test('all_8_phases_have_chain_entries', () => {
     for (const phase of BLUEPRINT_PHASE_ORDER) {
       assert.ok(phase in PHASE_CHAIN, `Missing chain entry for phase '${phase}'`)
     }

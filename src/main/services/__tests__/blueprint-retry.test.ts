@@ -18,6 +18,7 @@ const BLUEPRINT_PHASE_ORDER = [
   'tasks',
   'review',
   'build',
+  'code-review',
   'verify'
 ] as const
 
@@ -31,6 +32,7 @@ type BlueprintStatus =
   | 'tasking'
   | 'reviewing'
   | 'building'
+  | 'codeReviewing'
   | 'verifying'
   | 'complete'
   | 'failed'
@@ -43,6 +45,7 @@ const PHASE_TO_STATUS: Record<BlueprintPhaseType, BlueprintStatus> = {
   tasks: 'tasking',
   review: 'reviewing',
   build: 'building',
+  'code-review': 'codeReviewing',
   verify: 'verifying'
 }
 
@@ -69,6 +72,7 @@ const MID_PIPELINE_STATUSES = new Set<BlueprintStatus>([
   'tasking',
   'reviewing',
   'building',
+  'codeReviewing',
   'verifying'
 ])
 
@@ -195,7 +199,8 @@ describe('retryPhase — happy path', () => {
         { id: 'ph-4', phase: 'tasks', status: 'complete' },
         { id: 'ph-5', phase: 'review', status: 'complete' },
         { id: 'ph-6', phase: 'build', status: 'failed' },
-        { id: 'ph-7', phase: 'verify', status: 'pending' }
+        { id: 'ph-7', phase: 'code-review', status: 'pending' },
+        { id: 'ph-8', phase: 'verify', status: 'pending' }
       ]
     }
 
@@ -594,7 +599,8 @@ describe('retryPhase — build retry skips completed tasks (BP-RETRY-TASKS-01)',
         { id: 'ph-4', phase: 'tasks', status: 'complete' },
         { id: 'ph-5', phase: 'review', status: 'complete' },
         { id: 'ph-6', phase: 'build', status: 'failed' },
-        { id: 'ph-7', phase: 'verify', status: 'pending' }
+        { id: 'ph-7', phase: 'code-review', status: 'pending' },
+        { id: 'ph-8', phase: 'verify', status: 'pending' }
       ]
     }
 
