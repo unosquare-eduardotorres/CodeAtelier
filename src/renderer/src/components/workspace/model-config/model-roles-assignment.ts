@@ -17,11 +17,21 @@ export interface ModelOption {
   id: string
   label: string
   provider: LLMProvider
-  group: 'claude' | 'local'
+  group: 'claude' | 'local' | 'glm'
 }
 
-/** Claude's catalogue plus whatever the local server currently offers for chat. */
-export function buildModelOptions(localChatModels: string[]): ModelOption[] {
+/**
+ * Claude's catalogue, whatever the local server currently offers for chat, and the
+ * GLM catalogue.
+ *
+ * `glmModels` are the IDs discovered from the GLM endpoint's `/models` (Test
+ * Connection). When discovery hasn't run, the caller passes the static fallback list
+ * — Z.ai's own docs disagree on model IDs, so a hardcoded list can go stale.
+ */
+export function buildModelOptions(
+  localChatModels: string[],
+  glmModels: readonly { id: string; label: string }[] = []
+): ModelOption[] {
   const options: ModelOption[] = AVAILABLE_MODELS.map((m) => ({
     id: m.id,
     label: m.label,
@@ -31,6 +41,10 @@ export function buildModelOptions(localChatModels: string[]): ModelOption[] {
 
   for (const model of localChatModels) {
     options.push({ id: model, label: model, provider: 'local-llm', group: 'local' })
+  }
+
+  for (const model of glmModels) {
+    options.push({ id: model.id, label: model.label, provider: 'glm', group: 'glm' })
   }
 
   return options

@@ -92,6 +92,35 @@ describe('buildModelOptions', () => {
       false
     )
   })
+
+  /**
+   * Without a glm group the provider is invisible to routing — a workspace could be
+   * on GLM with every role still pointing at Claude, and nothing in the UI would say so.
+   */
+  test('GLM models form their own group tagged with the glm provider', () => {
+    const options = buildModelOptions([], [{ id: 'glm-5.3', label: 'GLM-5.3' }])
+    const glm = options.filter((o) => o.group === 'glm')
+    assert.deepEqual(
+      glm.map((o) => o.id),
+      ['glm-5.3']
+    )
+    assert.equal(glm[0].provider, 'glm')
+  })
+
+  test('omitting the GLM catalogue leaves the previous behaviour untouched', () => {
+    assert.equal(
+      buildModelOptions(['qwen3:8b']).some((o) => o.group === 'glm'),
+      false
+    )
+  })
+
+  test('a GLM assignment carries no localBackend', () => {
+    const assignment = buildAssignment(
+      { id: 'glm-5.3', label: 'GLM-5.3', provider: 'glm', group: 'glm' },
+      'ollama'
+    )
+    assert.deepEqual(assignment, { provider: 'glm', modelId: 'glm-5.3' })
+  })
 })
 
 describe('localBackendLabel', () => {

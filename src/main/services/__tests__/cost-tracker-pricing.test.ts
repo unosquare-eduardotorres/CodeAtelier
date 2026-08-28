@@ -12,6 +12,8 @@ import { test, describe, summaryAsync } from './test-harness'
 const { estimateCostCents, estimateCostFromTotal, MODEL_PRICING } =
   require('../cost-tracker.service') as typeof import('../cost-tracker.service')
 
+import { isGlmModelId } from '../../../shared/constants'
+
 describe('CostTracker — pricing edge cases', () => {
   test('fable-5 → most expensive current model', () => {
     // Fable 5 pricing: inputPer1M=10.0, outputPer1M=50.0
@@ -118,6 +120,30 @@ describe('CostTracker — MODEL_PRICING completeness', () => {
       assert.ok(p.inputPer1M > 0, `${modelId} inputPer1M must be positive`)
       assert.ok(p.outputPer1M > 0, `${modelId} outputPer1M must be positive`)
       assert.ok(p.outputPer1M >= p.inputPer1M, `${modelId} output should be >= input price`)
+    }
+  })
+})
+
+describe('CostTracker — GLM is not priced in USD', () => {
+  // GLM ids are absent from MODEL_PRICING, so before the guard they fell through
+  // to DEFAULT_PRICING and were billed as Sonnet — fabricated dollars that could
+  // trip a USD hard-stop while the real credit quota was barely touched.
+  for (const modelId of ['glm-5.3', 'glm-5.3-flash', 'GLM-5.3', 'glm-6-future']) {
+    test(`${modelId} → zero USD, not the Sonnet default`, () => {
+      assert.equal(estimateCostCents(1_000_000, 1_000_000, modelId), 0)
+      assert.equal(estimateCostFromTotal(2_000_000, modelId), 0)
+    })
+  }
+
+  test('an unknown NON-GLM model still falls back to default pricing', () => {
+    // The guard must be narrow: only GLM is exempt, everything else keeps the
+    // conservative Sonnet estimate rather than silently costing nothing.
+    assert.equal(estimateCostCents(1_000_000, 1_000_000, 'some-unreleased-claude'), 1800)
+  })
+
+  test('no GLM model leaked into MODEL_PRICING', () => {
+    for (const modelId of Object.keys(MODEL_PRICING)) {
+      assert.equal(isGlmModelId(modelId), false, `${modelId} must not carry a USD price`)
     }
   })
 })

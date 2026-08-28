@@ -298,6 +298,24 @@ export class AgentSessionRepository extends BaseRepository<AgentSessionRow, Agen
     return result.changes
   }
 
+  /**
+   * Sessions for a workspace that started at or after an ISO timestamp.
+   * Used for rolling-window quota accounting (GLM Coding Plan credits).
+   */
+  findSince(workspaceId: string, sinceIso: string): AgentSession[] {
+    // datetime() on both sides, not a raw string compare: started_at holds a mix of
+    // SQL-written 'YYYY-MM-DD HH:MM:SS' and JS-written ISO-8601 values, and ' ' sorts
+    // before 'T', so a lexicographic compare would drop every SQL-written row.
+    const rows = this.db()
+      .prepare(
+        `SELECT * FROM agent_sessions
+         WHERE workspace_id = ? AND datetime(started_at) >= datetime(?)
+         ORDER BY started_at DESC`
+      )
+      .all(workspaceId, sinceIso) as AgentSessionRow[]
+    return rows.map(toModel)
+  }
+
   /** Get recent sessions (last N, for display) */
   getRecent(workspaceId: string, limit: number = 50): AgentSession[] {
     const rows = this.db()

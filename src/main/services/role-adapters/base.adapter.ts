@@ -341,6 +341,21 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   }
 
   /**
+   * GLM-6: Explicit per-run provider selection (the Grill / Council / Audit provider
+   * toggles). Set by adapters whose constructor accepts an `llmProvider` param.
+   *
+   * These flows have no conversation row and therefore no model snapshot, so this is
+   * the only channel through which the choice reaches provider-config resolution.
+   * `undefined` means "no explicit choice" — the workspace provider is used.
+   */
+  protected explicitLlmProvider: LLMProvider | undefined
+
+  /** GLM-6: Read by AgentSessionService.start() to override the workspace provider. */
+  getLlmProvider(): LLMProvider | undefined {
+    return this.explicitLlmProvider
+  }
+
+  /**
    * Pattern 3: Extend interaction timeout for local LLM providers.
    * Local models are much slower but still productive.
    */

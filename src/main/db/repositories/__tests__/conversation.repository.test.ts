@@ -41,6 +41,52 @@ if (!env) {
       assert.equal(conv.mode, 'build')
     })
 
+    // Regression: the llm_provider CHECK constraint admitted only
+    // ('claude', 'local-llm'), so the first GLM conversation ever created died
+    // at the INSERT with SQLITE_CONSTRAINT while every TypeScript-level test
+    // stayed green. Migration 147 widened it. Assert a real insert per
+    // provider, not a type-level cast — the constraint lives in SQLite.
+    for (const provider of ['claude', 'local-llm', 'glm'] as const) {
+      test(`create() persists llm_provider='${provider}' past the CHECK constraint`, () => {
+        const conv = conversationRepository.create(wsId, `${provider} chat`, 'plan', undefined, provider)
+        assert.equal(conv.llmProvider, provider)
+
+        const row = db
+          .prepare('SELECT llm_provider FROM conversations WHERE id = ?')
+          .get(conv.id) as { llm_provider: string }
+        assert.equal(row.llm_provider, provider)
+      })
+    }
+
+    // The second write path to llm_provider: CHAT_UPDATE_ROUTING re-points an
+    // existing chat via updateModelSnapshot, which hit the same CHECK constraint.
+    // Creating a GLM chat and switching an existing chat to GLM are separate
+    // failures, so they get separate tests.
+    test('updateModelSnapshot() can switch an existing conversation to glm', () => {
+      const conv = conversationRepository.create(wsId, 'Switch me')
+      assert.equal(conv.llmProvider, 'claude')
+
+      const snapshot = {
+        plan: { provider: 'glm', modelId: 'glm-5.3' },
+        build: { provider: 'glm', modelId: 'glm-5.3' }
+      }
+      const updated = conversationRepository.updateModelSnapshot(conv.id, snapshot as never, 'glm')
+
+      assert.equal(updated?.llmProvider, 'glm')
+      const row = db
+        .prepare('SELECT llm_provider FROM conversations WHERE id = ?')
+        .get(conv.id) as { llm_provider: string }
+      assert.equal(row.llm_provider, 'glm')
+    })
+
+    test('create() still rejects an unknown llm_provider', () => {
+      assert.throws(
+        () =>
+          conversationRepository.create(wsId, 'bogus', 'plan', undefined, 'not-a-provider' as never),
+        /CONSTRAINT/i
+      )
+    })
+
     test('findByWorkspace() returns conversations for workspace', () => {
       conversationRepository.create(wsId2, 'First')
       conversationRepository.create(wsId2, 'Second')

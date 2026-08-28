@@ -61,10 +61,26 @@ export interface OpenCodeProviderConfig {
   providerId: string
   /** Model ID within the provider (e.g. 'claude-sonnet-4-6', 'qwen3-coder:30b') */
   modelId: string
-  /** Base URL for custom/local providers */
+  /**
+   * Base URL for custom/local providers.
+   * GLM-1: For cloud/proxied providers this is used VERBATIM — the config writer
+   * never appends `/v1` to it (that would 404 against Z.ai's `…/coding/paas/v4`).
+   */
   baseUrl?: string
   /** API key (if required by the provider) */
   apiKey?: string
+  /**
+   * GLM-2: Context window limit to declare for this model, for custom (npm) providers
+   * whose models aren't in models.dev. Discovered at Test Connection time.
+   */
+  contextLimit?: number
+  /** GLM-2: Max output tokens to declare alongside `contextLimit`. */
+  outputLimit?: number
+  /**
+   * GLM-3: Housekeeping model ID (title generation, summarisation) within this same
+   * provider. `''` disables housekeeping; `undefined` uses the per-provider default.
+   */
+  smallModelId?: string | null
 }
 
 /**

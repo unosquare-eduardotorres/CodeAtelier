@@ -14,6 +14,7 @@ import { ChevronDown, ChevronRight, Layers, AlertTriangle, AlertCircle, Lock } f
 import { SettingsCard } from '@renderer/components/common'
 import {
   DEFAULT_MODEL_CONFIG,
+  GLM_MODELS,
   MODEL_ROLE_ROWS
 } from '../../../../../shared/constants'
 import { isOptionalRoleAction } from '../../../../../shared/model-role-binding'
@@ -51,6 +52,24 @@ export interface ModelRolesSectionProps {
   fallbackModel: string | undefined
   /** Persists the fallback model */
   onFallbackModelChange: (modelId: string) => void
+  /**
+   * GLM models discovered from the endpoint's /models on the last connection test.
+   * Falls back to the static catalogue — Z.ai's docs disagree on model IDs, so the
+   * discovered list is authoritative when we have one.
+   */
+  glmModels?: { id: string; label: string }[]
+}
+
+/** Human label for the provider named in the mixed-provider warning. */
+function providerLabel(provider: LLMProvider): string {
+  switch (provider) {
+    case 'claude':
+      return 'Claude'
+    case 'glm':
+      return 'GLM'
+    case 'local-llm':
+      return 'Local LLM'
+  }
 }
 
 // ─── Role Definitions ────────────────────────────────────
@@ -141,6 +160,7 @@ function RoleRow({
     () => modelOptions.filter((o) => o.group === 'local'),
     [modelOptions]
   )
+  const glmOptions = useMemo(() => modelOptions.filter((o) => o.group === 'glm'), [modelOptions])
 
   // Check if the selected local model is missing from the current server list
   const isUnavailable =
@@ -208,6 +228,15 @@ function RoleRow({
             {isUnavailable && <option value={selectedId}>⚠ {selectedId} (unavailable)</option>}
           </optgroup>
         )}
+        {glmOptions.length > 0 && (
+          <optgroup label="GLM (Z.ai)">
+            {glmOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.label}
+              </option>
+            ))}
+          </optgroup>
+        )}
       </select>
       {/* Thinking Budget — Phase C placeholder */}
       <select
@@ -239,11 +268,19 @@ export default function ModelRolesSection({
   localBackend,
   onModelRolesChange,
   fallbackModel,
-  onFallbackModelChange
+  onFallbackModelChange,
+  glmModels
 }: ModelRolesSectionProps): React.JSX.Element {
   const [blueprintExpanded, setBlueprintExpanded] = useState(false)
 
-  const modelOptions = useMemo(() => buildModelOptions(omlxModels), [omlxModels])
+  const glmCatalogue = useMemo(
+    () => glmModels ?? GLM_MODELS.map((m) => ({ id: m.id, label: m.label })),
+    [glmModels]
+  )
+  const modelOptions = useMemo(
+    () => buildModelOptions(omlxModels, glmCatalogue),
+    [omlxModels, glmCatalogue]
+  )
 
   // Check if all blueprint actions use the same model
   const blueprintAllSame = useMemo(() => {
@@ -271,7 +308,7 @@ export default function ModelRolesSection({
     const planProvider = modelRoles['specialist:plan']?.provider
     const buildProvider = modelRoles['specialist:build']?.provider
     if (planProvider && buildProvider && planProvider !== buildProvider) {
-      return planProvider === 'claude' ? 'Claude' : 'Local LLM'
+      return providerLabel(planProvider)
     }
     return null
   }, [modelRoles])
@@ -286,6 +323,7 @@ export default function ModelRolesSection({
     () => modelOptions.filter((o) => o.group === 'local'),
     [modelOptions]
   )
+  const glmOptions = useMemo(() => modelOptions.filter((o) => o.group === 'glm'), [modelOptions])
   const isBlueprintUnavailable =
     blueprintProvider === 'local-llm' && !localOptions.some((o) => o.id === blueprintPrimaryModel)
 
@@ -293,7 +331,8 @@ export default function ModelRolesSection({
   const isFallbackUnavailable =
     !!fallbackModel &&
     !claudeOptions.some((o) => o.id === fallbackModel) &&
-    !localOptions.some((o) => o.id === fallbackModel)
+    !localOptions.some((o) => o.id === fallbackModel) &&
+    !glmOptions.some((o) => o.id === fallbackModel)
 
   /** Assign a model to multiple actions — builds overrides and calls instant-persist */
   const handleAssign = useCallback(
@@ -413,6 +452,15 @@ export default function ModelRolesSection({
                         ⚠ {blueprintPrimaryModel} (unavailable)
                       </option>
                     )}
+                  </optgroup>
+                )}
+                {glmOptions.length > 0 && (
+                  <optgroup label="GLM (Z.ai)">
+                    {glmOptions.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </optgroup>
                 )}
               </select>
@@ -570,6 +618,15 @@ export default function ModelRolesSection({
                   {isFallbackUnavailable && (
                     <option value={fallbackModel}>⚠ {fallbackModel} (unavailable)</option>
                   )}
+                </optgroup>
+              )}
+              {glmOptions.length > 0 && (
+                <optgroup label="GLM (Z.ai)">
+                  {glmOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id}>
+                      {opt.label}
+                    </option>
+                  ))}
                 </optgroup>
               )}
             </select>

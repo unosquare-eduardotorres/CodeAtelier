@@ -63,6 +63,8 @@ import type {
   CodeGraphIndexingState,
   ContextUsage,
   BugRecord,
+  GlmQuotaStatus,
+  GlmConnectionResult,
   AuditRun,
   AuditPlanRecord,
   AuditMode,
@@ -935,6 +937,14 @@ interface Api {
     dailyWarning: boolean
     dailyExceeded: boolean
   }>
+  /** GLM Coding Plan credit quota. Resolves to null when the workspace isn't on GLM. */
+  getGlmQuota: (args: { workspaceId: string }) => Promise<GlmQuotaStatus | null>
+  /** Probe {baseUrl}/models. Omit apiKey to use the stored (encrypted) one. */
+  glmTestConnection: (args: {
+    workspacePath?: string
+    baseUrl: string
+    apiKey?: string
+  }) => Promise<GlmConnectionResult>
   onBudgetWarning: (
     callback: (data: {
       workspaceId: string

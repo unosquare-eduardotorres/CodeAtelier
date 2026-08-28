@@ -54,6 +54,7 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
     this.skillContent = params.skillContent
     this.roundContext = params.roundContext
     this.llmProvider = params.llmProvider ?? 'claude'
+    this.explicitLlmProvider = params.llmProvider
     this.agentId = `audit-${params.trackId}-${params.workspaceId}`
   }
 

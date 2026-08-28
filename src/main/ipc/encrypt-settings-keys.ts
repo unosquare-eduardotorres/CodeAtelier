@@ -19,7 +19,7 @@ function getSafeStorage(): typeof import('electron').safeStorage {
 }
 
 /** Settings keys that contain API secrets and must be encrypted at rest. */
-const STATIC_ENCRYPTED_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey']
+const STATIC_ENCRYPTED_KEYS = ['anthropicApiKey', 'openCodeApiKey', 'localApiKey', 'glmApiKey']
 
 /**
  * Static keys plus every `secret: true` credential field declared by an external

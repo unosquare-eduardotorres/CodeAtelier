@@ -36,4 +36,11 @@ export function registerCostIpc(): void {
     const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.COST_CHECK_BUDGET)
     return costTrackerService.checkBudget(workspaceId)
   })
+
+  ipcMain.handle(IPC_CHANNELS.COST_GET_GLM_QUOTA, (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.COST_GET_GLM_QUOTA)
+    const workspaceId = requireString(args, 'workspaceId', IPC_CHANNELS.COST_GET_GLM_QUOTA)
+    return costTrackerService.getGlmQuotaStatus(workspaceId)
+  })
 }

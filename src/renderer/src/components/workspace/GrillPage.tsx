@@ -390,7 +390,7 @@ export default function GrillPage({
             <div className="flex items-center gap-3 px-1">
               <span className="text-xs font-medium text-text-secondary">Provider:</span>
               <div className="flex rounded-lg border border-border-subtle overflow-hidden">
-                {(['claude', 'local-llm'] as LLMProvider[]).map((prov) => (
+                {(['claude', 'local-llm', 'glm'] as LLMProvider[]).map((prov) => (
                   <button
                     key={prov}
                     className={`px-3 py-1 text-xs font-medium transition-colors ${
@@ -400,7 +400,7 @@ export default function GrillPage({
                     }`}
                     onClick={() => session.setGrillProvider(prov)}
                   >
-                    {prov === 'claude' ? '☁️ Cloud' : '🖥️ Local'}
+                    {prov === 'claude' ? '☁️ Cloud' : prov === 'local-llm' ? '🖥️ Local' : '✨ GLM'}
                   </button>
                 ))}
               </div>

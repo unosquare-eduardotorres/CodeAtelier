@@ -62,6 +62,9 @@ export default function ConfigureTab({ config }: ConfigureTabProps): React.JSX.E
         onUnloadOmlxModel={config.handleUnloadOmlxModel}
         ollamaEmbeddingModel={config.ollamaEmbeddingModel}
         onOllamaEmbeddingModelChange={config.handleOllamaEmbeddingModelChange}
+        workspaceId={config.activeWorkspace?.id}
+        workspacePath={config.activeWorkspace?.repoPath}
+        onGlmModelsDiscovered={config.applyGlmDiscoveredModels}
       />
 
       {/* ── Model Routing (cross-provider) ── */}
@@ -70,6 +73,7 @@ export default function ConfigureTab({ config }: ConfigureTabProps): React.JSX.E
         claudeModelOverrides={config.claudeModelOverrides}
         workspaceProvider={config.derivedProvider}
         omlxModels={config.omlxChatModels}
+        glmModels={config.glmModels}
         localBackend={config.localLlmBackend}
         onModelRolesChange={config.handleModelRolesChange}
         fallbackModel={config.fallbackModel}

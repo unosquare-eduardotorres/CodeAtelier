@@ -1,8 +1,16 @@
 import log from 'electron-log/main'
 import { EventEmitter } from 'node:events'
 import { getDatabase } from '../db'
-import { agentSessionRepository, workspaceRepository } from '../db/repositories'
+import {
+  agentSessionRepository,
+  conversationRepository,
+  workspaceRepository
+} from '../db/repositories'
 import { eventLoggerService } from './event-logger.service'
+import { buildGlmQuotaStatus, estimateGlmCredits } from './glm-credits'
+import type { GlmQuotaStatus } from './glm-credits'
+import { parseDbTimestamp } from '../../shared/db-time'
+import { isGlmModelId } from '../../shared/constants'
 
 const costLogger = log.scope('CostTracker')
 
@@ -10,6 +18,10 @@ const costLogger = log.scope('CostTracker')
  * Model pricing table — $/1M tokens for input and output.
  * Based on Claude pricing as of May 2026.
  * Updated model IDs should be added here as new models are released.
+ *
+ * Claude only. GLM runs on a Coding Plan subscription billed in credits, not dollars —
+ * see `getGlmQuotaStatus` below and `glm-credits.ts`. Do not add GLM models here: the
+ * unknown-model fallback would silently price them as Sonnet.
  */
 export const MODEL_PRICING: Record<string, { inputPer1M: number; outputPer1M: number }> = {
   // Current models
@@ -43,6 +55,12 @@ export function estimateCostCents(
   outputTokens: number,
   modelId?: string
 ): number {
+  // GLM has no USD price. Without this it falls through to DEFAULT_PRICING and
+  // is billed as Sonnet ($3/$15) — invented dollars that show up as confident
+  // figures on the dashboard and can trip a USD budget hard-stop, halting real
+  // work over spend that never happened. Credits are the real meter:
+  // `getGlmQuotaStatus`.
+  if (isGlmModelId(modelId)) return 0
   const pricing = modelId ? (MODEL_PRICING[modelId] ?? DEFAULT_PRICING) : DEFAULT_PRICING
   const inputCost = (inputTokens / 1_000_000) * pricing.inputPer1M
   const outputCost = (outputTokens / 1_000_000) * pricing.outputPer1M
@@ -107,13 +125,21 @@ class CostTrackerService extends EventEmitter {
     const summary = agentSessionRepository.getTokenSummary(workspaceId)
     const sessions = agentSessionRepository.findByWorkspace(workspaceId)
 
+    // GLM bills in Coding Plan credits, so every USD figure here would be invented
+    // at the Sonnet default. Resolve it from the workspace, the way checkBudget does
+    // — NOT from `session.modelUsed`, which is NULL for every production row
+    // (agentSessionRepository.create() is only ever called without a model id).
+    // Tokens stay real; only the dollar figure is suppressed.
+    const isGlm = this.isGlmWorkspace(workspaceId)
+
     let totalCostCents = 0
     const agentCosts = new Map<string, { costCents: number; tokens: number; sessions: number }>()
 
     for (const session of sessions) {
       // Use actual input/output breakdown when available (v37+), fallback to estimate for legacy sessions
-      const cost =
-        session.inputTokens > 0 || session.outputTokens > 0
+      const cost = isGlm
+        ? 0
+        : session.inputTokens > 0 || session.outputTokens > 0
           ? estimateCostCents(
               session.inputTokens,
               session.outputTokens,
@@ -153,6 +179,11 @@ class CostTrackerService extends EventEmitter {
    * Gets the estimated cost for a single conversation.
    */
   getConversationCostCents(conversationId: string): number {
+    // The aggregate below has no model column, so `estimateCostCents` would apply
+    // the Sonnet default to GLM tokens. Provider is a property of the
+    // conversation, so resolve it here rather than inventing a price.
+    if (conversationRepository.findById(conversationId)?.llmProvider === 'glm') return 0
+
     const summary = agentSessionRepository.getConversationTokenSummary(conversationId)
     // Use actual breakdown when available (v37+), fallback to estimate for legacy data
     if (summary.totalInputTokens > 0 || summary.totalOutputTokens > 0) {
@@ -170,6 +201,10 @@ class CostTrackerService extends EventEmitter {
     const db = getDatabase()
     const rows = db
       .prepare(
+        // Tokens are counted for every session — they are real regardless of provider.
+        // Pricing is gated below on the workspace provider. This deliberately does NOT
+        // filter on `model_used`: that column is NULL for every production row, so a
+        // `model_used LIKE 'glm-%'` branch here would never match anything.
         `SELECT conversation_id,
                 COALESCE(SUM(token_usage), 0) as total_tokens,
                 COALESCE(SUM(input_tokens), 0) as total_input_tokens,
@@ -186,14 +221,72 @@ class CostTrackerService extends EventEmitter {
       total_output_tokens: number
     }[]
 
+    const isGlm = this.isGlmWorkspace(workspaceId)
+
     return rows.map((r) => ({
       conversationId: r.conversation_id,
       totalTokens: r.total_tokens,
-      costCents:
-        r.total_input_tokens > 0 || r.total_output_tokens > 0
+      costCents: isGlm
+        ? 0
+        : r.total_input_tokens > 0 || r.total_output_tokens > 0
           ? estimateCostCents(r.total_input_tokens, r.total_output_tokens)
           : estimateCostFromTotal(r.total_tokens)
     }))
+  }
+
+  /**
+   * Whether a workspace is billed on the GLM Coding Plan (credits, not USD).
+   *
+   * Resolved from workspace settings on purpose. The per-session alternative,
+   * `agent_sessions.model_used`, is never written on the production path, so any
+   * model-based GLM check is dead code.
+   */
+  private isGlmWorkspace(workspaceId: string): boolean {
+    try {
+      return workspaceRepository.getSettings(workspaceId).llmProvider === 'glm'
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * GLM Coding Plan quota for a workspace — credits used against the rolling 5-hour
+   * and weekly windows.
+   *
+   * Returns `null` for non-GLM workspaces so callers show the USD view instead. A USD
+   * cap is meaningless on a subscription, and the USD figure for GLM would be invented.
+   */
+  getGlmQuotaStatus(workspaceId: string): GlmQuotaStatus | null {
+    const settings = workspaceRepository.getSettings(workspaceId)
+    if (settings.llmProvider !== 'glm') return null
+
+    const now = new Date()
+    const creditsSince = (windowMs: number): number => {
+      const since = new Date(now.getTime() - windowMs).toISOString()
+      return agentSessionRepository.findSince(workspaceId, since).reduce(
+        (sum, s) =>
+          sum +
+          estimateGlmCredits(
+            {
+              // `inputTokens` is the fresh (uncached) count; cache reads are the
+              // cached-input term, which bills ~4x cheaper and must not be folded in.
+              inputTokens: s.inputTokens,
+              cachedInputTokens: s.cacheReadTokens,
+              outputTokens: s.outputTokens
+            },
+            s.modelUsed ?? (settings.glmModel as string) ?? '',
+            // Peak/off-peak is a property of when the work ran, not of now.
+            parseDbTimestamp(s.startedAt)
+          ),
+        0
+      )
+    }
+
+    return buildGlmQuotaStatus(
+      creditsSince(5 * 60 * 60_000),
+      creditsSince(7 * 24 * 60 * 60_000),
+      now
+    )
   }
 
   /**
@@ -201,6 +294,22 @@ class CostTrackerService extends EventEmitter {
    */
   checkBudget(workspaceId: string): BudgetStatus {
     const settings = workspaceRepository.getSettings(workspaceId)
+
+    // A USD cap cannot be enforced on a subscription billed in credits. Leaving
+    // it live meant the executor's `error_max_budget_usd` path could stop real
+    // work on spend that was never incurred, while the meter that actually
+    // matters (the Coding Plan quota) went unchecked. GLM workspaces surface
+    // `getGlmQuotaStatus` instead.
+    if (settings.llmProvider === 'glm') {
+      return {
+        currentCostCents: 0,
+        dailyBudgetCents: 0,
+        sessionBudgetCents: 0,
+        dailyPercentUsed: 0,
+        dailyWarning: false,
+        dailyExceeded: false
+      }
+    }
 
     const dailyBudgetCents = (settings.dailyBudgetUsd ?? 0) * 100
     const sessionBudgetCents = (settings.sessionBudgetUsd ?? 0) * 100

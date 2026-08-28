@@ -60,6 +60,7 @@ export class GreenfieldGrillRoleAdapter extends BaseRoleAdapter {
     this.iterationHistory = params.iterationHistory
     this.previousScore = params.previousScore
     this.llmProvider = params.llmProvider ?? 'claude'
+    this.explicitLlmProvider = params.llmProvider
     this.agentId = `greenfield-grill-${params.trackId}-${Date.now()}`
   }
 

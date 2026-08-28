@@ -20,7 +20,8 @@ import {
   Undo2,
   History,
   ScrollText,
-  SearchCheck
+  SearchCheck,
+  Target
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTodoStore } from '@renderer/store/todo.store'
@@ -151,12 +152,30 @@ const SLASH_COMMANDS: readonly SlashCommand[] = [
     iconColor: 'text-emerald-400'
   },
   {
+    command: '/goal',
+    description: 'Set a completion condition the agent works toward',
+    icon: Target,
+    iconColor: 'text-emerald-400'
+  },
+  {
     command: '/help',
     description: 'Show available commands',
     icon: HelpCircle,
     iconColor: 'text-info'
   }
 ] as const
+
+/**
+ * Whether the provider can *enforce* a goal or merely be advised by it.
+ *
+ * Only the Claude CLI has the stop-hook evaluator that re-checks the condition
+ * before letting the agent stop. Everything else runs through OpenCode, where the
+ * condition is injected into the system prompt and nothing blocks an early stop.
+ * Saying "enforced" to a GLM user would be a lie the UI cannot back up.
+ */
+function goalIsEnforced(provider: LLMProvider): boolean {
+  return provider === 'claude'
+}
 
 // Extended help descriptions for /help output
 const HELP_DESCRIPTIONS: Record<string, string> = {
@@ -175,7 +194,20 @@ const HELP_DESCRIPTIONS: Record<string, string> = {
   '/council': 'Run the LLM Council — 5 independent AI advisors review and cross-examine your plan',
   '/audit':
     'Post-implementation audit — checks wiring, bugs, tests, complexity, dead code, and runs a premortem',
+  '/goal': 'Set a completion condition — `/goal all tests pass and the PR is opened`',
   '/help': 'Show available commands'
+}
+
+/** Provider-specific help text, overriding HELP_DESCRIPTIONS where enforcement differs. */
+function helpDescription(command: string, provider: LLMProvider): string | undefined {
+  if (command === '/goal' && !goalIsEnforced(provider)) {
+    return (
+      'Set a completion condition — `/goal all tests pass`. ' +
+      '**Advisory on this provider:** the condition is given to the model, but only Claude ' +
+      'enforces it with a stop-hook evaluator.'
+    )
+  }
+  return HELP_DESCRIPTIONS[command]
 }
 
 // ── Audit prompts ──
@@ -500,10 +532,42 @@ export function useSlashCommands(opts: UseSlashCommandsOptions): UseSlashCommand
           await opts.sendMessage(getAuditPrompt(opts.currentProvider))
         },
 
+        '/goal': async () => {
+          const condition = trimmed.replace(/^\/goal\s*/i, '').trim()
+          if (!condition) {
+            opts.appendLocalMessage(
+              'Usage: `/goal <condition>` — e.g. `/goal all tests pass and the PR is opened`'
+            )
+            return
+          }
+          const enforced = goalIsEnforced(opts.currentProvider)
+          try {
+            await window.api.chatSetGoal({
+              conversationId: opts.currentConversationId,
+              goal: condition,
+              goalMode: enforced ? 'enforce' : 'advisory'
+            })
+            opts.appendLocalMessage(
+              enforced
+                ? `**Goal set.** The agent will work until: ${condition}`
+                : `**Goal set (advisory).** The agent is told to work until: ${condition}\n\n` +
+                    'This provider has no stop-hook evaluator, so nothing prevents it from stopping ' +
+                    'early — check the result yourself.'
+            )
+          } catch (err) {
+            opts.appendLocalMessage(
+              `**Goal failed:** ${err instanceof Error ? err.message : String(err)}`
+            )
+          }
+        },
+
         '/help': () => {
           const helpLines = SLASH_COMMANDS.filter(
             (c) => !c.providers || c.providers.includes(opts.currentProvider)
-          ).map((c) => `**\`${c.command}\`** — ${HELP_DESCRIPTIONS[c.command] ?? c.description}`)
+          ).map(
+            (c) =>
+              `**\`${c.command}\`** — ${helpDescription(c.command, opts.currentProvider) ?? c.description}`
+          )
           opts.appendLocalMessage(`### Available Commands\n\n${helpLines.join('\n')}`)
         }
       }

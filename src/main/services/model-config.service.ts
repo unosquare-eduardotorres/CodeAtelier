@@ -1,5 +1,7 @@
 import {
   DEFAULT_MODEL_CONFIG,
+  GLM_DEFAULT_BASE_URL,
+  GLM_DEFAULT_MODEL_ID,
   OLLAMA_DEFAULT_HOST,
   OLLAMA_DEFAULT_PORT,
   OMLX_DEFAULT_PORT
@@ -7,6 +9,7 @@ import {
 import type {
   ConversationModelSnapshot,
   ExecutorBackend,
+  GlmEndpointMode,
   LLMProvider,
   LocalLLMBackend,
   LocalLLMConfig,
@@ -33,10 +36,37 @@ export interface OpenCodeProviderSettings {
   openCodeProvider: string
   /** Model ID within the provider */
   openCodeModel: string
-  /** Base URL for custom/local providers */
+  /**
+   * Base URL for custom/local providers.
+   * GLM-1: For cloud/proxied providers this is the user's URL verbatim — the config
+   * writer must not normalise or suffix it.
+   */
   openCodeBaseUrl?: string
   /** API key for the provider */
   openCodeApiKey?: string
+  /** GLM-2: Context limit to declare for custom providers absent from models.dev. */
+  openCodeContextLimit?: number
+  /** GLM-2: Output limit to declare alongside `openCodeContextLimit`. */
+  openCodeOutputLimit?: number
+  /**
+   * GLM-3: Housekeeping model within the same provider. `''` disables housekeeping;
+   * `undefined` uses the provider default.
+   */
+  openCodeSmallModel?: string | null
+}
+
+/** Resolved GLM (Z.ai) connection settings for a workspace. */
+export interface GlmConfig {
+  endpointMode: GlmEndpointMode
+  /** Used VERBATIM — never normalised, never suffixed with /v1. */
+  baseUrl: string
+  /** Decrypted API key. Optional in proxy mode, where the proxy may inject auth. */
+  apiKey?: string
+  modelId: string
+  /** `''` disables housekeeping entirely; `undefined` means "use the Flash default". */
+  smallModelId?: string
+  contextLimit?: number
+  outputLimit?: number
 }
 
 /**
@@ -63,10 +93,13 @@ class ModelConfigService {
 
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
 
-    // Check modelRoles (structured cross-provider path) — Claude only
+    // Check modelRoles (structured cross-provider path) — Claude only.
+    // Match on 'claude' explicitly rather than "not local": with GLM in the union,
+    // a negative test would hand a caller expecting a Claude model ID something like
+    // 'glm-5.3'. Non-Claude assignments fall through to the Claude default instead.
     const roles = (settings?.modelRoles ?? {}) as ModelRoleMap
     const roleAssignment = roles[action]
-    if (roleAssignment?.modelId && roleAssignment.provider !== 'local-llm') {
+    if (roleAssignment?.modelId && roleAssignment.provider === 'claude') {
       return roleAssignment.modelId
     }
 
@@ -88,10 +121,11 @@ class ModelConfigService {
 
     const settings = workspaceRepository.getSettings(workspaceId)
 
-    // Check modelRoles (structured cross-provider path) — Claude only
+    // Check modelRoles (structured cross-provider path) — Claude only.
+    // See getModel() above: an explicit 'claude' match, not "not local".
     const roles = (settings?.modelRoles ?? {}) as ModelRoleMap
     const roleAssignment = roles[action]
-    if (roleAssignment?.modelId && roleAssignment.provider !== 'local-llm') {
+    if (roleAssignment?.modelId && roleAssignment.provider === 'claude') {
       return roleAssignment.modelId
     }
 
@@ -181,6 +215,36 @@ class ModelConfigService {
     return this.getProvider(workspacePath) === 'local-llm'
   }
 
+  /** Check if workspace uses the GLM (Z.ai) provider */
+  isGlmProvider(workspacePath: string | undefined): boolean {
+    return this.getProvider(workspacePath) === 'glm'
+  }
+
+  /**
+   * Resolve GLM connection settings for a workspace.
+   *
+   * The base URL is returned exactly as stored. In proxy mode the API key is
+   * genuinely optional — a local proxy commonly injects the Authorization header
+   * itself, and demanding a key here would block that setup.
+   */
+  getGlmConfig(workspacePath: string): GlmConfig {
+    const settings = workspaceRepository.getSettingsByPath(workspacePath)
+    const endpointMode = (settings?.glmEndpointMode as GlmEndpointMode) ?? 'zai-coding'
+    const smallModel = settings?.glmSmallModel as string | undefined
+    return {
+      endpointMode,
+      baseUrl: (settings?.glmBaseUrl as string) || GLM_DEFAULT_BASE_URL,
+      apiKey: decryptSettingsKey(
+        settings?.glmApiKey as string | undefined,
+        !!settings?.glmApiKeyEncrypted
+      ),
+      modelId: (settings?.glmModel as string) || GLM_DEFAULT_MODEL_ID,
+      smallModelId: smallModel,
+      contextLimit: settings?.glmContextLimit as number | undefined,
+      outputLimit: settings?.glmOutputLimit as number | undefined
+    }
+  }
+
   /**
    * S14: Get the local LLM backend for a workspace.
    * Returns 'omlx' | 'ollama' | undefined (undefined if not a local provider).
@@ -217,12 +281,37 @@ class ModelConfigService {
    * Returns default Anthropic config if no OpenCode settings are configured.
    *
    * Phase 4C: Multi-provider support via OpenCode.
+   *
+   * GLM-6: `providerOverride` is an *explicit* per-run provider selection (the
+   * Grill / Council / Audit provider toggles). Those flows have no conversation
+   * row, so without this the config was always resolved from the workspace
+   * default — a user picking GLM on a Claude workspace silently ran against
+   * Anthropic. The override only replaces provider identity; connection details
+   * still come from that provider's live workspace settings.
    */
-  getOpenCodeConfig(workspacePath: string): OpenCodeProviderSettings {
+  getOpenCodeConfig(
+    workspacePath: string,
+    providerOverride?: LLMProvider
+  ): OpenCodeProviderSettings {
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
+    const provider = providerOverride ?? settings?.llmProvider
+
+    // GLM: OpenAI-compatible custom provider, reached directly or via a local proxy.
+    if (provider === 'glm') {
+      const glm = this.getGlmConfig(workspacePath)
+      return {
+        openCodeProvider: 'glm',
+        openCodeModel: glm.modelId,
+        openCodeBaseUrl: glm.baseUrl,
+        openCodeApiKey: glm.apiKey,
+        openCodeContextLimit: glm.contextLimit,
+        openCodeOutputLimit: glm.outputLimit,
+        openCodeSmallModel: glm.smallModelId
+      }
+    }
 
     // If workspace uses local LLM, auto-configure Ollama provider
-    if (settings?.llmProvider === 'local-llm') {
+    if (provider === 'local-llm') {
       const localConfig = this.getLocalLLMConfig(workspacePath)
       return {
         openCodeProvider: localConfig.backend === 'omlx' ? 'omlx' : 'ollama',

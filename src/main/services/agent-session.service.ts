@@ -23,6 +23,7 @@ import type {
   ConversationMode,
   ControlToolState,
   CostPreference,
+  GlmMcpServerId,
   GrillQuestion,
   ImageAttachment,
   LLMProvider,
@@ -65,6 +66,8 @@ import { isTurnPoisoned } from './turn-poison'
 import { openCodeExecutor } from './opencode-executor'
 import type { OpenCodeExecuteResult } from './opencode-executor'
 import { openCodeConfigWriter } from './opencode-config-writer'
+import { buildGlmRemoteMcpServers } from './glm-mcp'
+import { buildGoalPromptSection } from './goal-condition'
 import { openCodeAgentWriter } from './opencode-agent-writer'
 import { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import { elicitationService } from './elicitation.service'
@@ -75,6 +78,7 @@ import {
   resolveOpencodePath
 } from '../../shared/opencode-cli-path'
 import { resolveOpenCodeProviderFromSnapshot } from './snapshot-model-resolver'
+import type { OpenCodeProviderConfig } from './snapshot-model-resolver'
 import { trackService } from './track.service'
 import type { TrackOwnerKind } from '../../shared/track-types'
 import type { McpFeatureFlags } from './workspace-mcp-config'
@@ -237,6 +241,13 @@ export class AgentSessionService extends AgentBaseService {
   private currentMode: ConversationMode = 'plan'
   private costPreference: CostPreference = 'balanced'
   private llmProvider: LLMProvider = 'claude'
+  /**
+   * GLM-6: Explicit per-run provider selection supplied by the adapter (the Grill /
+   * Council / Audit provider toggles). Undefined for workspace-driven sessions.
+   * These flows have no conversation row, so this is the only signal that survives
+   * to provider-config resolution.
+   */
+  private providerOverride: LLMProvider | undefined
   /** Active executor backend — derived from llmProvider on start(). Default: 'cli'. */
   private executorBackend: ExecutorBackend = 'cli'
 
@@ -801,6 +812,21 @@ export class AgentSessionService extends AgentBaseService {
       const settings = workspace ? workspaceRepository.getSettings(workspace.id) : {}
       this.costPreference = settings.costPreference || 'balanced'
       this.llmProvider = settings.llmProvider || 'claude'
+      // GLM-6: An adapter-supplied provider is an explicit user choice for this run
+      // (Grill/Council/Audit toggles) and outranks the workspace default. Without it
+      // the toggle was decorative: backend and provider config both came from the
+      // workspace, so "GLM" on a Claude workspace ran against Anthropic.
+      const adapterProvider =
+        'getLlmProvider' in this.adapter
+          ? (this.adapter as { getLlmProvider(): LLMProvider | undefined }).getLlmProvider()
+          : undefined
+      if (adapterProvider && adapterProvider !== this.llmProvider) {
+        this.log.info(
+          `[start] Explicit provider '${adapterProvider}' overrides workspace provider '${this.llmProvider}'`
+        )
+        this.providerOverride = adapterProvider
+        this.llmProvider = adapterProvider
+      }
       // Derive executor backend from provider: claude → CLI, everything else → OpenCode.
       // No longer reads settings.executorBackend (was user-configurable, now derived).
       const storedBackend = settings.executorBackend as string | undefined
@@ -1984,10 +2010,21 @@ export class AgentSessionService extends AgentBaseService {
           const { text: ocPrompt, images: ocImages } = splitContentBlocks(
             cliPromptInput as string | Array<{ type: string; [k: string]: unknown }>
           )
+          // GLM-4: OpenCode has no `/goal` stop-hook evaluator, so the condition is
+          // delivered through the system prompt only — advisory, not enforced. The
+          // same resolution order as the CLI path (explicit opts, then adapter).
+          const ocGoal =
+            opts.goal ??
+            ('getGoalCondition' in this.adapter
+              ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
+              : null)
+          const ocSystemPrompt = ocGoal
+            ? systemPrompt + (buildGoalPromptSection(ocGoal) ?? '')
+            : systemPrompt
           executorStream = this.executeOpenCodeStream({
             prompt: ocPrompt,
             images: ocImages,
-            systemPrompt,
+            systemPrompt: ocSystemPrompt,
             isBuildMode,
             abortController,
             mcpResult
@@ -2355,8 +2392,10 @@ export class AgentSessionService extends AgentBaseService {
   }): AsyncGenerator<StreamChunk> {
     const { prompt, images, isBuildMode, abortController } = params
 
-    // Resolve provider config from conversation snapshot (snapshot-first, no workspace bleed)
-    let providerConfig: { providerId: string; modelId: string; baseUrl?: string; apiKey?: string }
+    // Resolve provider config from conversation snapshot (snapshot-first, no workspace bleed).
+    // Typed as the full OpenCodeProviderConfig on purpose: a narrower literal type here
+    // would silently drop GLM's contextLimit/outputLimit/smallModelId on the next refactor.
+    let providerConfig: OpenCodeProviderConfig
     try {
       providerConfig = this.resolveOpenCodeProviderConfig()
     } catch {
@@ -2622,6 +2661,17 @@ export class AgentSessionService extends AgentBaseService {
         contextWindowConfident = resolved.confident
       }
 
+      // GLM-7: Z.ai's Web Search / Web Reader are remote MCP endpoints, mounted only
+      // when the workspace opted in. Every call is credit-billed.
+      const remoteMcpServers =
+        params.providerConfig.providerId === 'glm' && this.workspacePath
+          ? buildGlmRemoteMcpServers(
+              workspaceRepository.getSettingsByPath(this.workspacePath)?.glmMcpActive as
+                Partial<Record<GlmMcpServerId, boolean>> | undefined,
+              params.providerConfig.apiKey
+            )
+          : undefined
+
       const configPath = openCodeConfigWriter.writeConfig({
         workspacePath: this.workspacePath!,
         workspaceId: this.workspaceId,
@@ -2632,7 +2682,8 @@ export class AgentSessionService extends AgentBaseService {
         ipcSocketPath: socketPath,
         isLocalProvider: isLocal,
         contextTier,
-        contextWindowConfident
+        contextWindowConfident,
+        ...(remoteMcpServers ? { remoteMcpServers } : {})
       })
 
       this._openCodeConfigPath = configPath
@@ -3007,13 +3058,10 @@ export class AgentSessionService extends AgentBaseService {
    * (baseUrl, apiKey) always come from live workspace settings.
    *
    * Falls back to live workspace settings when no snapshot exists (legacy chats).
+   * An explicit per-run provider selection (`providerOverride`) is honoured on that
+   * fallback path — see GLM-6 in resolveOpenCodeProviderFromSnapshot.
    */
-  private resolveOpenCodeProviderConfig(_llmProvider?: LLMProvider): {
-    providerId: string
-    modelId: string
-    baseUrl: string | undefined
-    apiKey: string | undefined
-  } {
+  private resolveOpenCodeProviderConfig(): OpenCodeProviderConfig {
     if (!this.workspacePath) {
       return {
         providerId: 'anthropic',
@@ -3026,7 +3074,8 @@ export class AgentSessionService extends AgentBaseService {
     return resolveOpenCodeProviderFromSnapshot(
       this.currentConversationId,
       this.workspacePath,
-      this.currentMode !== 'plan'
+      this.currentMode !== 'plan',
+      this.providerOverride
     )
   }
 }

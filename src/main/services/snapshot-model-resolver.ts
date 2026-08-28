@@ -11,7 +11,12 @@
  * - Settings changes don't affect existing conversations
  */
 
-import type { ConversationModelSnapshot, ModelAction, ResolvedAssignment } from '../../shared/types'
+import type {
+  ConversationModelSnapshot,
+  LLMProvider,
+  ModelAction,
+  ResolvedAssignment
+} from '../../shared/types'
 import {
   conversationRepository,
   blueprintRepository,
@@ -102,8 +107,15 @@ function resolveFromSnapshot(
 export interface OpenCodeProviderConfig {
   providerId: string
   modelId: string
+  /** Used VERBATIM for cloud/proxied providers — the config writer appends nothing. */
   baseUrl: string | undefined
   apiKey: string | undefined
+  /** GLM-2: Context limit to declare for providers absent from models.dev. */
+  contextLimit?: number
+  /** GLM-2: Output limit to declare alongside `contextLimit`. */
+  outputLimit?: number
+  /** GLM-3: Housekeeping model within this provider; `''` disables housekeeping. */
+  smallModelId?: string | null
 }
 
 /**
@@ -116,19 +128,28 @@ export interface OpenCodeProviderConfig {
  * Falls back to live resolution via modelConfigService.getOpenCodeConfig() when:
  * - conversationId is null
  * - conversation has no snapshot (legacy conversations, pre-migration 111)
+ *
+ * GLM-6: `providerOverride` carries an explicit per-run provider choice (Grill /
+ * Council / Audit toggles). It applies to the fallback path only — snapshot-backed
+ * conversations keep their frozen identity. Those toggle-driven flows never have a
+ * snapshot, so without it they resolved to the workspace default provider.
  */
 export function resolveOpenCodeProviderFromSnapshot(
   conversationId: string | null,
   workspacePath: string,
-  isBuildMode: boolean
+  isBuildMode: boolean,
+  providerOverride?: LLMProvider
 ): OpenCodeProviderConfig {
   const fallback = (): OpenCodeProviderConfig => {
-    const config = modelConfigService.getOpenCodeConfig(workspacePath)
+    const config = modelConfigService.getOpenCodeConfig(workspacePath, providerOverride)
     return {
       providerId: config.openCodeProvider,
       modelId: config.openCodeModel,
       baseUrl: config.openCodeBaseUrl,
-      apiKey: config.openCodeApiKey
+      apiKey: config.openCodeApiKey,
+      contextLimit: config.openCodeContextLimit,
+      outputLimit: config.openCodeOutputLimit,
+      smallModelId: config.openCodeSmallModel
     }
   }
 
@@ -167,6 +188,22 @@ function mapAssignmentToOpenCodeConfig(
   assignment: ResolvedAssignment,
   workspacePath: string
 ): OpenCodeProviderConfig {
+  if (assignment.provider === 'glm') {
+    // GLM-5: Identity from the snapshot, connection details from live settings.
+    // Without this branch a GLM assignment fell through to the `anthropic` provider
+    // below and was written into opencode.json as Anthropic.
+    const glm = modelConfigService.getGlmConfig(workspacePath)
+    return {
+      providerId: 'glm',
+      modelId: assignment.modelId,
+      baseUrl: glm.baseUrl,
+      apiKey: glm.apiKey,
+      contextLimit: glm.contextLimit,
+      outputLimit: glm.outputLimit,
+      smallModelId: glm.smallModelId
+    }
+  }
+
   if (assignment.provider === 'local-llm') {
     // Local LLM — derive providerId from localBackend, infrastructure from local config
     const providerId = assignment.localBackend === 'omlx' ? 'omlx' : 'ollama'

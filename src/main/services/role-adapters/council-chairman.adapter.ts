@@ -50,6 +50,7 @@ export class CouncilChairmanRoleAdapter extends BaseRoleAdapter {
     this.reviews = params.reviews
     this.peerReviews = params.peerReviews
     this.llmProvider = params.llmProvider ?? 'claude'
+    this.explicitLlmProvider = params.llmProvider
     this.agentId = `council-chairman-${params.workspaceId}`
   }
 

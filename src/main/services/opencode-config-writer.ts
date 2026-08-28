@@ -15,7 +15,7 @@
  * Phase 4B — OpenCode Evaluation: MCP server wiring.
  */
 
-import { writeFileSync, existsSync, mkdirSync, unlinkSync } from 'node:fs'
+import { writeFileSync, existsSync, mkdirSync, unlinkSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { app } from 'electron'
@@ -23,7 +23,12 @@ import log from 'electron-log/main'
 import type { ConversationMode } from '../../shared/types'
 import type { ContextWindowTier } from './context-management'
 import type { OpenCodeProviderConfig } from './opencode-executor'
-import { EXTERNAL_MCP_INTEGRATIONS } from '../../shared/constants'
+import {
+  EXTERNAL_MCP_INTEGRATIONS,
+  GLM_DEFAULT_CONTEXT_LIMIT,
+  GLM_DEFAULT_OUTPUT_LIMIT,
+  GLM_SMALL_MODEL_ID
+} from '../../shared/constants'
 import {
   LOCAL_MCP_SERVER_DEFS,
   FORMATTER_DEFS,
@@ -33,6 +38,14 @@ import { appPreferenceRepository } from '../db/repositories/app-preference.repos
 import { resolveActiveIntegrationEnvs } from './integration-credentials'
 
 const configLog = log.scope('OpenCodeConfigWriter')
+
+/**
+ * GLM-2: Fallback context/output limits for cloud custom (npm) providers whose model
+ * isn't in models.dev. Overridden by limits discovered from the provider's /models
+ * endpoint and carried on `OpenCodeProviderConfig.contextLimit`/`outputLimit`.
+ */
+const DEFAULT_CLOUD_CUSTOM_CONTEXT_LIMIT = GLM_DEFAULT_CONTEXT_LIMIT
+const DEFAULT_CLOUD_CUSTOM_OUTPUT_LIMIT = GLM_DEFAULT_OUTPUT_LIMIT
 
 // ── Types ──
 
@@ -280,6 +293,39 @@ export class OpenCodeConfigWriter {
     }
   }
 
+  /**
+   * GLM-P2: Remove every config this process wrote. Called on quit.
+   *
+   * `dispose()` only runs on the normal per-session stop path, so a quit with live
+   * sessions used to leave a plaintext provider API key in temp until the OS swept it.
+   */
+  disposeAll(): void {
+    for (const workspacePath of Array.from(this.configPaths.keys())) {
+      this.dispose(workspacePath)
+    }
+  }
+
+  /**
+   * GLM-P2: Delete config directories left behind by a previous run.
+   *
+   * Neither `dispose()` nor `disposeAll()` runs after a crash, a force-quit, or the
+   * shutdown failsafe, so a plaintext key can survive on disk. Every file under this
+   * root belongs to a process that is no longer alive — the app takes a single-instance
+   * lock, and configs are rewritten on demand — so removing the whole tree is safe.
+   *
+   * Must run at startup, BEFORE any writeConfig() call.
+   */
+  sweepStaleConfigs(): void {
+    const root = join(tmpdir(), 'code-atelier-opencode')
+    if (!existsSync(root)) return
+    try {
+      rmSync(root, { recursive: true, force: true })
+      configLog.info(`[opencode-config] Swept stale config dir: ${root}`)
+    } catch (e) {
+      configLog.warn('[opencode-config] Stale config sweep failed (non-fatal):', e)
+    }
+  }
+
   // ── Private ──
 
   private buildConfig(opts: OpenCodeConfigWriterOptions): OpenCodeConfig {
@@ -290,7 +336,7 @@ export class OpenCodeConfigWriter {
     const modelString = `${provider.providerId}/${provider.modelId}`
 
     // ── #5: Small model for housekeeping (title gen, summarization) ──
-    const smallModel = this.resolveSmallModel(provider.providerId)
+    const smallModel = this.resolveSmallModel(provider.providerId, provider.smallModelId)
 
     // Build provider config with timeouts (#15)
     const providers = this.buildProviderConfig(
@@ -432,8 +478,15 @@ export class OpenCodeConfigWriter {
   /**
    * #5: Resolve a lightweight small model for housekeeping tasks.
    * Avoids burning expensive model tokens on title generation, summarization.
+   *
+   * GLM-3: An explicit `smallModelId` on the provider config wins. The empty string
+   * means "disable housekeeping entirely" (credit-tight periods) — distinct from
+   * `undefined`, which means "no preference, use the per-provider default".
    */
-  private resolveSmallModel(providerId: string): string | undefined {
+  private resolveSmallModel(providerId: string, smallModelId?: string | null): string | undefined {
+    if (smallModelId !== undefined && smallModelId !== null) {
+      return smallModelId.length > 0 ? `${providerId}/${smallModelId}` : undefined
+    }
     switch (providerId) {
       case 'anthropic':
         return 'anthropic/claude-haiku-3-5'
@@ -447,6 +500,11 @@ export class OpenCodeConfigWriter {
         return 'ollama/qwen3:8b'
       case 'omlx':
         return undefined // oMLX models are already small
+      case 'glm':
+        // GLM-3: Housekeeping (title gen, summarisation) on the Flash model.
+        // GLM-5.3 bills output at a 24× credit multiplier vs Flash's 8× — running
+        // housekeeping on the frontier model burns Coding Plan credits for nothing.
+        return `glm/${GLM_SMALL_MODEL_ID}`
       default:
         return undefined
     }
@@ -578,11 +636,17 @@ export class OpenCodeConfigWriter {
       const builtInProviders = new Set(['anthropic', 'openai', 'google', 'aws', 'copilot'])
       const needsNpm = !builtInProviders.has(provider.providerId) && provider.baseUrl
 
-      // OpenAI-compatible providers expect baseURL to include /v1 (e.g. http://host:8000/v1)
-      // because the SDK appends /chat/completions, /models, etc. to it.
-      // The app stores base URLs without /v1 (used by health checks), so append it here.
+      // Local OpenAI-compatible servers (ollama/omlx) expect baseURL to include /v1
+      // (e.g. http://host:8000/v1) because the SDK appends /chat/completions, /models,
+      // etc. to it. The app stores local base URLs without /v1 (used by health checks),
+      // so append it here.
+      //
+      // GLM-1: Cloud and proxied providers (e.g. glm) store their base URL EXACTLY as
+      // the user entered it and must never be mutated — Z.ai's Coding Plan endpoint is
+      // `https://api.z.ai/api/coding/paas/v4`, and appending /v1 yields a 404. The same
+      // applies to a user's local reverse proxy, whose path layout we cannot guess.
       let resolvedBaseURL = provider.baseUrl
-      if (resolvedBaseURL && needsNpm && !resolvedBaseURL.endsWith('/v1')) {
+      if (resolvedBaseURL && isLocal && needsNpm && !resolvedBaseURL.endsWith('/v1')) {
         resolvedBaseURL = resolvedBaseURL.replace(/\/$/, '') + '/v1'
       }
 
@@ -597,44 +661,30 @@ export class OpenCodeConfigWriter {
       }
 
       // C-5: Context/output limits for custom providers.
-      // Custom providers (omlx, ollama) MUST declare their models —
-      // OpenCode's models.dev registry only covers built-in providers.
-      // Use confident limits when available, fall back to sensible defaults.
-      const models: OpenCodeConfig['provider'][string]['models'] =
-        isLocal && needsNpm
-          ? {
-              [provider.modelId]: {
-                // Custom models aren't in models.dev — declare capabilities explicitly
-                // so OpenCode advertises tools and accepts image attachments.
-                tool_call: true,
-                attachment: true,
-                reasoning: true,
-                // Declare vision modalities so OpenCode sends image parts to VLMs
-                // instead of stripping them or converting to text placeholders.
-                modalities: {
-                  input: ['text', 'image'],
-                  output: ['text']
-                },
-                limit:
-                  contextTier && contextWindowConfident
-                    ? {
-                        context:
-                          contextTier === 'small'
-                            ? 8192
-                            : contextTier === 'medium'
-                              ? 32768
-                              : 131072,
-                        output: contextTier === 'small' ? 4096 : 32768
-                      }
-                    : {
-                        // Defaults when context window isn't confidently resolved.
-                        // 131072 matches the ContextWindow module's default fallback.
-                        context: 131072,
-                        output: 32768
-                      }
-              }
+      // GLM-2: EVERY provider that needs `npm` MUST declare its models — OpenCode's
+      // models.dev registry only covers built-in providers, so an undeclared model has
+      // no `tool_call`/`attachment`/`reasoning` capability flags and silently degrades
+      // to plain chat. This applies to cloud custom providers (glm) exactly as it does
+      // to local ones (ollama, omlx) — the old `isLocal && needsNpm` gate left GLM with
+      // no model block at all.
+      const models: OpenCodeConfig['provider'][string]['models'] = needsNpm
+        ? {
+            [provider.modelId]: {
+              // Custom models aren't in models.dev — declare capabilities explicitly
+              // so OpenCode advertises tools and accepts image attachments.
+              tool_call: true,
+              attachment: true,
+              reasoning: true,
+              // Declare vision modalities so OpenCode sends image parts to VLMs
+              // instead of stripping them or converting to text placeholders.
+              modalities: {
+                input: ['text', 'image'],
+                output: ['text']
+              },
+              limit: this.resolveModelLimit(provider, isLocal, contextTier, contextWindowConfident)
             }
-          : undefined
+          }
+        : undefined
 
       providers[provider.providerId] = {
         ...(needsNpm ? { npm: '@ai-sdk/openai-compatible' } : {}),
@@ -643,6 +693,40 @@ export class OpenCodeConfigWriter {
       }
     }
     return providers
+  }
+
+  /**
+   * GLM-2: Resolve the context/output limit declared for a custom (npm) provider.
+   *
+   * Local providers derive limits from the resolved context tier. Cloud custom
+   * providers carry their own limits on the provider config (discovered via the
+   * provider's /models endpoint at Test Connection time) and fall back to the
+   * documented defaults when discovery hasn't run.
+   */
+  private resolveModelLimit(
+    provider: OpenCodeConfigWriterOptions['provider'],
+    isLocal: boolean,
+    contextTier?: ContextWindowTier,
+    contextWindowConfident?: boolean
+  ): { context: number; output: number } {
+    if (!isLocal) {
+      // Cloud custom provider (glm). Prefer limits carried on the provider config.
+      return {
+        context: provider.contextLimit ?? DEFAULT_CLOUD_CUSTOM_CONTEXT_LIMIT,
+        output: provider.outputLimit ?? DEFAULT_CLOUD_CUSTOM_OUTPUT_LIMIT
+      }
+    }
+
+    if (contextTier && contextWindowConfident) {
+      return {
+        context: contextTier === 'small' ? 8192 : contextTier === 'medium' ? 32768 : 131072,
+        output: contextTier === 'small' ? 4096 : 32768
+      }
+    }
+
+    // Defaults when context window isn't confidently resolved.
+    // 131072 matches the ContextWindow module's default fallback.
+    return { context: 131072, output: 32768 }
   }
 
   /** C-7: Discover workspace instruction files and glob patterns. */
@@ -685,6 +769,14 @@ export class OpenCodeConfigWriter {
     if (workspaceId) shellEnv.WORKSPACE_ID = workspaceId
     // Pass IPC socket path so the plugin can send events to the main process
     if (opts.ipcSocketPath) shellEnv.IPC_SOCKET_PATH = opts.ipcSocketPath
+
+    // NOTE (GLM-P6): a corporate HTTP(S)_PROXY can swallow calls to a loopback
+    // provider (a locally proxied GLM endpoint). Setting NO_PROXY here is NOT the
+    // fix: everything in this map is written into the main process's own
+    // `process.env` by buildConfig, so it would leak process-wide rather than reach
+    // only the agent. The diagnosable half is handled instead by the GLM Test
+    // Connection probe, which reports the exact URL it failed to reach.
+
     // Prevent OOM in heavy Node.js tasks spawned by the agent
     shellEnv.NODE_OPTIONS = '--max-old-space-size=4096'
 

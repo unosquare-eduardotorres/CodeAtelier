@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useWorkspaceStore, useToastStore } from '@renderer/store'
 import {
+  GLM_MODELS,
   OMLX_DEFAULT_PORT,
   OLLAMA_DEFAULT_PORT,
   defaultLocalLlmBackend
@@ -85,6 +86,13 @@ export interface ModelConfigState {
   omlxModels: string[]
   /** oMLX models filtered to chat-capable only (excludes embedding/reranker) */
   omlxChatModels: string[]
+  /**
+   * GLM model IDs reported by the endpoint's `/models` on the last successful
+   * Test Connection. Authoritative over the hardcoded GLM_MODELS fallback —
+   * Z.ai's docs disagree with each other on IDs, so routing must offer what the
+   * endpoint actually serves or the user picks an ID that fails at runtime.
+   */
+  glmModels: { id: string; label: string }[]
 }
 
 export interface ModelConfigActions {
@@ -115,6 +123,11 @@ export interface ModelConfigActions {
   // Workspace setting actions
   handleCostPreferenceChange: (pref: CostPreference) => Promise<void>
   handleToneChange: (tone: CommunicationTone) => void
+  /**
+   * Called by the GLM card after a Test Connection persists a fresh catalogue,
+   * so the routing dropdowns pick it up without a page reload.
+   */
+  applyGlmDiscoveredModels: (models: string[]) => void
 }
 
 // ─── Pure Helpers ─────────────────────────────────────────
@@ -320,6 +333,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
   const [routingDraft, setRoutingDraft] = useState<RoutingDraft>(defaultRoutingDraft)
   const [routingPersisted, setRoutingPersisted] = useState<RoutingDraft>(defaultRoutingDraft)
   const [defaultProvider, setDefaultProvider] = useState<LLMProvider>('claude')
+  const [glmDiscoveredModels, setGlmDiscoveredModels] = useState<string[]>([])
 
   // ── Platform + Claude CLI ──
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null)
@@ -392,6 +406,7 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
         wsSettings.setCostPreference((settings.costPreference as CostPreference) || 'balanced')
 
         setDefaultProvider((settings.llmProvider as LLMProvider) ?? 'claude')
+        setGlmDiscoveredModels((settings.glmDiscoveredModels as string[] | undefined) ?? [])
 
         const loadedRouting: RoutingDraft = {
           modelRoles: (settings.modelRoles as ModelRoleMap) ?? {},
@@ -622,6 +637,15 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     return models.filter((m) => !/embed|bge|rerank/i.test(m))
   }, [localStatus])
 
+  // Discovered IDs win; the shipped list is only a fallback for "never tested".
+  const glmModels = useMemo(
+    () =>
+      glmDiscoveredModels.length > 0
+        ? glmDiscoveredModels.map((id) => ({ id, label: id }))
+        : GLM_MODELS.map((m) => ({ id: m.id, label: m.label })),
+    [glmDiscoveredModels]
+  )
+
   // Derive provider from routing — reads plan action's provider from modelRoles
   const derivedProvider: LLMProvider = useMemo(() => {
     const planRole = routingDraft.modelRoles['specialist:plan']
@@ -661,6 +685,8 @@ export function useModelConfig(): ModelConfigState & ModelConfigActions {
     isRemoteServer,
     omlxModels: localStatus?.models ?? [],
     omlxChatModels,
+    glmModels,
+    applyGlmDiscoveredModels: setGlmDiscoveredModels,
     // Actions
     setLocalLlmBackend,
     setLocalHost,

@@ -1,9 +1,10 @@
 /**
  * ProviderCards — Provider connection / status cards.
  *
- * Three sections:
+ * Four sections:
  *   - Claude: CLI install status + warning when missing
  *   - OpenCode: Universal runtime availability/version
+ *   - Z.AI GLM: Endpoint/key/model config (own draft + Save, see GlmProviderCard)
  *   - Local Models (oMLX): Server connection config + model selector
  *
  * No default/active concept — executor is derived from the model routing's provider.
@@ -29,6 +30,7 @@ import type { ClaudeCliStatus } from './useModelConfig'
 import type { LocalModelsDraft } from './local-models-draft'
 import { localBackendLabel } from './model-roles-assignment'
 import LocalModelSelector from '../LocalModelSelector'
+import GlmProviderCard from './GlmProviderCard'
 
 // ─── Status Dot ──────────────────────────────────────────
 
@@ -685,6 +687,11 @@ export interface ProviderCardsProps {
   onUnloadOmlxModel: (modelId: string) => void
   ollamaEmbeddingModel: string
   onOllamaEmbeddingModelChange: (model: string) => void
+  /** Active workspace — GLM settings are per-workspace. */
+  workspaceId: string | undefined
+  workspacePath: string | undefined
+  /** Forwards the GLM catalogue discovered by Test Connection up to the routing section. */
+  onGlmModelsDiscovered?: (models: string[]) => void
 }
 
 export default function ProviderCards(props: ProviderCardsProps): React.JSX.Element {
@@ -695,6 +702,12 @@ export default function ProviderCards(props: ProviderCardsProps): React.JSX.Elem
         <ClaudeProviderCard claudeCliStatus={props.claudeCliStatus} />
         <OpenCodeCard status={props.openCodeCliStatus} />
       </div>
+      {/* GLM (full width — owns its own draft + Save) */}
+      <GlmProviderCard
+        workspaceId={props.workspaceId}
+        workspacePath={props.workspacePath}
+        onModelsDiscovered={props.onGlmModelsDiscovered}
+      />
       {/* Local models (full width) */}
       <OmlxProviderCard
         localLlmBackend={props.localLlmBackend}

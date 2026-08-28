@@ -259,36 +259,49 @@ function mountExternalMcps(
         continue
       }
 
-      const finalEnv = buildStdioEnv(
-        integration.envKeys,
-        resolveIntegrationEnv(integration, workspaceId)
-      )
+      // One integration must never cost the conversation its whole MCP config.
+      // `resolveStdioCommand` throws in packaged mode when the command is not at
+      // a known path (SVC-04). Uncaught, that escapes `buildWorkspaceMcpConfig`
+      // and the session starts with NO servers at all — code-graph and semantic
+      // search included — so a single misconfigured integration reads as a
+      // total agent regression. Degrade to skipping just this one.
+      try {
+        const finalEnv = buildStdioEnv(
+          integration.envKeys,
+          resolveIntegrationEnv(integration, workspaceId)
+        )
 
-      const stdioConfig: McpServerConfig = {
-        type: 'stdio',
-        ...(integration.bundledServerEntry
-          ? {
-              command: 'node',
-              args: [join(resolveMcpServerBasePath(), `${integration.bundledServerEntry}.js`)]
-            }
-          : {
-              command: resolveStdioCommand(integration.command, integration.commandPaths),
-              args: [...integration.args]
-            }),
-        alwaysLoad: true,
-        ...(finalEnv ? { env: finalEnv } : {})
+        const stdioConfig: McpServerConfig = {
+          type: 'stdio',
+          ...(integration.bundledServerEntry
+            ? {
+                command: 'node',
+                args: [join(resolveMcpServerBasePath(), `${integration.bundledServerEntry}.js`)]
+              }
+            : {
+                command: resolveStdioCommand(integration.command, integration.commandPaths),
+                args: [...integration.args]
+              }),
+          alwaysLoad: true,
+          ...(finalEnv ? { env: finalEnv } : {})
+        }
+        servers[integration.id] = stdioConfig
+
+        // Plan mode: only read-only tools. Build mode: all tools.
+        if (allowedTools !== undefined) {
+          const modeTools = mode === 'plan' ? integration.planModeToolNames : integration.toolNames
+          allowedTools.push(...modeTools)
+        }
+
+        chatAgentLogger.info(
+          `[mcp:mount-external] ✓ Mounted ${integration.id}: command=${stdioConfig.command} args=${stdioConfig.args.join(' ')} tools=${(mode === 'plan' ? integration.planModeToolNames : integration.toolNames).length}`
+        )
+      } catch (err) {
+        chatAgentLogger.error(
+          `[mcp:mount-external] ✗ Skipped ${integration.id} — mount failed: ${(err as Error).message}`
+        )
+        continue
       }
-      servers[integration.id] = stdioConfig
-
-      // Plan mode: only read-only tools. Build mode: all tools.
-      if (allowedTools !== undefined) {
-        const modeTools = mode === 'plan' ? integration.planModeToolNames : integration.toolNames
-        allowedTools.push(...modeTools)
-      }
-
-      chatAgentLogger.info(
-        `[mcp:mount-external] ✓ Mounted ${integration.id}: command=${stdioConfig.command} args=${stdioConfig.args.join(' ')} tools=${(mode === 'plan' ? integration.planModeToolNames : integration.toolNames).length}`
-      )
     } else {
       chatAgentLogger.info(`[mcp:mount-external] ✗ Skipped ${integration.id} (not active)`)
     }

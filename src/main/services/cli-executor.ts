@@ -39,6 +39,12 @@ import {
   executorLog
 } from './executor-utils/index'
 import { buildEnvWithPath } from './env-utils'
+import {
+  GOAL_CLEAR_ALIASES,
+  GOAL_MAX_CHARS,
+  buildGoalPromptSection,
+  sanitizeGoalCondition
+} from './goal-condition'
 import type { StreamState } from './executor-utils/index'
 
 // ── Re-export types for external consumers ──
@@ -241,11 +247,6 @@ const INTERRUPT_ACK_TIMEOUT_MS = 2000
  * avoid, on the machines least able to absorb it.
  */
 const INTERRUPT_UNWIND_TIMEOUT_MS = 15_000
-
-const GOAL_MAX_CHARS = 4_000
-
-/** Words that, when a goal condition starts with them, collide with /goal subcommands. */
-const GOAL_CLEAR_ALIASES = /^(clear|stop|off|reset|none|cancel)\b/i
 
 /** Regex for stderr patterns that indicate real errors (not progress info). */
 const STDERR_ERROR_PATTERN = /error|fatal|panic|ENOENT|EACCES|permission denied|segfault|SIGABRT/i
@@ -1616,8 +1617,9 @@ export class CLIExecutor {
 
       // Goal — delivered via system prompt since the CLI has no --goal flag.
       // (/goal is a session-only slash command, not a CLI argument.)
+      // Shared with the OpenCode path so the wording and limits match exactly.
       if (options.goal) {
-        fullPrompt += `\n\n## Completion Goal\n\nWork autonomously until the following condition is met, then emit the completion block:\n\n${options.goal}`
+        fullPrompt += buildGoalPromptSection(options.goal) ?? ''
       }
 
       const promptFilePath = this.writeSystemPromptFile(fullPrompt)
@@ -1844,24 +1846,16 @@ export function resolveEmptyTurnFailure(input: {
  * Exported for testing.
  */
 export function buildGoalCommand(goal: string): string | null {
-  // Collapse newlines and whitespace to single spaces
-  const sanitized = goal.replace(/\s+/g, ' ').trim()
+  // Collapse newlines/whitespace, trim, cap — shared with the OpenCode goal path.
+  const sanitized = sanitizeGoalCondition(goal)
   if (!sanitized) return null
+  if (sanitized.length < goal.replace(/\s+/g, ' ').trim().length) {
+    executorLog.warn(`[CLI:goal] condition truncated to ${GOAL_MAX_CHARS} chars`)
+  }
 
   // Prefix-guard: if the condition text starts with a word the CLI would
   // interpret as a clear/cancel subcommand, wrap it so it's unambiguous.
-  let conditionText = sanitized
-  if (GOAL_CLEAR_ALIASES.test(conditionText)) {
-    conditionText = `Condition: ${conditionText}`
-  }
-
-  // Truncate if over the cap
-  if (conditionText.length > GOAL_MAX_CHARS) {
-    executorLog.warn(
-      `[CLI:goal] condition truncated from ${conditionText.length} to ${GOAL_MAX_CHARS} chars`
-    )
-    conditionText = conditionText.slice(0, GOAL_MAX_CHARS)
-  }
+  const conditionText = GOAL_CLEAR_ALIASES.test(sanitized) ? `Condition: ${sanitized}` : sanitized
 
   return `/goal ${conditionText}`
 }

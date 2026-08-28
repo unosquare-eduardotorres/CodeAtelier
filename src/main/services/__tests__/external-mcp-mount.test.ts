@@ -206,6 +206,56 @@ describe('mountExternalMcps — tool exposure', () => {
   })
 })
 
+// ── Packaged-mode command resolution ──
+
+describe('mountExternalMcps — packaged-mode resolution', () => {
+  // SVC-04 makes `resolveStdioCommand` throw rather than fall back to a bare
+  // command once packaged. An entry with neither `bundledServerEntry` nor
+  // `commandPaths` therefore cannot mount in a real build — and, before the
+  // per-integration try/catch, took the entire MCP config down with it.
+  test('every PATH-resolved integration declares commandPaths', () => {
+    for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
+      if (integration.bundledServerEntry) continue
+      assert.ok(
+        integration.commandPaths && integration.commandPaths.length > 0,
+        `${integration.id} resolves "${integration.command}" via PATH but declares no commandPaths — it will throw in a packaged build`
+      )
+    }
+  })
+
+  test('an unresolvable integration is skipped, not fatal to the whole config', () => {
+    const { app } = require('electron')
+    const vision = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'zai-vision')!
+    const realPaths = vision.commandPaths
+    const realPackaged = app.isPackaged
+
+    // Force the throw: packaged, with every candidate path guaranteed absent.
+    ;(vision as { commandPaths?: readonly string[] }).commandPaths = [
+      '/nonexistent/definitely/not/npx'
+    ]
+    app.isPackaged = true
+
+    try {
+      withShellEnv({ ...SHELL_JIRA, Z_AI_API_KEY: 'k', Z_AI_MODE: 'ZAI' }, () => {
+        const result = build({ externalMcpActive: { jira: true, 'zai-vision': true } })
+
+        assert.equal(
+          result.mcpServers?.['zai-vision'],
+          undefined,
+          'the integration that could not resolve must not be mounted'
+        )
+        assert.ok(
+          result.mcpServers?.jira,
+          'a sibling integration must survive — one bad entry must not strip MCP from the whole conversation'
+        )
+      })
+    } finally {
+      ;(vision as { commandPaths?: readonly string[] }).commandPaths = realPaths
+      app.isPackaged = realPackaged
+    }
+  })
+})
+
 // ── Idle-timeout classification ──
 
 describe('external MCP registry — longRunningTools', () => {

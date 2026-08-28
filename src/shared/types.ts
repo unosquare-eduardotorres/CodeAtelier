@@ -1890,8 +1890,76 @@ export interface ElicitationEvent {
 
 // ── Local LLM Provider ──
 
-/** LLM provider for a workspace */
+/**
+ * LLM provider for a workspace.
+ *
+ * - 'claude'    — Anthropic Claude via the Claude CLI (subscription billing)
+ * - 'local-llm' — Ollama / oMLX on the local machine, via OpenCode
+ * - 'glm'       — Z.ai GLM via OpenCode's OpenAI-compatible provider. Reached either
+ *                 directly (Coding Plan endpoint) or through a local proxy.
+ *
+ * Executor derivation: 'claude' → CLI; everything else → OpenCode.
+ */
 export type LLMProvider = 'claude' | 'local-llm' | 'glm'
+
+/**
+ * How the GLM provider is reached.
+ * - 'zai-coding' — Z.ai Coding Plan endpoint directly (API key required)
+ * - 'proxy'      — a self-hosted/local proxy; the key may live in the proxy instead
+ */
+export type GlmEndpointMode = 'zai-coding' | 'proxy'
+
+/**
+ * GLM-hosted REMOTE MCP servers that can be mounted per workspace. All are
+ * credit-billed. Must stay in step with {@link GLM_REMOTE_MCP_SERVERS} — an id
+ * with no entry there can never be mounted or read.
+ *
+ * Vision is deliberately absent: it is a local stdio server (`npx @z_ai/mcp-server`)
+ * registered as the normal `zai-vision` integration and toggled through
+ * `externalMcpActive`, not through this map.
+ */
+export type GlmMcpServerId = 'web-search' | 'web-reader'
+
+/** Outcome of probing a GLM endpoint's `/models` (Test Connection). */
+export interface GlmConnectionResult {
+  ok: boolean
+  /** Human-safe summary for the settings card. */
+  message: string
+  /** Model IDs reported by the endpoint, in the order returned. */
+  models: string[]
+  /** Machine-readable outcome, so the UI can give a targeted hint. */
+  code: 'ok' | 'auth-failed' | 'not-found' | 'network' | 'timeout' | 'bad-url'
+  /** The exact URL probed — echoed back so a URL mistake is visible, not guessed at. */
+  probedUrl?: string
+  /**
+   * Per-model context/output limits, keyed by model id, for the models that
+   * reported them.
+   *
+   * Z.ai's own `/models` is undocumented and OpenAI-shaped (ids only), so this is
+   * usually empty against the Coding Plan endpoint. It is populated by local
+   * proxies (LiteLLM and friends) that do publish `context_length` — and those
+   * are the deployments where the shipped 200K default is most likely wrong,
+   * because the proxy may cap context well below the upstream model.
+   */
+  modelLimits?: Record<string, { contextLimit?: number; outputLimit?: number }>
+}
+
+/**
+ * GLM Coding Plan quota consumption against the plan's two rolling windows.
+ * Credits, not dollars — a USD figure is meaningless on a subscription.
+ */
+export interface GlmQuotaStatus {
+  /** Credits used in the current 5-hour window. */
+  creditsIn5h: number
+  /** Credits used in the last 7 days. */
+  creditsInWeek: number
+  limit5h: number
+  limitWeek: number
+  percentOf5h: number
+  percentOfWeek: number
+  /** Whether requests right now bill at the off-peak (half) rate. */
+  offPeak: boolean
+}
 
 /** Local LLM inference backend */
 export type LocalLLMBackend = 'ollama' | 'omlx'
@@ -1966,6 +2034,32 @@ export interface WorkspaceSettings {
   openCodeModel?: string
   openCodeBaseUrl?: string
   openCodeApiKey?: string
+
+  // ── GLM (Z.ai) ──
+  /** Coding Plan API key. Encrypted at rest via safeStorage (see encrypt-settings-keys). */
+  glmApiKey?: string
+  glmApiKeyEncrypted?: boolean
+  /**
+   * GLM base URL, stored and used VERBATIM — never normalised or suffixed.
+   * Z.ai Coding Plan: `https://api.z.ai/api/coding/paas/v4`.
+   * A local proxy uses whatever path layout the proxy exposes.
+   */
+  glmBaseUrl?: string
+  glmEndpointMode?: GlmEndpointMode
+  /** Primary GLM model ID (e.g. 'glm-5.3'). */
+  glmModel?: string
+  /**
+   * Housekeeping (title-gen/summarisation) model ID. `''` disables housekeeping
+   * entirely; `undefined` falls back to the Flash default.
+   */
+  glmSmallModel?: string
+  /** Which GLM-hosted MCP servers are mounted. All credit-billed — off by default. */
+  glmMcpActive?: Partial<Record<GlmMcpServerId, boolean>>
+  /** Context/output limits discovered from the provider's /models endpoint. */
+  glmContextLimit?: number
+  glmOutputLimit?: number
+  /** Model IDs reported by the last successful Test Connection. Authoritative over GLM_MODELS. */
+  glmDiscoveredModels?: string[]
 
   // ── GitHub ──
   githubTokenEncrypted?: string

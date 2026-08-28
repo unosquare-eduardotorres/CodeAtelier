@@ -3,6 +3,8 @@ import { ipcMain } from 'electron'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { ollamaManager } from '../services/ollama-manager.service'
 import { omlxManager } from '../services/omlx-manager.service'
+import { testGlmConnection } from '../services/glm-connection'
+import { modelConfigService } from '../services/model-config.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
 import type { PullProgress } from '../../shared/types'
@@ -85,6 +87,25 @@ export function registerOllamaIpc(mainWindow: BrowserWindow): void {
     async (event, args?: { modelId?: string; baseUrl?: string; apiKey?: string }) => {
       validateSender(event)
       await omlxManager.unloadModel(args?.modelId ?? '', args?.baseUrl, args?.apiKey)
+    }
+  )
+
+  // ── GLM (Z.ai) ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.GLM_TEST_CONNECTION,
+    async (event, args?: { workspacePath?: string; baseUrl?: string; apiKey?: string }) => {
+      validateSender(event)
+      // An empty apiKey means "use the stored one": the saved key is encrypted and is
+      // never handed back to the renderer, so the form has nothing to send unless the
+      // user just typed a new key. Resolving it here also keeps proxy mode testable,
+      // where there may legitimately be no key at all.
+      const apiKey =
+        args?.apiKey ||
+        (args?.workspacePath
+          ? modelConfigService.getGlmConfig(args.workspacePath).apiKey
+          : undefined)
+      return testGlmConnection(args?.baseUrl ?? '', apiKey)
     }
   )
 }

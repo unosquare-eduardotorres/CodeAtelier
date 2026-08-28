@@ -373,6 +373,8 @@ export const IPC_CHANNELS = {
   COST_GET_CONVERSATION: 'cost:getConversation',
   COST_GET_WORKSPACE_CONVERSATIONS: 'cost:getWorkspaceConversations',
   COST_CHECK_BUDGET: 'cost:checkBudget',
+  /** GLM Coding Plan credit quota (5-hour + weekly windows). Null for non-GLM workspaces. */
+  COST_GET_GLM_QUOTA: 'cost:getGlmQuota',
   COST_BUDGET_WARNING: 'cost:budgetWarning',
   COST_BUDGET_EXCEEDED: 'cost:budgetExceeded',
 
@@ -511,6 +513,10 @@ export const IPC_CHANNELS = {
   OMLX_ADMIN_URL: 'omlx:adminUrl',
   OMLX_LOAD_MODEL: 'omlx:loadModel',
   OMLX_UNLOAD_MODEL: 'omlx:unloadModel',
+
+  // GLM (Z.ai)
+  /** Probe GET {baseUrl}/models — validates auth and discovers the model catalogue. */
+  GLM_TEST_CONNECTION: 'glm:testConnection',
 
   // Platform
   PLATFORM_INFO: 'platform:info',
@@ -845,6 +851,128 @@ export const AVAILABLE_MODELS = [
     label: 'Fable 5',
     tier: 'fable' as const,
     description: 'Frontier — long-horizon reasoning'
+  }
+] as const
+
+// ── GLM (Z.ai) ───────────────────────────────────────────────────
+
+/**
+ * Z.ai base URLs.
+ *
+ * ⚠	A Coding Plan key is NOT valid on the pay-as-you-go platform. Pointing a Coding
+ * Plan key at `https://api.z.ai/api/paas/v4` (the URL in Z.ai's public quick-start
+ * guide) returns 401 — the single most common misconfiguration. `payAsYouGo` is
+ * listed here only so the UI can detect and warn about it.
+ *
+ * These URLs are used VERBATIM. The OpenCode config writer does not append `/v1`.
+ */
+export const GLM_ENDPOINTS = {
+  /** Coding Plan, OpenAI-compatible protocol — the default for this app. */
+  codingOpenAI: 'https://api.z.ai/api/coding/paas/v4',
+  /** Coding Plan, Anthropic-compatible protocol. */
+  codingAnthropic: 'https://api.z.ai/api/anthropic',
+  /** Pay-as-you-go platform — incompatible with Coding Plan keys. */
+  payAsYouGo: 'https://api.z.ai/api/paas/v4'
+} as const
+
+/** Default GLM base URL for a fresh workspace (Coding Plan, OpenAI protocol). */
+export const GLM_DEFAULT_BASE_URL = GLM_ENDPOINTS.codingOpenAI
+
+/** Default primary GLM model. */
+export const GLM_DEFAULT_MODEL_ID = 'glm-5.3'
+
+/** Default housekeeping model — Flash bills output at 8× vs GLM-5.3's 24×. */
+export const GLM_SMALL_MODEL_ID = 'glm-5.3-flash'
+
+/**
+ * Fallback GLM model list for the settings UI.
+ *
+ * Z.ai's own docs are inconsistent about model IDs (the overview says "GLM-5-Flash",
+ * the credit table says `glm-5.3-flash`). Treat this list as a FALLBACK only — the
+ * authoritative list is discovered from `GET {baseUrl}/models` on Test Connection.
+ */
+export const GLM_MODELS = [
+  { id: 'glm-5.3', label: 'GLM-5.3', description: 'Frontier coding model' },
+  { id: GLM_SMALL_MODEL_ID, label: 'GLM-5.3 Flash', description: 'Fast & credit-cheap' }
+] as const
+
+/**
+ * True for any Z.ai GLM model id.
+ *
+ * Prefix match rather than a lookup against {@link GLM_MODELS}: the authoritative
+ * list is discovered from `/models` at Test Connection time, so a hardcoded set
+ * would misclassify any model Z.ai adds or renames. Every Z.ai id is `glm-*`.
+ *
+ * Used to keep GLM out of USD costing — GLM bills in Coding Plan credits, and an
+ * unrecognised model id otherwise falls through to the Sonnet default price.
+ */
+export function isGlmModelId(modelId: string | null | undefined): boolean {
+  return typeof modelId === 'string' && modelId.trim().toLowerCase().startsWith('glm-')
+}
+
+/**
+ * Fallback context/output limits for GLM models, used only when the endpoint does
+ * not report its own (see `glmContextLimit` / `glmOutputLimit`, populated by Test
+ * Connection). These feed OpenCode's compaction maths.
+ *
+ * OUTPUT is documented: Z.ai's chat-completion reference gives `max_tokens` a hard
+ * range of 1..131072 and states the GLM-5.x / 4.6 / 4.7 series support 128K output.
+ *
+ * CONTEXT is NOT documented in Z.ai's API reference — 200K matches the figure
+ * published for the GLM-4.6/5 series by the aggregators that resell it, but it is
+ * an assumption, not a spec. Treat a value discovered from `/models` as better.
+ */
+export const GLM_DEFAULT_CONTEXT_LIMIT = 200_000
+export const GLM_DEFAULT_OUTPUT_LIMIT = 131_072
+
+/**
+ * Coding Plan credit multipliers, per 10,000 tokens.
+ * credits = (input×in + cachedInput×cached + output×out) / 10_000
+ *
+ * Two properties drive the whole cost model: output costs ~3.5× input, and cached
+ * input is ~4× cheaper than fresh input — so prompt-prefix stability (cache hit rate)
+ * is the dominant lever.
+ */
+export const GLM_CREDIT_RATES: Record<
+  string,
+  { input: number; cachedInput: number; output: number }
+> = {
+  'glm-5.3': { input: 6.9, cachedInput: 1.7, output: 24 },
+  'glm-5.3-flash': { input: 2.3, cachedInput: 0.56, output: 8 }
+}
+
+/** Credits charged per GLM-hosted MCP tool call. */
+export const GLM_MCP_CREDITS_PER_CALL = 1.2
+
+/** Coding Plan quota windows, by plan tier. */
+export const GLM_PLAN_LIMITS = {
+  max: { per5h: 28_000, perWeek: 140_000 }
+} as const
+
+/**
+ * Off-peak requests bill at half rate. Peak is Mon–Fri 14:00–18:00 in UTC+8.
+ */
+export const GLM_OFF_PEAK_MULTIPLIER = 0.5
+export const GLM_PEAK_WINDOW_UTC8 = { startHour: 14, endHour: 18 } as const
+
+/**
+ * GLM-hosted remote MCP servers. Mounted as OpenCode `type: 'remote'` entries with a
+ * Bearer header. Every tool call is credit-billed, so both default to OFF.
+ */
+export const GLM_REMOTE_MCP_SERVERS = [
+  {
+    id: 'web-search' as const,
+    serverName: 'web-search-prime',
+    displayName: 'Web Search',
+    url: 'https://api.z.ai/api/mcp/web_search_prime/mcp',
+    description: 'Live web search via Z.ai Web Search Prime.'
+  },
+  {
+    id: 'web-reader' as const,
+    serverName: 'web-reader',
+    displayName: 'Web Reader',
+    url: 'https://api.z.ai/api/mcp/web_reader/mcp',
+    description: 'Fetch and read a URL as clean text.'
   }
 ] as const
 
@@ -2916,6 +3044,124 @@ export const EXTERNAL_MCP_INTEGRATIONS: readonly ExternalMcpDefinition[] = [
         step: 'Enable + use',
         description:
           'Toggle Jira ON, then open the Jira tab to browse tickets — or reference issue keys naturally in chat: "summarise PROJ-123".'
+      }
+    ]
+  },
+  {
+    id: 'zai-vision',
+    displayName: 'Z.AI Vision',
+    description:
+      'GLM vision tools — read text from screenshots, diagnose error screens, understand diagrams, and diff UI states.',
+    icon: 'Eye',
+    // Unlike the Web Search / Web Reader servers (which are remote HTTP MCP mounted
+    // directly by the OpenCode config writer), the Z.AI vision server is stdio and
+    // runs locally under npx.
+    command: 'npx',
+    // Required in packaged builds: `resolveStdioCommand` refuses a bare-command
+    // fallback when `app.isPackaged` (SVC-04 anti-trojan guard) and throws
+    // instead, so an entry with no `commandPaths` and no `bundledServerEntry`
+    // cannot mount at all once shipped. Node installs npx in one of these.
+    commandPaths: ['/opt/homebrew/bin/npx', '/usr/local/bin/npx', '/usr/bin/npx'],
+    args: ['-y', '@z_ai/mcp-server@latest'],
+    envKeys: ['Z_AI_API_KEY', 'Z_AI_MODE', 'HTTPS_PROXY', 'HTTP_PROXY', 'NO_PROXY'],
+    tokenImpact: 'medium',
+    toolCount: 8,
+    // GLM-P9: the published server requires a modern Node. `@latest` is pinned in
+    // `args` so a stale cached npx copy (which lacks Flash support) isn't reused.
+    prerequisite: 'Node.js >= 22 and a Z.ai API key',
+    docsUrl: 'https://docs.z.ai/',
+    category: 'other',
+    toolNames: [
+      'mcp__zai-vision__ui_to_artifact',
+      'mcp__zai-vision__extract_text_from_screenshot',
+      'mcp__zai-vision__diagnose_error_screenshot',
+      'mcp__zai-vision__understand_technical_diagram',
+      'mcp__zai-vision__analyze_data_visualization',
+      'mcp__zai-vision__ui_diff_check',
+      'mcp__zai-vision__image_analysis',
+      'mcp__zai-vision__video_analysis'
+    ],
+    // Every tool is read-only analysis — nothing writes to the workspace or to Z.ai,
+    // so the full set is safe in plan mode.
+    planModeToolNames: [
+      'mcp__zai-vision__ui_to_artifact',
+      'mcp__zai-vision__extract_text_from_screenshot',
+      'mcp__zai-vision__diagnose_error_screenshot',
+      'mcp__zai-vision__understand_technical_diagram',
+      'mcp__zai-vision__analyze_data_visualization',
+      'mcp__zai-vision__ui_diff_check',
+      'mcp__zai-vision__image_analysis',
+      'mcp__zai-vision__video_analysis'
+    ],
+
+    credentialFields: [
+      {
+        key: 'apiKey',
+        label: 'Z.ai API key',
+        type: 'password',
+        envVar: 'Z_AI_API_KEY',
+        secret: true,
+        required: true,
+        help: 'Stored encrypted in your OS keychain. The same Coding Plan key you use for GLM chat.'
+      },
+      {
+        key: 'mode',
+        label: 'Region',
+        type: 'select',
+        envVar: 'Z_AI_MODE',
+        required: true,
+        options: [
+          { value: 'ZAI', label: 'Z.ai (international)' },
+          { value: 'BIGMODEL', label: 'BigModel (mainland China)' }
+        ]
+      }
+    ],
+
+    longDescription:
+      'Gives the agent eyes. Point it at a screenshot, a screen recording, or an architecture diagram and it reads them the way you would — pulling the stack trace out of an error screenshot, describing what a diagram actually wires together, or diffing two UI captures to say what moved. Tool calls bill against your GLM plan at Flash rates.',
+
+    useCases: [
+      {
+        title: 'Debug From a Screenshot',
+        description:
+          'Drop in a screenshot of a crash or a red error banner — the agent extracts the message and stack, then goes looking for the cause in your code.',
+        icon: 'Bug'
+      },
+      {
+        title: 'Turn a Mock Into Markup',
+        description:
+          'Hand it a design mock and ask for the component. `ui_to_artifact` converts the screenshot into structured UI it can then implement.',
+        icon: 'FileCode'
+      },
+      {
+        title: 'Read the Architecture Diagram',
+        description:
+          'Paste the whiteboard photo or the Confluence diagram instead of transcribing it — the agent describes the components and their connections.',
+        icon: 'Layers'
+      },
+      {
+        title: 'Visual Regression Diff',
+        description:
+          '`ui_diff_check` compares before/after captures and reports what actually changed, so a spacing regression is not left for a reviewer to spot.',
+        icon: 'Eye'
+      }
+    ],
+
+    workflowSteps: [
+      {
+        step: 'Check Node',
+        description:
+          'The server runs under npx and needs Node.js 22 or newer. Run `node -v` if the server fails to start.'
+      },
+      {
+        step: 'Add your key',
+        description:
+          'Paste the same Z.ai key you use for GLM chat. It is encrypted with your OS keychain.'
+      },
+      {
+        step: 'Enable + attach',
+        description:
+          'Toggle Z.AI Vision ON, then attach an image to a chat message and ask about it. Calls bill at Flash rates against your plan.'
       }
     ]
   }

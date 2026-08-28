@@ -93,7 +93,9 @@ import type {
   E2EResultSummary,
   E2EResultDetail,
   E2EProgressEvent,
-  BugRecord
+  BugRecord,
+  GlmQuotaStatus,
+  GlmConnectionResult
 } from '../shared/types'
 import type {
   HandoffRecord,
@@ -1528,6 +1530,10 @@ const api = {
     dailyExceeded: boolean
   }> => ipcRenderer.invoke(IPC_CHANNELS.COST_CHECK_BUDGET, args),
 
+  /** GLM Coding Plan credit quota. Resolves to null when the workspace isn't on GLM. */
+  getGlmQuota: (args: { workspaceId: string }): Promise<GlmQuotaStatus | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.COST_GET_GLM_QUOTA, args),
+
   onBudgetWarning: (
     callback: (data: {
       workspaceId: string
@@ -1775,6 +1781,14 @@ const api = {
 
   omlxUnloadModel: (args: { modelId: string; baseUrl?: string; apiKey?: string }): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.OMLX_UNLOAD_MODEL, args),
+
+  // ── GLM (Z.ai) ──
+  /** Probe {baseUrl}/models. Omit apiKey to use the stored (encrypted) one. */
+  glmTestConnection: (args: {
+    workspacePath?: string
+    baseUrl: string
+    apiKey?: string
+  }): Promise<GlmConnectionResult> => ipcRenderer.invoke(IPC_CHANNELS.GLM_TEST_CONNECTION, args),
 
   // ── Platform ──
   getPlatformInfo: (): Promise<import('../shared/types').PlatformInfo> =>

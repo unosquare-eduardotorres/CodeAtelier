@@ -62,6 +62,7 @@ import { initFileWatcherHandler } from './services/file-watcher.handler'
 import { fileWatcherService } from './services/file-watcher.service'
 import { localEmbeddingProvider } from './services/local-embedding.provider'
 import { cleanupStalePromptFiles } from './services/cli-executor'
+import { openCodeConfigWriter } from './services/opencode-config-writer'
 import { notificationService } from './services/notification.service'
 import { backgroundTaskWatcherService } from './services/background-task-watcher.service'
 import { memoryConsolidationService } from './services/memory-consolidation.service'
@@ -761,6 +762,11 @@ app.whenReady().then(() => {
   // ── Startup cleanup: remove stale system-prompt temp files from prior crashes ──
   cleanupStalePromptFiles()
 
+  // GLM-P2: opencode.json holds a plaintext provider API key. A crash or force-quit
+  // skips disposal, so sweep anything a previous process left behind. Must run before
+  // any session writes its config.
+  openCodeConfigWriter.sweepStaleConfigs()
+
   // ── OpenCode CLI: Verify resolution at startup and log to BUGS section if failed ──
   try {
     const reResolved = resolveOpencodePath()
@@ -955,6 +961,14 @@ app.on('before-quit', async (event) => {
       localEmbeddingProvider.dispose()
     } catch (e) {
       log.debug('oMLX embedding dispose error (expected during quit):', e)
+    }
+
+    // GLM-P2: Remove opencode.json files still on disk — they carry a plaintext
+    // provider API key. Per-session dispose() only covers the normal stop path.
+    try {
+      openCodeConfigWriter.disposeAll()
+    } catch (e) {
+      log.debug('OpenCode config dispose error (expected during quit):', e)
     }
 
     // Stop the periodic worktree reaper before anything else touches the DB

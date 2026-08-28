@@ -30,7 +30,7 @@ import TaskSummaryBadge from './TaskSummaryBadge'
 import ChatExecutionPanel from './ChatExecutionPanel'
 import { usePlanExecutionStore, type PlanExecution } from '@renderer/store/plan-execution.store'
 import { StackDriftBanner, BuildProgressInline } from '@renderer/components/specialist'
-import type { ConversationMode, ThinkingEffort } from '../../../../shared/types'
+import type { ConversationMode, LLMProvider, ThinkingEffort } from '../../../../shared/types'
 import type { SessionRecoveryPhase } from './SessionRecoveryBanner'
 import { useChatPanelEffects } from './useChatPanelEffects'
 import { useRateLimitState } from './useRateLimitState'
@@ -77,6 +77,23 @@ const MODE_CYCLE: Record<ConversationMode, ConversationMode> = {
   plan: 'build',
   build: 'danger',
   danger: 'plan'
+}
+
+/**
+ * Label for the conversation's provider.
+ *
+ * An exhaustive switch, not a `=== 'local-llm' ? 'Local' : 'Claude'` ternary — with
+ * GLM in the union that ternary labelled every GLM chat "Claude".
+ */
+function providerLabel(provider: LLMProvider | undefined): string {
+  switch (provider) {
+    case 'local-llm':
+      return 'Local'
+    case 'glm':
+      return 'GLM'
+    default:
+      return 'Claude'
+  }
 }
 
 // ── PanelToggleButton ────────────────────────────────────────────────────
@@ -648,7 +665,7 @@ export default function ChatPanel({
             {activeConversation && <ContextUsageIndicator conversationId={activeConversation.id} />}
             <ModelConfigPopover
               snapshot={activeConversation?.modelConfigSnapshot ?? null}
-              providerLabel={activeConversation?.llmProvider === 'local-llm' ? 'Local' : 'Claude'}
+              providerLabel={providerLabel(activeConversation?.llmProvider)}
               conversationId={activeConversation?.id}
               workspaceId={activeWorkspace?.id}
               onRoutingUpdated={(updated) => {

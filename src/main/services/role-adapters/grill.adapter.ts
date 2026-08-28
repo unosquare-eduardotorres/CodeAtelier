@@ -64,6 +64,7 @@ export class GrillRoleAdapter extends BaseRoleAdapter {
     this.iterationHistory = params.iterationHistory
     this.previousScore = params.previousScore
     this.llmProvider = params.llmProvider ?? 'claude'
+    this.explicitLlmProvider = params.llmProvider
     this.agentId = `grill-${params.trackId}-${params.workspaceId}`
   }
 
