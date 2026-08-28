@@ -29,7 +29,7 @@ import { memoryExtractionService } from './memory-extraction.service'
 import { BlueprintClarifyAdapter } from './role-adapters/blueprint/blueprint-clarify.adapter'
 import { buildSpecifyGoalCondition, buildClarifyGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import { blueprintPlanService } from './blueprint-plan.service'
 import { codeGraphService } from './code-graph.service'
@@ -87,6 +87,29 @@ export const CLARIFY_CORRECTION_MESSAGE =
   'Re-emit the findings block (```blueprint-clarify-findings) and either a questions block ' +
   '(```blueprint-clarify-questions) or the completion block (```blueprint-phase-complete).'
 
+/**
+ * API-ERROR-FAIL: terminal reasons that mean the model/API call itself died
+ * (e.g. GLM `api_error`). A turn that ended with one of these produced no real
+ * content — the corrective nudge cannot fix a dead API call, and the free-text
+ * fallback would strand the user in awaitingInput forever.
+ */
+const API_ERROR_TERMINAL_REASONS: ReadonlySet<string> = new Set([
+  'api_error',
+  'model_error',
+  'failed'
+])
+
+/** Thrown when a clarify turn ended with an API-error terminal reason and no parseable output. */
+export class ClarifyApiError extends Error {
+  constructor(terminalReason: string) {
+    super(
+      `Clarify turn ended with terminal reason "${terminalReason}" and no parseable output — ` +
+        `model/API error. Retry the phase.`
+    )
+    this.name = 'ClarifyApiError'
+  }
+}
+
 // ── Per-Blueprint Session State ──
 
 interface BlueprintSessionState {
@@ -98,6 +121,8 @@ interface BlueprintSessionState {
   activeWatchdog: PhaseActivityWatchdog | null
   /** B2-FIX: Pending ask_user requestId — set when the model calls ask_user during clarify. */
   pendingAskUserRequestId: string | null
+  /** API-ERROR-FAIL: terminal reason of the most recent turn (from status/_meta chunks). */
+  lastTerminalReason: string | null
 }
 
 // ── Service ──
@@ -411,6 +436,10 @@ export class BlueprintSpecService extends EventEmitter {
         syntheticConvId = `blueprint-specify-${blueprintId}-${Date.now()}`
       }
 
+      // BP-CONV-ENSURE: persist the conversation row so setConversation's FK
+      // guard passes and crash recovery can correlate the phase to its transcript.
+      blueprintService.ensurePhaseConversation(workspaceId, blueprintId, 'specify', syntheticConvId)
+
       // Persist conversation ID early so retries can find it
       if (specPhaseRecord) {
         try {
@@ -506,10 +535,7 @@ export class BlueprintSpecService extends EventEmitter {
           blueprintId,
           workspaceId,
           phase: 'specify',
-          artifact: {
-            type: 'spec',
-            contentMd: text
-          }
+          artifact: capArtifactForIpc({ type: 'spec', contentMd: text })
         } satisfies BlueprintPhaseArtifactPayload)
       }
 
@@ -683,6 +709,10 @@ export class BlueprintSpecService extends EventEmitter {
         syntheticConvId = `blueprint-clarify-${blueprintId}-${Date.now()}`
       }
 
+      // BP-CONV-ENSURE: persist the conversation row so setConversation's FK
+      // guard passes and crash recovery can correlate the phase to its transcript.
+      blueprintService.ensurePhaseConversation(workspaceId, blueprintId, 'clarify', syntheticConvId)
+
       // Persist conversation ID early so retries can find it
       if (clarifyPhaseRec) {
         try {
@@ -699,13 +729,30 @@ export class BlueprintSpecService extends EventEmitter {
         blueprintId,
         workspaceId,
         activeWatchdog: null,
-        pendingAskUserRequestId: null
+        pendingAskUserRequestId: null,
+        lastTerminalReason: null
       })
 
       // 7. Wire streaming events — chunk handler touches active watchdog
       session.on('chunk', (chunk: StreamChunk) => {
         const state = this.clarifySessions.get(blueprintId)
         state?.activeWatchdog?.touch()
+        // API-ERROR-FAIL: capture the turn's terminal reason. Status chunks
+        // carry `finishReason:<reason>` (opencode normalizer); the final
+        // complete chunk carries `_meta.terminalReason` (CLI backend) — same
+        // source as the [PIPELINE:terminal-reason] log line.
+        if (state) {
+          if (
+            chunk.type === 'status' &&
+            typeof chunk.content === 'string' &&
+            chunk.content.startsWith('finishReason:')
+          ) {
+            state.lastTerminalReason = chunk.content.slice('finishReason:'.length)
+          } else if ('_meta' in chunk && chunk._meta) {
+            const meta = chunk._meta as { terminalReason?: unknown }
+            if (meta.terminalReason) state.lastTerminalReason = String(meta.terminalReason)
+          }
+        }
         forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
           blueprintId,
           workspaceId,
@@ -785,6 +832,9 @@ export class BlueprintSpecService extends EventEmitter {
           abortSignal?.addEventListener('abort', onAbort, { once: true })
           if (abortSignal?.aborted) onAbort()
         })
+        // API-ERROR-FAIL: fresh turn — clear any stale terminal reason
+        const turnState = this.clarifySessions.get(blueprintId)
+        if (turnState) turnState.lastTerminalReason = null
         await Promise.race([
           session.send(adapter.getPhaseMessage(), syntheticConvId),
           clarifyWatchdog.promise,
@@ -892,6 +942,8 @@ export class BlueprintSpecService extends EventEmitter {
 
     const answerWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CLARIFY')
     sessionState.activeWatchdog = answerWatchdog
+    // API-ERROR-FAIL: fresh turn — clear any stale terminal reason
+    sessionState.lastTerminalReason = null
 
     try {
       // M9: Race send against abort signal + stall watchdog
@@ -1028,6 +1080,17 @@ export class BlueprintSpecService extends EventEmitter {
     // skipped the nudge entirely and fell through to the free-text fallback,
     // which is the very degradation the nudge exists to prevent.
     if (!questions && !completion) {
+      // API-ERROR-FAIL: if the turn died with an API/model error, no nudge can
+      // help — fail the phase (caught by the caller → phase failed, retryable)
+      // instead of degrading to the awaitingInput free-text fallback.
+      const terminalReason = this.clarifySessions.get(blueprintId)?.lastTerminalReason
+      if (terminalReason && API_ERROR_TERMINAL_REASONS.has(terminalReason)) {
+        bpLog.error(
+          `[handleClarifyTurnEnd] Blueprint ${blueprintId} — turn ended with ` +
+            `terminalReason=${terminalReason} and no parseable blocks; failing phase`
+        )
+        throw new ClarifyApiError(terminalReason)
+      }
       const alreadyAttempted = this.correctionAttempted.get(blueprintId) ?? false
       if (!alreadyAttempted) {
         bpLog.warn(
@@ -1310,10 +1373,7 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintId,
       workspaceId,
       phase: 'clarify',
-      artifact: {
-        type: 'clarify-qa',
-        contentMd: text
-      }
+      artifact: capArtifactForIpc({ type: 'clarify-qa', contentMd: text })
     } satisfies BlueprintPhaseArtifactPayload)
 
     // BP-CHAIN-CLARIFY-PLAN: Auto-dispatch PLAN after CLARIFY completes.

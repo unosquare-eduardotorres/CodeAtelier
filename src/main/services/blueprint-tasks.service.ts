@@ -23,7 +23,7 @@ import {
   parseBlueprintTasks,
   parseDiscoveriesBlock
 } from './blueprint-artifact-parsers'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import { blueprintReviewService } from './blueprint-review.service'
 import {
@@ -154,6 +154,10 @@ export class BlueprintTasksService extends EventEmitter {
         syntheticConvId = `blueprint-tasks-${blueprintId}-${Date.now()}`
       }
 
+      // BP-CONV-ENSURE: persist the conversation row so setConversation's FK
+      // guard passes and crash recovery can correlate the phase to its transcript.
+      blueprintService.ensurePhaseConversation(workspaceId, blueprintId, 'tasks', syntheticConvId)
+
       // Persist conversation ID early so retries can find it
       if (tasksPhaseRec) {
         try {
@@ -251,7 +255,7 @@ export class BlueprintTasksService extends EventEmitter {
           blueprintId,
           workspaceId,
           phase: 'tasks',
-          artifact: { type: 'tasks', contentMd: text }
+          artifact: capArtifactForIpc({ type: 'tasks', contentMd: text })
         } satisfies BlueprintPhaseArtifactPayload)
       }
 

@@ -30,7 +30,7 @@ import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, asStringArray } from './blueprint-artifact-parsers'
 import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
 import { scanCompletedTaskFiles, applyDeterministicFileCheck } from './blueprint-task-verification'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import {
   blueprintRepository,
@@ -744,7 +744,7 @@ export class BlueprintVerifyService extends EventEmitter {
               blueprintId,
               workspaceId,
               phase: 'verify',
-              artifact: { type: 'verify', contentMd: text }
+              artifact: capArtifactForIpc({ type: 'verify', contentMd: text })
             } satisfies BlueprintPhaseArtifactPayload)
           }
 

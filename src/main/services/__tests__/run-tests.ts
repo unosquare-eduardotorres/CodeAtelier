@@ -280,6 +280,9 @@ const TEST_FILES: string[] = [
   './blueprint-clarify-gate.test',
   // ─── Blueprint Pipeline Hardening — state machine ───
   './blueprint-state-machine.test',
+  // ─── v1.0.90 self-kill fix + hardening batch ───
+  './opencode-kill-stale-server.test',
+  './blueprint-clarify-api-error.test',
   // ─── Blueprint Pipeline Stall Fix + Chunk Forwarder ───
   './blueprint-recovery-gating.test',
   './blueprint-chunk-forwarder.test',

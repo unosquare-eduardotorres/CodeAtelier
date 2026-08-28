@@ -44,6 +44,12 @@ interface VitalsProviders {
   childProcessCount?: () => number
   /** Open the /proc/self/fd count (useful for detecting fd exhaustion kills). */
   fdCount?: () => number
+  /**
+   * Current blueprint phase per active workspace (e.g. "ws1:review ws2:build").
+   * Makes crash triage direct: the heartbeat line at death shows which phase
+   * the pipeline was in (v1.0.89 self-kill happened at tasks→review).
+   */
+  blueprintPhases?: () => string
 }
 
 let providers: VitalsProviders = {}
@@ -85,6 +91,10 @@ function sample(): string {
     if (providers.pendingRetryTimers) parts.push(`retryTimers=${providers.pendingRetryTimers()}`)
     if (providers.childProcessCount) parts.push(`childProcs=${providers.childProcessCount()}`)
     if (providers.fdCount) parts.push(`fds=${providers.fdCount()}`)
+    if (providers.blueprintPhases) {
+      const phases = providers.blueprintPhases()
+      if (phases) parts.push(`bp=${phases}`)
+    }
   } catch {
     /* provider errors must never break instrumentation */
   }

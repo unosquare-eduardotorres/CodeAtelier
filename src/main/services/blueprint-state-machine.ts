@@ -89,6 +89,15 @@ const IDEMPOTENT_WHEN_IDLE: BlueprintMachineTransition[] = [
   'approvalResponded'
 ]
 
+// States where a duplicate `awaitingInput` is a no-op rather than an invalid
+// transition. The clarify flow can emit awaitingInput more than once (e.g. a
+// status chunk race after the state already moved) — re-entering the same
+// awaiting state must not warn or emit a redundant stateChange.
+const IDEMPOTENT_AWAITING_INPUT_STATES: BlueprintMachineState[] = [
+  'awaiting-clarify-input',
+  'awaiting-clarify-questions'
+]
+
 // ── State Change Payload ──
 
 export interface BlueprintStateChangePayload {
@@ -144,6 +153,13 @@ export class BlueprintStateMachine extends EventEmitter {
     // Idempotent transitions — if already idle, treat finalizing events as no-ops.
     if (this.state === 'idle' && IDEMPOTENT_WHEN_IDLE.includes(event)) {
       smLog.info(`[SM:${this.workspaceId}] ${event} already idle — no-op`)
+      return true
+    }
+
+    // Idempotent awaitingInput — already awaiting input; a duplicate event is
+    // a no-op (no transition, no stateChange emit).
+    if (event === 'awaitingInput' && IDEMPOTENT_AWAITING_INPUT_STATES.includes(this.state)) {
+      smLog.info(`[SM:${this.workspaceId}] awaitingInput already in ${this.state} — no-op`)
       return true
     }
 

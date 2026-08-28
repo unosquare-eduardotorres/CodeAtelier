@@ -348,6 +348,50 @@ describe('BlueprintStateMachine', () => {
     assert.equal(sm.currentState, 'idle')
   })
 
+  // ── Idempotent awaitingInput (duplicate event while already awaiting) ──
+
+  test('awaitingInput from awaiting-clarify-input is idempotent (returns true, state unchanged)', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'clarify' })
+    sm.transition('awaitingInput')
+    assert.equal(sm.currentState, 'awaiting-clarify-input')
+    const result = sm.transition('awaitingInput')
+    assert.equal(result, true)
+    assert.equal(sm.currentState, 'awaiting-clarify-input')
+  })
+
+  test('awaitingInput from awaiting-clarify-questions is idempotent (returns true, state unchanged)', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'clarify' })
+    sm.transition('questionsParsed')
+    assert.equal(sm.currentState, 'awaiting-clarify-questions')
+    const result = sm.transition('awaitingInput')
+    assert.equal(result, true)
+    assert.equal(sm.currentState, 'awaiting-clarify-questions')
+  })
+
+  test('stateChange NOT emitted on idempotent awaitingInput no-op', () => {
+    const sm = make()
+    const events: BlueprintStateChangePayload[] = []
+    sm.on('stateChange', (p: BlueprintStateChangePayload) => events.push(p))
+
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'clarify' })
+    sm.transition('awaitingInput')
+    const countAfterFirst = events.length
+    sm.transition('awaitingInput') // duplicate — no-op
+    assert.equal(events.length, countAfterFirst)
+  })
+
+  test('awaitingInput from awaiting-clarify-gate is still invalid (not in idempotent set)', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'clarify' })
+    sm.transition('gateParsed')
+    assert.equal(sm.currentState, 'awaiting-clarify-gate')
+    const result = sm.transition('awaitingInput')
+    assert.equal(result, false)
+    assert.equal(sm.currentState, 'awaiting-clarify-gate')
+  })
+
   // ── Context Management ──
 
   test('context (blueprintId, phase) is cleared on transition to idle', () => {

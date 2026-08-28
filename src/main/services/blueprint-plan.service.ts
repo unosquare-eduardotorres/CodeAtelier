@@ -152,6 +152,10 @@ export class BlueprintPlanService extends EventEmitter {
         syntheticConvId = `blueprint-plan-${blueprintId}-${Date.now()}`
       }
 
+      // BP-CONV-ENSURE: persist the conversation row so setConversation's FK
+      // guard passes and crash recovery can correlate the phase to its transcript.
+      blueprintService.ensurePhaseConversation(workspaceId, blueprintId, 'plan', syntheticConvId)
+
       // Persist conversation ID early so retries can find it
       if (planPhaseRec) {
         try {

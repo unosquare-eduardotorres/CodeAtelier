@@ -170,6 +170,34 @@ const BASE_RETRY_DELAY_MS = 2000
 const OPENCODE_SERVER_PORT = 4096
 
 /**
+ * SELF-KILL FIX: Select stale-server PIDs from raw `lsof -ti` output.
+ *
+ * Pure helper (unit-testable without lsof). Rules:
+ *  - Only numeric lines are considered (lsof may emit warnings to stdout).
+ *  - The app's own PID is NEVER selected — `lsof :PORT` without a LISTEN filter
+ *    matches the Electron app's own client sockets (remote port = server port),
+ *    and killing those kills the app itself (SIGTERM crash loop at the
+ *    tasks→review transition).
+ *
+ * @param lsofOutput raw stdout of `lsof -ti :PORT -sTCP:LISTEN`
+ * @param ownPid the current process PID to always exclude
+ * @returns deduplicated numeric PIDs to kill (may be empty)
+ */
+export function selectStaleServerPids(lsofOutput: string, ownPid: number): number[] {
+  if (!lsofOutput) return []
+  const pids = new Set<number>()
+  for (const line of lsofOutput.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const pid = Number(trimmed)
+    if (!Number.isInteger(pid) || pid <= 0) continue
+    if (pid === ownPid) continue
+    pids.add(pid)
+  }
+  return [...pids]
+}
+
+/**
  * Chunk types that can only be produced by OUR prompt's agent loop.
  * Used by the stale-idle guard: a session.idle arriving before any of these
  * is a stale tail from the priming prompt (or an orphaned prior prompt on
@@ -1684,20 +1712,32 @@ Troubleshooting:
   private async killStaleServer(): Promise<void> {
     try {
       const { execSync } = await import('node:child_process')
-      // lsof finds PIDs listening on our port; awk extracts the PID column
-      const output = execSync(`lsof -ti :${OPENCODE_SERVER_PORT} 2>/dev/null`, {
-        encoding: 'utf-8',
-        timeout: 3000,
-        windowsHide: true
-      }).trim()
-      if (output) {
-        const pids = output.split('\n').filter(Boolean)
+      // SELF-KILL FIX: `-sTCP:LISTEN` restricts matches to processes LISTENING on
+      // the port. Without it, `lsof :PORT` also matches sockets whose REMOTE port
+      // is 4096 — i.e. our own SDK client / lingering SSE subscriptions — and the
+      // loop below SIGTERMs the Electron app itself at the tasks→review transition.
+      const output = execSync(
+        `lsof -ti :${OPENCODE_SERVER_PORT} -sTCP:LISTEN 2>/dev/null`,
+        {
+          encoding: 'utf-8',
+          timeout: 3000,
+          windowsHide: true
+        }
+      ).trim()
+      // Belt-and-braces: never kill our own PID even if the LISTEN filter regresses.
+      if (output.includes(String(process.pid))) {
+        openCodeLog.warn(
+          `[opencode] lsof matched own PID ${process.pid} on port ${OPENCODE_SERVER_PORT} — excluding (LISTEN filter regression?)`
+        )
+      }
+      const pids = selectStaleServerPids(output, process.pid)
+      if (pids.length > 0) {
         for (const pid of pids) {
           openCodeLog.warn(
             `[opencode] Killing stale server process on port ${OPENCODE_SERVER_PORT} (PID ${pid})`
           )
           try {
-            process.kill(Number(pid), 'SIGTERM')
+            process.kill(pid, 'SIGTERM')
           } catch {
             // Process may have already exited
           }

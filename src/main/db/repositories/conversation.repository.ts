@@ -114,6 +114,38 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     return mapRow(row)
   }
 
+  /**
+   * BP-CONV-ENSURE: Insert a conversation row with an EXPLICIT id, or return the
+   * existing row if that id is already present. Blueprint phase services mint
+   * synthetic conversation ids (`blueprint-<phase>-<id>-<ts>`) that the session
+   * layer streams under; without a persisted row, blueprintPhaseRepository
+   * .setConversation() skips the FK link ("Conversation … not found") and crash
+   * recovery can't correlate the phase to its transcript.
+   *
+   * Idempotent: safe to call on every phase start / retry.
+   */
+  ensureWithId(
+    id: string,
+    workspaceId: string,
+    title: string,
+    mode: ConversationMode = 'plan',
+    type: ConversationType = 'blueprint'
+  ): Conversation {
+    const existing = this.findById(id)
+    if (existing) return existing
+    const row = this.db()
+      .prepare(
+        `INSERT INTO conversations (id, workspace_id, title, mode, type)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO NOTHING
+         RETURNING *`
+      )
+      .get(id, workspaceId, title, mode, type) as ConversationRow | undefined
+    // ON CONFLICT DO NOTHING + RETURNING yields no row when another writer
+    // inserted concurrently — fall back to a plain read.
+    return row ? mapRow(row) : (this.findById(id) as Conversation)
+  }
+
   findByWorkspace(workspaceId: string): Conversation[] {
     const rows = this.db()
       .prepare(

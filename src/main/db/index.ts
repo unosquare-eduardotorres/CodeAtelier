@@ -4762,6 +4762,20 @@ export function getDatabase(): Database.Database {
   seedDefaultSpecialists(db)
   seedDefaultSkills(db)
 
+  // DB-MAINT: reclaim freelist pages in the background if they exceed the
+  // threshold (v1.0.89: 454MB of the 579MB packaged store was freelist).
+  // Deferred via lazy require to avoid a circular import at module load —
+  // blueprint.service imports db/index for getDatabase().
+  if (!isStandaloneMcpServer) {
+    try {
+      const { maybeVacuumInBackground } = require('./maintenance') as typeof import('./maintenance')
+      const { blueprintService } = require('../services/blueprint.service') as typeof import('../services/blueprint.service')
+      maybeVacuumInBackground(db, dbPath, () => blueprintService.hasAnyRunningPipeline())
+    } catch (err) {
+      dbLogger.warn('[DB] Failed to schedule maintenance VACUUM:', err)
+    }
+  }
+
   return db
 }
 

@@ -666,6 +666,15 @@ app.whenReady().then(() => {
   setVitalsProviders({
     activeOpenCodeSessions: () => openCodeExecutor.getVitals().activeSessions,
     pendingRetryTimers: () => openCodeExecutor.getVitals().retriesInFlight,
+    // P2: current blueprint phase per active workspace — makes crash triage
+    // direct (v1.0.89 self-kill happened at the tasks→review transition).
+    blueprintPhases: () => {
+      try {
+        return blueprintService.getActiveBlueprintPhases()
+      } catch {
+        return ''
+      }
+    },
     childProcessCount: () => {
       // pgrep is Unix-only — on Windows it doesn't exist and every 5s spawn
       // attempt adds overhead that accumulates into main-thread stalls.

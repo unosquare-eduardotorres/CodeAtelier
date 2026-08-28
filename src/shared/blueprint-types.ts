@@ -170,6 +170,8 @@ export interface BlueprintArtifact {
   filePath?: string
   contentMd?: string
   contentJson?: Record<string, unknown>
+  /** SIZE-GUARD: true when `contentMd` was truncated for the IPC payload — full text remains in the DB / on disk. */
+  truncated?: boolean
 }
 
 export interface BlueprintTask {

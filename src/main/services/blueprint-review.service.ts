@@ -22,7 +22,7 @@ import { AgentSessionService } from './agent-session.service'
 import { BlueprintReviewAdapter } from './role-adapters/blueprint/blueprint-review.adapter'
 import { buildReviewGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import {
   blueprintRepository,
@@ -151,6 +151,10 @@ export class BlueprintReviewService extends EventEmitter {
         syntheticConvId = `blueprint-review-${blueprintId}-${Date.now()}`
       }
 
+      // BP-CONV-ENSURE: persist the conversation row so setConversation's FK
+      // guard passes and crash recovery can correlate the phase to its transcript.
+      blueprintService.ensurePhaseConversation(workspaceId, blueprintId, 'review', syntheticConvId)
+
       // Persist conversation ID early so retries can find it
       if (reviewPhaseRec) {
         try {
@@ -232,7 +236,7 @@ export class BlueprintReviewService extends EventEmitter {
           blueprintId,
           workspaceId,
           phase: 'review',
-          artifact: { type: 'review', contentMd: text }
+          artifact: capArtifactForIpc({ type: 'review', contentMd: text })
         } satisfies BlueprintPhaseArtifactPayload)
       }
 

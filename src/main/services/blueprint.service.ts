@@ -17,7 +17,7 @@ import {
   blueprintPhaseRepository,
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
-import { workspaceRepository } from '../db/repositories'
+import { workspaceRepository, conversationRepository } from '../db/repositories'
 import { ideaRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
 import { buildPhaseSystemPrompt } from './blueprint-prompt-loader'
@@ -130,6 +130,58 @@ interface BlueprintPipelineState {
 }
 
 // ── Service ──
+
+/**
+ * SIZE-GUARD: per-type char caps for artifact `contentMd` injected into phase
+ * context. The prompt loader's 50K budget only truncates BETWEEN artifacts — a
+ * single oversized artifact (v1.0.89: tasks turn streamed 170KB) passed through
+ * uncut. When `contentJson` exists for tasks/plan the renderer prefers the
+ * compact projection anyway, so the markdown is dropped entirely.
+ */
+const ARTIFACT_CONTENT_MD_CAPS: Record<string, number> = {
+  tasks: 60_000,
+  plan: 40_000,
+  spec: 40_000,
+  review: 40_000,
+  verify: 40_000
+}
+const DEFAULT_ARTIFACT_CONTENT_MD_CAP = 40_000
+
+function capArtifactForContext(a: BlueprintArtifact): BlueprintArtifact {
+  if (!a.contentMd) return a
+  const cap = ARTIFACT_CONTENT_MD_CAPS[a.type] ?? DEFAULT_ARTIFACT_CONTENT_MD_CAP
+  if (a.contentMd.length <= cap) return a
+  // tasks/plan with structured JSON: the prompt loader renders the compact
+  // projection and ignores contentMd — drop it rather than truncate.
+  if ((a.type === 'tasks' || a.type === 'plan') && a.contentJson) {
+    return { ...a, contentMd: undefined }
+  }
+  return {
+    ...a,
+    contentMd:
+      a.contentMd.slice(0, cap) +
+      `\n\n…[truncated — ${a.type} artifact exceeded ${cap.toLocaleString()} chars; full text on disk at ${a.filePath ?? 'artifact file'}]`
+  }
+}
+
+/**
+ * SIZE-GUARD (IPC): cap `contentMd` in an emitted phaseArtifact payload at
+ * 120K chars. Multi-hundred-KB single IPC messages stall the renderer; the
+ * full text stays in the DB — the renderer renders what it gets. Sets
+ * `truncated: true` so the UI can say so.
+ */
+export const PHASE_ARTIFACT_IPC_CAP_CHARS = 120_000
+
+export function capArtifactForIpc(a: BlueprintArtifact): BlueprintArtifact {
+  if (!a.contentMd || a.contentMd.length <= PHASE_ARTIFACT_IPC_CAP_CHARS) return a
+  return {
+    ...a,
+    contentMd:
+      a.contentMd.slice(0, PHASE_ARTIFACT_IPC_CAP_CHARS) +
+      `\n\n…[truncated for display — full text stored in the blueprint record]`,
+    truncated: true
+  }
+}
 
 export class BlueprintService extends EventEmitter {
   private pipelines = new Map<string, BlueprintPipelineState>()
@@ -309,6 +361,28 @@ export class BlueprintService extends EventEmitter {
     return this.pipelines.get(workspaceId)?.running ?? false
   }
 
+  /** True if ANY workspace has a blueprint pipeline mid-flight — used by DB maintenance to defer VACUUM. */
+  hasAnyRunningPipeline(): boolean {
+    for (const state of this.pipelines.values()) {
+      if (state.running) return true
+    }
+    return false
+  }
+
+  /**
+   * P2 (vitals): compact "phase" summary of every running pipeline, e.g.
+   * "review" or "build|verify" — empty string when nothing is running.
+   * Injected into the 5s vitals heartbeat so the line at death shows which
+   * phase the pipeline was in.
+   */
+  getActiveBlueprintPhases(): string {
+    const phases: string[] = []
+    for (const state of this.pipelines.values()) {
+      if (state.running && state.currentPhase) phases.push(state.currentPhase)
+    }
+    return phases.join('|')
+  }
+
   getActiveBlueprintId(workspaceId: string): string | null {
     return this.pipelines.get(workspaceId)?.blueprintId ?? null
   }
@@ -353,6 +427,40 @@ export class BlueprintService extends EventEmitter {
     state.lastError = null
     // Corrective snapshot — overwrites the transient incoherent one from stateChange
     this.publishSnapshot(workspaceId)
+  }
+
+  /**
+   * BP-CONV-ENSURE: Ensure the conversations row for a blueprint phase's
+   * synthetic conversation id exists BEFORE blueprintPhaseRepository
+   * .setConversation() links the FK. Without this, the FK guard in
+   * setConversation() skips the link ("Conversation … not found") on every
+   * phase, and crash recovery / [reconcile] can't correlate the phase to its
+   * transcript — mid-flight blueprints get marked failed on relaunch.
+   *
+   * Idempotent — safe on retries and provider-change re-mints. Best-effort:
+   * failures are logged and swallowed (the phase can still run; the link is
+   * repaired on the next attempt).
+   */
+  ensurePhaseConversation(
+    workspaceId: string,
+    blueprintId: string,
+    phase: BlueprintPhaseType,
+    conversationId: string
+  ): void {
+    try {
+      conversationRepository.ensureWithId(
+        conversationId,
+        workspaceId,
+        `Blueprint ${blueprintId.slice(0, 8)} — ${phase}`,
+        'plan',
+        'blueprint'
+      )
+    } catch (err) {
+      bpLog.warn(
+        `[ensurePhaseConversation] Failed to persist conversation row ${conversationId}:`,
+        err
+      )
+    }
   }
 
   /** Mark a pipeline as stopped for a workspace. Called by phase services. */
@@ -1238,13 +1346,6 @@ export class BlueprintService extends EventEmitter {
   //  CONTEXT ASSEMBLY — Feeds into Prompt Injection
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Assemble the full context needed for a phase's system prompt.
-   * Collects blueprint metadata, constitution, and phase-relevant artifacts from prior phases.
-   *
-   * Uses PHASE_ARTIFACT_RELEVANCE to inject only the artifact types each phase needs,
-   * instead of blindly accumulating all prior artifacts (which caused 146–214KB prompts).
-   */
   async assemblePhaseContext(
     blueprintId: string,
     phase: BlueprintPhaseType,
@@ -1255,6 +1356,44 @@ export class BlueprintService extends EventEmitter {
       throw new Error(`Blueprint not found: ${blueprintId}`)
     }
 
+    // SIZE-GUARD: assembly must never throw — a broken artifact row or an
+    // unreadable workspace doc should degrade to a truncated context, not
+    // kill the phase before it starts.
+    try {
+      return await this.assemblePhaseContextInner(blueprint, phase, workspacePath)
+    } catch (err) {
+      bpLog.warn(
+        `[assemblePhaseContext] Context assembly failed — degrading to minimal context:`,
+        err
+      )
+      return {
+        blueprint: {
+          id: blueprint.id,
+          title: blueprint.title,
+          shortName: blueprint.shortName,
+          description: blueprint.description,
+          priority: blueprint.priority,
+          currentPhase: phase,
+          settings: blueprint.settingsJson
+        },
+        constitution: blueprint.constitutionSnapshot,
+        previousArtifacts: [],
+        specFilePath: `blueprints/${blueprint.shortName || blueprint.id}/spec.md`,
+        blueprintDir: `blueprints/${blueprint.shortName || blueprint.id}`,
+        grillDecisions: parseGrillDecisions(blueprint.settingsJson?.grillDecisions),
+        workspaceDocs: undefined,
+        retryContext: undefined,
+        revisionRequests: []
+      }
+    }
+  }
+
+  private async assemblePhaseContextInner(
+    blueprint: Blueprint,
+    phase: BlueprintPhaseType,
+    workspacePath?: string
+  ): Promise<PhaseContext> {
+    const blueprintId = blueprint.id
     const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
 
     // Collect only phase-relevant artifacts from prior phases
@@ -1266,7 +1405,7 @@ export class BlueprintService extends EventEmitter {
       if (pIdx < currentIdx && p.artifactsJson.length > 0) {
         for (const artifact of p.artifactsJson) {
           if (relevantTypes.has(artifact.type)) {
-            previousArtifacts.push(artifact)
+            previousArtifacts.push(capArtifactForContext(artifact))
           }
         }
       }

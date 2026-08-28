@@ -279,6 +279,46 @@ if (!env) {
       assert.equal(updated.conversationId, convId)
     })
 
+    // ── BP-CONV-ENSURE: synthetic conversation ids must be persistable ──
+
+    test('ensureWithId() creates the row once, then is idempotent', () => {
+      const { conversationRepository } = require('../conversation.repository')
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Ensure Conv' })
+      const syntheticId = `blueprint-clarify-${bp.id}-${Date.now()}`
+
+      // First call inserts
+      const created = conversationRepository.ensureWithId(
+        syntheticId,
+        wsId,
+        'Blueprint — clarify',
+        'plan',
+        'blueprint'
+      )
+      assert.equal(created.id, syntheticId)
+      assert.equal(created.type, 'blueprint')
+      assert.equal(created.mode, 'plan')
+
+      // Second call returns the SAME row — no duplicate
+      const again = conversationRepository.ensureWithId(syntheticId, wsId, 'Blueprint — clarify')
+      assert.equal(again.id, syntheticId)
+      const count = env.db
+        .prepare('SELECT COUNT(*) as n FROM conversations WHERE id = ?')
+        .get(syntheticId) as { n: number }
+      assert.equal(count.n, 1)
+    })
+
+    test('setConversation() links successfully after ensureWithId() (FK guard passes)', () => {
+      const { conversationRepository } = require('../conversation.repository')
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Ensure + Link' })
+      const phase = blueprintPhaseRepository.create({ blueprintId: bp.id, phase: 'tasks' })
+      const syntheticId = `blueprint-tasks-${bp.id}-${Date.now()}`
+
+      conversationRepository.ensureWithId(syntheticId, wsId, 'Blueprint — tasks')
+      const updated = blueprintPhaseRepository.setConversation(phase.id, syntheticId)
+      assert.ok(updated, 'FK link must succeed once the row exists')
+      assert.equal(updated.conversationId, syntheticId)
+    })
+
     test('saveArtifacts() stores artifact array', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'Artifacts' })
       const phase = blueprintPhaseRepository.create({ blueprintId: bp.id, phase: 'specify' })
