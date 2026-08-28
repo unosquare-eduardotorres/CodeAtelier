@@ -1,15 +1,20 @@
 /**
  * Regression guard for the Windows blueprint remediation loop.
  *
- * `execGateCommand` used to collapse Node's *string* spawn-failure codes
+ * The verify service used to collapse Node's *string* spawn-failure codes
  * (ENOENT/EACCES/...) into `exitCode: 1`, so an unspawnable `npx.cmd` on Windows
  * looked identical to a failing typecheck with no error output. That forced
  * `gaps_found`, which manufactured an empty remediation task, which rebuilt and
  * re-failed — forever.
  *
- * These tests pin the two behaviours that break the loop:
- *   1. spawn failure → `launched: false` (gate skipped, no finding)
- *   2. genuine non-zero exit → `launched: true` with the real exit code
+ * M8.2/M8.3 moved verify onto the gate engine (`runVerifyGates`), where the
+ * same invariant lives in `gateCommand`: a spawn failure is
+ * `unverifiable`/`command_error` (ledger, never fail) and a genuine non-zero
+ * exit is `fail` with the real exit code preserved.
+ *
+ * These tests pin the behaviours that break the loop:
+ *   1. spawn failure → `unverifiable`/`command_error`, never `fail`
+ *   2. genuine non-zero exit → `fail` with the real exit code in evidence
  *   3. an empty-bodied quality-gate finding never becomes a remediation task
  */
 import assert from 'node:assert/strict'
@@ -20,16 +25,10 @@ setupFullMock()
 
 const mod = require('../blueprint-verify.service')
 const { BlueprintVerifyService } = mod
-
-type GateResult = { exitCode: number; output: string; launched: boolean }
+const gates = require('../blueprint-gates.service')
+const { runVerifyGates } = gates
 
 const svc = new BlueprintVerifyService() as unknown as {
-  execGateCommand: (
-    cmd: string,
-    args: string[],
-    cwd: string,
-    timeoutMs: number
-  ) => Promise<GateResult>
   generateFallbackRemediationTasks: (
     completion: Record<string, unknown> | null,
     text: string,
@@ -37,58 +36,92 @@ const svc = new BlueprintVerifyService() as unknown as {
   ) => Array<{ taskId: string; description: string; files: string[] }>
 }
 
-// On win32 the gate runs through `shell: true`, so a missing binary surfaces as
-// a cmd.exe exit code with output rather than a spawn-level ENOENT, and args are
-// passed unquoted. Both make these process-level assertions platform-specific.
-const isWin = process.platform === 'win32'
-const winSkip = isWin ? { skipReason: 'shell:true changes spawn semantics on win32' } : undefined
+/** A runner that answers every command from a scripted table (no real spawn). */
+function scriptedRunner(
+  script: Record<string, { exitCode?: number; output?: string[]; spawnError?: string }>
+): Parameters<typeof runVerifyGates>[0]['runner'] {
+  return async (command) => {
+    const entry = script[command]
+    if (!entry) {
+      return {
+        exitCode: null,
+        output: [],
+        timedOut: false,
+        spawnError: 'command not found',
+        durationMs: 1
+      }
+    }
+    return {
+      exitCode: entry.exitCode ?? 0,
+      output: entry.output ?? [],
+      timedOut: false,
+      ...(entry.spawnError ? { spawnError: entry.spawnError } : {}),
+      durationMs: 1
+    }
+  }
+}
 
-describe('execGateCommand — launch classification', () => {
-  test(
-    'unspawnable command reports launched:false (not a failing gate)',
-    async () => {
-      const res = await svc.execGateCommand(
-        'definitely-not-a-real-binary-xyz',
-        ['--version'],
-        process.cwd(),
-        10_000
-      )
-      assert.equal(res.launched, false, 'spawn failure must not be reported as a gate run')
-      assert.equal(res.exitCode, 1)
-    },
-    winSkip
-  )
+function verifyCtx(
+  runner: Parameters<typeof runVerifyGates>[0]['runner'],
+  commands: Parameters<typeof runVerifyGates>[0]['commands']
+): Parameters<typeof runVerifyGates>[0] {
+  return {
+    blueprintId: 'bp-launch',
+    taskId: 'verify',
+    workspacePath: process.cwd(),
+    executionPath: process.cwd(),
+    plannedFiles: [],
+    packet: null,
+    commands,
+    runner
+  }
+}
 
-  test(
-    'genuine non-zero exit reports launched:true with the real exit code',
-    async () => {
-      const res = await svc.execGateCommand(
-        process.execPath,
-        ['-e', 'process.exit(2)'],
-        process.cwd(),
-        10_000
+describe('verify gate launch classification (engine)', () => {
+  test('unspawnable command ⇒ unverifiable/command_error, never fail', async () => {
+    const report = await runVerifyGates(
+      verifyCtx(
+        scriptedRunner({
+          'run-suite': { spawnError: 'spawn npx.cmd ENOENT' }
+        }),
+        { test: { command: 'run-suite', provenance: 'detected' } }
       )
-      assert.equal(res.launched, true)
-      assert.equal(res.exitCode, 2, 'numeric exit code must be preserved, not collapsed to 1')
-    },
-    winSkip
-  )
+    )
+    const gate = report.gates.find((g) => g.name === 'full-suite')!
+    assert.equal(gate.verdict, 'unverifiable', 'spawn failure must not be reported as a gate run')
+    assert.equal(gate.reason, 'command_error')
+    assert.notEqual(report.overall, 'fail')
+  })
 
-  test(
-    'successful command reports launched:true with exit code 0',
-    async () => {
-      const res = await svc.execGateCommand(
-        process.execPath,
-        ['-e', 'process.stdout.write("ok")'],
-        process.cwd(),
-        10_000
+  test('genuine non-zero exit ⇒ fail with the real exit code preserved', async () => {
+    const report = await runVerifyGates(
+      verifyCtx(
+        scriptedRunner({
+          'run-suite': { exitCode: 2, output: ['1 failing'] }
+        }),
+        { test: { command: 'run-suite', provenance: 'detected' } }
       )
-      assert.equal(res.launched, true)
-      assert.equal(res.exitCode, 0)
-      assert.ok(res.output.includes('ok'))
-    },
-    winSkip
-  )
+    )
+    const gate = report.gates.find((g) => g.name === 'full-suite')!
+    assert.equal(gate.verdict, 'fail')
+    assert.ok(
+      gate.evidence.some((e) => e.includes('exited 2')),
+      'numeric exit code must be preserved, not collapsed to 1'
+    )
+  })
+
+  test('successful command ⇒ pass', async () => {
+    const report = await runVerifyGates(
+      verifyCtx(
+        scriptedRunner({
+          'run-suite': { exitCode: 0, output: ['ok'] }
+        }),
+        { test: { command: 'run-suite', provenance: 'detected' } }
+      )
+    )
+    const gate = report.gates.find((g) => g.name === 'full-suite')!
+    assert.equal(gate.verdict, 'pass')
+  })
 })
 
 describe('generateFallbackRemediationTasks — empty-bodied gate findings', () => {
