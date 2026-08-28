@@ -25,7 +25,7 @@ setupFullMock()
 
 const mod = require('../blueprint-verify.service')
 const { BlueprintVerifyService } = mod
-const gates = require('../blueprint-gates.service')
+const gates = require('../blueprint-gates.service') as typeof import('../blueprint-gates.service')
 const { runVerifyGates } = gates
 
 const svc = new BlueprintVerifyService() as unknown as {
