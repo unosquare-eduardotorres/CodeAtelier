@@ -709,6 +709,30 @@ export class BlueprintService extends EventEmitter {
   delete(blueprintId: string): void {
     blueprintRepository.delete(blueprintId)
     bpLog.info(`[delete] Blueprint ${blueprintId} deleted`)
+
+    // BP-DELETE-MACHINE-RESET: If the workspace machine is still holding this
+    // blueprint (e.g. it was awaiting user input when deleted), reset it —
+    // otherwise the machine stays stranded in awaiting-clarify-input and every
+    // subsequent startPhase for the workspace throws "cannot start … machine in
+    // state 'awaiting-clarify-input'". The machine is per-workspace, so scan
+    // the pipeline states for one whose blueprintId matches.
+    for (const [workspaceId, state] of this.pipelines) {
+      if (state.blueprintId === blueprintId) {
+        const machine = this.getMachine(workspaceId)
+        if (!machine.isIdle()) {
+          bpLog.info(
+            `[delete] Resetting stranded machine (state=${machine.currentState}) for ` +
+              `deleted blueprint ${blueprintId}`
+          )
+          machine.forceReset()
+        }
+        state.running = false
+        state.blueprintId = null
+        state.currentPhase = null
+        state.abortController = null
+        break
+      }
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

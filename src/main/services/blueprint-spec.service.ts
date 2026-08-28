@@ -527,8 +527,16 @@ export class BlueprintSpecService extends EventEmitter {
       // Guard: don't overwrite 'cancelled' status set by blueprintService.cancel()
       const currentStatus = blueprintRepository.findById(blueprintId)?.status
       if (currentStatus !== 'cancelled') {
-        if (specifyPhase) {
-          blueprintPhaseRepository.updateStatus(specifyPhase.id, 'failed')
+        // BP-RETRY-UI-01: If the failure happened BEFORE the phase row was
+        // fetched/marked (e.g. markPipelineRunning threw on a stranded machine),
+        // specifyPhase is undefined — resolve it now so the phase row gets a
+        // 'failed' status. Without it the blueprint is failed with all phases
+        // pending, and the detail view's Retry banner (which requires a failed
+        // phase row) never renders — the user has no way to retry.
+        const failedPhaseRow =
+          specifyPhase ?? blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
+        if (failedPhaseRow) {
+          blueprintPhaseRepository.updateStatus(failedPhaseRow.id, 'failed')
         }
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
@@ -801,8 +809,12 @@ export class BlueprintSpecService extends EventEmitter {
       // (e.g. session.stop() racing an ask_user turn) must not paint it red.
       const awaitingInput = blueprintService.getMachine(workspaceId).isAwaitingInput()
       if (currentStatus !== 'cancelled' && !awaitingInput) {
-        if (clarifyPhase) {
-          blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'failed')
+        // BP-RETRY-UI-01: Same as specify — resolve the phase row when the
+        // failure preceded phase assignment so the Retry banner can render.
+        const failedPhaseRow =
+          clarifyPhase ?? blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
+        if (failedPhaseRow) {
+          blueprintPhaseRepository.updateStatus(failedPhaseRow.id, 'failed')
         }
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }

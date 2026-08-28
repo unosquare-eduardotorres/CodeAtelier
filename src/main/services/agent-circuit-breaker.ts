@@ -85,6 +85,8 @@ export class AgentCircuitBreaker {
     isLocalProvider?: boolean
     /** S1: Context window tier — drives the tool call limit for local LLMs */
     contextTier?: ContextWindowTier
+    /** CB-GOAL-01: A goal condition is active for this stream. */
+    hasGoalCondition?: boolean
   }): CircuitBreakerResult {
     this._toolCallCount++
 
@@ -106,7 +108,19 @@ export class AgentCircuitBreaker {
     // deliverable. In build mode "write a paragraph, then act" is the normal rhythm,
     // and the heuristic reads a status recap as a finished answer, cutting the stream
     // mid-tool and orphaning real work.
-    if (!opts.isBuildMode && this._toolCallCount === 1 && opts.accumulatedTextLength >= 500) {
+    //
+    // CB-GOAL-01: The same premise fails for goal-conditioned plan sessions
+    // (blueprint phases, chat /goal): the deliverable is a structured artifact
+    // (questions block, plan JSON, …), and the model legitimately gathers
+    // context with tools BEFORE producing it. Observed live: GLM streamed
+    // 1850 chars of clarify analysis, called `read` to pull the portal context
+    // doc, and this heuristic killed the turn — no questions block ever formed.
+    if (
+      !opts.isBuildMode &&
+      !opts.hasGoalCondition &&
+      this._toolCallCount === 1 &&
+      opts.accumulatedTextLength >= 500
+    ) {
       this.log.warn(
         `[PIPELINE:gratuitous-tool-soft-stop] conversationId=${opts.conversationId} textLen=${opts.accumulatedTextLength} — already answered, stopping after this tool`
       )

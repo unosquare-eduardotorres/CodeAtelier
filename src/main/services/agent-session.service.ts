@@ -2004,6 +2004,17 @@ export class AgentSessionService extends AgentBaseService {
       // ── Select executor backend ──
       const cliPromptInput = await this.extractPromptContent(sdkPrompt)
 
+      // CB-GOAL-01: Resolve the goal condition once for the whole stream —
+      // both backend branches resolve it identically for prompt injection, and
+      // the circuit breaker's gratuitous-tool heuristic must be suppressed
+      // whenever one is active (the deliverable is a structured artifact, not
+      // prose — "already answered" doesn't apply).
+      const goalForStream =
+        (opts.goal ??
+          ('getGoalCondition' in this.adapter
+            ? (this.adapter as { getGoalCondition(): string | null }).getGoalCondition()
+            : null)) !== null
+
       let executorStream: AsyncGenerator<StreamChunk>
       switch (effectiveBackend) {
         case 'opencode': {
@@ -2088,7 +2099,13 @@ export class AgentSessionService extends AgentBaseService {
             conversationId,
             isBuildMode,
             streamState,
-            contextTier: passedContextTier
+            contextTier: passedContextTier,
+            // CB-GOAL-01: The gratuitous-tool heuristic assumes prose = the
+            // deliverable. When a goal condition is active (blueprint phases,
+            // chat /goal), the deliverable is a structured artifact the model
+            // may legitimately need tools to produce — the heuristic must not
+            // fire. Resolved once per stream below (goalForStream).
+            hasGoalCondition: goalForStream
           })
           if (action === 'break') break
           if (action === 'continue') continue
@@ -2997,6 +3014,7 @@ export class AgentSessionService extends AgentBaseService {
       isBuildMode: boolean
       streamState: StreamLoopState
       contextTier?: ContextWindowTier
+      hasGoalCondition?: boolean
     }
   ): 'next' | 'break' | 'continue' {
     return this.streamProcessor.processContentChunk(chunk, ctx)

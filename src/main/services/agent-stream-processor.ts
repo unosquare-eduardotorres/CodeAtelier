@@ -338,6 +338,7 @@ export class AgentStreamProcessor {
       isBuildMode: boolean
       streamState: StreamLoopState
       contextTier?: ContextWindowTier
+      hasGoalCondition?: boolean
     }
   ): 'next' | 'break' | 'continue' {
     const { conversationId, isBuildMode, streamState } = ctx
@@ -359,7 +360,10 @@ export class AgentStreamProcessor {
       accumulatedTextLength: this.turnScopedTextLength(conversationId),
       conversationId,
       isLocalProvider: this.s.llmProvider === 'local-llm',
-      contextTier: ctx.contextTier
+      contextTier: ctx.contextTier,
+      // CB-GOAL-01: goal-driven sessions deliver a structured artifact — the
+      // "already answered, tool is gratuitous" premise doesn't hold.
+      hasGoalCondition: ctx.hasGoalCondition === true
     })
 
     if (cbResult.broken) {
@@ -408,6 +412,7 @@ export class AgentStreamProcessor {
     conversationId: string
     streamState: StreamLoopState
     contextTier?: ContextWindowTier
+    hasGoalCondition?: boolean
   }): 'next' | 'break' {
     const { isBuildMode, conversationId, streamState } = ctx
     for (let i = 0; i < 10; i++) {
@@ -416,7 +421,8 @@ export class AgentStreamProcessor {
         accumulatedTextLength: this.turnScopedTextLength(conversationId),
         conversationId,
         isLocalProvider: this.s.llmProvider === 'local-llm',
-        contextTier: ctx.contextTier
+        contextTier: ctx.contextTier,
+        hasGoalCondition: ctx.hasGoalCondition === true
       })
       if (cbResult.broken) {
         this.s.log.warn(
