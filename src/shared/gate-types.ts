@@ -41,6 +41,8 @@ export type GateName =
   | 'code-review'
   /** LEAD-REVIEW-PASS — post-verify whole-diff lead review findings (M6.1). */
   | 'lead-review-pass'
+  /** PEER-REVIEW — per-task advisory review findings that survived the fix attempt (M5). */
+  | 'peer-review'
 
 /**
  * Why a gate could not be evaluated. Only meaningful on `unverifiable`

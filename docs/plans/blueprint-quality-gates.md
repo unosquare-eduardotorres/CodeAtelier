@@ -71,10 +71,11 @@ Extend the Blueprint pipeline (`specify → clarify → plan → tasks → revie
 
 ## M5 — Peer review (optional cheap-model layer, per task)
 
-- [ ] **M5.1** Peer-review runner. **Not started.**
+- [x] **M5.1** Peer-review runner. (`blueprint-peer-review.service.ts` — dispatched from the build service's gate loop after a task's gates pass, only when `modelConfigService.isRoleEnabled(workspacePath, 'blueprint:peer-review')` (optional role, off unless bound). One cheap-model session reviews the task diff against its work packet; diff is write-set scoped (`packet.allowedFiles ∪ filePathsJson`) with peers' in-flight writes exempt, same attribution contract as the gates. `blueprint-peer-review.adapter.ts` — role `blueprint-review`, `getModelAction() = 'blueprint:peer-review'`, packet + ACs injected via `renderWorkPacket`. `prompts/peer-review-pass.md` carries the four-category rubric.)
 - [V] **M5.2** Closed four-category rubric in `task-review-types.ts`; `parsePeerReview` rejects out-of-rubric and non-actionable findings and reports why.
-- [ ] **M5.3** Structured findings, exactly one fix round-trip, advisory only.
+- [x] **M5.3** Structured findings, exactly one fix round-trip, advisory only. (Findings become ONE fix attempt appended to the task's retry ladder via `buildPeerReviewFixInstructions` — not a new wave, not R-tasks, never a loop; bound by `PEER_REVIEW_MAX_ROUNDS = 1`. The fix attempt re-runs the gates; findings that survive are recorded to the unverified ledger (gate `peer-review`, reason `finding_unresolved`) — never block. A pass failure is ledgered (`pass_error`) and the task keeps its passing state.)
 - [V] **M5.4** 14 parser tests (shared with M6.3). Registered in both runners.
+- [x] **M5.5** Tests. Registered in both runners. (`blueprint-peer-review.test.ts` — 14 tests: findings→advisory-fix mapping, no-R-task contract, one-round bound, no-git ledger path, disabled-role skip, adapter stance, off-rubric rejection integration, goal condition.)
 
 ## M6 — Lead review (strong model, per task)
 

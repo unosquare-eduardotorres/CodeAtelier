@@ -299,6 +299,25 @@ export function buildLeadReviewPassSystemPrompt(context: PhaseContext): string {
 }
 
 /**
+ * Build the system prompt for the per-task peer-review pass (M5).
+ *
+ * Like the lead-review pass, this is not a pipeline phase — the loader points
+ * at its dedicated prompt file and reuses the phase context-variable
+ * replacement.
+ */
+export function buildPeerReviewSystemPrompt(context: PhaseContext): string {
+  let prompt = readBlueprintFile('prompts/peer-review-pass.md')
+  if (!prompt) {
+    promptLog.warn('No prompt file found for peer-review pass, using review fallback')
+    prompt = readBlueprintFile('prompts/review-phase.md')
+  }
+  if (!prompt) {
+    prompt = buildFallbackPrompt('review')
+  }
+  return replaceVariables(prompt, context, '', '')
+}
+
+/**
  * Build the system prompt for the Constitution editor.
  */
 export function buildConstitutionEditorPrompt(

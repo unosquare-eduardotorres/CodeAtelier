@@ -89,6 +89,25 @@ import { ensureBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
 
 const bpLog = log.scope('blueprint-build')
 
+/** Format peer-review findings as builder fix instructions (M5). Exported for tests. */
+export function buildPeerReviewFixInstructions(
+  findings: import('../../shared/task-review-types').ReviewFinding[]
+): string {
+  if (findings.length === 0) return ''
+  const sections = findings.map(
+    (f) =>
+      `### ${f.category}: ${f.file}${f.location ? ` (${f.location})` : ''}\n` +
+      `- Issue: ${f.issue}\n` +
+      `- Required change: ${f.requiredChange}` +
+      (f.howVerified ? `\n- How to verify: ${f.howVerified}` : '')
+  )
+  return (
+    'A peer reviewer examined the previous attempt against the work packet and ' +
+    'found the gaps below. They are advisory — fix them in this attempt.\n\n' +
+    sections.join('\n\n')
+  )
+}
+
 const TASK_TIMEOUT_MS = 30 * 60_000 // 30 min per task
 
 /**
@@ -1453,7 +1472,18 @@ export class BlueprintBuildService extends EventEmitter {
       // exemption set is refreshed at gate time, not captured at dispatch time.
       this.refreshExemptFiles(gateCtx, params.inFlight)
       const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
-      if (report.overall !== 'fail') return { ...result, gateReport: report }
+      if (report.overall !== 'fail') {
+        // M5 — advisory peer-review pass over the just-passed task. Findings
+        // become ONE fix attempt appended to this ladder (never a new wave,
+        // never a loop); survivors go to the unverified ledger. A pass failure
+        // is ledgered inside the service and never blocks the task.
+        const peerReviewed = await this.runPeerReviewIfEnabled({
+          ...params,
+          baselineCommit: baseline.baselineCommit,
+          exemptFiles: gateCtx.exemptFiles
+        })
+        return { ...result, gateReport: report, ...(peerReviewed ? { peerReviewed } : {}) }
+      }
 
       gateFixInstructions = buildGateFixInstructions(report)
       const failedNames = report.gates
@@ -1483,6 +1513,105 @@ export class BlueprintBuildService extends EventEmitter {
 
     // Builder retries exhausted — one attempt by the strong model, then hard hold.
     return this.escalateToLead({ ...params, gateCtx, baseline, gateFixInstructions, lastResult })
+  }
+
+  /**
+   * M5 — advisory per-task peer review, dispatched after the gates pass.
+   *
+   * Off unless the `blueprint:peer-review` role is bound (an optional role —
+   * `isRoleEnabled` returns false for unbound workspaces, so the common path
+   * pays nothing). Exactly one round (PEER_REVIEW_MAX_ROUNDS = 1):
+   *   findings → ONE fix attempt with the findings as instructions → gates
+   *   re-run → survivors → unverified ledger (gate `peer-review`, reason
+   *   `finding_unresolved`). Never blocks: a fix attempt that fails its gates
+   *   keeps the task's passing state from the original attempt.
+   */
+  private async runPeerReviewIfEnabled(params: {
+    task: BlueprintTask
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    executionPath: string
+    phaseContext: import('../../shared/blueprint-types').PhaseContext
+    priorDiscoveries: string[]
+    tDispatch: number
+    waveNum: number
+    baselineCommit: string | null
+    exemptFiles?: readonly string[]
+    inFlight?: Map<string, InFlightEntry>
+  }): Promise<boolean> {
+    const { task, blueprintId, workspaceId, workspacePath } = params
+
+    if (!modelConfigService.isRoleEnabled(workspacePath, 'blueprint:peer-review')) return false
+
+    const { blueprintPeerReviewService } = await import('./blueprint-peer-review.service')
+    const outcome = await blueprintPeerReviewService.reviewTask({
+      task,
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      executionPath: params.executionPath,
+      baselineCommit: params.baselineCommit,
+      exemptFiles: params.exemptFiles
+    })
+
+    if (!outcome.fixDispatched) return false
+
+    // ONE advisory fix attempt: the findings become the fix instructions.
+    // This is appended to the task's existing retry ladder — not a new wave.
+    const fixInstructions = buildPeerReviewFixInstructions(outcome.review.findings)
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text: `Peer review: task ${task.taskId} — one advisory fix attempt for ${outcome.review.findings.length} finding(s)`,
+      kind: 'system'
+    })
+
+    const fixResult = await this.executeTask({ ...params, gateFixInstructions: fixInstructions })
+    blueprintTaskRepository.recordAttempt(task.id)
+
+    if (!fixResult.success) {
+      // The fix attempt failed to produce a session result — the original
+      // passing attempt stands; the findings are unresolved, so ledger them.
+      blueprintPeerReviewService.recordSurvivingFindings(
+        blueprintId,
+        task.taskId,
+        outcome.review.findings
+      )
+      return true
+    }
+
+    // Re-grade the fixed tree. A pass supersedes the findings; a fail or
+    // unverifiable means the findings survived — ledger them, never block.
+    const gateCtx: GateTaskContext = {
+      blueprintId,
+      taskId: task.taskId,
+      workspacePath,
+      executionPath: params.executionPath,
+      plannedFiles: task.filePathsJson ?? [],
+      packet: task.packetJson,
+      commands: this.resolveGateCommandsFor(blueprintId, workspacePath),
+      manifests: this.readManifestsCached(blueprintId, workspacePath),
+      skipCommandGates: true
+    }
+    this.refreshExemptFiles(gateCtx, params.inFlight)
+    const baseline: GateBaseline = {
+      baselineCommit: params.baselineCommit,
+      preexistingDirty: [],
+      testsBefore: {},
+      redProof: 'unavailable',
+      redEvidence: []
+    }
+    const fixReport = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
+    if (fixReport.overall === 'fail') {
+      blueprintPeerReviewService.recordSurvivingFindings(
+        blueprintId,
+        task.taskId,
+        outcome.review.findings
+      )
+    }
+    return true
   }
 
   /**

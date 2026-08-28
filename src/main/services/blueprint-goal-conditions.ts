@@ -116,6 +116,21 @@ export function buildCodeReviewGoalCondition(title: string): string {
 }
 
 /**
+ * Build the /goal completion condition for the per-task PEER-REVIEW pass
+ * (M5). A cheap model reviews one task's diff against its work packet —
+ * advisory only, findings resolved in one fix attempt or ledgered.
+ */
+export function buildPeerReviewGoalCondition(taskId: string, description: string): string {
+  return [
+    `Peer review of task ${taskId} ("${description.slice(0, 120)}") is completed`,
+    'Every finding uses a category from the closed rubric (ac-coverage / packet-compliance / stub-residue / write-set)',
+    'Every finding names a file, a one-sentence issue, and a mechanically actionable requiredChange',
+    'A blueprint-review-findings block is emitted with a findings array (an empty array is valid)',
+    'No finding is a style opinion — findings a builder cannot act on mechanically are omitted'
+  ].join('. ')
+}
+
+/**
  * Build the /goal completion condition for the post-verify LEAD-REVIEW pass
  * (M6.1). The lead sees the whole diff plus the verify report and judges the
  * cross-task failure modes the per-task gates structurally cannot: spec drift,

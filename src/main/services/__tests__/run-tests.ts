@@ -609,6 +609,7 @@ const TEST_FILES: string[] = [
   './blueprint-code-review-skip.test',
   './blueprint-code-review.test',
   './blueprint-lead-review.test',
+  './blueprint-peer-review.test',
   './blueprint-wave-gates-persist.test',
   // ─── Registry drift repair ───
   // These existed on disk and were registered in run-all.ts (so they counted
@@ -664,6 +665,8 @@ const TEST_FILES: string[] = [
   './grill-prompt-blocks.test',
   './opencode-agent-writer-builders.test',
   './opencode-config-writer-builders.test',
+  './glm-provider.test',
+  './glm-explicit-provider.test',
   './opencode-executor-logic.test',
   './prompt-builder-extractors.test',
   './prompt-builder-local.test',
