@@ -183,3 +183,48 @@ export function ledgerItemsFrom(
       at
     }))
 }
+
+/** M8.4 — rollup of a ledger for display and terminal reporting. */
+export interface LedgerSummary {
+  total: number
+  byGate: Partial<Record<GateName, number>>
+  byReason: Record<string, number>
+  byTask: Record<string, number>
+}
+
+/**
+ * M8.4 — count a ledger by gate, reason and task. Null/empty ⇒ zeroed
+ * summary (never null) so callers can render unconditionally.
+ */
+export function summarizeLedger(items: UnverifiedItem[] | null | undefined): LedgerSummary {
+  const summary: LedgerSummary = { total: 0, byGate: {}, byReason: {}, byTask: {} }
+  if (!items) return summary
+  for (const item of items) {
+    if (!item) continue
+    summary.total++
+    summary.byGate[item.gate] = (summary.byGate[item.gate] ?? 0) + 1
+    summary.byReason[item.reason] = (summary.byReason[item.reason] ?? 0) + 1
+    summary.byTask[item.taskId] = (summary.byTask[item.taskId] ?? 0) + 1
+  }
+  return summary
+}
+
+/** M8.4 — terminal outcome of a blueprint, derived (never stored). */
+export type BlueprintOutcome = 'complete' | 'complete-unproven' | 'incomplete'
+
+/**
+ * M8.4 — map a blueprint's status + ledger to a terminal outcome.
+ *
+ * Generalizes `isCompletedWithWarnings` (which stays — this composes with it):
+ *   - `complete`            status complete AND ledger empty — everything proven
+ *   - `complete-unproven`   status complete but the ledger is non-empty — the
+ *                           blueprint shipped with checks that could not run
+ *   - `incomplete`          any other status (building, failed, cancelled, …)
+ */
+export function blueprintOutcome(blueprint: {
+  status: string
+  unverifiedJson?: UnverifiedItem[] | null
+}): BlueprintOutcome {
+  if (blueprint.status !== 'complete') return 'incomplete'
+  return (blueprint.unverifiedJson?.length ?? 0) > 0 ? 'complete-unproven' : 'complete'
+}

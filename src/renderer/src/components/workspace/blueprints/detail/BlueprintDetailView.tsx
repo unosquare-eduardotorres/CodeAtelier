@@ -26,6 +26,7 @@ import {
   GitBranch
 } from 'lucide-react'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
+import { summarizeLedger } from '../../../../../../shared/gate-types'
 import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
 import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import { renderBlueprintMessage } from '../BlueprintChatView'
@@ -269,8 +270,13 @@ export function BlueprintDetailView({
             <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-warning" />
             <div className="flex flex-col gap-0.5 flex-1">
               <span className="text-sm font-medium text-warning">
+                {/* M8.4 — grouped rollup instead of a bare count */}
                 Finished UNPROVEN — {bp.unverifiedJson.length} check
-                {bp.unverifiedJson.length > 1 ? 's' : ''} could not run
+                {bp.unverifiedJson.length > 1 ? 's' : ''} could not be verified (
+                {Object.entries(summarizeLedger(bp.unverifiedJson).byGate)
+                  .map(([gate, n]) => `${gate} ×${n}`)
+                  .join(', ')}
+                )
               </span>
               <span className="text-xs text-text-muted">
                 These checks never executed, so nothing was verified for them. They never blocked
