@@ -184,9 +184,9 @@ Idea evaluation with iterative feedback.
 
 ---
 
-## 7. Blueprints (5 scenarios ✅)
+## 7. Blueprints (8 scenarios ✅)
 
-Multi-phase blueprint pipeline — specify, clarify, plan, tasks, build, verify.
+Multi-phase blueprint pipeline — specify, clarify, plan, tasks, build, code-review, verify.
 
 | ID                             | Title                    | Status     |
 | ------------------------------ | ------------------------ | ---------- |
@@ -195,12 +195,14 @@ Multi-phase blueprint pipeline — specify, clarify, plan, tasks, build, verify.
 | `blueprints.task-execution`    | Task Execution           | ✅ (heavy) |
 | `blueprints.clarify-live`      | Clarify Phase — Live LLM | ✅ (heavy) |
 | `blueprints.state-persistence` | State Persistence        | ✅         |
+| `blueprint-quality-gates`      | Quality Gates Full Pipeline (shim) | ✅ (heavy) |
+| `blueprint-quality-gates`      | Gate Commands + Unverified Ledger (shim) | ✅ (heavy) |
+| `blueprint-code-review-live`   | Code-Review Phase — Live LLM | ✅ (heavy, manual) |
 
 ### Gaps — Blueprints
 
 | ID (proposed)                  | Feature                      | Why needed                            |
 | ------------------------------ | ---------------------------- | ------------------------------------- |
-| 🔲 `blueprints.full-pipeline`  | Full specify→verify pipeline | End-to-end blueprint lifecycle        |
 | 🔲 `blueprints.build-phase`    | Build phase execution        | Verify code generation in build phase |
 | 🔲 `blueprints.verify-phase`   | Verify phase validation      | Verify verification catches issues    |
 | 🔲 `blueprints.review-phase`   | Review phase (council)       | Verify peer review integration        |
