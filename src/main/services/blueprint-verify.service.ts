@@ -14,9 +14,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { execFile, type ExecFileException } from 'node:child_process'
+import { execFileSync } from 'node:child_process'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -30,6 +28,7 @@ import { AgentSessionService } from './agent-session.service'
 import { BlueprintVerifyAdapter } from './role-adapters/blueprint/blueprint-verify.adapter'
 import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, asStringArray } from './blueprint-artifact-parsers'
+import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
 import { scanCompletedTaskFiles, applyDeterministicFileCheck } from './blueprint-task-verification'
 import { blueprintService } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
@@ -42,6 +41,18 @@ import { blueprintEventRepository } from '../db/repositories/blueprint-event.rep
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository, conversationRepository } from '../db/repositories'
 import { memoryExtractionService } from './memory-extraction.service'
+import { runVerifyGates, runStructuralGate, type GateTaskContext } from './blueprint-gates.service'
+import {
+  boundEvidence,
+  buildGateReport,
+  ledgerItemsFrom,
+  summarizeLedger,
+  type GateReport
+} from '../../shared/gate-types'
+import { resolveGateCommands } from '../../shared/gate-command-resolver'
+import type { GateCommandSet } from '../../shared/gate-command-types'
+import { scanGateCommands } from './blueprint-preflight.service'
+import { codeGraphService } from './code-graph.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import { resolveBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
 import type {
@@ -62,6 +73,15 @@ export const RERUN_VERIFY_RX =
 /** Generic remediation task description (Strategy-3 / GAP-B rescue). Exported for tests (GAP-F). */
 export const GENERIC_REMEDIATION_TASK_DESC =
   'Fix all gaps identified in the verification report. Review the verify phase output and implement missing or incomplete functionality.'
+
+/** Run a git subcommand in the execution tree (sync, best-effort). */
+function gitSync(args: string[], cwd: string): string | null {
+  try {
+    return execFileSync('git', args, { cwd, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 })
+  } catch {
+    return null
+  }
+}
 
 export class BlueprintVerifyService extends EventEmitter {
   // BP-VERIFY-RAW-EMIT-01: Error-isolated emit prevents listener throws from
@@ -385,11 +405,20 @@ export class BlueprintVerifyService extends EventEmitter {
         }
       }
 
-      // FIX-5b: Deterministic quality gates — run tsc/npm test independently
-      // of the verify agent's self-reported results.
+      // FIX-5b (M8.2/M8.3): deterministic quality gates — the real engine
+      // replaces the hardcoded tsc/npm-test probe. Commands resolve through
+      // the same override → declared → detected chain the build phase uses;
+      // `unverifiable` gates land in the ledger (M4.3 semantics) and only a
+      // red full-suite/smoke forces gaps_found.
       // Gates must run where the code is: a typecheck of the user's checkout
       // says nothing about what BUILD produced.
-      const gateResults = await this.runDeterministicQualityGates(executionPath)
+      const gateResults = await this.runVerifyQualityGates({
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        executionPath,
+        signal: abortSignal ?? undefined
+      })
       if (gateResults.failed) {
         bpLog.warn(`[startVerifyPhase] Deterministic quality gate(s) failed — forcing gaps_found`)
         if (!completion) {
@@ -418,15 +447,25 @@ export class BlueprintVerifyService extends EventEmitter {
       if (gateResults.gatesAvailable && completion && !completion.qualityGates) {
         bpLog.warn(
           `[startVerifyPhase] Blueprint ${blueprintId}: completion lacks qualityGates ` +
-            `while tsc/tests were available — agent may have skipped running them`
+            `while gate commands were available — agent may have skipped running them`
         )
         this.safeEmit('phaseProgress', {
           blueprintId,
           workspaceId,
           phase: 'verify',
-          text: 'Verify agent did not report running quality gates (tsc/tests) — deterministic gates ran independently',
+          text: 'Verify agent did not report running quality gates — deterministic gates ran independently',
           kind: 'system'
         })
+      }
+
+      // M8.4 — inject the ledger rollup into the completion payload so the
+      // terminal report states what shipped unproven (grouped by gate/reason).
+      if (completion) {
+        const ledgerNow = blueprintRepository.findById(blueprintId)?.unverifiedJson ?? []
+        completion = {
+          ...completion,
+          unverifiedSummary: summarizeLedger(ledgerNow)
+        } as BlueprintPhaseCompletion
       }
 
       // 8. Save phase artifact
@@ -859,150 +898,209 @@ export class BlueprintVerifyService extends EventEmitter {
   // ── Deterministic Quality Gates ────────────────────────────────────────
 
   /**
-   * FIX-5b: Run tsc + npm test deterministically after the verify agent completes.
-   * Non-zero exit → gate failed. Commands unavailable/timeout → log + skip.
+   * FIX-5b, rebuilt on the gate engine (M8.2/M8.3): resolve commands through
+   * the same override → declared → detected chain the build phase uses, run
+   * the VERIFY command gates (full-suite + smoke) plus the structural gate,
+   * and map the outcomes onto the verify model.
+   *
+   * No cache — verify runs once per blueprint, so the resolution is fresh by
+   * construction (and post-build scaffolding is visible).
+   *
+   * Mapping (M4.3 semantics):
+   *   - `fail` on full-suite/smoke → error findings (source
+   *     `deterministic-quality-gate`) feeding the existing findings array, so
+   *     the verify model and the FIX-5c gate-evasion check keep working
+   *   - `unverifiable` → ledger append + phaseProgress warning — never a fail
+   *   - structural findings → warning-severity findings (never fail)
+   *
+   * `gatesAvailable` keeps its FIX-5c meaning: true when any command gate
+   * actually resolved (regardless of outcome).
    */
-  private async runDeterministicQualityGates(workspacePath: string): Promise<{
+  private async runVerifyQualityGates(params: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    executionPath: string
+    signal?: AbortSignal
+  }): Promise<{
     failed: boolean
     gatesAvailable: boolean
     findings: Array<{ source: string; severity: string; gate: string; description: string }>
   }> {
+    const { blueprintId, workspaceId, workspacePath, executionPath, signal } = params
     const findings: Array<{ source: string; severity: string; gate: string; description: string }> =
       []
-    let gatesAvailable = false
-    const GATE_TIMEOUT_MS = 120_000 // 2 min per gate
 
-    // Gate 1: TypeScript typecheck (only if tsconfig.json exists)
-    const hasTsConfig = existsSync(join(workspacePath, 'tsconfig.json'))
-    if (hasTsConfig) {
-      try {
-        const tscOutput = await this.execGateCommand(
-          'npx',
-          ['tsc', '--noEmit'],
-          workspacePath,
-          GATE_TIMEOUT_MS
-        )
-        if (!tscOutput.launched) {
-          // The gate could not be spawned (npx missing from PATH, permissions,
-          // broken install). A gate that never ran must not force gaps_found.
-          bpLog.warn(
-            '[verify:quality-gates] tsc gate could not be launched — skipping (no finding recorded)'
-          )
-        } else {
-          gatesAvailable = true
-          if (tscOutput.exitCode !== 0) {
-            findings.push({
-              source: 'deterministic-quality-gate',
-              severity: 'error',
-              gate: 'tsc',
-              description: `TypeScript typecheck failed (exit ${tscOutput.exitCode}): ${tscOutput.output.slice(0, 2048)}`
-            })
-          } else {
-            bpLog.info('[verify:quality-gates] tsc --noEmit passed')
-          }
-        }
-      } catch (err) {
-        // Timeout — the gate did launch, so it counts as available.
-        gatesAvailable = true
-        bpLog.warn('[verify:quality-gates] tsc gate skipped:', err)
-      }
-    }
-
-    // Gate 2: npm test (only if package.json has a test script)
+    // 1. Resolve commands: override (workspace settings) → declared (PLAN
+    //    artifact `gate-commands` block) → detected (toolchain scan).
+    let declared: GateCommandSet = {}
     try {
-      const pkgPath = join(workspacePath, 'package.json')
-      if (existsSync(pkgPath)) {
-        const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'))
-        if (pkg.scripts?.test && pkg.scripts.test !== 'echo "Error: no test specified" && exit 1') {
-          try {
-            const testOutput = await this.execGateCommand(
-              'npm',
-              ['test', '--silent'],
-              workspacePath,
-              GATE_TIMEOUT_MS
-            )
-            if (!testOutput.launched) {
-              bpLog.warn(
-                '[verify:quality-gates] npm test gate could not be launched — skipping (no finding recorded)'
-              )
-            } else {
-              gatesAvailable = true
-              if (testOutput.exitCode !== 0) {
-                findings.push({
-                  source: 'deterministic-quality-gate',
-                  severity: 'error',
-                  gate: 'npm-test',
-                  description: `Test suite failed (exit ${testOutput.exitCode}): ${testOutput.output.slice(0, 2048)}`
-                })
-              } else {
-                bpLog.info('[verify:quality-gates] npm test passed')
-              }
-            }
-          } catch (err) {
-            gatesAvailable = true
-            bpLog.warn('[verify:quality-gates] npm test gate skipped:', err)
-          }
-        }
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'plan')
+      for (const artifact of planPhase?.artifactsJson ?? []) {
+        if (!artifact.contentMd) continue
+        const parsed = parseGateCommands(artifact.contentMd)
+        if (Object.keys(parsed).length > 0) declared = { ...declared, ...parsed }
       }
     } catch (err) {
-      bpLog.warn('[verify:quality-gates] Failed to read package.json:', err)
+      bpLog.warn('[verify:quality-gates] Could not read declared gate commands:', err)
     }
 
+    let commands
+    try {
+      const settings = workspaceRepository.getSettingsByPath(workspacePath)
+      commands = resolveGateCommands({
+        override: settings?.gateCommands as GateCommandSet | undefined,
+        declared,
+        detected: scanGateCommands(executionPath)
+      })
+    } catch (err) {
+      bpLog.warn('[verify:quality-gates] Command resolution failed:', err)
+      commands = {}
+    }
+
+    const gatesAvailable = commands.test !== undefined || commands.smoke !== undefined
+
+    // 2. Feature baseline for the structural gate — same contract as
+    //    lead-review's assembleFeatureDiff (settings baseline, merge-base fallback).
+    const baselineCommit = this.resolveFeatureBaseline(blueprintId, executionPath)
+
+    // 3. Run the gates. A throw anywhere here must not kill verify — the
+    //    agent's own report still stands; record honestly and continue.
+    let report: GateReport
+    try {
+      const ctx: GateTaskContext & {
+        workspaceId: string
+        baselineCommit: string | null
+      } = {
+        blueprintId,
+        taskId: 'verify',
+        workspacePath,
+        executionPath,
+        plannedFiles: [],
+        packet: null,
+        commands,
+        signal,
+        workspaceId,
+        baselineCommit
+      }
+
+      const commandReport = await runVerifyGates(ctx)
+      const structural = await runStructuralGate(ctx, {
+        indexWorkspace: (wsId, wsPath) => codeGraphService.indexWorkspace(wsId, wsPath),
+        findDeadCode: (wsId, wsPath, opts) => codeGraphService.findDeadCode(wsId, wsPath, opts),
+        findCircularDependencies: (wsId, opts) =>
+          codeGraphService.findCircularDependencies(wsId, opts)
+      })
+
+      report = buildGateReport([...commandReport.gates, structural], {
+        startedAt: commandReport.startedAt
+      })
+    } catch (err) {
+      bpLog.warn('[verify:quality-gates] Gate run threw — recording unverifiable:', err)
+      report = buildGateReport([
+        {
+          name: 'full-suite',
+          verdict: 'unverifiable',
+          reason: 'command_error',
+          evidence: boundEvidence([
+            `gate engine error: ${err instanceof Error ? err.message : String(err)}`
+          ]),
+          durationMs: 0
+        }
+      ])
+    }
+
+    // 4. Persist as a `verify-gates` artifact on the verify phase record
+    //    (mirrors P1.1 wave-gates; survives reload). Best-effort.
+    try {
+      const verifyPhaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'verify')
+      if (verifyPhaseRec) {
+        blueprintPhaseRepository.appendArtifact(verifyPhaseRec.id, {
+          type: 'verify-gates',
+          contentJson: { report }
+        })
+      }
+    } catch (err) {
+      bpLog.warn(`[verify:quality-gates] Could not persist verify-gates artifact:`, err)
+    }
+
+    // 5. Map outcomes: fails → error findings; unverifiable → ledger + warning.
+    for (const gate of report.gates) {
+      if (gate.verdict === 'fail') {
+        findings.push({
+          source: 'deterministic-quality-gate',
+          severity: 'error',
+          gate: gate.name,
+          description: `${gate.evidence[0] ?? `${gate.name} gate failed`}: ${gate.evidence
+            .slice(1)
+            .join('\n')
+            .slice(0, 2048)}`
+        })
+      }
+    }
+
+    const ledgerItems = ledgerItemsFrom(report, 'verify')
+    if (ledgerItems.length > 0) {
+      try {
+        blueprintRepository.appendUnverified(blueprintId, ledgerItems)
+      } catch (err) {
+        bpLog.warn('[verify:quality-gates] Ledger append failed:', err)
+      }
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'verify',
+        text:
+          `⚠ Verify: ${ledgerItems.length} check(s) could not be verified ` +
+          `(${ledgerItems.map((i) => `${i.gate}/${i.reason}`).join(', ')}) — continuing, recorded as unproven`,
+        kind: 'system'
+      })
+    }
+
+    // 6. Structural warnings → warning-severity findings (never fail).
+    const structuralGate = report.gates.find((g) => g.name === 'structural')
+    if (structuralGate && structuralGate.verdict === 'pass' && structuralGate.counts) {
+      const dead = structuralGate.counts.deadCode ?? 0
+      const cycles = structuralGate.counts.cycles ?? 0
+      if (dead + cycles > 0) {
+        findings.push({
+          source: 'deterministic-quality-gate',
+          severity: 'warning',
+          gate: 'structural',
+          description: `Structural analysis found ${dead} new dead-code symbol(s) and ${cycles} import cycle(s) in changed files:\n${structuralGate.evidence.join('\n').slice(0, 2048)}`
+        })
+      }
+    }
+
+    bpLog.info(
+      `[verify:quality-gates] ${blueprintId} → ${report.overall} ` +
+        `(${report.gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`
+    )
+
     return {
-      failed: findings.length > 0,
+      failed: findings.some((f) => f.severity === 'error'),
       gatesAvailable,
       findings
     }
   }
 
   /**
-   * Execute a gate command with timeout. Returns exit code + combined output.
-   *
-   * `launched` distinguishes "the gate ran and reported a result" from "the gate
-   * process never started". Node reports spawn failures with a *string* `code`
-   * (ENOENT, EACCES, EINVAL, ENOTDIR); a genuine non-zero exit carries a *number*.
-   * Collapsing the two made an unspawnable `npx` look like a failing typecheck.
+   * Feature baseline for the structural gate — `settingsJson.buildBaselineCommit`
+   * with merge-base fallback, the same contract as lead-review's
+   * `assembleFeatureDiff`. Null when neither resolves (⇒ structural `no_git`).
    */
-  private execGateCommand(
-    cmd: string,
-    args: string[],
-    cwd: string,
-    timeoutMs: number
-  ): Promise<{ exitCode: number; output: string; launched: boolean }> {
-    return new Promise((resolve, reject) => {
-      execFile(
-        cmd,
-        args,
-        {
-          cwd,
-          timeout: timeoutMs,
-          encoding: 'utf-8',
-          maxBuffer: 5 * 1024 * 1024, // 5MB
-          env: { ...process.env, CI: '1', NODE_ENV: 'test' },
-          shell: process.platform === 'win32', // .cmd shim resolution (npx/npm)
-          windowsHide: true
-        },
-        (error, stdout, stderr) => {
-          const output = (stdout ?? '') + (stderr ?? '')
-          if (error && (error as NodeJS.ErrnoException).code === 'ETIMEDOUT') {
-            reject(new Error(`Gate timed out after ${timeoutMs}ms`))
-            return
-          }
-          if (error) {
-            const execErr = error as ExecFileException
-            const code = execErr.code ?? 1
-            if (typeof code !== 'number') {
-              // Spawn failure — the command never executed. Not a code defect.
-              resolve({ exitCode: 1, output, launched: false })
-              return
-            }
-            resolve({ exitCode: code, output, launched: true })
-          } else {
-            resolve({ exitCode: 0, output, launched: true })
-          }
-        }
-      )
-    })
+  private resolveFeatureBaseline(blueprintId: string, executionPath: string): string | null {
+    try {
+      const blueprint = blueprintRepository.findById(blueprintId)
+      const settings = (blueprint?.settingsJson ?? {}) as Record<string, unknown>
+      if (typeof settings.buildBaselineCommit === 'string' && settings.buildBaselineCommit) {
+        return settings.buildBaselineCommit
+      }
+      const mb = gitSync(['merge-base', 'HEAD', 'main'], executionPath)
+      return mb?.trim() || null
+    } catch {
+      return null
+    }
   }
 
   // ── Remediation fallback ──────────────────────────────────────────────

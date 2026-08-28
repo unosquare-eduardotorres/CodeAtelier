@@ -116,7 +116,10 @@ async function withWorktreeLock<T>(key: string, fn: () => Promise<T>): Promise<T
   const gate = new Promise<void>((resolve) => {
     release = resolve
   })
-  worktreeLocks.set(key, previous.then(() => gate))
+  worktreeLocks.set(
+    key,
+    previous.then(() => gate)
+  )
   await previous.catch(() => {})
   try {
     return await fn()
@@ -898,6 +901,220 @@ export async function runWaveCommandGates(ctx: GateTaskContext): Promise<GateRep
       `(${gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`
   )
   return report
+}
+
+// ── VERIFY extensions (M8.2 / M8.3) ──
+
+/**
+ * M8.2 — VERIFY-phase command gates: the full suite as a backstop plus the
+ * optional smoke command.
+ *
+ * Mirrors `runWaveCommandGates` but for the whole blueprint rather than one
+ * wave. `gateCommand` already supplies the "missing ⇒ ledger, not failure"
+ * semantics M8.2 requires: an unresolved smoke command returns
+ * `unverifiable`/`no_command`, which the caller records in the ledger and
+ * never treats as a fail. A red full-suite or red smoke IS a fail — backstop
+ * parity with the wave level (M8.1).
+ */
+export async function runVerifyGates(ctx: GateTaskContext): Promise<GateReport> {
+  const runner = ctx.runner ?? defaultCommandRunner
+  const startedAt = new Date().toISOString()
+  const gates: GateResult[] = []
+
+  for (const [name, kind] of [
+    ['full-suite', 'test'],
+    ['smoke', 'smoke']
+  ] as const) {
+    gates.push(await gateCommand(name, kind, ctx, runner))
+  }
+
+  const report = buildGateReport(gates, { startedAt })
+  gateLog.info(
+    `[runVerifyGates] ${ctx.blueprintId}/verify → ${report.overall} ` +
+      `(${gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`
+  )
+  return report
+}
+
+/** Hard budget for the structural gate's reindex — see `runStructuralGate`. */
+export const STRUCTURAL_REINDEX_BUDGET_MS = 60_000
+
+/** Cap on findings surfaced as evidence lines per category (bounded evidence). */
+const STRUCTURAL_MAX_EVIDENCE_LINES = 20
+
+/**
+ * M8.3 — injectable collaborators for `runStructuralGate`, mirroring the
+ * `CommandRunner` seam: tests supply fakes, production wires the real
+ * code-graph service and git.
+ */
+export interface StructuralGateDeps {
+  /** Reindex the workspace graph so it reflects post-build code. */
+  indexWorkspace: (workspaceId: string, workspacePath: string) => Promise<void>
+  /** Dead-code findings (file, line, name, …) for the indexed graph. */
+  findDeadCode: (
+    workspaceId: string,
+    workspacePath: string,
+    opts?: { path?: string; maxResults?: number; excludeSymbolKinds?: string[] }
+  ) => Promise<Array<{ file: string; line: number; name: string; symbolKind: string | null }>>
+  /** Import cycles, each an array of file paths forming the cycle. */
+  findCircularDependencies: (
+    workspaceId: string,
+    opts?: { path?: string; maxCycles?: number }
+  ) => string[][]
+}
+
+/**
+ * M8.3 — structural analysis: NEW dead code and import cycles introduced by
+ * the feature, scoped to the feature diff.
+ *
+ * Findings are WARNINGS, never fails (per the plan doc): the verdict is `pass`
+ * with evidence lines naming each finding, or a clean `pass` when empty. Only
+ * a graph that could not be built/queried is `unverifiable`/`analysis_unavailable`
+ * → ledger.
+ *
+ * The graph must reflect post-build code or new dead code is invisible (a
+ * stale index false-passes), so the reindex is AWAITED — but raced against a
+ * 60s budget: a structural warning must never stall the terminal phase on a
+ * huge workspace. Overrun or throw ⇒ `unverifiable`, honestly recorded.
+ *
+ * Scoping: findings are filtered to the feature's changed files (baseline =
+ * `settingsJson.buildBaselineCommit` with merge-base fallback — the same
+ * contract as lead-review's `assembleFeatureDiff`), so pre-existing debt in
+ * untouched files cannot warn here.
+ */
+export async function runStructuralGate(
+  ctx: GateTaskContext & {
+    workspaceId: string
+    /** Baseline commit for the feature diff; null ⇒ no_git. */
+    baselineCommit: string | null
+    /** Test seam — reindex budget override. Defaults to the 60s constant. */
+    reindexBudgetMs?: number
+  },
+  deps: StructuralGateDeps
+): Promise<GateResult> {
+  const started = Date.now()
+  const name: GateName = 'structural'
+
+  if (!ctx.baselineCommit) {
+    return unverifiable(
+      name,
+      'no_git',
+      ['no feature baseline commit — changed-file scope could not be established'],
+      Date.now() - started
+    )
+  }
+
+  // Changed files from the feature diff. `git diff --name-only baseline..HEAD`;
+  // a null result (not a repo, bad base) ⇒ unverifiable, never fail.
+  const changed = await git(
+    ['diff', '--name-only', `${ctx.baselineCommit}..HEAD`, '--'],
+    ctx.executionPath,
+    ctx.runner ?? defaultCommandRunner,
+    ctx.signal
+  )
+  if (changed === null) {
+    return unverifiable(
+      name,
+      'no_git',
+      [`git diff --name-only ${ctx.baselineCommit}..HEAD failed`],
+      Date.now() - started
+    )
+  }
+  const changedSet = new Set(
+    changed
+      .split('\n')
+      .map((l) => normalizePath(l.trim()))
+      .filter(Boolean)
+  )
+  if (changedSet.size === 0) {
+    return result(name, 'pass', ['feature diff is empty — nothing to analyze'], {
+      durationMs: Date.now() - started
+    })
+  }
+
+  // Budgeted reindex: race the await against the budget. The losing index
+  // keeps running in the background (it will benefit the next consumer) but
+  // this gate does not wait for it.
+  const budgetMs = ctx.reindexBudgetMs ?? STRUCTURAL_REINDEX_BUDGET_MS
+  try {
+    await Promise.race([
+      deps.indexWorkspace(ctx.workspaceId, ctx.executionPath),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`reindex exceeded ${budgetMs}ms budget`)), budgetMs)
+      )
+    ])
+  } catch (err) {
+    return unverifiable(
+      name,
+      'analysis_unavailable',
+      [
+        `code-graph reindex unavailable: ${
+          err instanceof Error ? err.message : String(err)
+        } — structural findings not assessed`
+      ],
+      Date.now() - started
+    )
+  }
+
+  // Dead code, filtered to changed files.
+  let dead: Array<{ file: string; line: number; name: string }> = []
+  let cycles: string[][] = []
+  try {
+    const allDead = await deps.findDeadCode(ctx.workspaceId, ctx.executionPath)
+    dead = allDead
+      .filter((d) => changedSet.has(normalizePath(d.file)))
+      .map((d) => ({ file: d.file, line: d.line, name: d.name }))
+
+    // Import cycles touching changed files.
+    const allCycles = deps.findCircularDependencies(ctx.workspaceId)
+    cycles = allCycles.filter((cycle) => cycle.some((f) => changedSet.has(normalizePath(f))))
+  } catch (err) {
+    return unverifiable(
+      name,
+      'analysis_unavailable',
+      [
+        `code-graph query failed: ${
+          err instanceof Error ? err.message : String(err)
+        } — structural findings not assessed`
+      ],
+      Date.now() - started
+    )
+  }
+
+  // Warnings, never fail: verdict stays `pass` with evidence naming findings.
+  const evidence: string[] = []
+  if (dead.length > 0) {
+    evidence.push(
+      ...dead
+        .slice(0, STRUCTURAL_MAX_EVIDENCE_LINES)
+        .map((d) => `new dead code: ${d.file}:${d.line} ${d.name}`)
+    )
+    if (dead.length > STRUCTURAL_MAX_EVIDENCE_LINES) {
+      evidence.push(`…and ${dead.length - STRUCTURAL_MAX_EVIDENCE_LINES} more dead-code finding(s)`)
+    }
+  }
+  if (cycles.length > 0) {
+    evidence.push(
+      ...cycles.slice(0, STRUCTURAL_MAX_EVIDENCE_LINES).map((c) => `import cycle: ${c.join(' → ')}`)
+    )
+    if (cycles.length > STRUCTURAL_MAX_EVIDENCE_LINES) {
+      evidence.push(`…and ${cycles.length - STRUCTURAL_MAX_EVIDENCE_LINES} more cycle(s)`)
+    }
+  }
+
+  if (evidence.length === 0) {
+    return result(
+      name,
+      'pass',
+      [`no new dead code or import cycles across ${changedSet.size} changed file(s)`],
+      { durationMs: Date.now() - started }
+    )
+  }
+
+  return result(name, 'pass', evidence, {
+    counts: { deadCode: dead.length, cycles: cycles.length, changedFiles: changedSet.size },
+    durationMs: Date.now() - started
+  })
 }
 
 /**
