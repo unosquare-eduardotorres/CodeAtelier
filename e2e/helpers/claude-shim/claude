@@ -8,6 +8,13 @@
  * Specify session  → minimal spec + blueprint-phase-complete (specify)
  * Clarify turn 1   → findings + questions (q1–q3 with options)
  * Clarify turn 2   → reads answer, emits resolved findings + blueprint-phase-complete (clarify)
+ * Plan session     → blueprint-plan block + gate-commands + blueprint-phase-complete (plan)
+ * Tasks session    → blueprint-tasks block (waves format) + blueprint-phase-complete (tasks)
+ * Review session   → blueprint-phase-complete (review, recommendation proceed)
+ * Build session    → blueprint-phase-complete (build) per task
+ * Verify session   → blueprint-phase-complete (verify, overallStatus passed)
+ * Code-review      → blueprint-phase-complete (code-review, verdict approve, no findings)
+ * Lead-review pass → blueprint-review-findings block (verdict approved, no findings)
  * Slow chat        → plain chat turn dripped out over ~15s (E2E_SLOW_STREAM marker),
  *                    so a test can act while the stream is still live
  *
@@ -113,6 +120,13 @@ function emitResult(resultText) {
       cache_creation_input_tokens: 0
     }
   })
+}
+
+/** Emit a full response (message start + text + result) and exit the turn. */
+function respond(text) {
+  emitMessageStart()
+  emitTextDelta(text)
+  emitResult(text)
 }
 
 // ── Response payloads ──
@@ -249,6 +263,120 @@ All gaps have been addressed. The specification is now complete and ready for pl
 \`\`\``
 }
 
+// ── Full-pipeline phase responses (M10.1) ──
+
+const PLAN_RESPONSE = `I've researched the codebase and derived the implementation plan.
+
+## Plan
+
+One item covers the whole feature — a greeting endpoint module plus its test.
+
+\`\`\`blueprint-plan
+{
+  "summary": "Add a greeting endpoint with JSON response and name parameter",
+  "techStack": ["typescript"],
+  "mustHaves": {
+    "truths": ["GET /hello returns JSON"],
+    "artifacts": ["src/hello.ts"],
+    "keyLinks": []
+  },
+  "items": [
+    {
+      "id": "P1",
+      "title": "Greeting endpoint",
+      "files": ["src/hello.ts", "src/hello.test.ts"],
+      "scope": "Endpoint handler + test"
+    }
+  ]
+}
+\`\`\`
+
+\`\`\`gate-commands
+{
+  "build": "node -e \\"require('fs')\\"",
+  "test": "node --test"
+}
+\`\`\`
+
+\`\`\`blueprint-phase-complete
+{"phase":"plan","status":"complete"}
+\`\`\``
+
+const TASKS_RESPONSE = `I've decomposed the plan into wave-ordered tasks.
+
+\`\`\`blueprint-tasks
+{
+  "waves": [
+    {
+      "wave": 1,
+      "tasks": [
+        {
+          "taskId": "T001",
+          "description": "Create the greeting endpoint module with JSON response and name parameter",
+          "files": ["src/hello.ts"],
+          "userStory": "US1",
+          "isParallel": false
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+\`\`\`blueprint-phase-complete
+{"phase":"tasks","status":"complete"}
+\`\`\``
+
+const REVIEW_RESPONSE = `Cross-artifact review complete. Spec, plan and tasks are consistent; file paths are valid for this workspace.
+
+Coverage: 1/1 plan items traced to tasks. No critical findings.
+
+\`\`\`blueprint-phase-complete
+{"phase":"review","status":"complete","criticalCount":0,"highCount":0,"mediumCount":0,"lowCount":0,"recommendation":"proceed"}
+\`\`\``
+
+/**
+ * BUILD — one response per task session. The build service spawns a fresh
+ * session per task, so each process sees exactly one kickoff message with the
+ * task context embedded. The completion block claims no files: the shim does
+ * not write anything, and a claim the disk check would refute (missing files)
+ * forces gaps_found. An empty claim with no planned files is honest.
+ */
+function buildBuildResponse(content) {
+  // Extract the task id from the kickoff message when present (T001-style).
+  const taskIdMatch = content.match(/\b(T\d{3}|R\d{3})\b/)
+  const taskId = taskIdMatch ? taskIdMatch[1] : 'T001'
+  return `Task ${taskId} implemented.
+
+\`\`\`blueprint-phase-complete
+{"phase":"build","status":"complete","taskId":"${taskId}","filesCreated":[],"filesModified":[]}
+\`\`\``
+}
+
+const VERIFY_RESPONSE = `Adversarial verification complete.
+
+All artifacts verified: EXISTS, SUBSTANTIVE, WIRED, DATA FLOWING. No anti-patterns found. Every spec requirement traces to code.
+
+\`\`\`blueprint-phase-complete
+{"phase":"verify","status":"complete","overallStatus":"passed","recommendation":"complete","findings":[]}
+\`\`\``
+
+const CODE_REVIEW_RESPONSE = `External review of the complete feature diff.
+
+No findings — the diff is small, consistent with the spec, and introduces no security or performance concerns.
+
+\`\`\`blueprint-phase-complete
+{"phase":"code-review","status":"complete","findings":[],"verdict":"approve"}
+\`\`\``
+
+const LEAD_REVIEW_RESPONSE = `Lead review of the complete feature diff after verification.
+
+No findings. The implementation matches the spec, no test gaming detected, no stub residue.
+
+\`\`\`blueprint-review-findings
+{"verdict":"approved","findings":[]}
+\`\`\``
+
 // ── Slow chat (workspace-switch streaming tests) ──
 
 /** A chat prompt containing this marker gets a deliberately slow stream. */
@@ -291,11 +419,63 @@ async function handleSlowChatTurn() {
   emitResult(full)
 }
 
+// ── Phase detection ──
+
+/**
+ * Detect the pipeline phase from a kickoff message. Ordered most-specific
+ * first: the whole-diff reviewers and the verifier all mention the diff or
+ * verification, so their markers must be checked before the generic ones.
+ */
+function detectPhase(content) {
+  // Lead-review pass: whole-diff review AFTER verify passed.
+  if (
+    content.includes('Lead review of the complete feature diff') ||
+    (content.includes('lead reviewer') && content.includes('FEATURE DIFF'))
+  ) {
+    return 'lead-review'
+  }
+  // Code-review: external-reviewer stance over the whole diff.
+  if (content.includes('Review the complete diff of this feature as an external reviewer')) {
+    return 'code-review'
+  }
+  // Verify: adversarial verification kickoff.
+  if (content.includes('Begin adversarial verification of the BUILD phase output')) {
+    return 'verify'
+  }
+  // Build: per-task kickoff.
+  if (content.includes('Implement the task described in "Current Task" above')) {
+    return 'build'
+  }
+  // Review: pre-build artifact review.
+  if (content.includes('Perform a comprehensive review of the blueprint artifacts')) {
+    return 'review'
+  }
+  // Tasks: decomposition kickoff.
+  if (content.includes('Decompose the implementation plan into wave-ordered')) {
+    return 'tasks'
+  }
+  // Plan: planning kickoff.
+  if (content.includes('Create a detailed implementation plan from the specification')) {
+    return 'plan'
+  }
+  // Clarify: gap analysis kickoff.
+  if (content.includes('Analyze the specification') || content.includes('gap analysis')) {
+    return 'clarify'
+  }
+  // Specify: spec generation kickoff.
+  if (
+    content.includes('Generate a detailed specification') ||
+    (content.includes('specification') && content.includes('description'))
+  ) {
+    return 'specify'
+  }
+  return null
+}
+
 // ── State machine ──
 
 let turnCount = 0
-let isSpecify = false
-let isClarify = false
+let phase = null // null until detected; 'slow-chat' for the slow stream
 let isSlowChat = false
 
 // ── Main loop ──
@@ -339,19 +519,10 @@ async function main() {
 
     // Phase detection on first user message
     if (turnCount === 1 && !isSlowChat) {
-      if (
-        content.includes('Generate a detailed specification') ||
-        (content.includes('specification') && content.includes('description'))
-      ) {
-        isSpecify = true
-      } else if (
-        content.includes('Analyze the specification') ||
-        content.includes('gap analysis')
-      ) {
-        isClarify = true
-      } else {
-        // Default: treat as specify for robustness
-        isSpecify = true
+      phase = detectPhase(content)
+      if (!phase) {
+        // Default: treat as specify for robustness (legacy behaviour)
+        phase = 'specify'
       }
     }
 
@@ -359,12 +530,34 @@ async function main() {
     if (isSlowChat) {
       await handleSlowChatTurn()
       break // One slow turn is all the test needs
-    } else if (isSpecify) {
-      handleSpecifyTurn(content)
-      break // Specify is one-shot
-    } else if (isClarify) {
+    } else if (phase === 'clarify') {
       handleClarifyTurn(content, turnCount)
       if (turnCount >= 2) break // Second turn completes clarify
+    } else if (phase === 'build') {
+      respond(buildBuildResponse(content))
+      break // One task per session
+    } else if (phase === 'plan') {
+      respond(PLAN_RESPONSE)
+      break
+    } else if (phase === 'tasks') {
+      respond(TASKS_RESPONSE)
+      break
+    } else if (phase === 'review') {
+      respond(REVIEW_RESPONSE)
+      break
+    } else if (phase === 'verify') {
+      respond(VERIFY_RESPONSE)
+      break
+    } else if (phase === 'code-review') {
+      respond(CODE_REVIEW_RESPONSE)
+      break
+    } else if (phase === 'lead-review') {
+      respond(LEAD_REVIEW_RESPONSE)
+      break
+    } else {
+      // specify (default)
+      handleSpecifyTurn(content)
+      break // Specify is one-shot
     }
   }
 
@@ -387,20 +580,13 @@ function extractUserText(msg) {
 }
 
 function handleSpecifyTurn(_content) {
-  emitMessageStart()
-  const response = SPECIFY_RESPONSE
-  emitTextDelta(response)
-  emitResult(response)
+  respond(SPECIFY_RESPONSE)
 }
 
 function handleClarifyTurn(content, turn) {
-  emitMessageStart()
-
   if (turn === 1) {
     // First turn: emit findings + questions
-    const response = buildClarifyTurn1Response()
-    emitTextDelta(response)
-    emitResult(response)
+    respond(buildClarifyTurn1Response())
   } else {
     // Second turn: user answered → check for sentinel or regression
     //
@@ -410,14 +596,10 @@ function handleClarifyTurn(content, turn) {
     // "zero duplicate clarifyQuestions events" assertion catches it.
     if (content.includes('Analyze the specification')) {
       // Regression! Re-emit questions (loop signature)
-      const response = buildClarifyTurn1Response()
-      emitTextDelta(response)
-      emitResult(response)
+      respond(buildClarifyTurn1Response())
     } else {
       // Normal answer flow — emit resolved findings + completion
-      const response = buildClarifyTurn2Response()
-      emitTextDelta(response)
-      emitResult(response)
+      respond(buildClarifyTurn2Response())
     }
   }
 }

@@ -18,7 +18,9 @@ import { test as base, chromium, expect } from '@playwright/test'
 import type { Page, Browser } from '@playwright/test'
 import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
-import { resolve } from 'path'
+import { resolve, join } from 'path'
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -106,6 +108,17 @@ export const test = base.extend<{}, ElectronWorkerFixtures>({
           // /usr/local/bin prepends — otherwise a real `claude` install wins and
           // the "shim" test quietly exercises the live CLI.
           env.CLAUDE_SHIM_DIR = shimDir
+        }
+
+        // DB isolation for shim-driven runs: these tests create
+        // workspaces/blueprints over IPC, and without a throwaway store they
+        // land in the developer's real app profile (and the assertions read it
+        // back). LIVE_LLM runs are manual and may genuinely need the real
+        // profile's configured workspace/provider — leave those alone.
+        // Plain UI e2e tests also keep the real profile.
+        // E2E_USER_DATA_OVERRIDE opts out when a shim test needs the real one.
+        if (process.env.CLAUDE_SHIM_DIR && !process.env.E2E_USER_DATA_OVERRIDE) {
+          env.E2E_USER_DATA = mkdtempSync(join(tmpdir(), 'e2e-user-data-'))
         }
 
         // Spawn Electron with CDP port.

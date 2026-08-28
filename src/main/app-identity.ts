@@ -57,6 +57,17 @@ const DB_FILE = 'code-atelier.db'
 app.setName(app.isPackaged ? PACKAGED_NAME : DEV_NAME)
 
 /**
+ * E2E isolation: when the test fixture points the app at a throwaway store,
+ * redirect userData BEFORE anything resolves a path from it. Model-driven E2E
+ * (shim or live) creates workspaces/blueprints over IPC — without this they
+ * land in the developer's real profile, and the assertions read it back.
+ * Plain UI e2e runs don't set the variable and keep the real profile.
+ */
+if (process.env.E2E_USER_DATA) {
+  app.setPath('userData', process.env.E2E_USER_DATA)
+}
+
+/**
  * Point at an older store when the canonical one is empty.
  *
  * Pinning the name is what stops future flips, but for anyone whose data
