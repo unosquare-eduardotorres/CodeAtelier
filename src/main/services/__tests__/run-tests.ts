@@ -607,6 +607,7 @@ const TEST_FILES: string[] = [
   './blueprint-gate-ladder.test',
   './blueprint-code-review-skip.test',
   './blueprint-code-review.test',
+  './blueprint-lead-review.test',
   './blueprint-wave-gates-persist.test',
   // ─── Registry drift repair ───
   // These existed on disk and were registered in run-all.ts (so they counted

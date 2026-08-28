@@ -121,3 +121,12 @@ export function buildCodeReviewGoalCondition(title: string): string {
  * cross-task failure modes the per-task gates structurally cannot: spec drift,
  * test gaming, and whole-feature correctness.
  */
+export function buildLeadReviewPassGoalCondition(title: string): string {
+  return [
+    `Lead review of the complete feature diff is completed for: "${title.slice(0, 150)}"`,
+    'Every finding uses a category from the closed rubric (spec-drift / test-gaming / correctness / ac-coverage / packet-compliance / stub-residue / write-set)',
+    'Every finding names a file, a one-sentence issue, and a mechanically actionable requiredChange',
+    'A blueprint-review-findings block is emitted with a findings array and a verdict (approved / changes-required)',
+    'The verdict is approved only when there are zero findings'
+  ].join('. ')
+}

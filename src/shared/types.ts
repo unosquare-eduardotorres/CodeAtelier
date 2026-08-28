@@ -1981,6 +1981,16 @@ export interface WorkspaceSettings {
    */
   gateCommands?: import('./gate-command-types').GateCommandSet
 
+  /**
+   * M6.1 — post-verify lead-review pass. When true, a verify outcome of
+   * `passed`/`human_needed` dispatches one whole-diff lead-review pass (spec
+   * drift, test gaming, correctness) before the blueprint is marked complete.
+   * Default OFF: the pass costs an extra strong-model session per run. The
+   * `blueprint:lead-review` role binding stays mandatory either way — it is
+   * the escalation ladder's fixer of last resort.
+   */
+  leadReviewPass?: boolean
+
   // ── Misc ──
   additionalDirectories?: string[]
   modelOverrides?: Record<string, unknown>

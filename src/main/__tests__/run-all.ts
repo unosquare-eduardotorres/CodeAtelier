@@ -721,6 +721,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-gate-ladder.test',
   '../services/__tests__/blueprint-code-review-skip.test',
   '../services/__tests__/blueprint-code-review.test',
+  '../services/__tests__/blueprint-lead-review.test',
   '../services/__tests__/blueprint-wave-gates-persist.test',
   // ─── Round 3: e2e-testing behavioral coverage ───
   '../services/__tests__/e2e-assertions-behavior.test',

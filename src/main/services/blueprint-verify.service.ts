@@ -97,6 +97,14 @@ export class BlueprintVerifyService extends EventEmitter {
       workspaceId: string
       workspacePath: string
     } | null = null
+    // M6.1 — deferred lead-review-pass dispatch. Same pattern as
+    // pendingRemediation: the pass re-acquires the pipeline lock, so it must
+    // not start until this method's finally has released it.
+    let pendingLeadReviewPass: {
+      blueprintId: string
+      workspaceId: string
+      workspacePath: string
+    } | null = null
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
 
@@ -652,39 +660,91 @@ export class BlueprintVerifyService extends EventEmitter {
         // 'unknown' (parse failure / truncation) and 'gaps_found' → failed.
         // BP-VERIFY-CANCEL-OVERWRITE-01: Guard against overwriting 'cancelled' status.
         const currentStatus = currentBlueprint?.status
-        if (currentStatus !== 'cancelled') {
-          if (overallStatus === 'passed' || overallStatus === 'human_needed') {
-            blueprintRepository.updateStatus(blueprintId, 'complete')
-          } else {
-            // BP-RETRY-CONTEXT: Save retry context for gaps_found/unknown failures
+
+        // M6.1 — post-verify lead-review pass. When the workspace setting is
+        // ON, the outcome is a genuine completion, and no fix round has been
+        // dispatched yet, the pass runs BEFORE the blueprint is marked
+        // complete. The pass owns the terminal transition (and the memory
+        // extraction) when dispatched — verify skips both here.
+        //
+        // leadReviewRound: absent/0 → first dispatch; 1 → fix wave already ran
+        // (the re-verify re-triggers the pass for the round-2 check, which
+        // records survivors to the ledger and completes); ≥2 → settled.
+        const leadPassEligible =
+          (overallStatus === 'passed' || overallStatus === 'human_needed') &&
+          currentStatus !== 'cancelled' &&
+          (() => {
             try {
-              blueprintService.saveRetryContext(blueprintId, 'verify', {
-                error: `Verify failed with status: ${overallStatus}`
-              })
+              const wsSettings = workspaceRepository.getSettings(workspaceId) as Record<
+                string,
+                unknown
+              >
+              if (wsSettings.leadReviewPass !== true) return false
+              const round = currentSettings.leadReviewRound
+              return typeof round !== 'number' || round < 2
             } catch {
-              /* best effort */
+              return false
             }
-            blueprintRepository.updateStatus(blueprintId, 'failed')
+          })()
+
+        if (leadPassEligible) {
+          // Emit phaseComplete for the verify phase itself (it genuinely
+          // completed), then hand off to the pass. The pass re-acquires the
+          // pipeline lock in its own markPipelineRunning — deferred until
+          // after this finally releases it (same pattern as pendingRemediation).
+          this.safeEmit('phaseComplete', {
+            blueprintId,
+            workspaceId,
+            phase: 'verify',
+            status: 'complete',
+            completion
+          } satisfies BlueprintPhaseCompletePayload)
+
+          if (verifyPhase) {
+            this.safeEmit('phaseArtifact', {
+              blueprintId,
+              workspaceId,
+              phase: 'verify',
+              artifact: { type: 'verify', contentMd: text }
+            } satisfies BlueprintPhaseArtifactPayload)
           }
+
+          pendingLeadReviewPass = { blueprintId, workspaceId, workspacePath }
+        } else {
+          if (currentStatus !== 'cancelled') {
+            if (overallStatus === 'passed' || overallStatus === 'human_needed') {
+              blueprintRepository.updateStatus(blueprintId, 'complete')
+            } else {
+              // BP-RETRY-CONTEXT: Save retry context for gaps_found/unknown failures
+              try {
+                blueprintService.saveRetryContext(blueprintId, 'verify', {
+                  error: `Verify failed with status: ${overallStatus}`
+                })
+              } catch {
+                /* best effort */
+              }
+              blueprintRepository.updateStatus(blueprintId, 'failed')
+            }
+          }
+
+          // Emit phaseComplete
+          this.safeEmit('phaseComplete', {
+            blueprintId,
+            workspaceId,
+            phase: 'verify',
+            status: verifyPhaseStatus,
+            completion
+          } satisfies BlueprintPhaseCompletePayload)
+
+          // MEM-BP-COMPLETE-01: Enqueue memory extraction for completed/failed blueprint.
+          // Non-blocking — runs after all DB and event work is done.
+          this.enqueueBlueprintMemoryExtraction(
+            blueprintId,
+            workspaceId,
+            workspacePath,
+            overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
+          )
         }
-
-        // Emit phaseComplete
-        this.safeEmit('phaseComplete', {
-          blueprintId,
-          workspaceId,
-          phase: 'verify',
-          status: verifyPhaseStatus,
-          completion
-        } satisfies BlueprintPhaseCompletePayload)
-
-        // MEM-BP-COMPLETE-01: Enqueue memory extraction for completed/failed blueprint.
-        // Non-blocking — runs after all DB and event work is done.
-        this.enqueueBlueprintMemoryExtraction(
-          blueprintId,
-          workspaceId,
-          workspacePath,
-          overallStatus === 'passed' || overallStatus === 'human_needed' ? 'complete' : 'failed'
-        )
       }
 
       if (verifyPhase) {
@@ -772,6 +832,27 @@ export class BlueprintVerifyService extends EventEmitter {
     if (pendingRemediation) {
       const payload = pendingRemediation
       setImmediate(() => this.safeEmit('remediationNeeded', payload))
+    }
+
+    // M6.1 — lead-review pass dispatch, same deferred pattern. Lazy import:
+    // the lead-review service imports the build service (fix-wave dispatch),
+    // which imports this service — a static import here would be a cycle.
+    if (pendingLeadReviewPass) {
+      const payload = pendingLeadReviewPass
+      setImmediate(() => {
+        import('./blueprint-lead-review.service')
+          .then(({ blueprintLeadReviewService }) =>
+            blueprintLeadReviewService.startLeadReviewPass(payload)
+          )
+          .catch((err) => {
+            bpLog.error('[verify→lead-review] Lead-review pass failed:', err)
+            // The pass records its own failures to the ledger and completes;
+            // this catch is the belt-and-braces path (e.g. import failure).
+            const errorMsg = err instanceof Error ? err.message : String(err)
+            blueprintService.failPipeline(payload.workspaceId, errorMsg)
+            blueprintRepository.updateStatus(payload.blueprintId, 'failed')
+          })
+      })
     }
   }
 

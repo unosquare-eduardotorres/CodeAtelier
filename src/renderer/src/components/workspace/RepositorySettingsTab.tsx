@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useWorkspaceStore } from '@renderer/store'
 import type { RepoInfo } from '../../../../shared/types'
-import { GitConfigSection, GitHubTokenSection, AutomationSection } from './settings-sections'
+import {
+  GitConfigSection,
+  GitHubTokenSection,
+  AutomationSection,
+  LeadReviewSection
+} from './settings-sections'
 
 export default function RepositorySettingsTab(): React.JSX.Element {
   const { activeWorkspace, repoInfo, githubStatus, loadRepoInfo, loadGitHubStatus } =
@@ -160,6 +165,12 @@ export default function RepositorySettingsTab(): React.JSX.Element {
         githubConfigured={!!githubStatus?.configured}
         hasRemote={hasRemote}
         onToggle={handleToggleSetting}
+      />
+
+      {/* M6.1 — post-verify lead-review pass toggle */}
+      <LeadReviewSection
+        enabled={settings.leadReviewPass === true}
+        onToggle={(v) => void handleToggleSetting('leadReviewPass', v)}
       />
     </div>
   )
