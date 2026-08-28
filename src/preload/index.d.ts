@@ -1845,6 +1845,16 @@ interface Api {
     cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ) => () => void
 
+  /** M9.2 — per-task deterministic quality-gate report. Fires once per attempt. */
+  onBlueprintTaskGates: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      taskId: string
+      report: import('../shared/gate-types').GateReport
+    }) => void
+  ) => () => void
+
   // Blueprint Snapshot Sync (M2)
   onBlueprintStateSync: (
     cb: (data: {

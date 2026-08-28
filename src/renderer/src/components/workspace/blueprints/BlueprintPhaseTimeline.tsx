@@ -137,6 +137,13 @@ export default function BlueprintPhaseTimeline({
                 }`}
               >
                 {label}
+                {/* M9.4 — a skipped optional layer reads as "deliberately off",
+                    not as a failure or an omission. */}
+                {entry.status === 'skipped' && !entry.isGate && (
+                  <span className="text-[10px] font-normal text-text-muted ml-1.5">
+                    (layer off)
+                  </span>
+                )}
               </span>
 
               {/* Duration */}

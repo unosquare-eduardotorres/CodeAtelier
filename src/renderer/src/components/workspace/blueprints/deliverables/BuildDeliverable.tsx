@@ -18,6 +18,7 @@ import {
   Undo2
 } from 'lucide-react'
 import type { BlueprintPhase, BlueprintTask } from '../../../../../../shared/blueprint-types'
+import type { GateReport } from '../../../../../../shared/gate-types'
 import { useBlueprintStore } from '../../../../store/blueprint.store'
 import { rendererLog } from '../../../../utils/logger'
 import { PHASE_ICONS } from '../phase-icons'
@@ -50,6 +51,14 @@ export function BuildDeliverable({
   const discoveries = extractDiscoveries(phase.artifactsJson)
   const deviations =
     (json?.deviations as Array<{ rule: number; description: string; files?: string[] }>) ?? []
+
+  // M9.4 — persisted wave-gate evidence (P1.1). One artifact per wave; survives
+  // reload, unlike the transient taskGates event.
+  const waveGateReports = phase.artifactsJson
+    .filter((a) => a.type === 'wave-gates')
+    .map((a) => a.contentJson as { wave: number; report: GateReport })
+    .filter((w) => w && typeof w.wave === 'number' && w.report?.gates)
+    .sort((a, b) => a.wave - b.wave)
 
   const progressPct =
     totalTasks > 0 ? Math.min(100, Math.round((tasksCompleted / totalTasks) * 100)) : 0
@@ -296,6 +305,20 @@ export function BuildDeliverable({
         </div>
       )}
 
+      {/* Wave-gate evidence (M9.4) — lint/build/full-suite per wave, persisted */}
+      {waveGateReports.length > 0 && (
+        <div className="mb-6">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            Wave Gates
+          </h3>
+          <div className="space-y-2">
+            {waveGateReports.map(({ wave, report }) => (
+              <WaveGateRow key={wave} wave={wave} report={report} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Files created */}
       {filesCreated.length > 0 && (
         <CollapsibleFileSection
@@ -352,6 +375,45 @@ export function BuildDeliverable({
 
       {/* Discoveries */}
       <DiscoveriesSection discoveries={discoveries} />
+    </div>
+  )
+}
+
+// ── Wave-gate evidence (M9.4) ──
+
+const GATE_VERDICT_STYLE: Record<string, string> = {
+  pass: 'text-success bg-success/10',
+  fail: 'text-danger bg-danger/10',
+  unverifiable: 'text-warning bg-warning/10'
+}
+
+function WaveGateRow({ wave, report }: { wave: number; report: GateReport }): JSX.Element {
+  return (
+    <div className="rounded-lg border border-border-subtle bg-surface-inset/30 px-3 py-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs font-mono font-semibold text-text-secondary">Wave {wave}</span>
+        <span
+          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+            report.overall === 'fail'
+              ? 'text-danger bg-danger/10'
+              : report.overall === 'unverifiable'
+                ? 'text-warning bg-warning/10'
+                : 'text-success bg-success/10'
+          }`}
+        >
+          {report.overall}
+        </span>
+        {report.gates.map((g) => (
+          <span
+            key={g.name}
+            title={g.evidence.join('\n')}
+            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${GATE_VERDICT_STYLE[g.verdict] ?? 'text-text-muted bg-surface-inset'}`}
+          >
+            {g.name}:{g.verdict}
+            {g.verdict === 'unverifiable' && g.reason ? ` (${g.reason})` : ''}
+          </span>
+        ))}
+      </div>
     </div>
   )
 }

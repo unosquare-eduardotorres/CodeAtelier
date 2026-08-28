@@ -12,6 +12,7 @@ const statusConfig: Record<string, { color: string; label: string }> = {
   reviewing: { color: 'text-accent bg-accent-muted', label: 'Reviewing' },
   building: { color: 'text-accent bg-accent-muted', label: 'Building' },
   verifying: { color: 'text-accent bg-accent-muted', label: 'Verifying' },
+  codeReviewing: { color: 'text-accent bg-accent-muted', label: 'Code Reviewing' },
   complete: { color: 'text-success bg-success-muted', label: 'Complete' },
   failed: { color: 'text-danger bg-danger-muted', label: 'Failed' },
   cancelled: { color: 'text-text-muted bg-surface-float', label: 'Stopped' }

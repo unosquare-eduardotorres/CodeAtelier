@@ -32,6 +32,7 @@ import type {
 } from '../../../shared/blueprint-types'
 import type { ToolActivity } from '../../../shared/types'
 import type { BlueprintMachineState } from '../../../shared/blueprint-snapshot-types'
+import type { GateReport } from '../../../shared/gate-types'
 
 // ── Blueprint Chat Message types (unified — all phases stream into this) ──
 
@@ -120,6 +121,8 @@ function freshRunState(workspaceId: string): Partial<BlueprintState> {
     currentGoal: null,
     taskGoals: {},
     runningTasks: {},
+    /** M9.2 — per-task gate reports keyed by taskId (W<n> wave pseudo-ids excluded). */
+    gatesByTask: {},
     phaseCompletions: {},
     totalTaskCount: 0,
     totalWaves: 0,
@@ -247,6 +250,10 @@ interface BlueprintState {
   taskGoals: Record<string, string>
   /** G3: Currently executing tasks during parallel build (shown as chips in header). */
   runningTasks: Record<string, { taskId: string; description: string }>
+  /** M9.2 — latest deterministic gate report per task, keyed by taskId. Wave
+   * pseudo-ids (`W<n>`) are excluded — wave evidence renders via the build
+   * deliverable's persisted `wave-gates` artifacts (M9.4), not task rows. */
+  gatesByTask: Record<string, GateReport>
   /** Phase completion metrics (from phaseComplete event) */
   phaseCompletions: Partial<Record<BlueprintPhaseType, Record<string, unknown>>>
   /** Total task count across all waves (for progress bar) */
@@ -360,6 +367,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   currentGoal: null,
   taskGoals: {},
   runningTasks: {},
+  gatesByTask: {},
   phaseCompletions: {},
   totalTaskCount: 0,
   totalWaves: 0,
@@ -529,6 +537,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         currentGoal: null,
         taskGoals: {},
         runningTasks: {},
+        gatesByTask: {},
         phaseCompletions: {},
         totalTaskCount: 0,
         totalWaves: 0,
@@ -773,6 +782,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       currentGoal: null,
       taskGoals: {},
       runningTasks: {},
+      gatesByTask: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,
@@ -1484,6 +1494,19 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       }
     })
 
+    // ── M9.2 — per-task deterministic gate reports ──
+    // Fires once per graded attempt. Wave pseudo-ids (`W<n>`) are stored
+    // separately — they render via the build deliverable's persisted
+    // `wave-gates` artifacts (M9.4), not task rows.
+    safeSubscribe(window.api.onBlueprintTaskGates, 'onBlueprintTaskGates', (data) => {
+      if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
+      if (resolveAction(data.workspaceId) === 'drop') return
+      if (/^W\d+$/.test(data.taskId)) return
+      set((state) => ({
+        gatesByTask: { ...state.gatesByTask, [data.taskId]: data.report }
+      }))
+    })
+
     // ── M2/M7: Whole-state snapshot sync ──
     // One handler that receives the complete pipeline state from main.
     // Drops stale snapshots (seq ≤ last seen per workspace). Overwrites
@@ -1723,6 +1746,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       currentGoal: null,
       taskGoals: {},
       runningTasks: {},
+      gatesByTask: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,
@@ -1763,6 +1787,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       currentGoal: null,
       taskGoals: {},
       runningTasks: {},
+      gatesByTask: {},
       phaseCompletions: {},
       totalTaskCount: 0,
       totalWaves: 0,

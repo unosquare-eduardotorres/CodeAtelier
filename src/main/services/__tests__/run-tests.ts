@@ -185,6 +185,7 @@ const TEST_FILES: string[] = [
   './cli-interrupt-cancel.test',
   '../../../renderer/src/store/__tests__/safety-timeout-policy.test',
   '../../../renderer/src/store/__tests__/safety-timeout-orphan.test',
+  '../../../renderer/src/store/__tests__/blueprint-gates-ui.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   './evaluation-mcp-config.test',
   './mpa-base-adapter.test',

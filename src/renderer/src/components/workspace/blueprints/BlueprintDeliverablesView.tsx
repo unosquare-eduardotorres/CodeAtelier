@@ -28,6 +28,7 @@ import { PlanDeliverable } from './deliverables/PlanDeliverable'
 import { TasksDeliverable } from './deliverables/TasksDeliverable'
 import { ReviewDeliverable } from './deliverables/ReviewDeliverable'
 import { BuildDeliverable } from './deliverables/BuildDeliverable'
+import { CodeReviewDeliverable } from './deliverables/CodeReviewDeliverable'
 import { VerifyDeliverable } from './deliverables/VerifyDeliverable'
 
 // ── Props ──
@@ -166,6 +167,10 @@ function PhaseDeliverableContent({
       return <ReviewDeliverable phase={phase} duration={duration} />
     case 'build':
       return <BuildDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
+    case 'code-review':
+      return (
+        <CodeReviewDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
+      )
     case 'verify':
       return <VerifyDeliverable phase={phase} duration={duration} />
     default:

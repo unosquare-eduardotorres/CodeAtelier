@@ -31,6 +31,7 @@ import type {
   BlueprintTaskStatus,
   BlueprintPhaseType
 } from '../../../../../shared/blueprint-types'
+import type { GateReport } from '../../../../../shared/gate-types'
 import { BlueprintPlanCard } from './BlueprintPlanCard'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
@@ -95,9 +96,48 @@ interface TaskRowProps {
   task: BlueprintTask
   liveStatus?: BlueprintTaskStatus
   goal?: string
+  /** M9.2 — latest deterministic gate report for this task. */
+  gateReport?: GateReport
 }
 
-function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
+/** M9.2 — gate-verdict chip: pass/fail/unverifiable with reason tooltip.
+ * Mirrors aggregateVerdict: an empty report is `unverifiable`, never a
+ * silent pass — nothing was checked. */
+function GateVerdictChip({ report }: { report: GateReport }): JSX.Element {
+  const failed = report.gates.filter((g) => g.verdict === 'fail')
+  const unverifiable = report.gates.filter((g) => g.verdict === 'unverifiable')
+  const verdict =
+    failed.length > 0
+      ? 'fail'
+      : unverifiable.length > 0 || report.gates.length === 0
+        ? 'unverifiable'
+        : 'pass'
+
+  const config = {
+    pass: { label: 'gates ✓', cls: 'text-success bg-success/10', tip: 'All deterministic gates passed' },
+    fail: {
+      label: `gates ✗ ${failed.length}`,
+      cls: 'text-danger bg-danger/10',
+      tip: `Failed: ${failed.map((g) => g.name).join(', ')}`
+    },
+    unverifiable: {
+      label: `gates ? ${unverifiable.length}`,
+      cls: 'text-warning bg-warning/10',
+      tip: `Unverifiable: ${unverifiable.map((g) => `${g.name} (${g.reason ?? 'unknown'})`).join(', ')}`
+    }
+  }[verdict]
+
+  return (
+    <span
+      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 ${config.cls}`}
+      title={config.tip}
+    >
+      {config.label}
+    </span>
+  )
+}
+
+function TaskRow({ task, liveStatus, goal, gateReport }: TaskRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const status = liveStatus ?? task.status
   const { clean, userStory, parallel } = parseTaskMarkers(task.description)
@@ -124,6 +164,18 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
         {parallel && (
           <span className="text-[10px] font-semibold text-info bg-info/10 px-1.5 py-0.5 rounded flex-shrink-0">
             P
+          </span>
+        )}
+        {/* M9.2 — gate verdict chip (pass/fail/unverifiable, reason in tooltip) */}
+        {gateReport && <GateVerdictChip report={gateReport} />}
+        {/* M9.2 — escalation badge: this task outlived its builder retries and
+            was handed to the lead-review model. */}
+        {task.escalatedTo && (
+          <span
+            className="text-[10px] font-semibold text-warning bg-warning/10 px-1.5 py-0.5 rounded flex-shrink-0"
+            title={`Escalated to ${task.escalatedTo} after builder retries ran out`}
+          >
+            ↑ escalated
           </span>
         )}
         <span className="text-[10px] text-text-muted opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-px">
@@ -241,6 +293,15 @@ function TaskRow({ task, liveStatus, goal }: TaskRowProps): JSX.Element {
               </span>
             </div>
           )}
+
+          {/* R2.3 — attempts for tasks that actually ran. `attempts` is monotonic
+              across retries (never reset), so a task that ran once shows 1, not 0. */}
+          {task.startedAt && Math.max(task.attempts, 1) > 1 && (
+            <div className="text-xs text-text-muted">
+              {Math.max(task.attempts, 1)} attempt
+              {Math.max(task.attempts, 1) > 1 ? 's' : ''}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -254,6 +315,8 @@ interface WaveAccordionProps {
   tasks: BlueprintTask[]
   waveTasks: Record<string, BlueprintTaskStatus>
   taskGoals: Record<string, string>
+  /** M9.2 — per-task gate reports from the store. */
+  gatesByTask?: Record<string, GateReport>
   defaultOpen?: boolean
 }
 
@@ -262,6 +325,7 @@ function WaveAccordion({
   tasks,
   waveTasks,
   taskGoals,
+  gatesByTask,
   defaultOpen = false
 }: WaveAccordionProps): JSX.Element {
   const [open, setOpen] = useState(defaultOpen)
@@ -345,6 +409,7 @@ function WaveAccordion({
               task={task}
               liveStatus={waveTasks[task.taskId]}
               goal={taskGoals[task.taskId]}
+              gateReport={gatesByTask?.[task.taskId]}
             />
           ))}
         </div>
@@ -410,6 +475,8 @@ export interface BlueprintExecutionPanelProps {
   tasks: BlueprintTask[]
   waveTasks: Record<string, BlueprintTaskStatus>
   taskGoals: Record<string, string>
+  /** M9.2 — per-task gate reports (from blueprint.store gatesByTask). */
+  gatesByTask?: Record<string, GateReport>
   currentWave: { wave: number; taskCount: number } | null
   phaseCompletions: Partial<Record<BlueprintPhaseType, Record<string, unknown>>>
   /** Plan artifact for the Plan tab (from phase artifacts contentJson) */
@@ -450,6 +517,7 @@ export default function BlueprintExecutionPanel({
   tasks,
   waveTasks,
   taskGoals,
+  gatesByTask,
   currentWave,
   phaseCompletions,
   planArtifact,
@@ -625,6 +693,7 @@ export default function BlueprintExecutionPanel({
                   tasks={waveTasks_}
                   waveTasks={waveTasks}
                   taskGoals={taskGoals}
+                  gatesByTask={gatesByTask}
                   defaultOpen={currentWave?.wave === waveNum}
                 />
               ))

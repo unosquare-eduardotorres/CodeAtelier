@@ -12,7 +12,11 @@
 import { useState, useMemo, useCallback } from 'react'
 import { ChevronDown, ChevronRight, Layers, AlertTriangle, AlertCircle, Lock } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
-import { DEFAULT_MODEL_CONFIG, MODEL_ROLE_ROWS } from '../../../../../shared/constants'
+import {
+  DEFAULT_MODEL_CONFIG,
+  MODEL_ROLE_ROWS
+} from '../../../../../shared/constants'
+import { isOptionalRoleAction } from '../../../../../shared/model-role-binding'
 import type {
   LLMProvider,
   LocalLLMBackend,
@@ -107,6 +111,27 @@ function RoleRow({
     }
   }, [modelRoles, claudeModelOverrides, workspaceProvider, role.primaryAction])
 
+  // M9.1 — optional roles (peer-review, code-review) are OFF until bound.
+  // The row then shows an explicit "Off" selection instead of a phantom model.
+  const isOptional = isOptionalRoleAction(role.primaryAction)
+  const isOff =
+    isOptional &&
+    !modelRoles[role.primaryAction] &&
+    !claudeModelOverrides[role.primaryAction]
+
+  // M9.1 — decorrelation warning: an adversarial reviewer running the same
+  // model as the layer it reviews loses the independence the layer exists for.
+  const decorrelationWarning = useMemo(() => {
+    if (isOff || role.primaryAction !== 'blueprint:code-review') return null
+    const lead = modelRoles['blueprint:lead-review']
+    const leadModel =
+      lead?.modelId ?? claudeModelOverrides['blueprint:lead-review'] ?? null
+    if (!leadModel) return null
+    return effective.modelId === leadModel
+      ? 'Same model as Lead Review — an independent reviewer catches different bugs'
+      : null
+  }, [isOff, modelRoles, claudeModelOverrides, role.primaryAction, effective.modelId])
+
   const selectedId = effective.modelId
   const claudeOptions = useMemo(
     () => modelOptions.filter((o) => o.group === 'claude'),
@@ -123,12 +148,23 @@ function RoleRow({
 
   const handleSelect = useCallback(
     (optId: string) => {
+      // M9.1 — the explicit "Off" option for optional roles: binds
+      // { disabled: true } so "turned off" is distinguishable from
+      // "never configured" (see model-role-binding.ts).
+      if (optId === '__off__') {
+        onAssign(role.actions, {
+          provider: workspaceProvider,
+          modelId: '',
+          disabled: true
+        })
+        return
+      }
       const opt = modelOptions.find((o) => o.id === optId)
       if (opt) {
         onAssign(role.actions, buildAssignment(opt, localBackend))
       }
     },
-    [modelOptions, onAssign, role.actions, localBackend]
+    [modelOptions, onAssign, role.actions, localBackend, workspaceProvider]
   )
 
   return (
@@ -136,14 +172,25 @@ function RoleRow({
       <div className="flex-1 min-w-0">
         <h4 className="text-sm font-medium text-text-primary">{role.label}</h4>
         <p className="text-xs text-text-secondary truncate">{role.description}</p>
+        {/* M9.1 — decorrelation hint for the adversarial reviewer */}
+        {decorrelationWarning && (
+          <p className="text-[10px] text-warning mt-0.5 flex items-center gap-1">
+            <AlertTriangle size={10} className="inline" />
+            {decorrelationWarning}
+          </p>
+        )}
       </div>
 
       <select
-        value={selectedId}
+        value={isOff ? '__off__' : selectedId}
         onChange={(e) => handleSelect(e.target.value)}
         aria-label={role.label}
         className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/50 shrink-0 max-w-xs"
       >
+        {/* M9.1 — explicit Off option for optional roles */}
+        {isOptional && (
+          <option value="__off__">Off — skip this layer</option>
+        )}
         <optgroup label="Claude">
           {claudeOptions.map((opt) => (
             <option key={opt.id} value={opt.id}>

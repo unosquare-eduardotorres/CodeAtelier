@@ -60,6 +60,7 @@ function BlueprintActiveView({
   currentGoal,
   taskGoals,
   runningTasks,
+  gatesByTask,
   phaseCompletions,
   totalTaskCount,
   totalWaves,
@@ -116,6 +117,8 @@ function BlueprintActiveView({
   currentGoal: string | null
   taskGoals: Record<string, string>
   runningTasks: Record<string, { taskId: string; description: string }>
+  /** M9.2 — per-task gate reports (from blueprint.store gatesByTask). */
+  gatesByTask: Record<string, import('../../../../shared/gate-types').GateReport>
   phaseCompletions: Partial<Record<BlueprintPhaseType, Record<string, unknown>>>
   totalTaskCount: number
   totalWaves: number
@@ -294,6 +297,7 @@ function BlueprintActiveView({
                 tasks={currentBlueprint?.tasks ?? []}
                 waveTasks={waveTasks}
                 taskGoals={taskGoals}
+                gatesByTask={gatesByTask}
                 currentWave={currentWave}
                 phaseCompletions={phaseCompletions}
                 planArtifact={planArtifact}
@@ -415,6 +419,7 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
     currentGoal,
     taskGoals,
     runningTasks,
+    gatesByTask,
     phaseCompletions,
     totalTaskCount,
     totalWaves,
@@ -935,6 +940,7 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
             currentGoal={currentGoal}
             taskGoals={taskGoals}
             runningTasks={runningTasks}
+            gatesByTask={gatesByTask}
             phaseCompletions={phaseCompletions}
             totalTaskCount={totalTaskCount}
             totalWaves={totalWaves}

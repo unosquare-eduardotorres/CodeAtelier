@@ -1509,6 +1509,16 @@ function wireOnceEventForwarding(): void {
     IPC_CHANNELS.BLUEPRINT_WAVE_COMPLETE,
     'build-event'
   )
+  // Per-task deterministic gate verdicts. Emitted on every attempt, so the UI
+  // can show a task failing a gate and then passing on retry.
+  // R2.4: tagged 'build-event' so consumers filtering by event origin (the same
+  // channel is reused by other services) can distinguish build-phase gates.
+  forward(
+    blueprintBuildService as unknown as EventEmitterLike,
+    'taskGates',
+    IPC_CHANNELS.BLUEPRINT_TASK_GATES,
+    'build-event'
+  )
 
   // ── BlueprintSpecService events (Phase 2: Specify + Clarify) ──
   forward(

@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react'
 import { useWorkspaceStore } from '@renderer/store'
 import type { RepoInfo } from '../../../../shared/types'
+import type { GateCommandSet } from '../../../../shared/gate-command-types'
 import {
   GitConfigSection,
   GitHubTokenSection,
   AutomationSection,
+  GateCommandsSection,
   LeadReviewSection
 } from './settings-sections'
 
@@ -118,6 +120,18 @@ export default function RepositorySettingsTab(): React.JSX.Element {
     })
   }
 
+  // M9.5 — persist gate-command overrides. Same single-key merge rule.
+  const handleSaveGateCommands = async (
+    workspaceId: string,
+    commands: GateCommandSet
+  ): Promise<void> => {
+    await window.api.updateWorkspaceSettings({
+      workspaceId,
+      settings: { gateCommands: commands }
+    })
+    setSettings((prev) => ({ ...prev, gateCommands: commands }))
+  }
+
   if (!activeWorkspace) return <div />
 
   const hasRemote = !!(localRepoInfo?.hasRemote && localRepoInfo?.remoteUrl)
@@ -165,6 +179,13 @@ export default function RepositorySettingsTab(): React.JSX.Element {
         githubConfigured={!!githubStatus?.configured}
         hasRemote={hasRemote}
         onToggle={handleToggleSetting}
+      />
+
+      {/* M9.5 — deterministic gate-command overrides (build/lint/test/smoke) */}
+      <GateCommandsSection
+        workspaceId={activeWorkspace.id}
+        gateCommands={settings.gateCommands as GateCommandSet | undefined}
+        onSave={handleSaveGateCommands}
       />
 
       {/* M6.1 — post-verify lead-review pass toggle */}

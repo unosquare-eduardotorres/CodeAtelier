@@ -255,6 +255,46 @@ export function BlueprintDetailView({
         </div>
       )}
 
+      {/* ── M9.4 — Unverified-items banner: the run finished UNPROVEN ──
+          Persistent amber banner when the unverified ledger is non-empty —
+          checks that could not run (no_command, no_git, …) or code-review
+          findings that survived the fix round. Data flows via the blueprint
+          record (unverifiedJson), so it survives reload. */}
+      {bp.unverifiedJson && bp.unverifiedJson.length > 0 && (
+        <div
+          data-testid="blueprint-unverified-banner"
+          className="rounded-xl border border-warning/20 bg-warning/5"
+        >
+          <div className="flex items-start gap-3 px-4 py-3">
+            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0 text-warning" />
+            <div className="flex flex-col gap-0.5 flex-1">
+              <span className="text-sm font-medium text-warning">
+                Finished UNPROVEN — {bp.unverifiedJson.length} check
+                {bp.unverifiedJson.length > 1 ? 's' : ''} could not run
+              </span>
+              <span className="text-xs text-text-muted">
+                These checks never executed, so nothing was verified for them. They never blocked
+                the run — they are recorded so the gap is visible.
+              </span>
+            </div>
+          </div>
+          <div className="border-t border-warning/10 px-4 py-3 space-y-1.5">
+            {bp.unverifiedJson.map((item, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <span className="text-warning/60 mt-0.5 text-xs font-mono">▸</span>
+                <span className="text-xs text-text-secondary">
+                  <span className="font-mono text-[10px] text-text-muted">
+                    {item.taskId}/{item.gate}
+                  </span>{' '}
+                  <span className="font-mono text-[10px] text-warning/80">{item.reason}</span>
+                  {item.detail ? ` — ${item.detail}` : ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Human review needed banner (unacknowledged) with Mark as Verified + Re-verify ── */}
       {isComplete &&
         outcomeStats?.verifyStatus === 'human_needed' &&

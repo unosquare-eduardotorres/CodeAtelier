@@ -3535,6 +3535,28 @@ const api = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_WAVE_TASK_COMPLETE, handler)
   },
 
+  /** Per-task deterministic quality-gate report. Fires once per attempt. */
+  onBlueprintTaskGates: (
+    cb: (data: {
+      blueprintId: string
+      workspaceId: string
+      taskId: string
+      report: import('../shared/gate-types').GateReport
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _: unknown,
+      data: {
+        blueprintId: string
+        workspaceId: string
+        taskId: string
+        report: import('../shared/gate-types').GateReport
+      }
+    ): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.BLUEPRINT_TASK_GATES, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.BLUEPRINT_TASK_GATES, handler)
+  },
+
   onBlueprintWaveComplete: (
     cb: (data: { blueprintId: string; workspaceId: string; wave: number; status: string }) => void
   ): (() => void) => {
