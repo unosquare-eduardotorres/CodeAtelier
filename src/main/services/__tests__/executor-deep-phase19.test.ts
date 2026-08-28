@@ -166,7 +166,9 @@ if (ocLoaded) {
       const oc = makeOC()
       const result = (oc as any).isSessionComplete(
         { type: 'session.idle', properties: { sessionID: 's1' } },
-        's1'
+        's1',
+        false,
+        true // sawTurnActivity — idle after activity is terminal
       )
       assert.ok(result)
     })
@@ -195,7 +197,9 @@ if (ocLoaded) {
       const oc = makeOC()
       const result = (oc as any).isSessionComplete(
         { type: 'session.status', properties: { status: 'idle', sessionID: 's1' } },
-        's1'
+        's1',
+        false,
+        true // sawTurnActivity — idle after activity is terminal
       )
       assert.ok(result)
     })

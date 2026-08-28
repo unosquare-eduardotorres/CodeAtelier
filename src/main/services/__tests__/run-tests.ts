@@ -260,6 +260,7 @@ const TEST_FILES: string[] = [
   './mcp-tool-consistency.test',
   // ─── OpenCode error pipeline (normalizer → processor end-to-end) ───
   './opencode-error-pipeline.test',
+  './opencode-stale-idle.test',
   // ─── Phase 17: Coverage Mega-Push III — IPC handler bodies, service instances, adapters ───
   '../../ipc/__tests__/ipc-handler-bodies.test',
   './service-instance-deep.test',

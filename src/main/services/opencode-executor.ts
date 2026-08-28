@@ -169,6 +169,44 @@ const BASE_RETRY_DELAY_MS = 2000
 /** Default port used by the OpenCode SDK server */
 const OPENCODE_SERVER_PORT = 4096
 
+/**
+ * Chunk types that can only be produced by OUR prompt's agent loop.
+ * Used by the stale-idle guard: a session.idle arriving before any of these
+ * is a stale tail from the priming prompt (or an orphaned prior prompt on
+ * the same session) and must not terminate the turn.
+ */
+const PROMPT_ACTIVITY_CHUNK_TYPES: ReadonlySet<string> = new Set([
+  'text',
+  'thinking',
+  'tool_use',
+  'tool_result',
+  'tool_progress',
+  'structured_output',
+  'permission_request',
+  'subagent_progress',
+  'subagent_complete'
+])
+
+/** Does this normalized chunk prove our prompt is being processed? */
+function isPromptActivityChunk(chunk: StreamChunk): boolean {
+  if (!PROMPT_ACTIVITY_CHUNK_TYPES.has(chunk.type)) return false
+  // text/thinking chunks must carry content — empty ones prove nothing
+  if ((chunk.type === 'text' || chunk.type === 'thinking') && !chunk.content) return false
+  return true
+}
+
+/**
+ * Raw event types that normalize to zero chunks but still prove our prompt
+ * started (V2 event bus). sessionID-filtered like isSessionComplete().
+ */
+function isPromptActivityEvent(event: unknown, sessionId: string): boolean {
+  const evt = event as Record<string, unknown>
+  if (evt.type !== 'session.next.step.started') return false
+  const properties = evt.properties as Record<string, unknown> | undefined
+  const eventSessionId = properties?.sessionID as string | undefined
+  return !eventSessionId || eventSessionId === sessionId
+}
+
 export class OpenCodeExecutor {
   // Store dynamic imports to handle ESM-only package
   private client: OpencodeClient | null = null
@@ -183,6 +221,12 @@ export class OpenCodeExecutor {
   private retriesInFlight = 0
   /** Max consecutive errors before circuit breaker trips */
   private static readonly CIRCUIT_BREAKER_THRESHOLD = 5
+  /**
+   * Backstop for a prompt that never produces activity events: the SSE stream
+   * may emit nothing at all (dead session / dropped subscription), which would
+   * hang the event loop forever now that pre-activity idles are ignored.
+   */
+  private static readonly NO_ACTIVITY_TIMEOUT_MS = 120_000
   /** Health check polling interval (ms) */
   private static readonly HEALTH_CHECK_INTERVAL = 30_000
   /** Health check timer */
@@ -551,6 +595,7 @@ export class OpenCodeExecutor {
     tokenUsage: ExecutorTokenUsage
     maxTurns: number
     abortController?: AbortController
+    noActivityTimeoutMs?: number
   }): AsyncGenerator<StreamChunk, { resultText: string; maxTurnsReached: boolean }> {
     const { events, openCodeSessionId, promptBody, tokenUsage, maxTurns, abortController } = params
     let resultText = ''
@@ -558,65 +603,135 @@ export class OpenCodeExecutor {
     let maxTurnsReached = false
     let transientRetryCount = 0
 
-    for await (const event of events.stream) {
-      if (abortController?.signal.aborted) break
+    // Stale-idle guard: only an event that can belong exclusively to OUR prompt
+    // (assistant text/thinking, tool traffic, structured output, permission
+    // asks, subagent progress, or a V2 step start) confirms the turn is live.
+    // session.idle / session.status:idle arriving BEFORE such activity is a
+    // stale tail from the just-finished priming prompt or an orphaned prior
+    // prompt on the same session — it must not terminate the turn.
+    // session.error and session.next.step.failed stay ungated (genuine failures).
+    let sawTurnActivity = false
 
-      let retryInitiatedThisEvent = false
-      const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
-      for (const chunk of chunks) {
-        if (chunk.type === 'text' && chunk.content) {
-          resultText += chunk.content
-        }
+    // Backstop: race the wait for the first activity against a timeout so a
+    // stream that never emits (or only emits pre-activity idles we now ignore)
+    // cannot hang the turn forever.
+    const noActivityTimeoutMs =
+      params.noActivityTimeoutMs ?? OpenCodeExecutor.NO_ACTIVITY_TIMEOUT_MS
+    let noActivityTimer: ReturnType<typeof setTimeout> | null = null
+    const noActivityPromise = new Promise<'no-activity-timeout'>((resolve) => {
+      noActivityTimer = setTimeout(() => resolve('no-activity-timeout'), noActivityTimeoutMs)
+    })
 
-        // Handle transient errors with retry
-        if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
-          const retryGen = this.handleTransientRetry(
-            chunk,
-            transientRetryCount,
-            openCodeSessionId,
-            promptBody
-          )
-          let retryResult = await retryGen.next()
-          while (!retryResult.done) {
-            yield retryResult.value
-            retryResult = await retryGen.next()
+    const iterator = events.stream[Symbol.asyncIterator]()
+    // True only when we exit because the no-activity timeout fired while a
+    // next() was still pending — calling return() then would queue behind the
+    // pending next() and hang, so the iterator is abandoned to GC instead.
+    let abandonedPendingNext = false
+
+    const nextEvent = (): Promise<IteratorResult<unknown> | 'no-activity-timeout'> =>
+      sawTurnActivity
+        ? iterator.next()
+        : Promise.race([iterator.next(), noActivityPromise])
+
+    try {
+      let iterResult = await nextEvent()
+      while (iterResult !== 'no-activity-timeout' && !iterResult.done) {
+        const event = iterResult.value
+        if (abortController?.signal.aborted) break
+
+        let retryInitiatedThisEvent = false
+        const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
+        for (const chunk of chunks) {
+          if (!sawTurnActivity && isPromptActivityChunk(chunk)) sawTurnActivity = true
+
+          if (chunk.type === 'text' && chunk.content) {
+            resultText += chunk.content
           }
-          const newRetryCount = retryResult.value
-          if (newRetryCount >= 0) {
-            transientRetryCount = newRetryCount
-            retryInitiatedThisEvent = true
-            continue
-          }
-          // Max retries exhausted — fall through to emit the error
-        }
 
-        // Count tool invocations as turns
-        if (chunk.type === 'tool_use') {
-          turnCount++
-          if (maxTurns > 0 && turnCount >= maxTurns) {
-            openCodeLog.info(
-              `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
+          // Handle transient errors with retry
+          if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
+            const retryGen = this.handleTransientRetry(
+              chunk,
+              transientRetryCount,
+              openCodeSessionId,
+              promptBody
             )
-            maxTurnsReached = true
-            if (this.client) {
-              this.client.session
-                .abort({ path: { id: openCodeSessionId } })
-                .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
+            let retryResult = await retryGen.next()
+            while (!retryResult.done) {
+              yield retryResult.value
+              retryResult = await retryGen.next()
+            }
+            const newRetryCount = retryResult.value
+            if (newRetryCount >= 0) {
+              transientRetryCount = newRetryCount
+              retryInitiatedThisEvent = true
+              continue
+            }
+            // Max retries exhausted — fall through to emit the error
+          }
+
+          // Count tool invocations as turns
+          if (chunk.type === 'tool_use') {
+            turnCount++
+            if (maxTurns > 0 && turnCount >= maxTurns) {
+              openCodeLog.info(
+                `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
+              )
+              maxTurnsReached = true
+              if (this.client) {
+                this.client.session
+                  .abort({ path: { id: openCodeSessionId } })
+                  .catch(() => {}) /* non-fatal: best-effort abort after maxTurns */
+              }
             }
           }
+
+          yield chunk
         }
 
-        yield chunk
+        // V2 step starts normalize to zero chunks — check the raw event too
+        if (!sawTurnActivity && isPromptActivityEvent(event, openCodeSessionId)) {
+          sawTurnActivity = true
+        }
+        if (sawTurnActivity && noActivityTimer) {
+          clearTimeout(noActivityTimer)
+          noActivityTimer = null
+        }
+
+        if (maxTurnsReached) break
+
+        // Only suppress session.error when a retry was actually initiated for THIS event.
+        // Without this, the first non-retried error gets suppressed forever (deadlock).
+        const retriesAvailable = retryInitiatedThisEvent
+        if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable, sawTurnActivity)) {
+          break
+        }
+
+        iterResult = await nextEvent()
       }
 
-      if (maxTurnsReached) break
-
-      // Only suppress session.error when a retry was actually initiated for THIS event.
-      // Without this, the first non-retried error gets suppressed forever (deadlock).
-      const retriesAvailable = retryInitiatedThisEvent
-      if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable)) {
-        break
+      if (iterResult === 'no-activity-timeout') {
+        openCodeLog.warn(
+          `[opencode] No prompt activity within ${noActivityTimeoutMs}ms — aborting turn (session may be stale)`
+        )
+        abandonedPendingNext = true
+        if (this.client) {
+          this.client.session
+            .abort({ path: { id: openCodeSessionId } })
+            .catch(() => {}) /* non-fatal: best-effort cleanup of the zombie prompt */
+        }
+        yield {
+          type: 'error',
+          error:
+            `OpenCode produced no prompt activity within ${noActivityTimeoutMs}ms — ` +
+            `the session may be stale. Try re-sending.`
+        }
       }
+    } finally {
+      if (noActivityTimer) clearTimeout(noActivityTimer)
+      // Close the subscription on normal exits (mirrors the old for-await
+      // break semantics). Skipped on the timeout path — see above.
+      if (!abandonedPendingNext) await iterator.return?.()
     }
 
     return { resultText, maxTurnsReached }
@@ -1615,13 +1730,23 @@ Troubleshooting:
    *   should only be true when handleTransientRetry fired successfully — NOT simply
    *   because the retry budget hasn't been exhausted (which caused the suppression
    *   deadlock: errors were suppressed but no retry ever fired).
+   * @param sawTurnActivity - When false, `session.idle` / `session.status:idle` are
+   *   NOT terminal: they are stale tails from the priming prompt or an orphaned
+   *   prior prompt on the same session (same sessionID, so the filter above passes)
+   *   that arrive before our prompt produces any activity. Genuine errors
+   *   (session.error, session.next.step.failed) are never gated by this flag.
    */
   /** Diagnostic gauges for the vitals heartbeat (see main-vitals.ts). */
   public getVitals(): { activeSessions: number; retriesInFlight: number } {
     return { activeSessions: this.sessionMap.size, retriesInFlight: this.retriesInFlight }
   }
 
-  private isSessionComplete(event: unknown, sessionId: string, retriesAvailable = false): boolean {
+  private isSessionComplete(
+    event: unknown,
+    sessionId: string,
+    retriesAvailable = false,
+    sawTurnActivity = false
+  ): boolean {
     const evt = event as Record<string, unknown>
     const type = evt.type as string | undefined
     const properties = evt.properties as Record<string, unknown> | undefined
@@ -1630,12 +1755,23 @@ Troubleshooting:
     const eventSessionId = properties.sessionID as string | undefined
     if (eventSessionId && eventSessionId !== sessionId) return false
 
-    // session.idle means the agent loop is done
-    if (type === 'session.idle') return true
+    // session.idle means the agent loop is done — but only once OUR prompt has
+    // produced activity. A pre-activity idle is a stale tail from the priming
+    // prompt (or an orphaned prior prompt on this session) and is ignored.
+    if (type === 'session.idle') {
+      if (!sawTurnActivity) {
+        openCodeLog.info('[opencode] stale session.idle before prompt activity — ignoring')
+        return false
+      }
+      return true
+    }
 
     // session.error terminates only when no retries are available.
     // During active retries the error is handled by the retry logic above
     // and a new prompt is fired — we must NOT break the event loop.
+    // NOTE: deliberately NOT gated by sawTurnActivity — genuine provider
+    // failures (bad API key, overload) must terminate immediately even
+    // before the first activity event.
     if (type === 'session.error') {
       if (retriesAvailable) {
         openCodeLog.info('[opencode] session.error suppressed — retries still available')
@@ -1647,7 +1783,14 @@ Troubleshooting:
     // Check for status changes indicating completion
     if (type === 'session.status') {
       const status = properties.status as string | undefined
-      if (status === 'idle') return true
+      if (status === 'idle') {
+        // Same stale-tail guard as session.idle above
+        if (!sawTurnActivity) {
+          openCodeLog.info('[opencode] stale session.status:idle before prompt activity — ignoring')
+          return false
+        }
+        return true
+      }
       if (status === 'error' && !retriesAvailable) return true
     }
 
@@ -1656,9 +1799,10 @@ Troubleshooting:
     // models emit a step.ended(stop) for the thinking step before the final answer
     // step streams in — breaking here truncated the last text (e.g. the JSON answer),
     // left the server session running as a zombie, and stalled the UI with no loading
-    // state. `session.idle` / `session.status:idle` is the authoritative completion
-    // signal (see handleSessionIdle in opencode-event-normalizer.ts); the outer
-    // streamPrompt timeout is the backstop if idle never arrives.
+    // state. `session.idle` / `session.status:idle` after prompt activity is the
+    // authoritative completion signal (see handleSessionIdle in
+    // opencode-event-normalizer.ts); the no-activity timeout in processEventStream
+    // is the backstop if idle never arrives.
 
     // V2 event bus: session.next.step.failed is a terminal signal
     if (type === 'session.next.step.failed') {

@@ -796,7 +796,11 @@ export class BlueprintSpecService extends EventEmitter {
 
       // Guard: don't overwrite 'cancelled' status set by blueprintService.cancel()
       const currentStatus = blueprintRepository.findById(blueprintId)?.status
-      if (currentStatus !== 'cancelled') {
+      // Guard: if the machine is already awaiting user input, the phase didn't
+      // fail — it's waiting for the user. Teardown errors during quit/switch
+      // (e.g. session.stop() racing an ask_user turn) must not paint it red.
+      const awaitingInput = blueprintService.getMachine(workspaceId).isAwaitingInput()
+      if (currentStatus !== 'cancelled' && !awaitingInput) {
         if (clarifyPhase) {
           blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'failed')
         }

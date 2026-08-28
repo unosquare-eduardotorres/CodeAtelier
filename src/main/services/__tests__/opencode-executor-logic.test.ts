@@ -119,7 +119,7 @@ describe('OpenCodeExecutor.computeTransientRetry', () => {
 describe('OpenCodeExecutor.isSessionComplete', () => {
   test('session.idle event → true', () => {
     const event = { type: 'session.idle', properties: { sessionID: 'sess-1' } }
-    assert.equal((executor as any).isSessionComplete(event, 'sess-1', false), true)
+    assert.equal((executor as any).isSessionComplete(event, 'sess-1', false, true), true)
   })
 
   test('session.error without retries → true', () => {
@@ -134,7 +134,7 @@ describe('OpenCodeExecutor.isSessionComplete', () => {
 
   test('session.status idle → true', () => {
     const event = { type: 'session.status', properties: { sessionID: 'sess-1', status: 'idle' } }
-    assert.equal((executor as any).isSessionComplete(event, 'sess-1', false), true)
+    assert.equal((executor as any).isSessionComplete(event, 'sess-1', false, true), true)
   })
 
   test('session.status error without retries → true', () => {
@@ -247,7 +247,8 @@ describe('OpenCodeExecutor.isSessionComplete — edge cases', () => {
     const event = { type: 'session.idle', properties: {} }
     // properties exists but sessionID is undefined — should still match
     // because eventSessionId is undefined and the check is: if (eventSessionId && ...)
-    assert.equal((executor as any).isSessionComplete(event, 'sess-1', false), true)
+    // sawTurnActivity=true: with activity proven, an unattributed idle terminates.
+    assert.equal((executor as any).isSessionComplete(event, 'sess-1', false, true), true)
   })
 })
 
