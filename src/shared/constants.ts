@@ -705,7 +705,10 @@ export const IPC_CHANNELS = {
   // Blueprint phase execution (Phase 6 — Build)
   BLUEPRINT_START_BUILD: 'blueprint:startBuild',
 
-  // Blueprint phase execution (Phase 7 — Verify)
+  // Blueprint phase execution (Phase 7 — adversarial whole-diff Code Review)
+  BLUEPRINT_START_CODE_REVIEW: 'blueprint:startCodeReview',
+
+  // Blueprint phase execution (Phase 8 — Verify)
   BLUEPRINT_START_VERIFY: 'blueprint:startVerify',
 
   // Blueprint streamed events (main → renderer)

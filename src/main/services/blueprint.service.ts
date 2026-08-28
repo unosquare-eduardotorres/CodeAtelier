@@ -600,6 +600,9 @@ export class BlueprintService extends EventEmitter {
       tasks: resolveAssignment({ action: 'blueprint:tasks', ...resolveOpts }),
       review: resolveAssignment({ action: 'blueprint:review', ...resolveOpts }),
       build: resolveAssignment({ action: 'blueprint:build', ...resolveOpts }),
+      // M7.4 — optional layer: resolves to an off-binding when no model is
+      // bound; the snapshot records the deliberate state either way.
+      codeReview: resolveAssignment({ action: 'blueprint:code-review', ...resolveOpts }),
       verify: resolveAssignment({ action: 'blueprint:verify', ...resolveOpts }),
       snapshotAt: new Date().toISOString()
     }

@@ -100,3 +100,24 @@ export function buildVerifyGoalCondition(title: string): string {
     'A blueprint-phase-complete block is emitted with phase: "verify", overallStatus, and recommendation'
   ].join('. ')
 }
+
+/**
+ * Build the /goal completion condition for the CODE-REVIEW phase (M7.6).
+ * Adversarial external review of the whole-feature diff — findings resolved
+ * or ledgered, never silently dropped.
+ */
+export function buildCodeReviewGoalCondition(title: string): string {
+  return [
+    `Adversarial review of the complete feature diff is completed for: "${title.slice(0, 150)}"`,
+    'Every finding names a file, a severity (critical/high/medium/low), and a one-line summary',
+    'Critical and high findings include a concrete suggested fix',
+    'A blueprint-phase-complete block is emitted with phase: "code-review", status: "complete", a findings array, and a verdict (approve / fix_required / concerns_noted)'
+  ].join('. ')
+}
+
+/**
+ * Build the /goal completion condition for the post-verify LEAD-REVIEW pass
+ * (M6.1). The lead sees the whole diff plus the verify report and judges the
+ * cross-task failure modes the per-task gates structurally cannot: spec drift,
+ * test gaming, and whole-feature correctness.
+ */

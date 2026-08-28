@@ -26,6 +26,8 @@ import { blueprintPlanRevisionService } from '../services/blueprint-plan-revisio
 import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
+import { blueprintCodeReviewService } from '../services/blueprint-code-review.service'
+import { modelConfigService } from '../services/model-config.service'
 import { workspaceRepository } from '../db/repositories'
 import { loadBranchOptions } from './load-branch-options'
 import {
@@ -1267,7 +1269,36 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
           blueprintId,
           workspaceId,
           workspacePath: workspace.repoPath
-        })
+        }),
+      // M7.4 — real code-review dispatch. When the role is enabled the phase
+      // runs via its service; when disabled, settle the record and re-resolve
+      // the next retryable phase (skip-and-advance, R1.3 re-wire fallback).
+      'code-review': async (): Promise<void> => {
+        if (modelConfigService.isRoleEnabled(workspace.repoPath, 'blueprint:code-review')) {
+          await blueprintCodeReviewService.startCodeReviewPhase({
+            blueprintId,
+            workspaceId,
+            workspacePath: workspace.repoPath
+          })
+          return
+        }
+        blueprintService.settleOptionalPhases(blueprintId)
+        const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
+        const next = phases.find((p) => p.status === 'pending' && p.phase !== 'code-review')
+        if (!next) {
+          bpLog.warn(
+            `[blueprint:retryPhase] code-review settled — no retryable phase remains for ${blueprintId}`
+          )
+          return
+        }
+        const dispatchNext = phaseDispatch[next.phase]
+        if (!dispatchNext) {
+          bpLog.error(`[blueprint:retryPhase] Unknown phase: ${next.phase}`)
+          return
+        }
+        bpLog.info(`[blueprint:retryPhase] code-review settled — dispatching ${next.phase}`)
+        await dispatchNext()
+      }
     }
 
     const dispatch = phaseDispatch[phase]

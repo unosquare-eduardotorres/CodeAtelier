@@ -40,6 +40,7 @@ import { AgentSessionService } from './agent-session.service'
 import { BlueprintBuildAdapter } from './role-adapters/blueprint/blueprint-build.adapter'
 import { buildBuildGoalCondition } from './blueprint-goal-conditions'
 import { blueprintVerifyService } from './blueprint-verify.service'
+import { blueprintCodeReviewService } from './blueprint-code-review.service'
 import {
   parsePhaseCompletionBlock,
   parseDiscoveriesBlock,
@@ -2016,9 +2017,40 @@ export class BlueprintBuildService extends EventEmitter {
       }
     } satisfies BlueprintPhaseArtifactPayload)
 
-    // Auto-trigger VERIFY phase (non-blocking).
+    // Auto-trigger the next phase (non-blocking).
     // BP-VERIFY-AUTOFIRE-01: M6 wire-once pattern means listeners are always active.
     // No per-workspace wiring needed.
+    //
+    // M7.4 — when the code-review role is enabled, build advances to
+    // CODE-REVIEW (the adversarial whole-diff layer) instead of jumping to
+    // VERIFY; the code-review service advances to verify on completion.
+    // When the role is disabled, settleOptionalPhases marks the phase record
+    // `skipped` (R1.3 re-wire) and the pipeline goes build → verify directly.
+    const codeReviewEnabled = modelConfigService.isRoleEnabled(
+      workspacePath,
+      'blueprint:code-review'
+    )
+    if (codeReviewEnabled) {
+      try {
+        blueprintCodeReviewService
+          .startCodeReviewPhase({ blueprintId, workspaceId, workspacePath })
+          .catch((err) => {
+            bpLog.error('[build→code-review] Code-review phase failed:', err)
+            const errorMsg = err instanceof Error ? err.message : String(err)
+            blueprintService.failPipeline(workspaceId, errorMsg)
+            blueprintRepository.updateStatus(blueprintId, 'failed')
+          })
+      } catch (syncErr) {
+        bpLog.error('[build→code-review] Code-review startup failed (sync):', syncErr)
+        const errorMsg = syncErr instanceof Error ? syncErr.message : String(syncErr)
+        blueprintService.failPipeline(workspaceId, errorMsg)
+        blueprintRepository.updateStatus(blueprintId, 'failed')
+      }
+      return
+    }
+
+    // Role disabled — settle the optional phase record, then VERIFY.
+    blueprintService.settleOptionalPhases(blueprintId)
     // BP-VERIFY-SYNC-01: Wrap in try-catch for synchronous throws (e.g. markPipelineRunning()
     // throwing if lock is held). .catch() only handles Promise rejections, not sync throws
     // that occur before the Promise is returned.
