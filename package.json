@@ -1,6 +1,6 @@
 {
   "name": "code-atelier",
-  "version": "1.0.90",
+  "version": "1.0.91",
   "description": "Code Atelier — Where Craft Meets Code",
   "main": "./out/main/index.js",
   "author": "example.com",
