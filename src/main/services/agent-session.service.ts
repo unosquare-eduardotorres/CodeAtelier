@@ -809,7 +809,21 @@ export class AgentSessionService extends AgentBaseService {
       const workspaces = workspaceRepository.findAll()
       const workspace = workspaces.find((w) => w.repoPath === workspacePath)
       if (workspace) this.workspaceId = workspace.id
-      const settings = workspace ? workspaceRepository.getSettings(workspace.id) : {}
+      // Shadow (worktree) rows are excluded from findAll() by design, so a
+      // blueprint phase running inside a worktree resolves no workspace here.
+      // Fall back to path-based settings — getSettingsByPath merges the parent
+      // workspace's model-routing keys for shadow rows, so the phase routes to
+      // the configured provider instead of silently defaulting to Claude.
+      const settings = workspace
+        ? workspaceRepository.getSettings(workspace.id)
+        : workspaceRepository.getSettingsByPath(workspacePath)
+      if (!settings.llmProvider) {
+        this.log.warn(
+          `[start] No llmProvider configured for workspace at '${workspacePath}' — ` +
+            `defaulting to 'claude'. If this workspace should route to another ` +
+            `provider, configure it in Settings → Model Routing.`
+        )
+      }
       this.costPreference = settings.costPreference || 'balanced'
       this.llmProvider = settings.llmProvider || 'claude'
       // GLM-6: An adapter-supplied provider is an explicit user choice for this run

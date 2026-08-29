@@ -3,6 +3,7 @@
 import './message.repository.test'
 import './conversation.repository.test'
 import './workspace.repository.test'
+import './shadow-routing-settings.test'
 import './grill-session.repository.test'
 import './mpa-campaign.repository.test'
 import './usage-log.repository.test'

@@ -161,5 +161,138 @@ if (!env) {
       const result = workspaceRepository.getSettingsByPath('/tmp/ws-test-7')
       assert.deepEqual(result, { key: 'value' })
     })
+
+    // ── Shadow (worktree) model-routing inheritance ──────────────────────
+
+    test('ensureShadow() seeds the new row with the parent routing keys', () => {
+      const parent = workspaceRepository.create('GLM Parent', '/tmp/ws-shadow-glm-parent')
+      workspaceRepository.updateSettings(parent.id, {
+        llmProvider: 'glm',
+        glmBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        glmApiKey: 'sk-parent',
+        modelRoles: { 'blueprint:clarify': { provider: 'glm', model: 'glm-5.3' } },
+        githubToken: 'ghp-should-not-inherit'
+      })
+      const shadow = workspaceRepository.ensureShadow(
+        parent.id,
+        '/tmp/wt-glm/seeded',
+        'seeded'
+      )
+      // The row itself is self-describing for raw-SQL consumers
+      const raw = JSON.parse(
+        (
+          env.db
+            .prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+            .get(shadow.id) as any
+        ).settings_json
+      ) as Record<string, unknown>
+      assert.equal(raw.llmProvider, 'glm')
+      assert.equal(raw.glmBaseUrl, 'https://api.z.ai/api/coding/paas/v4')
+      assert.equal(raw.glmApiKey, 'sk-parent')
+      assert.equal('githubToken' in raw, false, 'non-routing keys must not be seeded')
+    })
+
+    test('getSettings()/getSettingsByPath() inherit parent routing for shadow rows', () => {
+      const parent = workspaceRepository.create('Routing Parent', '/tmp/ws-shadow-routing')
+      workspaceRepository.updateSettings(parent.id, {
+        llmProvider: 'glm',
+        glmModel: 'glm-5.3',
+        glmBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+        costPreference: 'cheap',
+        githubToken: 'ghp-parent'
+      })
+      const shadow = workspaceRepository.ensureShadow(
+        parent.id,
+        '/tmp/wt-routing/inherit',
+        'inherit'
+      )
+
+      const byId = workspaceRepository.getSettings(shadow.id)
+      assert.equal(byId.llmProvider, 'glm', 'getSettings must inherit the parent provider')
+      assert.equal(byId.glmModel, 'glm-5.3')
+      assert.equal(byId.glmBaseUrl, 'https://api.z.ai/api/coding/paas/v4')
+      assert.equal(byId.costPreference, 'cheap')
+      assert.equal('githubToken' in byId, false, 'non-routing keys must not leak through reads')
+
+      const byPath = workspaceRepository.getSettingsByPath('/tmp/wt-routing/inherit')
+      assert.equal(byPath.llmProvider, 'glm', 'getSettingsByPath must inherit too')
+      assert.equal(byPath.glmModel, 'glm-5.3')
+    })
+
+    test('read-time merge heals pre-existing bare shadow rows (no migration)', () => {
+      const parent = workspaceRepository.create('Legacy Parent', '/tmp/ws-shadow-legacy')
+      workspaceRepository.updateSettings(parent.id, {
+        llmProvider: 'glm',
+        glmModel: 'glm-5.3'
+      })
+      // Simulate a shadow row created before the seeding existed: settings_json = '{}'
+      const row = env.db
+        .prepare(
+          `INSERT INTO workspaces (name, repo_path, is_git_repo, shadow_of_workspace_id, settings_json)
+           VALUES ('legacy', '/tmp/wt-legacy/bare', 1, ?, '{}') RETURNING *`
+        )
+        .get(parent.id) as any
+      const healed = workspaceRepository.getSettingsByPath('/tmp/wt-legacy/bare')
+      assert.equal(healed.llmProvider, 'glm', 'a bare legacy shadow row must heal at read time')
+      assert.equal(healed.glmModel, 'glm-5.3')
+      assert.equal(row.shadow_of_workspace_id, parent.id)
+    })
+
+    test("shadow's own routing values override the parent's", () => {
+      const parent = workspaceRepository.create('Override Parent', '/tmp/ws-shadow-override')
+      workspaceRepository.updateSettings(parent.id, {
+        llmProvider: 'glm',
+        glmModel: 'glm-5.3'
+      })
+      const shadow = workspaceRepository.ensureShadow(
+        parent.id,
+        '/tmp/wt-override/own',
+        'own'
+      )
+      workspaceRepository.updateSettings(shadow.id, {
+        llmProvider: 'claude',
+        glmModel: 'glm-5.3'
+      })
+      const settings = workspaceRepository.getSettings(shadow.id)
+      assert.equal(settings.llmProvider, 'claude', 'the shadow row must win over the parent')
+      assert.equal(settings.glmModel, 'glm-5.3')
+    })
+
+    test('parent without a provider inherits nothing (unchanged behavior)', () => {
+      const parent = workspaceRepository.create('Bare Parent', '/tmp/ws-shadow-bare-parent')
+      workspaceRepository.updateSettings(parent.id, { githubToken: 'ghp-x' })
+      const shadow = workspaceRepository.ensureShadow(
+        parent.id,
+        '/tmp/wt-bare/none',
+        'none'
+      )
+      const settings = workspaceRepository.getSettings(shadow.id)
+      assert.equal(settings.llmProvider, undefined, 'no provider anywhere → no inheritance')
+      assert.equal('githubToken' in settings, false)
+    })
+
+    test('shadow with a deleted parent still returns its own settings', () => {
+      const parent = workspaceRepository.create('Doomed Parent', '/tmp/ws-shadow-doomed')
+      workspaceRepository.updateSettings(parent.id, { llmProvider: 'glm' })
+      workspaceRepository.ensureShadow(parent.id, '/tmp/wt-doomed/orphan', 'orphan')
+      workspaceRepository.delete(parent.id)
+      // Cascade removes the shadow too — simulate a legacy orphan by inserting
+      // with FKs off (the read path must tolerate a dangling parent reference)
+      env.db.pragma('foreign_keys = OFF')
+      let orphan: any
+      try {
+        orphan = env.db
+          .prepare(
+            `INSERT INTO workspaces (name, repo_path, is_git_repo, shadow_of_workspace_id, settings_json)
+             VALUES ('orphan', '/tmp/wt-doomed/orphan2', 1, ?, ?) RETURNING *`
+          )
+          .get(parent.id, JSON.stringify({ glmModel: 'glm-5.3' })) as any
+      } finally {
+        env.db.pragma('foreign_keys = ON')
+      }
+      const settings = workspaceRepository.getSettings(orphan.id)
+      assert.equal(settings.glmModel, 'glm-5.3', 'own keys survive a missing parent')
+      assert.equal(settings.llmProvider, undefined, 'nothing to inherit from a dead parent')
+    })
   })
 }

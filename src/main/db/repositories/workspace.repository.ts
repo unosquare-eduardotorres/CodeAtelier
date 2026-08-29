@@ -32,6 +32,56 @@ function mapRow(row: WorkspaceRow): Workspace {
   }
 }
 
+/**
+ * Model-routing keys a shadow (worktree) workspace inherits from its parent
+ * when the shadow row doesn't define them itself.
+ *
+ * Routing only: provider selection, role bindings and provider connection
+ * details. Everything else (jira.*, watcher flags, view state, gate-command
+ * overrides, tokens for unrelated integrations) stays per-workspace — a
+ * worktree must not silently gain the parent's GitHub credentials or UI state.
+ */
+const SHADOW_ROUTED_SETTING_KEYS = new Set([
+  'llmProvider',
+  'modelRoles',
+  'modelOverrides',
+  'costPreference',
+  'localLlmBackend'
+])
+
+/** Connection-detail key families inherited by prefix: glm*, openCode*, localLlm*. */
+const SHADOW_ROUTED_SETTING_PREFIXES = [/^glm/, /^openCode/, /^localLlm/]
+
+function isRoutingSettingKey(key: string): boolean {
+  return (
+    SHADOW_ROUTED_SETTING_KEYS.has(key) ||
+    SHADOW_ROUTED_SETTING_PREFIXES.some((re) => re.test(key))
+  )
+}
+
+/**
+ * Merge a shadow workspace's settings over its parent's routing keys.
+ *
+ * Pure. The shadow's own values always win (undefined/null count as absent);
+ * only routing keys are inherited; non-routing parent keys are dropped.
+ * Used both to seed new shadow rows (ensureShadow) and to heal pre-existing
+ * bare shadow rows at read time (getSettings / getSettingsByPath) — phase
+ * services run with the worktree path, so without this a shadow row's
+ * `settings_json = '{}'` routed every blueprint phase to the Claude default
+ * even when the parent workspace was fully GLM-configured.
+ */
+export function mergeShadowRoutingSettings(
+  shadow: WorkspaceSettings,
+  parent: WorkspaceSettings
+): WorkspaceSettings {
+  const merged: WorkspaceSettings = { ...shadow }
+  for (const [key, value] of Object.entries(parent)) {
+    if (!isRoutingSettingKey(key)) continue
+    if (merged[key] === undefined || merged[key] === null) merged[key] = value
+  }
+  return merged
+}
+
 export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace> {
   protected readonly tableName = 'workspaces'
   protected mapRow(row: WorkspaceRow): Workspace {
@@ -81,13 +131,24 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
       .get(worktreePath) as WorkspaceRow | undefined
     if (existing) return mapRow(existing)
 
+    // Seed the row with the parent's model-routing keys so it is self-describing
+    // for raw-SQL consumers. Read paths additionally merge at read time, which
+    // heals shadow rows created before this seeding existed.
+    const parentRow = db
+      .prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+      .get(parentWorkspaceId) as Pick<WorkspaceRow, 'settings_json'> | undefined
+    const parentSettings = parentRow
+      ? safeParseJSON<WorkspaceSettings>(parentRow.settings_json, {})
+      : {}
+    const seeded = mergeShadowRoutingSettings({}, parentSettings)
+
     const row = db
       .prepare(
-        `INSERT INTO workspaces (name, repo_path, is_git_repo, shadow_of_workspace_id)
-         VALUES (?, ?, 1, ?)
+        `INSERT INTO workspaces (name, repo_path, is_git_repo, shadow_of_workspace_id, settings_json)
+         VALUES (?, ?, 1, ?, ?)
          RETURNING *`
       )
-      .get(label, worktreePath, parentWorkspaceId) as WorkspaceRow
+      .get(label, worktreePath, parentWorkspaceId, JSON.stringify(seeded)) as WorkspaceRow
     return mapRow(row)
   }
 
@@ -164,8 +225,7 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
   getSettings(id: string): WorkspaceSettings {
     const workspace = this.findById(id)
     if (!workspace) return {}
-    // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
-    return safeParseJSON<WorkspaceSettings>(workspace.settingsJson, {})
+    return this.settingsWithShadowMerge(workspace)
   }
 
   /** Get settings for a workspace by its repo path (used when only path is available) */
@@ -174,8 +234,29 @@ export class WorkspaceRepository extends BaseRepository<WorkspaceRow, Workspace>
     const row = db.prepare('SELECT * FROM workspaces WHERE repo_path = ?').get(repoPath) as
       WorkspaceRow | undefined
     if (!row) return {}
+    return this.settingsWithShadowMerge(mapRow(row))
+  }
+
+  /**
+   * Parse a workspace's settings, inheriting the parent's model-routing keys
+   * when this row is a shadow (worktree scope). No-op for real workspaces and
+   * for shadows whose parent is gone.
+   */
+  private settingsWithShadowMerge(workspace: Workspace): WorkspaceSettings {
     // DB-07: Use safeParseJSON for logged fallback on corrupted JSON
-    return safeParseJSON<WorkspaceSettings>(row.settings_json, {})
+    const own = safeParseJSON<WorkspaceSettings>(workspace.settingsJson, {})
+    if (!workspace.shadowOfWorkspaceId) return own
+    let parentRow: Pick<WorkspaceRow, 'settings_json'> | undefined
+    try {
+      parentRow = this.db()
+        .prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+        .get(workspace.shadowOfWorkspaceId) as Pick<WorkspaceRow, 'settings_json'> | undefined
+    } catch {
+      return own
+    }
+    if (!parentRow) return own
+    const parent = safeParseJSON<WorkspaceSettings>(parentRow.settings_json, {})
+    return mergeShadowRoutingSettings(own, parent)
   }
 
   /** Update workspace constitution markdown and version. */
