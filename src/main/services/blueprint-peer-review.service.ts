@@ -121,7 +121,8 @@ export class BlueprintPeerReviewService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'build',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       // 3. Adapter + session

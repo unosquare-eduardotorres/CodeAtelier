@@ -95,7 +95,8 @@ export class BlueprintTasksService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'tasks',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       // 3. Create adapter + session

@@ -631,6 +631,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-task-user-skip.test',
   '../services/__tests__/blueprint-dependson-scheduling.test',
   '../services/__tests__/blueprint-plan-revision.test',
+  '../services/__tests__/blueprint-artifact-cap.test',
   '../services/__tests__/btw.test',
   '../services/__tests__/budget-exceeded-error.test',
   '../services/__tests__/budget-preflight.test',

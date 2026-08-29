@@ -20,7 +20,7 @@ import {
 import { workspaceRepository, conversationRepository } from '../db/repositories'
 import { ideaRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
-import { buildPhaseSystemPrompt } from './blueprint-prompt-loader'
+import { buildPhaseSystemPrompt, artifactBudgetForTier } from './blueprint-prompt-loader'
 import { buildWorkspaceDocsBlock } from './blueprint-document-loader'
 import { safeParseJSON } from '../db/json-utils'
 import { validateTaskGraph } from './blueprint-task-validator'
@@ -51,6 +51,9 @@ import {
   resolveAssignment,
   buildResolveOpts
 } from './model-config.service'
+import { resolveContextTier } from './context-management'
+import type { ContextWindowTier } from './context-management'
+import { contextWindowResolver } from './context-window-resolver'
 
 export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 
@@ -133,10 +136,15 @@ interface BlueprintPipelineState {
 
 /**
  * SIZE-GUARD: per-type char caps for artifact `contentMd` injected into phase
- * context. The prompt loader's 50K budget only truncates BETWEEN artifacts — a
+ * context. The prompt loader's budget only truncates BETWEEN artifacts — a
  * single oversized artifact (v1.0.89: tasks turn streamed 170KB) passed through
  * uncut. When `contentJson` exists for tasks/plan the renderer prefers the
  * compact projection anyway, so the markdown is dropped entirely.
+ *
+ * Caps scale with the phase model's context tier (see ARTIFACT_MD_CAPS_BY_TIER):
+ * a 32K local model gets tighter caps than a 1M-context Claude. `medium` keeps
+ * the historical values so callers that don't pass a context window see zero
+ * behavior change.
  */
 const ARTIFACT_CONTENT_MD_CAPS: Record<string, number> = {
   tasks: 60_000,
@@ -147,9 +155,30 @@ const ARTIFACT_CONTENT_MD_CAPS: Record<string, number> = {
 }
 const DEFAULT_ARTIFACT_CONTENT_MD_CAP = 40_000
 
-function capArtifactForContext(a: BlueprintArtifact): BlueprintArtifact {
+/** Tier-scaled per-type caps — `medium` equals the static table above. */
+const ARTIFACT_MD_CAPS_BY_TIER: Record<ContextWindowTier, Record<string, number>> = {
+  small: { tasks: 30_000, plan: 20_000, spec: 20_000, review: 20_000, verify: 20_000 },
+  medium: ARTIFACT_CONTENT_MD_CAPS,
+  large: { tasks: 120_000, plan: 80_000, spec: 80_000, review: 80_000, verify: 80_000 }
+}
+const DEFAULT_ARTIFACT_MD_CAP_BY_TIER: Record<ContextWindowTier, number> = {
+  small: 20_000,
+  medium: 40_000,
+  large: 80_000
+}
+
+/** Resolve the per-type cap table for a context tier (defaults to medium). */
+function artifactMdCapsForTier(tier: ContextWindowTier): Record<string, number> {
+  return ARTIFACT_MD_CAPS_BY_TIER[tier] ?? ARTIFACT_CONTENT_MD_CAPS
+}
+
+function capArtifactForContext(
+  a: BlueprintArtifact,
+  caps: Record<string, number> = ARTIFACT_CONTENT_MD_CAPS,
+  defaultCap: number = DEFAULT_ARTIFACT_CONTENT_MD_CAP
+): BlueprintArtifact {
   if (!a.contentMd) return a
-  const cap = ARTIFACT_CONTENT_MD_CAPS[a.type] ?? DEFAULT_ARTIFACT_CONTENT_MD_CAP
+  const cap = caps[a.type] ?? defaultCap
   if (a.contentMd.length <= cap) return a
   // tasks/plan with structured JSON: the prompt loader renders the compact
   // projection and ignores contentMd — drop it rather than truncate.
@@ -1346,10 +1375,43 @@ export class BlueprintService extends EventEmitter {
   //  CONTEXT ASSEMBLY — Feeds into Prompt Injection
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /**
+   * Resolve the context window (tokens) of a workspace's active provider, for
+   * tier-scaling artifact budgets in assemblePhaseContext().
+   *
+   * Deliberately synchronous and cheap: the full ContextWindowResolver chain
+   * probes the backend API (up to 3s) which would stall phase start, so this
+   * uses only the synchronous prefix — user override → known-model table.
+   * Unknown → undefined, which keeps the medium-tier defaults (= today's
+   * static caps) rather than guessing.
+   */
+  resolveWorkspaceContextWindow(workspacePath: string | undefined): number | undefined {
+    if (!workspacePath) return undefined
+    try {
+      const provider = modelConfigService.getProvider(workspacePath)
+      if (provider === 'glm') {
+        return modelConfigService.getGlmConfig(workspacePath).contextLimit
+      }
+      if (provider === 'local-llm') {
+        const settings = workspaceRepository.getSettingsByPath(workspacePath)
+        const override =
+          typeof settings?.localContextWindow === 'number' ? settings.localContextWindow : undefined
+        if (override && override > 0) return override
+        const localConfig = modelConfigService.getLocalLLMConfig(workspacePath)
+        return contextWindowResolver.fromKnownModels(localConfig.localModel) ?? undefined
+      }
+      // claude — every current model is ≥200K tokens → large tier.
+      return 200_000
+    } catch {
+      return undefined
+    }
+  }
+
   async assemblePhaseContext(
     blueprintId: string,
     phase: BlueprintPhaseType,
-    workspacePath?: string
+    workspacePath?: string,
+    contextWindowTokens?: number
   ): Promise<PhaseContext> {
     const blueprint = blueprintRepository.findById(blueprintId)
     if (!blueprint) {
@@ -1360,7 +1422,12 @@ export class BlueprintService extends EventEmitter {
     // unreadable workspace doc should degrade to a truncated context, not
     // kill the phase before it starts.
     try {
-      return await this.assemblePhaseContextInner(blueprint, phase, workspacePath)
+      return await this.assemblePhaseContextInner(
+        blueprint,
+        phase,
+        workspacePath,
+        contextWindowTokens
+      )
     } catch (err) {
       bpLog.warn(
         `[assemblePhaseContext] Context assembly failed — degrading to minimal context:`,
@@ -1391,21 +1458,38 @@ export class BlueprintService extends EventEmitter {
   private async assemblePhaseContextInner(
     blueprint: Blueprint,
     phase: BlueprintPhaseType,
-    workspacePath?: string
+    workspacePath?: string,
+    contextWindowTokens?: number
   ): Promise<PhaseContext> {
     const blueprintId = blueprint.id
     const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
 
-    // Collect only phase-relevant artifacts from prior phases
+    // Tier-scaled budgets: derive caps from the phase model's context window
+    // when the caller knows it. Absent → medium tier, which equals the
+    // historical static values — zero behavior change for callers without
+    // model info.
+    const tier: ContextWindowTier = contextWindowTokens
+      ? resolveContextTier(contextWindowTokens)
+      : 'medium'
+    const mdCaps = artifactMdCapsForTier(tier)
+    const mdDefaultCap = DEFAULT_ARTIFACT_MD_CAP_BY_TIER[tier]
+    const artifactBudgetChars = contextWindowTokens
+      ? artifactBudgetForTier(contextWindowTokens)
+      : undefined
+
+    // Collect only phase-relevant artifacts from prior phases — RAW, uncapped.
+    // The disk mirror below must carry the full text: the truncation marker
+    // promises "full text on disk at <path>", which is self-defeating if the
+    // capped copy is what gets written.
     const currentIdx = BLUEPRINT_PHASE_ORDER.indexOf(phase)
     const relevantTypes = PHASE_ARTIFACT_RELEVANCE[phase]
-    const previousArtifacts: BlueprintArtifact[] = []
+    const rawArtifacts: BlueprintArtifact[] = []
     for (const p of phases) {
       const pIdx = BLUEPRINT_PHASE_ORDER.indexOf(p.phase)
       if (pIdx < currentIdx && p.artifactsJson.length > 0) {
         for (const artifact of p.artifactsJson) {
           if (relevantTypes.has(artifact.type)) {
-            previousArtifacts.push(capArtifactForContext(artifact))
+            rawArtifacts.push(artifact)
           }
         }
       }
@@ -1421,14 +1505,14 @@ export class BlueprintService extends EventEmitter {
       for (const artifact of currentPhaseRecord.artifactsJson) {
         if (artifact.type.endsWith('-partial')) {
           if (artifact.contentMd && artifact.contentMd.length > MAX_PARTIAL_CHARS) {
-            previousArtifacts.push({
+            rawArtifacts.push({
               ...artifact,
               contentMd:
                 artifact.contentMd.slice(0, MAX_PARTIAL_CHARS) +
                 '\n\n…[truncated — prior attempt output exceeded 8K chars]'
             })
           } else {
-            previousArtifacts.push(artifact)
+            rawArtifacts.push(artifact)
           }
         }
       }
@@ -1463,8 +1547,11 @@ export class BlueprintService extends EventEmitter {
       }
     }
 
-    // Write prior artifacts to disk so agents can Read them if truncated from context
-    if (workspacePath && previousArtifacts.length > 0) {
+    // Write prior artifacts to disk so agents can Read them if truncated from
+    // context. Runs on the RAW artifacts — full text on disk — BEFORE the
+    // context copies are capped, so the truncation marker's disk reference
+    // points at the complete artifact.
+    if (workspacePath && rawArtifacts.length > 0) {
       const artifactDir = resolve(
         workspacePath,
         `blueprints/${blueprint.shortName || blueprint.id}`
@@ -1478,7 +1565,7 @@ export class BlueprintService extends EventEmitter {
         // review-phase.md tells the agent to Read exactly spec.md / plan.md /
         // tasks.md, so the current artifact has to own the unsuffixed path.
         // Three plans give plan-1.md, plan-2.md, plan.md.
-        const writable = previousArtifacts.filter(
+        const writable = rawArtifacts.filter(
           (a) => !a.type.endsWith('-partial') && a.type !== 'discoveries'
         )
         const totalByType = new Map<string, number>()
@@ -1504,6 +1591,13 @@ export class BlueprintService extends EventEmitter {
       }
     }
 
+    // Cap for context AFTER the disk mirror — the spread-copies inherit
+    // filePath from the raw objects, so the marker's "full text on disk at
+    // <path>" is true.
+    const previousArtifacts = rawArtifacts.map((a) =>
+      capArtifactForContext(a, mdCaps, mdDefaultCap)
+    )
+
     return {
       blueprint: {
         id: blueprint.id,
@@ -1521,7 +1615,8 @@ export class BlueprintService extends EventEmitter {
       grillDecisions,
       workspaceDocs,
       retryContext,
-      revisionRequests: this.getRevisionRequests(blueprintId)
+      revisionRequests: this.getRevisionRequests(blueprintId),
+      ...(artifactBudgetChars !== undefined ? { artifactBudgetChars } : {})
     }
   }
 
@@ -1665,6 +1760,11 @@ export class BlueprintService extends EventEmitter {
 
   /**
    * Save an artifact produced by a phase.
+   *
+   * SIZE-GUARD (advisory): an artifact whose contentMd exceeds its type cap is
+   * still saved in full — the DB keeps everything — but the next phase's
+   * context will truncate it. Warn at save time so an oversized artifact is
+   * surfaced here, not discovered downstream as a mystery truncation marker.
    */
   savePhaseArtifact(
     blueprintId: string,
@@ -1678,6 +1778,27 @@ export class BlueprintService extends EventEmitter {
 
     blueprintPhaseRepository.appendArtifact(phaseRecord.id, artifact)
     bpLog.info(`[saveArtifact] Blueprint ${blueprintId}/${phase} — saved ${artifact.type}`)
+
+    // Advisory only — never reject. The cap matches the medium-tier table so
+    // the warning fires on the same threshold the default context path uses.
+    if (artifact.contentMd) {
+      const cap = ARTIFACT_CONTENT_MD_CAPS[artifact.type] ?? DEFAULT_ARTIFACT_CONTENT_MD_CAP
+      if (artifact.contentMd.length > cap) {
+        const sizeK = Math.round(artifact.contentMd.length / 1000)
+        const capK = Math.round(cap / 1000)
+        bpLog.warn(
+          `[saveArtifact] ${artifact.type} artifact is ${sizeK}K chars (cap ${capK}K) — ` +
+            `it will be truncated in downstream phase context`
+        )
+        this.emit('phaseProgress', {
+          blueprintId,
+          workspaceId: blueprintRepository.findById(blueprintId)?.workspaceId ?? '',
+          phase,
+          text: `⚠️ The ${artifact.type} artifact is ${sizeK}K chars — it will be truncated to ${capK}K in downstream phase context (full text stays on disk). Consider splitting the blueprint.`,
+          kind: 'system'
+        })
+      }
+    }
   }
 
   /**

@@ -230,7 +230,8 @@ export class BlueprintPlanRevisionService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'review',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       const adapter = new BlueprintPlanRevisionAdapter({

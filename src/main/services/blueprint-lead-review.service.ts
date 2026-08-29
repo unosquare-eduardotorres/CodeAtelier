@@ -137,7 +137,8 @@ export class BlueprintLeadReviewService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'verify',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       // 4. Adapter + session

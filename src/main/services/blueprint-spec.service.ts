@@ -286,7 +286,8 @@ export class BlueprintSpecService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'specify',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       // 3b. Surface code-graph index status — warn when repomap is enabled
@@ -670,7 +671,8 @@ export class BlueprintSpecService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'clarify',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       // 4. Create adapter

@@ -379,7 +379,8 @@ export class BlueprintBuildService extends EventEmitter {
       const phaseContext = await blueprintService.assemblePhaseContext(
         blueprintId,
         'build',
-        workspacePath
+        workspacePath,
+        blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
       // 2b. Seed discoveries from prior phases + previous build runs (crash-resume)

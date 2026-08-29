@@ -348,6 +348,13 @@ export interface PhaseContext {
    * you.
    */
   revisionRequests?: BlueprintRevisionRequest[]
+  /**
+   * Tier-scaled char budget for the formatted artifacts block. Set when the
+   * phase's model context window was known at assembly time
+   * (`assemblePhaseContext(…, contextWindowTokens)`); absent → the prompt
+   * loader's static default (ARTIFACT_BUDGET_CHARS).
+   */
+  artifactBudgetChars?: number
   /** Structured retry context — populated only when retrying a failed phase */
   retryContext?: {
     attempt: number

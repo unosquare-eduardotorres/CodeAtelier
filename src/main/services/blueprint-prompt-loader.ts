@@ -13,6 +13,8 @@
 import { readFileSync, readdirSync, existsSync } from 'fs'
 import { join } from 'path'
 import log from 'electron-log'
+import { resolveContextTier } from './context-management'
+import type { ContextWindowTier } from './context-management'
 import type {
   BlueprintPhaseType,
   PhaseContext,
@@ -112,6 +114,25 @@ const TASKS_PROJECTION_KEYS = new Set([
 
 /** Per-phase char budget for the formatted artifacts block. */
 export const ARTIFACT_BUDGET_CHARS = 50_000
+
+/**
+ * Tier-scaled artifact budgets (chars) for the formatted artifacts block.
+ *
+ * A 32K local model and a 1M-context Claude used to get the identical 50K
+ * budget — half the small model's window, a rounding error for the large one.
+ * `medium` matches the historical static values so existing behavior is the
+ * midpoint, not a cliff.
+ */
+export const ARTIFACT_BUDGETS_BY_TIER: Record<ContextWindowTier, number> = {
+  small: 25_000,
+  medium: 50_000, // = ARTIFACT_BUDGET_CHARS (today's static value)
+  large: 100_000
+}
+
+/** Resolve the artifacts-block char budget for a context window (in tokens). */
+export function artifactBudgetForTier(contextWindowTokens: number): number {
+  return ARTIFACT_BUDGETS_BY_TIER[resolveContextTier(contextWindowTokens)]
+}
 
 /** Max number of consolidated discovery entries before truncation. */
 const MAX_DISCOVERY_ENTRIES = 30
@@ -432,8 +453,12 @@ function replaceVariables(
       .replace('{{BLUEPRINT_CONTEXT_JSON}}', JSON.stringify(context.blueprint, null, 2))
       // Constitution content
       .replace('{{CONSTITUTION_CONTENT}}', context.constitution || '(No constitution defined.)')
-      // Previous phase artifacts
-      .replace('{{PREVIOUS_PHASE_ARTIFACTS}}', formatArtifacts(context.previousArtifacts))
+      // Previous phase artifacts — budget scales with the phase model's context
+      // tier when the assembler knew it, else the static default.
+      .replace(
+        '{{PREVIOUS_PHASE_ARTIFACTS}}',
+        formatArtifacts(context.previousArtifacts, context.artifactBudgetChars)
+      )
       // File paths
       .replace(/\{\{SPEC_FILE_PATH\}\}/g, context.specFilePath)
       .replace(/\{\{BLUEPRINT_DIR\}\}/g, context.blueprintDir)
