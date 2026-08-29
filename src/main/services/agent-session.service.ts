@@ -942,7 +942,15 @@ export class AgentSessionService extends AgentBaseService {
     let conversationProvider: LLMProvider = this.llmProvider
     try {
       const conv = conversationRepository.findById(conversationId)
-      if (conv?.llmProvider) {
+      // Blueprint phase conversations are synthetic rows minted by the phase
+      // services — their llm_provider is an artifact of row creation (the DB
+      // column is NOT NULL DEFAULT 'claude'), never a user choice. The session
+      // provider, resolved fresh from workspace settings at start(), is the
+      // authoritative routing for pipeline phases. Honoring the row's stale
+      // default here misrouted every blueprint turn to the Claude CLI on
+      // GLM-configured workspaces (v1.0.91 regression) — and retry-reused
+      // conversation rows kept the poison across fixes.
+      if (conv?.llmProvider && conv.type !== 'blueprint') {
         conversationProvider = conv.llmProvider as LLMProvider
       }
     } catch {
@@ -1463,7 +1471,10 @@ export class AgentSessionService extends AgentBaseService {
     } catch {
       // DB unavailable (e.g. better-sqlite3 ABI mismatch in test env) — fall back to session provider
     }
-    const compactProvider = (compactConv?.llmProvider as LLMProvider) ?? this.llmProvider
+    const compactProvider =
+      compactConv && compactConv.type !== 'blueprint'
+        ? ((compactConv.llmProvider as LLMProvider) ?? this.llmProvider)
+        : this.llmProvider
     if (compactProvider === 'local-llm' && this.executorBackend !== 'opencode') {
       this.log.info('[compaction] Local LLM — compaction unavailable, suggesting new conversation')
       this.emit('compactNeeded', {

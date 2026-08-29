@@ -749,6 +749,7 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/conversation.repository.test',
   '../db/repositories/__tests__/workspace.repository.test',
   '../db/repositories/__tests__/shadow-routing-settings.test',
+  '../db/repositories/__tests__/blueprint-provider-routing.test',
   '../db/repositories/__tests__/usage-log.repository.test',
   '../db/repositories/__tests__/grill-session.repository.test',
   '../db/repositories/__tests__/mpa-campaign.repository.test',

@@ -7,7 +7,8 @@ import type {
   ConversationModelSnapshot,
   ConversationType,
   LLMProvider,
-  ThinkingEffort
+  ThinkingEffort,
+  WorkspaceSettings
 } from '../../../shared/types'
 
 interface ConversationRow {
@@ -129,18 +130,38 @@ export class ConversationRepository extends BaseRepository<ConversationRow, Conv
     workspaceId: string,
     title: string,
     mode: ConversationMode = 'plan',
-    type: ConversationType = 'blueprint'
+    type: ConversationType = 'blueprint',
+    llmProvider?: LLMProvider
   ): Conversation {
     const existing = this.findById(id)
     if (existing) return existing
+    // The llm_provider column is NOT NULL DEFAULT 'claude'. Synthetic blueprint
+    // phase rows historically inherited that default silently, so the per-turn
+    // provider resolution (conv.llmProvider overrides the session provider)
+    // routed every blueprint turn to the Claude CLI even on GLM-configured
+    // workspaces. Seed the workspace's actual provider when the caller doesn't
+    // pin one explicitly.
+    let provider = llmProvider
+    if (!provider) {
+      try {
+        const ws = this.db()
+          .prepare('SELECT settings_json FROM workspaces WHERE id = ?')
+          .get(workspaceId) as { settings_json: string } | undefined
+        if (ws) {
+          provider = safeParseJSON<WorkspaceSettings>(ws.settings_json, {}).llmProvider
+        }
+      } catch {
+        /* keep DB default */
+      }
+    }
     const row = this.db()
       .prepare(
-        `INSERT INTO conversations (id, workspace_id, title, mode, type)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO conversations (id, workspace_id, title, mode, type, llm_provider)
+         VALUES (?, ?, ?, ?, ?, COALESCE(?, 'claude'))
          ON CONFLICT(id) DO NOTHING
          RETURNING *`
       )
-      .get(id, workspaceId, title, mode, type) as ConversationRow | undefined
+      .get(id, workspaceId, title, mode, type, provider ?? null) as ConversationRow | undefined
     // ON CONFLICT DO NOTHING + RETURNING yields no row when another writer
     // inserted concurrently — fall back to a plain read.
     return row ? mapRow(row) : (this.findById(id) as Conversation)

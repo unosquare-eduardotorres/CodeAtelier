@@ -1044,6 +1044,32 @@ class MemoryExtractionService {
         })
         return result.text
       }
+      if (assignment.provider === 'glm') {
+        // GLM workspaces must not fall through to the Claude CLI spawn below —
+        // that burned Claude-plan quota (weekly-limit api_errors) for what is
+        // housekeeping extraction. Route through the same OpenAI-compatible
+        // one-shot path as local LLMs, with NO Claude fallback (a GLM failure
+        // should surface, not silently spend Anthropic credits).
+        const glm = modelConfigService.getGlmConfig(workspacePath)
+        const result = await runOneShotLocal({
+          systemPrompt: 'You are a knowledge extraction engine. Follow the instructions exactly.',
+          userMessage: prompt,
+          baseUrl: glm.baseUrl.replace(/\/$/, ''),
+          model: glm.smallModelId || glm.modelId,
+          apiKey: glm.apiKey,
+          feature: 'memory_feed',
+          workspaceId,
+          maxTokens: 4096,
+          timeoutMs: 60_000,
+          chatCompletionsPath: '/chat/completions'
+        })
+        if (!result.text.trim()) {
+          // Surface GLM failures — the caller warns per-doc; silently persisting
+          // an empty extraction would hide a broken key/endpoint.
+          throw new Error('GLM extraction returned empty text')
+        }
+        return result.text
+      }
     }
 
     return new Promise((resolve, reject) => {

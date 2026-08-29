@@ -19,8 +19,7 @@ const localLog = log.scope('OneShotLocal')
 /** Default timeout for local LLM requests (10s) */
 const LOCAL_REQUEST_TIMEOUT_MS = 10_000
 
-/**
- * Build the Claude CLI fallback args for memory-feed one-shot calls.
+/** Build the Claude CLI fallback args for memory-feed one-shot calls.
  * Single source of truth — consumed by spawnSummarizer, spawnClassifier, and tests.
  */
 export function buildMemoryFeedFallbackArgs(prompt: string): string[] {
@@ -55,6 +54,13 @@ export interface OneShotLocalOptions {
   maxTokens?: number
   /** Request timeout in ms (default: 10s) */
   timeoutMs?: number
+  /**
+   * Path appended to baseUrl for the chat-completions call. Default
+   * '/v1/chat/completions' (ollama/omlx layout). Cloud OpenAI-compatible
+   * endpoints whose base URL already ends in a version segment (Z.ai Coding
+   * Plan: https://api.z.ai/api/coding/paas/v4) need '/chat/completions'.
+   */
+  chatCompletionsPath?: string
   /** Claude fallback args — used when local call fails */
   claudeFallbackArgs?: string[]
   /** Claude fallback model */
@@ -100,12 +106,15 @@ export async function runOneShotLocal(opts: OneShotLocalOptions): Promise<OneSho
       stream: false
     })
 
-    const response = await fetch(`${opts.baseUrl}/v1/chat/completions`, {
-      method: 'POST',
-      headers,
-      body,
-      signal: controller.signal
-    })
+    const response = await fetch(
+      `${opts.baseUrl}${opts.chatCompletionsPath ?? '/v1/chat/completions'}`,
+      {
+        method: 'POST',
+        headers,
+        body,
+        signal: controller.signal
+      }
+    )
 
     clearTimeout(timer)
 
@@ -166,7 +175,10 @@ export async function runOneShotLocal(opts: OneShotLocalOptions): Promise<OneSho
       }
     }
 
-    // No fallback configured — return empty with warning
+    // No fallback configured — return empty. Callers that must surface the
+    // failure (e.g. GLM extraction, which must never silently degrade) check
+    // result.text themselves; prompt-optimizer deliberately treats empty as
+    // skippedReason:'error' and keeps the original prompt.
     return {
       text: '',
       provider: 'local',
