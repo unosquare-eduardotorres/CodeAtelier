@@ -503,6 +503,8 @@ export interface AppPreferences {
   userAvatarVariant: UserAvatarVariant
   /** Absolute hard cap for stream lifetime in minutes (clamped 10–120). Default: 30. */
   maxStreamLifetimeMin: number
+  /** When true, Blueprint BUILD dispatches tasks by dependsOn DAG readiness instead of wave barriers (default: true). Kill-switch for the classic wave scheduler. */
+  dagScheduling: boolean
   /** When true, Blueprint BUILD/VERIFY phases bypass all permission prompts (default: true). */
   blueprintAutoMode: boolean
 }

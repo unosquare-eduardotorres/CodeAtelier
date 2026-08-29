@@ -72,6 +72,7 @@ export class AppPreferenceRepository extends BaseRepository<
         return raw === '1' || raw === '2' || raw === '3' ? raw : '1'
       })(),
       maxStreamLifetimeMin: this.getInt('max_stream_lifetime_min', 30, 10, 120),
+      dagScheduling: this.getBool('dag_scheduling', true),
       blueprintAutoMode: this.getBool('blueprint_auto_mode', true)
     }
   }

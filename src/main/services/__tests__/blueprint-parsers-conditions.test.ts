@@ -98,6 +98,65 @@ describe('parseBlueprintTasks', () => {
   test('returns null for missing block', () => {
     assert.equal(parseBlueprintTasks('no tasks here'), null)
   })
+
+  // ── BP-TASKS-SILENT-EMPTY: the GLM truncation family ──
+
+  /**
+   * The exact observed failure: GLM emitted ~47K chars of narrative, then the
+   * fenced JSON, and hit its output cap mid-block — the closing fence never
+   * arrived, so the extraction regex could not match and the phase advanced
+   * with zero tasks. BUILD then "completed" in 5 seconds with 0/0 tasks.
+   */
+  test('recovers tasks from an unclosed fence (output cap mid-block)', () => {
+    const text =
+      'Long thinking narrative before the block.\n\n```blueprint-tasks\n' +
+      '{"totalTasks":2,"waves":[{"wave":1,"tasks":[{"taskId":"T001","description":"first"}]},{"wave":2,"tasks":[{"taskId":"T002","description":"second"}]}]}'
+    // NOTE: no closing ``` — stream cut mid-block
+    const result = parseBlueprintTasks(text)
+    assert.ok(result, 'must recover from an unclosed fence')
+    const waves = (result as any).waves as any[]
+    assert.equal(waves.length, 2)
+    assert.equal(waves[0].tasks[0].taskId, 'T001')
+    assert.equal(waves[1].tasks[0].taskId, 'T002')
+  })
+
+  test('recovers complete waves when the JSON is cut mid-string inside a later wave', () => {
+    const text =
+      '```blueprint-tasks\n' +
+      '{"totalTasks":3,"waves":[' +
+      '{"wave":1,"tasks":[{"taskId":"T001","description":"a"},{"taskId":"T002","description":"b"}]},' +
+      '{"wave":2,"tasks":[{"taskId":"T003","description":"cut off mid str'
+    const result = parseBlueprintTasks(text)
+    assert.ok(result, 'must recover the complete wave 1')
+    const waves = (result as any).waves as any[]
+    assert.equal(waves.length, 1)
+    assert.equal(waves[0].tasks.length, 2)
+    assert.equal(waves[0].tasks[1].taskId, 'T002')
+  })
+
+  test('repair truncates, never invents: a cut inside the FIRST wave yields null', () => {
+    const text =
+      '```blueprint-tasks\n{"totalTasks":2,"waves":[{"wave":1,"tasks":[{"taskId":"T001","descri'
+    assert.equal(parseBlueprintTasks(text), null)
+  })
+
+  test('braces inside JSON strings do not fool the repair', () => {
+    const text =
+      '```blueprint-tasks\n' +
+      '{"totalTasks":1,"waves":[{"wave":1,"tasks":[{"taskId":"T001","description":"uses } and { and \\" quotes"}]}'
+    const result = parseBlueprintTasks(text)
+    assert.ok(result)
+    const waves = (result as any).waves as any[]
+    assert.equal(waves[0].tasks[0].description, 'uses } and { and " quotes')
+  })
+
+  test('a complete block still parses without touching the repair path', () => {
+    const text =
+      '```blueprint-tasks\n{"totalTasks":1,"waves":[{"wave":1,"tasks":[{"taskId":"T001","description":"x"}]}]}\n```\ntrailing text'
+    const result = parseBlueprintTasks(text)
+    assert.ok(result)
+    assert.equal((result as any).totalTasks, 1)
+  })
 })
 
 describe('parseBlueprintPlan', () => {

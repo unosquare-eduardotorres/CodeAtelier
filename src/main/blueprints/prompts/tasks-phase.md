@@ -90,6 +90,10 @@ validates, tests or gates another task's output must declare `dependsOn` for
 every task it checks — or be placed in a later wave. Without it the gate runs
 against half-applied edits and reports a failure that does not exist.
 
+**Dependency source of truth**: `dependsOn` is the execution-order source of
+truth; waves are advisory grouping. BUILD dispatches a task as soon as its
+declared dependencies are settled, even across wave boundaries.
+
 **Parallel markers**: Tasks in the same wave with different files
 get the [P] marker — they can execute concurrently.
 

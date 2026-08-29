@@ -608,6 +608,11 @@ const TEST_FILES: string[] = [
   '../../../shared/__tests__/gate-analysis.test',
   '../../../shared/__tests__/work-packet.test',
   '../../../shared/__tests__/task-review-parsers.test',
+  // ─── DAG scheduler primitives (DAG BUILD) ───
+  '../../../shared/__tests__/task-dag.test',
+  './blueprint-dag-scheduler.test',
+  // ─── DAG scheduling UI derivations (DAG BUILD D4) ───
+  '../../../shared/__tests__/blueprint-dag-ui.test',
   './blueprint-gates.test',
   './blueprint-verify-gates.test',
   './blueprint-gates-remediation.test',

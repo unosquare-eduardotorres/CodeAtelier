@@ -397,6 +397,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/code-analysis-handlers.test',
   '../services/__tests__/blueprint-spec-deep.test',
   '../services/__tests__/blueprint-parallel-scheduler.test',
+  '../services/__tests__/blueprint-dag-scheduler.test',
   '../services/__tests__/blueprint-verify-extractor.test',
   // ─── Phase 21: Coverage Mega-Push ───
   '../services/__tests__/memory-engine-extraction-deep.test',
@@ -723,6 +724,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/gate-analysis.test',
   '../../shared/__tests__/work-packet.test',
   '../../shared/__tests__/task-review-parsers.test',
+  '../../shared/__tests__/task-dag.test',
+  '../../shared/__tests__/blueprint-dag-ui.test',
   '../services/__tests__/blueprint-gates.test',
   '../services/__tests__/blueprint-verify-gates.test',
   '../services/__tests__/blueprint-gates-remediation.test',

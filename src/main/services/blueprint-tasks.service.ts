@@ -33,6 +33,7 @@ import {
 } from '../db/repositories/blueprint.repository'
 import { conversationRepository } from '../db/repositories'
 import { extractWorkPacket } from '../../shared/work-packet-parser'
+import { buildTaskDag } from '../../shared/task-dag'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -196,6 +197,23 @@ export class BlueprintTasksService extends EventEmitter {
       const text = session.getStreamedContent(syntheticConvId)
       const completion = parsePhaseCompletionBlock(text, 'tasks') ?? undefined
       const tasksJson = parseBlueprintTasks(text)
+
+      // BP-TASKS-SILENT-EMPTY: a missing or unparseable blueprint-tasks block used
+      // to advance to REVIEW anyway with zero tasks persisted — BUILD then
+      // "completed" in seconds with 0/0 tasks and an empty diff, and the pipeline
+      // sailed on into code-review reviewing nothing. A tasks phase that produced
+      // no persistable waves is a failure, not a success: throw so the catch block
+      // marks the phase failed, saves the partial output and schedules the
+      // auto-retry. Observed with GLM, which emitted 47K chars of narrative before
+      // the fenced JSON block and hit its output cap mid-block, so the closing
+      // fence never arrived and the extraction regex could not match.
+      const waves = tasksJson?.waves
+      if (!Array.isArray(waves) || waves.length === 0) {
+        throw new Error(
+          'No parseable blueprint-tasks block in the phase output — the model ' +
+            'likely truncated before closing the fenced JSON block. Retrying.'
+        )
+      }
 
       // 8. Save phase artifact
       if (tasksPhase) {
@@ -380,6 +398,47 @@ export class BlueprintTasksService extends EventEmitter {
       )
 
       const persisted = blueprintService.populateTasks(blueprintId, flatTasks)
+
+      // ── DAG validation (post-parse Kahn check) ──
+      // Cycles and unknown dep ids are dropped-with-warning into a tasks-phase
+      // artifact BEFORE build ever sees them; the build-time guard stays as a
+      // runtime backstop. A cycle here means the model emitted mutually
+      // dependent tasks — the deps are stripped so the wave grouping still
+      // yields a runnable (if degraded) build.
+      try {
+        const dag = buildTaskDag(flatTasks)
+        const warnings: string[] = []
+        if (dag.cycle) {
+          warnings.push(
+            `Dependency cycle detected: ${dag.cycle.join(' → ')}. ` +
+              `The cycle's dependsOn edges were ignored; BUILD falls back to wave scheduling.`
+          )
+          bpLog.warn(`[persistTasksFromJson] Task dependency cycle: ${dag.cycle.join(' → ')}`)
+        }
+        if (dag.unknownDeps.length > 0) {
+          warnings.push(
+            `Unknown dependsOn ids ignored: ${dag.unknownDeps
+              .map((u) => `${u.taskId}→${u.dep}`)
+              .join(', ')}. Those dependencies cannot gate execution.`
+          )
+          bpLog.warn(
+            `[persistTasksFromJson] Unknown dependsOn ids: ${dag.unknownDeps
+              .map((u) => `${u.taskId}→${u.dep}`)
+              .join(', ')}`
+          )
+        }
+        if (warnings.length > 0) {
+          const phaseRec = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
+          if (phaseRec) {
+            blueprintPhaseRepository.appendArtifact(phaseRec.id, {
+              type: 'tasks-dag-warnings',
+              contentJson: { warnings, cycle: dag.cycle, unknownDeps: dag.unknownDeps }
+            })
+          }
+        }
+      } catch (dagErr) {
+        bpLog.warn('[persistTasksFromJson] DAG validation failed (non-fatal):', dagErr)
+      }
 
       // Attach work packets. A task without one still builds — its gates report
       // `unverifiable` / `no_packet` rather than failing (M3.4).

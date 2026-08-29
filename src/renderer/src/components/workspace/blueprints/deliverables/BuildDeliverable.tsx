@@ -26,6 +26,7 @@ import { FileChips } from '../BlueprintPlanCard'
 import { DeliverableHeader, MetricTile, DiscoveriesSection, CappedMarkdownBlock } from './shared'
 import { findArtifact, extractDiscoveries } from './artifact-helpers'
 import { formatDurationMs } from '../detail/phase-summaries'
+import { taskReadiness, waveCompletion } from '../../../../../../shared/task-readiness'
 
 // ── Component ──
 
@@ -74,6 +75,11 @@ export function BuildDeliverable({
     }
     return Array.from(map.entries()).sort(([a], [b]) => a - b)
   }, [dbTasks])
+
+  // DAG scheduling: readiness chips + derived wave completion (no waveComplete
+  // event exists in DAG mode — waves are advisory grouping).
+  const readiness = useMemo(() => taskReadiness(dbTasks), [dbTasks])
+  const waveDone = useMemo(() => waveCompletion(dbTasks), [dbTasks])
 
   // Collapsible file list state
   const [showCreated, setShowCreated] = useState(false)
@@ -258,11 +264,37 @@ export function BuildDeliverable({
                           className="px-4 py-2 text-xs font-mono text-text-muted align-top"
                           rowSpan={tasks.length}
                         >
-                          W{wave}
+                          <span
+                            className={waveDone.get(wave) ? 'text-success' : undefined}
+                            title={
+                              waveDone.get(wave)
+                                ? 'All tasks in this wave are settled'
+                                : 'Wave grouping is advisory — tasks dispatch by dependency readiness'
+                            }
+                          >
+                            W{wave}
+                          </span>
                         </td>
                       )}
                       <td className="px-4 py-2 text-xs font-mono text-text-secondary">
                         {task.taskId}
+                        {task.status === 'pending' && readiness.get(task.taskId)?.ready && (
+                          <span
+                            className="ml-2 inline-flex items-center gap-1 text-[10px] font-sans text-accent"
+                            title="All declared dependencies are settled — dispatchable now"
+                          >
+                            ready
+                          </span>
+                        )}
+                        {task.status === 'pending' &&
+                          readiness.get(task.taskId)?.blockedBy?.length && (
+                            <span
+                              className="ml-2 inline-flex items-center gap-1 text-[10px] font-sans text-text-muted"
+                              title={`Waiting on: ${readiness.get(task.taskId)!.blockedBy.join(', ')}`}
+                            >
+                              blocked
+                            </span>
+                          )}
                       </td>
                       <td className="px-4 py-2 text-text-secondary">
                         {task.description}

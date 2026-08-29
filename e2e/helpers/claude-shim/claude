@@ -327,6 +327,58 @@ const TASKS_RESPONSE = `I've decomposed the plan into wave-ordered tasks.
 {"phase":"tasks","status":"complete"}
 \`\`\``
 
+/**
+ * DAG-shaped tasks (CLAUDE_SHIM_DAG_TASKS=1): two independent wave-1 tasks
+ * and a wave-2 gate task depending on both. Under DAG scheduling the gate
+ * dispatches as soon as BOTH deps settle — while nothing else waits — and the
+ * drain-point gates run once on the settled tree. The E2E test asserts the
+ * scheduler artifact records dag mode + ≥1 drain point.
+ */
+const TASKS_DAG_RESPONSE = `I've decomposed the plan into wave-ordered tasks with dependencies.
+
+\`\`\`blueprint-tasks
+{
+  "waves": [
+    {
+      "wave": 1,
+      "tasks": [
+        {
+          "taskId": "T001",
+          "description": "Create the greeting endpoint module with JSON response and name parameter",
+          "files": ["src/hello.ts"],
+          "userStory": "US1",
+          "isParallel": true
+        },
+        {
+          "taskId": "T002",
+          "description": "Create the greeting test helper module",
+          "files": ["src/hello-helper.ts"],
+          "userStory": "US1",
+          "isParallel": true
+        }
+      ]
+    },
+    {
+      "wave": 2,
+      "tasks": [
+        {
+          "taskId": "T003",
+          "description": "Gate task: validate the endpoint and helper work together",
+          "files": ["src/hello-gate.ts"],
+          "userStory": "US1",
+          "isParallel": false,
+          "dependsOn": ["T001", "T002"]
+        }
+      ]
+    }
+  ]
+}
+\`\`\`
+
+\`\`\`blueprint-phase-complete
+{"phase":"tasks","status":"complete"}
+\`\`\``
+
 const REVIEW_RESPONSE = `Cross-artifact review complete. Spec, plan and tasks are consistent; file paths are valid for this workspace.
 
 Coverage: 1/1 plan items traced to tasks. No critical findings.
@@ -540,7 +592,7 @@ async function main() {
       respond(PLAN_RESPONSE)
       break
     } else if (phase === 'tasks') {
-      respond(TASKS_RESPONSE)
+      respond(process.env.CLAUDE_SHIM_DAG_TASKS === '1' ? TASKS_DAG_RESPONSE : TASKS_RESPONSE)
       break
     } else if (phase === 'review') {
       respond(REVIEW_RESPONSE)

@@ -207,19 +207,126 @@ export function parseLeadReview(text: string): LeadReviewResult {
 const TASKS_REGEX = /```blueprint-tasks\s*\n([\s\S]*?)```/g
 
 /**
+ * Repair a truncated blueprint-tasks JSON body by brace-balancing to the last
+ * complete top-level element inside the `waves` array.
+ *
+ * Why this exists: models with long thinking narratives (GLM notably) can hit
+ * their output cap mid-block, so the closing fence never arrives and the
+ * extraction regex cannot match at all. When the fence DID arrive but the JSON
+ * inside is cut mid-string, `JSON.parse` throws and the whole phase's work is
+ * discarded — 25 of 27 tasks thrown away over a missing closing brace.
+ *
+ * The repair is conservative: it only ever TRUNCATES, never invents. It walks
+ * the raw text tracking string/escape state, finds the last position where the
+ * `waves` array contained only complete objects, and closes the structure
+ * around what is provably there. Returns null when nothing complete can be
+ * recovered.
+ */
+function repairTruncatedTasksJson(raw: string): Record<string, unknown> | null {
+  // Locate the "waves" array start: "waves": [
+  const wavesMatch = raw.match(/"waves"\s*:\s*\[/)
+  if (!wavesMatch) return null
+  const arrayStart = (wavesMatch.index ?? 0) + wavesMatch[0].length // first char after '['
+
+  // Walk the text tracking JSON string state so braces inside strings don't
+  // fool the depth counter.
+  let depth = 1 // inside the waves array
+  let inString = false
+  let escaped = false
+  let lastCompleteElementEnd = -1 // index AFTER the ']' or ',' closing a complete wave object
+  let lastWaveObjectEnd = -1
+
+  for (let i = arrayStart; i < raw.length; i++) {
+    const ch = raw[i]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (ch === '\\' && inString) {
+      escaped = true
+      continue
+    }
+    if (ch === '"') {
+      inString = !inString
+      continue
+    }
+    if (inString) continue
+
+    if (ch === '[') depth++
+    else if (ch === ']') {
+      depth--
+      if (depth === 0) {
+        // The waves array itself closed — the JSON was complete after all;
+        // JSON.parse should have handled it. Nothing to repair.
+        return null
+      }
+    } else if (ch === '{') {
+      if (depth === 1) lastWaveObjectEnd = -1 // starting a new wave object
+    } else if (ch === '}') {
+      if (depth === 1) {
+        lastWaveObjectEnd = i
+      }
+    } else if (ch === ',' && depth === 1 && lastWaveObjectEnd >= 0) {
+      lastCompleteElementEnd = i // a comma at array depth follows a complete wave object
+    }
+  }
+
+  if (lastCompleteElementEnd < 0 && lastWaveObjectEnd < 0) return null
+
+  const cut = lastCompleteElementEnd >= 0 ? lastCompleteElementEnd : lastWaveObjectEnd + 1
+  const repaired =
+    raw.slice(0, cut) +
+    (lastCompleteElementEnd >= 0 ? '' : '') +
+    ']' +
+    (raw.includes('"totalTasks"') ? '}' : '}')
+
+  try {
+    const parsed = JSON.parse(repaired) as Record<string, unknown>
+    const waves = parsed.waves
+    if (!Array.isArray(waves) || waves.length === 0) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/**
  * Parse the last blueprint-tasks block from streamed text.
- * Returns null if no block found or parsing fails.
+ *
+ * Extraction order:
+ *   1. A complete fenced block that parses — the normal path.
+ *   2. A fenced block whose JSON is truncated mid-string — repaired by
+ *      brace-balancing to the last complete wave (see repairTruncatedTasksJson).
+ *   3. An UNCLOSED fence (output cap hit mid-block, closing ``` never arrived)
+ *      — treated as running to end-of-text and repaired the same way.
+ *
+ * Returns null if no block is found or nothing complete can be recovered.
  */
 export function parseBlueprintTasks(text: string): Record<string, unknown> | null {
-  const matches = [...text.matchAll(TASKS_REGEX)]
-  if (matches.length === 0) return null
+  if (text.length > 500_000) {
+    // Same guard as parsePhaseCompletionBlock — don't run a regex over a
+    // corrupted multi-megabyte stream.
+    return null
+  }
 
-  const lastMatch = matches[matches.length - 1]
-  const jsonStr = lastMatch[1].trim()
+  const matches = [...text.matchAll(TASKS_REGEX)]
+
+  let jsonStr: string | null = null
+  if (matches.length > 0) {
+    jsonStr = matches[matches.length - 1][1].trim()
+  } else {
+    // No closed fence. An opening ```blueprint-tasks with no closing ``` means
+    // the stream was cut mid-block (output cap). Treat the rest of the text as
+    // the block body and attempt repair.
+    const openMatch = text.match(/```blueprint-tasks\s*\n([\s\S]*)$/)
+    if (openMatch?.[1]) jsonStr = openMatch[1]
+  }
+
+  if (jsonStr === null) return null
 
   try {
     return JSON.parse(jsonStr) as Record<string, unknown>
   } catch {
-    return null
+    return repairTruncatedTasksJson(jsonStr)
   }
 }

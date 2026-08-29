@@ -4,10 +4,14 @@
  * Unlike previous phases (one-shot), BUILD iterates through tasks grouped by wave.
  * Each task gets its own AgentSessionService with write access (session.start('build')).
  *
- * Wave execution:
- * - Tasks within a wave execute sequentially (simpler, avoids file conflicts)
- * - If any task in a wave fails, remaining waves are aborted
- * - After all waves complete, auto-advances to VERIFY phase
+ * Scheduling (DAG mode, default): tasks dispatch as soon as their declared
+ * `dependsOn` dependencies are settled, regardless of wave grouping — waves
+ * remain advisory grouping for the UI. The scheduler is a greedy parallel
+ * loop with a file-overlap guard, exclusive-task blocking, graceful drain on
+ * failure, and overload backoff (see executeDag / src/shared/task-dag.ts).
+ *
+ * Degradation: a dependency cycle, or the `dagScheduling` preference off,
+ * falls back to the classic wave-barrier scheduler (executeWave).
  *
  * Follows the BlueprintReviewService pattern for event emission + error handling.
  */
@@ -69,6 +73,14 @@ import type { WorkspaceManifests } from '../../shared/gate-command-detect'
 import { readWorkspaceManifests } from './blueprint-preflight.service'
 import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
 import { renderWorkPacket } from '../../shared/work-packet-prompt'
+import {
+  buildTaskDag,
+  readyTasks,
+  markComplete,
+  collectTransitiveDependents,
+  isDepSatisfied,
+  type TaskDag
+} from '../../shared/task-dag'
 import { modelConfigService } from './model-config.service'
 import { blueprintService } from './blueprint.service'
 import { codeGraphService } from './code-graph.service'
@@ -175,6 +187,27 @@ interface BuildResult {
   taskTimings: TaskTiming[]
   /** Per-task failure summaries for UI surfacing instead of generic message. */
   taskFailures: Array<{ taskId: string; reason: string }>
+  /** DAG scheduler observability — quantifies the parallelism win and diagnoses stalls. */
+  scheduler?: SchedulerStats
+}
+
+/**
+ * Scheduler observability (D5 of the DAG plan): per-task ready→dispatch wait,
+ * drain count, and a parallelism histogram. `mode` records whether the run
+ * used the DAG scheduler or fell back to wave barriers (cycle / pref off).
+ */
+export interface SchedulerStats {
+  mode: 'dag' | 'wave-fallback'
+  /** taskId → ms spent ready-but-not-dispatched (dependency wait beyond cap/file guards). */
+  perTaskWaitMs: Record<string, number>
+  /** Number of times the loop hit a natural frontier stall (drain points). */
+  drainCount: number
+  /** Peak concurrent in-flight tasks. */
+  maxParallelism: number
+  /** Histogram: concurrency level → how many loop iterations ran at that level. */
+  parallelismHistogram: Record<number, number>
+  /** Why wave fallback was used, when it was. */
+  fallbackReason?: string
 }
 
 /** Return type for executeTask, including timing data. */
@@ -544,12 +577,46 @@ export class BlueprintBuildService extends EventEmitter {
         totalTasks,
         totalWaves: sortedWaves.length
       } satisfies BlueprintPhaseStartPayload)
-      // 5. Execute waves sequentially
-      for (const waveNum of sortedWaves) {
-        const waveTasks = waveMap.get(waveNum) ?? []
-        await this.executeWave({
-          waveNum,
-          waveTasks,
+      // 5. Execute — DAG mode (default) or classic wave barriers
+      const dagEnabled = appPreferenceRepository.getAppPreferences().dagScheduling
+      const allTasks = [...waveMap.values()].flat()
+      const dag = buildTaskDag(allTasks)
+      let useDag = dagEnabled
+      if (dagEnabled && dag.cycle) {
+        useDag = false
+        bpLog.warn(
+          `[startBuildPhase] Task dependency cycle (${dag.cycle.join(' → ')}) — ` +
+            `falling back to wave-barrier scheduling`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text: `⚠ Task dependency cycle (${dag.cycle.join(' → ')}) — using wave scheduling for this build`,
+          kind: 'system'
+        })
+      }
+      if (dagEnabled && dag.unknownDeps.length > 0) {
+        // Reported at TASKS persist time too — this is the runtime backstop.
+        bpLog.warn(
+          `[startBuildPhase] Unknown dependsOn ids ignored: ` +
+            dag.unknownDeps.map((u) => `${u.taskId}→${u.dep}`).join(', ')
+        )
+      }
+      result.scheduler = {
+        mode: useDag ? 'dag' : 'wave-fallback',
+        perTaskWaitMs: {},
+        drainCount: 0,
+        maxParallelism: 0,
+        parallelismHistogram: {},
+        ...(useDag
+          ? {}
+          : { fallbackReason: dag.cycle ? 'dependency cycle' : 'dagScheduling preference off' })
+      }
+
+      if (useDag) {
+        await this.executeDag({
+          dag,
           blueprintId,
           workspaceId,
           workspacePath,
@@ -557,7 +624,21 @@ export class BlueprintBuildService extends EventEmitter {
           phaseContext,
           result
         })
-        if (result.failed) break
+      } else {
+        for (const waveNum of sortedWaves) {
+          const waveTasks = waveMap.get(waveNum) ?? []
+          await this.executeWave({
+            waveNum,
+            waveTasks,
+            blueprintId,
+            workspaceId,
+            workspacePath,
+            executionPath,
+            phaseContext,
+            result
+          })
+          if (result.failed) break
+        }
       }
 
       // 6. Save build phase artifact (summary)
@@ -600,7 +681,8 @@ export class BlueprintBuildService extends EventEmitter {
             totalTasks,
             filesCreated: result.filesCreated,
             filesModified: result.filesModified,
-            taskTimings: result.taskTimings
+            taskTimings: result.taskTimings,
+            scheduler: result.scheduler
           }
         })
       }
@@ -729,6 +811,505 @@ export class BlueprintBuildService extends EventEmitter {
       if (!verifyTriggered) {
         blueprintService.markPipelineStopped(workspaceId)
         if (holdsPrimaryTree) primaryTreeLock.release(workspaceId, primaryTreeOwnerId)
+      }
+    }
+  }
+
+  // ── DAG Execution (Graph-wide Parallel Scheduler) ──
+
+  /**
+   * Execute the whole task graph with readiness-based dispatch.
+   *
+   * Same scheduling model as executeWave (greedy scan, file-overlap guard,
+   * exclusive-task blocking, graceful drain, overload backoff) lifted
+   * graph-wide: a task dispatches as soon as its `dependsOn` deps are
+   * settled, regardless of wave grouping. Waves remain advisory grouping.
+   *
+   * Differences from the wave loop, all deliberate:
+   * - Ready set is rank-ordered by critical-path depth (upwardRank) — the
+   *   longest chain to the sink dispatches first when a slot frees.
+   * - Overload cap-halving is build-scoped, not per-wave.
+   * - Wave gates run at DRAIN POINTS: inFlight = ∅ ∧ readySet = ∅ ∧ ≥1 task
+   *   completed since the last gate run — the natural frontier stall, the
+   *   same settled-tree invariant the end-of-wave point provided.
+   * - Failure cascade is reachability-based: only transitive dependents of
+   *   failed tasks (plus undispatched tasks at drain) are skipped; healthy
+   *   peers keep running.
+   */
+  private async executeDag(params: {
+    dag: TaskDag
+    blueprintId: string
+    workspaceId: string
+    /** Workspace identity — the primary tree. Never a cwd. */
+    workspacePath: string
+    /** Where the agents write (run worktree or primary tree). */
+    executionPath: string
+    phaseContext: import('../../shared/blueprint-types').PhaseContext
+    result: BuildResult
+  }): Promise<void> {
+    const { dag, blueprintId, workspaceId, workspacePath, executionPath, phaseContext, result } =
+      params
+    const stats = result.scheduler!
+
+    // Build-scoped cap (clamped 1–6, default 3). Mutable — halved on overload.
+    let cap = appPreferenceRepository.getAppPreferences().parallelBuildAgents
+
+    const inFlight = new Map<string, InFlightEntry>()
+    const dispatched = new Set<string>()
+    const terminal = new Set<string>() // settled this run: complete/failed/user-skipped
+    let exclusiveInFlight = false
+    let draining = false
+    const overloadRetries = new Map<string, number>()
+    const reportedFiles = new Map<string, Set<string>>()
+    const failedTaskIds = new Set<string>()
+    // Per-task ready timestamp: when the task first entered the ready set.
+    const readySince = new Map<string, number>()
+    // Drain-point gate bookkeeping.
+    let completionsSinceGate = 0
+    let gatesRun = 0
+
+    /** Live task record by taskId (DB row, refreshed on demand). */
+    const taskById = new Map<string, BlueprintTask>()
+    for (const rec of blueprintTaskRepository.findByBlueprint(blueprintId)) {
+      taskById.set(rec.taskId, rec)
+    }
+
+    // ── Resume pre-pass: settle already-settled tasks (mirrors executeWave) ──
+    // A task that is 'complete' or user-skipped in the DB never dispatches;
+    // it counts toward completion the way a completed task does. Without this
+    // pre-pass the ready-set scan would re-dispatch them.
+    let resumedCount = 0
+    let userSkippedCount = 0
+    for (const node of dag.nodes.values()) {
+      const rec = taskById.get(node.taskId)
+      if (!rec) continue
+      if (rec.skippedByUserAt) {
+        terminal.add(node.taskId)
+        result.tasksCompleted++
+        userSkippedCount++
+        markComplete(dag, node.taskId)
+        this.safeEmit('waveTaskComplete', {
+          blueprintId,
+          workspaceId,
+          wave: node.wave,
+          taskId: node.taskId,
+          status: 'skipped'
+        } satisfies BlueprintWaveTaskCompletePayload)
+      } else if (rec.status === 'complete') {
+        terminal.add(node.taskId)
+        result.tasksCompleted++
+        result.tasksResumed++
+        resumedCount++
+        markComplete(dag, node.taskId)
+        this.safeEmit('waveTaskComplete', {
+          blueprintId,
+          workspaceId,
+          wave: node.wave,
+          taskId: node.taskId,
+          status: 'complete'
+        } satisfies BlueprintWaveTaskCompletePayload)
+      }
+    }
+    if (resumedCount > 0 || userSkippedCount > 0) {
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text: `Skipping ${resumedCount} already-completed and ${userSkippedCount} user-skipped task${resumedCount + userSkippedCount > 1 ? 's' : ''} (resume)`,
+        kind: 'system'
+      })
+    }
+
+    /** Waves whose waveStart has been emitted (lazy — first dispatch in the wave). */
+    const wavesStarted = new Set<number>()
+
+    /** Readiness predicate: dep settled ⇔ complete ∨ user-skipped. */
+    const isSatisfied = (taskId: string): boolean => {
+      if (terminal.has(taskId)) return true
+      const rec = taskById.get(taskId)
+      const status = rec?.status ?? 'pending'
+      return isDepSatisfied(status, rec?.skippedByUserAt ?? null)
+    }
+
+    /**
+     * A task whose status is a stale cascade-skip (skipped, no user timestamp)
+     * is NOT settled — and must not be dispatched either. It stays blocked,
+     * surfaces as blocked, and its dependents stay blocked with it (the
+     * retry path resets cascade-skips before rebuild; a non-reset one must
+     * never silently unblock downstream work).
+     */
+    const isCascadeSkipped = (taskId: string): boolean => {
+      const rec = taskById.get(taskId)
+      return rec?.status === 'skipped' && !rec.skippedByUserAt && !terminal.has(taskId)
+    }
+
+    /**
+     * Rank-ordered actionable ready set: deps satisfied, not dispatched, not
+     * terminal. (readyTasks also returns terminal tasks with satisfied deps —
+     * the caller filters; here that filter is `dispatched`/`terminal`.)
+     */
+    const actionableReady = (): string[] =>
+      readyTasks(dag, isSatisfied).filter(
+        (id) => !dispatched.has(id) && !terminal.has(id) && !isCascadeSkipped(id)
+      )
+
+    const allInFlightFiles = (): Set<string> => {
+      const merged = new Set<string>()
+      for (const entry of inFlight.values()) {
+        for (const f of entry.files) merged.add(f)
+      }
+      return merged
+    }
+
+    const syncRunningTasks = (): void => {
+      const running: Record<string, { taskId: string; description: string }> = {}
+      for (const [taskId, entry] of inFlight) {
+        running[taskId] = { taskId, description: entry.task.description }
+      }
+      blueprintService.setRunningTasks(
+        workspaceId,
+        Object.keys(running).length > 0 ? running : null
+      )
+    }
+
+    const recordParallelism = (): void => {
+      const n = inFlight.size
+      stats.maxParallelism = Math.max(stats.maxParallelism, n)
+      stats.parallelismHistogram[n] = (stats.parallelismHistogram[n] ?? 0) + 1
+    }
+
+    /** Dispatch one task (mirrors executeWave's dispatchTask call sites). */
+    const dispatch = (taskId: string): boolean => {
+      const task = taskById.get(taskId)
+      if (!task) return false
+      const waveNum = task.wave
+      const taskFiles = normalizePaths(task.filePathsJson)
+      const waited = readySince.has(taskId) ? Date.now() - readySince.get(taskId)! : 0
+      if (waited > 0) stats.perTaskWaitMs[taskId] = waited
+      if (!wavesStarted.has(waveNum)) {
+        wavesStarted.add(waveNum)
+        const waveSize = [...dag.nodes.values()].filter((n) => n.wave === waveNum).length
+        this.safeEmit('waveStart', {
+          blueprintId,
+          workspaceId,
+          wave: waveNum,
+          taskCount: waveSize
+        } satisfies BlueprintWaveStartPayload)
+      }
+      this.dispatchTask({
+        task,
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        executionPath,
+        phaseContext,
+        result,
+        waveNum,
+        inFlight,
+        taskFiles
+      })
+      dispatched.add(taskId)
+      if (taskFiles.size === 0) exclusiveInFlight = true
+      syncRunningTasks()
+      return true
+    }
+
+    /**
+     * Drain-point gates: the natural frontier stall. Same settled-tree
+     * invariant as the old end-of-wave point — nothing in flight, nothing
+     * ready, and real work happened since the last gate run. Diamond graphs
+     * produce one stall at the join; no gate inflation.
+     */
+    const runDrainPointGates = async (): Promise<void> => {
+      if (inFlight.size > 0 || actionableReady().length > 0 || completionsSinceGate === 0) return
+      const cohort = [...dispatched].filter((id) => !gatedCohorts.has(id))
+      if (cohort.length === 0) {
+        completionsSinceGate = 0
+        return
+      }
+      const maxWave = cohort.reduce((m, id) => Math.max(m, taskById.get(id)?.wave ?? 0), 0)
+      gatesRun++
+      stats.drainCount = gatesRun
+      bpLog.info(
+        `[executeDag] Drain point ${gatesRun}: gates on settled cohort of ${cohort.length} task(s) (max wave ${maxWave})`
+      )
+      const report = await this.runWaveGates({
+        blueprintId,
+        workspaceId,
+        workspacePath,
+        executionPath,
+        waveNum: maxWave
+      })
+      for (const id of cohort) gatedCohorts.add(id)
+      completionsSinceGate = 0
+      if (report.overall === 'fail') {
+        result.failed = true
+        draining = true
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text: `⚠ Drain-point lint/build failed (${report.gates
+            .filter((g) => g.verdict === 'fail')
+            .map((g) => g.name)
+            .join(', ')}) — stopping build`,
+          kind: 'system'
+        })
+      }
+    }
+    const gatedCohorts = new Set<string>()
+
+    // ── Main loop ──
+    while (true) {
+      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      if (abortSignal?.aborted && !draining) {
+        bpLog.info(`[executeDag] Aborted — draining ${inFlight.size} in-flight tasks`)
+        draining = true
+      }
+
+      // Fill slots from the rank-ordered ready set.
+      if (!draining && !exclusiveInFlight) {
+        for (const taskId of actionableReady()) {
+          if (inFlight.size >= cap) break
+          if (exclusiveInFlight) break
+          const task = taskById.get(taskId)
+          if (!task) continue
+          const taskFiles = normalizePaths(task.filePathsJson)
+          if (taskFiles.size === 0) {
+            // Exclusive task: only when nothing else is in flight.
+            if (inFlight.size > 0) continue
+            dispatch(taskId)
+            break
+          }
+          if (filesOverlap(taskFiles, allInFlightFiles())) continue
+          dispatch(taskId)
+        }
+      }
+
+      recordParallelism()
+
+      // Nothing in flight and nothing dispatchable → drain point or done.
+      if (inFlight.size === 0) {
+        const ready = actionableReady()
+        if (ready.length === 0) {
+          if (completionsSinceGate > 0) {
+            await runDrainPointGates()
+            if (result.failed) break
+            continue
+          }
+          break // settled and gated — done (or stalled: see post-loop check)
+        }
+        if (!draining) {
+          // Ready but blocked by cap/file/exclusive guards with nothing in
+          // flight cannot happen for cap; for file/exclusive it also cannot
+          // (empty in-flight set never overlaps). Defensive: dispatch head —
+          // and bail out if the record is missing so the loop cannot spin.
+          if (!dispatch(ready[0])) break
+        } else {
+          break
+        }
+      }
+
+      // Wait for ANY in-flight task to settle.
+      const settled = await Promise.race(
+        [...inFlight.entries()].map(async ([taskId, entry]) => {
+          const taskResult = await entry.promise
+          return { taskId, entry, taskResult }
+        })
+      )
+
+      inFlight.delete(settled.taskId)
+      if (settled.entry.files.size === 0) exclusiveInFlight = false
+
+      // OVERLOAD-RETRY — same semantics as executeWave, build-scoped cap.
+      if (
+        !settled.taskResult.success &&
+        settled.taskResult.failureReason === 'overload' &&
+        !draining &&
+        !abortSignal?.aborted
+      ) {
+        const priorRetries = overloadRetries.get(settled.taskId) ?? 0
+        if (priorRetries < OVERLOAD_MAX_RETRIES) {
+          const attempt = priorRetries + 1
+          overloadRetries.set(settled.taskId, attempt)
+          const delay = OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
+
+          if (priorRetries === 0 && cap > 1) {
+            const newCap = Math.max(1, Math.floor(cap / 2))
+            bpLog.warn(
+              `[executeDag] Task ${settled.taskId} hit API overload — ` +
+                `reducing build parallel cap from ${cap} to ${newCap}`
+            )
+            cap = newCap
+          }
+
+          const totalAttempts = OVERLOAD_MAX_RETRIES + 1
+          bpLog.info(
+            `[executeDag] Task ${settled.taskId} overload retry ${attempt + 1}/${totalAttempts} — backing off ${delay / 1000}s`
+          )
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'build',
+            text:
+              `⚠ Task ${settled.entry.task.taskId} hit API overload — ` +
+              `retrying in ${delay / 1000}s (attempt ${attempt + 1}/${totalAttempts})`,
+            kind: 'system'
+          })
+
+          const retryTask = settled.entry.task
+          const retryFiles = settled.entry.files
+          const discoverySnapshot = [...result.discoveries]
+          const retryPromise = abortAwareSleep(delay, abortSignal ?? undefined)
+            .then(() =>
+              this.executeTask({
+                task: retryTask,
+                blueprintId,
+                workspaceId,
+                workspacePath,
+                executionPath,
+                phaseContext,
+                priorDiscoveries: discoverySnapshot,
+                tDispatch: Date.now(),
+                waveNum: retryTask.wave
+              })
+            )
+            .catch((_err): TaskResult => ({
+              success: false,
+              completion: null,
+              discoveries: [],
+              failureReason: 'aborted'
+            }))
+
+          if (settled.taskResult.timing) {
+            result.taskTimings.push(settled.taskResult.timing)
+          }
+          blueprintTaskRepository.updateStatus(retryTask.id, 'running')
+          inFlight.set(settled.taskId, {
+            promise: retryPromise,
+            files: retryFiles,
+            task: retryTask
+          })
+          if (retryFiles.size === 0) exclusiveInFlight = true
+          syncRunningTasks()
+          continue
+        }
+      }
+
+      this.handleTaskCompletion({
+        task: settled.entry.task,
+        taskResult: settled.taskResult,
+        blueprintId,
+        workspaceId,
+        waveNum: settled.entry.task.wave,
+        result
+      })
+      terminal.add(settled.taskId)
+      completionsSinceGate++
+      markComplete(dag, settled.taskId)
+
+      if (settled.taskResult.success) {
+        const modified = asStringArray(settled.taskResult.completion?.filesModified)
+        if (modified.length > 0) {
+          reportedFiles.set(settled.taskId, normalizePaths(modified))
+        }
+      } else {
+        failedTaskIds.add(settled.taskId)
+        if (!draining) {
+          bpLog.warn(`[executeDag] Task ${settled.taskId} failed — draining`)
+          draining = true
+          result.failed = true
+        }
+      }
+      syncRunningTasks()
+
+      // Newly-ready tasks get a ready timestamp for wait-time stats.
+      for (const id of actionableReady()) {
+        if (!readySince.has(id) && !dispatched.has(id)) readySince.set(id, Date.now())
+      }
+    }
+
+    blueprintService.setRunningTasks(workspaceId, null)
+
+    // ── Residual-risk hedge: warn on undeclared reported-file overlaps ──
+    const taskIdsForOverlap = [...reportedFiles.keys()]
+    for (let i = 0; i < taskIdsForOverlap.length; i++) {
+      for (let j = i + 1; j < taskIdsForOverlap.length; j++) {
+        const a = reportedFiles.get(taskIdsForOverlap[i])!
+        const b = reportedFiles.get(taskIdsForOverlap[j])!
+        if (filesOverlap(a, b)) {
+          const overlap = [...a].filter((f) => b.has(f))
+          bpLog.warn(
+            `[executeDag] REPORTED FILE OVERLAP: Tasks ${taskIdsForOverlap[i]} and ${taskIdsForOverlap[j]} both modified: ${overlap.join(', ')}`
+          )
+        }
+      }
+    }
+
+    // ── Reachability-based skip cascade ──
+    // Only transitive dependents of failed tasks, plus anything still
+    // undispatched at drain, are skipped. Healthy peers keep their state.
+    const doomed =
+      draining || result.failed
+        ? collectTransitiveDependents(dag, [...failedTaskIds])
+        : new Set<string>()
+    for (const node of dag.nodes.values()) {
+      const rec = taskById.get(node.taskId)
+      if (!rec) continue
+      const currentStatus = blueprintTaskRepository.findById(rec.id)?.status
+      if (currentStatus !== 'pending' && currentStatus !== 'running') continue
+      if (!draining && !result.failed) continue
+      if (doomed.has(node.taskId) || !dispatched.has(node.taskId)) {
+        blueprintTaskRepository.updateStatus(rec.id, 'skipped')
+        this.safeEmit('waveTaskComplete', {
+          blueprintId,
+          workspaceId,
+          wave: node.wave,
+          taskId: node.taskId,
+          status: 'skipped'
+        } satisfies BlueprintWaveTaskCompletePayload)
+      } else if (currentStatus === 'running') {
+        // In-flight at loop exit (abort path): leave it — the session's own
+        // abort handling settles it.
+        bpLog.info(`[executeDag] Task ${node.taskId} still running at exit — leaving to settle`)
+      }
+    }
+
+    // ── Stall detection: undischarged tasks that are neither ready nor failed ──
+    // A non-reset cascade-skip (or any unsatisfiable dep) leaves dependents
+    // blocked forever; surface it instead of hanging or silently skipping.
+    if (!draining && !result.failed) {
+      const stuck = [...dag.nodes.values()]
+        .map((n) => n.taskId)
+        .filter(
+          (id) =>
+            !terminal.has(id) &&
+            !dispatched.has(id) &&
+            (taskById.get(id)?.status ?? 'pending') === 'pending'
+        )
+      if (stuck.length > 0) {
+        bpLog.warn(
+          `[executeDag] ${stuck.length} task(s) blocked on unsatisfied dependencies: ${stuck.join(', ')} — marking skipped`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text: `⚠ ${stuck.length} task(s) blocked on unsatisfiable dependencies (${stuck.join(', ')}) — marked skipped`,
+          kind: 'system'
+        })
+        for (const id of stuck) {
+          const rec = taskById.get(id)
+          if (!rec) continue
+          blueprintTaskRepository.updateStatus(rec.id, 'skipped')
+          this.safeEmit('waveTaskComplete', {
+            blueprintId,
+            workspaceId,
+            wave: rec.wave,
+            taskId: id,
+            status: 'skipped'
+          } satisfies BlueprintWaveTaskCompletePayload)
+        }
       }
     }
   }
@@ -1423,10 +2004,7 @@ export class BlueprintBuildService extends EventEmitter {
       // ledger entry and no user-visible signal. Record it like any other
       // unverifiable outcome: ledger entry + phaseProgress warning.
       const detail = err instanceof Error ? err.message : String(err)
-      bpLog.warn(
-        `[gates] Baseline capture failed for ${task.taskId} — gates degrade:`,
-        detail
-      )
+      bpLog.warn(`[gates] Baseline capture failed for ${task.taskId} — gates degrade:`, detail)
       const ledgerItem: UnverifiedItem = {
         taskId: task.taskId,
         gate: 'write-set',
@@ -1658,9 +2236,10 @@ export class BlueprintBuildService extends EventEmitter {
     const noCommand = report.gates.some(
       (g) => g.verdict === 'unverifiable' && g.reason === 'no_command'
     )
-    const touchedManifest = [...(task.packetJson?.allowedFiles ?? []), ...(task.filePathsJson ?? [])].some(
-      (f) => typeof f === 'string' && isManifestFile(f)
-    )
+    const touchedManifest = [
+      ...(task.packetJson?.allowedFiles ?? []),
+      ...(task.filePathsJson ?? [])
+    ].some((f) => typeof f === 'string' && isManifestFile(f))
     if (noCommand || touchedManifest) {
       this.gateCommandCache.delete(gateCtx.blueprintId)
       this.manifestCache.delete(gateCtx.blueprintId)
@@ -1861,7 +2440,8 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintId,
       workspaceId,
       phase: 'build',
-      text: `Wave ${waveNum} gates: ${report.overall}` +
+      text:
+        `Wave ${waveNum} gates: ${report.overall}` +
         ` (${report.gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`,
       kind: 'system'
     })

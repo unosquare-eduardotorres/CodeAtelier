@@ -26,6 +26,7 @@ const defaultPreferences: AppPreferences = {
   leanBuildMcp: false,
   userAvatarVariant: '1' as UserAvatarVariant,
   maxStreamLifetimeMin: 30,
+  dagScheduling: true,
   blueprintAutoMode: true
 }
 
@@ -45,6 +46,7 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   leanBuildMcp: 'lean_build_mcp',
   userAvatarVariant: 'user_avatar_variant',
   maxStreamLifetimeMin: 'max_stream_lifetime_min',
+  dagScheduling: 'dag_scheduling',
   blueprintAutoMode: 'blueprint_auto_mode'
 }
 
@@ -166,6 +168,9 @@ export const useMaxStreamLifetimeMin = (): number =>
 
 export const useBlueprintAutoMode = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.blueprintAutoMode)
+
+export const useDagScheduling = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.dagScheduling)
 
 export const useUserAvatarVariant = (): UserAvatarVariant =>
   useAppPreferenceStore((state) => state.preferences.userAvatarVariant)
