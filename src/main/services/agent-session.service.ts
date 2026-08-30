@@ -361,6 +361,23 @@ export class AgentSessionService extends AgentBaseService {
 
   /** G1: Per-session instance ID for MCP config file isolation (parallel build tasks). */
   readonly instanceId: string | undefined
+  /**
+   * WAVE-RACE FIX: server-owner key for sessions constructed WITHOUT an
+   * instanceId (chat, council, grill, spec… — every call site except
+   * blueprint-build). Lazily generated on first OpenCode use so those
+   * sessions hold a server reference too: without it, a build wave draining
+   * to refcount 0 would stop the shared server mid-turn under a live chat
+   * session, and these sessions' stop() could never trigger teardown.
+   */
+  private _opencodeOwnerKey: string | null = null
+
+  /** Stable per-session server-owner key (constructor instanceId or generated). */
+  private opencodeOwnerKey(): string {
+    if (!this._opencodeOwnerKey) {
+      this._opencodeOwnerKey = this.instanceId ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    }
+    return this._opencodeOwnerKey
+  }
 
   constructor(
     private readonly adapter: AgentRoleAdapter,
@@ -1309,11 +1326,10 @@ export class AgentSessionService extends AgentBaseService {
       // (the BUILD-T001 5-min stall). The server (and the workspace-keyed
       // config) is only torn down when this was the LAST reference.
       if (this.executorBackend === 'opencode') {
-        // instanceId may be undefined (session never registered) — then no ref
-        // was ever acquired and releaseServer is a no-op returning false.
-        const wasLastRef = this.instanceId
-          ? openCodeExecutor.releaseServer(this.instanceId)
-          : false
+        // WAVE-RACE FIX: release this session's claim instead of killing the
+        // shared server. Sessions that never started OpenCode hold no ref —
+        // releaseServer is a no-op for them (returns false).
+        const wasLastRef = openCodeExecutor.releaseServer(this.opencodeOwnerKey())
         if (wasLastRef) {
           await openCodeExecutor.stop()
           if (this.workspacePath) {
@@ -2490,7 +2506,7 @@ export class AgentSessionService extends AgentBaseService {
         await openCodeExecutor.ensureStarted(this.workspacePath!, {
           configPath: this._openCodeConfigPath,
           isLocal: providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx',
-          ownerKey: this.instanceId
+          ownerKey: this.opencodeOwnerKey()
         })
       } catch (error) {
         const err = error as Error
