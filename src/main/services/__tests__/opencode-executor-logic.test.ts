@@ -94,10 +94,20 @@ describe('OpenCodeExecutor.computeTransientRetry', () => {
   })
 
   test('second retry → attempt 2, delay 4000ms', () => {
-    const result = (executor as any).computeTransientRetry(1, 'timeout')
+    // SSE-TIMEOUT FIX: fast-class message keeps the 2s base (timeout is now
+    // slow-class — covered by the slow-class test below)
+    const result = (executor as any).computeTransientRetry(1, 'rate limit')
     assert.ok(result !== null)
     assert.equal(result.attemptNumber, 2)
     assert.equal(result.delayMs, 4000) // 2000 * 2^1
+  })
+
+  test('slow-class timeout → attempt 2, delay 60000ms', () => {
+    // SSE-TIMEOUT FIX: timeout/connection-stall class uses SLOW_RETRY_BASE_DELAY_MS
+    const result = (executor as any).computeTransientRetry(1, 'timeout')
+    assert.ok(result !== null)
+    assert.equal(result.attemptNumber, 2)
+    assert.equal(result.delayMs, 60000) // 30000 * 2^1
   })
 
   test('third retry → attempt 3, delay 8000ms', () => {

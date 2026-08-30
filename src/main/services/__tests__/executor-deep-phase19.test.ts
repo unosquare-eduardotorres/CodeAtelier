@@ -138,10 +138,22 @@ if (ocLoaded) {
 
     test('third_retry_has_quadrupled_delay', () => {
       const oc = makeOC()
-      const result = (oc as any).computeTransientRetry(2, 'timeout')
+      // SSE-TIMEOUT FIX: fast-class message keeps the 2s base (timeout is
+      // slow-class — covered by the slow-class test below)
+      const result = (oc as any).computeTransientRetry(2, 'rate limit')
       assert.ok(result)
       assert.equal(result.attemptNumber, 3)
       assert.equal(result.delayMs, 8000) // 2000 * 2^2
+    })
+
+    test('slow_class_timeout_uses_slow_base', () => {
+      const oc = makeOC()
+      // SSE-TIMEOUT FIX: timeout/connection-stall class uses
+      // SLOW_RETRY_BASE_DELAY_MS (30s/60s/120s)
+      const result = (oc as any).computeTransientRetry(2, 'timeout')
+      assert.ok(result)
+      assert.equal(result.attemptNumber, 3)
+      assert.equal(result.delayMs, 120000) // 30000 * 2^2
     })
 
     test('returns_null_when_max_retries_exhausted', () => {

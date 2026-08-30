@@ -20,11 +20,28 @@ const TRANSIENT_ERROR_PATTERNS = [
   /ETIMEDOUT/,
   /ECONNREFUSED/,
   /network/i,
-  /timeout/i
+  /timeout/i,
+  /timed[\s_-]?out/i
 ]
 
 const MAX_TRANSIENT_RETRIES = 3
 const BASE_RETRY_DELAY_MS = 2000
+const SLOW_RETRY_BASE_DELAY_MS = 30_000
+
+const SLOW_TRANSIENT_PATTERNS = [
+  /timeout/i,
+  /timed[\s_-]?out/i,
+  /ETIMEDOUT/,
+  /ECONNRESET/,
+  /stalled/i
+]
+
+/**
+ * Replicated from opencode-executor.ts isSlowTransientError (SSE-TIMEOUT FIX).
+ */
+function isSlowTransientError(message: string): boolean {
+  return SLOW_TRANSIENT_PATTERNS.some((pattern) => pattern.test(message))
+}
 
 // ── Replicated pure functions ──
 
@@ -36,11 +53,13 @@ function isTransientError(errorMessage: string): boolean {
 }
 
 /**
- * Replicated from OpenCodeExecutor.computeTransientRetry (opencode-executor.ts:1033-1057).
+ * Replicated from OpenCodeExecutor.computeTransientRetry (opencode-executor.ts).
+ * SSE-TIMEOUT FIX: class-aware backoff — slow transients (timeout/stall class)
+ * use SLOW_RETRY_BASE_DELAY_MS (30s/60s/120s); fast transients keep 2s/4s/8s.
  */
 function computeTransientRetry(
   currentRetryCount: number,
-  _errorMessage: string
+  errorMessage: string
 ): {
   attemptNumber: number
   delayMs: number
@@ -50,7 +69,10 @@ function computeTransientRetry(
   if (currentRetryCount >= MAX_TRANSIENT_RETRIES) return null
 
   const attemptNumber = currentRetryCount + 1
-  const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, attemptNumber - 1)
+  const baseDelayMs = isSlowTransientError(errorMessage)
+    ? SLOW_RETRY_BASE_DELAY_MS
+    : BASE_RETRY_DELAY_MS
+  const delayMs = baseDelayMs * Math.pow(2, attemptNumber - 1)
 
   return {
     attemptNumber,
@@ -187,6 +209,20 @@ describe('isTransientError', () => {
     assert.ok(isTransientError('request timeout'))
   })
 
+  test('sse_read_timed_out_spaced_form_returns_true', () => {
+    // SSE-TIMEOUT FIX regression: the spaced form emitted by the opencode
+    // server on upstream SSE read stalls was previously misclassified permanent.
+    assert.ok(isTransientError('SSE read timed out'))
+  })
+
+  test('timed_out_hyphenated_form_returns_true', () => {
+    assert.ok(isTransientError('request timed-out after 30000ms'))
+  })
+
+  test('timed_out_underscored_form_returns_true', () => {
+    assert.ok(isTransientError('upstream_timed_out'))
+  })
+
   test('invalid_auth_returns_false', () => {
     assert.ok(!isTransientError('invalid authentication credentials'))
   })
@@ -236,6 +272,106 @@ describe('computeTransientRetry', () => {
   test('includes_resumingMessage_string', () => {
     const result = computeTransientRetry(1, 'rate limit')
     assert.ok(result!.resumingMessage.includes('Retry 2'))
+  })
+})
+
+describe('computeTransientRetry — class-aware backoff (SSE-TIMEOUT FIX)', () => {
+  test('slow_class_attempt_1_returns_30000ms_delay', () => {
+    const result = computeTransientRetry(0, 'SSE read timed out')
+    assert.ok(result !== null)
+    assert.equal(result!.delayMs, 30_000)
+  })
+
+  test('slow_class_attempt_2_returns_60000ms_delay', () => {
+    const result = computeTransientRetry(1, 'SSE read timed out')
+    assert.ok(result !== null)
+    assert.equal(result!.delayMs, 60_000)
+  })
+
+  test('slow_class_attempt_3_returns_120000ms_delay', () => {
+    const result = computeTransientRetry(2, 'read timed out')
+    assert.ok(result !== null)
+    assert.equal(result!.delayMs, 120_000)
+  })
+
+  test('slow_class_attempt_4_exceeds_max_returns_null', () => {
+    assert.equal(computeTransientRetry(3, 'SSE read timed out'), null)
+  })
+
+  test('slow_class_startedMessage_reports_30s', () => {
+    const result = computeTransientRetry(0, 'SSE read timed out')
+    assert.ok(result!.startedMessage.includes('retrying in 30s'))
+  })
+
+  test('fast_class_429_keeps_2000ms_delay', () => {
+    const result = computeTransientRetry(0, 'HTTP 429 Too Many Requests')
+    assert.ok(result !== null)
+    assert.equal(result!.delayMs, 2_000)
+  })
+
+  test('fast_class_rate_limit_backoff_2s_4s_8s', () => {
+    assert.equal(computeTransientRetry(0, 'rate limit exceeded')!.delayMs, 2_000)
+    assert.equal(computeTransientRetry(1, 'rate limit exceeded')!.delayMs, 4_000)
+    assert.equal(computeTransientRetry(2, 'rate limit exceeded')!.delayMs, 8_000)
+  })
+
+  test('fast_class_overloaded_keeps_fast_base', () => {
+    assert.equal(computeTransientRetry(0, 'server overloaded')!.delayMs, 2_000)
+  })
+})
+
+describe('isSlowTransientError', () => {
+  test('sse_read_timed_out_returns_true', () => {
+    assert.ok(isSlowTransientError('SSE read timed out'))
+  })
+
+  test('read_timed_out_returns_true', () => {
+    assert.ok(isSlowTransientError('read timed out'))
+  })
+
+  test('timed_out_hyphenated_returns_true', () => {
+    assert.ok(isSlowTransientError('timed-out'))
+  })
+
+  test('timed_out_underscored_returns_true', () => {
+    assert.ok(isSlowTransientError('timed_out'))
+  })
+
+  test('plain_timeout_is_slow_class', () => {
+    // timeout IS slow-class; fast-class is rate-limit/429/overloaded
+    assert.ok(isSlowTransientError('request timeout'))
+  })
+
+  test('ETIMEDOUT_returns_true', () => {
+    assert.ok(isSlowTransientError('connect ETIMEDOUT 1.2.3.4:443'))
+  })
+
+  test('ECONNRESET_returns_true', () => {
+    assert.ok(isSlowTransientError('read ECONNRESET'))
+  })
+
+  test('stalled_returns_true', () => {
+    assert.ok(isSlowTransientError('upstream connection stalled'))
+  })
+
+  test('rate_limited_returns_false', () => {
+    assert.ok(!isSlowTransientError('rate limited'))
+  })
+
+  test('http_429_returns_false', () => {
+    assert.ok(!isSlowTransientError('HTTP 429'))
+  })
+
+  test('overloaded_returns_false', () => {
+    assert.ok(!isSlowTransientError('server_is_overloaded'))
+  })
+
+  test('invalid_auth_returns_false', () => {
+    assert.ok(!isSlowTransientError('invalid authentication credentials'))
+  })
+
+  test('empty_string_returns_false', () => {
+    assert.ok(!isSlowTransientError(''))
   })
 })
 
@@ -406,6 +542,43 @@ describe('OpenCode Executor — module import coverage', () => {
     const mod = await import('../opencode-executor')
     assert.ok(mod.openCodeExecutor)
     assert.equal(typeof mod.openCodeExecutor.resetCircuitBreaker, 'function')
+  })
+
+  test('isSlowTransientError_is_exported', async () => {
+    const mod = await import('../opencode-executor')
+    assert.equal(typeof mod.isSlowTransientError, 'function')
+    assert.ok(mod.isSlowTransientError('SSE read timed out'))
+    assert.ok(!mod.isSlowTransientError('rate limited'))
+  })
+})
+
+describe('OpenCode Executor — prototype regression (SSE-TIMEOUT FIX)', () => {
+  // Guards against replication drift: exercise the REAL private methods via
+  // prototype access rather than the replicated copies above.
+  test('real_isTransientError_classifies_sse_read_timed_out_transient', async () => {
+    const { OpenCodeExecutor } = await import('../opencode-executor')
+    const proto = OpenCodeExecutor.prototype as unknown as {
+      isTransientError: (msg: string) => boolean
+    }
+    assert.ok(proto.isTransientError.call(null, 'SSE read timed out'))
+    assert.ok(proto.isTransientError.call(null, 'request timed-out'))
+  })
+
+  test('real_computeTransientRetry_uses_slow_base_for_timed_out', async () => {
+    const { OpenCodeExecutor } = await import('../opencode-executor')
+    const proto = OpenCodeExecutor.prototype as unknown as {
+      computeTransientRetry: (
+        count: number,
+        msg: string
+      ) => { attemptNumber: number; delayMs: number } | null
+    }
+    const slow = proto.computeTransientRetry.call(null, 0, 'SSE read timed out')
+    assert.ok(slow !== null)
+    assert.equal(slow!.delayMs, 30_000)
+
+    const fast = proto.computeTransientRetry.call(null, 0, 'rate limit exceeded')
+    assert.ok(fast !== null)
+    assert.equal(fast!.delayMs, 2_000)
   })
 })
 

@@ -30,7 +30,11 @@ const TRANSIENT_PATTERNS = [
   /ETIMEDOUT/,
   /ECONNREFUSED/,
   /network/i,
-  /timeout/i
+  /timeout/i,
+  // SSE-TIMEOUT FIX: spaced/hyphenated/underscored forms ("timed out",
+  // "timed-out", "timed_out") — mirrors the executor's TRANSIENT_ERROR_PATTERNS
+  // so SSE read stalls show as api_retry in the UI instead of a hard error.
+  /timed[\s_-]?out/i
 ]
 
 /**

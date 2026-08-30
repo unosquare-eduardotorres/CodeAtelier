@@ -170,7 +170,12 @@ const TRANSIENT_ERROR_PATTERNS = [
   /ETIMEDOUT/,
   /ECONNREFUSED/,
   /network/i,
-  /timeout/i
+  /timeout/i,
+  // SSE-TIMEOUT FIX: spaced/hyphenated/underscored forms ("timed out",
+  // "timed-out", "timed_out") emitted by the opencode server on upstream
+  // SSE read stalls — previously matched no pattern, so these were
+  // misclassified as permanent and never retried.
+  /timed[\s_-]?out/i
 ]
 
 /** Max retry attempts for transient errors */
@@ -178,6 +183,31 @@ const MAX_TRANSIENT_RETRIES = 3
 
 /** Base delay for exponential backoff (ms) */
 const BASE_RETRY_DELAY_MS = 2000
+
+/**
+ * SSE-TIMEOUT FIX: base delay for slow transients (timeout/connection-stall
+ * class). Yields 30s/60s/120s across the 3 retries — provider stalls need a
+ * far longer recovery window than fast transients (429/overloaded).
+ */
+const SLOW_RETRY_BASE_DELAY_MS = 30_000
+
+/** Slow-transient patterns: timeout / connection-stall class errors */
+const SLOW_TRANSIENT_PATTERNS = [
+  /timeout/i,
+  /timed[\s_-]?out/i,
+  /ETIMEDOUT/,
+  /ECONNRESET/,
+  /stalled/i
+]
+
+/**
+ * SSE-TIMEOUT FIX: true when the error belongs to the timeout/connection-stall
+ * class — these warrant the slow backoff base (SLOW_RETRY_BASE_DELAY_MS)
+ * instead of the fast 2s base. Pure helper, exported for tests.
+ */
+export function isSlowTransientError(message: string): boolean {
+  return SLOW_TRANSIENT_PATTERNS.some((pattern) => pattern.test(message))
+}
 
 /** Default port used by the OpenCode SDK server */
 const OPENCODE_SERVER_PORT = 4096
@@ -1787,10 +1817,14 @@ Troubleshooting:
     if (currentRetryCount >= MAX_TRANSIENT_RETRIES) return null
 
     const attemptNumber = currentRetryCount + 1
-    const delayMs = BASE_RETRY_DELAY_MS * Math.pow(2, attemptNumber - 1)
+    // SSE-TIMEOUT FIX: class-aware backoff — timeout/connection-stall errors
+    // get the slow base (30s/60s/120s); everything else keeps 2s/4s/8s.
+    const isSlow = isSlowTransientError(errorMessage)
+    const baseDelayMs = isSlow ? SLOW_RETRY_BASE_DELAY_MS : BASE_RETRY_DELAY_MS
+    const delayMs = baseDelayMs * Math.pow(2, attemptNumber - 1)
     openCodeLog.info(
-      `[opencode] Transient error detected, retrying in ${delayMs}ms ` +
-        `(attempt ${attemptNumber}/${MAX_TRANSIENT_RETRIES}): ${errorMessage}`
+      `[opencode] Transient error detected (${isSlow ? 'slow' : 'fast'} class), ` +
+        `retrying in ${delayMs}ms (attempt ${attemptNumber}/${MAX_TRANSIENT_RETRIES}): ${errorMessage}`
     )
 
     return {
