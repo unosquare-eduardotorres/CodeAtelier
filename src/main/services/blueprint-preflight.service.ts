@@ -71,6 +71,12 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     fileMarkers: ['prisma/schema.prisma'],
     taskKeywords: ['postgres', 'postgresql', 'psql'], // B7: removed 'database migration' (SQLite false positive)
     requiredEnvVars: ['DATABASE_URL'],
+    // Projects that split read/write connections (e.g. Congruity HR's
+    // DB_READ_DSN/DB_WRITE_DSN convention) satisfy the same requirement —
+    // either DSN present means the DB connection is configured.
+    envVarAlternatives: {
+      DATABASE_URL: ['DB_READ_DSN', 'DB_WRITE_DSN', 'POSTGRES_URL', 'PG_URL']
+    },
     presenceProbe: { cmd: 'psql', args: ['--version'] },
     presenceWarnOnly: true, // B5: hosted DBs don't need local psql
     installHint: 'brew install postgresql  (or use Docker: docker run -p 5432:5432 postgres)'
@@ -609,17 +615,27 @@ export async function runPreflightChecks(
     // ── Env var checks (B5: critical = blocker, optional = warn) ──
     for (const envVar of def.requiredEnvVars) {
       const isAvailable = availableEnv.has(envVar)
+      // Alternative names satisfy the requirement (e.g. DB_READ_DSN/DB_WRITE_DSN
+      // instead of DATABASE_URL) — any one present counts as configured.
+      const presentAlts = (def.envVarAlternatives?.[envVar] ?? []).filter((alt) =>
+        availableEnv.has(alt)
+      )
+      const satisfiedByAlts = !isAvailable && presentAlts.length > 0
       checks.push({
         id: envVar,
         name: envVar,
         kind: 'env-var',
-        status: isAvailable ? 'pass' : 'blocker',
+        status: isAvailable || satisfiedByAlts ? 'pass' : 'blocker',
         message: isAvailable
           ? `${envVar} is set`
-          : `${envVar} is not set in process environment or workspace .env`,
+          : satisfiedByAlts
+            ? `${envVar} not set, but ${presentAlts.join('/')} ${presentAlts.length === 1 ? 'is' : 'are'} — requirement satisfied`
+            : `${envVar} is not set in process environment or workspace .env`,
         remediation: isAvailable
           ? undefined
-          : `Add ${envVar} to your .env file or set it in your environment`,
+          : satisfiedByAlts
+            ? undefined
+            : `Add ${envVar} to your .env file or set it in your environment`,
         sources
       })
     }

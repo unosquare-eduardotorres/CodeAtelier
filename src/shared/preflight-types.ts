@@ -68,6 +68,13 @@ export interface PreflightServiceDef {
   taskKeywords: string[]
   /** Environment variable names this service requires — absence = blocker. */
   requiredEnvVars: string[]
+  /**
+   * Alternative env-var names that satisfy a required var — presence of ANY
+   * listed alternative marks the requirement met (e.g. a project using
+   * DB_READ_DSN/DB_WRITE_DSN instead of the generic DATABASE_URL).
+   * Keyed by the required var name; each entry lists acceptable substitutes.
+   */
+  envVarAlternatives?: Record<string, string[]>
   /** Environment variables that are useful but not critical — absence = warn. */
   optionalEnvVars?: string[]
   /** Presence probe: CLI command + args to check installation (e.g. ['docker', '--version']). */

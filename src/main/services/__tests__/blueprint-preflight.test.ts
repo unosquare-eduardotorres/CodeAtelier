@@ -6,6 +6,9 @@
  * async engine budget, env-var severity tiers, login-shell caching.
  */
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 
 // We test the exported functions directly. The service depends on:
@@ -530,6 +533,61 @@ describe('approval payload redaction', () => {
     }
     assert.ok(!('value' in check), 'PreflightCheck should never have a value field')
     assert.ok(!check.message.includes('sk_'), 'Message should not contain secret patterns')
+  })
+})
+
+// ── envVarAlternatives: alternative DSN names satisfy required vars ──
+
+describe('envVarAlternatives — DATABASE_URL satisfied by split DSNs', () => {
+  test('postgres registry entry declares DB_READ_DSN/DB_WRITE_DSN as alternatives', () => {
+    const postgres = KNOWN_SERVICES.find((s) => s.id === 'postgres')
+    assert.ok(postgres, 'postgres service not found')
+    const alts = postgres.envVarAlternatives?.['DATABASE_URL']
+    assert.ok(alts, 'envVarAlternatives.DATABASE_URL not declared')
+    assert.ok(alts.includes('DB_READ_DSN'), 'DB_READ_DSN missing from alternatives')
+    assert.ok(alts.includes('DB_WRITE_DSN'), 'DB_WRITE_DSN missing from alternatives')
+  })
+
+  test('DB_WRITE_DSN in workspace .env satisfies DATABASE_URL (no blocker)', async () => {
+    // Congruity HR case: .env sets DB_READ_DSN/DB_WRITE_DSN, never DATABASE_URL.
+    // Previously a hard blocker requiring manual override on every run.
+    const dir = mkdtempSync(join(tmpdir(), 'preflight-alt-'))
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 't', dependencies: { pg: '^8' } })
+      )
+      writeFileSync(join(dir, '.env'), 'DB_READ_DSN=postgresql://x/y\nDB_WRITE_DSN=postgresql://x/y\n')
+
+      const result = await runPreflightChecks(dir)
+      const dbCheck = result.checks.find((c) => c.id === 'DATABASE_URL')
+      assert.ok(dbCheck, 'DATABASE_URL check missing from results')
+      assert.equal(
+        dbCheck?.status,
+        'pass',
+        `Expected pass via alternative, got ${dbCheck?.status} (${dbCheck?.message})`
+      )
+      assert.ok(dbCheck?.message.includes('DB_WRITE_DSN'), 'message should name the satisfying var')
+      assert.equal(result.hasBlockers, false, 'no blockers expected for split-DSN workspace')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('no DSN at all still blocks', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preflight-alt-'))
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 't', dependencies: { pg: '^8' } })
+      )
+      // No .env, no DATABASE_URL in process env (test runner env is clean of it)
+      const result = await runPreflightChecks(dir)
+      const dbCheck = result.checks.find((c) => c.id === 'DATABASE_URL')
+      assert.equal(dbCheck?.status, 'blocker', 'missing DSN must stay a blocker')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 
