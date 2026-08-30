@@ -41,21 +41,51 @@ async function* fakeStream(events: unknown[]): AsyncIterable<unknown> {
   for (const e of events) yield e
 }
 
+/** An async iterable that yields the given events, then never resolves (simulates an SSE stall). */
+function stallingStream(events: unknown[]): AsyncIterable<unknown> {
+  return {
+    [Symbol.asyncIterator]() {
+      let i = 0
+      return {
+        next(): Promise<IteratorResult<unknown>> {
+          if (i < events.length) return Promise.resolve({ done: false, value: events[i++] })
+          return new Promise(() => {}) // hang forever — the stall
+        }
+      }
+    }
+  }
+}
+
 // ── Access private method via prototype cast ──
 
-async function collectChunks(
+interface StreamRunResult {
+  resultText: string
+  maxTurnsReached: boolean
+  transientRetries: number
+  lastTransientClass: 'slow' | 'fast' | null
+}
+
+async function runEventStream(
   executor: OpenCodeExecutor,
-  events: unknown[]
-): Promise<Array<StreamChunk>> {
+  events: unknown[],
+  opts: {
+    midTurnStallMs?: number
+    stream?: AsyncIterable<unknown>
+  } = {}
+): Promise<{ chunks: StreamChunk[]; result: StreamRunResult }> {
   const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
   const processEventStream = proto.processEventStream.bind(executor)
+  // Shrink real backoff sleeps (30s/2s → 30ms/2ms) so transient-retry tests
+  // stay fast. Reported retryInfo delays are NOT scaled.
+  shrinkRetryDelays(executor)
 
   const gen = processEventStream({
-    events: { stream: fakeStream(events) },
+    events: { stream: opts.stream ?? fakeStream(events) },
     openCodeSessionId: SID,
     promptBody: { parts: [{ type: 'text', text: 'test' }] },
     tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
-    maxTurns: 0
+    maxTurns: 0,
+    ...(opts.midTurnStallMs !== undefined ? { midTurnStallMs: opts.midTurnStallMs } : {})
   })
 
   const chunks: StreamChunk[] = []
@@ -64,7 +94,48 @@ async function collectChunks(
     chunks.push(result.value as StreamChunk)
     result = await gen.next()
   }
-  return chunks
+  return { chunks, result: result.value as StreamRunResult }
+}
+
+async function collectChunks(
+  executor: OpenCodeExecutor,
+  events: unknown[]
+): Promise<Array<StreamChunk>> {
+  return (await runEventStream(executor, events)).chunks
+}
+
+/** Shrink real retry backoff sleeps (30s → 30ms) without touching reported retryInfo. */
+function shrinkRetryDelays(executor: OpenCodeExecutor): void {
+  ;(executor as unknown as { retryDelayScale: number }).retryDelayScale = 0.001
+}
+
+/** Minimal fake client capturing promptAsync (resend) + abort calls. */
+function fakeClient(): {
+  client: { session: { promptAsync: () => Promise<void>; abort: () => Promise<void> } }
+  prompts: number
+  aborts: number
+} {
+  const calls = { prompts: 0, aborts: 0 }
+  return {
+    client: {
+      session: {
+        promptAsync: () => {
+          calls.prompts++
+          return Promise.resolve()
+        },
+        abort: () => {
+          calls.aborts++
+          return Promise.resolve()
+        }
+      }
+    },
+    get prompts() {
+      return calls.prompts
+    },
+    get aborts() {
+      return calls.aborts
+    }
+  }
 }
 
 // ── Tests ──
@@ -167,9 +238,9 @@ describe('processEventStream — synthetic SSE integration', () => {
   test('transient error does not deadlock when normalizer classifies as api_retry', async () => {
     const executor = new OpenCodeExecutor()
     // 'overloaded' → normalizer emits api_retry chunk (not error chunk).
-    // The error chunk path in processEventStream is never entered, so
-    // retryInitiatedThisEvent stays false. session.error must still terminate.
-    // Before fix: suppressed → hang. After fix: terminates.
+    // SSE-RETRY FIX (A): the api_retry chunk now triggers handleTransientRetry
+    // (retryInitiatedThisEvent=true → session.error suppressed), the stream
+    // ends, and the loop terminates via iterator completion.
     const deadline = Date.now() + 5000
     const chunks = await collectChunks(executor, [
       sessionErrorEvent({ name: 'ApiError', data: { message: 'server overloaded' } })
@@ -181,6 +252,265 @@ describe('processEventStream — synthetic SSE integration', () => {
       'DEADLOCK: stream hung on normalizer-classified transient error'
     )
     assert.ok(chunks.length >= 1, 'Should produce chunks and terminate')
+  })
+})
+
+describe('processEventStream — SSE-RETRY FIX (A): api_retry interception', () => {
+  test('transient session.error → session_recovery chunks + corrected retryInfo + prompt re-sent', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    const { chunks, result } = await runEventStream(executor, [
+      sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } }),
+      sessionIdleEvent()
+    ])
+
+    // api_retry forwarded with REAL retryInfo (slow class → 30000ms, not the
+    // normalizer's hardcoded 1/3/2000)
+    const apiRetry = chunks.find((c) => c.type === 'api_retry')
+    assert.ok(apiRetry, 'api_retry chunk should be forwarded')
+    assert.equal(apiRetry!.retryInfo?.attempt, 1)
+    assert.equal(apiRetry!.retryInfo?.maxRetries, 3)
+    assert.equal(apiRetry!.retryInfo?.retryDelayMs, 30_000, 'slow class must report 30s backoff')
+
+    // session_recovery lifecycle chunks
+    const phases = chunks
+      .filter((c) => c.type === 'session_recovery')
+      .map((c) => c.recoveryPhase)
+    assert.ok(phases.includes('started'), 'session_recovery started missing')
+    assert.ok(phases.includes('resuming'), 'session_recovery resuming missing')
+
+    // prompt re-sent via promptAsync
+    assert.equal(fake.prompts, 1, 'retry must re-send the prompt')
+
+    // loop did NOT terminate on the error — it completed via idle
+    assert.equal(result.transientRetries, 1)
+    assert.equal(result.lastTransientClass, 'slow')
+  })
+
+  test('fast-class transient (overloaded) reports 2000ms retryInfo', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    const { chunks, result } = await runEventStream(executor, [
+      sessionErrorEvent({ name: 'ApiError', data: { message: 'server overloaded' } }),
+      sessionIdleEvent()
+    ])
+
+    const apiRetry = chunks.find((c) => c.type === 'api_retry')
+    assert.ok(apiRetry)
+    assert.equal(apiRetry!.retryInfo?.retryDelayMs, 2_000, 'fast class must report 2s backoff')
+    assert.equal(result.lastTransientClass, 'fast')
+  })
+
+  test('api_retry exhaustion → terminal error chunk (not truncated-completed)', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // 4 transient errors: 3 retries fire, the 4th exhausts the budget
+    const err = () => sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
+    const { chunks, result } = await runEventStream(executor, [err(), err(), err(), err()])
+
+    assert.equal(fake.prompts, 3, 'exactly 3 retries must fire')
+    const recoveryChunks = chunks.filter((c) => c.type === 'session_recovery')
+    assert.equal(recoveryChunks.length, 6, '3 retries × (started + resuming)')
+
+    const errorChunks = chunks.filter((c) => c.type === 'error')
+    assert.ok(errorChunks.length >= 1, 'exhaustion must yield a terminal error chunk')
+    assert.match(errorChunks[errorChunks.length - 1].error ?? '', /timed out/)
+    assert.equal(result.transientRetries, 3)
+  })
+
+  test('string transient error (ETIMEDOUT) also triggers the retry path', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // String errors go through the same normalizer classification → api_retry
+    const { chunks } = await runEventStream(executor, [
+      sessionErrorEvent('connect ETIMEDOUT 1.2.3.4:443'),
+      sessionIdleEvent()
+    ])
+
+    const hasRecovery = chunks.some((c) => c.type === 'session_recovery')
+    assert.ok(hasRecovery, 'string transient error must trigger recovery')
+    assert.equal(fake.prompts, 1)
+  })
+})
+
+describe('processEventStream — MID-TURN STALL FIX (B)', () => {
+  test('activity then silence → abort + slow-class retry + recovery chunks', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Controllable stream: emits one activity event, then hangs on a gate the
+    // test releases after asserting the stall fired.
+    let activitySent = false
+    let released = false
+    let releasedEvent: unknown = null
+    const manual: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: (): Promise<IteratorResult<unknown>> => {
+            if (!activitySent) {
+              activitySent = true
+              return Promise.resolve({ done: false, value: textPartEvent('working on it') })
+            }
+            if (released) {
+              return releasedEvent
+                ? Promise.resolve({ done: false, value: releasedEvent })
+                : Promise.resolve({ done: true, value: undefined })
+            }
+            return new Promise<IteratorResult<unknown>>((resolve) => {
+              const poll = setInterval(() => {
+                if (released) {
+                  clearInterval(poll)
+                  resolve(
+                    releasedEvent
+                      ? { done: false, value: releasedEvent }
+                      : { done: true, value: undefined }
+                  )
+                }
+              }, 10)
+            })
+          }
+        }
+      }
+    }
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const gen = processEventStream({
+      events: { stream: manual },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      midTurnStallMs: 60
+    })
+
+    const chunks: StreamChunk[] = []
+    const consumer = (async () => {
+      let r = await gen.next()
+      while (!r.done) {
+        chunks.push(r.value as StreamChunk)
+        r = await gen.next()
+      }
+      return r.value as StreamRunResult
+    })()
+
+    // Wait for the stall (60ms) + scaled retry backoff to fire, then release
+    // IMMEDIATELY so the re-armed 60ms stall window doesn't fire a second retry.
+    const releaseDeadline = Date.now() + 2000
+    while (fake.prompts < 1 && Date.now() < releaseDeadline) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    assert.equal(fake.aborts, 1, 'zombie prompt must be aborted on stall')
+    assert.equal(fake.prompts, 1, 'prompt must be re-sent after stall retry')
+    const phases = chunks
+      .filter((c) => c.type === 'session_recovery')
+      .map((c) => c.recoveryPhase)
+    assert.ok(phases.includes('started'), 'stall retry must emit session_recovery started')
+    assert.ok(phases.includes('resuming'), 'stall retry must emit session_recovery resuming')
+
+    // Release the stream — idle terminates the turn
+    released = true
+    releasedEvent = sessionIdleEvent()
+    const result = await consumer
+
+    assert.equal(result.transientRetries, 1)
+    assert.equal(result.lastTransientClass, 'slow')
+  })
+
+  test('repeated stalls exhaust the 3-retry budget → terminal error', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Stream that emits one activity event then hangs forever
+    const hanging = stallingStream([textPartEvent('starting')])
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const gen = processEventStream({
+      events: { stream: hanging },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      midTurnStallMs: 40
+    })
+
+    const chunks: StreamChunk[] = []
+    let r = await gen.next()
+    while (!r.done) {
+      chunks.push(r.value as StreamChunk)
+      r = await gen.next()
+    }
+
+    assert.equal(fake.aborts, 4, 'each stall firing aborts the zombie prompt (3 retries + 1 exhausted)')
+    assert.equal(fake.prompts, 3)
+    const errorChunks = chunks.filter((c) => c.type === 'error')
+    assert.ok(errorChunks.length >= 1, 'exhausted stalls must yield a terminal error')
+    assert.match(errorChunks[errorChunks.length - 1].error ?? '', /stalled/)
+    assert.equal((r.value as StreamRunResult).transientRetries, 3)
+  })
+
+  test('steady activity never fires the stall watcher', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Events arrive every 30ms with a 100ms stall window — no stall should fire
+    const events = [
+      textPartEvent('a'),
+      textPartEvent('b'),
+      textPartEvent('c'),
+      sessionIdleEvent()
+    ]
+    const slowStream = {
+      [Symbol.asyncIterator]() {
+        let i = 0
+        return {
+          next: async (): Promise<IteratorResult<unknown>> => {
+            if (i < events.length) {
+              await new Promise((res) => setTimeout(res, 30))
+              return { done: false, value: events[i++] }
+            }
+            return { done: true, value: undefined }
+          }
+        }
+      }
+    }
+
+    const { chunks, result } = await runEventStream(executor, [], {
+      midTurnStallMs: 100,
+      stream: slowStream
+    })
+
+    assert.equal(fake.aborts, 0, 'no stall should fire for steady activity')
+    assert.equal(result.transientRetries, 0)
+    assert.ok(chunks.some((c) => c.type === 'text' && c.content === 'a'))
+  })
+})
+
+describe('processEventStream — SSE-RETRY FIX (D): retry telemetry', () => {
+  test('clean turn reports transientRetries=0 and null class', async () => {
+    const executor = new OpenCodeExecutor()
+    const { result } = await runEventStream(executor, [
+      textPartEvent('all good'),
+      sessionIdleEvent()
+    ])
+    assert.equal(result.transientRetries, 0)
+    assert.equal(result.lastTransientClass, null)
   })
 })
 

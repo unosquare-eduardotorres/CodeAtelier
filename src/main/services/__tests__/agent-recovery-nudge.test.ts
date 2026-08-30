@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync, createSpy } from './test-harness'
 import {
   RecoveryNudgeService,
+  isUuidSessionId,
   type RecoveryNudgeOptions,
   type PlanToolRecoveryOptions
 } from '../agent-recovery-nudge'
@@ -88,7 +89,9 @@ function baseOpts(overrides: Partial<RecoveryNudgeOptions> = {}): RecoveryNudgeO
     workspacePath: '/ws',
     model: 'claude-sonnet-4-6',
     isBuildMode: false,
-    sessionId: 'sess-1',
+    // CLI session IDs are UUIDs — the SSE-RETRY FIX (C) guard skips the CLI
+    // turn for non-UUID IDs (opencode ses_…), so fixtures must use UUIDs.
+    sessionId: '11111111-2222-3333-4444-555555555555',
     conversationId: 'conv-1',
     toolCallCount: 2,
     onSessionCapture: createSpy<[string], void>(),
@@ -214,6 +217,67 @@ describe('agent-recovery-nudge › attemptRecovery', () => {
     assert.equal(result.recovered, true)
     assert.equal(result.text, 'recovered text')
     assert.equal(calls.length, 1, 'cliExecutor.execute must be called')
+  })
+})
+
+describe('agent-recovery-nudge › SSE-RETRY FIX (C): opencode session-ID guard', () => {
+  test('isUuidSessionId accepts canonical UUIDs (case-insensitive)', () => {
+    assert.ok(isUuidSessionId('a1b2c3d4-e5f6-7890-abcd-ef1234567890'))
+    assert.ok(isUuidSessionId('A1B2C3D4-E5F6-7890-ABCD-EF1234567890'))
+  })
+
+  test('isUuidSessionId rejects opencode ses_ IDs, undefined, and other shapes', () => {
+    assert.ok(!isUuidSessionId('ses_7f3a2b8c9d0e1f2a3b4c5d6e7f8a9b0c'))
+    assert.ok(!isUuidSessionId('ses_abc'))
+    assert.ok(!isUuidSessionId(undefined))
+    assert.ok(!isUuidSessionId(''))
+    assert.ok(!isUuidSessionId('not-a-session-id'))
+    assert.ok(!isUuidSessionId('a1b2c3d4-e5f6-7890-abcd')) // too short
+  })
+
+  test('opencode ses_ sessionId → CLI turn skipped, fallback emitted', async () => {
+    const { executor, calls } = capturingExecutor([{ type: 'text', content: 'must not appear' }])
+    const onChunk = createSpy<[StreamChunk], void>()
+    const opts = baseOpts({
+      cliExecutor: executor,
+      onChunk,
+      toolCallCount: 2,
+      skipCliTurn: false, // backend guard must fire on its own
+      sessionId: 'ses_7f3a2b8c9d0e1f2a3b4c5d6e7f8a9b0c'
+    })
+
+    const result = await service.attemptRecovery(opts)
+    assert.equal(result.recovered, false, 'must not mark opencode-ID nudge as recovered')
+    assert.equal(calls.length, 0, 'claude --resume ses_… spawn must NOT happen')
+    assert.equal(onChunk.callCount, 1, 'fallback message must be emitted')
+    assert.match(result.text, /didn't produce a summary/)
+  })
+
+  test('valid UUID sessionId → CLI turn still runs (guard does not over-fire)', async () => {
+    const { executor, calls } = capturingExecutor([{ type: 'text', content: 'recovered' }])
+    const opts = baseOpts({
+      cliExecutor: executor,
+      skipCliTurn: false,
+      sessionId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
+    })
+
+    const result = await service.attemptRecovery(opts)
+    assert.equal(result.recovered, true)
+    assert.equal(calls.length, 1, 'CLI turn must still run for CLI-shaped session IDs')
+    assert.equal(calls[0].resume, 'a1b2c3d4-e5f6-7890-abcd-ef1234567890')
+  })
+
+  test('undefined sessionId → CLI turn still runs (fresh session)', async () => {
+    const { executor, calls } = capturingExecutor([{ type: 'text', content: 'recovered' }])
+    const opts = baseOpts({
+      cliExecutor: executor,
+      skipCliTurn: false,
+      sessionId: undefined
+    })
+
+    const result = await service.attemptRecovery(opts)
+    assert.equal(result.recovered, true)
+    assert.equal(calls.length, 1)
   })
 })
 

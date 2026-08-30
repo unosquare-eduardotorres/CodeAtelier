@@ -48,6 +48,17 @@ export interface RecoveryNudgeResult {
   text: string
 }
 
+/**
+ * SSE-RETRY FIX (C): Claude CLI session IDs are UUIDs; OpenCode session IDs
+ * are `ses_…`-shaped. Resuming the Claude CLI with an OpenCode ID makes the
+ * CLI reject the flag and emit garbage fallback text. Pure helper, exported
+ * for tests.
+ */
+export function isUuidSessionId(sessionId: string | undefined): boolean {
+  if (!sessionId) return false
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
+}
+
 export interface PlanToolRecoveryOptions {
   /** CLI executor to perform the recovery call */
   cliExecutor: CLIExecutor
@@ -158,9 +169,19 @@ export class RecoveryNudgeService {
 
     // Local-LLM sessions must never spawn the Claude CLI — skip the executor
     // turn entirely and fall straight through to the fallback message.
-    if (opts.skipCliTurn) {
+    //
+    // SSE-RETRY FIX (C): same skip when the sessionId belongs to a non-CLI
+    // backend (OpenCode `ses_…` IDs are not UUIDs — `claude --resume ses_…`
+    // is rejected by the CLI and only produces garbage fallback text). An
+    // undefined sessionId is fine: the nudge then spawns a fresh CLI session.
+    const sessionIdNotCliShaped = opts.sessionId !== undefined && !isUuidSessionId(opts.sessionId)
+    if (opts.skipCliTurn || sessionIdNotCliShaped) {
       this.log.info(
-        `[PIPELINE:recovery-nudge-skip-cli] local provider — bypassing CLI turn for conversationId=${opts.conversationId}`
+        `[PIPELINE:recovery-nudge-skip-cli] ${
+          sessionIdNotCliShaped
+            ? `sessionId '${opts.sessionId}' is not a CLI UUID (opencode backend?)`
+            : 'local provider'
+        } — bypassing CLI turn for conversationId=${opts.conversationId}`
       )
     } else {
       // Build context-specific recovery prompt when tool names are available

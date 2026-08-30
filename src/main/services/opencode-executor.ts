@@ -21,6 +21,10 @@ import type { ExecutorResult, ExecutorTokenUsage } from './executor-types'
 import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
 import type { ImageAttachment } from '../../shared/types'
 import { normalizeOpenCodeEvent, type NormalizerState } from './opencode-event-normalizer'
+import {
+  TRANSIENT_ERROR_PATTERNS,
+  isSlowTransientError
+} from './opencode-transient-patterns'
 import { ensureOpencodePathInEnv, getOpencodePath } from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
 
@@ -130,6 +134,8 @@ export interface OpenCodeExecuteResult extends ExecutorResult {
   openCodeSessionId?: string
   /** Provider used for the response */
   providerId?: string
+  /** SSE-RETRY FIX (D): in-stream transient retries fired during this turn */
+  transientRetries?: number
 }
 
 /**
@@ -158,26 +164,6 @@ export interface OpenCodeStartConfig {
  * The executor manages a single OpenCode server instance. Multiple
  * sessions can run concurrently through the same server.
  */
-/** Transient error patterns that warrant retry with backoff */
-const TRANSIENT_ERROR_PATTERNS = [
-  /rate.?limit/i,
-  /overloaded/i,
-  /server_is_overloaded/i,
-  /too many requests/i,
-  /503/,
-  /429/,
-  /ECONNRESET/,
-  /ETIMEDOUT/,
-  /ECONNREFUSED/,
-  /network/i,
-  /timeout/i,
-  // SSE-TIMEOUT FIX: spaced/hyphenated/underscored forms ("timed out",
-  // "timed-out", "timed_out") emitted by the opencode server on upstream
-  // SSE read stalls — previously matched no pattern, so these were
-  // misclassified as permanent and never retried.
-  /timed[\s_-]?out/i
-]
-
 /** Max retry attempts for transient errors */
 const MAX_TRANSIENT_RETRIES = 3
 
@@ -191,22 +177,17 @@ const BASE_RETRY_DELAY_MS = 2000
  */
 const SLOW_RETRY_BASE_DELAY_MS = 30_000
 
-/** Slow-transient patterns: timeout / connection-stall class errors */
-const SLOW_TRANSIENT_PATTERNS = [
-  /timeout/i,
-  /timed[\s_-]?out/i,
-  /ETIMEDOUT/,
-  /ECONNRESET/,
-  /stalled/i
-]
+// TRANSIENT_ERROR_PATTERNS / SLOW_TRANSIENT_PATTERNS / isSlowTransientError
+// live in ./opencode-transient-patterns.ts (shared with the event normalizer).
+// Re-exported here for existing importers/tests.
+export { isSlowTransientError }
 
-/**
- * SSE-TIMEOUT FIX: true when the error belongs to the timeout/connection-stall
- * class — these warrant the slow backoff base (SLOW_RETRY_BASE_DELAY_MS)
- * instead of the fast 2s base. Pure helper, exported for tests.
- */
-export function isSlowTransientError(message: string): boolean {
-  return SLOW_TRANSIENT_PATTERNS.some((pattern) => pattern.test(message))
+/** Computed retry state for a transient error (see computeTransientRetry). */
+interface TransientRetryState {
+  attemptNumber: number
+  delayMs: number
+  startedMessage: string
+  resumingMessage: string
 }
 
 /** Default port used by the OpenCode SDK server */
@@ -355,6 +336,23 @@ export class OpenCodeExecutor {
    * hang the event loop forever now that pre-activity idles are ignored.
    */
   private static readonly NO_ACTIVITY_TIMEOUT_MS = 120_000
+  /**
+   * MID-TURN STALL FIX (T002): rolling no-activity window that applies AFTER
+   * the first activity event. The pre-activity backstop above is cleared
+   * permanently once activity starts, so a stream that goes silent mid-turn
+   * (provider SSE stall) was previously only caught by the blueprint 5-minute
+   * watchdog — which fails the task instead of retrying. 4 minutes is
+   * deliberately under that watchdog so the executor's own retry (whose
+   * session_recovery chunks reset the watchdog via onChunk) fires first.
+   * False-positive risk (a legitimately long silent tool call) is bounded by
+   * the 240s window + abort-before-resend + the shared 3-retry budget.
+   */
+  private static readonly MID_TURN_STALL_MS = 240_000
+  /**
+   * Test-hook multiplier for transient-retry backoff sleeps (production: 1).
+   * Reported retryInfo delays stay unscaled — only the actual sleep shrinks.
+   */
+  private retryDelayScale = 1
   /** Health check polling interval (ms) */
   private static readonly HEALTH_CHECK_INTERVAL = 30_000
   /** Health check timer */
@@ -773,6 +771,11 @@ export class OpenCodeExecutor {
 
   /**
    * Handle a transient error chunk: yield recovery events, wait, resend.
+   * SSE-RETRY FIX (A): reads the message from `chunk.error` OR `chunk.content` —
+   * api_retry chunks from the normalizer carry their text in `content`
+   * ("Transient error: SSE read timed out"), error chunks in `error`.
+   * `precomputed` lets the caller share its computeTransientRetry() result so
+   * the retry plan is computed (and logged) exactly once per event.
    * Returns the updated retry count, or -1 if max retries are exhausted.
    */
   private async *handleTransientRetry(
@@ -780,9 +783,11 @@ export class OpenCodeExecutor {
     retryCount: number,
     sessionId: string,
     promptBody: SessionPromptData['body'],
-    directory?: string
+    directory?: string,
+    precomputed?: TransientRetryState | null
   ): AsyncGenerator<StreamChunk, number> {
-    const retry = this.computeTransientRetry(retryCount, chunk.error!)
+    const message = chunk.error ?? chunk.content ?? ''
+    const retry = precomputed ?? this.computeTransientRetry(retryCount, message)
     if (!retry) {
       // Max retries exhausted
       this.consecutiveErrors++
@@ -800,7 +805,9 @@ export class OpenCodeExecutor {
 
     this.retriesInFlight++
     try {
-      await new Promise((r) => setTimeout(r, retry.delayMs))
+      // retryDelayScale is a test hook (production: 1) — shrinks the real sleep
+      // without touching the retryInfo delays reported to the UI.
+      await new Promise((r) => setTimeout(r, Math.max(1, Math.round(retry.delayMs * this.retryDelayScale))))
     } finally {
       this.retriesInFlight--
     }
@@ -818,6 +825,20 @@ export class OpenCodeExecutor {
   /**
    * Process the event stream, handling transient retries and turn counting.
    * Yields StreamChunks and collects resultText + maxTurnsReached status.
+   *
+   * SSE-RETRY FIX (A): transient errors now reach the retry branch via BOTH
+   * chunk shapes — raw `error` chunks and normalizer-emitted `api_retry`
+   * chunks (GAP-11 converts transient session.error events to api_retry with
+   * the message in `content`). Previously only `type: 'error'` triggered
+   * handleTransientRetry, so the entire retry path was unreachable for the
+   * most common transient shape and turns ended truncated-but-"completed".
+   *
+   * MID-TURN STALL FIX (B): a rolling no-activity window (MID_TURN_STALL_MS)
+   * armed after the first activity event. On fire: abort the zombie prompt,
+   * classify as a slow transient, and run the same retry path.
+   *
+   * SSE-RETRY FIX (D): returns transientRetries + lastTransientClass so
+   * execute() can surface retry telemetry in _meta and the turn-end log.
    */
   private async *processEventStream(params: {
     events: { stream: AsyncIterable<unknown> }
@@ -827,14 +848,25 @@ export class OpenCodeExecutor {
     maxTurns: number
     abortController?: AbortController
     noActivityTimeoutMs?: number
+    /** Test hook: override the mid-turn stall window (production: 240s). */
+    midTurnStallMs?: number
     /** BP-WORKTREE-CWD: per-session directory, forwarded on transient retries. */
     directory?: string
-  }): AsyncGenerator<StreamChunk, { resultText: string; maxTurnsReached: boolean }> {
+  }): AsyncGenerator<
+    StreamChunk,
+    {
+      resultText: string
+      maxTurnsReached: boolean
+      transientRetries: number
+      lastTransientClass: 'slow' | 'fast' | null
+    }
+  > {
     const { events, openCodeSessionId, promptBody, tokenUsage, maxTurns, abortController } = params
     let resultText = ''
     let turnCount = 0
     let maxTurnsReached = false
     let transientRetryCount = 0
+    let lastTransientClass: 'slow' | 'fast' | null = null
 
     // Stale-idle guard: only an event that can belong exclusively to OUR prompt
     // (assistant text/thinking, tool traffic, structured output, permission
@@ -855,20 +887,94 @@ export class OpenCodeExecutor {
       noActivityTimer = setTimeout(() => resolve('no-activity-timeout'), noActivityTimeoutMs)
     })
 
-    const iterator = events.stream[Symbol.asyncIterator]()
-    // True only when we exit because the no-activity timeout fired while a
-    // next() was still pending — calling return() then would queue behind the
-    // pending next() and hang, so the iterator is abandoned to GC instead.
-    let abandonedPendingNext = false
+    // MID-TURN STALL FIX (B): rolling window, re-armed at the start of every
+    // post-activity wait. Fresh promise per wait — an already-resolved stall
+    // promise would win every subsequent Promise.race immediately.
+    const stallMs = params.midTurnStallMs ?? OpenCodeExecutor.MID_TURN_STALL_MS
+    let stallTimer: ReturnType<typeof setTimeout> | null = null
+    let stallResolve: ((v: 'mid-turn-stall') => void) | null = null
+    let stallPromise = new Promise<'mid-turn-stall'>((resolve) => {
+      stallResolve = resolve
+    })
+    const resetStallWatch = (): void => {
+      if (stallTimer) clearTimeout(stallTimer)
+      stallPromise = new Promise<'mid-turn-stall'>((resolve) => {
+        stallResolve = resolve
+      })
+      stallTimer = setTimeout(() => stallResolve?.('mid-turn-stall'), stallMs)
+    }
 
-    const nextEvent = (): Promise<IteratorResult<unknown> | 'no-activity-timeout'> =>
-      sawTurnActivity
-        ? iterator.next()
-        : Promise.race([iterator.next(), noActivityPromise])
+    const iterator = events.stream[Symbol.asyncIterator]()
+    // True only when we exit with a next() still pending — calling return()
+    // then would queue behind the pending next() and hang, so the iterator is
+    // abandoned to GC instead.
+    let abandonedPendingNext = false
+    // The single in-flight iterator.next() call. Reused (not re-issued) when a
+    // race is lost to the stall timer — issuing a second next() while one is
+    // pending would queue behind it and silently drop the first post-retry
+    // event to the orphaned promise.
+    let pendingNext: Promise<IteratorResult<unknown>> | null = null
+
+    const nextEvent = (): Promise<
+      IteratorResult<unknown> | 'no-activity-timeout' | 'mid-turn-stall'
+    > => {
+      if (!pendingNext) pendingNext = iterator.next()
+      if (sawTurnActivity) {
+        resetStallWatch()
+        return Promise.race([pendingNext, stallPromise])
+      }
+      return Promise.race([pendingNext, noActivityPromise])
+    }
 
     try {
       let iterResult = await nextEvent()
-      while (iterResult !== 'no-activity-timeout' && !iterResult.done) {
+      while (true) {
+        // MID-TURN STALL FIX (B): the rolling window fired while waiting for
+        // the next event. Abort the zombie prompt, then run the shared
+        // transient-retry path (counts against the same 3-retry budget).
+        if (iterResult === 'mid-turn-stall') {
+          openCodeLog.warn(
+            `[opencode] Mid-turn stall — no stream activity for ${stallMs}ms — ` +
+              `aborting zombie prompt and retrying (attempt ${transientRetryCount + 1}/${MAX_TRANSIENT_RETRIES})`
+          )
+          if (this.client) {
+            this.client.session
+              .abort({ path: { id: openCodeSessionId } })
+              .catch(() => {}) /* non-fatal: best-effort cleanup of the zombie prompt */
+          }
+          // 'stalled' matches SLOW_TRANSIENT_PATTERNS → slow-class backoff.
+          // This path calls handleTransientRetry directly (bypassing the
+          // isTransientError gate — 'stalled' is not a provider error string).
+          const stallMessage = `stream stalled — no activity for ${Math.round(stallMs / 1000)}s`
+          const stallChunk: StreamChunk = { type: 'error', error: stallMessage }
+          const stallRetryGen = this.handleTransientRetry(
+            stallChunk,
+            transientRetryCount,
+            openCodeSessionId,
+            promptBody,
+            params.directory
+          )
+          let stallRetryResult = await stallRetryGen.next()
+          while (!stallRetryResult.done) {
+            yield stallRetryResult.value
+            stallRetryResult = await stallRetryGen.next()
+          }
+          if (stallRetryResult.value >= 0) {
+            transientRetryCount = stallRetryResult.value
+            lastTransientClass = 'slow'
+            iterResult = await nextEvent()
+            continue
+          }
+          // Retries exhausted — terminal error. A next() is still pending, so
+          // the iterator must be abandoned (see abandonedPendingNext above).
+          abandonedPendingNext = true
+          yield { type: 'error', error: stallMessage }
+          break
+        }
+
+        if (iterResult === 'no-activity-timeout' || iterResult.done) break
+
+        pendingNext = null // the awaited next() has resolved — safe to re-issue
         const event = iterResult.value
         if (abortController?.signal.aborted) break
 
@@ -881,27 +987,65 @@ export class OpenCodeExecutor {
             resultText += chunk.content
           }
 
-          // Handle transient errors with retry
-          if (chunk.type === 'error' && chunk.error && this.isTransientError(chunk.error)) {
-            const retryGen = this.handleTransientRetry(
-              chunk,
-              transientRetryCount,
-              openCodeSessionId,
-              promptBody,
-              params.directory
-            )
-            let retryResult = await retryGen.next()
-            while (!retryResult.done) {
-              yield retryResult.value
-              retryResult = await retryGen.next()
+          // SSE-RETRY FIX (A): intercept transient errors in BOTH chunk shapes.
+          // api_retry chunks (from the normalizer) carry the message in
+          // `content`; raw error chunks carry it in `error`.
+          if (chunk.type === 'error' || chunk.type === 'api_retry') {
+            const transientMsg = chunk.error ?? chunk.content
+            if (transientMsg && this.isTransientError(transientMsg)) {
+              const retryPlan = this.computeTransientRetry(transientRetryCount, transientMsg)
+              if (chunk.type === 'api_retry') {
+                // Overwrite the normalizer's hardcoded retryInfo (always
+                // 1/3/2000) with the real computed values so the UI shows the
+                // actual attempt number and backoff (e.g. 30000ms slow class).
+                // On exhaustion there is no plan — report the failed attempt
+                // with zero delay instead of the stale hardcoded values.
+                chunk.retryInfo = retryPlan
+                  ? {
+                      attempt: retryPlan.attemptNumber,
+                      maxRetries: MAX_TRANSIENT_RETRIES,
+                      retryDelayMs: retryPlan.delayMs,
+                      errorStatus: null
+                    }
+                  : {
+                      attempt: transientRetryCount + 1,
+                      maxRetries: MAX_TRANSIENT_RETRIES,
+                      retryDelayMs: 0,
+                      errorStatus: null
+                    }
+                // api_retry is a UI status chunk, not a failure — forward it
+                // (with corrected retryInfo) even when a retry follows.
+                yield chunk
+              }
+              const retryGen = this.handleTransientRetry(
+                chunk,
+                transientRetryCount,
+                openCodeSessionId,
+                promptBody,
+                params.directory,
+                retryPlan
+              )
+              let retryResult = await retryGen.next()
+              while (!retryResult.done) {
+                yield retryResult.value
+                retryResult = await retryGen.next()
+              }
+              const newRetryCount = retryResult.value
+              if (newRetryCount >= 0) {
+                transientRetryCount = newRetryCount
+                lastTransientClass = isSlowTransientError(transientMsg) ? 'slow' : 'fast'
+                retryInitiatedThisEvent = true
+                continue
+              }
+              // Max retries exhausted. Error chunks fall through and emit
+              // below; api_retry chunks were already forwarded above, so
+              // synthesize the terminal error the turn actually ended with
+              // (otherwise downstream sees a truncated-but-completed turn).
+              if (chunk.type === 'api_retry') {
+                yield { type: 'error', error: transientMsg }
+                continue
+              }
             }
-            const newRetryCount = retryResult.value
-            if (newRetryCount >= 0) {
-              transientRetryCount = newRetryCount
-              retryInitiatedThisEvent = true
-              continue
-            }
-            // Max retries exhausted — fall through to emit the error
           }
 
           // Count tool invocations as turns
@@ -963,12 +1107,13 @@ export class OpenCodeExecutor {
       }
     } finally {
       if (noActivityTimer) clearTimeout(noActivityTimer)
+      if (stallTimer) clearTimeout(stallTimer)
       // Close the subscription on normal exits (mirrors the old for-await
       // break semantics). Skipped on the timeout path — see above.
       if (!abandonedPendingNext) await iterator.return?.()
     }
 
-    return { resultText, maxTurnsReached }
+    return { resultText, maxTurnsReached, transientRetries: transientRetryCount, lastTransientClass }
   }
 
   // ── execute ──────────────────────────────────────────────────────────
@@ -1087,6 +1232,8 @@ export class OpenCodeExecutor {
       // Process event stream
       let resultText = ''
       let maxTurnsReached = false
+      let transientRetries = 0
+      let lastTransientClass: 'slow' | 'fast' | null = null
 
       if (events.stream) {
         const streamGen = this.processEventStream({
@@ -1103,10 +1250,17 @@ export class OpenCodeExecutor {
           yield streamResult.value
           streamResult = await streamGen.next()
         }
-        ;({ resultText, maxTurnsReached } = streamResult.value)
+        ;({ resultText, maxTurnsReached, transientRetries, lastTransientClass } = streamResult.value)
       }
 
       clearInterval(promptErrorWatcher)
+
+      // SSE-RETRY FIX (D): one-line turn-end telemetry — distinguishes provider
+      // stalls (retries fired) from clean model behavior in post-mortems.
+      openCodeLog.info(
+        `[opencode] Turn ended — transientRetries=${transientRetries}` +
+          (lastTransientClass ? ` (last: ${lastTransientClass})` : '')
+      )
 
       // OC-04: If prompt send failed before/during streaming, surface the error
       if (promptSendError) {
@@ -1126,6 +1280,7 @@ export class OpenCodeExecutor {
           tokenUsage,
           openCodeSessionId,
           providerId: provider.providerId,
+          transientRetries,
           terminalReason: maxTurnsReached ? 'max_turns' : 'completed'
         }
       } as StreamChunk & { _meta: OpenCodeExecuteResult }
@@ -1840,7 +1995,13 @@ Troubleshooting:
    * BP-WORKTREE-CWD: carries the same per-session directory as the original send.
    */
   private resendPrompt(sessionId: string, promptBody: SessionPromptData['body'], directory?: string): void {
-    this.client!.session.promptAsync({
+    // Defensive: the executor may have been stopped while a retry backoff was
+    // sleeping (unit tests also run the retry path without a live client).
+    if (!this.client) {
+      openCodeLog.warn('[opencode] Retry skipped — client no longer available')
+      return
+    }
+    this.client.session.promptAsync({
       path: { id: sessionId },
       body: promptBody,
       ...(directory ? { query: { directory } } : {})

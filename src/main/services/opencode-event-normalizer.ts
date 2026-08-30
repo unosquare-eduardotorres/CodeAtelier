@@ -8,6 +8,7 @@
 import type { StreamChunk } from './agent-base.service'
 import { summarizeToolInput } from './index'
 import { extractResultSummary } from '../ipc/tool-result-summarizer'
+import { TRANSIENT_ERROR_PATTERNS } from './opencode-transient-patterns'
 import log from 'electron-log/main'
 
 const openCodeLog = log.scope('OpenCode')
@@ -17,25 +18,6 @@ const openCodeLog = log.scope('OpenCode')
  * into text deltas. These should never reach the chunk-router as text.
  */
 const LOCAL_CONTROL_SIGNAL_RE = /^\s*\{\s*"type"\s*:\s*"(?:busy|idle|ready|processing)"\s*\}\s*$/
-
-/** GAP-11: Transient error patterns — mirrors TRANSIENT_ERROR_PATTERNS from executor */
-const TRANSIENT_PATTERNS = [
-  /rate.?limit/i,
-  /overloaded/i,
-  /server_is_overloaded/i,
-  /too many requests/i,
-  /503/,
-  /429/,
-  /ECONNRESET/,
-  /ETIMEDOUT/,
-  /ECONNREFUSED/,
-  /network/i,
-  /timeout/i,
-  // SSE-TIMEOUT FIX: spaced/hyphenated/underscored forms ("timed out",
-  // "timed-out", "timed_out") — mirrors the executor's TRANSIENT_ERROR_PATTERNS
-  // so SSE read stalls show as api_retry in the UI instead of a hard error.
-  /timed[\s_-]?out/i
-]
 
 /**
  * R7: Route inline <think>...</think> blocks to thinking chunks.
@@ -468,7 +450,9 @@ function handleSessionError(properties: EventProperties): StreamChunk[] {
 
   // GAP-11: Classify transient vs permanent errors. Transient errors emit
   // api_retry instead of error, giving the UI a more accurate status indicator.
-  const isTransient = TRANSIENT_PATTERNS.some((p) => p.test(error))
+  // Patterns come from the shared module (opencode-transient-patterns.ts) so the
+  // normalizer and executor can never drift apart.
+  const isTransient = TRANSIENT_ERROR_PATTERNS.some((p) => p.test(error))
   if (isTransient) {
     openCodeLog.info(`[opencode] Transient error detected — UI will show retry status: ${error}`)
     const chunks: StreamChunk[] = [

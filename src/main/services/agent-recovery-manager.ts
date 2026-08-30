@@ -416,7 +416,11 @@ export class AgentRecoveryManager {
           isBuildMode
         ),
         isBuildMode,
-        skipCliTurn: this.s.llmProvider === 'local-llm',
+        // SSE-RETRY FIX (C): never spawn the Claude CLI nudge when the
+        // conversation runs on the OpenCode backend — its `ses_…` session IDs
+        // are not CLI UUIDs and `claude --resume` rejects them.
+        skipCliTurn:
+          this.s.llmProvider === 'local-llm' || this.s.executorBackend === 'opencode',
         sessionId: this.s.sessionMap.get(conversationId),
         conversationId,
         workspaceId: this.s.workspaceId,
