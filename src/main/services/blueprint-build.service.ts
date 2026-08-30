@@ -257,6 +257,34 @@ export function isManifestFile(path: string): boolean {
   return MANIFEST_FILE_PATTERNS.some((p) => p.test(norm))
 }
 
+/**
+ * BP-WRITE-TOOLS-01: write-capable tool names, lowercased.
+ *
+ * Covers BOTH naming conventions the executors emit — Claude CLI PascalCase
+ * (Write/Edit/MultiEdit/NotebookEdit) and OpenCode lowercase
+ * (write/edit/multiedit/applypatch/apply_patch). Matching is case-insensitive
+ * at the call site so `Write` and `write` both count. Bash is classified
+ * separately (isBashTool) because it is write-capable only sometimes.
+ */
+const WRITE_TOOL_NAMES = new Set([
+  'write',
+  'edit',
+  'multiedit',
+  'notebookedit',
+  'applypatch',
+  'apply_patch'
+])
+
+/** BP-WRITE-TOOLS-01: is this tool call file-writing? (case-insensitive) */
+export function isWriteTool(name: string): boolean {
+  return WRITE_TOOL_NAMES.has(name.toLowerCase())
+}
+
+/** BP-WRITE-TOOLS-01: is this tool call Bash? (case-insensitive) */
+export function isBashTool(name: string): boolean {
+  return /^bash$/i.test(name)
+}
+
 /** Check whether two file sets overlap. */
 function filesOverlap(a: Set<string>, b: Set<string>): boolean {
   for (const f of a) {
@@ -2924,9 +2952,15 @@ export class BlueprintBuildService extends EventEmitter {
 
     // FIX-2: Track write-capable tool calls to detect no-op sessions whose
     // stale files on disk would otherwise pass the disk-existence check.
-    const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
+    // BP-WRITE-TOOLS-01: matching is case-insensitive and covers BOTH naming
+    // conventions — Claude CLI emits PascalCase (Write/Edit/MultiEdit), OpenCode
+    // emits lowercase (write/edit/multiedit/applypatch/apply_patch). See the
+    // module-level isWriteTool/isBashTool helpers.
     let writeToolCalls = 0
     let bashCalls = 0
+    // BP-WRITE-TOOLS-01: one debug line per task so future tool-name drift is
+    // visible without re-reading the normalizer.
+    const observedToolNames = new Set<string>()
     // WAVE-RACE FIX: first executor-level error chunk wins. When the OpenCode
     // server fails to start (ServeError / port conflict), the turn ends with
     // `session=none chunks=1` — a single error chunk, no completion block. The
@@ -2948,8 +2982,9 @@ export class BlueprintBuildService extends EventEmitter {
       }
       // FIX-2: Count write-capable tool invocations
       if (chunk.type === 'tool_use' && chunk.toolName) {
-        if (WRITE_TOOLS.has(chunk.toolName)) writeToolCalls++
-        if (chunk.toolName === 'Bash') bashCalls++
+        observedToolNames.add(chunk.toolName)
+        if (isWriteTool(chunk.toolName)) writeToolCalls++
+        if (isBashTool(chunk.toolName)) bashCalls++
       }
 
       forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
@@ -3334,6 +3369,12 @@ export class BlueprintBuildService extends EventEmitter {
 
       // Emit timing before cleanup so it's recorded even if stop() hangs
       this.safeEmit('taskTiming', { workspaceId, blueprintId, timing })
+      // BP-WRITE-TOOLS-01: observed tool names, once per task (debug) — makes
+      // future name drift visible without re-reading the normalizer.
+      bpLog.debug(
+        `[executeTask] Task ${task.taskId} tool usage — writes=${writeToolCalls} ` +
+          `bash=${bashCalls} observed=[${[...observedToolNames].sort().join(', ')}]`
+      )
       bpLog.info(
         `[executeTask] TIMING task=${task.taskId} ` +
           `spawn=${tSessionReady ? tSessionReady - tDispatch : '?'}ms ` +

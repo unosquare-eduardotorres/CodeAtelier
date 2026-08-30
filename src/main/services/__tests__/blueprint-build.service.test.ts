@@ -8,7 +8,12 @@
 
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { BlueprintBuildService, type TaskTiming } from '../blueprint-build.service'
+import {
+  BlueprintBuildService,
+  isWriteTool,
+  isBashTool,
+  type TaskTiming
+} from '../blueprint-build.service'
 
 describe('BlueprintBuildService', () => {
   describe('buildTaskContext', () => {
@@ -165,6 +170,49 @@ describe('BlueprintBuildService', () => {
       const service = new BlueprintBuildService()
       // Should not throw when there's nothing to cancel
       await service.cancelBlueprint('nonexistent-bp')
+    })
+  })
+
+  // BP-WRITE-TOOLS-01: the no-write-activity guard only works if it recognises
+  // the tool names BOTH executors emit. Live failure (blueprint 718c): OpenCode
+  // emitted lowercase `write`/`edit`, the guard matched only PascalCase, and
+  // real write activity read as zero.
+  describe('Write-tool classification (BP-WRITE-TOOLS-01)', () => {
+    test('matches Claude CLI PascalCase names', () => {
+      assert.ok(isWriteTool('Write'))
+      assert.ok(isWriteTool('Edit'))
+      assert.ok(isWriteTool('MultiEdit'))
+      assert.ok(isWriteTool('NotebookEdit'))
+    })
+
+    test('matches OpenCode lowercase names', () => {
+      assert.ok(isWriteTool('write'))
+      assert.ok(isWriteTool('edit'))
+      assert.ok(isWriteTool('multiedit'))
+      assert.ok(isWriteTool('applypatch'))
+      assert.ok(isWriteTool('apply_patch'))
+    })
+
+    test('matching is case-insensitive across conventions', () => {
+      assert.ok(isWriteTool('WRITE'))
+      assert.ok(isWriteTool('Edit'))
+      assert.ok(isWriteTool('MultiEdit'))
+    })
+
+    test('read-only tools are NOT write tools', () => {
+      assert.ok(!isWriteTool('Read'))
+      assert.ok(!isWriteTool('read'))
+      assert.ok(!isWriteTool('Glob'))
+      assert.ok(!isWriteTool('Grep'))
+      assert.ok(!isWriteTool('mcp__code-graph__file_outline'))
+      assert.ok(!isWriteTool('unknown'))
+    })
+
+    test('Bash is classified separately, case-insensitively', () => {
+      assert.ok(isBashTool('Bash'))
+      assert.ok(isBashTool('bash'))
+      assert.ok(!isBashTool('BASH_SCRIPT'))
+      assert.ok(!isWriteTool('Bash')) // bash counts as bash, not as a write tool
     })
   })
 })
