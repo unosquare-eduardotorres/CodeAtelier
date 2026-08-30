@@ -132,6 +132,19 @@ export interface OpenCodeExecuteResult extends ExecutorResult {
   providerId?: string
 }
 
+/**
+ * WAVE-RACE FIX: start() config shape, extracted so ensureStarted() can extend
+ * it with an ownerKey without re-declaring the inline literal.
+ */
+export interface OpenCodeStartConfig {
+  providers?: Record<string, { baseUrl?: string; apiKey?: string }>
+  mcpServers?: OpenCodeMcpConfig
+  /** Path to the opencode.json config file (now in temp dir) */
+  configPath?: string
+  /** Whether this is a local LLM provider (longer timeout) */
+  isLocal?: boolean
+}
+
 // ── Executor ──
 
 /**
@@ -235,12 +248,69 @@ function isPromptActivityEvent(event: unknown, sessionId: string): boolean {
   return !eventSessionId || eventSessionId === sessionId
 }
 
+/**
+ * WAVE-RACE FIX: reference-counted ownership of the shared OpenCode server.
+ *
+ * Parallel blueprint wave tasks each own an AgentSessionService with its own
+ * instanceId, but they all share ONE singleton executor (and its fixed port
+ * 4096 server). Before this existed, every task's stop() unconditionally killed
+ * the server — tearing it out from under sibling tasks mid-turn (observed as
+ * 5-minute stall watchdog failures on BUILD-T001).
+ *
+ * Pure class (no I/O) so the acquire/release/shouldStop semantics are
+ * unit-testable without spawning anything.
+ */
+export class ServerRefTracker {
+  private readonly owners = new Set<string>()
+
+  /** Register a session's claim on the server. Idempotent per key. */
+  acquire(key: string): void {
+    this.owners.add(key)
+  }
+
+  /**
+   * Drop a session's claim. Returns true when the key was actually held
+   * (i.e. this release was a real decrement, not a no-op double-release).
+   */
+  release(key: string): boolean {
+    return this.owners.delete(key)
+  }
+
+  has(key: string): boolean {
+    return this.owners.has(key)
+  }
+
+  /** Number of sessions currently holding a reference. */
+  get size(): number {
+    return this.owners.size
+  }
+
+  /** True when nobody holds a reference — the server may be torn down. */
+  shouldStop(): boolean {
+    return this.owners.size === 0
+  }
+
+  /** Force-clear all references (test/emergency use — not part of normal flow). */
+  clear(): void {
+    this.owners.clear()
+  }
+}
+
 export class OpenCodeExecutor {
   // Store dynamic imports to handle ESM-only package
   private client: OpencodeClient | null = null
   /** Reference to the OpenCode server child process — needed for clean shutdown */
   private server: { url: string; close(): void } | null = null
   private isStarted = false
+  /** WAVE-RACE FIX: sessions sharing the server — stop() is a no-op while non-empty. */
+  private readonly serverOwners = new ServerRefTracker()
+  /** WAVE-RACE FIX: in-flight startup — concurrent ensureStarted() callers await one start. */
+  private startInFlight: Promise<void> | null = null
+  /** @internal test-only — substituted startOnce body (null = real one). */
+  private startOnceImplForTest: ((cwd: string, config?: OpenCodeStartConfig) => Promise<void>) | null =
+    null
+  /** @internal test-only — substituted killStaleServer body (null = real one). */
+  private killStaleImplForTest: (() => Promise<void>) | null = null
   /** Map of conversationId → OpenCode session ID for multi-turn reuse */
   private readonly sessionMap = new Map<string, string>()
   /** Consecutive error count for circuit breaker integration */
@@ -337,17 +407,119 @@ export class OpenCodeExecutor {
   /** A-2: AbortController for cancelling startup if it hangs */
   private startupAbortController: AbortController | null = null
 
-  async start(
-    cwd: string,
-    config?: {
-      providers?: Record<string, { baseUrl?: string; apiKey?: string }>
-      mcpServers?: OpenCodeMcpConfig
-      /** Path to the opencode.json config file (now in temp dir) */
-      configPath?: string
-      /** Whether this is a local LLM provider (longer timeout) */
-      isLocal?: boolean
+  async start(cwd: string, config?: OpenCodeStartConfig): Promise<void> {
+    // WAVE-RACE FIX: serialize concurrent starts. Parallel wave tasks used to
+    // each see "not running" and each call start() — three createOpencode()
+    // calls racing for one fixed port. Now the first caller's startup promise
+    // is shared: later callers await it instead of racing it.
+    if (this.startInFlight) {
+      openCodeLog.info('[opencode] start() already in flight — awaiting existing startup')
+      return this.startInFlight
     }
+    if (this.isStarted) {
+      openCodeLog.info('[opencode] Server already running')
+      return
+    }
+    this.startInFlight = this.startWithServeErrorRetry(cwd, config).finally(() => {
+      this.startInFlight = null
+    })
+    return this.startInFlight
+  }
+
+  /**
+   * WAVE-RACE FIX: idempotent, refcounted startup for session owners.
+   *
+   * - Registers `ownerKey` as a server owner (see ServerRefTracker) so this
+   *   session's stop() can't tear the server down while siblings still use it.
+   * - Starts the server if needed; reuses (and awaits) an in-flight startup.
+   * - First starter's config wins — same workspace means the same workspace-keyed
+   *   config path, so concurrent callers are interchangeable.
+   */
+  async ensureStarted(
+    cwd: string,
+    config?: OpenCodeStartConfig & { ownerKey?: string }
   ): Promise<void> {
+    const { ownerKey, ...startConfig } = config ?? {}
+    if (ownerKey) {
+      this.serverOwners.acquire(ownerKey)
+      openCodeLog.info(
+        `[opencode] ensureStarted: owner ${ownerKey} acquired (${this.serverOwners.size} active)`
+      )
+    }
+    try {
+      if (this.startInFlight) {
+        await this.startInFlight
+        return
+      }
+      if (this.isStarted) return
+      await this.start(cwd, startConfig)
+    } catch (err) {
+      // Startup failed — this owner's claim is void. Drop it so the refcount
+      // can reach 0 and a later stop() isn't blocked by a dead session's ref.
+      if (ownerKey) this.serverOwners.release(ownerKey)
+      throw err
+    }
+  }
+
+  /** Register a session's claim on the shared server without starting it. */
+  acquireServer(key: string): void {
+    this.serverOwners.acquire(key)
+  }
+
+  /**
+   * WAVE-RACE FIX: drop a session's claim on the shared server.
+   * Returns true when this was the LAST reference — the caller should then
+   * tear the server down (stop() actually runs at refcount 0).
+   */
+  releaseServer(key: string): boolean {
+    const wasHeld = this.serverOwners.release(key)
+    if (!wasHeld) {
+      openCodeLog.info(`[opencode] releaseServer: ${key} held no reference (nothing to do)`)
+    }
+    return wasHeld && this.serverOwners.shouldStop()
+  }
+
+  /** WAVE-RACE FIX: sessions currently holding a reference to the server. */
+  get serverOwnerCount(): number {
+    return this.serverOwners.size
+  }
+
+  /**
+   * WAVE-RACE FIX: one retry when the server dies on startup with a port
+   * conflict. A sibling session's just-failed server can take a moment to
+   * release port 4096 — an immediate retry hits the same ServeError.
+   */
+  private async startWithServeErrorRetry(
+    cwd: string,
+    config?: OpenCodeStartConfig
+  ): Promise<void> {
+    try {
+      await this.startOnce(cwd, config)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/ServeError|EADDRINUSE|address already in use/i.test(msg)) {
+        openCodeLog.warn(
+          `[opencode] Server start hit a port conflict (${msg.slice(0, 120)}) — ` +
+            'retrying once after 1.5s backoff'
+        )
+        await new Promise((r) => setTimeout(r, 1500))
+        await this.startOnce(cwd, config)
+      } else {
+        throw err
+      }
+    }
+  }
+
+  private async startOnce(
+    cwd: string,
+    config?: OpenCodeStartConfig
+  ): Promise<void> {
+    // @internal test-only seam — see __setStartOnceImplForTest
+    if (this.startOnceImplForTest) {
+      await this.startOnceImplForTest(cwd, config)
+      this.isStarted = true
+      return
+    }
     if (this.isStarted) {
       openCodeLog.info('[opencode] Server already running')
       return
@@ -962,8 +1134,25 @@ Troubleshooting:
 
   /**
    * Stop the OpenCode server and clean up resources.
+   *
+   * WAVE-RACE FIX: refcount-aware. While any session still holds a reference
+   * (via ensureStarted/acquireServer), this is a NO-OP — the server is shared
+   * and killing it would tear a sibling task's live turn out from under it.
+   * The teardown body only runs at refcount 0. Use forceStop() to tear down
+   * unconditionally (health-check auto-restart, app shutdown).
    */
   async stop(): Promise<void> {
+    if (!this.serverOwners.shouldStop()) {
+      openCodeLog.info(
+        `[opencode] stop() skipped — ${this.serverOwners.size} session(s) still hold the server`
+      )
+      return
+    }
+    await this.forceStop()
+  }
+
+  /** Unconditional teardown — ignores outstanding session references. */
+  async forceStop(): Promise<void> {
     if (!this.isStarted) return
 
     // A-2: Cancel any in-progress startup
@@ -1060,7 +1249,9 @@ Troubleshooting:
         if (consecutiveFailures >= 3 && this.lastCwd) {
           openCodeLog.info('[opencode] Attempting auto-restart after 3 health check failures')
           try {
-            await this.stop()
+            // WAVE-RACE FIX: forceStop — the server is confirmed unhealthy, so
+            // outstanding session refs describe a dead server, not a live one.
+            await this.forceStop()
             await this.start(this.lastCwd, this.lastConfig)
             this.onHealthChange?.(true)
             consecutiveFailures = 0
@@ -1708,8 +1899,23 @@ Troubleshooting:
   /**
    * PORT-FIX: Kill any stale `opencode serve` process holding the server port.
    * This handles ungraceful shutdowns where stop() wasn't called or failed.
+   *
+   * WAVE-RACE FIX: never runs while our own server is live — a live server on
+   * port 4096 is by definition not stale. Previously this killed whatever held
+   * the port, including a sibling task's live server mid-turn.
    */
   private async killStaleServer(): Promise<void> {
+    if (this.isStarted) {
+      openCodeLog.info(
+        '[opencode] killStaleServer skipped — our own server is live on the port'
+      )
+      return
+    }
+    // @internal test-only seam — see __setKillStaleImplForTest
+    if (this.killStaleImplForTest) {
+      await this.killStaleImplForTest()
+      return
+    }
     try {
       const { execSync } = await import('node:child_process')
       // SELF-KILL FIX: `-sTCP:LISTEN` restricts matches to processes LISTENING on
@@ -1856,6 +2062,48 @@ Troubleshooting:
     }
 
     return false
+  }
+
+  // ── Test-only hooks ──────────────────────────────────────────────────────
+  // The lifecycle semantics above (serialized start, refcounted stop, stale-kill
+  // guard, ServeError retry) are behavioral contracts. These hooks let tests
+  // exercise them against the REAL singleton without spawning a server or
+  // shelling out to lsof. They are no-ops in production code paths.
+
+  /** @internal test-only — replace the real startOnce body. */
+  __setStartOnceImplForTest(impl: (cwd: string, config?: OpenCodeStartConfig) => Promise<void>): void {
+    this.startOnceImplForTest = impl
+  }
+
+  /** @internal test-only — replace the real killStaleServer body. */
+  __setKillStaleImplForTest(impl: () => Promise<void>): void {
+    this.killStaleImplForTest = impl
+  }
+
+  /** @internal test-only — start() with the test impl substituted. */
+  async startForTest(): Promise<void> {
+    return this.start('__test__', undefined)
+  }
+
+  /** @internal test-only — ensureStarted with a fixed cwd. */
+  async ensureStartedForTest(ownerKey: string): Promise<void> {
+    return this.ensureStarted('__test__', { ownerKey })
+  }
+
+  /** @internal test-only — invoke killStaleServer (private). */
+  async killStaleServerForTest(): Promise<void> {
+    return this.killStaleServer()
+  }
+
+  /** @internal test-only — drop every owner ref. */
+  releaseAllOwnersForTest(): void {
+    this.serverOwners.clear()
+  }
+
+  /** @internal test-only — force teardown without the refcount guard. */
+  async forceStopForTest(): Promise<void> {
+    this.startInFlight = null
+    return this.forceStop()
   }
 }
 

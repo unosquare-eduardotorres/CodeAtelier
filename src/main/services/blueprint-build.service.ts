@@ -2927,12 +2927,25 @@ export class BlueprintBuildService extends EventEmitter {
     const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
     let writeToolCalls = 0
     let bashCalls = 0
+    // WAVE-RACE FIX: first executor-level error chunk wins. When the OpenCode
+    // server fails to start (ServeError / port conflict), the turn ends with
+    // `session=none chunks=1` — a single error chunk, no completion block. The
+    // downstream disk verification then reports "N planned missing", which is
+    // only the symptom. This captures the actionable cause.
+    // Boxed in an object so closure assignments keep the `string | null` type
+    // (a bare `let` narrows to `never` at the read sites after CFA).
+    const executorErrorBox: { value: string | null } = { value: null }
 
     const onChunk = (chunk: StreamChunk): void => {
       // Phase 0: Record first chunk time (prefill latency proxy)
       if (tFirstChunk === 0) tFirstChunk = Date.now()
       stallWatchdog.touch()
 
+      // WAVE-RACE FIX: capture the first error chunk (see executorErrorBox above)
+      if (chunk.type === 'error' && executorErrorBox.value === null) {
+        executorErrorBox.value =
+          typeof chunk.error === 'string' ? chunk.error : String(chunk.error)
+      }
       // FIX-2: Count write-capable tool invocations
       if (chunk.type === 'tool_use' && chunk.toolName) {
         if (WRITE_TOOLS.has(chunk.toolName)) writeToolCalls++
@@ -3224,11 +3237,20 @@ export class BlueprintBuildService extends EventEmitter {
             verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
           const verifyFailReason = `verification failed — ${verifyFailParts.join(', ')}`
 
+          // WAVE-RACE FIX: when the session never produced a completion block
+          // AND the executor emitted an error, the error is the actionable
+          // cause — the missing files are only the symptom of a session that
+          // died before writing anything.
+          const failureReason =
+            !completion && executorErrorBox.value
+              ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
+              : verifyFailReason
+
           taskResult = {
             success: false,
             completion,
             discoveries: taskDiscoveries,
-            failureReason: verifyFailReason
+            failureReason
           }
         } else {
           // If the completion claims files BUT the session never invoked a
@@ -3252,7 +3274,12 @@ export class BlueprintBuildService extends EventEmitter {
               success: false,
               completion,
               discoveries: taskDiscoveries,
-              failureReason: 'no-write-activity'
+              // WAVE-RACE FIX: executor error (server failed to start / died)
+              // is the actionable cause when present — see executorErrorBox above.
+              failureReason:
+                !completion && executorErrorBox.value
+                  ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
+                  : 'no-write-activity'
             }
           } else {
             taskResult = {

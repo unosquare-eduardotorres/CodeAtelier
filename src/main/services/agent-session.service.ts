@@ -1303,10 +1303,22 @@ export class AgentSessionService extends AgentBaseService {
       }
 
       // Stop OpenCode server
+      // WAVE-RACE FIX: release this session's claim instead of killing the
+      // shared server. Parallel wave tasks share one executor — an
+      // unconditional stop() here killed a sibling task's live server mid-turn
+      // (the BUILD-T001 5-min stall). The server (and the workspace-keyed
+      // config) is only torn down when this was the LAST reference.
       if (this.executorBackend === 'opencode') {
-        await openCodeExecutor.stop()
-        if (this.workspacePath) {
-          openCodeConfigWriter.dispose(this.workspacePath)
+        // instanceId may be undefined (session never registered) — then no ref
+        // was ever acquired and releaseServer is a no-op returning false.
+        const wasLastRef = this.instanceId
+          ? openCodeExecutor.releaseServer(this.instanceId)
+          : false
+        if (wasLastRef) {
+          await openCodeExecutor.stop()
+          if (this.workspacePath) {
+            openCodeConfigWriter.dispose(this.workspacePath)
+          }
         }
       }
 
@@ -2454,7 +2466,15 @@ export class AgentSessionService extends AgentBaseService {
     await this.writeOpenCodeConfigFiles({ providerConfig, systemPrompt: params.systemPrompt })
 
     // Start OpenCode server if not running
-    if (!openCodeExecutor.isRunning()) {
+    // WAVE-RACE FIX: ensureStarted is idempotent + refcounted. The old
+    // `if (!isRunning()) start()` was a TOCTOU race — parallel wave tasks all
+    // saw "not running" and all called start(), each killing the port holder.
+    // It also skipped ref acquisition when a sibling had already started the
+    // server, so the first sibling's stop() tore the server out from under
+    // this session mid-turn. ensureStarted is called UNCONDITIONALLY: it
+    // registers this session's ownerKey, starts only if needed, and shares any
+    // in-flight startup.
+    {
       let pathResolved = false
       try {
         // Ensure opencode path is resolved and in PATH (uses cached value)
@@ -2467,9 +2487,10 @@ export class AgentSessionService extends AgentBaseService {
           this.log.info('[opencode] Ensured opencode path in PATH at session start')
         }
 
-        await openCodeExecutor.start(this.workspacePath!, {
+        await openCodeExecutor.ensureStarted(this.workspacePath!, {
           configPath: this._openCodeConfigPath,
-          isLocal: providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx'
+          isLocal: providerConfig.providerId === 'ollama' || providerConfig.providerId === 'omlx',
+          ownerKey: this.instanceId
         })
       } catch (error) {
         const err = error as Error
