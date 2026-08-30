@@ -10,9 +10,13 @@
  * - A new segment starts when NEW TEXT arrives after tools — the previous
  *   text + tools are finalized together, and the new text starts a fresh segment.
  * - Heading-based splits still fire when a heading arrives after 200+ chars.
+ * - Splits never fire inside a fenced code block (all three triggers: size,
+ *   heading, and tool). A mid-fence split would render as two broken fences,
+ *   so every trigger defers until the fence closes.
  */
 
 import { SentenceBuffer } from './sentence-buffer'
+import { shouldCommitForSize, fenceParityAfter } from '../../../shared/stream-segmentation'
 import type { ToolActivity } from '../../../shared/types'
 
 // ── Public types ──────────────────────────────────────────────────────────
@@ -42,6 +46,8 @@ export class StreamSegmentAccumulator {
   private currentSegmentStartedAt: number = Date.now()
   /** Reentrance guard — prevents nested emitChange when onChange triggers resetAccumulator */
   private isFlushing = false
+  /** A2 FIX: fence parity across the current segment — a split must never land inside a fenced code block. */
+  private inCodeFence = false
 
   constructor(private onChange: (state: SegmentState) => void) {}
 
@@ -91,6 +97,7 @@ export class StreamSegmentAccumulator {
     this.currentContent = ''
     this.currentToolActivities = []
     this.currentSegmentStartedAt = Date.now()
+    this.inCodeFence = false
   }
 
   /** Get current accumulated state */
@@ -111,8 +118,24 @@ export class StreamSegmentAccumulator {
         const hasSubstantialContent = this.currentContent.trim().length > 200
         // New text arriving after tools → finalize current segment (even if content is empty)
         const hasToolsBeforeNewText = this.currentToolActivities.length > 0
+        // A2 FIX: over the size cap → finalize at the next paragraph boundary
+        // (predicate shared + tested in src/shared/stream-segmentation.ts).
+        const isOverSizeLimit = shouldCommitForSize(
+          this.currentContent.length,
+          sentences,
+          this.inCodeFence
+        )
+        // F5 FIX: no split trigger may fire inside a fenced code block — a
+        // `## ` inside a fenced markdown sample is content, not a section
+        // break, and tools must stay attached to the in-fence text. Deferred
+        // splits fire on the next eligible flush after the fence closes.
+        const canSplit = !this.inCodeFence
 
-        if ((isNewSection && hasSubstantialContent) || hasToolsBeforeNewText) {
+        if (
+          (canSplit && isOverSizeLimit) ||
+          (canSplit && isNewSection && hasSubstantialContent) ||
+          (canSplit && hasToolsBeforeNewText)
+        ) {
           this.segments.push({
             content: this.currentContent,
             toolActivities: this.currentToolActivities,
@@ -121,9 +144,15 @@ export class StreamSegmentAccumulator {
           this.currentContent = sentences
           this.currentToolActivities = []
           this.currentSegmentStartedAt = Date.now()
+          this.inCodeFence = false
         } else {
           this.currentContent += sentences
         }
+
+        // Track fence parity across everything appended to the current segment
+        // (SentenceBuffer's force-flush paths can emit mid-fence text, so the
+        // boundary heuristic alone is not fence-safe).
+        this.inCodeFence = fenceParityAfter(this.inCodeFence, sentences)
 
         this.emitChange()
       })

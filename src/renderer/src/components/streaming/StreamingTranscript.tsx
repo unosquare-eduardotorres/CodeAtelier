@@ -5,8 +5,9 @@
  * It renders, top-to-bottom:
  *   1. an optional `header` slot (e.g. the grill requirement card)
  *   2. message history via a pluggable `renderMessage`
- *   3. the LIVE streaming bubble — segments + currentContent merged (and optionally
- *      transformed, e.g. to strip grill-evaluation JSON), shown with `identity`
+ *   3. the LIVE streaming region — finalized segments as individual bubbles,
+ *      then the live tail (currentContent), each optionally transformed (e.g. to
+ *      strip grill-evaluation JSON), shown with `identity`
  *   4. the shared <ThinkingIndicator> while `isStreaming`
  *   5. an optional `footer` slot (e.g. interactive question cards)
  *
@@ -46,9 +47,11 @@ interface StreamingTranscriptProps<T> {
   transformContent?: (raw: string) => string
 
   /**
-   * When true, suppress the live-text bubble entirely — only show ThinkingIndicator
-   * (with in-flight tools) while streaming. Complete bubbles appear via committed
-   * messages instead. Used by Blueprint for chat-parity progressive rendering.
+   * When true, suppress the live **tail** bubble — only show ThinkingIndicator
+   * (with in-flight tools) while streaming. Finalized segments ALWAYS render;
+   * callers that want to suppress everything pass `segments={[]}`. Complete
+   * bubbles appear via committed messages instead. Used by Blueprint for
+   * chat-parity progressive rendering.
    */
   suppressLiveBubble?: boolean
 
@@ -70,7 +73,42 @@ interface StreamingTranscriptProps<T> {
   scrollDeps?: ReadonlyArray<unknown>
 }
 
-const LIVE_MESSAGE_ID = 'streaming-live'
+const LIVE_TAIL_MESSAGE_ID = 'streaming-live-tail'
+
+/**
+ * A2 FIX: adapted Message per finalized segment, cached by the segment object.
+ * Segments are immutable once finalized, so the cache keeps `message` props
+ * referentially stable → React.memo on MessageBubble hits → committed segments
+ * are never re-parsed while the tail streams.
+ *
+ * F1 FIX: the cached contentMd is the TRANSFORMED content (same transform the
+ * merged bubble used to apply), so grill-eval JSON / blueprint tagged blocks are
+ * stripped from committed segment bubbles too. Safe to bake into the cache
+ * because segments are immutable and never shared across surfaces (each store
+ * owns its own segment objects).
+ */
+const segmentMessageCache = new WeakMap<StreamSegment, Message>()
+
+function segmentToMessage(
+  segment: StreamSegment,
+  index: number,
+  transformContent?: (raw: string) => string
+): Message {
+  let message = segmentMessageCache.get(segment)
+  if (!message) {
+    message = {
+      id: `streaming-segment-${index}`,
+      conversationId: 'streaming',
+      role: 'specialist',
+      contentMd: transformContent ? transformContent(segment.content) : segment.content,
+      attachmentsJson: '[]',
+      createdAt: new Date(segment.timestamp).toISOString(),
+      toolActivities: segment.toolActivities
+    }
+    segmentMessageCache.set(segment, message)
+  }
+  return message
+}
 
 export default function StreamingTranscript<T>({
   messages,
@@ -92,28 +130,29 @@ export default function StreamingTranscript<T>({
 }: StreamingTranscriptProps<T>): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Merge segments + current content into the live narration (then transform).
-  const liveContent = useMemo(() => {
-    const merged = segments.map((s) => s.content).join('') + currentContent
-    return transformContent ? transformContent(merged) : merged
-  }, [segments, currentContent, transformContent])
-
-  const liveToolActivities = useMemo(
-    () => [...segments.flatMap((s) => s.toolActivities), ...currentToolActivities],
-    [segments, currentToolActivities]
+  // A2 FIX: finalized segments render as individual memoized bubbles (stable
+  // string props → memo hits); only the live tail (currentContent) is re-parsed
+  // per flush. Previously ALL segments + tail were merged into one ever-growing
+  // bubble, making per-flush parse cost O(total accumulated) — the renderer
+  // CPU saturation during long blueprint phases.
+  const tailContent = useMemo(
+    () => (transformContent ? transformContent(currentContent) : currentContent),
+    [currentContent, transformContent]
   )
 
-  // Synthetic message backing the live bubble — identity is supplied via override.
-  const liveMessage = useMemo<Message>(
+  const tailToolActivities = currentToolActivities
+
+  // Synthetic message backing the live tail bubble — identity is supplied via override.
+  const tailMessage = useMemo<Message>(
     () => ({
-      id: LIVE_MESSAGE_ID,
+      id: LIVE_TAIL_MESSAGE_ID,
       conversationId: 'streaming',
       role: 'specialist',
-      contentMd: liveContent,
+      contentMd: tailContent,
       attachmentsJson: '[]',
       createdAt: new Date().toISOString()
     }),
-    [liveContent]
+    [tailContent]
   )
 
   // Stable signal for caller-supplied scroll deps (avoids a spread in the array).
@@ -122,15 +161,18 @@ export default function StreamingTranscript<T>({
   // Sticky-bottom auto-scroll: pauses when the user scrolls up,
   // resumes when they scroll back to the bottom or click the button.
   const { isPinned, scrollToBottom } = useStreamScroll(scrollRef, [
-    liveContent,
+    tailContent,
     segments.length,
-    liveToolActivities.length,
+    tailToolActivities.length,
     messages.length,
     isStreaming,
     scrollSignal
   ])
 
-  const hasLiveContent = liveContent.trim().length > 0
+  // F2 FIX: only the live TAIL gates the tail bubble. Segments always render as
+  // their own bubbles above; when only segments exist (empty tail) the correct
+  // state is the ThinkingIndicator (in-flight tools), not an empty bubble.
+  const hasTailContent = tailContent.trim().length > 0
 
   return (
     <div className="relative flex-1 min-h-0 overflow-hidden">
@@ -142,24 +184,37 @@ export default function StreamingTranscript<T>({
 
           {isStreaming && (
             <>
-              {hasLiveContent && !suppressLiveBubble ? (
-                /* Live content exists: tools render INSIDE the bubble via BubbleFooterActions.
-                 * The bubble footer shows a pulsing "writing…" indicator via isStreaming. */
+              {/* A2 FIX: finalized segments render as individual memoized bubbles.
+               * Each gets a stable `message` prop (WeakMap-cached) so committed
+               * content is parsed once, not on every tail flush. */}
+              {segments.map((segment, index) => (
                 <MessageBubble
-                  message={liveMessage}
+                  key={`live-seg-${index}`}
+                  message={segmentToMessage(segment, index, transformContent)}
+                  identityOverride={identity}
+                  toolActivities={segment.toolActivities}
+                />
+              ))}
+              {hasTailContent && !suppressLiveBubble ? (
+                /* Live tail: only currentContent re-parses per flush (bounded by
+                 * the accumulator's segment size cap). Tools render INSIDE the
+                 * bubble via BubbleFooterActions; the footer shows a pulsing
+                 * "writing…" indicator via isStreaming. */
+                <MessageBubble
+                  message={tailMessage}
                   identityOverride={identity}
                   isStreaming
-                  toolActivities={liveToolActivities}
+                  toolActivities={tailToolActivities}
                 />
               ) : (
-                /* No live content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
+                /* No live tail content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
                 <ThinkingIndicator
                   identity={{
                     name: identity.displayName,
                     avatarKey: identity.avatarKey,
                     accentColor: identity.accentColor
                   }}
-                  toolActivities={liveToolActivities}
+                  toolActivities={tailToolActivities}
                   label={thinkingLabel}
                   showHookIndicator={showHookIndicator}
                 />

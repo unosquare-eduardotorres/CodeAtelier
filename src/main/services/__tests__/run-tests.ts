@@ -601,6 +601,8 @@ const TEST_FILES: string[] = [
   '../../../shared/__tests__/db-time.test',
   // ─── Truncated plan block: nested fence inside a JSON string value ───
   '../../../shared/__tests__/fenced-block.test',
+  // ─── Renderer CPU saturation fix: stream-segment size-threshold commit rule (A2) ───
+  '../../../shared/__tests__/stream-segmentation.test',
   // ─── Blueprint quality gates (M0) ───
   '../../../shared/__tests__/gate-types.test',
   '../../../shared/__tests__/gate-rollup.test',
@@ -699,6 +701,10 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
   // ─── Build Now kickoff must not re-trigger the build → plan auto-switch ───
   '../../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
+  // ─── F5: no segment split trigger fires inside a fenced code block ───
+  '../../../renderer/src/utils/__tests__/stream-segment-accumulator-fence.test',
+  // ─── F10: grill transform strips orphaned block closers ───
+  '../../../renderer/src/utils/__tests__/strip-grill-json.test',
   // ─── Chat header naming (project specialist, raw agent ids) ───
   '../../../renderer/src/components/chat/__tests__/message-identity.test',
   // ─── Audit → Blueprint handoff formatting ───

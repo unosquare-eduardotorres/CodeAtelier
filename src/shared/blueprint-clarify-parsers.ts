@@ -358,6 +358,46 @@ export function grillQuestionsToClarifyBlock(questions: GrillQuestion[]): Clarif
 
 // ── Strip helpers ──
 
+/**
+ * F10: strip an orphaned block CLOSER from a continuation segment.
+ *
+ * When a segment split lands inside a structured block (unfenced JSON, or a
+ * fence the parity tracker missed), the FOLLOW-UP segment starts mid-content
+ * and its first fence closes that block. Left alone, the JSON tail renders as
+ * prose and the dangling ``` opens a phantom code block that swallows the
+ * prose after it. Strip from segment start through that bare closing fence.
+ *
+ * Guarded against plain code blocks that legitimately OPEN a segment: the
+ * fence must be bare (block closers never carry an info string — an opener
+ * like ```ts fails the check), sit on its own line, and the text before it
+ * must span no blank line (a blank line was a legal split point, so a true
+ * continuation cannot cross one) and carry a JSON signal (block bodies are
+ * JSON; plain code usually is not).
+ */
+export function stripOrphanedBlockCloser(text: string): string {
+  const m = text.match(/`{3,}/)
+  if (!m || m.index === undefined) return text
+
+  const pre = text.slice(0, m.index)
+  const rest = text.slice(m.index + m[0].length)
+
+  // Fence must sit at line start (only whitespace since the last newline).
+  const lineStart = pre.lastIndexOf('\n') + 1
+  if (/[\S]/.test(pre.slice(lineStart))) return text
+  // And be a closer: bare, ending the line (or the segment).
+  if (!/^[ \t]*(?:\r?\n|$)/.test(rest)) return text
+
+  const preTrimmed = pre.trim()
+  if (!preTrimmed) return text // empty pre → indistinguishable from a plain opener; leave it
+  if (/\n[ \t]*\n/.test(pre)) return text // blank line before the fence → not a continuation
+  const jsonSignal =
+    /^[{["]/.test(preTrimmed) || (/":/.test(preTrimmed) && /[}\]]$/.test(preTrimmed))
+  if (!jsonSignal) return text
+
+  // Strip start-of-segment through the closing fence (incl. its line break).
+  return rest.replace(/^[ \t]*\r?\n/, '')
+}
+
 export function stripBlueprintBlocks(text: string): string {
   // 0. MERGED-FENCE-FIX: un-glue back-to-back blocks before anything else, so a
   //    greedy close can't eat the next block's opening fence.
@@ -373,6 +413,11 @@ export function stripBlueprintBlocks(text: string): string {
   // 2. Partial fenced blocks (opening fence present, no closing fence yet — mid-stream).
   //    `[\s\S]*` is greedy, so it already runs to end-of-string — no anchor needed.
   cleaned = cleaned.replace(new RegExp('`{3,}\\s*' + BLOCK_INFO_STRING + '[\\s\\S]*', 'g'), '')
+
+  // 3. F10: orphaned closer — the continuation segment of a block that was
+  //    split mid-content. Its own strip pass cannot see the opener (it lived
+  //    in the previous segment), so clean it here instead.
+  cleaned = stripOrphanedBlockCloser(cleaned)
 
   return cleaned.replace(/\n{3,}/g, '\n\n').trim()
 }

@@ -275,6 +275,80 @@ I found several issues:
       assert.ok(!result.includes('blueprint-clarify-findings'))
       assert.ok(!result.includes('{"findings"'))
     })
+
+    // ── F10: partial JSON / tagged blocks in committed segments ──
+
+    test('F10: split-before-JSON-close — continuation segment strips orphaned closer', () => {
+      // A segment split landed mid-JSON: the opener lived in the previous
+      // segment, this one starts with the JSON tail + the closing fence.
+      const continuation = `"score": 8, "feedback": "solid"}
+\`\`\`
+
+Now the prose continues after the block.`
+
+      const result = stripBlueprintBlocks(continuation)
+      assert.ok(!result.includes('"score": 8'), 'JSON tail must not render as prose')
+      assert.ok(!result.includes('```'), 'orphaned closing fence must be stripped')
+      assert.ok(result.includes('Now the prose continues'), 'post-block prose survives')
+    })
+
+    test('F10: split-after-open — opener segment strips open block to end', () => {
+      // The opener segment carries the fence + partial JSON; rule 2 already
+      // strips to end-of-segment. Verifies the interaction with rule 3.
+      const openerSegment = `Analysis prose before the block.
+
+\`\`\`blueprint-clarify-findings
+{"findings": [{"id": "f1", "category": "sec`
+
+      const result = stripBlueprintBlocks(openerSegment)
+      assert.ok(result.includes('Analysis prose before the block.'))
+      assert.ok(!result.includes('blueprint-clarify-findings'))
+      assert.ok(!result.includes('{"findings"'))
+    })
+
+    test('F10: closer-orphan segment — JSON tail + bare fence stripped from start', () => {
+      // No fence at all in the previous segment (unfenced JSON), so the
+      // continuation starts mid-JSON and its first fence is the closer.
+      const orphan = `{"remaining": "keys": ["a"]}
+\`\`\`
+
+Summary text.`
+
+      const result = stripBlueprintBlocks(orphan)
+      assert.ok(!result.includes('"remaining"'), 'JSON tail must not render as prose')
+      assert.ok(!result.includes('```'), 'bare fence must be stripped')
+      assert.ok(result.includes('Summary text.'))
+    })
+
+    test('F10: plain code block opening a segment is NOT stripped', () => {
+      // A legitimate ```ts opener carries an info string and is not a closer —
+      // the guard must leave it alone.
+      const legit = `\`\`\`ts
+const x = 1
+\`\`\`
+
+Prose after.`
+
+      const result = stripBlueprintBlocks(legit)
+      assert.ok(result.includes('```ts'), 'legit code opener survives')
+      assert.ok(result.includes('const x = 1'))
+      assert.ok(result.includes('Prose after.'))
+    })
+
+    test('F10: prose before a bare fence (no JSON signal) is NOT stripped', () => {
+      // No JSON signal before the fence → not a block continuation; the fence
+      // is a legitimate code block opener for the following content.
+      const prose = `Some plain prose line
+\`\`\`
+code body
+\`\`\`
+
+End.`
+
+      const result = stripBlueprintBlocks(prose)
+      assert.ok(result.includes('Some plain prose line'))
+      assert.ok(result.includes('code body'))
+    })
   })
 
   // ── parseBlueprintPlan ──

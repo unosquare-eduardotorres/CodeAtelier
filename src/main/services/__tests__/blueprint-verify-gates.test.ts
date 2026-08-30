@@ -420,4 +420,4 @@ test('STRUCTURAL_REINDEX_BUDGET_MS is a finite positive budget', () => {
   assert.ok(STRUCTURAL_REINDEX_BUDGET_MS > 0)
 })
 
-summaryAsync()
+if (import.meta.url === `file://${process.argv[1]}`) void summaryAsync()

@@ -131,4 +131,4 @@ describe('blueprintOutcome', () => {
   })
 })
 
-summaryAsync()
+if (import.meta.url === `file://${process.argv[1]}`) void summaryAsync()

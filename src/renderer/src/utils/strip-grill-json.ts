@@ -15,7 +15,11 @@
  * 2. Partial fenced blocks (no closing fence — mid-stream)
  * 3. Unfenced: "grill-evaluation" on its own line followed by JSON
  * 4. Stray JSON starting with `{"trackId":` (grill eval payload without any fence)
+ * 5. F10: orphaned block closer — continuation segment of a block split
+ *    mid-content (JSON tail + dangling ``` that would open a phantom code block)
  */
+import { stripOrphanedBlockCloser } from '../../../shared/blueprint-clarify-parsers'
+
 export function stripGrillEvaluationBlocks(text: string): string {
   let cleaned = text
 
@@ -30,6 +34,9 @@ export function stripGrillEvaluationBlocks(text: string): string {
 
   // 4. Stray JSON that starts with {"trackId": (grill eval payload without any fence)
   cleaned = cleaned.replace(/\{"trackId"\s*:\s*"[^"]*"\s*,\s*"score"\s*:[\s\S]*$/m, '')
+
+  // 5. F10: orphaned closer from a mid-block segment split
+  cleaned = stripOrphanedBlockCloser(cleaned)
 
   return cleaned.trim()
 }

@@ -1119,8 +1119,9 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         })
       }
 
-      // Update activity timestamp for stale detection
-      set({ lastChunkAt: Date.now() })
+      // A3 FIX: lastChunkAt moved into the rAF flush below — a per-chunk set()
+      // fired a store notification for every one of ~34K chunks/turn outside the
+      // batch, saturating the renderer with microtask work.
 
       if (!flushScheduled) {
         flushScheduled = true
@@ -1140,7 +1141,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
             for (const [phase, events] of Object.entries(bufferedEvents)) {
               updatedEvents[phase] = [...(updatedEvents[phase] ?? []), ...events]
             }
-            return { phaseStreamText: updatedText, phaseStreamEvents: updatedEvents }
+            return {
+              phaseStreamText: updatedText,
+              phaseStreamEvents: updatedEvents,
+              // One activity-timestamp update per frame max (stale detection)
+              lastChunkAt: Date.now()
+            }
           })
         })
       }

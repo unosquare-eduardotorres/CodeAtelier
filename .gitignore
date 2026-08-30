@@ -33,3 +33,11 @@ coverage/
 
 # Scratch screenshots from live E2E sessions (never commit)
 .tmp-screens/
+
+# Ad-hoc scratch screenshots at repo root (live debugging sessions)
+.tmp-shot*.png
+.tmp-shot*.jpg
+.tmp-screenshot.png
+
+# Emergency DB recovery backups taken during live incident triage
+.blueprint-*-recovery-backup-*.sql

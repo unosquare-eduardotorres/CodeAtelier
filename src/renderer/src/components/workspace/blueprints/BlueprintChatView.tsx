@@ -45,6 +45,7 @@ import type {
   QuestionAnswerState
 } from '../../../../../shared/blueprint-clarify-parsers'
 import type { BlueprintChatMessage } from '@renderer/store/blueprint.store'
+import type { Message } from '../../../../../shared/types'
 import { BlueprintFindingsCard } from './BlueprintFindingsCard'
 import { BlueprintPlanCard, BlueprintTasksCard } from './BlueprintPlanCard'
 
@@ -318,21 +319,35 @@ function BlueprintQuestionFooter({
 
 // ── Message-history renderer ────────────────────────────────────────────────
 
+// A1 FIX: History messages are stable, append-only objects, but the adapted
+// `Message` was rebuilt on every render — a fresh object identity defeats the
+// React.memo on MessageBubble, so every history bubble re-parsed markdown on
+// every stream flush (O(history × parse) per flush → renderer CPU saturation).
+// Caching the adapted Message keyed by the source object keeps the prop
+// referentially stable so memo hits and per-flush history cost drops to ~0.
+const agentMessageCache = new WeakMap<BlueprintChatMessage, Message>()
+
 function renderBlueprintMessage(
   msg: BlueprintChatMessage,
   i: number,
   avatarSize: 'md' | 'lg' | 'xl'
 ): React.ReactNode {
   switch (msg.type) {
-    case 'agent':
+    case 'agent': {
+      let message = agentMessageCache.get(msg)
+      if (!message) {
+        message = blueprintAgentToMessage(msg.content, msg.toolActivities, i, msg.timestamp)
+        agentMessageCache.set(msg, message)
+      }
       return (
         <MessageBubble
           key={`msg-${i}`}
-          message={blueprintAgentToMessage(msg.content, msg.toolActivities, i, msg.timestamp)}
+          message={message}
           toolActivities={msg.toolActivities}
           identityOverride={BLUEPRINT_IDENTITY}
         />
       )
+    }
     case 'user':
       return (
         <div key={`msg-${i}`} className="flex gap-3 justify-end">

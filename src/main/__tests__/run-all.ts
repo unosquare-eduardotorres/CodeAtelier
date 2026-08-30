@@ -698,6 +698,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/components/workspace/integrations/__tests__/integration-readiness.test',
   '../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
   '../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
+  '../../renderer/src/utils/__tests__/stream-segment-accumulator-fence.test',
+  '../../renderer/src/utils/__tests__/strip-grill-json.test',
   '../../renderer/src/components/chat/__tests__/message-identity.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
@@ -717,6 +719,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/db-time.test',
   // ─── Truncated plan block: nested fence inside a JSON string value ───
   '../../shared/__tests__/fenced-block.test',
+  // ─── Renderer CPU saturation fix: stream-segment size-threshold commit rule (A2) ───
+  '../../shared/__tests__/stream-segmentation.test',
   // ─── Blueprint quality gates (M0) ───
   '../../shared/__tests__/gate-types.test',
   '../../shared/__tests__/gate-rollup.test',
