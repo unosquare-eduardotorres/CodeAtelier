@@ -405,6 +405,30 @@ if (loaded) {
         assert.ok(result.isOverload)
       })
 
+      // PARITY FIX (H): opencode provider messages classify via the shared
+      // transient patterns — previously only CLI strings matched.
+      test('overload_detected_for_opencode_transient_sse_timeout', () => {
+        const host = createMockHost()
+        const rm = new AgentRecoveryManager(host)
+        const result = (rm as any).classifyStreamError(new Error('SSE read timed out'), false)
+        assert.ok(result.isOverload, 'opencode transient message must classify as overload')
+        assert.ok(!result.isAbort)
+      })
+
+      test('overload_detected_for_opencode_transient_econnreset', () => {
+        const host = createMockHost()
+        const rm = new AgentRecoveryManager(host)
+        const result = (rm as any).classifyStreamError(new Error('read ECONNRESET'), false)
+        assert.ok(result.isOverload)
+      })
+
+      test('overload_not_detected_for_non_transient_opencode_error', () => {
+        const host = createMockHost()
+        const rm = new AgentRecoveryManager(host)
+        const result = (rm as any).classifyStreamError(new Error('invalid model id'), false)
+        assert.ok(!result.isOverload, 'permanent errors must not classify as overload')
+      })
+
       test('overload_not_detected_when_timed_out', () => {
         const host = createMockHost()
         const rm = new AgentRecoveryManager(host)

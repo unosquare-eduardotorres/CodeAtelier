@@ -142,6 +142,61 @@ describe('normalizeOpenCodeEvent — turn boundary (F16)', () => {
   })
 })
 
+describe('normalizeOpenCodeEvent — PARITY FIX (G): message.updated token usage', () => {
+  test('assistant message.updated with tokens populates all four usage fields', () => {
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.updated',
+        properties: {
+          tokens: { total: 127, input: 100, output: 20, reasoning: 0, cache: { read: 5, write: 2 } }
+        }
+      },
+      SID,
+      usage,
+      freshState()
+    )
+    assert.deepEqual(out, [], 'token-only message.updated emits no chunks')
+    assert.equal(usage.input, 100)
+    assert.equal(usage.output, 20)
+    assert.equal(usage.cacheReadInputTokens, 5)
+    assert.equal(usage.cacheCreationInputTokens, 2)
+  })
+
+  test('message.updated with zero tokens leaves usage untouched', () => {
+    const usage = freshUsage()
+    normalizeOpenCodeEvent(
+      { type: 'message.updated', properties: { tokens: { input: 0, output: 0 } } },
+      SID,
+      usage,
+      freshState()
+    )
+    assert.equal(usage.input, 0)
+    assert.equal(usage.output, 0)
+  })
+
+  test('message.updated text part still emits text chunk alongside tokens', () => {
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'message.updated',
+        properties: {
+          tokens: { input: 10, output: 5 },
+          part: { type: 'text', content: 'hi' }
+        }
+      },
+      SID,
+      usage,
+      freshState()
+    )
+    assert.equal(out.length, 1)
+    assert.equal(out[0].type, 'text')
+    assert.equal(out[0].content, 'hi')
+    assert.equal(usage.input, 10)
+    assert.equal(usage.output, 5)
+  })
+})
+
 describe('normalizeOpenCodeEvent — error classification', () => {
   test('transient error emits api_retry', () => {
     const out = normalizeOpenCodeEvent(

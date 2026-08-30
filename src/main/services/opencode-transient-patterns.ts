@@ -49,3 +49,15 @@ export const SLOW_TRANSIENT_PATTERNS: RegExp[] = [
 export function isSlowTransientError(message: string): boolean {
   return SLOW_TRANSIENT_PATTERNS.some((pattern) => pattern.test(message))
 }
+
+/**
+ * PARITY FIX (H): backend-neutral transient classification for the session
+ * layer (agent-recovery-manager.classifyStreamError). The CLI-only regexes
+ * there (529|overloaded|503 Service) never matched opencode provider messages
+ * like "SSE read timed out" or ECONNRESET, so overload recovery never fired on
+ * the opencode execution path. Wraps TRANSIENT_ERROR_PATTERNS so the session
+ * layer and the executor can never drift apart.
+ */
+export function isTransientProviderError(message: string): boolean {
+  return TRANSIENT_ERROR_PATTERNS.some((pattern) => pattern.test(message))
+}

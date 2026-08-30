@@ -63,6 +63,7 @@ interface StreamRunResult {
   maxTurnsReached: boolean
   transientRetries: number
   lastTransientClass: 'slow' | 'fast' | null
+  endedWithTerminalError: boolean
 }
 
 async function runEventStream(
@@ -128,6 +129,54 @@ function fakeClient(): {
           return Promise.resolve()
         }
       }
+    },
+    get prompts() {
+      return calls.prompts
+    },
+    get aborts() {
+      return calls.aborts
+    }
+  }
+}
+
+/**
+ * PARITY FIX (E) test helper: fake client whose event.subscribe() hands out
+ * successive streams from a queue and counts subscriptions. Also captures
+ * promptAsync/abort and answers session.messages with an empty list.
+ */
+function resubscribingClient(streams: AsyncIterable<unknown>[]): {
+  client: Record<string, unknown>
+  subscribes: number
+  prompts: number
+  aborts: number
+} {
+  const calls = { subscribes: 0, prompts: 0, aborts: 0 }
+  const queue = [...streams]
+  return {
+    client: {
+      event: {
+        subscribe: () => {
+          calls.subscribes++
+          const next = queue.shift()
+          if (!next) throw new Error('test: no more streams in subscribe queue')
+          return Promise.resolve({ stream: next })
+        }
+      },
+      session: {
+        create: () => Promise.resolve({ data: { id: SID } }),
+        promptAsync: () => {
+          calls.prompts++
+          return Promise.resolve()
+        },
+        abort: () => {
+          calls.aborts++
+          return Promise.resolve()
+        },
+        messages: () => Promise.resolve({ data: [] })
+      }
+    },
+    get subscribes() {
+      return calls.subscribes
     },
     get prompts() {
       return calls.prompts
@@ -511,6 +560,248 @@ describe('processEventStream — SSE-RETRY FIX (D): retry telemetry', () => {
     ])
     assert.equal(result.transientRetries, 0)
     assert.equal(result.lastTransientClass, null)
+  })
+})
+
+describe('processEventStream — PARITY FIX (E): SSE re-subscribe after retry resend', () => {
+  test('stream ends after retry → re-subscribe → resent run observed and completes', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = resubscribingClient([
+      // stream 2 (the re-subscription): the resent prompt's run
+      fakeStream([textPartEvent('recovered answer'), sessionIdleEvent()])
+    ])
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // stream 1 (initial): activity, then a transient error, then the server
+    // closes the subscription (done) — the T002/T004 failure shape.
+    const { chunks, result } = await runEventStream(executor, [], {
+      stream: fakeStream([
+        textPartEvent('first attempt partial'),
+        sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
+      ])
+    })
+
+    // Re-subscribed exactly once
+    assert.equal(fake.subscribes, 1, 'must re-subscribe after the post-retry stream end')
+    // The resent prompt was re-sent exactly once
+    assert.equal(fake.prompts, 1)
+    // The resent run's text was observed (not a truncated-but-completed turn)
+    assert.ok(
+      chunks.some((c) => c.type === 'text' && c.content === 'recovered answer'),
+      'resent run text must be observed after re-subscribe'
+    )
+    assert.equal(result.transientRetries, 1)
+    assert.equal(result.lastTransientClass, 'slow')
+    assert.equal(result.endedWithTerminalError, false)
+    // Recovery lifecycle chunks surfaced
+    const phases = chunks
+      .filter((c) => c.type === 'session_recovery')
+      .map((c) => c.recoveryPhase)
+    assert.ok(phases.includes('started'))
+    assert.ok(phases.includes('resuming'))
+  })
+
+  test('three error→done cycles → 3 retries → terminal error, no 4th re-subscribe', async () => {
+    const executor = new OpenCodeExecutor()
+    const err = () =>
+      sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
+    // Re-subscription streams 2..4, each carrying one error then ending
+    const fake = resubscribingClient([fakeStream([err()]), fakeStream([err()]), fakeStream([err()])])
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Initial stream: one error then done (cycle 1)
+    const { chunks, result } = await runEventStream(executor, [], { stream: fakeStream([err()]) })
+
+    assert.equal(fake.prompts, 3, 'exactly 3 retries must fire')
+    // 3 re-subscribes — the cap holds (no 4th re-subscribe)
+    assert.equal(fake.subscribes, 3)
+    const errorChunks = chunks.filter((c) => c.type === 'error')
+    assert.ok(errorChunks.length >= 1, 'exhaustion must yield a terminal error chunk')
+    assert.match(errorChunks[errorChunks.length - 1].error ?? '', /timed out/)
+    assert.equal(result.transientRetries, 3)
+    assert.equal(result.endedWithTerminalError, true)
+  })
+
+  test('clean end without retry → no extra subscribe', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = resubscribingClient([])
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    const { result } = await runEventStream(executor, [], {
+      stream: fakeStream([textPartEvent('ok'), sessionIdleEvent()])
+    })
+
+    assert.equal(fake.subscribes, 0, 'no re-subscribe may happen without a pending resend')
+    assert.equal(result.transientRetries, 0)
+    assert.equal(result.endedWithTerminalError, false)
+  })
+})
+
+describe('processEventStream — PARITY FIX (F): heartbeat-immune stall watcher', () => {
+  test('heartbeats every 50ms do NOT defeat a 100ms stall window', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Manual stream: one activity event, then server.heartbeat events every
+    // 50ms (held on a gate), releasable by the test.
+    let heartbeats = 0
+    let released = false
+    let releasedEvent: unknown = null
+    const manual: AsyncIterable<unknown> = {
+      [Symbol.asyncIterator]() {
+        let sentActivity = false
+        return {
+          next: (): Promise<IteratorResult<unknown>> => {
+            if (!sentActivity) {
+              sentActivity = true
+              return Promise.resolve({ done: false, value: textPartEvent('working') })
+            }
+            if (released) {
+              return releasedEvent
+                ? Promise.resolve({ done: false, value: releasedEvent })
+                : Promise.resolve({ done: true, value: undefined })
+            }
+            return new Promise<IteratorResult<unknown>>((resolve) => {
+              setTimeout(() => {
+                if (released) {
+                  resolve(
+                    releasedEvent
+                      ? { done: false, value: releasedEvent }
+                      : { done: true, value: undefined }
+                  )
+                } else {
+                  heartbeats++
+                  resolve({ done: false, value: { type: 'server.heartbeat', properties: {} } })
+                }
+              }, 50)
+            })
+          }
+        }
+      }
+    }
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const gen = processEventStream({
+      events: { stream: manual },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      midTurnStallMs: 100
+    })
+
+    const chunks: StreamChunk[] = []
+    const consumer = (async () => {
+      let r = await gen.next()
+      while (!r.done) {
+        chunks.push(r.value as StreamChunk)
+        r = await gen.next()
+      }
+      return r.value as StreamRunResult
+    })()
+
+    // The stall (100ms) must fire while heartbeats (50ms cadence) keep flowing.
+    // Poll for the RE-SENT PROMPT (not the abort — it fires synchronously before
+    // the scaled 30ms backoff sleep completes).
+    const deadline = Date.now() + 2000
+    while (fake.prompts < 1 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    // At least one heartbeat must have flowed during the window — under load
+    // the 50ms heartbeat timer can slip past the 100ms stall window, but even
+    // ONE heartbeat + a stall firing at ~100ms proves immunity (the old code
+    // would have pushed the window to 150ms+ on that heartbeat).
+    assert.ok(heartbeats >= 1, `heartbeats must have flowed during the window (got ${heartbeats})`)
+    assert.equal(fake.aborts, 1, 'stall must fire despite heartbeats')
+    assert.equal(fake.prompts, 1, 'stall retry must re-send the prompt')
+
+    // Release immediately so the re-armed 100ms window doesn't fire again —
+    // the recovered activity re-arms it legitimately.
+    released = true
+    releasedEvent = sessionIdleEvent()
+    const result = await consumer
+
+    assert.equal(result.transientRetries, 1)
+    assert.equal(result.lastTransientClass, 'slow')
+  })
+})
+
+describe('execute — PARITY FIX (I): session poisoning after retry exhaustion', () => {
+  test('retry exhaustion removes the conversation→session mapping', async () => {
+    const executor = new OpenCodeExecutor()
+    const err = () =>
+      sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
+    const fake = resubscribingClient([fakeStream([err(), err(), err(), err()])])
+    ;(executor as unknown as { client: unknown }).client = fake.client
+    ;(executor as unknown as { isStarted: boolean }).isStarted = true
+
+    // Pre-seed the mapping the way getOrCreateSession would
+    const sessionMap = (executor as unknown as { sessionMap: Map<string, string> }).sessionMap
+    sessionMap.set('conv-poison', SID)
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const execute = proto.execute.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const chunks: Array<StreamChunk & { _meta?: unknown }> = []
+    const gen = execute({
+      prompt: 'do the thing',
+      systemPrompt: 'sys',
+      provider: { providerId: 'test', modelId: 'm1' },
+      cwd: '/tmp',
+      conversationId: 'conv-poison',
+      maxTurns: 0
+    })
+    let r = await gen.next()
+    while (!r.done) {
+      chunks.push(r.value)
+      r = await gen.next()
+    }
+
+    // 1 initial prompt (execute) + 3 retries = 4 promptAsync calls
+    assert.equal(fake.prompts, 4, 'exhaustion after exactly 3 retries (+1 initial send)')
+    assert.ok(
+      chunks.some((c) => c.type === 'error'),
+      'terminal error chunk must be surfaced'
+    )
+    assert.equal(
+      sessionMap.has('conv-poison'),
+      false,
+      'poisoned session mapping must be deleted — next turn starts fresh'
+    )
+  })
+
+  test('clean turn keeps the session mapping (no poisoning)', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = resubscribingClient([fakeStream([textPartEvent('done'), sessionIdleEvent()])])
+    ;(executor as unknown as { client: unknown }).client = fake.client
+    ;(executor as unknown as { isStarted: boolean }).isStarted = true
+
+    const sessionMap = (executor as unknown as { sessionMap: Map<string, string> }).sessionMap
+    sessionMap.set('conv-keep', SID)
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const execute = proto.execute.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const gen = execute({
+      prompt: 'hello',
+      systemPrompt: 'sys',
+      provider: { providerId: 'test', modelId: 'm1' },
+      cwd: '/tmp',
+      conversationId: 'conv-keep',
+      maxTurns: 0
+    })
+    let r = await gen.next()
+    while (!r.done) {
+      r = await gen.next()
+    }
+
+    assert.equal(sessionMap.has('conv-keep'), true, 'clean turn must keep the mapping')
   })
 })
 

@@ -640,7 +640,28 @@ function handleMessageRemoved(properties: EventProperties): StreamChunk[] {
   return removedId ? [{ type: 'session_state', content: `message_removed:${removedId}` }] : []
 }
 
-function handleMessageUpdated(properties: EventProperties): StreamChunk[] {
+function handleMessageUpdated(
+  properties: EventProperties,
+  _sessionId: string,
+  tokenUsage: ExecutorTokenUsage
+): StreamChunk[] {
+  // PARITY FIX (G): opencode reports per-message token usage on assistant
+  // message.updated events — shape {total, input, output, reasoning,
+  // cache: {read, write}}. GLM (and other providers) never emit session.updated
+  // usage, so this is the only usage signal for them. Last message wins; the
+  // executor's post-turn backstop sums per-message tokens when this is absent.
+  const tokens = properties.tokens as Record<string, unknown> | undefined
+  if (tokens && typeof tokens === 'object') {
+    const input = Number(tokens.input ?? 0)
+    const output = Number(tokens.output ?? 0)
+    if (input > 0 || output > 0) {
+      const cache = tokens.cache as Record<string, unknown> | undefined
+      tokenUsage.input = input
+      tokenUsage.output = output
+      tokenUsage.cacheReadInputTokens = Number(cache?.read ?? 0)
+      tokenUsage.cacheCreationInputTokens = Number(cache?.write ?? 0)
+    }
+  }
   const msgPart = properties.part as Record<string, unknown> | undefined
   if (msgPart?.type === 'text') {
     const text = msgPart.content as string | undefined

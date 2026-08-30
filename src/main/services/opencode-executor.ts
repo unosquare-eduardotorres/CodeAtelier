@@ -839,6 +839,13 @@ export class OpenCodeExecutor {
    *
    * SSE-RETRY FIX (D): returns transientRetries + lastTransientClass so
    * execute() can surface retry telemetry in _meta and the turn-end log.
+   *
+   * PARITY FIX (E): when the SSE stream ends while a re-sent prompt is still
+   * in flight (the server closes the subscription after session.error),
+   * re-subscribe so the resent run's events are observed.
+   *
+   * PARITY FIX (I): returns endedWithTerminalError so execute() can poison
+   * the session mapping after retry exhaustion.
    */
   private async *processEventStream(params: {
     events: { stream: AsyncIterable<unknown> }
@@ -859,6 +866,8 @@ export class OpenCodeExecutor {
       maxTurnsReached: boolean
       transientRetries: number
       lastTransientClass: 'slow' | 'fast' | null
+      /** PARITY FIX (I): true when retry exhaustion ended the turn poisoned. */
+      endedWithTerminalError: boolean
     }
   > {
     const { events, openCodeSessionId, promptBody, tokenUsage, maxTurns, abortController } = params
@@ -867,6 +876,14 @@ export class OpenCodeExecutor {
     let maxTurnsReached = false
     let transientRetryCount = 0
     let lastTransientClass: 'slow' | 'fast' | null = null
+    let endedWithTerminalError = false
+    // PARITY FIX (E): true from the moment a retry re-sends the prompt until
+    // the resent run shows prompt activity. The SSE stream routinely CLOSES
+    // after session.error — without a re-subscribe the resent prompt's events
+    // were never observed and the turn ended truncated-but-"completed"
+    // (blueprint T002/T004 failures).
+    let resendAwaitingActivity = false
+    let resubscribeCount = 0
 
     // Stale-idle guard: only an event that can belong exclusively to OUR prompt
     // (assistant text/thinking, tool traffic, structured output, permission
@@ -883,9 +900,20 @@ export class OpenCodeExecutor {
     const noActivityTimeoutMs =
       params.noActivityTimeoutMs ?? OpenCodeExecutor.NO_ACTIVITY_TIMEOUT_MS
     let noActivityTimer: ReturnType<typeof setTimeout> | null = null
-    const noActivityPromise = new Promise<'no-activity-timeout'>((resolve) => {
-      noActivityTimer = setTimeout(() => resolve('no-activity-timeout'), noActivityTimeoutMs)
-    })
+    let noActivityPromise = new Promise<'no-activity-timeout'>(() => {})
+    /**
+     * PARITY FIX (E): (re)arm the pre-activity backstop. Extracted from the
+     * former one-shot setup so the re-subscribe path can re-arm it for the
+     * resent run. Pre-activity semantics unchanged: heartbeats do NOT clear
+     * it — only prompt activity does.
+     */
+    const armNoActivityWatch = (): void => {
+      if (noActivityTimer) clearTimeout(noActivityTimer)
+      noActivityPromise = new Promise<'no-activity-timeout'>((resolve) => {
+        noActivityTimer = setTimeout(() => resolve('no-activity-timeout'), noActivityTimeoutMs)
+      })
+    }
+    armNoActivityWatch()
 
     // MID-TURN STALL FIX (B): rolling window, re-armed at the start of every
     // post-activity wait. Fresh promise per wait — an already-resolved stall
@@ -904,7 +932,7 @@ export class OpenCodeExecutor {
       stallTimer = setTimeout(() => stallResolve?.('mid-turn-stall'), stallMs)
     }
 
-    const iterator = events.stream[Symbol.asyncIterator]()
+    let iterator = events.stream[Symbol.asyncIterator]()
     // True only when we exit with a next() still pending — calling return()
     // then would queue behind the pending next() and hang, so the iterator is
     // abandoned to GC instead.
@@ -920,7 +948,11 @@ export class OpenCodeExecutor {
     > => {
       if (!pendingNext) pendingNext = iterator.next()
       if (sawTurnActivity) {
-        resetStallWatch()
+        // PARITY FIX (F): the stall window is NO LONGER re-armed here on every
+        // event — only processing a prompt-activity event re-arms it (see the
+        // event-level handling below). server.heartbeat (~10s cadence) used
+        // to keep the window alive forever, which defeated the watcher for
+        // genuinely stalled provider streams.
         return Promise.race([pendingNext, stallPromise])
       }
       return Promise.race([pendingNext, noActivityPromise])
@@ -962,26 +994,76 @@ export class OpenCodeExecutor {
           if (stallRetryResult.value >= 0) {
             transientRetryCount = stallRetryResult.value
             lastTransientClass = 'slow'
+            // PARITY FIX (E): the re-sent prompt must be observed — re-arm the
+            // stall window fresh (the previous promise already resolved) and
+            // flag the pending resend for the re-subscribe path.
+            resendAwaitingActivity = true
+            resetStallWatch()
             iterResult = await nextEvent()
             continue
           }
           // Retries exhausted — terminal error. A next() is still pending, so
           // the iterator must be abandoned (see abandonedPendingNext above).
           abandonedPendingNext = true
+          endedWithTerminalError = true // PARITY FIX (I)
           yield { type: 'error', error: stallMessage }
           break
         }
 
-        if (iterResult === 'no-activity-timeout' || iterResult.done) break
+        if (iterResult === 'no-activity-timeout') break
+
+        if (iterResult.done) {
+          // PARITY FIX (E): the SSE stream closed while a re-sent prompt is
+          // still in flight (the server drops the subscription after
+          // session.error). Re-subscribe so the resent run is observed;
+          // without this the turn ended truncated-but-"completed".
+          if (resendAwaitingActivity && resubscribeCount < MAX_TRANSIENT_RETRIES) {
+            resubscribeCount++
+            openCodeLog.info(
+              `[opencode] SSE stream ended after retry — re-subscribing ` +
+                `(${resubscribeCount}/${MAX_TRANSIENT_RETRIES})`
+            )
+            try {
+              if (!this.client) throw new Error('OpenCode client unavailable')
+              const resubscription = (await this.client.event.subscribe()) as unknown as {
+                stream: AsyncIterable<unknown>
+              }
+              iterator = resubscription.stream[Symbol.asyncIterator]()
+            } catch (err) {
+              openCodeLog.error(`[opencode] SSE re-subscribe failed: ${(err as Error).message}`)
+              endedWithTerminalError = true
+              yield { type: 'error', error: `SSE re-subscribe failed: ${(err as Error).message}` }
+              break
+            }
+            pendingNext = null
+            // The stale-idle guard now protects the resent run from the aborted
+            // first run's tail events; fresh pre-activity backstop for the new
+            // subscription.
+            sawTurnActivity = false
+            armNoActivityWatch()
+            iterResult = await nextEvent()
+            continue
+          }
+          if (resendAwaitingActivity) {
+            openCodeLog.warn(
+              '[opencode] SSE stream ended with a pending resend — re-subscribe budget exhausted'
+            )
+          }
+          break
+        }
 
         pendingNext = null // the awaited next() has resolved — safe to re-issue
         const event = iterResult.value
         if (abortController?.signal.aborted) break
 
         let retryInitiatedThisEvent = false
+        let eventWasActivity = false
         const chunks = this.normalizeEvent(event, openCodeSessionId, tokenUsage)
         for (const chunk of chunks) {
-          if (!sawTurnActivity && isPromptActivityChunk(chunk)) sawTurnActivity = true
+          if (isPromptActivityChunk(chunk)) {
+            sawTurnActivity = true
+            eventWasActivity = true
+          }
 
           if (chunk.type === 'text' && chunk.content) {
             resultText += chunk.content
@@ -1037,7 +1119,10 @@ export class OpenCodeExecutor {
                 retryInitiatedThisEvent = true
                 continue
               }
-              // Max retries exhausted. Error chunks fall through and emit
+              // Max retries exhausted — PARITY FIX (I): mark the turn poisoned
+              // so execute() drops the session mapping (CLI parity).
+              endedWithTerminalError = true
+              // Error chunks fall through and emit
               // below; api_retry chunks were already forwarded above, so
               // synthesize the terminal error the turn actually ended with
               // (otherwise downstream sees a truncated-but-completed turn).
@@ -1068,8 +1153,26 @@ export class OpenCodeExecutor {
         }
 
         // V2 step starts normalize to zero chunks — check the raw event too
-        if (!sawTurnActivity && isPromptActivityEvent(event, openCodeSessionId)) {
+        if (!eventWasActivity && isPromptActivityEvent(event, openCodeSessionId)) {
           sawTurnActivity = true
+          eventWasActivity = true
+        }
+        if (eventWasActivity && !retryInitiatedThisEvent) {
+          // PARITY FIX (E): the (re)sent run is live — a later stream end is a
+          // genuine end, not a dropped subscription.
+          resendAwaitingActivity = false
+        }
+        if (retryInitiatedThisEvent) {
+          // A retry re-sent the prompt: the resent run's events must be
+          // observed (re-subscribe on stream end) and the stall window starts
+          // fresh (the previous promise may already be resolved).
+          resendAwaitingActivity = true
+          resetStallWatch()
+        } else if (eventWasActivity) {
+          // PARITY FIX (F): re-arm the mid-turn stall window ONLY on genuine
+          // prompt activity. Heartbeats and other-session events no longer
+          // reset it.
+          resetStallWatch()
         }
         if (sawTurnActivity && noActivityTimer) {
           clearTimeout(noActivityTimer)
@@ -1113,7 +1216,13 @@ export class OpenCodeExecutor {
       if (!abandonedPendingNext) await iterator.return?.()
     }
 
-    return { resultText, maxTurnsReached, transientRetries: transientRetryCount, lastTransientClass }
+    return {
+      resultText,
+      maxTurnsReached,
+      transientRetries: transientRetryCount,
+      lastTransientClass,
+      endedWithTerminalError
+    }
   }
 
   // ── execute ──────────────────────────────────────────────────────────
@@ -1171,6 +1280,10 @@ export class OpenCodeExecutor {
 
       // Build the prompt body (parts + model config + output schema)
       const promptBody = this.buildPromptBody(prompt, systemPrompt, provider, outputSchema, images)
+
+      // PARITY FIX (G): timestamp taken BEFORE the prompt is sent — the token
+      // backstop below only counts assistant messages created after this.
+      const turnStartedAt = Date.now()
 
       // ENH-13: Update session title with meaningful content from the user's prompt
       const titleText = prompt.slice(0, 80).replace(/\n/g, ' ').trim()
@@ -1234,6 +1347,7 @@ export class OpenCodeExecutor {
       let maxTurnsReached = false
       let transientRetries = 0
       let lastTransientClass: 'slow' | 'fast' | null = null
+      let endedWithTerminalError = false
 
       if (events.stream) {
         const streamGen = this.processEventStream({
@@ -1250,7 +1364,13 @@ export class OpenCodeExecutor {
           yield streamResult.value
           streamResult = await streamGen.next()
         }
-        ;({ resultText, maxTurnsReached, transientRetries, lastTransientClass } = streamResult.value)
+        ;({
+          resultText,
+          maxTurnsReached,
+          transientRetries,
+          lastTransientClass,
+          endedWithTerminalError
+        } = streamResult.value)
       }
 
       clearInterval(promptErrorWatcher)
@@ -1261,6 +1381,36 @@ export class OpenCodeExecutor {
         `[opencode] Turn ended — transientRetries=${transientRetries}` +
           (lastTransientClass ? ` (last: ${lastTransientClass})` : '')
       )
+
+      // PARITY FIX (I): retry exhaustion poisoned the session — drop the
+      // conversation→session mapping so the next turn starts fresh (mirrors the
+      // CLI executor's poisonedSessions set). Resuming a session with a
+      // half-finished/orphaned turn replays its stale tail events into the next
+      // turn (stale-idle guards only mask the symptom).
+      if (endedWithTerminalError && options.conversationId) {
+        this.sessionMap.delete(options.conversationId)
+        openCodeLog.warn(
+          `[opencode] Session poisoned after retry exhaustion — next turn starts fresh ` +
+            `(conversationId=${options.conversationId})`
+        )
+      }
+
+      // PARITY FIX (G): token usage backstop. Some providers (GLM) never emit
+      // usage on session.updated — but opencode persists per-message tokens on
+      // assistant messages. Fold them in so usage/cost telemetry is never
+      // reported as zero for a turn that demonstrably ran.
+      if (tokenUsage.input + tokenUsage.output === 0 && openCodeSessionId) {
+        const summedMessages = await this.sumAssistantTokensSince(
+          openCodeSessionId,
+          turnStartedAt,
+          tokenUsage
+        )
+        if (summedMessages > 0) {
+          openCodeLog.info(
+            `[opencode] Token backstop applied — summed ${summedMessages} assistant messages`
+          )
+        }
+      }
 
       // OC-04: If prompt send failed before/during streaming, surface the error
       if (promptSendError) {
@@ -1875,6 +2025,60 @@ Troubleshooting:
     } catch (err) {
       openCodeLog.warn(`[opencode] Failed to fetch session messages: ${(err as Error).message}`)
       return []
+    }
+  }
+
+  /**
+   * PARITY FIX (G): fold per-message token usage from assistant messages
+   * created after `sinceMs` into `tokenUsage`. Returns how many messages
+   * carried tokens. Best-effort: any failure (or no client) returns 0 and the
+   * caller keeps whatever usage it already has.
+   *
+   * Timestamp handling: opencode reports `created` as unix seconds (or ms /
+   * ISO string depending on version) — all three are parsed. A message with no
+   * parsable timestamp is counted (fail-open): under-counting a turn that ran
+   * is worse than occasionally including a boundary message.
+   */
+  private async sumAssistantTokensSince(
+    sessionId: string,
+    sinceMs: number,
+    tokenUsage: ExecutorTokenUsage
+  ): Promise<number> {
+    if (!this.client) return 0
+    try {
+      const result = await this.client.session.messages({ path: { id: sessionId } })
+      const messages =
+        ((result as Record<string, unknown>)?.data as Array<Record<string, unknown>>) ?? []
+      let counted = 0
+      for (const m of messages) {
+        if (m.role !== 'assistant') continue
+        const createdRaw = (m.created ?? m.createdAt) as unknown
+        let ts: number | null = null
+        if (typeof createdRaw === 'number') {
+          ts = createdRaw < 1e12 ? createdRaw * 1000 : createdRaw // seconds vs ms
+        } else if (typeof createdRaw === 'string') {
+          const parsed = Date.parse(createdRaw)
+          if (!Number.isNaN(parsed)) ts = parsed
+        }
+        if (ts !== null && ts < sinceMs) continue
+        const tokens = m.tokens as Record<string, unknown> | undefined
+        if (!tokens || typeof tokens !== 'object') continue
+        const input = Number(tokens.input ?? 0)
+        const output = Number(tokens.output ?? 0)
+        if (input <= 0 && output <= 0) continue
+        const cache = tokens.cache as Record<string, unknown> | undefined
+        tokenUsage.input += input
+        tokenUsage.output += output
+        tokenUsage.cacheReadInputTokens += Number(cache?.read ?? 0)
+        tokenUsage.cacheCreationInputTokens += Number(cache?.write ?? 0)
+        counted++
+      }
+      return counted
+    } catch (err) {
+      openCodeLog.warn(
+        `[opencode] Token backstop failed to fetch session messages: ${(err as Error).message}`
+      )
+      return 0
     }
   }
 

@@ -17,6 +17,7 @@ import { resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import type { DiscoveredContext } from './local-plan-state.service'
+import { isTransientProviderError } from './opencode-transient-patterns'
 
 // N8: Single source of truth for the turn-limit-exhausted message (text fallback)
 const TURN_LIMIT_EXHAUSTED_MSG =
@@ -235,16 +236,18 @@ export class AgentRecoveryManager {
 
     // Skip if the underlying cause was API overload
     if (streamState.overloadDetected && streamState.lastTerminalReason === 'max_turns') {
-      this.s.log.warn(
-        `[PIPELINE:overload-skip-continue] Skipping auto-continue — API overload detected for conversationId=${conversationId}`
-      )
+      this.s.log.warn(`[PIPELINE:overload-skip-continue] Skipping auto-continue — API overload detected for conversationId=${conversationId}`)
       this.s.emit('chunk', {
         type: 'text',
         content:
           '\n\n---\n\n' +
-          '⚠️ **Claude is temporarily overloaded** — the API returned 529 errors during this session. ' +
-          'This is a server-side issue and not a problem with your request.\n\n' +
-          'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).'
+          (this.s.executorBackend === 'opencode'
+            ? '⚠️ **The AI provider is temporarily overloaded** — the server returned transient errors during this session. ' +
+              'This is a server-side issue and not a problem with your request.\n\n' +
+              'Try again in a few minutes.'
+            : '⚠️ **Claude is temporarily overloaded** — the API returned 529 errors during this session. ' +
+              'This is a server-side issue and not a problem with your request.\n\n' +
+              'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).')
       } as StreamChunk)
       this.s.currentStatus = 'idle'
       this.s.flushTokenUsage()
@@ -635,10 +638,14 @@ export class AgentRecoveryManager {
     isAbort: boolean
   } {
     const isAbort = error.name === 'AbortError'
+    // PARITY FIX (H): union of the CLI-specific patterns and the shared
+    // opencode transient patterns — opencode provider messages ("SSE read
+    // timed out", ECONNRESET, 429…) now classify as overload here too.
     const isOverload =
       !timedOut &&
       !isAbort &&
-      /529|overloaded|server_is_overloaded|503 Service/i.test(error.message)
+      (/529|overloaded|server_is_overloaded|503 Service/i.test(error.message) ||
+        isTransientProviderError(error.message))
     const isMaxTurns = !timedOut && !isAbort && error.message?.includes('maximum number of turns')
     const isContextOverflow =
       !timedOut &&
@@ -724,9 +731,13 @@ export class AgentRecoveryManager {
         type: 'text',
         content:
           '\n\n---\n\n' +
-          '⚠️ **Claude is temporarily overloaded** — the API returned server errors during this session. ' +
-          'This is a server-side issue and not a problem with your request.\n\n' +
-          'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).'
+          (this.s.executorBackend === 'opencode'
+            ? '⚠️ **The AI provider is temporarily overloaded** — the server returned transient errors during this session. ' +
+              'This is a server-side issue and not a problem with your request.\n\n' +
+              'Try again in a few minutes.'
+            : '⚠️ **Claude is temporarily overloaded** — the API returned server errors during this session. ' +
+              'This is a server-side issue and not a problem with your request.\n\n' +
+              'Try again in a few minutes. If it persists, check [status.claude.com](https://status.claude.com).')
       } as StreamChunk)
       this.emitIdleComplete()
       return
