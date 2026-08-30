@@ -34,7 +34,7 @@ import { AgentSessionService } from './agent-session.service'
 import { BlueprintCodeReviewAdapter } from './role-adapters/blueprint/blueprint-code-review.adapter'
 import { buildCodeReviewGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock } from './blueprint-artifact-parsers'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 // Static import is cycle-free (verify does not import this service) and keeps
 // the build→verify-style synchronous lock handoff: startVerifyPhase's sync
@@ -165,6 +165,9 @@ export class BlueprintCodeReviewService extends EventEmitter {
     // which would destroy the successor's AbortController mid-flight (same
     // pattern as BP-BUILD-VERIFY-STARTLOCK-COLLISION in the build service).
     let lockHandedOff = false
+    // C3 FIX: set when the first terminal event is emitted — guards the catch
+    // against duplicate terminal emissions on late/re-fired throws.
+    let settled = false
 
     try {
       // 1. Pipeline + DB state
@@ -350,16 +353,18 @@ export class BlueprintCodeReviewService extends EventEmitter {
           verdict: review.verdict
         } as BlueprintPhaseCompletion
       } satisfies BlueprintPhaseCompletePayload)
+      settled = true
 
       if (phaseRecord) {
         this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'code-review',
-          artifact: {
+          // A5: cap for IPC — multi-hundred-KB payloads stall the renderer
+          artifact: capArtifactForIpc({
             type: 'code-review',
             contentJson: { findings: review.findings, verdict: review.verdict }
-          }
+          })
         } satisfies BlueprintPhaseArtifactPayload)
       }
 
@@ -382,6 +387,23 @@ export class BlueprintCodeReviewService extends EventEmitter {
       // 12. Advance to VERIFY (mirrors build→verify)
       lockHandedOff = this.advanceToVerify(blueprintId, workspaceId, workspacePath)
     } catch (err) {
+      if (settled) {
+        // C3 FIX: the run already settled — a late throw must not re-fail the
+        // pipeline or emit a duplicate terminal event.
+        bpLog.warn(`[startCodeReviewPhase] Post-settlement throw ignored:`, err)
+        // F3 FIX: still surface it to the human — a swallowed handoff failure
+        // (e.g. advance-to-VERIFY dispatch) would otherwise look like a silent stall.
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'code-review',
+          text: `⚠️ Post-completion error (phase already settled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
+        return
+      }
+      settled = true
       bpLog.error(`[startCodeReviewPhase] CODE-REVIEW phase failed:`, err)
 
       const currentStatus = blueprintRepository.findById(blueprintId)?.status

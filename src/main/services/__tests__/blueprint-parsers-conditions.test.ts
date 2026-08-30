@@ -86,6 +86,71 @@ describe('parsePhaseCompletionBlock — verify-style fallback', () => {
   })
 })
 
+describe('parsePhaseCompletionBlock — B1/B2 fallback-skip + relaxed parsing', () => {
+  // Regression origin (log-confirmed 22:17:09, blueprint 718c7487): the model
+  // emitted YAML-ish `phase: "re"...` inside the tagged block; JSON.parse threw
+  // inside the OUTER try and skipped BOTH fallbacks → `recommendation: unknown`
+  // on a review that actually succeeded.
+
+  test('recovers recommendation from YAML-ish tagged block (B2 relaxed parse)', () => {
+    const text =
+      'Review narrative before the block.\n\n```blueprint-phase-complete\nphase: "review"\nstatus: "complete"\nrecommendation: "proceed"\ncoveragePercent: 92\n```\nTrailing prose.'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result, 'YAML-ish block must be recovered, not dropped')
+    assert.equal(result.phase, 'review')
+    assert.equal(result.status, 'complete')
+    assert.equal(result.recommendation, 'proceed')
+    assert.equal(result.coveragePercent, 92) // numeric coercion
+  })
+
+  test('relaxed parse tolerates trailing prose lines inside the tagged block', () => {
+    const text =
+      '```blueprint-phase-complete\nphase: review\nstatus: complete\n# a comment line\nThis sentence has no colon shape and is skipped.\n```'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal(result.phase, 'review')
+    assert.equal(result.status, 'complete')
+  })
+
+  test('relaxed parse coerces booleans and inline JSON values', () => {
+    const text =
+      '```blueprint-phase-complete\nphase: "verify"\nstatus: "complete"\nhasBlockers: false\nfindings: {"critical": 1, "high": 2}\n```'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    const rec = result as Record<string, unknown>
+    assert.equal(rec.hasBlockers, false)
+    assert.deepEqual(rec.findings, { critical: 1, high: 2 })
+  })
+
+  test('strict JSON still preferred over relaxed parse', () => {
+    const text =
+      '```blueprint-phase-complete\n{"phase":"review","status":"complete","recommendation":"revise"}\n```'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result)
+    assert.equal(result.recommendation, 'revise')
+  })
+
+  test('tagged-block parse failure no longer skips the fallbacks (B1)', () => {
+    // Tagged block present but unparseable AND missing phase/status → the
+    // brace-counted fallback must still run and find the embedded JSON.
+    const text =
+      '```blueprint-phase-complete\nphase: "review"\n```\n\n{"phase":"review","status":"complete","recommendation":"proceed"}'
+    const result = parsePhaseCompletionBlock(text)
+    assert.ok(result, 'fallback chain must run after tagged-block parse failure')
+    assert.equal(result.recommendation, 'proceed')
+  })
+
+  test('oversized-input guard still rejects (500KB)', () => {
+    const huge = 'x'.repeat(500_001)
+    assert.equal(parsePhaseCompletionBlock(huge), null)
+  })
+
+  test('relaxed parse rejects blocks missing phase or status', () => {
+    const text = '```blueprint-phase-complete\nrecommendation: "proceed"\nnotes: "no keys"\n```'
+    assert.equal(parsePhaseCompletionBlock(text), null)
+  })
+})
+
 describe('parseBlueprintTasks', () => {
   test('parses valid blueprint-tasks block', () => {
     const text =

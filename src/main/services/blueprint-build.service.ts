@@ -82,7 +82,7 @@ import {
   type TaskDag
 } from '../../shared/task-dag'
 import { modelConfigService } from './model-config.service'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { codeGraphService } from './code-graph.service'
 import {
   blueprintRepository,
@@ -269,6 +269,14 @@ export class BlueprintBuildService extends EventEmitter {
   /** BP-05: Per-workspace active session sets (multiple for parallel tasks). */
   private activeSessions = new Map<string, Set<AgentSessionService>>()
   private activeBlueprintIds = new Map<string, string>()
+  /**
+   * C3 FIX: blueprints whose current run already emitted its terminal event.
+   * Guards finalizeFailed/finalizeSuccess against duplicate terminal emissions
+   * when a cancelled pipeline's catch/finally fire late (log-confirmed Aug 28:
+   * `cancelled + fail` / `cancelled + phaseComplete` pairs). Cleared when a new
+   * run starts (startBuildPhase) so retries work.
+   */
+  private settledBlueprints = new Set<string>()
   /** G2: Per-task status tracking for derived workspace status. */
   private perTaskStatus = new Map<string, AgentStatus['status']>()
   /** Per-blueprint resolved gate commands — detection walks the disk, so cache it. */
@@ -282,6 +290,10 @@ export class BlueprintBuildService extends EventEmitter {
     const { blueprintId, workspaceId, workspacePath } = params
 
     bpLog.info(`[startBuildPhase] Blueprint ${blueprintId} — starting BUILD`)
+
+    // C3 FIX: new run — clear any settled flag left by the previous run so
+    // finalizeFailed/finalizeSuccess can emit this run's terminal event.
+    this.settledBlueprints.delete(blueprintId)
 
     const result: BuildResult = {
       tasksCompleted: 0,
@@ -741,6 +753,26 @@ export class BlueprintBuildService extends EventEmitter {
         verifyTriggered = true
       }
     } catch (err) {
+      // F6/F7 FIX: the run already settled (finalizeSuccess or finalizeFailed
+      // emitted this run's terminal phaseComplete — settledBlueprints is
+      // cleared at run start). A late throw must not run the failure-path work
+      // below: the task-skipping loop would mark completed tasks 'skipped',
+      // and the partial-artifact write + saveRetryContext would record a
+      // failure that didn't happen. finalizeFailed re-entry is already guarded.
+      if (this.settledBlueprints.has(blueprintId)) {
+        bpLog.warn(`[startBuildPhase] Post-settlement throw ignored:`, err)
+        // F3 FIX: still surface it to the human — a swallowed post-completion
+        // failure would otherwise look like a silent stall.
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text: `⚠️ Post-completion error (phase already settled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
+        return
+      }
       bpLog.error(`[startBuildPhase] BUILD phase failed:`, err)
       // BP-WAVE-EXCEPTION-01: Mark ALL unfinished tasks as 'skipped' when wave throws.
       // Without this, tasks stuck in 'running'/'pending' permanently after an exception
@@ -2634,6 +2666,15 @@ export class BlueprintBuildService extends EventEmitter {
     error?: string,
     workspacePath?: string
   ): void {
+    // C3 FIX: one terminal event per run — a late catch/finally must not
+    // re-fail an already-settled (or cancelled) pipeline.
+    if (this.settledBlueprints.has(blueprintId)) {
+      bpLog.info(
+        `[finalizeFailed] Blueprint ${blueprintId} already settled — ignoring late failure`
+      )
+      return
+    }
+    this.settledBlueprints.add(blueprintId)
     if (buildPhaseId) {
       blueprintPhaseRepository.updateStatus(buildPhaseId, 'failed')
     }
@@ -2678,6 +2719,14 @@ export class BlueprintBuildService extends EventEmitter {
     result: BuildResult,
     totalTasks: number
   ): void {
+    // C3 FIX: one terminal event per run (see settledBlueprints).
+    if (this.settledBlueprints.has(blueprintId)) {
+      bpLog.info(
+        `[finalizeSuccess] Blueprint ${blueprintId} already settled — ignoring late success`
+      )
+      return
+    }
+    this.settledBlueprints.add(blueprintId)
     if (buildPhaseId) {
       blueprintPhaseRepository.updateStatus(buildPhaseId, 'complete')
       // BP-RETRY-CONTEXT-CLEAR: Clear retry context on successful completion
@@ -2715,7 +2764,7 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintId,
       workspaceId,
       phase: 'build',
-      artifact: {
+      artifact: capArtifactForIpc({
         type: 'build',
         contentMd: this.buildArtifactSummary(
           result.tasksCompleted,
@@ -2724,7 +2773,7 @@ export class BlueprintBuildService extends EventEmitter {
           result.filesModified,
           result.tasksResumed
         )
-      }
+      })
     } satisfies BlueprintPhaseArtifactPayload)
 
     // Auto-trigger the next phase (non-blocking).

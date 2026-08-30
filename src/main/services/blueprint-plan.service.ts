@@ -23,7 +23,7 @@ import {
   parseBlueprintPlan,
   parseDiscoveriesBlock
 } from './blueprint-artifact-parsers'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import { blueprintTasksService } from './blueprint-tasks.service'
 import {
@@ -75,6 +75,9 @@ export class BlueprintPlanService extends EventEmitter {
     let cleanupAskUser: (() => void) | undefined
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
+    // F6 FIX: set when the first terminal event is emitted — a late/re-fired
+    // catch must not produce a duplicate phaseComplete or re-fail the pipeline.
+    let settled = false
 
     try {
       // 1. Pipeline + DB state
@@ -245,19 +248,38 @@ export class BlueprintPlanService extends EventEmitter {
         status: 'complete',
         completion
       } satisfies BlueprintPhaseCompletePayload)
+      settled = true
 
       if (planPhase) {
         this.safeEmit('phaseArtifact', {
           blueprintId,
           workspaceId,
           phase: 'plan',
-          artifact: { type: 'plan', contentMd: text }
+          // A5: cap for IPC — multi-hundred-KB payloads stall the renderer
+          artifact: capArtifactForIpc({ type: 'plan', contentMd: text })
         } satisfies BlueprintPhaseArtifactPayload)
       }
 
       // BP-CHAIN-PLAN-TASKS: Auto-dispatch TASKS after PLAN completes.
       pendingTasksDispatch = { blueprintId, workspaceId, workspacePath }
     } catch (err) {
+      if (settled) {
+        // F6 FIX: the run already settled (phaseComplete emitted) — a late
+        // throw from post-completion work must not re-fail the pipeline or
+        // emit a duplicate terminal event.
+        bpLog.warn(`[startPlanPhase] Post-settlement throw ignored:`, err)
+        // F3 FIX: still surface it to the human — a swallowed post-completion
+        // failure would otherwise look like a silent stall.
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'plan',
+          text: `⚠️ Post-completion error (phase already settled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
+        return
+      }
       bpLog.error(`[startPlanPhase] PLAN phase failed:`, err)
 
       // Guard: don't overwrite 'cancelled' status set by blueprintService.cancel()
@@ -305,6 +327,7 @@ export class BlueprintPlanService extends EventEmitter {
         error: errorMsg,
         ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
+      settled = true
     } finally {
       cleanupAskUser?.()
       if (session) {

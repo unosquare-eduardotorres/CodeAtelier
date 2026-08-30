@@ -127,6 +127,9 @@ export class BlueprintVerifyService extends EventEmitter {
     } | null = null
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
+    // F6 FIX: set when the first terminal event is emitted — a late/re-fired
+    // catch must not produce a duplicate phaseComplete or re-fail the pipeline.
+    let settled = false
 
     // VERIFY runs in whatever tree BUILD wrote into — resolved, never created,
     // because BUILD owns creation and a VERIFY re-run long after the fact should
@@ -694,6 +697,7 @@ export class BlueprintVerifyService extends EventEmitter {
           remediationTriggered: true,
           completion: completion ? { ...completion, _remediationTriggered: true } : undefined
         } satisfies BlueprintPhaseCompletePayload)
+        settled = true
       } else {
         // 10. Determine final blueprint status (no remediation)
         // BP-03: Only explicit 'passed' or 'human_needed' → complete.
@@ -739,6 +743,7 @@ export class BlueprintVerifyService extends EventEmitter {
             status: 'complete',
             completion
           } satisfies BlueprintPhaseCompletePayload)
+          settled = true
 
           if (verifyPhase) {
             this.safeEmit('phaseArtifact', {
@@ -775,6 +780,7 @@ export class BlueprintVerifyService extends EventEmitter {
             status: verifyPhaseStatus,
             completion
           } satisfies BlueprintPhaseCompletePayload)
+          settled = true
 
           // MEM-BP-COMPLETE-01: Enqueue memory extraction for completed/failed blueprint.
           // Non-blocking — runs after all DB and event work is done.
@@ -792,10 +798,29 @@ export class BlueprintVerifyService extends EventEmitter {
           blueprintId,
           workspaceId,
           phase: 'verify',
-          artifact: { type: 'verify', contentMd: text }
+          // A5: cap for IPC — multi-hundred-KB payloads stall the renderer
+          artifact: capArtifactForIpc({ type: 'verify', contentMd: text })
         } satisfies BlueprintPhaseArtifactPayload)
       }
     } catch (err) {
+      if (settled) {
+        // F6 FIX: the run already settled (phaseComplete emitted) — a late
+        // throw from post-completion work must not re-fail the pipeline or
+        // emit a duplicate terminal event. Guard sits BEFORE the DB writes so
+        // a settled run's status is never overwritten (same as review services).
+        bpLog.warn(`[startVerifyPhase] Post-settlement throw ignored:`, err)
+        // F3 FIX: still surface it to the human — a swallowed post-completion
+        // failure would otherwise look like a silent stall.
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          text: `⚠️ Post-completion error (phase already settled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
+        return
+      }
       bpLog.error(`[startVerifyPhase] VERIFY phase failed:`, err)
 
       // Guard: don't overwrite 'cancelled' status
@@ -842,6 +867,7 @@ export class BlueprintVerifyService extends EventEmitter {
         error: errorMsg,
         ...(autoRetrying ? { autoRetry: true } : {})
       } satisfies BlueprintPhaseCompletePayload)
+      settled = true
 
       // MEM-BP-COMPLETE-01: Also extract from failed blueprints — failures are
       // valuable gotcha facts. Skip if auto-retrying (extraction on final outcome only).

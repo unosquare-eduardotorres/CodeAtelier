@@ -94,6 +94,69 @@ export function parsePlanRevisionBlock(text: string): BlueprintPlanRevision | nu
   }
 }
 
+/**
+ * B2 FIX: relaxed parse for YAML-ish tagged-block content.
+ *
+ * The model sometimes emits `phase: "review"` / `status: complete` lines instead
+ * of strict JSON inside the ```blueprint-phase-complete fence (log-confirmed
+ * 2024-08-29, blueprint 718c7487). Converts line-oriented `key: value` pairs to
+ * a JSON-compatible object. Accepts only results carrying both `phase` and
+ * `status` — anything less is not a completion payload.
+ *
+ * Line rules (deliberately conservative):
+ * - `#` comment lines and lines without a `key:` shape are skipped (trailing prose)
+ * - quoted values are unquoted; true/false/null/numbers keep their JSON type
+ * - inline `{...}` / `[...]` values are JSON.parse'd when possible, else kept as strings
+ * - empty values (nested YAML blocks) are skipped — not representable in the flat shape
+ */
+function parseRelaxedKeyValueBlock(source: string): Record<string, unknown> | null {
+  const lines = source
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith('```'))
+  if (lines.length === 0) return null
+
+  const obj: Record<string, unknown> = {}
+  for (const line of lines) {
+    if (line.startsWith('#')) continue
+    const colon = line.indexOf(':')
+    if (colon <= 0) continue // prose / list item — skip
+    const key = line
+      .slice(0, colon)
+      .trim()
+      .replace(/^["']|["']$/g, '')
+    if (!/^[A-Za-z][\w.-]*$/.test(key)) continue
+
+    const rawValue = line.slice(colon + 1).trim()
+    if (rawValue === '') continue // nested block — not representable, skip key
+
+    obj[key] = coerceRelaxedValue(rawValue)
+  }
+
+  return Object.keys(obj).length > 0 ? obj : null
+}
+
+/** Convert a single YAML-ish scalar/inline value to a JSON value. */
+function coerceRelaxedValue(raw: string): unknown {
+  // Quoted string
+  const quoted = raw.match(/^["']([\s\S]*)["']$/)
+  if (quoted) return quoted[1]
+  // JSON literals
+  if (raw === 'true') return true
+  if (raw === 'false') return false
+  if (raw === 'null') return null
+  if (/^-?\d+(?:\.\d+)?$/.test(raw)) return Number(raw)
+  // Inline JSON object/array (tolerate trailing commas)
+  if (raw.startsWith('{') || raw.startsWith('[')) {
+    try {
+      return JSON.parse(raw.replace(/,\s*([}\]])/g, '$1'))
+    } catch {
+      /* fall through to string */
+    }
+  }
+  return raw
+}
+
 export function parsePhaseCompletionBlock(
   text: string,
   expectedPhase?: BlueprintPhaseType
@@ -109,9 +172,30 @@ export function parsePhaseCompletionBlock(
     // Look for ```blueprint-phase-complete ... ``` tagged block
     const match = text.match(/```blueprint-phase-complete\s*\n([\s\S]*?)\n```/)
     if (match?.[1]) {
-      const parsed = JSON.parse(match[1])
-      if (parsed.phase && parsed.status) {
+      // B1 FIX: inner try/catch — a JSON.parse throw here used to escape the
+      // OUTER try and skip BOTH fallbacks below, landing in the catch with
+      // `recommendation: unknown` even though the phase succeeded.
+      let parsed: unknown = null
+      try {
+        parsed = JSON.parse(match[1])
+      } catch {
+        parsed = null
+      }
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        (parsed as Record<string, unknown>).phase &&
+        (parsed as Record<string, unknown>).status
+      ) {
         return parsed as BlueprintPhaseCompletion
+      }
+
+      // B2 FIX: relaxed parse of YAML-ish `key: "value"` content inside the
+      // tagged block — strict JSON failed, but the payload is recoverable.
+      const relaxed = parseRelaxedKeyValueBlock(match[1])
+      if (relaxed?.phase && relaxed?.status) {
+        bpLog.info('[parsePhaseCompletionBlock] Recovered completion via relaxed key:value parse')
+        return relaxed as unknown as BlueprintPhaseCompletion
       }
     }
 

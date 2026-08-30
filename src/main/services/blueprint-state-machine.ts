@@ -98,6 +98,29 @@ const IDEMPOTENT_AWAITING_INPUT_STATES: BlueprintMachineState[] = [
   'awaiting-clarify-questions'
 ]
 
+/**
+ * C2 FIX: late terminal events that are ABSORBED (accepted-and-ignored) in
+ * non-running states. Phase services fire terminal events from catch/finally
+ * blocks that can race the legitimate terminal path:
+ *
+ * - `awaiting-approval` + `phaseComplete`: review deliberately ends at the
+ *   approval gate (SM already transitioned via approvalNeeded); the finally
+ *   block's markPipelineStopped → phaseComplete arrives late. A normal race,
+ *   not an error.
+ * - `cancelled` + (`phaseComplete` | `fail`): cancel won the race; the phase
+ *   service's catch/finally still fire their terminal events afterward.
+ * - `failed` + `phaseComplete`: fail won; a late completion is expected.
+ *
+ * Absorbing keeps the winning state intact (no stateChange emitted) while
+ * returning true so callers don't treat the race as a failure.
+ */
+const ABSORBED_LATE_TERMINAL: Partial<Record<BlueprintMachineState, BlueprintMachineTransition[]>> =
+  {
+    'awaiting-approval': ['phaseComplete'],
+    cancelled: ['phaseComplete', 'fail'],
+    failed: ['phaseComplete']
+  }
+
 // ── State Change Payload ──
 
 export interface BlueprintStateChangePayload {
@@ -160,6 +183,15 @@ export class BlueprintStateMachine extends EventEmitter {
     // a no-op (no transition, no stateChange emit).
     if (event === 'awaitingInput' && IDEMPOTENT_AWAITING_INPUT_STATES.includes(this.state)) {
       smLog.info(`[SM:${this.workspaceId}] awaitingInput already in ${this.state} — no-op`)
+      return true
+    }
+
+    // C2 FIX: absorb late terminal events in non-running states — the winning
+    // terminal/gate state stays intact; the late event is a known race, not an error.
+    if (ABSORBED_LATE_TERMINAL[this.state]?.includes(event)) {
+      smLog.info(
+        `[SM:${this.workspaceId}] Absorbed late terminal ${event} in ${this.state} — no-op`
+      )
       return true
     }
 

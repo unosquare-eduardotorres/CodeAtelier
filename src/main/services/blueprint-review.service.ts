@@ -73,6 +73,12 @@ export class BlueprintReviewService extends EventEmitter {
     let cleanupAskUser: (() => void) | undefined
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
     let syntheticConvId: string | undefined
+    // C1 FIX: set when the phase legitimately ends at a gate (approvalNeeded) —
+    // the finally block must not fire a second terminal transition over it.
+    let endedAtGate = false
+    // C3 FIX: set when the first terminal event is emitted — a late/re-fired
+    // catch must not produce a duplicate phaseComplete or re-fail the pipeline.
+    let settled = false
 
     try {
       // 1. Pipeline + DB state
@@ -194,6 +200,18 @@ export class BlueprintReviewService extends EventEmitter {
       const text = session.getStreamedContent(syntheticConvId)
       const completion = parsePhaseCompletionBlock(text, 'review') ?? undefined
 
+      // B3 FIX: surface parse degradation to the human, not just the log.
+      // The approval gate still renders reviewMarkdown, so the review is
+      // visible — this makes the missing structured summary explicit.
+      if (!completion && text.length > 200) {
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'review',
+          text: '⚠️ Review completed but the structured summary could not be parsed — showing raw review text.'
+        })
+      }
+
       // 8. Save phase artifact
       if (reviewPhase) {
         blueprintPhaseRepository.appendArtifact(reviewPhase.id, {
@@ -224,6 +242,7 @@ export class BlueprintReviewService extends EventEmitter {
       )
 
       // 9. Emit phaseComplete
+      settled = true
       this.safeEmit('phaseComplete', {
         blueprintId,
         workspaceId,
@@ -271,6 +290,7 @@ export class BlueprintReviewService extends EventEmitter {
       // Drive state machine: phase-running → awaiting-approval
       const machine = blueprintService.getMachine(workspaceId)
       machine.transition('approvalNeeded')
+      endedAtGate = true
 
       const planSummary = this.buildApprovalSummary(completion ?? null)
       // M2: Track approval state for snapshot sync
@@ -300,6 +320,24 @@ export class BlueprintReviewService extends EventEmitter {
 
       // NOTE: Does NOT advance to BUILD. That happens in BLUEPRINT_APPROVAL_RESPOND handler.
     } catch (err) {
+      if (settled) {
+        // C3 FIX: the run already settled (phaseComplete + gate emitted) — a late
+        // throw from post-completion work must not re-fail the pipeline or emit
+        // a duplicate terminal event.
+        bpLog.warn(`[startReviewPhase] Post-settlement throw ignored:`, err)
+        // F3 FIX: still surface it to the human — a swallowed handoff failure
+        // (e.g. advance-to-BUILD dispatch) would otherwise look like a silent stall.
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'review',
+          text: `⚠️ Post-completion error (phase already settled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
+        return
+      }
+      settled = true
       bpLog.error(`[startReviewPhase] REVIEW phase failed:`, err)
 
       // Guard: don't overwrite 'cancelled' status
@@ -353,7 +391,12 @@ export class BlueprintReviewService extends EventEmitter {
         if (onStatus) session.removeListener('statusUpdate', onStatus)
         await session.stop()
       }
-      blueprintService.markPipelineStopped(workspaceId)
+      // C1 FIX: keepGate — the SM is already at awaiting-approval; the pipeline
+      // fields still clear + snapshot still publishes, but no phaseComplete fires.
+      blueprintService.markPipelineStopped(
+        workspaceId,
+        endedAtGate ? { keepGate: true } : undefined
+      )
     }
   }
 

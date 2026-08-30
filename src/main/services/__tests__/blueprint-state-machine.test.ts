@@ -622,3 +622,86 @@ describe('BlueprintStateMachine', () => {
     assert.equal(sm1.blueprintId, 'bp-1')
   })
 })
+
+// ── C2 FIX: late terminal events are absorbed in non-running states ──
+
+describe('BlueprintStateMachine — late terminal event absorption', () => {
+  // Regression origin (log-confirmed 22:17:10): review ends at the approval
+  // gate, then the finally block's markPipelineStopped → phaseComplete fires
+  // 12ms later → `Invalid transition: awaiting-approval + phaseComplete`.
+
+  test('awaiting-approval + phaseComplete → absorbed, state unchanged', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'review' })
+    sm.transition('approvalNeeded')
+    assert.equal(sm.currentState, 'awaiting-approval')
+
+    const result = sm.transition('phaseComplete')
+    assert.equal(result, true, 'late completion after the gate is a race, not an error')
+    assert.equal(sm.currentState, 'awaiting-approval', 'gate state stays intact')
+
+    // The gate still works afterward
+    assert.equal(sm.transition('approvalResponded'), true)
+    assert.equal(sm.currentState, 'idle')
+  })
+
+  test('cancelled + phaseComplete → absorbed, stays cancelled', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'build' })
+    sm.transition('cancel')
+    assert.equal(sm.currentState, 'cancelled')
+
+    assert.equal(sm.transition('phaseComplete'), true)
+    assert.equal(sm.currentState, 'cancelled')
+  })
+
+  test('cancelled + fail → absorbed, stays cancelled', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'build' })
+    sm.transition('cancel')
+
+    assert.equal(sm.transition('fail'), true)
+    assert.equal(sm.currentState, 'cancelled', 'cancel won — late fail must not flip to failed')
+  })
+
+  test('failed + phaseComplete → absorbed, stays failed', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'verify' })
+    sm.transition('fail')
+
+    assert.equal(sm.transition('phaseComplete'), true)
+    assert.equal(sm.currentState, 'failed')
+  })
+
+  test('absorbed events emit no stateChange', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'review' })
+    sm.transition('approvalNeeded')
+
+    let changes = 0
+    sm.on('stateChange', () => changes++)
+    sm.transition('phaseComplete') // absorbed
+    assert.equal(changes, 0, 'absorption is a no-op — no stateChange emitted')
+  })
+
+  test('genuine invalid transitions still return false', () => {
+    const sm = make()
+    // idle + questionsParsed is genuinely invalid
+    assert.equal(sm.transition('questionsParsed'), false)
+
+    // awaiting-approval + answerReceived is genuinely invalid
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'review' })
+    sm.transition('approvalNeeded')
+    assert.equal(sm.transition('answerReceived'), false)
+    assert.equal(sm.currentState, 'awaiting-approval')
+  })
+
+  test('cancelled + approvalNeeded is NOT absorbed (genuinely invalid)', () => {
+    const sm = make()
+    sm.transition('startPhase', { blueprintId: 'bp-1', phase: 'review' })
+    sm.transition('cancel')
+    // approvalNeeded from cancelled is not in the absorption table
+    assert.equal(sm.transition('approvalNeeded'), false)
+    assert.equal(sm.currentState, 'cancelled')
+  })
+})

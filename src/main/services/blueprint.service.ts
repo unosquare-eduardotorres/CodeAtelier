@@ -492,8 +492,17 @@ export class BlueprintService extends EventEmitter {
     }
   }
 
-  /** Mark a pipeline as stopped for a workspace. Called by phase services. */
-  markPipelineStopped(workspaceId: string): void {
+  /**
+   * Mark a pipeline as stopped for a workspace. Called by phase services.
+   *
+   * C1 FIX: `keepGate: true` suppresses only the machine.transition('phaseComplete')
+   * call — for phases that legitimately end at a gate (review → awaiting-approval,
+   * clarify → awaiting-clarify-*). The pipeline state fields are still cleared and
+   * the snapshot still publishes running=false; the SM simply stays in its
+   * awaiting state instead of being yanked through an invalid transition by the
+   * finally block.
+   */
+  markPipelineStopped(workspaceId: string, opts?: { keepGate?: boolean }): void {
     // COHERENT-SNAPSHOT-FIX: Mutate pipeline state BEFORE machine.transition()
     // so the snapshot published by the stateChange listener already sees
     // running=false. Previously state was mutated after, causing the snapshot
@@ -508,6 +517,7 @@ export class BlueprintService extends EventEmitter {
       state.waveState = null
       state.runningTasks = null
     }
+    if (opts?.keepGate) return // SM stays in its awaiting state — gate owns the next transition
     const machine = this.getMachine(workspaceId)
     // phaseComplete is idempotent when idle — safe to call multiple times.
     machine.transition('phaseComplete')
@@ -838,6 +848,15 @@ export class BlueprintService extends EventEmitter {
     this.clearAutoRetryState(state.blueprintId!)
     state.blueprintId = null
     state.currentPhase = null
+
+    // COHERENT-SNAPSHOT-FIX (cancel): the snapshot published by the cancel
+    // transition fires BEFORE the pipeline fields above are cleared, so the
+    // last broadcast still carries running:true + the stale blueprintId/
+    // currentPhase. A renderer that misses that transient (e.g. webContents
+    // reload at cancel time — log-confirmed 2026-08-29 23:09) keeps showing
+    // the Stop button and every subsequent press no-ops. Publish a final,
+    // fully-coherent snapshot so any connected client converges on cancelled.
+    this.publishSnapshot(workspaceId)
   }
 
   /**

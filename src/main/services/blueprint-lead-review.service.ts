@@ -43,7 +43,7 @@ import { BlueprintLeadReviewAdapter } from './role-adapters/blueprint/blueprint-
 import { buildLeadReviewPassGoalCondition } from './blueprint-goal-conditions'
 import { parseLeadReview } from '../../shared/blueprint-artifact-parsers'
 import type { LeadReviewResult, ReviewFinding } from '../../shared/task-review-types'
-import { blueprintService } from './blueprint.service'
+import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository,
@@ -101,6 +101,9 @@ export class BlueprintLeadReviewService extends EventEmitter {
     let syntheticConvId: string | undefined
     // Set when a successor (fix-wave build) took over the pipeline lock.
     let lockHandedOff = false
+    // F6 FIX: set when the first terminal event is emitted — a late/re-fired
+    // catch must not produce a duplicate phaseComplete or re-complete the blueprint.
+    let settled = false
 
     try {
       // 1. Pipeline + DB state. The blueprint stays in 'verifying' status —
@@ -128,7 +131,9 @@ export class BlueprintLeadReviewService extends EventEmitter {
           rejected: [],
           note: 'diff unavailable — pass not performed'
         })
-        this.completeBlueprint(blueprintId, workspaceId, workspacePath)
+        this.completeBlueprint(blueprintId, workspaceId, workspacePath, () => {
+          settled = true
+        })
         return
       }
 
@@ -251,14 +256,15 @@ export class BlueprintLeadReviewService extends EventEmitter {
         blueprintId,
         workspaceId,
         phase: 'verify',
-        artifact: {
+        // A5: cap for IPC — multi-hundred-KB payloads stall the renderer
+        artifact: capArtifactForIpc({
           type: 'lead-review-pass',
           contentJson: {
             findings: review.findings,
             verdict: review.verdict,
             rejected: review.rejected
           }
-        }
+        })
       } satisfies BlueprintPhaseArtifactPayload)
 
       // 11. Findings → fix tasks (one wave), then build re-enters verify which
@@ -276,8 +282,27 @@ export class BlueprintLeadReviewService extends EventEmitter {
       }
 
       // 12. No fix wave (approved, or round bound reached) → complete.
-      this.completeBlueprint(blueprintId, workspaceId, workspacePath)
+      this.completeBlueprint(blueprintId, workspaceId, workspacePath, () => {
+        settled = true
+      })
     } catch (err) {
+      if (settled) {
+        // F6 FIX: the pass already settled (terminal phaseComplete emitted) —
+        // a late throw from post-completion work must not re-complete the
+        // blueprint or emit a duplicate terminal event.
+        bpLog.warn(`[startLeadReviewPass] Post-settlement throw ignored:`, err)
+        // F3 FIX: still surface it to the human — a swallowed post-completion
+        // failure would otherwise look like a silent stall.
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          text: `⚠️ Post-completion error (phase already settled): ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        })
+        return
+      }
       bpLog.error(`[startLeadReviewPass] Lead-review pass failed:`, err)
 
       const currentStatus = blueprintRepository.findById(blueprintId)?.status
@@ -301,7 +326,9 @@ export class BlueprintLeadReviewService extends EventEmitter {
           rejected: [],
           note: `pass failed: ${errorMsg.slice(0, 300)}`
         })
-        this.completeBlueprint(blueprintId, workspaceId, workspacePath)
+        this.completeBlueprint(blueprintId, workspaceId, workspacePath, () => {
+          settled = true
+        })
       }
     } finally {
       cleanupAskUser?.()
@@ -481,7 +508,10 @@ export class BlueprintLeadReviewService extends EventEmitter {
   private completeBlueprint(
     blueprintId: string,
     workspaceId: string,
-    workspacePath: string
+    workspacePath: string,
+    // F6 FIX: invoked immediately after the terminal emit so the caller's
+    // settled flag flips even if later work here throws.
+    onSettled?: () => void
   ): void {
     const currentStatus = blueprintRepository.findById(blueprintId)?.status
     if (currentStatus === 'cancelled') return
@@ -500,6 +530,7 @@ export class BlueprintLeadReviewService extends EventEmitter {
         leadReviewPass: true
       }
     } satisfies BlueprintPhaseCompletePayload)
+    onSettled?.()
 
     // MEM-BP-COMPLETE-01 parity: enqueue memory extraction (the verify service
     // skipped its own when it dispatched this pass).
