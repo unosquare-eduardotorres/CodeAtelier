@@ -749,7 +749,8 @@ export class OpenCodeExecutor {
     chunk: StreamChunk,
     retryCount: number,
     sessionId: string,
-    promptBody: SessionPromptData['body']
+    promptBody: SessionPromptData['body'],
+    directory?: string
   ): AsyncGenerator<StreamChunk, number> {
     const retry = this.computeTransientRetry(retryCount, chunk.error!)
     if (!retry) {
@@ -773,7 +774,7 @@ export class OpenCodeExecutor {
     } finally {
       this.retriesInFlight--
     }
-    this.resendPrompt(sessionId, promptBody)
+    this.resendPrompt(sessionId, promptBody, directory)
 
     yield {
       type: 'session_recovery',
@@ -796,6 +797,8 @@ export class OpenCodeExecutor {
     maxTurns: number
     abortController?: AbortController
     noActivityTimeoutMs?: number
+    /** BP-WORKTREE-CWD: per-session directory, forwarded on transient retries. */
+    directory?: string
   }): AsyncGenerator<StreamChunk, { resultText: string; maxTurnsReached: boolean }> {
     const { events, openCodeSessionId, promptBody, tokenUsage, maxTurns, abortController } = params
     let resultText = ''
@@ -854,7 +857,8 @@ export class OpenCodeExecutor {
               chunk,
               transientRetryCount,
               openCodeSessionId,
-              promptBody
+              promptBody,
+              params.directory
             )
             let retryResult = await retryGen.next()
             while (!retryResult.done) {
@@ -1010,11 +1014,14 @@ export class OpenCodeExecutor {
       // Events arrive via SSE (event.subscribe). The synchronous session.prompt()
       // blocks until the full AI response completes, which holds an HTTP connection
       // open for the entire agent loop — wrong pattern for streaming.
+      // BP-WORKTREE-CWD: the directory query param scopes this prompt (and its
+      // tool calls) to the session's worktree when the caller passed one.
       let promptSendError: Error | null = null
       this.client.session
         .promptAsync({
           path: { id: openCodeSessionId },
-          body: promptBody
+          body: promptBody,
+          ...(options.cwd ? { query: { directory: options.cwd } } : {})
         })
         .then((response) => {
           // OC-07: Check the error field — HTTP 4xx/5xx errors land here.
@@ -1058,7 +1065,8 @@ export class OpenCodeExecutor {
           promptBody,
           tokenUsage,
           maxTurns: options.maxTurns ?? 0,
-          abortController
+          abortController,
+          directory: options.cwd
         })
         let streamResult = await streamGen.next()
         while (!streamResult.done) {
@@ -1382,7 +1390,9 @@ Troubleshooting:
    */
   async primeSession(
     sessionId: string,
-    contextParts: Array<{ type: 'text'; text: string }>
+    contextParts: Array<{ type: 'text'; text: string }>,
+    /** BP-WORKTREE-CWD: per-session directory — keeps priming in the same tree. */
+    directory?: string
   ): Promise<void> {
     if (!this.client || !contextParts.length) return
 
@@ -1402,7 +1412,8 @@ Troubleshooting:
         body: {
           parts: contextParts,
           noReply: true
-        }
+        },
+        ...(directory ? { query: { directory } } : {})
       })
       return 'done' as const
     })()
@@ -1792,11 +1803,13 @@ Troubleshooting:
 
   /**
    * Re-send a prompt to the OpenCode session (fire-and-forget for retries).
+   * BP-WORKTREE-CWD: carries the same per-session directory as the original send.
    */
-  private resendPrompt(sessionId: string, promptBody: SessionPromptData['body']): void {
+  private resendPrompt(sessionId: string, promptBody: SessionPromptData['body'], directory?: string): void {
     this.client!.session.promptAsync({
       path: { id: sessionId },
-      body: promptBody
+      body: promptBody,
+      ...(directory ? { query: { directory } } : {})
     }).catch((err) => {
       openCodeLog.error('[opencode] Retry prompt error:', err)
     })
@@ -1805,9 +1818,18 @@ Troubleshooting:
   /**
    * Get or create an OpenCode session for the given options.
    * Handles session reuse for multi-turn conversations and priming.
+   *
+   * BP-WORKTREE-CWD: `options.cwd` is passed as the per-session `directory`
+   * query param. The OpenCode server supports multi-project sessions — a
+   * session created with `directory: <worktree>` resolves relative file paths
+   * and runs its tools there, while the server itself (and its config, MCP
+   * servers, provider credentials) stays rooted in the workspace. Without
+   * this, blueprint BUILD sessions wrote into the user's primary checkout
+   * while verification checked the worktree (live evidence: blueprint 718c,
+   * T003's commit landed on the workspace branch, not the blueprint branch).
    */
   private async getOrCreateSession(options: OpenCodeExecuteOptions): Promise<string | undefined> {
-    const { conversationId, provider } = options
+    const { conversationId, provider, cwd } = options
     let sessionId: string | undefined
 
     if (conversationId) {
@@ -1816,7 +1838,8 @@ Troubleshooting:
 
     if (!sessionId) {
       const session = await this.client!.session.create({
-        body: { title: `Code Atelier: ${new Date().toISOString()}` }
+        body: { title: `Code Atelier: ${new Date().toISOString()}` },
+        ...(cwd ? { query: { directory: cwd } } : {})
       })
       sessionId = session.data?.id
       if (!sessionId) {
@@ -1833,12 +1856,13 @@ Troubleshooting:
       }
 
       openCodeLog.info(
-        `[opencode] Session ${sessionId} created — provider=${provider.providerId}/${provider.modelId}`
+        `[opencode] Session ${sessionId} created — provider=${provider.providerId}/${provider.modelId}` +
+          (cwd && cwd !== this.lastCwd ? ` directory=${cwd}` : '')
       )
 
       // A-1: Prime the session with workspace context before the first real prompt
       if (options.primingContext && options.primingContext.length > 0) {
-        await this.primeSession(sessionId, options.primingContext)
+        await this.primeSession(sessionId, options.primingContext, cwd)
       }
     } else {
       openCodeLog.info(`[opencode] Reusing session ${sessionId} for conversation=${conversationId}`)
