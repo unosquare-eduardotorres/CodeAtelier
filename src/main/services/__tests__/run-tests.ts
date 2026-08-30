@@ -282,6 +282,8 @@ const TEST_FILES: string[] = [
   './blueprint-state-machine.test',
   // ─── v1.0.90 self-kill fix + hardening batch ───
   './opencode-kill-stale-server.test',
+  // ─── WAVE-RACE FIX: refcounted server lifecycle (parallel wave tasks) ───
+  './opencode-server-lifecycle.test',
   './blueprint-clarify-api-error.test',
   // ─── Blueprint Pipeline Stall Fix + Chunk Forwarder ───
   './blueprint-recovery-gating.test',
@@ -701,6 +703,8 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
   // ─── Build Now kickoff must not re-trigger the build → plan auto-switch ───
   '../../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
+  // ─── WAVE-RACE FIX: Retry screen humanizes persisted task failure reasons ───
+  '../../../renderer/src/utils/__tests__/task-failure-display.test',
   // ─── F5: no segment split trigger fires inside a fenced code block ───
   '../../../renderer/src/utils/__tests__/stream-segment-accumulator-fence.test',
   // ─── F10: grill transform strips orphaned block closers ───

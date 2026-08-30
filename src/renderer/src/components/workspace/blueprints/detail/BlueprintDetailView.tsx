@@ -37,7 +37,11 @@ import { PhaseJourney } from './PhaseJourney'
 import { OutcomeSummary } from './OutcomeSummary'
 import { BlueprintHandoffCard } from './BlueprintHandoffCard'
 import { getOutcomeStats, formatDuration } from './phase-summaries'
-import { findArtifact } from '../deliverables/artifact-helpers'
+import { findArtifact, findAllArtifacts } from '../deliverables/artifact-helpers'
+import {
+  deriveTaskFailureDisplay,
+  capTaskList
+} from '@renderer/utils/task-failure-display'
 import { BlueprintAttachments } from './BlueprintAttachments'
 import { extractReferenceDocs, readBlueprintBranchName } from './reference-docs'
 import { DraftPanel } from './DraftPanel'
@@ -390,41 +394,106 @@ export function BlueprintDetailView({
             }
           }
 
+          // WAVE-RACE FIX: surface the persisted per-task failure reasons. The
+          // banner above only shows the ephemeral lastError (null after reload);
+          // the real reasons live in blueprint_tasks.failure_reason and the
+          // build phase's verification-failure artifacts — both already in props.
+          const failedTaskList =
+            failedPhase?.phase === 'build'
+              ? capTaskList(
+                  (bp.tasks ?? []).filter((t) => t.status === 'failed'),
+                  5
+                )
+              : null
+          const verifyFailArts = failedPhase
+            ? findAllArtifacts(failedPhase.artifactsJson, 'verification-failure')
+            : []
+          const artifactForTask = (taskId: string): string | null => {
+            const art = verifyFailArts.find((a) =>
+              a.contentMd?.startsWith(`## Task ${taskId} `)
+            )
+            return art?.contentMd ?? null
+          }
+
           return failedPhase ? (
-            <div
-              className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${
-                failureContext?.isGaps
-                  ? 'border-warning/20 bg-warning/5 text-warning'
-                  : 'border-danger/20 bg-danger-muted text-danger'
-              }`}
-            >
-              {failureContext?.isGaps ? (
-                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-              ) : (
-                <XCircle size={16} className="mt-0.5 flex-shrink-0" />
-              )}
-              <div className="flex flex-col gap-0.5 flex-1">
-                <span className="text-sm font-medium">
-                  {failureContext?.title ??
-                    `${failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed`}
-                </span>
-                <span className="text-xs opacity-80">
-                  {failureContext?.description ??
-                    errorMsg ??
-                    'An error occurred during this phase. Retry to try again.'}
-                </span>
-              </div>
-              <button
-                onClick={onRetryPhase}
-                className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
+            <div className="flex flex-col gap-2" key="failed-banner">
+              <div
+                className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${
                   failureContext?.isGaps
-                    ? 'bg-warning hover:bg-warning/80'
-                    : 'bg-danger hover:bg-danger/80'
+                    ? 'border-warning/20 bg-warning/5 text-warning'
+                    : 'border-danger/20 bg-danger-muted text-danger'
                 }`}
               >
-                <RotateCcw size={12} />
-                {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
-              </button>
+                {failureContext?.isGaps ? (
+                  <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+                ) : (
+                  <XCircle size={16} className="mt-0.5 flex-shrink-0" />
+                )}
+                <div className="flex flex-col gap-0.5 flex-1">
+                  <span className="text-sm font-medium">
+                    {failureContext?.title ??
+                      `${failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed`}
+                  </span>
+                  <span className="text-xs opacity-80">
+                    {failureContext?.description ??
+                      errorMsg ??
+                      'An error occurred during this phase. Retry to try again.'}
+                  </span>
+                </div>
+                <button
+                  onClick={onRetryPhase}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
+                    failureContext?.isGaps
+                      ? 'bg-warning hover:bg-warning/80'
+                      : 'bg-danger hover:bg-danger/80'
+                  }`}
+                >
+                  <RotateCcw size={12} />
+                  {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
+                </button>
+              </div>
+              {failedTaskList && failedTaskList.shown.length > 0 && (
+                <div className="px-4 py-3 rounded-xl border border-danger/20 bg-danger-muted/40 text-danger">
+                  <div className="text-xs font-medium mb-2">
+                    {failedTaskList.shown.length + failedTaskList.hiddenCount} task
+                    {failedTaskList.shown.length + failedTaskList.hiddenCount === 1 ? '' : 's'}{' '}
+                    failed — persisted reasons:
+                  </div>
+                  <ul className="flex flex-col gap-2">
+                    {failedTaskList.shown.map((t) => {
+                      const disp = deriveTaskFailureDisplay(t, artifactForTask(t.taskId))
+                      return (
+                        <li key={t.taskId} className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-mono font-semibold">{disp.title}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-danger/15 border border-danger/25">
+                              {disp.attempts} attempt{disp.attempts === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                          <span className="text-xs opacity-80">{disp.hint}</span>
+                          {disp.missingFiles.length > 0 && (
+                            <span className="text-[11px] opacity-60 font-mono">
+                              missing: {disp.missingFiles.join(', ')}
+                              {(() => {
+                                const total = (t.filePathsJson ?? []).length
+                                return disp.missingFiles.length >= 3 && total > 3
+                                  ? ` (+${total - disp.missingFiles.length} more)`
+                                  : ''
+                              })()}
+                            </span>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                  {failedTaskList.hiddenCount > 0 && (
+                    <div className="text-[11px] opacity-60 mt-2">
+                      +{failedTaskList.hiddenCount} more failed task
+                      {failedTaskList.hiddenCount === 1 ? '' : 's'}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : null
         })()}
