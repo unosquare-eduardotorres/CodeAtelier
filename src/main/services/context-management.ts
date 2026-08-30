@@ -103,6 +103,39 @@ export const TIER_LIMITS: Record<ContextWindowTier, ContextTierLimits> = {
   }
 } as const
 
+/**
+ * Multiplier applied to the tier's maxTurns when the session is goal-conditioned
+ * (blueprint BUILD tasks, MPA phases, chat /goal).
+ *
+ * Live debugging of blueprint 718c (GLM 5.3, medium tier → maxTurnsBuild 25)
+ * showed the failure mode these limits create for verified, retried work: the
+ * model spends its turn budget reading the repo (25 read-only tool calls), the
+ * executor aborts at maxTurns, and the task fails verification with "planned
+ * files missing" — the model never got to the writing phase. Interactive chat
+ * keeps the tight budget (a human is waiting); goal-conditioned sessions are
+ * machine-verified and retried, so they get room to finish. The runaway-loop
+ * guard is the circuit breaker (AgentCircuitBreaker), not this cap.
+ */
+export const GOAL_CONDITION_MAX_TURNS_MULTIPLIER = 4
+
+/**
+ * Resolve the maxTurns cap for an OpenCode session.
+ *
+ * `hasGoalCondition` exempts verified/retried pipeline sessions (blueprint
+ * BUILD, MPA) from the interactive-chat turn budget — see
+ * GOAL_CONDITION_MAX_TURNS_MULTIPLIER. The CLI backend is unaffected: it runs
+ * with SESSION_CONSTANTS.CLI_MAX_TURNS and enforces completion via /goal.
+ */
+export function resolveMaxTurns(params: {
+  contextWindow: number
+  isBuildMode: boolean
+  hasGoalCondition?: boolean
+}): number {
+  const limits = TIER_LIMITS[resolveContextTier(params.contextWindow)]
+  const base = params.isBuildMode ? limits.maxTurnsBuild : limits.maxTurnsPlan
+  return params.hasGoalCondition ? base * GOAL_CONDITION_MAX_TURNS_MULTIPLIER : base
+}
+
 // ── Context Management Config ────────────────────────────────────────
 
 /**

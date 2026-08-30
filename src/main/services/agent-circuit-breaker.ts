@@ -128,16 +128,20 @@ export class AgentCircuitBreaker {
       return { broken: false, shouldTerminate: true }
     }
 
-    // Soft warning at 5 tool calls — approaching prompt-stated target
+    // Soft breadcrumbs at 5/8 tool calls in build mode. These are diagnostics
+    // only — no prompt states a 5–8 budget (the chat Mode Section says "start
+    // wrapping up around 15", and blueprint BUILD prompts state none), and the
+    // real ceilings are the tier-aware limits below plus the executor's
+    // maxTurns. Kept because the counts correlate with the aimless-exploration
+    // pattern they were added to surface.
     if (this._toolCallCount === 5 && opts.isBuildMode) {
       this.log.warn(
-        `[PIPELINE:tool-limit-warning] conversationId=${opts.conversationId} — 5 tool calls reached, approaching limit`
+        `[PIPELINE:tool-limit-warning] conversationId=${opts.conversationId} — 5 tool calls, no writes yet (diagnostic; no prompt limit imposed)`
       )
     }
-    // Hard limit warning at 8 — prompt-stated HARD LIMIT exceeded
     if (this._toolCallCount === 8 && opts.isBuildMode) {
       this.log.warn(
-        `[PIPELINE:tool-limit-reached] conversationId=${opts.conversationId} — 8 tool calls, prompt hard limit exceeded`
+        `[PIPELINE:tool-limit-reached] conversationId=${opts.conversationId} — 8 tool calls, still no writes (diagnostic; no prompt limit imposed)`
       )
     }
 

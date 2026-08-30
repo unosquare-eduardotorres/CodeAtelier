@@ -39,7 +39,7 @@ import type { StreamChunk } from './agent-base.service'
 import type { ExecutorResult } from './executor-types'
 import { CLIExecutor } from './cli-executor'
 import type { CLIExecuteOptions, CLIExecuteResult } from './cli-executor'
-import { resolveContextTier, TIER_LIMITS } from './context-management'
+import { resolveContextTier, resolveMaxTurns } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { auditContextBudget, estimateToolCount } from './context-budget-auditor'
 import { authProvider } from './auth-provider'
@@ -2091,7 +2091,9 @@ export class AgentSessionService extends AgentBaseService {
             systemPrompt: ocSystemPrompt,
             isBuildMode,
             abortController,
-            mcpResult
+            mcpResult,
+            // BP-BUILD-TURN-BUDGET: goal-conditioned sessions get the raised cap.
+            hasGoalCondition: goalForStream
           })
           break
         }
@@ -2459,6 +2461,8 @@ export class AgentSessionService extends AgentBaseService {
     isBuildMode: boolean
     abortController: AbortController
     mcpResult: AdapterMcpResult
+    /** CB-GOAL-01 / BP-BUILD-TURN-BUDGET: goal-conditioned sessions get a raised maxTurns cap. */
+    hasGoalCondition?: boolean
   }): AsyncGenerator<StreamChunk> {
     const { prompt, images, isBuildMode, abortController } = params
 
@@ -2547,20 +2551,40 @@ export class AgentSessionService extends AgentBaseService {
 
     // MAXTURNS-HARDCODED-01: Use tier-appropriate maxTurns for local LLMs.
     // Use the async resolver so user overrides and backend API queries take effect.
+    // BP-BUILD-TURN-BUDGET: goal-conditioned sessions (blueprint BUILD tasks, MPA
+    // phases, chat /goal) are machine-verified and retried — they get a raised
+    // cap so the model can finish writing after its reading phase. Interactive
+    // chat keeps the tight budget (a human is waiting on the turn).
     const maxTurns = await (async () => {
       const { contextWindow } = await this.resolveLocalContextWindowAsync()
-      const tier = resolveContextTier(contextWindow)
-      const limits = TIER_LIMITS[tier]
-      return isBuildMode ? limits.maxTurnsBuild : limits.maxTurnsPlan
+      return resolveMaxTurns({
+        contextWindow,
+        isBuildMode,
+        hasGoalCondition: params.hasGoalCondition === true
+      })
     })()
 
-    // Execute through OpenCode — pass conversationId for multi-turn session reuse
+    // Execute through OpenCode — pass conversationId for multi-turn session reuse.
+    // BP-WORKTREE-CWD: the session's directory is the turn's execution path
+    // (worktree when the conversation/track owner has one), NOT the workspace
+    // root — the CLI backend already spawns with this path
+    // (agent-executor-factory uses resolveExecutionPath for cwd), and the
+    // OpenCode backend must match or its file writes land in the primary
+    // checkout while verification checks the worktree. The server itself stays
+    // rooted in the workspace (config, MCP servers, provider credentials).
+    const executionPath = this.resolveExecutionPath(this.currentConversationId ?? undefined)
+    if (executionPath && executionPath !== this.workspacePath) {
+      this.log.info(
+        `[opencode] Session directory = track execution path: ${executionPath} ` +
+          `(workspace root: ${this.workspacePath})`
+      )
+    }
     for await (const chunk of openCodeExecutor.execute({
       prompt,
       images,
       systemPrompt: params.systemPrompt,
       provider: providerConfig,
-      cwd: this.workspacePath!,
+      cwd: executionPath || this.workspacePath!,
       abortController,
       conversationId: this.currentConversationId ?? undefined,
       maxTurns,

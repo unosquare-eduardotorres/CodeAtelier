@@ -15,6 +15,8 @@ import {
   CLAUDE_ECONOMY_CONTEXT_CONFIG,
   getLocalLlmContextConfig,
   resolveContextTier,
+  resolveMaxTurns,
+  GOAL_CONDITION_MAX_TURNS_MULTIPLIER,
   TIER_LIMITS
 } from '../context-management'
 import { supportsContext1M } from '../../../shared/constants'
@@ -212,6 +214,47 @@ describe('Context Window Tiers', () => {
     assert.equal(CLAUDE_1M_CONTEXT_CONFIG._tierLimits, undefined)
     assert.equal(CLAUDE_ECONOMY_CONTEXT_CONFIG._tier, undefined)
     assert.equal(CLAUDE_ECONOMY_CONTEXT_CONFIG._tierLimits, undefined)
+  })
+})
+
+describe('resolveMaxTurns — goal-condition exemption (BP-BUILD-TURN-BUDGET)', () => {
+  test('interactive chat keeps the tier budget (no goal condition)', () => {
+    // Medium tier (GLM 5.3 fallback 131K) build mode → 25
+    assert.equal(resolveMaxTurns({ contextWindow: 131_072, isBuildMode: true }), 25)
+    assert.equal(resolveMaxTurns({ contextWindow: 131_072, isBuildMode: false }), 15)
+    // Small tier
+    assert.equal(resolveMaxTurns({ contextWindow: 32_768, isBuildMode: true }), 15)
+    // Large tier
+    assert.equal(resolveMaxTurns({ contextWindow: 262_144, isBuildMode: true }), 50)
+  })
+
+  test('goal-conditioned sessions get the raised budget', () => {
+    // Blueprint BUILD on GLM 5.3 (medium tier): 25 → 100 — the model can spend
+    // its reading phase AND still write (live failure: 25 reads, abort, no files).
+    assert.equal(
+      resolveMaxTurns({ contextWindow: 131_072, isBuildMode: true, hasGoalCondition: true }),
+      25 * GOAL_CONDITION_MAX_TURNS_MULTIPLIER
+    )
+    assert.equal(
+      resolveMaxTurns({ contextWindow: 32_768, isBuildMode: true, hasGoalCondition: true }),
+      15 * GOAL_CONDITION_MAX_TURNS_MULTIPLIER
+    )
+    assert.equal(
+      resolveMaxTurns({ contextWindow: 262_144, isBuildMode: true, hasGoalCondition: true }),
+      50 * GOAL_CONDITION_MAX_TURNS_MULTIPLIER
+    )
+  })
+
+  test('plan-mode goal sessions are also raised (blueprint read phases)', () => {
+    assert.equal(
+      resolveMaxTurns({ contextWindow: 131_072, isBuildMode: false, hasGoalCondition: true }),
+      15 * GOAL_CONDITION_MAX_TURNS_MULTIPLIER
+    )
+  })
+
+  test('multiplier is a modest raise, not an unbounded one', () => {
+    assert.ok(GOAL_CONDITION_MAX_TURNS_MULTIPLIER >= 2)
+    assert.ok(GOAL_CONDITION_MAX_TURNS_MULTIPLIER <= 8)
   })
 })
 
