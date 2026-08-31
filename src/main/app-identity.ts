@@ -57,6 +57,16 @@ const DB_FILE = 'code-atelier.db'
 app.setName(app.isPackaged ? PACKAGED_NAME : DEV_NAME)
 
 /**
+ * Debugging switch: run dev under the PACKAGED identity so it can decrypt
+ * credentials the deployed app encrypted (safeStorage keys are per-app-name)
+ * and read the real store. Requires the user to approve a keychain access
+ * prompt the first time (different binary, same keychain entry).
+ */
+if (!app.isPackaged && process.env.DEV_USE_PACKAGED_IDENTITY === '1') {
+  app.setName(PACKAGED_NAME)
+}
+
+/**
  * E2E isolation: when the test fixture points the app at a throwaway store,
  * redirect userData BEFORE anything resolves a path from it. Model-driven E2E
  * (shim or live) creates workspaces/blueprints over IPC — without this they

@@ -1164,16 +1164,28 @@ export function normalizeOpenCodeEvent(
 
   // Filter events for this session — but allow child session events through
   const eventSessionId = properties.sessionID as string | undefined
-  if (eventSessionId && eventSessionId !== sessionId) {
+  // G2: part-level events (message.part.updated / message.part.delta) carry the
+  // owning session NESTED in properties.part.sessionID, not at the properties
+  // top level (live-verified on opencode 1.18.18). Without this, sibling-session
+  // parts on the shared server passed the filter below and normalized as OUR
+  // chunks — faking prompt activity and resetting the executor's stall watches.
+  const effectiveSessionId =
+    type === 'message.part.updated' || type === 'message.part.delta'
+      ? ((properties.part as Record<string, unknown> | undefined)?.sessionID as
+          | string
+          | undefined) ?? eventSessionId
+      : eventSessionId
+  if (effectiveSessionId && effectiveSessionId !== sessionId) {
     // GAP-13: Check if this event belongs to a known child/subagent session
     const isChildSession =
-      state.childSessions.has(sessionId) && state.childSessions.get(sessionId)!.has(eventSessionId)
+      state.childSessions.has(sessionId) &&
+      state.childSessions.get(sessionId)!.has(effectiveSessionId)
 
     if (isChildSession) {
       // Process child session events but tag them as subagent progress
       if (type === 'session.idle' || type === 'session.deleted') {
         return [
-          { type: 'subagent_complete', content: `Subagent session completed: ${eventSessionId}` }
+          { type: 'subagent_complete', content: `Subagent session completed: ${effectiveSessionId}` }
         ]
       }
 
@@ -1188,7 +1200,7 @@ export function normalizeOpenCodeEvent(
               ...chunk,
               type: 'subagent_progress' as const,
               content: chunk.content
-                ? `[subagent:${eventSessionId.slice(0, 8)}] ${chunk.content}`
+                ? `[subagent:${effectiveSessionId.slice(0, 8)}] ${chunk.content}`
                 : chunk.content
             }
           }

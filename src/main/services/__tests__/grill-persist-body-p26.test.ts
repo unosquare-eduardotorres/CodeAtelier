@@ -19,10 +19,23 @@
  */
 import assert from 'node:assert/strict'
 import { describe, test, beforeEach } from './test-harness'
-import { setupFullMock, getMockRepo, createSpy, resetAllMocks } from './setup-full-mock'
+import {
+  setupFullMock,
+  getMockRepo,
+  createSpy,
+  resetAllMocks,
+  evictFromCache
+} from './setup-full-mock'
 import { IPC_CHANNELS } from '../../../shared/constants'
 setupFullMock()
 
+// restoreFullMock()'s cache purge (see setup-full-mock.ts) evicts the
+// mock-bound controller copy cached by earlier full-mock files; an
+// intermediate file can then re-cache it bound to the REAL repositories,
+// and the require below would hand back that copy — getMockRepo() would then
+// configure an object the controller never reads (green standalone, red
+// in-suite). Evict so this require re-binds to the mock installed above.
+evictFromCache('grill-persistence.controller')
 const mod = require('../grill-persistence.controller')
 const { grillPersistenceController: controller } = mod
 const grillRepo = getMockRepo('grillSession')

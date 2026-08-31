@@ -118,7 +118,7 @@ describe('OpenCodeConfigWriter.buildProviderConfig', () => {
     assert.ok(entry, 'should have anthropic entry')
     assert.equal(entry.options.setCacheKey, true)
     assert.equal(entry.options.timeout, 300_000)
-    assert.equal(entry.options.chunkTimeout, 15_000)
+    assert.equal(entry.options.chunkTimeout, 120_000)
     // Built-in provider should NOT have npm
     assert.equal(entry.npm, undefined)
   })

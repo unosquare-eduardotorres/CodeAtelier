@@ -231,13 +231,28 @@ class ModelConfigService {
     const settings = workspaceRepository.getSettingsByPath(workspacePath)
     const endpointMode = (settings?.glmEndpointMode as GlmEndpointMode) ?? 'zai-coding'
     const smallModel = settings?.glmSmallModel as string | undefined
+    const glmApiKey = decryptSettingsKey(
+      settings?.glmApiKey as string | undefined,
+      !!settings?.glmApiKeyEncrypted
+    )
+    // Diagnosis-only warning (no behavior change): an encrypted flag paired with
+    // an undecryptable value almost always means the dev/packaged keychain split —
+    // safeStorage keys material by app name, so a key saved by `npm run dev` is
+    // unreadable in the packaged app (and vice versa). See
+    // docs/verification/glm-verification.md and DEV_USE_PACKAGED_IDENTITY in
+    // src/main/app-identity.ts.
+    if (settings?.glmApiKeyEncrypted && settings?.glmApiKey && !glmApiKey) {
+      console.warn(
+        '[glm] glmApiKeyEncrypted is set but decryption returned an empty key — ' +
+          'likely the dev/packaged keychain split (safeStorage is keyed per app ' +
+          'name; run dev with DEV_USE_PACKAGED_IDENTITY=1 to share the packaged ' +
+          'identity). Re-enter the GLM API key in this build.'
+      )
+    }
     return {
       endpointMode,
       baseUrl: (settings?.glmBaseUrl as string) || GLM_DEFAULT_BASE_URL,
-      apiKey: decryptSettingsKey(
-        settings?.glmApiKey as string | undefined,
-        !!settings?.glmApiKeyEncrypted
-      ),
+      apiKey: glmApiKey,
       modelId: (settings?.glmModel as string) || GLM_DEFAULT_MODEL_ID,
       smallModelId: smallModel,
       contextLimit: settings?.glmContextLimit as number | undefined,

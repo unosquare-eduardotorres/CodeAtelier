@@ -653,9 +653,17 @@ export class OpenCodeConfigWriter {
       const options: NonNullable<OpenCodeConfig['provider'][string]['options']> = {
         ...(resolvedBaseURL ? { baseURL: resolvedBaseURL } : {}),
         ...(provider.apiKey ? { apiKey: provider.apiKey } : {}),
-        // #15: Tier-aware timeouts — local models are slower
+        // #15: Tier-aware timeouts — local models are slower.
+        // CHUNK-TIMEOUT FIX: cloud custom providers (GLM/Z.ai) buffer the ENTIRE
+        // tool-call input before streaming — a large write (300+ line file) emits
+        // zero SSE chunks for well over the old 15s cloud default, which the
+        // openai-compatible SDK reads as a dead stream and kills with "SSE read
+        // timed out" (live evidence: T001 died exactly as the model said
+        // "Writing the migration now"). 120s covers buffered generation of large
+        // files; genuinely dead streams are still caught by the executor's
+        // 240s mid-turn stall watcher.
         timeout: isLocal ? 600_000 : 300_000,
-        chunkTimeout: isLocal ? 30_000 : 15_000,
+        chunkTimeout: isLocal ? 30_000 : 120_000,
         // C-1: Enable prompt caching for Anthropic
         ...(provider.providerId === 'anthropic' ? { setCacheKey: true } : {})
       }

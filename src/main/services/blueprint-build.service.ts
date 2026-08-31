@@ -98,6 +98,7 @@ import {
 } from './blueprint-preflight.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import { ensureBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
+import { recordBaselineCommit } from './blueprint-modified-files'
 
 const bpLog = log.scope('blueprint-build')
 
@@ -367,6 +368,27 @@ export class BlueprintBuildService extends EventEmitter {
 
       const track = await ensureBlueprintTrack({ blueprintId, workspaceId, workspacePath })
       executionPath = track.path
+
+      // Baseline for the VERIFY "Modified Files" section — snapshot HEAD of
+      // the tree BUILD will run in before any task touches it. Best-effort:
+      // non-git workspaces simply get no modified-files list.
+      try {
+        const existing = blueprintRepository.findById(blueprintId)
+        const existingBaseline = (existing?.settingsJson as Record<string, unknown>)?.baselineCommit
+        if (!existingBaseline) {
+          await recordBaselineCommit(blueprintId, executionPath, (id, key, value) => {
+            const current = blueprintRepository.findById(id)
+            blueprintRepository.update(id, {
+              settingsJson: {
+                ...(current?.settingsJson as Record<string, unknown>),
+                [key]: value
+              }
+            })
+          })
+        }
+      } catch (err) {
+        bpLog.warn(`[startBuildPhase] baseline commit capture failed (non-fatal):`, err)
+      }
 
       if (!track.isolated) {
         if (
@@ -2977,8 +2999,7 @@ export class BlueprintBuildService extends EventEmitter {
 
       // WAVE-RACE FIX: capture the first error chunk (see executorErrorBox above)
       if (chunk.type === 'error' && executorErrorBox.value === null) {
-        executorErrorBox.value =
-          typeof chunk.error === 'string' ? chunk.error : String(chunk.error)
+        executorErrorBox.value = typeof chunk.error === 'string' ? chunk.error : String(chunk.error)
       }
       // FIX-2: Count write-capable tool invocations
       if (chunk.type === 'tool_use' && chunk.toolName) {

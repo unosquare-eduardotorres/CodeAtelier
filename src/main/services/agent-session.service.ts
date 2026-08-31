@@ -2588,7 +2588,12 @@ export class AgentSessionService extends AgentBaseService {
       abortController,
       conversationId: this.currentConversationId ?? undefined,
       maxTurns,
-      primingContext
+      primingContext,
+      // AGENT-SELECT: build/danger sessions route through the workspace 'davinci'
+      // agent so its permission block (Write/Edit/Bash: allow) applies. Plan mode
+      // stays on the default agent — davinci.md's plan-mode Bash:ask would override
+      // the global safe-command allow-globs and deadlock headless plan turns.
+      ...(isBuildMode ? { agent: 'davinci' } : {})
     })) {
       // Forward chunks, converting OpenCode meta to executor meta format
       if ('_meta' in chunk && chunk._meta) {

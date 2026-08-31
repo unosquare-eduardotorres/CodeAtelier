@@ -173,6 +173,11 @@ let fullMockInstalled = false
 // Holds the pre-patch Module._load so restoreFullMock() can undo the interception.
 // Module-scoped (not a local inside setupFullMock()) so restoreFullMock() can reach it.
 let origLoad: any = null
+// Resolved filenames of PROJECT modules loaded through the patched loader while
+// the full mock was installed (the "mock window"). restoreFullMock() purges these
+// from require.cache so no later file inherits a mock-bound copy. Null when the
+// mock is not installed.
+let mockWindowModules: Set<string> | null = null
 
 /**
  * Install the full module mock. Extends setupElectronStub() to also intercept
@@ -202,6 +207,7 @@ export function setupFullMock(): void {
 
   // Now extend Module._load with database/repository interception
   origLoad = (Module as any)._load
+  mockWindowModules = new Set<string>()
   ;(Module as any)._load = function (request: string, parent: any, isMain: boolean) {
     // ── Database core ──
     if (request === 'better-sqlite3') {
@@ -269,7 +275,43 @@ export function setupFullMock(): void {
     // ── electron-log already handled by setupElectronStub ──
     // ── .sql?raw files already handled by setupElectronStub ──
 
+    // Pass-through: remember the resolved project module so restoreFullMock()
+    // can purge its (potentially mock-bound) cache entry later.
+    recordMockWindowModule(request, parent)
     return origLoad.call(this, request, parent, isMain)
+  }
+}
+
+/**
+ * Record the resolved filename of a pass-through require issued while the full
+ * mock loader is installed. Only modules FIRST loaded during the mock window
+ * are recorded — a module already sitting in require.cache keeps its pre-window
+ * bindings (the patched loader returns the cached entry untouched), so evicting
+ * it would only orphan references other files already hold and mint duplicate
+ * singletons. Additional filters:
+ * - Node builtins resolve to non-absolute ids ("fs", "node:path") — skipped.
+ * - node_modules deps pass through the mock untouched, so their bindings are
+ *   identical to a load outside the window; re-executing them buys nothing and
+ *   risks native/global side effects — skipped.
+ * - The db/electron mock modules themselves must survive (their loaders cache
+ *   references to them) — skipped.
+ */
+function recordMockWindowModule(request: string, parent: any): void {
+  if (!mockWindowModules) return
+  try {
+    const filename = (Module as any)._resolveFilename(request, parent)
+    if (
+      typeof filename === 'string' &&
+      path.isAbsolute(filename) &&
+      !filename.includes('node_modules') &&
+      filename !== dbMockPath &&
+      !filename.includes('__electron_mock') &&
+      require.cache[filename] === undefined
+    ) {
+      mockWindowModules.add(filename)
+    }
+  } catch {
+    /* unresolvable request — origLoad will fail on it too; nothing to record */
   }
 }
 
@@ -430,35 +472,38 @@ export function resetAllMocks(): void {
 
 /**
  * Undo setupFullMock()'s Module._load interception, restoring the original
- * loader. No-op if setupFullMock() was never called (or has already been
+ * loader — then purge every project module that was loaded while the mock was
+ * installed. No-op if setupFullMock() was never called (or has already been
  * restored) — safe to call unconditionally after every test file in a
  * unified run.
  *
- * This is the fix for global mock pollution: without it, `Module._load`
- * stays patched for the lifetime of the process, so every module imported
- * later — including real `db/repositories/*.repository.ts` files pulled in
- * by later, non-mocked repository tests — silently resolves to this mock
- * instead of the real implementation, contributing zero real coverage.
+ * Why restore alone is not enough: `Module._load` interception only affects
+ * modules loaded while it is installed, but the require cache is keyed by path
+ * and not by what was installed at the time. A service first cached under a
+ * full-mock file keeps its MOCK repository bindings for the rest of the run —
+ * a later file that patches the REAL repository object configures an object
+ * the cached service never reads (the identity split behind the order-dependent
+ * `undefined.parallelBuildAgents` TypeError in blueprint-build.service and the
+ * council "null first write" failure: each passed standalone, failed in-suite).
  *
- * Deliberately does NOT purge require.cache. An earlier version of this
- * function deleted every cached /services/, /ipc/, /db/ entry (later
- * narrowed to only entries created since setupFullMock() was called) to
- * force stale, mock-bound modules to re-resolve to the real implementation.
- * Both variants forced modules that never even saw the mock to be
- * re-executed, and re-executing one half of a circular require pair while
- * its partner stays cached (or is evicted out of order) leaves a
- * partially-initialized circular partner — surfacing first as "accessing
- * non-existent property inside circular dependency" warnings and then as a
- * hard crash (observed: ChatStreamService and BlueprintService reading
- * properties off an undefined circular import, and BlueprintService's
- * mocked repositories resolving to the real, unopened DB instead). Simply
- * restoring `Module._load` promptly after each file — which this function
- * still does — is enough to stop any LATER file's plain (non-mock) requires
- * from ever reaching the hijacked loader; the residual risk (a module
- * transitively pulled in while a mock episode was active keeps its
- * mock-bound singletons for the rest of the run, undercounting coverage for
- * that specific module) is a coverage-completeness tradeoff, not a
- * correctness/stability one, and is the safer failure mode of the two.
+ * The purge is deliberately narrow — only filenames recorded by
+ * `recordMockWindowModule()` during THIS mock window:
+ *   - project source only (no node_modules, no builtins, not the mock modules),
+ *   - only modules that actually resolved through the patched loader (a module
+ *     loaded before the window, or never touched by it, is never evicted),
+ *   - the whole window set is evicted at once, and the next requires re-execute
+ *     in natural dependency order — the same fresh-load semantics a standalone
+ *     run of the next file already has.
+ *
+ * An earlier, BROADER purge attempt (every /services/, /ipc/, /db/ entry, later
+ * "everything created since setupFullMock()") crashed because it evicted
+ * modules that never saw the mock and broke circular require pairs out of
+ * order. Recording the exact pass-through set avoids both failure modes.
+ *
+ * Consequence: modules with singleton side effects re-initialize on their next
+ * require — desired, and identical to standalone-run behavior. Already-loaded
+ * test files keep their closed-over bindings (harmless — they finished
+ * loading, and the runners drain their async tests before restoring).
  *
  * Does NOT clear `serviceMocks` or captured mock state (that's
  * `resetAllMocks()`'s job) — it only reverses the module-loader patch, so a
@@ -468,6 +513,13 @@ export function restoreFullMock(): void {
   if (!fullMockInstalled) return
   if (origLoad) {
     ;(Module as any)._load = origLoad
+  }
+
+  if (mockWindowModules) {
+    for (const id of mockWindowModules) {
+      delete require.cache[id]
+    }
+    mockWindowModules = null
   }
 
   fullMockInstalled = false

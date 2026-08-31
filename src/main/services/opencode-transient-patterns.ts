@@ -29,7 +29,12 @@ export const TRANSIENT_ERROR_PATTERNS: RegExp[] = [
   // "timed-out", "timed_out") emitted by the opencode server on upstream
   // SSE read stalls — previously matched no pattern, so these were
   // misclassified as permanent and never retried.
-  /timed[\s_-]?out/i
+  /timed[\s_-]?out/i,
+  // GLM/Z.ai transient: the coding endpoint intermittently rejects a request
+  // with a bare "Failed to execute statement" (observed live: kills the turn
+  // mid-loop on T002/T004 and on a single-session probe — no parallel-contention
+  // correlation). Retryable in practice: the identical re-send succeeds.
+  /failed to execute statement/i
 ]
 
 /** Slow-transient patterns: timeout / connection-stall class errors */

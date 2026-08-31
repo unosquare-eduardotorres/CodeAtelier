@@ -173,7 +173,10 @@ describe('runProbeAsync', () => {
     const start = Date.now()
     await runProbeAsync({ cmd: 'echo', args: ['fast-async'] })
     const elapsed = Date.now() - start
-    assert.ok(elapsed < 2000, `Async probe took too long: ${elapsed}ms`)
+    // Budget is "did not hang", not "fast": in the shared runner this test
+    // competes with hundreds of concurrently-draining async tests for the
+    // event loop, and a 2s budget flaked at 2.6s under load.
+    assert.ok(elapsed < 10_000, `Async probe took too long: ${elapsed}ms`)
   })
 })
 

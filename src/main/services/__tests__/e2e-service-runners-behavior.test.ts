@@ -17,7 +17,7 @@ import { setupElectronStub } from './electron-stub'
 setupElectronStub()
 
 import { attachTestDb } from '../../db/repositories/__tests__/db-test-helper'
-import { serial, tryRequire, makeCtx, statuses, errors } from './e2e-runner-harness'
+import { serial, tryRequire, makeCtx, statuses, errors, type Patcher } from './e2e-runner-harness'
 
 const dbContext = attachTestDb()
 
@@ -33,19 +33,18 @@ if (!dbContext) {
 
   // Bind the singletons the way the RUNNERS bind them.
   //
-  // The runners reach their dependencies with `await import(...)`. A plain
-  // `require(...)` here usually returns the same object — but not always: a test
-  // file earlier in the shared run can leave a mock registered in
-  // setup-full-mock's module-scoped `serviceMocks` map, and any module first
-  // loaded during that mock episode keeps the mock in its binding for the rest
-  // of the process (documented in restoreFullMock as a known residual risk).
-  // When that happens `require` hands back the mock while the runner resolves
-  // the real module, so the patch lands on an object nobody calls and the test
-  // fails only in the shared run. Seeding from `require` keeps the standalone
-  // run working (a fresh ESM namespace for a CJS module can read as undefined
-  // until the module has been required once); the dynamic import then overwrites
-  // it with exactly the instance the runner will use. Test bodies are async and
-  // run after this module finishes loading, so the assignment always wins.
+  // The runners reach their dependencies with `await import(...)`. Under tsx
+  // that resolves through the ESM namespace cache, whose object is NOT
+  // necessarily the one a load-time `require()` returns: restoreFullMock()'s
+  // cache purge can leave require.cache empty for these modules, so the
+  // `tryRequire` below mints a fresh CJS instance while an ESM namespace
+  // created earlier in the shared run still hands the runner the older one.
+  // Seeding from `require` keeps the standalone run working; the authoritative
+  // resync is `depsReady` below, awaited as the first line of every serial
+  // body via `serialResync()` — a floating `.then()` resync fires too late
+  // for the first test (its body starts eagerly during describe(), before
+  // the dynamic import resolves), which had the patch landing on an object
+  // nobody calls (green standalone, red in-suite).
   const memoryMod = tryRequire('../e2e-testing/service-runners/memory.runner')
   const codeIntelMod = tryRequire('../e2e-testing/service-runners/code-intel.runner')
   let engine = tryRequire('../memory-engine.service')?.memoryEngineService
@@ -53,21 +52,31 @@ if (!dbContext) {
   let embedder = tryRequire('../local-embedding.provider')?.localEmbeddingProvider
   let codeGraph = tryRequire('../code-graph.service')?.codeGraphService
   let repos = tryRequire('../../db/repositories')
-  void import('../memory-engine.service').then((m: any) => {
-    engine = m?.memoryEngineService ?? engine
+  const depsReady = Promise.all([
+    import('../memory-engine.service'),
+    import('../memory-retrieval.service'),
+    import('../local-embedding.provider'),
+    import('../code-graph.service'),
+    import('../../db/repositories')
+  ]).then(([mEngine, mRetrieval, mEmbedder, mCodeGraph, mRepos]) => {
+    engine = mEngine?.memoryEngineService ?? engine
+    retrieval = mRetrieval?.memoryRetrievalService ?? retrieval
+    embedder = mEmbedder?.localEmbeddingProvider ?? embedder
+    codeGraph = mCodeGraph?.codeGraphService ?? codeGraph
+    repos = mRepos?.memoryFactRepository ? mRepos : repos
   })
-  void import('../memory-retrieval.service').then((m: any) => {
-    retrieval = m?.memoryRetrievalService ?? retrieval
-  })
-  void import('../local-embedding.provider').then((m: any) => {
-    embedder = m?.localEmbeddingProvider ?? embedder
-  })
-  void import('../code-graph.service').then((m: any) => {
-    codeGraph = m?.codeGraphService ?? codeGraph
-  })
-  void import('../../db/repositories').then((m: any) => {
-    repos = m?.memoryFactRepository ? m : repos
-  })
+
+  /**
+   * serial() + wait for the singleton resync. Every body that patches
+   * engine/retrieval/embedder/codeGraph/repos must resolve the same objects
+   * the runners will `await import()` at call time — awaiting depsReady first
+   * makes that deterministic instead of racing the floating .then().
+   */
+  const serialResync = (fn: (p: Patcher) => Promise<void>): (() => Promise<void>) =>
+    serial(async (p) => {
+      await depsReady
+      await fn(p)
+    })
 
   // ── memory.runner — runMemoryTiers ─────────────────────────────────────────
 
@@ -80,7 +89,7 @@ if (!dbContext) {
 
     test(
       'a null first write short-circuits before the second proposal',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let writes = 0
         p.set(engine, 'writeFact', async () => {
           writes++
@@ -95,7 +104,7 @@ if (!dbContext) {
 
     test(
       'a rejecting writeFact is caught into an error entry, not thrown',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => {
           throw new Error('engine offline')
         })
@@ -107,7 +116,7 @@ if (!dbContext) {
 
     test(
       'the fact payload carries the documented category and source',
-      serial(async (p) => {
+      serialResync(async (p) => {
         const seen: any[] = []
         p.set(engine, 'writeFact', async (a: any) => {
           seen.push(a)
@@ -131,7 +140,7 @@ if (!dbContext) {
   describe('memory.runner — runMemoryDedupExact', () => {
     test(
       'counts only facts carrying the run-unique tag',
-      serial(async (p) => {
+      serialResync(async (p) => {
         const written: string[] = []
         p.set(engine, 'writeFact', async (a: any) => {
           written.push(a.content)
@@ -147,7 +156,7 @@ if (!dbContext) {
 
     test(
       'unrelated workspace facts are excluded from the count',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(repos.memoryFactRepository, 'findByWorkspace', () => [
           { id: 'other', content: 'completely unrelated fact' }
@@ -159,7 +168,7 @@ if (!dbContext) {
 
     test(
       'a repository throw becomes an error entry',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(repos.memoryFactRepository, 'findByWorkspace', () => {
           throw new Error('db gone')
@@ -175,7 +184,7 @@ if (!dbContext) {
   describe('memory.runner — embedding-gated runners', () => {
     test(
       'runMemoryDedupNear short-circuits when the embedding provider is offline',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let writes = 0
         p.set(embedder, 'isReady', false)
         p.set(engine, 'writeFact', async () => {
@@ -190,7 +199,7 @@ if (!dbContext) {
 
     test(
       'runMemoryDedupNear reports dedup_near_ok when at most one fact survives',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'isReady', true)
         let last = ''
         p.set(engine, 'writeFact', async (a: any) => {
@@ -205,7 +214,7 @@ if (!dbContext) {
 
     test(
       'runMemoryDedupNear reports the count when the paraphrase was not merged',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'isReady', true)
         const seen: string[] = []
         p.set(engine, 'writeFact', async (a: any) => {
@@ -222,7 +231,7 @@ if (!dbContext) {
 
     test(
       'runMemoryAmbiguous short-circuits when the embedding provider is offline',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'isReady', false)
         const t = await memoryMod.runMemoryAmbiguous(ctx())
         assert.deepEqual(statuses(t), ['skip_embedding_offline'])
@@ -231,7 +240,7 @@ if (!dbContext) {
 
     test(
       'runMemoryAmbiguous reports ok when a recent contradiction exists',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'isReady', true)
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(repos.memoryFactRepository, 'findContradictions', () => [
@@ -248,7 +257,7 @@ if (!dbContext) {
 
     test(
       'runMemoryAmbiguous reports no_contradiction when only stale rows exist',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'isReady', true)
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(repos.memoryFactRepository, 'findContradictions', () => [
@@ -261,7 +270,7 @@ if (!dbContext) {
 
     test(
       'runMemoryAmbiguous writes two facts with the same title but different answers',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'isReady', true)
         const seen: any[] = []
         p.set(engine, 'writeFact', async (a: any) => {
@@ -282,7 +291,7 @@ if (!dbContext) {
   describe('memory.runner — retrieval-backed runners', () => {
     test(
       'runMemoryIsolation reports ok when the foreign workspace returns nothing',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         const queried: string[] = []
         p.set(retrieval, 'retrieve', async (ws: string) => {
@@ -298,7 +307,7 @@ if (!dbContext) {
 
     test(
       'runMemoryIsolation reports a leak with the row count',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(retrieval, 'retrieve', async () => [{}, {}])
         const t = await memoryMod.runMemoryIsolation(ctx())
@@ -308,7 +317,7 @@ if (!dbContext) {
 
     test(
       'runMemoryScopeBoost reports ok when the scoped fact ranks first',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let scoped = ''
         p.set(engine, 'writeFact', async (a: any) => {
           if (a.scopePaths) scoped = a.content
@@ -325,7 +334,7 @@ if (!dbContext) {
 
     test(
       'runMemoryScopeBoost flags the wrong order when the unscoped fact wins',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let content = ''
         p.set(engine, 'writeFact', async (a: any) => {
           content = a.content
@@ -342,7 +351,7 @@ if (!dbContext) {
 
     test(
       'runMemoryScopeBoost handles the single-result branch',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let content = ''
         p.set(engine, 'writeFact', async (a: any) => {
           content = a.content
@@ -356,7 +365,7 @@ if (!dbContext) {
 
     test(
       'runMemoryScopeBoost handles the no-result branch',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(retrieval, 'retrieve', async () => [])
         const t = await memoryMod.runMemoryScopeBoost(ctx())
@@ -366,7 +375,7 @@ if (!dbContext) {
 
     test(
       'runMemoryScopeBoost writes one unscoped and one src/hello.ts-scoped fact',
-      serial(async (p) => {
+      serialResync(async (p) => {
         const seen: any[] = []
         p.set(engine, 'writeFact', async (a: any) => {
           seen.push(a)
@@ -382,7 +391,7 @@ if (!dbContext) {
 
     test(
       'runMemorySessionDedupe reports ok when the second turn injects nothing',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         let call = 0
         p.set(retrieval, 'getContextForTurn', async () =>
@@ -396,7 +405,7 @@ if (!dbContext) {
 
     test(
       'runMemorySessionDedupe passes the SAME injectedIds set to both calls',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         const sets: unknown[] = []
         p.set(retrieval, 'getContextForTurn', async (_w: string, _q: string, _t: string, s: unknown) => {
@@ -412,7 +421,7 @@ if (!dbContext) {
 
     test(
       'runMemorySessionDedupe reports no_match when the first turn found nothing',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(retrieval, 'getContextForTurn', async () => '')
         const t = await memoryMod.runMemorySessionDedupe(ctx())
@@ -422,7 +431,7 @@ if (!dbContext) {
 
     test(
       'runMemorySessionDedupe reports a leak with the second-call size',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(retrieval, 'getContextForTurn', async () => 'abcde')
         const t = await memoryMod.runMemorySessionDedupe(ctx())
@@ -432,7 +441,7 @@ if (!dbContext) {
 
     test(
       'a rejecting retrieval is caught into an error entry',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(engine, 'writeFact', async () => ({ id: 'x' }))
         p.set(retrieval, 'retrieve', async () => {
           throw new Error('retrieval down')
@@ -448,7 +457,7 @@ if (!dbContext) {
   describe('code-intel.runner — runCodeGraphIndex', () => {
     test(
       'reports totalFiles once the indexing state turns complete',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'indexWorkspace', async () => undefined)
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete', totalFiles: 42 }))
         const t = await codeIntelMod.runCodeGraphIndex(ctx())
@@ -458,7 +467,7 @@ if (!dbContext) {
 
     test(
       'defaults totalFiles to 0 when the state omits it',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'indexWorkspace', async () => undefined)
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete' }))
         const t = await codeIntelMod.runCodeGraphIndex(ctx())
@@ -468,7 +477,7 @@ if (!dbContext) {
 
     test(
       'emits indexing_timeout after exhausting the poll budget',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let polls = 0
         p.set(codeGraph, 'indexWorkspace', async () => undefined)
         p.set(codeGraph, 'getIndexingState', () => {
@@ -483,7 +492,7 @@ if (!dbContext) {
 
     test(
       'an aborted signal stops polling before the timeout branch',
-      serial(async (p) => {
+      serialResync(async (p) => {
         const ac = new AbortController()
         ac.abort()
         p.set(codeGraph, 'indexWorkspace', async () => undefined)
@@ -495,7 +504,7 @@ if (!dbContext) {
 
     test(
       'a rejecting indexWorkspace becomes an error entry',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'indexWorkspace', async () => {
           throw new Error('tree-sitter missing')
         })
@@ -507,7 +516,7 @@ if (!dbContext) {
 
     test(
       'indexWorkspace receives the workspace id and path from the context',
-      serial(async (p) => {
+      serialResync(async (p) => {
         const args: unknown[][] = []
         p.set(codeGraph, 'indexWorkspace', async (...a: unknown[]) => {
           args.push(a)
@@ -525,7 +534,7 @@ if (!dbContext) {
   describe('code-intel.runner — runEmbeddingGeneration', () => {
     test(
       'reports vector count and dimension on success',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'initialize', async () => undefined)
         p.set(embedder, 'isReady', true)
         p.set(embedder, 'embed', async () => [new Array(384).fill(0), new Array(384).fill(0)])
@@ -536,7 +545,7 @@ if (!dbContext) {
 
     test(
       'reports dim=0 when the provider returns no vectors',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'initialize', async () => undefined)
         p.set(embedder, 'isReady', true)
         p.set(embedder, 'embed', async () => [])
@@ -547,7 +556,7 @@ if (!dbContext) {
 
     test(
       'short-circuits with embedding_not_ready and never calls embed',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let embedCalls = 0
         p.set(embedder, 'initialize', async () => undefined)
         p.set(embedder, 'isReady', false)
@@ -563,7 +572,7 @@ if (!dbContext) {
 
     test(
       'initialize is pointed at the local oMLX loopback address',
-      serial(async (p) => {
+      serialResync(async (p) => {
         const urls: string[] = []
         p.set(embedder, 'initialize', async (u: string) => {
           urls.push(u)
@@ -577,7 +586,7 @@ if (!dbContext) {
 
     test(
       'a failing initialize becomes an error entry',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'initialize', async () => {
           throw new Error('oMLX unreachable')
         })
@@ -588,7 +597,7 @@ if (!dbContext) {
 
     test(
       'a failing embed becomes an error entry after the ready check passes',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(embedder, 'initialize', async () => undefined)
         p.set(embedder, 'isReady', true)
         p.set(embedder, 'embed', async () => {
@@ -605,7 +614,7 @@ if (!dbContext) {
   describe('code-intel.runner — runSemanticSearch', () => {
     test(
       'skips re-indexing when the workspace is already complete',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let indexCalls = 0
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete' }))
         p.set(codeGraph, 'indexWorkspace', async () => {
@@ -620,7 +629,7 @@ if (!dbContext) {
 
     test(
       'indexes first when the workspace is not complete',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let indexCalls = 0
         let state: { status: string } = { status: 'stale' }
         p.set(codeGraph, 'getIndexingState', () => state)
@@ -640,7 +649,7 @@ if (!dbContext) {
 
     test(
       'a missing indexing state also triggers indexing',
-      serial(async (p) => {
+      serialResync(async (p) => {
         let indexCalls = 0
         p.set(codeGraph, 'getIndexingState', () => null)
         p.set(codeGraph, 'indexWorkspace', async () => {
@@ -655,7 +664,7 @@ if (!dbContext) {
 
     test(
       'hasHello is case-insensitive over identifier names',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete' }))
         p.set(codeGraph, 'searchIdentifiers', async () => [{ name: 'SayHELLOLoudly' }])
         const t = await codeIntelMod.runSemanticSearch(ctx())
@@ -665,7 +674,7 @@ if (!dbContext) {
 
     test(
       'reports count=0 for an empty result set',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete' }))
         p.set(codeGraph, 'searchIdentifiers', async () => [])
         const t = await codeIntelMod.runSemanticSearch(ctx())
@@ -675,7 +684,7 @@ if (!dbContext) {
 
     test(
       'a null result set takes the same empty branch',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete' }))
         p.set(codeGraph, 'searchIdentifiers', async () => null)
         const t = await codeIntelMod.runSemanticSearch(ctx())
@@ -685,7 +694,7 @@ if (!dbContext) {
 
     test(
       'a rejecting search becomes an error entry',
-      serial(async (p) => {
+      serialResync(async (p) => {
         p.set(codeGraph, 'getIndexingState', () => ({ status: 'complete' }))
         p.set(codeGraph, 'searchIdentifiers', async () => {
           throw new Error('index corrupt')

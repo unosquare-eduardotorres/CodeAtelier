@@ -157,6 +157,34 @@ describe('OpenCodeConfigWriter private methods', () => {
       const perms = w.buildPermissions('plan')
       assert.equal(perms.Read, 'allow')
     })
+
+    // 2B lock-in: the full build-mode permission surface — a regression here
+    // re-introduces the BUILD no-write deadlock (model narrates instead of
+    // writing because every mutation tool asks/hangs).
+    test('build_mode_full_permission_surface', () => {
+      const perms = w.buildPermissions('build')
+      assert.equal(perms.Write, 'allow')
+      assert.equal(perms.Edit, 'allow')
+      assert.equal(perms.Bash, 'allow')
+      assert.equal(perms.Read, 'allow')
+      assert.equal(perms.Glob, 'allow')
+      assert.equal(perms.Grep, 'allow')
+      assert.equal(perms.task, 'allow', 'subagent invocation must be allowed in build mode')
+      assert.equal(perms.todowrite, 'allow')
+      assert.equal(perms.lsp, 'allow')
+      assert.equal(perms.skill, 'allow')
+      // No 'ask' or 'deny' anywhere in the build-mode block
+      for (const [tool, rule] of Object.entries(perms)) {
+        assert.equal(rule, 'allow', `build mode must allow ${tool} (got ${String(rule)})`)
+      }
+    })
+
+    test('danger_mode_full_permission_surface', () => {
+      const perms = w.buildPermissions('danger')
+      for (const [tool, rule] of Object.entries(perms)) {
+        assert.equal(rule, 'allow', `danger mode must allow ${tool} (got ${String(rule)})`)
+      }
+    })
   })
 
   // ── buildCompactionConfig ──
@@ -210,7 +238,7 @@ describe('OpenCodeConfigWriter private methods', () => {
       const config = w.buildProviderConfig(provider, false)
       const entry = config[provider.providerId]
       assert.equal(entry.options.timeout, 300_000)
-      assert.equal(entry.options.chunkTimeout, 15_000)
+      assert.equal(entry.options.chunkTimeout, 120_000)
     })
 
     test('anthropic_provider_has_setCacheKey_true', () => {

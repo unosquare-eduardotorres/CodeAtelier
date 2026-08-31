@@ -215,7 +215,14 @@ describe('manifest collection', () => {
   let testDir: string
 
   beforeEach(() => {
-    testDir = join(tmpdir(), 'bootstrap-manifest-' + Date.now())
+    // Random suffix: the harness runs this file's async tests concurrently, and
+    // two hooks landing in the same Date.now() millisecond would share a dir —
+    // one test's afterEach rmSync then deletes the other's fixtures mid-test
+    // (observed as a flaky "Should include tsconfig.json" in the shared run).
+    testDir = join(
+      tmpdir(),
+      'bootstrap-manifest-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+    )
     mkdirSync(testDir, { recursive: true })
   })
 
