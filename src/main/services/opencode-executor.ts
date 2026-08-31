@@ -126,6 +126,16 @@ export interface OpenCodeExecuteOptions {
   conversationId?: string
   /** A-1: Context parts to inject before the first prompt (priming). */
   primingContext?: Array<{ type: 'text'; text: string }>
+  /**
+   * AGENT-SELECT: OpenCode agent to route this prompt through (e.g. 'davinci').
+   * Live-verified (opencode 1.18.18): body.agent selects the project agent from
+   * .opencode/agents/<name>.md — its permission block and max_turns/steps apply —
+   * while body.system still overrides the agent's markdown prompt, so the
+   * specialist system prompt survives. Only set for build/danger sessions:
+   * the plan-mode davinci.md carries Bash:ask, which would override the global
+   * safe-command allow-globs and deadlock headless plan turns.
+   */
+  agent?: string
 }
 
 /** Result metadata from OpenCode execution */
@@ -248,6 +258,68 @@ function isPromptActivityChunk(chunk: StreamChunk): boolean {
 }
 
 /**
+ * NO-WRITE NUDGE: tools that count as "writing" for build-mode progress.
+ * Lowercase — OpenCode tool names arrive as write/edit/apply_patch.
+ *
+ * bash is deliberately NOT write-class: build turns routinely run read-only
+ * bash (ls, git status, find) during exploration. Counting it suppressed the
+ * nudge on exactly the turns that needed it (live evidence: T002 ran bash=4
+ * read-only, writes=0, nudge never fired, 41K chars of narration). The app's
+ * own task verification counts writes and bash separately for the same reason.
+ */
+const WRITE_CLASS_TOOLS: ReadonlySet<string> = new Set([
+  'write',
+  'edit',
+  'multiedit',
+  'applypatch',
+  'apply_patch',
+  'notebookedit'
+])
+
+/** NO-WRITE NUDGE: is this tool call a write-class mutation? */
+function isWriteClassTool(toolName: string | undefined): boolean {
+  if (!toolName) return false
+  return WRITE_CLASS_TOOLS.has(toolName.toLowerCase())
+}
+
+/**
+ * NO-WRITE NUDGE: the in-band course-correction text. Queued as the next user
+ * message while the session is busy (live-verified queue semantics) — the model
+ * sees it mid-loop and pivots to writing.
+ */
+const NO_WRITE_NUDGE_TEXT =
+  '[COURSE CORRECTION] You have made several tool calls without creating or modifying any files. ' +
+  'This is a BUILD task: the deliverable is code on disk, not narration. Stop exploring now. ' +
+  'Create or modify the required files with the write/edit tools, then verify (typecheck/tests) and finish.'
+
+/**
+ * NO-WRITE NUDGE (final): the escalated second message. The first nudge
+ * QUEUES as the next user message — a model mid-way through a huge narration
+ * (T005: 52K chars) cannot interrupt it, finishes narrating, and would end
+ * the turn with writes=0. The text-volume trigger therefore allows ONE more
+ * nudge after another NUDGE_TEXT_VOLUME_THRESHOLD chars of post-nudge
+ * narration, with this escalated text.
+ */
+const NO_WRITE_NUDGE_TEXT_FINAL =
+  '[FINAL COURSE CORRECTION] You have now narrated the deliverable twice without writing it. ' +
+  'Write the files NOW with the write/edit tools. Your reply text is not the deliverable.'
+
+/**
+ * STALL-RETRY ECHO FIX: extract a matchable string from a session.error
+ * payload (string, {message}, or {data:{message}} shapes) so abort echoes
+ * can be recognized in isSessionComplete().
+ */
+function sessionErrorText(error: unknown): string {
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object') {
+    const e = error as { message?: unknown; data?: { message?: unknown } }
+    if (typeof e.message === 'string') return e.message
+    if (typeof e.data?.message === 'string') return e.data.message
+  }
+  return ''
+}
+
+/**
  * Raw event types that normalize to zero chunks but still prove our prompt
  * started (V2 event bus). sessionID-filtered like isSessionComplete().
  */
@@ -348,6 +420,29 @@ export class OpenCodeExecutor {
    * the 240s window + abort-before-resend + the shared 3-retry budget.
    */
   private static readonly MID_TURN_STALL_MS = 240_000
+  /**
+   * NO-WRITE NUDGE: tool-call threshold that triggers the one-shot build-mode
+   * course-correction. Matches the circuit breaker's 8-call diagnostic
+   * breadcrumb (agent-circuit-breaker.ts) so both layers agree on when a
+   * build turn has explored too long without writing.
+   */
+  private static readonly NUDGE_TOOL_CALL_THRESHOLD = 8
+  /**
+   * NO-WRITE NUDGE (text-volume trigger): a build turn that has streamed this
+   * much assistant text with ZERO write-class tool calls is narrating its
+   * deliverable as prose instead of writing files (live evidence: T001 run 3 —
+   * ~6 tool calls, 61K chars of narrated migration, turn ended "completed"
+   * with the file never created). Tool-count alone never reaches the threshold
+   * on that shape, so text volume is an independent trigger.
+   */
+  private static readonly NUDGE_TEXT_VOLUME_THRESHOLD = 12_000
+  /**
+   * NO-WRITE NUDGE (escalation): max nudges per turn. The first nudge queues
+   * behind an in-flight generation the model cannot interrupt (T005) — one
+   * escalated volume-triggered follow-up is allowed, then the turn is left
+   * to end (further nagging cannot help).
+   */
+  private static readonly MAX_NUDGES_PER_TURN = 2
   /**
    * Test-hook multiplier for transient-retry backoff sleeps (production: 1).
    * Reported retryInfo delays stay unscaled — only the actual sleep shrinks.
@@ -859,6 +954,15 @@ export class OpenCodeExecutor {
     midTurnStallMs?: number
     /** BP-WORKTREE-CWD: per-session directory, forwarded on transient retries. */
     directory?: string
+    /**
+     * NO-WRITE NUDGE: when true (build-mode sessions), a turn that reaches
+     * NUDGE_TOOL_CALL_THRESHOLD tool calls without any write-class tool use
+     * gets an in-band course-correction via prompt_async (live-verified: a
+     * prompt sent while the session is busy QUEUES as the next user message —
+     * no abort needed). The tool-count trigger fires once; the text-volume
+     * trigger may fire one escalated follow-up (MAX_NUDGES_PER_TURN total).
+     */
+    enableNoWriteNudge?: boolean
   }): AsyncGenerator<
     StreamChunk,
     {
@@ -877,6 +981,18 @@ export class OpenCodeExecutor {
     let transientRetryCount = 0
     let lastTransientClass: 'slow' | 'fast' | null = null
     let endedWithTerminalError = false
+
+    // NO-WRITE NUDGE: write-class tool detection. Mirrors the circuit breaker's
+    // 8-call diagnostic breadcrumb but ACTS on it: at the threshold with zero
+    // writes, a course-correction is queued in-band telling the model to stop
+    // exploring and write. The tool-count trigger fires once; the text-volume
+    // trigger allows one ESCALATED follow-up after another 12K chars of
+    // post-nudge narration (T005: the first nudge queued behind a 52K-char
+    // generation the model could not interrupt).
+    let nudgeCount = 0
+    let textLengthAtLastNudge = 0
+    let writeToolSeen = false
+    let toolCallCount = 0
     // PARITY FIX (E): true from the moment a retry re-sends the prompt until
     // the resent run shows prompt activity. The SSE stream routinely CLOSES
     // after session.error — without a re-subscribe the resent prompt's events
@@ -1065,8 +1181,52 @@ export class OpenCodeExecutor {
             eventWasActivity = true
           }
 
+          // STALL-RETRY ECHO FIX (T006): while a resend is pending, our own
+          // abort of the zombie prompt echoes back as session.error("Aborted")
+          // — it is not a provider failure. Skip it entirely (not yielded, not
+          // retried) so executorErrorBox never sees it and the turn survives
+          // to observe the resent run. User cancellation is unaffected: it is
+          // caught above by the abortController.signal.aborted check.
+          if (
+            resendAwaitingActivity &&
+            chunk.type === 'error' &&
+            /abort/i.test(chunk.error ?? '')
+          ) {
+            openCodeLog.info('[opencode] abort echo suppressed — resend still pending')
+            continue
+          }
+
           if (chunk.type === 'text' && chunk.content) {
             resultText += chunk.content
+            // NO-WRITE NUDGE (text-volume trigger): independent of tool count —
+            // a build turn streaming a huge narration with zero writes is
+            // writing its deliverable as prose. The FIRST nudge fires at the
+            // threshold; one ESCALATED follow-up may fire after another
+            // threshold-worth of post-nudge narration (the first nudge queues
+            // behind an in-flight generation the model cannot interrupt).
+            if (
+              params.enableNoWriteNudge &&
+              nudgeCount < OpenCodeExecutor.MAX_NUDGES_PER_TURN &&
+              !writeToolSeen &&
+              resultText.length - textLengthAtLastNudge >=
+                OpenCodeExecutor.NUDGE_TEXT_VOLUME_THRESHOLD
+            ) {
+              nudgeCount++
+              textLengthAtLastNudge = resultText.length
+              const isFinalNudge = nudgeCount >= OpenCodeExecutor.MAX_NUDGES_PER_TURN
+              openCodeLog.warn(
+                `[opencode] No-write nudge${isFinalNudge ? ' (final)' : ''} (text volume) — ` +
+                  `${resultText.length} chars streamed, zero writes — queuing course-correction ` +
+                  `(nudge ${nudgeCount}/${OpenCodeExecutor.MAX_NUDGES_PER_TURN}, session=${openCodeSessionId})`
+              )
+              this.sendNoWriteNudge(openCodeSessionId, params.directory, isFinalNudge)
+              yield {
+                type: 'status',
+                content: isFinalNudge
+                  ? 'no-write nudge sent (final) — demanding file creation now'
+                  : 'no-write nudge sent (text volume) — course-correcting to file creation'
+              } as StreamChunk
+            }
           }
 
           // SSE-RETRY FIX (A): intercept transient errors in BOTH chunk shapes.
@@ -1136,6 +1296,32 @@ export class OpenCodeExecutor {
           // Count tool invocations as turns
           if (chunk.type === 'tool_use') {
             turnCount++
+            // NO-WRITE NUDGE: track write-class tools and fire the one-shot
+            // course-correction at the threshold. Queued via prompt_async — the
+            // busy session receives it as the next user message (live-verified).
+            if (params.enableNoWriteNudge) {
+              toolCallCount++
+              if (isWriteClassTool(chunk.toolName)) writeToolSeen = true
+              // Tool-count trigger: first nudge only — escalation is reserved
+              // for the text-volume trigger (post-nudge narration shape).
+              if (
+                nudgeCount === 0 &&
+                !writeToolSeen &&
+                toolCallCount >= OpenCodeExecutor.NUDGE_TOOL_CALL_THRESHOLD
+              ) {
+                nudgeCount++
+                textLengthAtLastNudge = resultText.length
+                openCodeLog.warn(
+                  `[opencode] No-write nudge — ${toolCallCount} tool calls, zero writes — ` +
+                    `queuing course-correction (session=${openCodeSessionId})`
+                )
+                this.sendNoWriteNudge(openCodeSessionId, params.directory)
+                yield {
+                  type: 'status',
+                  content: 'no-write nudge sent — course-correcting to file creation'
+                } as StreamChunk
+              }
+            }
             if (maxTurns > 0 && turnCount >= maxTurns) {
               openCodeLog.info(
                 `[opencode] maxTurns reached (${turnCount}/${maxTurns}) — aborting session`
@@ -1184,7 +1370,15 @@ export class OpenCodeExecutor {
         // Only suppress session.error when a retry was actually initiated for THIS event.
         // Without this, the first non-retried error gets suppressed forever (deadlock).
         const retriesAvailable = retryInitiatedThisEvent
-        if (this.isSessionComplete(event, openCodeSessionId, retriesAvailable, sawTurnActivity)) {
+        if (
+          this.isSessionComplete(
+            event,
+            openCodeSessionId,
+            retriesAvailable,
+            sawTurnActivity,
+            resendAwaitingActivity
+          )
+        ) {
           break
         }
 
@@ -1196,6 +1390,10 @@ export class OpenCodeExecutor {
           `[opencode] No prompt activity within ${noActivityTimeoutMs}ms — aborting turn (session may be stale)`
         )
         abandonedPendingNext = true
+        // G1: a turn that never produced activity is NOT a clean completion —
+        // poison the session mapping so the next turn starts fresh. Resuming a
+        // stale session replays its zombie tail events into the next turn.
+        endedWithTerminalError = true
         if (this.client) {
           this.client.session
             .abort({ path: { id: openCodeSessionId } })
@@ -1279,7 +1477,14 @@ export class OpenCodeExecutor {
       const events = await this.client.event.subscribe()
 
       // Build the prompt body (parts + model config + output schema)
-      const promptBody = this.buildPromptBody(prompt, systemPrompt, provider, outputSchema, images)
+      const promptBody = this.buildPromptBody(
+        prompt,
+        systemPrompt,
+        provider,
+        outputSchema,
+        images,
+        options.agent
+      )
 
       // PARITY FIX (G): timestamp taken BEFORE the prompt is sent — the token
       // backstop below only counts assistant messages created after this.
@@ -1357,7 +1562,10 @@ export class OpenCodeExecutor {
           tokenUsage,
           maxTurns: options.maxTurns ?? 0,
           abortController,
-          directory: options.cwd
+          directory: options.cwd,
+          // NO-WRITE NUDGE: only for build sessions routed through the davinci
+          // agent (its permission block guarantees write tools are available).
+          enableNoWriteNudge: !!options.agent
         })
         let streamResult = await streamGen.next()
         while (!streamResult.done) {
@@ -2215,6 +2423,30 @@ Troubleshooting:
   }
 
   /**
+   * NO-WRITE NUDGE: queue the in-band course-correction on a busy session.
+   * Live-verified (opencode 1.18.18): prompt_async while busy QUEUES — the
+   * model receives this as its next user message mid-loop and pivots. No abort,
+   * no retry budget consumed. Fire-and-forget like resendPrompt.
+   */
+  private sendNoWriteNudge(sessionId: string, directory?: string, final = false): void {
+    if (!this.client) {
+      openCodeLog.warn('[opencode] No-write nudge skipped — client unavailable')
+      return
+    }
+    this.client.session
+      .promptAsync({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: 'text', text: final ? NO_WRITE_NUDGE_TEXT_FINAL : NO_WRITE_NUDGE_TEXT }]
+        },
+        ...(directory ? { query: { directory } } : {})
+      })
+      .catch((err) => {
+        openCodeLog.error('[opencode] No-write nudge send error:', err)
+      })
+  }
+
+  /**
    * Get or create an OpenCode session for the given options.
    * Handles session reuse for multi-turn conversations and priming.
    *
@@ -2236,18 +2468,45 @@ Troubleshooting:
     }
 
     if (!sessionId) {
-      const session = await this.client!.session.create({
-        body: { title: `Code Atelier: ${new Date().toISOString()}` },
-        ...(cwd ? { query: { directory: cwd } } : {})
-      })
-      sessionId = session.data?.id
-      if (!sessionId) {
-        // Log the full response so config/provider errors are diagnosable
-        openCodeLog.error(
-          '[opencode] session.create returned no ID — response:',
-          JSON.stringify(session.data ?? session, null, 2)
+      // COLD-BOOTSTRAP RETRY (T005/T006 "Failed to create OpenCode session"):
+      // on a freshly-started server the 10s server.connected gate can expire
+      // while MCP servers are still handshaking; session.create then hits a
+      // mid-bootstrap server and 500s ("Unexpected server error", live refs
+      // err_0da58028/err_10cda3f8). That shape is transient — the identical
+      // create succeeds once bootstrap finishes (verified by manual repro).
+      // Retry twice with backoff before giving up.
+      const SESSION_CREATE_RETRIES = 2
+      const SESSION_CREATE_BACKOFF_MS = [2_000, 5_000]
+      for (let attempt = 0; ; attempt++) {
+        let session: Awaited<ReturnType<OpencodeClient['session']['create']>>
+        try {
+          session = await this.client!.session.create({
+            body: { title: `Code Atelier: ${new Date().toISOString()}` },
+            ...(cwd ? { query: { directory: cwd } } : {})
+          })
+        } catch (err) {
+          openCodeLog.error('[opencode] session.create threw:', (err as Error).message)
+          session = { data: undefined } as typeof session
+        }
+        sessionId = session.data?.id
+        if (sessionId) break
+        if (attempt >= SESSION_CREATE_RETRIES) {
+          // Log the full response so config/provider errors are diagnosable
+          openCodeLog.error(
+            '[opencode] session.create returned no ID after ' +
+              `${attempt + 1} attempt(s) — response:`,
+            JSON.stringify(session.data ?? session, null, 2)
+          )
+          return undefined
+        }
+        const delay = SESSION_CREATE_BACKOFF_MS[attempt] ?? 5_000
+        openCodeLog.warn(
+          `[opencode] session.create returned no ID (attempt ${attempt + 1}/${SESSION_CREATE_RETRIES + 1}) — ` +
+            `server may still be bootstrapping — retrying in ${delay}ms`
         )
-        return undefined
+        await new Promise((r) =>
+          setTimeout(r, Math.max(1, Math.round(delay * this.retryDelayScale)))
+        )
       }
 
       if (conversationId) {
@@ -2280,7 +2539,8 @@ Troubleshooting:
     systemPrompt: string,
     provider: OpenCodeProviderConfig,
     outputSchema?: Record<string, unknown>,
-    images?: ImageAttachment[]
+    images?: ImageAttachment[],
+    agent?: string
   ): SessionPromptData['body'] {
     const hasPluginSystemPromptHook = !!process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
     const body: Record<string, unknown> = {
@@ -2298,6 +2558,10 @@ Troubleshooting:
         providerID: provider.providerId,
         modelID: provider.modelId
       },
+      // AGENT-SELECT: route through the workspace agent (davinci) so its
+      // permission block (Write/Edit/Bash: allow in build mode) and max_turns
+      // apply. body.system below still overrides the agent's markdown prompt.
+      ...(agent ? { agent } : {}),
       // Use the SDK's system field for system prompts — proper channel for model instructions.
       // This gives the system prompt higher priority, enables provider-specific routing,
       // and supports prefix caching. Skip when the plugin hook injects its own system prompt.
@@ -2406,6 +2670,10 @@ Troubleshooting:
    *   prior prompt on the same session (same sessionID, so the filter above passes)
    *   that arrive before our prompt produces any activity. Genuine errors
    *   (session.error, session.next.step.failed) are never gated by this flag.
+   * @param resendPending - When true, a retry has re-sent the prompt and the
+   *   resent run has not shown activity yet. `session.idle` / `session.status:idle`
+   *   belong to the ABORTED prior run and are not terminal; `session.error`
+   *   matching /abort/i is our own abort's echo, not a provider failure.
    */
   /** Diagnostic gauges for the vitals heartbeat (see main-vitals.ts). */
   public getVitals(): { activeSessions: number; retriesInFlight: number } {
@@ -2416,7 +2684,8 @@ Troubleshooting:
     event: unknown,
     sessionId: string,
     retriesAvailable = false,
-    sawTurnActivity = false
+    sawTurnActivity = false,
+    resendPending = false
   ): boolean {
     const evt = event as Record<string, unknown>
     const type = evt.type as string | undefined
@@ -2429,7 +2698,17 @@ Troubleshooting:
     // session.idle means the agent loop is done — but only once OUR prompt has
     // produced activity. A pre-activity idle is a stale tail from the priming
     // prompt (or an orphaned prior prompt on this session) and is ignored.
+    // STALL-RETRY ECHO FIX (T006): an idle arriving while a resend is pending
+    // belongs to the ABORTED run — sawTurnActivity is already true at that
+    // point (the stall only fires after activity), so it needs its own guard.
+    // Only the resent run's activity clears the flag; a later idle is genuine.
     if (type === 'session.idle') {
+      if (resendPending) {
+        openCodeLog.info(
+          '[opencode] session.idle from aborted run while resend pending — ignoring'
+        )
+        return false
+      }
       if (!sawTurnActivity) {
         openCodeLog.info('[opencode] stale session.idle before prompt activity — ignoring')
         return false
@@ -2443,7 +2722,14 @@ Troubleshooting:
     // NOTE: deliberately NOT gated by sawTurnActivity — genuine provider
     // failures (bad API key, overload) must terminate immediately even
     // before the first activity event.
+    // STALL-RETRY ECHO FIX (T006): our own abort of a zombie prompt echoes
+    // back as session.error("Aborted") while the resend is pending — that is
+    // not a provider failure and must not terminate the turn.
     if (type === 'session.error') {
+      if (resendPending && /abort/i.test(sessionErrorText(properties.error))) {
+        openCodeLog.info('[opencode] session.error abort echo while resend pending — ignoring')
+        return false
+      }
       if (retriesAvailable) {
         openCodeLog.info('[opencode] session.error suppressed — retries still available')
         return false
@@ -2455,7 +2741,14 @@ Troubleshooting:
     if (type === 'session.status') {
       const status = properties.status as string | undefined
       if (status === 'idle') {
-        // Same stale-tail guard as session.idle above
+        // Same stale-tail guard as session.idle above, plus the aborted-run
+        // guard while a resend is pending (T006).
+        if (resendPending) {
+          openCodeLog.info(
+            '[opencode] stale session.status:idle from aborted run while resend pending — ignoring'
+          )
+          return false
+        }
         if (!sawTurnActivity) {
           openCodeLog.info('[opencode] stale session.status:idle before prompt activity — ignoring')
           return false

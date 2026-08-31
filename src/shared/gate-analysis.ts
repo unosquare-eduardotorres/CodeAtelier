@@ -254,31 +254,37 @@ export interface TestIntegrityResult {
   skipsAdded: StubFinding[]
   /** Files whose test count went down, with the before/after numbers. */
   countDrops: { file: string; before: number; after: number }[]
+  /**
+   * EXTENSION ALLOWANCE: files that changed but ONLY by adding tests — strict
+   * count increase, no skips added in that file, no count drop, not deleted.
+   * Authoring new tests inside an existing packet-declared test file is a
+   * legitimate deliverable (T001: extend test_rls_isolation.py with election
+   * coverage), so these are excluded from `modified` while staying visible
+   * as evidence.
+   */
+  extended: string[]
   ok: boolean
 }
 
 /**
  * The builder must make the pre-authored tests pass, not edit them into
- * passing. Three independent ways to cheat, three checks:
- *   (a) the file changed at all (hash), (b) a test was disabled (skip markers),
- *   (c) tests disappeared without the hash check noticing a rename.
+ * passing. The gate distinguishes WEAKENING the spec (fail) from EXTENDING it
+ * (pass):
+ *   (a) the file changed at all (hash) — fail, UNLESS it is a pure extension:
+ *       test count strictly increased, no skip markers added in that file, no
+ *       count drop (same-count rewrites still fail — they could be rewriting
+ *       assertions to match broken code),
+ *   (b) a test was disabled (skip markers) — fail,
+ *   (c) tests disappeared (count drop or deletion) — fail.
+ * Residual trade-off: a rewrite that ALSO adds tests can slip past the hash
+ * check — that shape is still covered by the stub scan (added lines) and
+ * peer review.
  */
 export function evaluateTestIntegrity(input: TestIntegrityInput): TestIntegrityResult {
   const modified: string[] = []
   const deleted: string[] = []
+  const extended: string[] = []
   const countDrops: { file: string; before: number; after: number }[] = []
-
-  for (const [file, before] of Object.entries(input.before)) {
-    const after = input.after[file]
-    if (after === null || after === undefined) {
-      deleted.push(file)
-      continue
-    }
-    if (after.hash !== before.hash) modified.push(file)
-    if (after.testCount < before.testCount) {
-      countDrops.push({ file, before: before.testCount, after: after.testCount })
-    }
-  }
 
   const skipsAdded: StubFinding[] = []
   for (const line of input.addedTestLines) {
@@ -291,12 +297,34 @@ export function evaluateTestIntegrity(input: TestIntegrityInput): TestIntegrityR
       })
     }
   }
+  const filesWithSkips = new Set(skipsAdded.map((s) => s.file))
+
+  for (const [file, before] of Object.entries(input.before)) {
+    const after = input.after[file]
+    if (after === null || after === undefined) {
+      deleted.push(file)
+      continue
+    }
+    if (after.testCount < before.testCount) {
+      countDrops.push({ file, before: before.testCount, after: after.testCount })
+    }
+    if (after.hash !== before.hash) {
+      // EXTENSION ALLOWANCE: strict count increase + no skips in this file +
+      // no count drop (implied by the increase) = authoring, not weakening.
+      if (after.testCount > before.testCount && !filesWithSkips.has(file)) {
+        extended.push(file)
+      } else {
+        modified.push(file)
+      }
+    }
+  }
 
   return {
     modified,
     deleted,
     skipsAdded,
     countDrops,
+    extended,
     ok:
       modified.length === 0 &&
       deleted.length === 0 &&

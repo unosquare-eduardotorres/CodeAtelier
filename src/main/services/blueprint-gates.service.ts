@@ -55,6 +55,18 @@ const gateLog = log.scope('blueprint-gates')
 
 /** Per-file read cap for hashing and stub scanning. Beyond this, skip. */
 const MAX_SCAN_BYTES = 1_000_000
+
+/**
+ * APP-BOOKKEEPING EXEMPTION: workspace paths the app itself writes during a
+ * build — never the graded task's work. Prefix-matched (normalized, no leading
+ * dot-slash) against every changed file in collectChanges.
+ */
+const APP_BOOKKEEPING_PREFIXES: readonly string[] = [
+  '.opencode/',
+  'blueprints/',
+  '.pm-state/',
+  '.atelierignore'
+]
 /** Git plumbing is fast; a hang here means a broken repo, not a slow one. */
 const GIT_TIMEOUT_MS = 20_000
 /** Output tail retained per command before `boundEvidence` trims further. */
@@ -522,7 +534,18 @@ async function collectChanges(
   // subtracted exactly like pre-existing dirt. Without this, a parallel wave in
   // one shared worktree attributes every peer's writes to every task, and G4
   // fails all of them for writes outside their write-set.
-  const exempt = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+  // APP-BOOKKEEPING EXEMPTION: files the APP itself writes into the workspace
+  // during task execution — opencode agent/command definitions (rewritten at
+  // every session start), blueprint phase artifacts (plan/tasks/spec updated as
+  // the pipeline progresses), and process-manager state. These are not the
+  // graded task's work, yet they land after the baseline snapshot, so without
+  // this exemption G4 attributes them to whichever task is being gated
+  // (live evidence: T004 wrote 13 files, status passed, gate failed on
+  // .opencode/agents/davinci.md + blueprints/<id>/plan.md).
+  const exempt = new Set([
+    ...(ctx.exemptFiles ?? []).map(normalizePath),
+    ...APP_BOOKKEEPING_PREFIXES
+  ])
   const notThisTasks = (f: string): boolean => dirtyBefore.has(f) || exempt.has(f)
   const addedLines = parseDiffAddedLines(diff).filter((l) => !notThisTasks(l.file))
 
@@ -683,9 +706,26 @@ function gateTestIntegrity(
     )
   }
 
-  return result('test-integrity', 'pass', [`${declared.length} test file(s) intact`], {
-    durationMs: Date.now() - started
+  // EXTENSION ALLOWANCE: extended files are visible as info, not failures —
+  // authoring new tests inside a packet-declared file is a legitimate
+  // deliverable (T001 shape), and the builder needs to see it was recognized.
+  const extensionLines = evaluation.extended.map((f) => {
+    const beforeState = baseline.testsBefore[f]
+    const afterState = after[f]
+    return `test file extended ${beforeState?.testCount}→${afterState?.testCount} tests — authoring allowed: ${f}`
   })
+
+  return result(
+    'test-integrity',
+    'pass',
+    [
+      `${declared.length} test file(s) intact`,
+      ...extensionLines
+    ],
+    {
+      durationMs: Date.now() - started
+    }
+  )
 }
 
 /** Shared shape for the two command-driven gates (lint, build). */

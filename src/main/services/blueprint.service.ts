@@ -565,7 +565,12 @@ export class BlueprintService extends EventEmitter {
     /spawn.*ENOENT/i,
     // Anthropic transient API errors — the whole point of an auto-retry.
     /rate.?limit/i,
-    /overloaded/i
+    /overloaded/i,
+    // OpenCode cold-bootstrap: session.create 500s while MCP servers are
+    // still handshaking past the 10s server.connected gate (live: blueprint
+    // 718c wave 2, T005/T006 both died "Failed to create OpenCode session"
+    // ~10s after server start; the identical create succeeds on retry).
+    /Failed to create OpenCode session/i
   ]
 
   /** Error patterns that should NOT be retried (deterministic failures). */

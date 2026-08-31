@@ -53,9 +53,19 @@ export function humanizeFailureReason(reason: string | null | undefined): string
   }
 
   if (/planned missing/i.test(reason)) {
+    // Two very different causes share this persisted reason. A task whose
+    // session produced NOTHING (no writes, no bash) plausibly died early —
+    // server/port failure. But a task that ran a full LLM turn and still has
+    // planned files missing (live: R005 "create tasks.md", an auto-generated
+    // remediation task for pipeline metadata) is a task whose deliverable is
+    // wrong or impossible, not a dead session. The generic wording covers
+    // both without asserting the wrong one.
     return (
-      'Builder session died before writing any files — the OpenCode server ' +
-      'failed to start or was killed mid-task (parallel-wave port conflict).'
+      'Verification says planned file(s) are missing. If the session produced ' +
+      'no output at all, the OpenCode server may have failed to start or been ' +
+      'killed mid-task (parallel-wave port conflict). If the session ran but ' +
+      'the file never appeared, the planned file itself may be wrong or ' +
+      'impossible to produce — check the task description before retrying.'
     )
   }
 

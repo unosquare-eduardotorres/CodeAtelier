@@ -30,10 +30,16 @@ describe('humanizeFailureReason — pattern mapping', () => {
     assert.match(humanizeFailureReason(''), /no reason was recorded/)
   })
 
-  test('"planned missing" → server-death explanation', () => {
+  test('"planned missing" → covers both dead-session and impossible-deliverable causes', () => {
     const out = humanizeFailureReason('verification failed — 2 planned missing')
-    assert.match(out, /died before writing any files/)
+    // Dead-session cause must still be mentioned (the common historical case)
     assert.match(out, /OpenCode server/)
+    // ...but the message must not assert server death as the ONLY cause —
+    // R005 (blueprint 718c) ran full LLM turns and still "planned missing"
+    // because its deliverable (tasks.md) was pipeline metadata, impossible
+    // by construction.
+    assert.match(out, /planned file itself may be wrong or impossible/)
+    assert.doesNotMatch(out, /died before writing any files/)
   })
 
   test('"stalled — no activity" → sibling-teardown explanation', () => {
@@ -132,7 +138,8 @@ describe('deriveTaskFailureDisplay — composite shape', () => {
       '**Planned but absent (1):**\n- `docs/signature-request.md`\n'
     )
     assert.equal(disp.title, 'T003')
-    assert.match(disp.hint, /died before writing any files/)
+    assert.match(disp.hint, /planned file\(s\) are missing/)
+    assert.match(disp.hint, /OpenCode server/)
     assert.equal(disp.attempts, 6)
     assert.deepEqual(disp.missingFiles, ['docs/signature-request.md'])
   })

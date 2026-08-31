@@ -36,6 +36,22 @@ function sessionIdleEvent() {
   return { type: 'session.idle', properties: {} }
 }
 
+/** G2: a message.part.updated carrying a NESTED part.sessionID (opencode ≥1.17 shape). */
+function partEventForSession(sessionId: string, content: string) {
+  return {
+    type: 'message.part.updated',
+    properties: { part: { type: 'text', content, sessionID: sessionId } }
+  }
+}
+
+/** NO-WRITE NUDGE: a V2 tool.called event for a given tool + callID. */
+function toolCalledEvent(toolName: string, callId: string) {
+  return {
+    type: 'session.next.tool.called',
+    properties: { tool: toolName, callID: callId }
+  }
+}
+
 /** Create an async iterable from an array of events */
 async function* fakeStream(events: unknown[]): AsyncIterable<unknown> {
   for (const e of events) yield e
@@ -52,6 +68,62 @@ function stallingStream(events: unknown[]): AsyncIterable<unknown> {
           return new Promise(() => {}) // hang forever — the stall
         }
       }
+    }
+  }
+}
+
+/**
+ * STALL-RETRY ECHO FIX (T006) helper: a stream that emits `pre` promptly,
+ * then hangs on a gate (optionally emitting server.heartbeat events while
+ * hung — heartbeatMs > 0), and after release() emits `post` promptly then
+ * ends. Models the live shape: activity → stall → abort+resend → the aborted
+ * run's echo events → the resent run's events.
+ */
+function stallGateStream(
+  pre: unknown[],
+  post: unknown[],
+  heartbeatMs = 0
+): { release: () => void; heartbeats: () => number; stream: AsyncIterable<unknown> } {
+  let released = false
+  let beats = 0
+  let preIdx = 0
+  let postIdx = 0
+  const takePost = (): IteratorResult<unknown> =>
+    postIdx < post.length ? { done: false, value: post[postIdx++] } : { done: true, value: undefined }
+  return {
+    release: () => {
+      released = true
+    },
+    heartbeats: () => beats,
+    stream: {
+      [Symbol.asyncIterator]: () => ({
+        next: (): Promise<IteratorResult<unknown>> => {
+          if (preIdx < pre.length) {
+            return Promise.resolve({ done: false, value: pre[preIdx++] })
+          }
+          if (postIdx >= post.length) return Promise.resolve({ done: true, value: undefined })
+          if (released) return Promise.resolve(takePost())
+          if (heartbeatMs > 0) {
+            return new Promise((resolve) => {
+              setTimeout(() => {
+                if (released) resolve(takePost())
+                else {
+                  beats++
+                  resolve({ done: false, value: { type: 'server.heartbeat', properties: {} } })
+                }
+              }, heartbeatMs)
+            })
+          }
+          return new Promise((resolve) => {
+            const poll = setInterval(() => {
+              if (released) {
+                clearInterval(poll)
+                resolve(takePost())
+              }
+            }, 5)
+          })
+        }
+      })
     }
   }
 }
@@ -397,46 +469,21 @@ describe('processEventStream — MID-TURN STALL FIX (B)', () => {
     ;(executor as unknown as { client: unknown }).client = fake.client
 
     // Controllable stream: emits one activity event, then hangs on a gate the
-    // test releases after asserting the stall fired.
-    let activitySent = false
-    let released = false
-    let releasedEvent: unknown = null
-    const manual: AsyncIterable<unknown> = {
-      [Symbol.asyncIterator]() {
-        return {
-          next: (): Promise<IteratorResult<unknown>> => {
-            if (!activitySent) {
-              activitySent = true
-              return Promise.resolve({ done: false, value: textPartEvent('working on it') })
-            }
-            if (released) {
-              return releasedEvent
-                ? Promise.resolve({ done: false, value: releasedEvent })
-                : Promise.resolve({ done: true, value: undefined })
-            }
-            return new Promise<IteratorResult<unknown>>((resolve) => {
-              const poll = setInterval(() => {
-                if (released) {
-                  clearInterval(poll)
-                  resolve(
-                    releasedEvent
-                      ? { done: false, value: releasedEvent }
-                      : { done: true, value: undefined }
-                  )
-                }
-              }, 10)
-            })
-          }
-        }
-      }
-    }
+    // test releases after asserting the stall fired. Post-fix, the released
+    // events must include the RESENT run's activity before the idle — an
+    // idle arriving while the resend is pending belongs to the aborted run
+    // and no longer terminates the turn (STALL-RETRY ECHO FIX).
+    const gate = stallGateStream(
+      [textPartEvent('working on it')],
+      [textPartEvent('recovered answer'), sessionIdleEvent()]
+    )
 
     const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
 
     const gen = processEventStream({
-      events: { stream: manual },
+      events: { stream: gate.stream },
       openCodeSessionId: SID,
       promptBody: { parts: [{ type: 'text', text: 'test' }] },
       tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
@@ -468,13 +515,13 @@ describe('processEventStream — MID-TURN STALL FIX (B)', () => {
     assert.ok(phases.includes('started'), 'stall retry must emit session_recovery started')
     assert.ok(phases.includes('resuming'), 'stall retry must emit session_recovery resuming')
 
-    // Release the stream — idle terminates the turn
-    released = true
-    releasedEvent = sessionIdleEvent()
+    // Release the stream — the resent run's activity then a genuine idle
+    gate.release()
     const result = await consumer
 
     assert.equal(result.transientRetries, 1)
     assert.equal(result.lastTransientClass, 'slow')
+    assert.equal(result.endedWithTerminalError, false)
   })
 
   test('repeated stalls exhaust the 3-retry budget → terminal error', async () => {
@@ -644,49 +691,21 @@ describe('processEventStream — PARITY FIX (F): heartbeat-immune stall watcher'
     ;(executor as unknown as { client: unknown }).client = fake.client
 
     // Manual stream: one activity event, then server.heartbeat events every
-    // 50ms (held on a gate), releasable by the test.
-    let heartbeats = 0
-    let released = false
-    let releasedEvent: unknown = null
-    const manual: AsyncIterable<unknown> = {
-      [Symbol.asyncIterator]() {
-        let sentActivity = false
-        return {
-          next: (): Promise<IteratorResult<unknown>> => {
-            if (!sentActivity) {
-              sentActivity = true
-              return Promise.resolve({ done: false, value: textPartEvent('working') })
-            }
-            if (released) {
-              return releasedEvent
-                ? Promise.resolve({ done: false, value: releasedEvent })
-                : Promise.resolve({ done: true, value: undefined })
-            }
-            return new Promise<IteratorResult<unknown>>((resolve) => {
-              setTimeout(() => {
-                if (released) {
-                  resolve(
-                    releasedEvent
-                      ? { done: false, value: releasedEvent }
-                      : { done: true, value: undefined }
-                  )
-                } else {
-                  heartbeats++
-                  resolve({ done: false, value: { type: 'server.heartbeat', properties: {} } })
-                }
-              }, 50)
-            })
-          }
-        }
-      }
-    }
+    // 50ms (held on a gate), releasable by the test. Post-fix the released
+    // events must carry the resent run's activity before the idle (an idle
+    // while the resend is pending belongs to the aborted run).
+    const gate = stallGateStream(
+      [textPartEvent('working')],
+      [textPartEvent('recovered'), sessionIdleEvent()],
+      50
+    )
 
     const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
 
     const gen = processEventStream({
-      events: { stream: manual },
+      events: { stream: gate.stream },
       openCodeSessionId: SID,
       promptBody: { parts: [{ type: 'text', text: 'test' }] },
       tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
@@ -715,14 +734,16 @@ describe('processEventStream — PARITY FIX (F): heartbeat-immune stall watcher'
     // the 50ms heartbeat timer can slip past the 100ms stall window, but even
     // ONE heartbeat + a stall firing at ~100ms proves immunity (the old code
     // would have pushed the window to 150ms+ on that heartbeat).
-    assert.ok(heartbeats >= 1, `heartbeats must have flowed during the window (got ${heartbeats})`)
+    assert.ok(
+      gate.heartbeats() >= 1,
+      `heartbeats must have flowed during the window (got ${gate.heartbeats()})`
+    )
     assert.equal(fake.aborts, 1, 'stall must fire despite heartbeats')
     assert.equal(fake.prompts, 1, 'stall retry must re-send the prompt')
 
     // Release immediately so the re-armed 100ms window doesn't fire again —
     // the recovered activity re-arms it legitimately.
-    released = true
-    releasedEvent = sessionIdleEvent()
+    gate.release()
     const result = await consumer
 
     assert.equal(result.transientRetries, 1)
@@ -802,6 +823,595 @@ describe('execute — PARITY FIX (I): session poisoning after retry exhaustion',
     }
 
     assert.equal(sessionMap.has('conv-keep'), true, 'clean turn must keep the mapping')
+  })
+})
+
+describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', () => {
+  test('8 read-only tool calls → exactly ONE nudge promptAsync + status chunk', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // 8 read-only tool calls then idle — the nudge must fire once at call 8
+    const events: unknown[] = []
+    for (let i = 0; i < 8; i++) events.push(toolCalledEvent('read', `call-${i}`))
+    events.push(sessionIdleEvent())
+
+    const { chunks } = await runEventStream(executor, events, {} as never)
+    // Re-run with the nudge flag via direct generator invocation
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    const nudgedChunks: StreamChunk[] = []
+    let r = await gen.next()
+    while (!r.done) {
+      nudgedChunks.push(r.value as StreamChunk)
+      r = await gen.next()
+    }
+
+    // The nudge re-sent exactly one promptAsync (beyond the initial send which
+    // processEventStream doesn't perform — fake.prompts counts only nudge/resend)
+    assert.equal(fake.prompts, 1, 'exactly one nudge must be queued')
+    assert.ok(
+      nudgedChunks.some(
+        (c) => c.type === 'status' && c.content?.includes('no-write nudge')
+      ),
+      'nudge status chunk must be surfaced'
+    )
+    // Sanity: the first (non-nudged) run produced no nudge
+    assert.ok(
+      !chunks.some((c) => c.type === 'status' && c.content?.includes('no-write nudge')),
+      'nudge must not fire when enableNoWriteNudge is unset'
+    )
+  })
+
+  test('write-class tool before threshold suppresses the nudge', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    const events: unknown[] = [toolCalledEvent('read', 'c0'), toolCalledEvent('write', 'c1')]
+    for (let i = 2; i < 10; i++) events.push(toolCalledEvent('read', `c${i}`))
+    events.push(sessionIdleEvent())
+    // (assertions below — bash regression case follows in its own test)
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    let r = await gen.next()
+    while (!r.done) r = await gen.next()
+
+    assert.equal(fake.prompts, 0, 'no nudge may fire once a write tool was seen')
+  })
+
+  test('read-only bash does NOT suppress the nudge (T002 regression)', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Live evidence: T002 ran bash=4 (ls/git status — read-only), writes=0,
+    // and the nudge never fired because bash counted as write-class.
+    const events: unknown[] = [
+      toolCalledEvent('read', 'c0'),
+      toolCalledEvent('bash', 'c1'),
+      toolCalledEvent('bash', 'c2'),
+      toolCalledEvent('glob', 'c3'),
+      toolCalledEvent('bash', 'c4'),
+      toolCalledEvent('bash', 'c5'),
+      toolCalledEvent('grep', 'c6'),
+      toolCalledEvent('read', 'c7'),
+      toolCalledEvent('read', 'c8'),
+      sessionIdleEvent()
+    ]
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    const chunks: StreamChunk[] = []
+    let r = await gen.next()
+    while (!r.done) {
+      chunks.push(r.value as StreamChunk)
+      r = await gen.next()
+    }
+
+    assert.equal(fake.prompts, 1, 'read-only bash must not suppress the nudge')
+    assert.ok(
+      chunks.some((c) => c.type === 'status' && c.content?.includes('no-write nudge')),
+      'nudge status must surface on a bash-heavy read-only turn'
+    )
+  })
+
+  test('text-volume trigger fires with few tool calls (T001 run-3 regression)', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Live evidence: T001 run 3 — ~6 tool calls, 61K chars of narrated
+    // migration, zero writes, turn "completed" with the file never created.
+    // The tool-count trigger never fires on this shape; text volume must.
+    const events: unknown[] = [
+      toolCalledEvent('read', 'c0'),
+      toolCalledEvent('read', 'c1'),
+      toolCalledEvent('bash', 'c2'),
+      // One giant narration chunk (61K chars) — exceeds the 12K threshold
+      textPartEvent('X'.repeat(61_000)),
+      sessionIdleEvent()
+    ]
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input:0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    const chunks: StreamChunk[] = []
+    let r = await gen.next()
+    while (!r.done) {
+      chunks.push(r.value as StreamChunk)
+      r = await gen.next()
+    }
+
+    assert.equal(fake.prompts, 1, 'text-volume trigger must fire the nudge')
+    assert.ok(
+      chunks.some((c) => c.type === 'status' && c.content?.includes('text volume')),
+      'text-volume nudge status must surface'
+    )
+  })
+
+  test('nudge never fires twice even with 20 read-only calls', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    const events: unknown[] = []
+    for (let i = 0; i < 20; i++) events.push(toolCalledEvent('grep', `call-${i}`))
+    events.push(sessionIdleEvent())
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    let r = await gen.next()
+    while (!r.done) r = await gen.next()
+
+    assert.equal(fake.prompts, 1, 'nudge is one-shot per turn')
+  })
+})
+
+describe('processEventStream — GLM "Failed to execute statement" is transient', () => {
+  test('statement error triggers retry instead of terminating the turn', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Live evidence: T002/T004 died mid-loop on this bare error string —
+    // no pattern matched, no retry fired, the turn ended truncated.
+    // Post STALL-RETRY ECHO FIX: the idle right after the failed run's error
+    // arrives while the resend is pending and is ignored; the resent run's
+    // activity clears the flag and a LATER idle is the genuine completion.
+    const { chunks, result } = await runEventStream(executor, [
+      textPartEvent('working'),
+      sessionErrorEvent({ name: 'UnknownError', data: { message: 'Failed to execute statement' } }),
+      sessionIdleEvent(), // the failed run's idle — ignored while resend pending
+      textPartEvent('recovered work'),
+      sessionIdleEvent() // genuine completion of the resent run
+    ])
+
+    assert.ok(
+      chunks.some((c) => c.type === 'session_recovery'),
+      'statement error must trigger the retry path'
+    )
+    assert.equal(fake.prompts, 1, 'prompt must be re-sent once')
+    assert.equal(result.transientRetries, 1)
+    assert.equal(result.endedWithTerminalError, false)
+  })
+})
+
+describe('processEventStream — G1: no-activity timeout poisons the session', () => {
+  test('no-activity timeout sets endedWithTerminalError=true', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // A stream that never emits anything — the pre-activity backstop fires
+    const hanging = stallingStream([])
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    const gen = processEventStream({
+      events: { stream: hanging },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      noActivityTimeoutMs: 80
+    })
+    const chunks: StreamChunk[] = []
+    let r = await gen.next()
+    while (!r.done) {
+      chunks.push(r.value as StreamChunk)
+      r = await gen.next()
+    }
+
+    assert.equal(
+      (r.value as StreamRunResult).endedWithTerminalError,
+      true,
+      'no-activity timeout must poison the turn (G1)'
+    )
+    assert.ok(
+      chunks.some((c) => c.type === 'error' && c.error?.includes('no prompt activity')),
+      'timeout error chunk must be surfaced'
+    )
+    assert.equal(fake.aborts, 1, 'zombie prompt must be aborted')
+  })
+})
+
+describe('processEventStream — G2: sibling-session parts are not our activity', () => {
+  test('sibling session text part produces NO chunks (nested part.sessionID filter)', async () => {
+    const executor = new OpenCodeExecutor()
+    const chunks = await collectChunks(executor, [
+      partEventForSession('sibling-session-xyz', 'sibling chatter')
+    ])
+
+    assert.equal(
+      chunks.filter((c) => c.type === 'text').length,
+      0,
+      'sibling-session part must not normalize as our text'
+    )
+  })
+
+  test('own-session part with nested sessionID still normalizes', async () => {
+    const executor = new OpenCodeExecutor()
+    const chunks = await collectChunks(executor, [
+      partEventForSession(SID, 'our own text'),
+      sessionIdleEvent()
+    ])
+
+    assert.ok(
+      chunks.some((c) => c.type === 'text' && c.content === 'our own text'),
+      'own-session part must still normalize'
+    )
+  })
+})
+
+describe('processEventStream — STALL-RETRY ECHO FIX (T006): abort echo must not kill the turn', () => {
+  test('stall → abort echo + aborted-run idle ignored → resent run observed, no "Aborted" error', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Live evidence (T006, 21:38:57→21:39:27): GLM stalled 240s mid-generation,
+    // the watcher aborted the zombie prompt and re-sent — then the abort's OWN
+    // echo events (session.error "Aborted" + session.idle for the aborted run)
+    // terminated the turn before the resent prompt ran. The migration was
+    // never written and the UI showed "executor error: Aborted".
+    const gate = stallGateStream(
+      [textPartEvent('working on the migration')],
+      [
+        sessionErrorEvent('Aborted'), // our own abort's echo — must be suppressed
+        sessionIdleEvent(), // the aborted run's idle — must not terminate
+        textPartEvent('re-sent run answer'), // the resent run's activity
+        sessionIdleEvent() // genuine completion
+      ]
+    )
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const gen = processEventStream({
+      events: { stream: gate.stream },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      midTurnStallMs: 60
+    })
+
+    const chunks: StreamChunk[] = []
+    const consumer = (async () => {
+      let r = await gen.next()
+      while (!r.done) {
+        chunks.push(r.value as StreamChunk)
+        r = await gen.next()
+      }
+      return r.value as StreamRunResult
+    })()
+
+    const deadline = Date.now() + 2000
+    while (fake.prompts < 1 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    assert.equal(fake.aborts, 1, 'the stall must abort the zombie prompt')
+    assert.equal(fake.prompts, 1, 'the stall retry must re-send the prompt')
+
+    gate.release()
+    const result = await consumer
+
+    assert.ok(
+      !chunks.some((c) => c.type === 'error' && /abort/i.test(c.error ?? '')),
+      'the abort echo must NOT be yielded as an error chunk (executorErrorBox must never see it)'
+    )
+    assert.ok(
+      chunks.some((c) => c.type === 'text' && c.content === 're-sent run answer'),
+      'the resent run\'s text must be observed'
+    )
+    assert.equal(result.transientRetries, 1)
+    assert.equal(result.endedWithTerminalError, false)
+  })
+
+  test('isSessionComplete: idle and abort-error are non-terminal only while a resend is pending', () => {
+    const executor = new OpenCodeExecutor()
+    const anyExec = executor as unknown as {
+      isSessionComplete: (
+        event: unknown,
+        sessionId: string,
+        retriesAvailable?: boolean,
+        sawTurnActivity?: boolean,
+        resendPending?: boolean
+      ) => boolean
+    }
+    // While the resend is pending: aborted-run idle + abort echo are ignored
+    assert.equal(anyExec.isSessionComplete(sessionIdleEvent(), SID, false, true, true), false)
+    assert.equal(anyExec.isSessionComplete(sessionErrorEvent('Aborted'), SID, false, true, true), false)
+    // Once the resend ran (flag cleared): idle is genuine, abort-shaped errors terminal
+    assert.equal(anyExec.isSessionComplete(sessionIdleEvent(), SID, false, true, false), true)
+    assert.equal(anyExec.isSessionComplete(sessionErrorEvent('Aborted'), SID, false, true, false), true)
+    // Non-abort errors stay terminal even while a resend is pending
+    assert.equal(
+      anyExec.isSessionComplete(sessionErrorEvent('invalid model'), SID, false, true, true),
+      true
+    )
+  })
+})
+
+describe('processEventStream — NO-WRITE NUDGE escalation (T005): second, final nudge', () => {
+  test('tool-count nudge → 12K more chars → escalated final nudge; a third 12K does not fire', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    // Live evidence (T005): the first nudge queued behind a 52K-char narration
+    // the model could not interrupt; the turn ended with writes=0. One more
+    // volume-triggered nudge is now allowed, with escalated text.
+    const events: unknown[] = []
+    for (let i = 0; i < 8; i++) events.push(toolCalledEvent('read', `c${i}`))
+    events.push(textPartEvent('X'.repeat(12_500))) // +12K post-nudge narration → final nudge
+    events.push(textPartEvent('Y'.repeat(12_500))) // another 12K → NO third nudge
+    events.push(sessionIdleEvent())
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    const chunks: StreamChunk[] = []
+    let r = await gen.next()
+    while (!r.done) {
+      chunks.push(r.value as StreamChunk)
+      r = await gen.next()
+    }
+
+    assert.equal(fake.prompts, 2, 'exactly two nudges: initial (tool count) + final (text volume)')
+    const statuses = chunks
+      .filter((c) => c.type === 'status')
+      .map((c) => c.content ?? '')
+    assert.ok(
+      statuses.some((s) => s.includes('no-write nudge sent —')),
+      'the first (tool-count) nudge status must surface'
+    )
+    assert.ok(
+      statuses.some((s) => s.includes('no-write nudge sent (final)')),
+      'the escalated final nudge status must surface'
+    )
+    assert.equal(
+      statuses.filter((s) => s.includes('no-write nudge')).length,
+      2,
+      'no third nudge may fire'
+    )
+  })
+
+  test('write-class tool after the first nudge suppresses the escalated nudge', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = fakeClient()
+    ;(executor as unknown as { client: unknown }).client = fake.client
+
+    const events: unknown[] = []
+    for (let i = 0; i < 8; i++) events.push(toolCalledEvent('read', `c${i}`))
+    events.push(toolCalledEvent('write', 'cw')) // the model obeyed nudge #1
+    events.push(textPartEvent('Z'.repeat(25_000))) // narration after the write
+    events.push(sessionIdleEvent())
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const processEventStream = proto.processEventStream.bind(executor)
+    shrinkRetryDelays(executor)
+    const gen = processEventStream({
+      events: { stream: fakeStream(events) },
+      openCodeSessionId: SID,
+      promptBody: { parts: [{ type: 'text', text: 'test' }] },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      maxTurns: 0,
+      enableNoWriteNudge: true
+    })
+    let r = await gen.next()
+    while (!r.done) r = await gen.next()
+
+    assert.equal(fake.prompts, 1, 'a write-class tool suppresses all further nudges')
+  })
+})
+
+describe('getOrCreateSession — COLD-BOOTSTRAP RETRY: session.create 500s', () => {
+  test('two 500s then success — retries with backoff, returns the session id', async () => {
+    const executor = new OpenCodeExecutor()
+    shrinkRetryDelays(executor)
+
+    // Live shape (blueprint 718c wave 2): server.connected gate expired while
+    // MCP servers were still handshaking; session.create 500'd with
+    // "Unexpected server error" for BOTH concurrent tasks. The identical
+    // create succeeds once bootstrap finishes.
+    let calls = 0
+    const fake = {
+      session: {
+        create: () => {
+          calls++
+          if (calls <= 2) {
+            return Promise.resolve({
+              data: undefined,
+              error: { name: 'UnknownError', data: { message: 'Unexpected server error' } }
+            })
+          }
+          return Promise.resolve({ data: { id: 'ses_retry_ok' } })
+        },
+        promptAsync: () => Promise.resolve()
+      }
+    }
+    ;(executor as unknown as { client: unknown }).client = fake
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const getOrCreateSession = proto.getOrCreateSession.bind(executor)
+    const sessionId = await getOrCreateSession({
+      conversationId: 'conv-cold-boot',
+      provider: { providerId: 'glm', modelId: 'glm-4.6' },
+      cwd: '/tmp/some-worktree'
+    })
+
+    assert.equal(sessionId, 'ses_retry_ok', 'third attempt must succeed')
+    assert.equal(calls, 3, 'exactly two retries must fire')
+    // The mapping is registered so the next turn reuses the session
+    const sessionMap = (executor as unknown as { sessionMap: Map<string, string> }).sessionMap
+    assert.equal(sessionMap.get('conv-cold-boot'), 'ses_retry_ok')
+  })
+
+  test('persistent 500s — gives up after 3 attempts and returns undefined', async () => {
+    const executor = new OpenCodeExecutor()
+    shrinkRetryDelays(executor)
+
+    let calls = 0
+    const fake = {
+      session: {
+        create: () => {
+          calls++
+          return Promise.resolve({
+            data: undefined,
+            error: { name: 'UnknownError', data: { message: 'Unexpected server error' } }
+          })
+        },
+        promptAsync: () => Promise.resolve()
+      }
+    }
+    ;(executor as unknown as { client: unknown }).client = fake
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const getOrCreateSession = proto.getOrCreateSession.bind(executor)
+    const sessionId = await getOrCreateSession({
+      conversationId: 'conv-cold-boot-2',
+      provider: { providerId: 'glm', modelId: 'glm-4.6' }
+    })
+
+    assert.equal(sessionId, undefined, 'exhausted retries must return undefined')
+    assert.equal(calls, 3, '1 initial + 2 retries, no more')
+  })
+
+  test('a thrown create error is retried too (not just no-ID responses)', async () => {
+    const executor = new OpenCodeExecutor()
+    shrinkRetryDelays(executor)
+
+    let calls = 0
+    const fake = {
+      session: {
+        create: () => {
+          calls++
+          if (calls === 1) return Promise.reject(new Error('fetch failed'))
+          return Promise.resolve({ data: { id: 'ses_throw_ok' } })
+        },
+        promptAsync: () => Promise.resolve()
+      }
+    }
+    ;(executor as unknown as { client: unknown }).client = fake
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<
+      string,
+      (...args: any[]) => any
+    >
+    const getOrCreateSession = proto.getOrCreateSession.bind(executor)
+    const sessionId = await getOrCreateSession({
+      conversationId: 'conv-cold-boot-3',
+      provider: { providerId: 'glm', modelId: 'glm-4.6' }
+    })
+
+    assert.equal(sessionId, 'ses_throw_ok')
+    assert.equal(calls, 2)
   })
 })
 

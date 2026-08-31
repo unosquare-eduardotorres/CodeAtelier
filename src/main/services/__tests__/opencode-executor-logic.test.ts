@@ -216,6 +216,50 @@ describe('OpenCodeExecutor.buildPromptBody', () => {
 
     if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
   })
+
+  // AGENT-SELECT: agent routing via prompt body (live-verified on opencode 1.18.18)
+  test('agent param is included in body when provided', () => {
+    const original = process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
+    delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
+
+    const body = (executor as any).buildPromptBody(
+      'hi',
+      'sys',
+      provider,
+      undefined,
+      undefined,
+      'davinci'
+    )
+    assert.equal(body.agent, 'davinci', 'agent must be included when provided')
+    assert.equal(body.system, 'sys', 'system prompt must survive agent selection')
+
+    if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
+  })
+
+  test('agent field omitted when not provided', () => {
+    const original = process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
+    delete process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE
+
+    const body = (executor as any).buildPromptBody('hi', 'sys', provider, undefined)
+    assert.equal('agent' in body, false, 'agent must be omitted when not provided')
+
+    if (original) process.env.CODE_ATELIER_SYSTEM_PROMPT_FILE = original
+  })
+})
+
+describe('OpenCodeExecuteOptions.agent — build-mode routing contract', () => {
+  test('agent is an optional string on execute options', () => {
+    // Compile-time contract: the field exists and accepts a string. Runtime
+    // routing is covered by buildPromptBody tests + live verification.
+    const opts: import('../opencode-executor').OpenCodeExecuteOptions = {
+      prompt: 'p',
+      systemPrompt: 's',
+      provider: { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' },
+      cwd: '/tmp',
+      agent: 'davinci'
+    }
+    assert.equal(opts.agent, 'davinci')
+  })
 })
 
 // ── isTransientError: additional patterns ──

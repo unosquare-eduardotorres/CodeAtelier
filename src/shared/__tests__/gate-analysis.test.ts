@@ -266,6 +266,76 @@ describe('evaluateTestIntegrity', () => {
     assert.deepEqual(r.countDrops, [])
     assert.equal(r.ok, true)
   })
+
+  // ── EXTENSION ALLOWANCE (T001 double-bind fix) ──
+  // A task whose deliverable is authoring tests INSIDE an existing packet
+  // test file was in a double-bind: author → hash change → fail; don't author
+  // → task-tests unverifiable. A pure extension (strict count increase, no
+  // skips, no drops) now passes and is reported via `extended`.
+
+  test('pure addition (10→15, no skips) passes and lands in extended, not modified', () => {
+    const r = evaluateTestIntegrity({
+      before: { 'a.test.ts': { hash: 'h1', testCount: 10 } },
+      after: { 'a.test.ts': { hash: 'h2', testCount: 15 } },
+      addedTestLines: [{ file: 'a.test.ts', line: 40, text: '  it("new case", () => {})' }]
+    })
+    assert.equal(r.ok, true, 'pure extension must pass')
+    assert.deepEqual(r.extended, ['a.test.ts'])
+    assert.deepEqual(r.modified, [], 'an extension is not a modification failure')
+  })
+
+  test('same-count rewrite still fails — it could be rewriting assertions', () => {
+    const r = evaluateTestIntegrity({
+      before,
+      after: { 'a.test.ts': { hash: 'h2', testCount: 3 } },
+      addedTestLines: []
+    })
+    assert.equal(r.ok, false)
+    assert.deepEqual(r.modified, ['a.test.ts'])
+    assert.deepEqual(r.extended, [])
+  })
+
+  test('addition + skip marker in the same file fails — not a pure extension', () => {
+    const r = evaluateTestIntegrity({
+      before: { 'a.test.ts': { hash: 'h1', testCount: 10 } },
+      after: { 'a.test.ts': { hash: 'h2', testCount: 15 } },
+      addedTestLines: [{ file: 'a.test.ts', line: 12, text: '  it.skip("disable the failing one", () => {})' }]
+    })
+    assert.equal(r.ok, false)
+    assert.equal(r.skipsAdded.length, 1)
+    assert.deepEqual(r.modified, ['a.test.ts'], 'skip-poisoned extension must fail as modified')
+    assert.deepEqual(r.extended, [])
+  })
+
+  test('addition in one file + count drop in another file fails', () => {
+    const r = evaluateTestIntegrity({
+      before: {
+        'a.test.ts': { hash: 'h1', testCount: 10 },
+        'b.test.ts': { hash: 'h3', testCount: 8 }
+      },
+      after: {
+        'a.test.ts': { hash: 'h2', testCount: 15 },
+        'b.test.ts': { hash: 'h4', testCount: 2 }
+      },
+      addedTestLines: []
+    })
+    assert.equal(r.ok, false)
+    assert.deepEqual(r.countDrops, [{ file: 'b.test.ts', before: 8, after: 2 }])
+    assert.deepEqual(r.extended, ['a.test.ts'], 'the clean extension is still visible as evidence')
+  })
+
+  test('deletion still fails even when the other file was extended', () => {
+    const r = evaluateTestIntegrity({
+      before: {
+        'a.test.ts': { hash: 'h1', testCount: 10 },
+        'b.test.ts': { hash: 'h3', testCount: 8 }
+      },
+      after: { 'a.test.ts': { hash: 'h2', testCount: 15 }, 'b.test.ts': null },
+      addedTestLines: []
+    })
+    assert.equal(r.ok, false)
+    assert.deepEqual(r.deleted, ['b.test.ts'])
+  })
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) void summaryAsync()
