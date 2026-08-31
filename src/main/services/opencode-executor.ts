@@ -1486,6 +1486,33 @@ export class OpenCodeExecutor {
         options.agent
       )
 
+      // AGENT-PREFLIGHT (blueprint 0520): when the caller routes through a
+      // named agent (davinci), verify the server can resolve it BEFORE the
+      // prompt is sent. The server rejects prompt_async for an unknown agent
+      // internally ('default agent "davinci" not found') but still answers
+      // 204 — the app then waits the full no-activity timeout on events that
+      // can never arrive. Fail fast with the real cause instead.
+      if (options.agent) {
+        try {
+          const { missingExpected } = await this.validateAgents()
+          if (missingExpected.includes(options.agent)) {
+            const msg =
+              `OpenCode agent '${options.agent}' is not available on the server — ` +
+              `agent definitions were not found for this session's directory. ` +
+              `Prompt rejected before send.`
+            openCodeLog.error(`[opencode] ${msg}`)
+            yield { type: 'error', error: msg }
+            return
+          }
+        } catch (err) {
+          // Validation itself failing must not block the prompt — the agent
+          // may still resolve (list endpoint differs from prompt resolution).
+          openCodeLog.warn(
+            `[opencode] Agent preflight check failed (proceeding): ${(err as Error).message}`
+          )
+        }
+      }
+
       // PARITY FIX (G): timestamp taken BEFORE the prompt is sent — the token
       // backstop below only counts assistant messages created after this.
       const turnStartedAt = Date.now()

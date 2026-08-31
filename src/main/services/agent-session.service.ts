@@ -2578,6 +2578,27 @@ export class AgentSessionService extends AgentBaseService {
         `[opencode] Session directory = track execution path: ${executionPath} ` +
           `(workspace root: ${this.workspacePath})`
       )
+      // WORKTREE-AGENTS (blueprint 0520): build sessions run with directory=
+      // the worktree, and the OpenCode server resolves agents (davinci) from
+      // the SESSION's directory — the workspace's .opencode/agents is not
+      // visible there. The server then rejects every prompt with
+      // 'default agent "davinci" not found' but still returns 204, so the
+      // app waited the full 120s no-activity timeout on events that could
+      // never arrive (live: 3 tasks x 2 attempts, zero message events
+      // server-side). Mirror the agent definitions into the worktree.
+      try {
+        openCodeAgentWriter.writeAgents({
+          workspacePath: executionPath,
+          provider: providerConfig,
+          davinciSystemPrompt: params.systemPrompt,
+          mode: this.currentMode
+        })
+        this.log.info(
+          `[opencode] Mirrored agent definitions into worktree: ${executionPath}/.opencode/agents`
+        )
+      } catch (agentErr) {
+        this.log.warn('[opencode] Failed to mirror agents into worktree:', agentErr)
+      }
     }
     for await (const chunk of openCodeExecutor.execute({
       prompt,
