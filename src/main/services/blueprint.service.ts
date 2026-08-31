@@ -570,7 +570,12 @@ export class BlueprintService extends EventEmitter {
     // still handshaking past the 10s server.connected gate (live: blueprint
     // 718c wave 2, T005/T006 both died "Failed to create OpenCode session"
     // ~10s after server start; the identical create succeeds on retry).
-    /Failed to create OpenCode session/i
+    /Failed to create OpenCode session/i,
+    // No-activity timeout: the prompt was accepted (204) but the provider
+    // never produced a token — GLM/Z.ai intermittently accepts then stalls
+    // (live: blueprint 0520 wave 1, all 3 tasks, zero message events
+    // server-side). Transient: the identical re-send generates.
+    /no prompt activity within/i
   ]
 
   /** Error patterns that should NOT be retried (deterministic failures). */

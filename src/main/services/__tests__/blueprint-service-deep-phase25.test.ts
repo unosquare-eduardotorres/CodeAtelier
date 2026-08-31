@@ -236,6 +236,18 @@ if (loaded) {
         true
       )
     })
+
+    // NO-ACTIVITY TIMEOUT (blueprint 0520 wave 1): prompt accepted (204) but
+    // the provider never produced a token — zero message events server-side.
+    // Transient: the identical re-send generates.
+    test('no prompt activity timeout is retryable', () => {
+      assert.equal(
+        blueprintService.isRetryableError(
+          'executor error: OpenCode produced no prompt activity within 120000ms — the session may be stale. Try re-sending.'
+        ),
+        true
+      )
+    })
   })
 
   // ── Event emission ────────────────────────────────────────────────────
