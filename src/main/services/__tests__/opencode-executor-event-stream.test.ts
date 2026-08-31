@@ -223,12 +223,14 @@ function resubscribingClient(streams: AsyncIterable<unknown>[]): {
   aborts: number
 } {
   const calls = { subscribes: 0, prompts: 0, aborts: 0 }
+  const subscribeArgs: unknown[] = []
   const queue = [...streams]
   return {
     client: {
       event: {
-        subscribe: () => {
+        subscribe: (opts?: unknown) => {
           calls.subscribes++
+          subscribeArgs.push(opts)
           const next = queue.shift()
           if (!next) throw new Error('test: no more streams in subscribe queue')
           return Promise.resolve({ stream: next })
@@ -249,6 +251,9 @@ function resubscribingClient(streams: AsyncIterable<unknown>[]): {
     },
     get subscribes() {
       return calls.subscribes
+    },
+    get subscribeArgs() {
+      return subscribeArgs
     },
     get prompts() {
       return calls.prompts
@@ -1412,6 +1417,39 @@ describe('getOrCreateSession — COLD-BOOTSTRAP RETRY: session.create 500s', () 
 
     assert.equal(sessionId, 'ses_throw_ok')
     assert.equal(calls, 2)
+  })
+})
+
+describe('processEventStream — WORKTREE-SSE: directory-scoped subscription', () => {
+  test('execute subscribes with the directory query when cwd is a worktree', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = resubscribingClient([fakeStream([textPartEvent('ok'), sessionIdleEvent()])])
+    ;(executor as unknown as { client: unknown }).client = fake.client
+    ;(executor as unknown as { isStarted: boolean }).isStarted = true
+
+    const sessionMap = (executor as unknown as { sessionMap: Map<string, string> }).sessionMap
+    sessionMap.set('conv-wt', SID)
+
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
+    const execute = proto.execute.bind(executor)
+    shrinkRetryDelays(executor)
+
+    const gen = execute({
+      prompt: 'build it',
+      systemPrompt: 'sys',
+      provider: { providerId: 'test', modelId: 'm1' },
+      cwd: '/tmp/some-worktree',
+      conversationId: 'conv-wt',
+      maxTurns: 0
+    })
+    let r = await gen.next()
+    while (!r.done) r = await gen.next()
+
+    // The SSE subscription MUST carry the directory query — a directory-scoped
+    // session's events never reach the global /event endpoint (verified live:
+    // global SSE got only server.connected while the instance generated 120+).
+    assert.equal(fake.subscribeArgs.length, 1)
+    assert.deepEqual(fake.subscribeArgs[0], { query: { directory: '/tmp/some-worktree' } })
   })
 })
 

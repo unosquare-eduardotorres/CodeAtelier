@@ -1473,8 +1473,19 @@ export class OpenCodeExecutor {
         return
       }
 
-      // Subscribe to events for streaming
-      const events = await this.client.event.subscribe()
+      // Subscribe to events for streaming.
+      // WORKTREE-SSE (blueprint 0520, experimentally verified): a session
+      // created with directory=<path> publishes its events to that
+      // DIRECTORY-SCOPED instance's event bus — the global /event endpoint
+      // never sees them (verified: global SSE received only server.connected
+      // while the instance generated 120+ events; with ?directory= it
+      // received the full stream). Without this, worktree builds accept the
+      // prompt (204), generate server-side, and the app waits out the
+      // no-activity timeout blind. 718c worked only because its build ran in
+      // the primary tree (global instance).
+      const events = await this.client.event.subscribe(
+        options.cwd ? ({ query: { directory: options.cwd } } as never) : undefined
+      )
 
       // Build the prompt body (parts + model config + output schema)
       const promptBody = this.buildPromptBody(
