@@ -56,6 +56,7 @@ import { registerTestingIpc } from './testing.ipc'
 import { registerHandoffIpc } from './handoff.ipc'
 import { registerProcessIpc } from './process.ipc'
 import { registerTrackIpc } from './track.ipc'
+import { registerFileViewerIpc } from './file-viewer.ipc'
 
 export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   // Initialize session event router FIRST — other IPC handlers may need it
@@ -117,4 +118,5 @@ export function registerAllIpcHandlers(mainWindow: BrowserWindow): void {
   registerHandoffIpc()
   registerProcessIpc()
   registerTrackIpc()
+  registerFileViewerIpc()
 }

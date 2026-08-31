@@ -8,6 +8,8 @@
 
 import type { StreamChunk } from '../services'
 import { summarizeToolInput } from '../services'
+import fs from 'node:fs'
+import path from 'node:path'
 import type {
   ConversationMode,
   ToolActivity,
@@ -189,12 +191,53 @@ export function extractEditDiffs(
   return { editDiffs, editDiffsOmitted: pairs.length - editDiffs.length }
 }
 
+/**
+ * Build a Write diff: old content read from disk at tool_use time (the file has
+ * not been written yet — the processor runs before execution), new content
+ * from the tool input. ENOENT or any read failure yields '' — an all-green
+ * diff, which is exactly right for a newly created file. Never throws: a disk
+ * hiccup must not break the stream.
+ */
+function extractWriteDiff(
+  input: Record<string, unknown>,
+  workspacePath: string | undefined
+): ToolEditDiff[] | undefined {
+  const content = input.content
+  if (typeof content !== 'string') return undefined
+
+  const filePath = (input.file_path ?? input.filePath ?? input.path) as string | undefined
+  if (!filePath || !workspacePath) return undefined
+
+  let oldString = ''
+  try {
+    const resolved = path.resolve(workspacePath, filePath)
+    // Containment — same boundary rule as the file viewer.
+    if (resolved === workspacePath || resolved.startsWith(workspacePath + path.sep)) {
+      const stat = fs.statSync(resolved, { throwIfNoEntry: false })
+      // Only read existing regular files, and only when small enough that the
+      // clipped copy stays meaningful.
+      if (stat?.isFile() && stat.size <= MAX_EDIT_DIFFS_TOTAL_CHARS * 4) {
+        oldString = fs.readFileSync(resolved, 'utf8')
+      }
+    }
+  } catch {
+    oldString = ''
+  }
+
+  const oldClip = clip(oldString)
+  const newClip = clip(content)
+  const diff: ToolEditDiff = { oldString: oldClip.value, newString: newClip.value }
+  if (oldClip.truncated || newClip.truncated) diff.truncated = true
+  return [diff]
+}
+
 // ── Structured metadata extraction ──
 
 function extractStructuredMeta(
   toolName: string | undefined,
   toolInput: string | undefined,
-  toolInputRaw?: string
+  toolInputRaw?: string,
+  workspacePath?: string
 ): {
   filePath?: string
   lineRange?: string
@@ -243,9 +286,17 @@ function extractStructuredMeta(
   const limit = input.limit as number | undefined
   const lineRange = offset ? `${offset}${limit ? `-${offset + limit - 1}` : '+'}` : undefined
 
-  // Before/after segments — Edit/MultiEdit only. The tool *input* already
-  // carries the exact changed text, so there's nothing to parse from output.
-  const edits = operationType === 'edit' ? extractEditDiffs(input) : undefined
+  // Before/after segments — Edit/MultiEdit from tool input; Write by reading
+  // the current file from disk (it is overwritten only after this returns).
+  const edits =
+    operationType === 'edit'
+      ? extractEditDiffs(input)
+      : operationType === 'write'
+        ? (() => {
+            const writeDiff = extractWriteDiff(input, workspacePath)
+            return writeDiff ? { editDiffs: writeDiff, editDiffsOmitted: 0 } : undefined
+          })()
+        : undefined
 
   return {
     filePath: filePath || undefined,
@@ -274,7 +325,12 @@ export function processToolChunk(
   if (chunk.toolName?.startsWith(MCP_TOOLS.CONTROL_ACTIONS._PREFIX)) return null
 
   if (chunk.type === 'tool_use') {
-    const meta = extractStructuredMeta(chunk.toolName, chunk.toolInput, chunk.toolInputRaw)
+    const meta = extractStructuredMeta(
+      chunk.toolName,
+      chunk.toolInput,
+      chunk.toolInputRaw,
+      options.workspacePath
+    )
     return {
       type: 'tool_activity',
       toolActivity: {
@@ -349,7 +405,10 @@ export function processToolChunk(
       })
     }
 
-    // Extract structured metadata from the original tool input
+    // Extract structured metadata from the original tool input. No workspace
+    // path here: at tool_result time the file has already been written, so a
+    // disk read would capture the NEW content as "old". Write diffs captured
+    // at tool_use time survive the merge (fields are only set when present).
     const meta = extractStructuredMeta(chunk.toolName, chunk.toolInput, chunk.toolInputRaw)
 
     const toolActivity: ToolActivity = {

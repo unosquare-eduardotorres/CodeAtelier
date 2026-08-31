@@ -28,10 +28,12 @@
     "test:cov": "c8 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:html": "c8 --reporter=html --reporter=text node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
     "test:cov:check": "c8 --check-coverage --lines 65 --functions 77 --branches 76 node --import tsx --enable-source-maps src/main/__tests__/run-all.ts",
+    "verify:glm": "node --import tsx --enable-source-maps scripts/live-glm-verify.ts",
     "test:cov:full": "bash scripts/coverage-full.sh",
     "coverage:rank": "node scripts/coverage-rank.mjs",
     "test:cov:report": "npm run test:cov && npm run coverage:rank",
-    "test:check-orphans": "node scripts/check-test-orphans.mjs"
+    "test:check-orphans": "node scripts/check-test-orphans.mjs",
+    "icons:extract": "tsx scripts/extract-language-icons.ts"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
@@ -59,6 +61,7 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource/cormorant-garamond": "^5.2.11",
     "@fontsource/eb-garamond": "^5.2.7",
+    "@iconify-json/vscode-icons": "^1.2.76",
     "@octokit/rest": "^22.0.1",
     "@playwright/test": "^1.61.1",
     "@tailwindcss/typography": "^0.5.20",
@@ -101,7 +104,7 @@
     "remark-gfm": "^4.0.1",
     "simple-git": "^3.36.0",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.23.1",
+    "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "typescript-native": "npm:typescript@^7.0.2",
     "vite": "^7.3.1",
