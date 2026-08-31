@@ -226,6 +226,16 @@ if (loaded) {
       const result = blueprintService.isRetryableError('')
       assert.equal(result, false)
     })
+
+    // COLD-BOOTSTRAP (blueprint 718c wave 2): both wave tasks died with this
+    // exact message ~10s after server start; the phase hard-failed because it
+    // matched no retryable pattern. The identical create succeeds on retry.
+    test('Failed to create OpenCode session is retryable', () => {
+      assert.equal(
+        blueprintService.isRetryableError('executor error: Failed to create OpenCode session'),
+        true
+      )
+    })
   })
 
   // ── Event emission ────────────────────────────────────────────────────

@@ -74,6 +74,26 @@ export const RERUN_VERIFY_RX =
 export const GENERIC_REMEDIATION_TASK_DESC =
   'Fix all gaps identified in the verification report. Review the verify phase output and implement missing or incomplete functionality.'
 
+/**
+ * REMEDIATION-SCRAPE FILTER (R005 incident): paths that must NEVER become
+ * remediation tasks. The verify report routinely cites the blueprint's own
+ * metadata files (blueprints/<id>/tasks.md, plan.md, spec.md, build-*.md) when
+ * describing what was checked — the Strategy-2 regex scraped `tasks.md` out of
+ * that prose and generated "create tasks.md" as a build task. That file is
+ * pipeline metadata, not a code deliverable: it does not exist in the build
+ * worktree and never should, so the task failed verification on every retry
+ * (live: blueprint 718c wave 7, R005 burned 2 attempts x ~5 min).
+ */
+const NON_REMEDIABLE_PATH_RX =
+  /(?:^|\/)\b(?:tasks|plan|spec|build|build-\d+|verify|review)\.md\b/i
+
+/** True when a scraped path is pipeline metadata (or not a real file path at all). */
+function isNonRemediablePath(path: string): boolean {
+  const trimmed = path.trim().replace(/^[`'"]+|[`'"]+$/g, '')
+  if (!trimmed) return true
+  return NON_REMEDIABLE_PATH_RX.test(trimmed)
+}
+
 /** Run a git subcommand in the execution tree (sync, best-effort). */
 function gitSync(args: string[], cwd: string): string | null {
   try {
@@ -1227,7 +1247,8 @@ export class BlueprintVerifyService extends EventEmitter {
       let match: RegExpExecArray | null
       while ((match = gapPattern.exec(text)) !== null) {
         const file = match[1] || match[2]
-        if (file) gapFiles.add(file)
+        // REMEDIATION-SCRAPE FILTER: blueprint metadata prose is not a gap.
+        if (file && !isNonRemediablePath(file)) gapFiles.add(file)
       }
       if (gapFiles.size > 0) {
         tasks.push({

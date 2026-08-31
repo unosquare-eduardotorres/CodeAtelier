@@ -68,6 +68,25 @@ const FIX_TASK_SEVERITIES = new Set(['critical', 'high'])
  * this is describing a rewrite, not a review. */
 const MAX_FIX_TASKS = 10
 
+/**
+ * FIX-TASK METADATA FILTER (8acc incident): findings whose `file` is the
+ * blueprint's own pipeline metadata must never become build fix-tasks.
+ * The reviewer cites blueprints/<id>/tasks.md / build.md when describing
+ * what it checked; those files live outside the build worktree and can
+ * never be produced there, so a fix task targeting them fails verification
+ * on every retry (live: 8acc R001/R002 burned 2 attempts each on
+ * tasks.md / build.md deliverables). Same class of bug as the verify-side
+ * NON_REMEDIABLE_PATH_RX filter.
+ */
+const FIX_TASK_NON_ACTIONABLE_FILE_RX =
+  /(?:^|\/)\b(?:tasks|plan|spec|build|build-\d+|verify|review)\.md\b/i
+
+/** True when a finding's file is pipeline metadata (never a build deliverable). */
+function isFixTaskNonActionableFile(file: string): boolean {
+  const trimmed = file.trim().replace(/^[`'"]+|[`'"]+$/g, '')
+  return FIX_TASK_NON_ACTIONABLE_FILE_RX.test(trimmed)
+}
+
 export interface CodeReviewFinding {
   file: string
   line?: number
@@ -514,7 +533,20 @@ export class BlueprintCodeReviewService extends EventEmitter {
   }): Promise<boolean> {
     const { blueprintId, workspaceId, workspacePath, review } = params
 
-    const fixable = review.findings.filter((f) => FIX_TASK_SEVERITIES.has(f.severity))
+    let fixable = review.findings.filter((f) => FIX_TASK_SEVERITIES.has(f.severity))
+    // FIX-TASK METADATA FILTER: drop findings targeting pipeline metadata —
+    // they are recorded as surviving findings (visible in the ledger), never
+    // dispatched as impossible build tasks.
+    const metadataFindings = fixable.filter((f) => isFixTaskNonActionableFile(f.file))
+    if (metadataFindings.length > 0) {
+      bpLog.warn(
+        `[code-review] Blueprint ${blueprintId} — ${metadataFindings.length} finding(s) target ` +
+          `pipeline metadata (${metadataFindings.map((f) => f.file).slice(0, 5).join(', ')}) — ` +
+          `recording as unverified, not dispatching fix tasks`
+      )
+      this.recordSurvivingFindings(blueprintId, metadataFindings)
+      fixable = fixable.filter((f) => !isFixTaskNonActionableFile(f.file))
+    }
     if (fixable.length === 0) return false
 
     // Re-review bound: only one fix round. A second fix_required verdict after

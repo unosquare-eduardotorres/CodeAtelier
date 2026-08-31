@@ -30,6 +30,8 @@ import { blueprintCodeReviewService } from '../services/blueprint-code-review.se
 import { modelConfigService } from '../services/model-config.service'
 import { workspaceRepository } from '../db/repositories'
 import { loadBranchOptions } from './load-branch-options'
+import { getModifiedFilesSince } from '../services/blueprint-modified-files'
+import { trackService } from '../services/track.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository,
@@ -127,6 +129,16 @@ const REFERENCE_DOC_TYPES = new Set(['file', 'workspace-file', 'url'])
 /** Ceiling on attachments per blueprint — the edit form has no other bound. */
 const MAX_REFERENCE_DOCS = 50
 
+/**
+ * DOC-VOLUME GUARD (8acc incident): above this many reference docs the TASKS
+ * phase degrades in practice — the model spends its output budget narrating
+ * doc-reading instead of emitting the task JSON (live: 11 docs → 30-min
+ * timeout on attempt 1, a 180K-char raw transcript on attempt 2). The hard
+ * cap stays 50; this is the advisory threshold surfaced to the user at
+ * ingestion time so they can split the blueprint before burning an hour.
+ */
+const ADVISORY_REFERENCE_DOCS = 8
+
 /** Generous next to git's own limits, tight enough to reject a pasted blob. */
 const MAX_BRANCH_NAME_LENGTH = 255
 
@@ -142,6 +154,15 @@ function parseReferenceDocuments(
   if (!Array.isArray(raw)) throw new Error(`${ch}: referenceDocuments must be an array`)
   if (raw.length > MAX_REFERENCE_DOCS) {
     throw new Error(`${ch}: too many attachments (${raw.length}); max ${MAX_REFERENCE_DOCS}`)
+  }
+  if (raw.length > ADVISORY_REFERENCE_DOCS) {
+    // Advisory, not a rejection: large doc sets work but the TASKS phase
+    // becomes slow and fragile. The user should split the scope instead.
+    bpLog.warn(
+      `${ch}: ${raw.length} reference documents attached (advisory threshold ` +
+        `${ADVISORY_REFERENCE_DOCS}) — consider splitting the blueprint into ` +
+        `smaller scopes; large doc sets slow and destabilize task decomposition`
+    )
   }
   return raw.map((entry, i) => {
     if (!entry || typeof entry !== 'object') {
@@ -286,6 +307,35 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_GET)
     const id = requireString(args, 'id', IPC_CHANNELS.BLUEPRINT_GET)
     return blueprintService.getBlueprint(id)
+  })
+
+  // ── blueprint:getModifiedFiles — files changed since BUILD baseline ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_MODIFIED_FILES, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const args = requireObject(rawArgs, IPC_CHANNELS.BLUEPRINT_GET_MODIFIED_FILES)
+    const blueprintId = requireString(
+      args,
+      'blueprintId',
+      IPC_CHANNELS.BLUEPRINT_GET_MODIFIED_FILES
+    )
+
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) return { files: [], source: 'none' as const }
+
+    const baseline = (blueprint.settingsJson as Record<string, unknown> | null)?.baselineCommit
+    if (typeof baseline !== 'string') return { files: [], source: 'none' as const }
+
+    const workspace = workspaceRepository.findById(blueprint.workspaceId)
+    if (!workspace) return { files: [], source: 'none' as const }
+
+    // Diff against the tree BUILD ran in — the blueprint's track when one
+    // exists, the primary checkout otherwise. resolveTrack never creates
+    // anything and falls back to the primary path on any lookup failure.
+    const target = trackService.resolveTrack('blueprint', blueprintId, workspace.repoPath)
+
+    const files = await getModifiedFilesSince(target.path, baseline)
+    return { files: files ?? [], source: files ? ('git' as const) : ('none' as const) }
   })
 
   // ── blueprint:getDetails — Get a blueprint with phases + tasks ──

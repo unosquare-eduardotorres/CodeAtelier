@@ -163,4 +163,42 @@ describe('generateFallbackRemediationTasks — empty-bodied gate findings', () =
     assert.ok(tasks[0].description.includes('TS2345'))
     assert.deepEqual(tasks[0].files, ['src/App.tsx'])
   })
+
+  // ── REMEDIATION-SCRAPE FILTER (R005 incident, blueprint 718c wave 7) ──
+  // The verify report cites the blueprint's own metadata files when describing
+  // what was checked; the Strategy-2 regex turned `tasks.md` into a "create
+  // tasks.md" build task that failed verification on every retry.
+
+  test('Strategy 2 does not scrape blueprint metadata (tasks.md) into a task', () => {
+    const text = [
+      '## Verification report',
+      'Checked plan against blueprints/abc/tasks.md and spec.md.',
+      'MISSING — `tasks.md`',
+      'MISSING — `src/feature/repo.ts`'
+    ].join('\n')
+    const tasks = svc.generateFallbackRemediationTasks(null, text, 'bp-test')
+    assert.equal(tasks.length, 1, 'only the real code path may become a task')
+    assert.deepEqual(tasks[0].files, ['src/feature/repo.ts'])
+  })
+
+  test('Strategy 2 filters plan/spec/build/verify/review markdown metadata', () => {
+    const text = [
+      'STUB — `plan.md`',
+      'ORPHANED — `build-3.md`',
+      'MISSING — `spec.md`',
+      'MISSING — `verify.md`',
+      'MISSING — `review.md`',
+      'MISSING — `apps/web/src/lib/x.ts`'
+    ].join('\n')
+    const tasks = svc.generateFallbackRemediationTasks(null, text, 'bp-test')
+    assert.equal(tasks.length, 1)
+    assert.deepEqual(tasks[0].files, ['apps/web/src/lib/x.ts'])
+  })
+
+  test('a real code file named tasks.ts is NOT filtered', () => {
+    const text = 'MISSING — `src/tasks.ts`'
+    const tasks = svc.generateFallbackRemediationTasks(null, text, 'bp-test')
+    assert.equal(tasks.length, 1)
+    assert.deepEqual(tasks[0].files, ['src/tasks.ts'])
+  })
 })

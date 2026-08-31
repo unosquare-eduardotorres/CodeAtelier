@@ -88,6 +88,10 @@ const TEST_FILES: string[] = [
   './grill-handoff-utils.test',
   // ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
   '../../ipc/__tests__/tool-chunk-processor.test',
+  // ─── Run 15b: File viewer + Write diff capture ───
+  '../../ipc/__tests__/file-viewer-write-diffs.test',
+  // ─── Run 15c: Blueprint modified-files git parsing (temp repo) ───
+  './blueprint-modified-files.test',
   // ─── Run 16: Context usage level/quality resolution ───
   './context-usage-level.test',
   // ─── Run 17: Context compaction verification (badge + thresholds + local) ───
@@ -405,6 +409,7 @@ const TEST_FILES: string[] = [
   // ─── Blueprint Environment Preflight (dependency validation before BUILD) ───
   './blueprint-preflight.test',
   './blueprint-gate-launch.test',
+  './blueprint-tasks-mapreduce.test',
   // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
   './blueprint-task-verification.test',
   './blueprint-task-user-skip.test',
@@ -439,6 +444,8 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../../renderer/src/store/__tests__/workspace-switch-streams.test',
   '../../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
+  // ─── F9: completed build lanes snapshot-and-release ───
+  '../../../renderer/src/store/__tests__/blueprint-lane-finalize.test',
   '../../../renderer/src/hooks/__tests__/background-stream-routing.test',
   '../../../renderer/src/store/__tests__/update-snooze.test',
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
@@ -611,6 +618,7 @@ const TEST_FILES: string[] = [
   '../../../shared/__tests__/model-family.test',
   '../../../shared/__tests__/gate-commands.test',
   '../../../shared/__tests__/gate-analysis.test',
+  '../../../shared/__tests__/doc-classification.test',
   '../../../shared/__tests__/work-packet.test',
   '../../../shared/__tests__/task-review-parsers.test',
   // ─── DAG scheduler primitives (DAG BUILD) ───
@@ -707,8 +715,14 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/utils/__tests__/task-failure-display.test',
   // ─── F5: no segment split trigger fires inside a fenced code block ───
   '../../../renderer/src/utils/__tests__/stream-segment-accumulator-fence.test',
+  // ─── N2: monotonic segment seq — stable ids across the committed boundary ───
+  '../../../renderer/src/utils/__tests__/stream-segment-seq.test',
+  // ─── Phase D: StreamingTranscript component tests (jsdom harness) ───
+  '../../../renderer/src/components/streaming/__tests__/streaming-transcript.dom.test',
   // ─── F10: grill transform strips orphaned block closers ───
   '../../../renderer/src/utils/__tests__/strip-grill-json.test',
+  // ─── VERIFY fallback: modified files aggregated from tool activity ───
+  '../../../renderer/src/utils/__tests__/modified-files-fallback.test',
   // ─── Chat header naming (project specialist, raw agent ids) ───
   '../../../renderer/src/components/chat/__tests__/message-identity.test',
   // ─── Audit → Blueprint handoff formatting ───

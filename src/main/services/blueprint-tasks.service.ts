@@ -34,6 +34,13 @@ import {
 import { conversationRepository } from '../db/repositories'
 import { extractWorkPacket } from '../../shared/work-packet-parser'
 import { buildTaskDag } from '../../shared/task-dag'
+import {
+  partitionReferenceDocs,
+  buildMapPrompt,
+  reduceToWavesJson,
+  type MergedTask
+} from './blueprint-tasks-mapreduce'
+import { extractReferenceDocuments } from '../ipc/blueprint-ipc-handlers'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -99,9 +106,99 @@ export class BlueprintTasksService extends EventEmitter {
         blueprintService.resolveWorkspaceContextWindow(workspacePath)
       )
 
-      // 3. Create adapter + session
+      // 2a. Create adapter (needed by both the map sessions and the one-shot session)
       const adapter = new BlueprintTasksAdapter({ workspaceId, blueprintId, phaseContext })
 
+      // 2b. AGENTIC MAPREDUCE (8acc incident): when the blueprint carries
+      // reference documents, classify them (reference-context vs plan-units)
+      // and decompose EACH plan doc in its own focused map session, then
+      // reduce the per-doc waves deterministically. One-shot decomposition
+      // with 11 docs burned the 30-min budget narrating doc-reading and
+      // produced a raw transcript. Falls through to the one-shot path when
+      // there are no docs or no plan-classified docs.
+      const refDocs = extractReferenceDocuments(blueprintService.getBlueprint(blueprintId)?.settingsJson)
+      let mapReducedTasks: Record<string, unknown> | null = null
+      if (refDocs && refDocs.length > 0) {
+        const partition = await partitionReferenceDocs(workspacePath, refDocs)
+        if (partition.plans.length > 0) {
+          bpLog.info(
+            `[startTasksPhase] Map-reduce decomposition: ${partition.plans.length} plan doc(s), ` +
+              `${partition.reference.length} reference doc(s)`
+          )
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'tasks',
+            text: `Decomposing ${partition.plans.length} plan document(s) one by one (${partition.reference.length} reference docs as context)`,
+            kind: 'system'
+          })
+
+          const referenceSummary =
+            partition.reference.length > 0
+              ? partition.reference.map((r) => `- ${r.name}`).join('\n')
+              : '(none)'
+          const priorArtifactsSummary = [
+            'Prior artifacts (spec.md, plan.md) are on disk under blueprints/ - Read them as needed.',
+            'The plan artifact maps plan items to files; align this document tasks with those items.'
+          ].join('\n')
+
+          const perDoc: Array<{ docName: string; tasks: MergedTask[] }> = []
+          for (let i = 0; i < partition.plans.length; i++) {
+            const doc = partition.plans[i]
+            const docSession = new AgentSessionService(adapter)
+            const docConvId = `blueprint-tasks-map-${blueprintId}-${i}-${Date.now()}`
+            try {
+              await docSession.start(workspacePath, 'plan')
+              await docSession.send(
+                buildMapPrompt({
+                  docName: doc.name,
+                  docContent: doc.content,
+                  referenceSummary,
+                  priorArtifactsSummary,
+                  docIndex: i,
+                  totalDocs: partition.plans.length
+                }),
+                docConvId
+              )
+              const docText = docSession.getStreamedContent(docConvId)
+              const docJson = parseBlueprintTasks(docText)
+              const docWaves = docJson?.waves as
+                | Array<{ wave: number; tasks: MergedTask[] }>
+                | undefined
+              if (Array.isArray(docWaves) && docWaves.length > 0) {
+                const docTasks = docWaves.flatMap((w) =>
+                  w.tasks.map((t) => ({ ...t, wave: w.wave }))
+                )
+                perDoc.push({ docName: doc.name, tasks: docTasks })
+                bpLog.info(
+                  `[startTasksPhase] Map ${i + 1}/${partition.plans.length} (${doc.name}): ` +
+                    `${docTasks.length} tasks`
+                )
+              } else {
+                bpLog.warn(
+                  `[startTasksPhase] Map ${i + 1}/${partition.plans.length} (${doc.name}) produced no parseable tasks - skipping doc`
+                )
+              }
+            } finally {
+              await docSession.stop()
+            }
+          }
+
+          if (perDoc.length === 0) {
+            throw new Error(
+              'Map-reduce decomposition: no plan document produced parseable tasks. Retrying.'
+            )
+          }
+          const reduced = reduceToWavesJson(perDoc)
+          mapReducedTasks = { waves: reduced.waves }
+          bpLog.info(
+            `[startTasksPhase] Reduce: ${reduced.waves.length} merged wave(s)` +
+              (reduced.warnings.length > 0 ? ` (${reduced.warnings.length} warning(s))` : '')
+          )
+        }
+      }
+
+      // 3. (adapter created at 2a) One-shot session for the no-docs path
       const blueprint = blueprintService.getBlueprint(blueprintId)
       adapter.setGoalCondition(buildTasksGoalCondition(blueprint?.title ?? 'Unknown'), 'enforce')
 
@@ -185,19 +282,38 @@ export class BlueprintTasksService extends EventEmitter {
         }
       })
 
-      const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
+      // MAP-REDUCE BYPASS: when the per-doc map sessions already produced a
+      // reduced graph, skip the one-shot session entirely — its whole point
+      // was to read the docs, which the map sessions just did per-doc.
+      let text = ''
+      let completion: ReturnType<typeof parsePhaseCompletionBlock> = null
+      let tasksJson: Record<string, unknown> | null = null
 
-      try {
-        await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
-      } finally {
+      if (mapReducedTasks) {
         if (timeoutId) clearTimeout(timeoutId)
         stallWatchdog.dispose()
-      }
+        text =
+          `# Task decomposition (Agentic MapReduce)\n\n` +
+          `Decomposed per plan document, then merged deterministically.\n\n` +
+          '```json\n' +
+          JSON.stringify(mapReducedTasks, null, 2) +
+          '\n```'
+        tasksJson = mapReducedTasks
+      } else {
+        const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
 
-      // 7. Parse output
-      const text = session.getStreamedContent(syntheticConvId)
-      const completion = parsePhaseCompletionBlock(text, 'tasks') ?? undefined
-      const tasksJson = parseBlueprintTasks(text)
+        try {
+          await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId)
+          stallWatchdog.dispose()
+        }
+
+        // 7. Parse output
+        text = session.getStreamedContent(syntheticConvId)
+        completion = parsePhaseCompletionBlock(text, 'tasks')
+        tasksJson = parseBlueprintTasks(text)
+      }
 
       // BP-TASKS-SILENT-EMPTY: a missing or unparseable blueprint-tasks block used
       // to advance to REVIEW anyway with zero tasks persisted — BUILD then
@@ -245,6 +361,13 @@ export class BlueprintTasksService extends EventEmitter {
       }
 
       // 9. Persist tasks to DB (via the parsed blueprint-tasks JSON)
+      // BP-TASKS-PERSIST-FAILFAST: persistTasksFromJson used to swallow its
+      // own errors (log-only catch), so a SqliteError mid-batch left the
+      // blueprint with ZERO tasks while the phase advanced 'complete' —
+      // REVIEW/code-review then ran on an empty build and produced nonsense
+      // fix-tasks (live: blueprint 8acc, 0/0 tasks, R001-R003 targeting
+      // metadata files). Persistence is now a phase-level failure: throw so
+      // the catch block marks the phase failed and schedules the auto-retry.
       if (tasksJson) {
         this.persistTasksFromJson(blueprintId, tasksJson)
       }
@@ -266,7 +389,7 @@ export class BlueprintTasksService extends EventEmitter {
         workspaceId,
         phase: 'tasks',
         status: 'complete',
-        completion
+        completion: completion ?? undefined
       } satisfies BlueprintPhaseCompletePayload)
 
       if (tasksPhase) {
@@ -358,8 +481,8 @@ export class BlueprintTasksService extends EventEmitter {
    * blueprintService.populateTasks(). Handles the wave-nested format from the prompt.
    */
   private persistTasksFromJson(blueprintId: string, tasksJson: Record<string, unknown>): void {
-    try {
-      const waves = tasksJson.waves as
+    // BP-TASKS-PERSIST-FAILFAST: throws on failure — see startTasksPhase step 9.
+    const waves = tasksJson.waves as
         | Array<{
             wave: number
             tasks: Array<{
@@ -451,18 +574,15 @@ export class BlueprintTasksService extends EventEmitter {
         packetCount++
       }
 
-      bpLog.info(
-        `[persistTasksFromJson] Persisted ${persisted.length} tasks across ${waves.length} waves ` +
-          `(${packetCount} with work packets)`
+    bpLog.info(
+      `[persistTasksFromJson] Persisted ${persisted.length} tasks across ${waves.length} waves ` +
+        `(${packetCount} with work packets)`
+    )
+    if (packetCount === 0 && persisted.length > 0) {
+      bpLog.warn(
+        '[persistTasksFromJson] No task carried a work packet — the write-set, ' +
+          'test-integrity and task-test gates will all report unverifiable'
       )
-      if (packetCount === 0 && persisted.length > 0) {
-        bpLog.warn(
-          '[persistTasksFromJson] No task carried a work packet — the write-set, ' +
-            'test-integrity and task-test gates will all report unverifiable'
-        )
-      }
-    } catch (err) {
-      bpLog.error(`[persistTasksFromJson] Failed to persist tasks:`, err)
     }
   }
 

@@ -122,6 +122,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/grill-handoff-utils.test',
   // ─── Run 15: Tool Chunk Processor (centralized pipeline) ───
   '../ipc/__tests__/tool-chunk-processor.test',
+  '../ipc/__tests__/file-viewer-write-diffs.test',
+  '../services/__tests__/blueprint-modified-files.test',
   // ─── Run 16: Context usage level/quality resolution ───
   '../services/__tests__/context-usage-level.test',
   // ─── Run 17: Context compaction verification (badge + thresholds + local) ───
@@ -319,6 +321,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-chunk-forwarder.test',
   '../services/__tests__/opencode-stale-idle.test',
   '../services/__tests__/opencode-kill-stale-server.test',
+  // ─── WAVE-RACE FIX: refcounted server lifecycle (parallel wave tasks) ───
+  '../services/__tests__/opencode-server-lifecycle.test',
   // ─── Blueprint Crash Recovery, Discoveries, Resolve Assignment ───
   '../services/__tests__/blueprint-resume.test',
   '../services/__tests__/blueprint-discoveries.test',
@@ -328,7 +332,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/prompt-optimizer.test',
   // ─── Pipeline Stabilization Round 2 — phase watchdog + registry sync guard ───
   '../services/__tests__/blueprint-phase-watchdog.test',
-  '../services/__tests__/blueprint-gate-launch.test',
+  '../services/__tests__/blueprint-gate-launch.test'
+  '../services/__tests__/blueprint-tasks-mapreduce.test',,
   // ─── Memory Engine (knowledge-aware) ───
   '../services/__tests__/memory-engine.test',
   '../services/__tests__/memory-retrieval.test',
@@ -686,6 +691,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/workspace-switch-streams.test',
   '../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
+  // ─── F9: completed build lanes snapshot-and-release ───
+  '../../renderer/src/store/__tests__/blueprint-lane-finalize.test',
   '../../renderer/src/hooks/__tests__/background-stream-routing.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
@@ -698,8 +705,16 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/components/workspace/integrations/__tests__/integration-readiness.test',
   '../../renderer/src/components/chat/task-plan/__tests__/build-bar-visibility.test',
   '../../renderer/src/utils/__tests__/build-kickoff-mode-guard.test',
+  // ─── WAVE-RACE FIX: Retry screen humanizes persisted task failure reasons ───
+  '../../renderer/src/utils/__tests__/task-failure-display.test',
   '../../renderer/src/utils/__tests__/stream-segment-accumulator-fence.test',
+  // ─── N2: monotonic segment seq — stable ids across the committed boundary ───
+  '../../renderer/src/utils/__tests__/stream-segment-seq.test',
+  // ─── Phase D: StreamingTranscript component tests (jsdom harness) ───
+  '../../renderer/src/components/streaming/__tests__/streaming-transcript.dom.test',
   '../../renderer/src/utils/__tests__/strip-grill-json.test',
+  // ─── VERIFY fallback: modified files aggregated from tool activity ───
+  '../../renderer/src/utils/__tests__/modified-files-fallback.test',
   '../../renderer/src/components/chat/__tests__/message-identity.test',
   '../services/__tests__/prompt-builder-extractors.test',
   '../services/__tests__/prompt-builder-local.test',
@@ -726,7 +741,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/gate-rollup.test',
   '../../shared/__tests__/model-family.test',
   '../../shared/__tests__/gate-commands.test',
-  '../../shared/__tests__/gate-analysis.test',
+  '../../shared/__tests__/gate-analysis.test'
+  '../../shared/__tests__/doc-classification.test',,
   '../../shared/__tests__/work-packet.test',
   '../../shared/__tests__/task-review-parsers.test',
   '../../shared/__tests__/task-dag.test',
