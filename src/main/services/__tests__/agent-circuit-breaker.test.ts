@@ -117,6 +117,23 @@ describe('AgentCircuitBreaker', () => {
     assert.equal(breaker.isBroken, true)
   })
 
+  // CB-GOAL-01 regression (map sessions): a goal-conditioned plan session
+  // legitimately streams analysis prose before its FIRST tool call — the
+  // gratuitous heuristic must stay suppressed. Live: blueprint map sessions
+  // were cut at the first read tool (4/4 docs 'no parseable tasks').
+  test('does_not_soft_stop_first_tool_call_when_goal_condition_is_active', () => {
+    const { breaker } = createCircuitBreaker()
+    const result = breaker.onToolUse({
+      isBuildMode: false,
+      accumulatedTextLength: 27223,
+      conversationId: 'conv-map-1',
+      hasGoalCondition: true
+    })
+    assert.equal(result.broken, false)
+    assert.equal(result.shouldTerminate, false)
+    assert.equal(breaker.isBroken, false)
+  })
+
   test('does_not_trigger_gratuitous_on_second_tool_call', () => {
     const { breaker } = createCircuitBreaker()
     // First tool call with low text

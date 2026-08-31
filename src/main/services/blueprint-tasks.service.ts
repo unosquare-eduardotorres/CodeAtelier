@@ -108,6 +108,19 @@ export class BlueprintTasksService extends EventEmitter {
 
       // 2a. Create adapter (needed by both the map sessions and the one-shot session)
       const adapter = new BlueprintTasksAdapter({ workspaceId, blueprintId, phaseContext })
+      // CB-GOAL-01 (map sessions): set the goal condition BEFORE any map session
+      // runs. The circuit breaker's gratuitous-tool heuristic (500+ chars of
+      // prose + first tool call = 'already answered') is suppressed only when a
+      // goal condition is active — and a map session legitimately streams doc
+      // analysis prose before its FIRST read tool call (the prompt invites it:
+      // 'Read them as needed'). Without this, every map turn was cut at the
+      // first tool call (live: 4/4 docs 'no parseable tasks', all with
+      // circuit-break-stream-cut + messageStop=false). The one-shot path below
+      // re-sets the same condition — harmless.
+      adapter.setGoalCondition(
+        buildTasksGoalCondition(blueprintService.getBlueprint(blueprintId)?.title ?? 'Unknown'),
+        'enforce'
+      )
 
       // 2b. AGENTIC MAPREDUCE (8acc incident): when the blueprint carries
       // reference documents, classify them (reference-context vs plan-units)

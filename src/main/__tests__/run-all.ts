@@ -332,8 +332,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/prompt-optimizer.test',
   // ─── Pipeline Stabilization Round 2 — phase watchdog + registry sync guard ───
   '../services/__tests__/blueprint-phase-watchdog.test',
-  '../services/__tests__/blueprint-gate-launch.test'
-  '../services/__tests__/blueprint-tasks-mapreduce.test',,
+  '../services/__tests__/blueprint-gate-launch.test',
+  '../services/__tests__/blueprint-tasks-mapreduce.test',
   // ─── Memory Engine (knowledge-aware) ───
   '../services/__tests__/memory-engine.test',
   '../services/__tests__/memory-retrieval.test',
@@ -741,8 +741,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/gate-rollup.test',
   '../../shared/__tests__/model-family.test',
   '../../shared/__tests__/gate-commands.test',
-  '../../shared/__tests__/gate-analysis.test'
-  '../../shared/__tests__/doc-classification.test',,
+  '../../shared/__tests__/gate-analysis.test',
+  '../../shared/__tests__/doc-classification.test',
   '../../shared/__tests__/work-packet.test',
   '../../shared/__tests__/task-review-parsers.test',
   '../../shared/__tests__/task-dag.test',
