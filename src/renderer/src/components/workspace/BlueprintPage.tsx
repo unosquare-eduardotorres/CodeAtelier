@@ -5,11 +5,13 @@ import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/bl
 import { rendererLog } from '@renderer/utils/logger'
 import { ConfirmDialog } from '@renderer/components/common'
 import { useWorkspaceStore } from '@renderer/store/workspace.store'
+import { useFileViewerStore } from '@renderer/store/file-viewer.store'
 import { BlueprintPhaseTimeline, BlueprintApprovalGate, BlueprintHistoryItem } from './blueprints'
 import { BlueprintClarifyGateCard } from './blueprints/BlueprintClarifyGateCard'
 import { PHASE_ICONS, type PhaseIconKey } from './blueprints/phase-icons'
 import BlueprintChatView, { BlueprintQuestionFooter } from './blueprints/BlueprintChatView'
 import BlueprintExecutionPanel from './blueprints/BlueprintExecutionPanel'
+import BlueprintFileViewerDrawer from './blueprints/BlueprintFileViewerDrawer'
 import { BlueprintRunHeader } from './blueprints/BlueprintRunHeader'
 import { readBlueprintBranchName } from './blueprints/detail/reference-docs'
 import { BlueprintDetailView } from './blueprints/detail/BlueprintDetailView'
@@ -166,6 +168,11 @@ function BlueprintActiveView({
     return (planArt?.contentJson as Record<string, unknown>) ?? null
   }, [currentBlueprint])
 
+  // File-viewer drawer participates in the execution grid only while a file is
+  // open — the drawer itself renders null when closed, so the column template
+  // must track its state to avoid an empty trailing grid track.
+  const viewerOpen = useFileViewerStore((s) => s.isOpen)
+
   // Overall progress (tasks done / total)
   const tasksDone = currentBlueprint
     ? currentBlueprint.tasks.filter((t) => {
@@ -215,9 +222,13 @@ function BlueprintActiveView({
           className="bg-surface-raised rounded-xl border border-border-subtle overflow-hidden flex-1 min-h-0 flex flex-col"
         >
           <div
-            className={`grid ${panelOpen ? '' : 'grid-cols-[200px_minmax(0,1fr)]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
+            className={`grid ${panelOpen || viewerOpen ? '' : 'grid-cols-[200px_minmax(0,1fr)]'} grid-rows-[minmax(0,1fr)] divide-x divide-border-subtle flex-1 min-h-0`}
             style={
-              panelOpen ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` } : undefined
+              panelOpen
+                ? { gridTemplateColumns: `200px minmax(0,1fr) ${panelWidth}px` }
+                : viewerOpen
+                  ? { gridTemplateColumns: '200px minmax(0,1fr) 420px' }
+                  : undefined
             }
           >
             <div className="p-3 overflow-y-auto min-h-0">
@@ -231,6 +242,7 @@ function BlueprintActiveView({
             <div className="flex flex-col min-h-0 min-w-0">
               <BlueprintChatView
                 messages={chatMessages}
+                blueprintId={currentBlueprint?.id}
                 isStreaming={
                   isRunning &&
                   !clarifyGateReady &&
@@ -290,6 +302,11 @@ function BlueprintActiveView({
                 }
               />
             </div>
+
+            {/* File viewer drawer — tool rows in the live transcript open files here.
+                Self-gating (renders null when closed); the grid template above
+                adds its column only while viewerOpen. */}
+            {!panelOpen && <BlueprintFileViewerDrawer className="h-full max-h-full overflow-hidden" />}
 
             {/* Execution panel (collapsible right column) */}
             {panelOpen && (

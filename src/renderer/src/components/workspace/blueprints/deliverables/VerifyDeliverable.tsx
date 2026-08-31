@@ -17,8 +17,11 @@ import {
 } from 'lucide-react'
 import type { BlueprintPhase } from '../../../../../../shared/blueprint-types'
 import { PHASE_ICONS } from '../phase-icons'
+import { useFileViewerStore } from '@renderer/store/file-viewer.store'
+import FileLanguageIcon from '../../../common/FileLanguageIcon'
 import { DeliverableHeader, MetricTile, DiscoveriesSection, CappedMarkdownBlock } from './shared'
 import { findArtifact, extractDiscoveries } from './artifact-helpers'
+import { ModifiedFilesSection } from './ModifiedFilesSection'
 
 // ── Types ──
 
@@ -167,10 +170,13 @@ function SeverityBadge({ severity }: { severity: string }): JSX.Element {
 
 export function VerifyDeliverable({
   phase,
-  duration
+  duration,
+  blueprintId
 }: {
   phase: BlueprintPhase
   duration: number | null
+  /** When provided, shows the git-based Modified Files section. */
+  blueprintId?: string
 }): JSX.Element {
   const config = PHASE_ICONS.verify
   const verify = findArtifact(phase.artifactsJson, 'verify', 'verification')
@@ -227,6 +233,13 @@ export function VerifyDeliverable({
   const display = getStatusDisplay(overallStatus, remediationTasks.length > 0)
   const DisplayIcon = display.icon
 
+  // Finding chips open the file in the shared viewer (blueprint drawer shows it)
+  const openFileInViewer = useFileViewerStore((s) => s.openFile)
+  const handleOpenFindingFile = (file: string): void => {
+    // blueprintId ctx → viewer reads from the blueprint's execution track
+    if (blueprintId) void openFileInViewer(file, { blueprintId })
+  }
+
   // Coverage percentage
   const coveragePct =
     totalRequirements > 0 ? Math.round((requirementsCovered / totalRequirements) * 100) : null
@@ -271,6 +284,9 @@ export function VerifyDeliverable({
   return (
     <div>
       <DeliverableHeader config={config} summary={display.label} duration={duration} />
+
+      {/* 0. Modified files — what BUILD actually changed on disk */}
+      {blueprintId && <ModifiedFilesSection blueprintId={blueprintId} />}
 
       {/* 1. Status banner */}
       <div
@@ -367,12 +383,16 @@ export function VerifyDeliverable({
                 {finding.files.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-2 ml-0">
                     {finding.files.map((file, fi) => (
-                      <span
+                      <button
                         key={fi}
-                        className="inline-block px-2 py-0.5 rounded bg-surface-inset text-[11px] font-mono text-text-muted"
+                        type="button"
+                        onClick={() => handleOpenFindingFile(file)}
+                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-inset text-[11px] font-mono text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+                        title={file}
                       >
+                        <FileLanguageIcon filePath={file} size={12} />
                         {file}
-                      </span>
+                      </button>
                     ))}
                   </div>
                 )}

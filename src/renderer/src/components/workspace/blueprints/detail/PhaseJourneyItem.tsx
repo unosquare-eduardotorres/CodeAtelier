@@ -54,11 +54,13 @@ function CappedMarkdown({
 interface PhaseJourneyItemContentProps {
   phase: BlueprintPhase
   tasks: BlueprintTask[]
+  blueprintId?: string
 }
 
 export function PhaseJourneyItemContent({
   phase,
-  tasks
+  tasks,
+  blueprintId
 }: PhaseJourneyItemContentProps): JSX.Element {
   // Compute duration from phase timestamps (deliverables expect ms or null)
   const duration =
@@ -80,7 +82,7 @@ export function PhaseJourneyItemContent({
     case 'build':
       return <BuildDeliverable phase={phase} duration={duration} tasks={tasks} />
     case 'verify':
-      return <VerifyDeliverable phase={phase} duration={duration} />
+      return <VerifyDeliverable phase={phase} duration={duration} blueprintId={blueprintId} />
     default: {
       // Fallback: show any markdown artifact
       const mdArt = phase.artifactsJson?.find((a) => a.contentMd)

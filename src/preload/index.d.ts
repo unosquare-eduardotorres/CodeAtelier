@@ -809,6 +809,22 @@ interface Api {
       oldPath?: string
     }>
   >
+
+  // File Viewer
+  filesViewerRead: (args: {
+    conversationId?: string
+    blueprintId?: string
+    workspacePath?: string
+    filePath: string
+  }) => Promise<{ content: string; size: number; truncated: boolean }>,
+
+  // Blueprint modified files (VERIFY deliverable)
+  getBlueprintModifiedFiles: (args: {
+    blueprintId: string
+  }) => Promise<{
+    files: Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>
+    source: 'git' | 'none'
+  }>
   getFileDiff: (args: {
     conversationId: string
     filePath: string

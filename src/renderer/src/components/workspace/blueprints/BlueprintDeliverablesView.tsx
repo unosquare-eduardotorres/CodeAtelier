@@ -30,6 +30,7 @@ import { ReviewDeliverable } from './deliverables/ReviewDeliverable'
 import { BuildDeliverable } from './deliverables/BuildDeliverable'
 import { CodeReviewDeliverable } from './deliverables/CodeReviewDeliverable'
 import { VerifyDeliverable } from './deliverables/VerifyDeliverable'
+import BlueprintFileViewerDrawer from './BlueprintFileViewerDrawer'
 
 // ── Props ──
 
@@ -168,11 +169,9 @@ function PhaseDeliverableContent({
     case 'build':
       return <BuildDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
     case 'code-review':
-      return (
-        <CodeReviewDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
-      )
+      return <CodeReviewDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
     case 'verify':
-      return <VerifyDeliverable phase={phase} duration={duration} />
+      return <VerifyDeliverable phase={phase} duration={duration} blueprintId={blueprint.id} />
     default:
       return <p className="text-xs text-text-muted italic">No renderer for phase: {phase.phase}</p>
   }
@@ -216,42 +215,47 @@ export function BlueprintDeliverablesView({
   const bannerType = clarifyAwaitingInput || clarifyQuestions ? 'clarify' : 'approval'
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 bg-surface-raised rounded-xl border border-border-subtle overflow-hidden">
-      {/* Notification banners */}
-      {needsInput && <InteractionBanner type={bannerType} onSwitch={onSwitchToExecution} />}
+    <div className="flex flex-1 min-h-0 bg-surface-raised rounded-xl border border-border-subtle overflow-hidden">
+      <div className="flex flex-col flex-1 min-h-0 min-w-0">
+        {/* Notification banners */}
+        {needsInput && <InteractionBanner type={bannerType} onSwitch={onSwitchToExecution} />}
 
-      {/* Phase selector — horizontal pill bar */}
-      <div className="sticky top-0 z-10 bg-surface-raised/95 backdrop-blur-sm border-b border-border-subtle px-6 py-3">
-        <div
-          className="flex items-center gap-2 flex-wrap max-w-7xl mx-auto"
-          role="tablist"
-          aria-label="Phase deliverables"
-        >
-          {phases.map((phase) => (
-            <PhaseSelector
-              key={phase.phase}
-              phase={phase}
-              isSelected={selectedPhase === phase.phase}
-              onClick={() => setSelectedPhase(phase.phase)}
-            />
-          ))}
+        {/* Phase selector — horizontal pill bar */}
+        <div className="sticky top-0 z-10 bg-surface-raised/95 backdrop-blur-sm border-b border-border-subtle px-6 py-3">
+          <div
+            className="flex items-center gap-2 flex-wrap max-w-7xl mx-auto"
+            role="tablist"
+            aria-label="Phase deliverables"
+          >
+            {phases.map((phase) => (
+              <PhaseSelector
+                key={phase.phase}
+                phase={phase}
+                isSelected={selectedPhase === phase.phase}
+                onClick={() => setSelectedPhase(phase.phase)}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Phase content — full width, scrollable */}
+        <div className="flex-1 overflow-y-auto px-6 py-6">
+          <div className="max-w-7xl mx-auto w-full">
+            {selectedPhaseData && blueprint ? (
+              <PhaseDeliverableContent
+                phase={selectedPhaseData}
+                blueprint={blueprint}
+                phaseDurations={phaseDurations}
+              />
+            ) : (
+              <EmptyDeliverableState currentPhase={currentPhase} />
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Phase content — full width, scrollable */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="max-w-7xl mx-auto w-full">
-          {selectedPhaseData && blueprint ? (
-            <PhaseDeliverableContent
-              phase={selectedPhaseData}
-              blueprint={blueprint}
-              phaseDurations={phaseDurations}
-            />
-          ) : (
-            <EmptyDeliverableState currentPhase={currentPhase} />
-          )}
-        </div>
-      </div>
+      {/* Shared file viewer drawer — deliverable file chips open here */}
+      <BlueprintFileViewerDrawer className="h-full max-h-full overflow-hidden" />
     </div>
   )
 }

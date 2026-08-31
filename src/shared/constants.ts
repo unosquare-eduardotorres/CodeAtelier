@@ -180,6 +180,9 @@ export const IPC_CHANNELS = {
   WORKSPACE_CANCEL_ACTIVATION: 'workspace:cancelActivation',
   WORKSPACE_CLEAN_ACTIVATION: 'workspace:cleanActivation',
 
+  // File viewer (chat Files tab / blueprint drawer)
+  FILES_VIEWER_READ: 'filesViewer:read',
+
   // Agent/Skill individual delete & sync
   AGENT_DELETE_FROM_WORKSPACE: 'agent:deleteFromWorkspace',
   AGENT_SYNC_TO_WORKSPACE: 'agent:syncToWorkspace',
@@ -732,6 +735,8 @@ export const IPC_CHANNELS = {
   BLUEPRINT_WAVE_COMPLETE: 'blueprint:waveComplete',
   /** Per-task deterministic quality-gate report (main → renderer). */
   BLUEPRINT_TASK_GATES: 'blueprint:taskGates',
+  /** Files modified since the BUILD baseline commit (for VERIFY deliverable). */
+  BLUEPRINT_GET_MODIFIED_FILES: 'blueprint:getModifiedFiles',
 
   // Constitution
   BLUEPRINT_GET_CONSTITUTION: 'blueprint:getConstitution',
@@ -929,6 +934,9 @@ export const GLM_DEFAULT_OUTPUT_LIMIT = 131_072
  * Coding Plan credit multipliers, per 10,000 tokens.
  * credits = (input×in + cachedInput×cached + output×out) / 10_000
  *
+ * Source: Z.ai Coding Plan pricing — https://docs.z.ai/guides/overview/pricing
+ * (cross-check plan tiers at https://z.ai/subscribe). Re-verify on plan changes.
+ *
  * Two properties drive the whole cost model: output costs ~3.5× input, and cached
  * input is ~4× cheaper than fresh input — so prompt-prefix stability (cache hit rate)
  * is the dominant lever.
@@ -944,7 +952,12 @@ export const GLM_CREDIT_RATES: Record<
 /** Credits charged per GLM-hosted MCP tool call. */
 export const GLM_MCP_CREDITS_PER_CALL = 1.2
 
-/** Coding Plan quota windows, by plan tier. */
+/**
+ * Coding Plan quota windows, by plan tier.
+ *
+ * Source: Z.ai Coding Plan pricing — https://docs.z.ai/guides/overview/pricing
+ * (cross-check plan tiers at https://z.ai/subscribe). Re-verify on plan changes.
+ */
 export const GLM_PLAN_LIMITS = {
   max: { per5h: 28_000, perWeek: 140_000 }
 } as const

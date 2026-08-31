@@ -71,6 +71,7 @@ export default function AuditStreamView({
                 message={auditSegmentToMessage(seg.content, seg.toolActivities, i)}
                 toolActivities={seg.toolActivities}
                 identityOverride={auditIdentity}
+                viewerContext="other"
               />
             ))}
 

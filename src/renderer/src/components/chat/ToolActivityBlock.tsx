@@ -11,12 +11,17 @@ import {
   PenLine,
   FileOutput,
   Copy,
-  Check
+  Check,
+  ExternalLink
 } from 'lucide-react'
 import type { ToolActivity, ToolOperationType } from '../../../../shared/types'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import { shortenInput, getToolDisplayName } from './tool-activity-utils'
 import InlineEditDiff from './InlineEditDiff'
+import FileLanguageIcon from '../common/FileLanguageIcon'
+import DiffStatBadge from '../common/DiffStatBadge'
+import { useFileViewerStore } from '@renderer/store/file-viewer.store'
+import type { FileViewerCtx } from '@renderer/store/file-viewer.store'
 
 // ── Copy button helper ──
 
@@ -125,6 +130,13 @@ const STATUS_STYLES: Record<
   }
 }
 
+/** Left-border status dot color — replaces icon color for file rows. */
+const STATUS_DOT_COLORS: Record<string, string> = {
+  running: 'bg-purple-400',
+  error: 'bg-danger',
+  completed: 'bg-emerald-400'
+}
+
 // ── ToolRow sub-components ──
 
 function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Element {
@@ -166,10 +178,35 @@ function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Ele
   )
 }
 
-function ToolRowExpandedPanel({ activity }: { activity: ToolActivity }): React.JSX.Element {
+function ToolRowExpandedPanel({
+  activity,
+  onOpenFile
+}: {
+  activity: ToolActivity
+  onOpenFile?: (filePath: string) => void
+}): React.JSX.Element {
   const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
+  const canOpenFile = Boolean(onOpenFile && activity.filePath)
   return (
     <div className="mt-1 ml-5 rounded-md bg-surface-base border border-border-subtle overflow-hidden">
+      {(activity.editDiffs?.length || canOpenFile) && (
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border-subtle/50 bg-surface-overlay/30">
+          <span className="text-[10px] uppercase tracking-wider text-text-secondary font-medium">
+            {activity.editDiffs?.length ? 'Changes' : 'File'}
+          </span>
+          {canOpenFile && (
+            <button
+              type="button"
+              onClick={() => activity.filePath && onOpenFile?.(activity.filePath)}
+              className="flex items-center gap-1 text-[11px] text-text-secondary hover:text-accent transition-colors"
+              data-testid="tool-activity-open-file"
+            >
+              <ExternalLink size={11} />
+              Open file
+            </button>
+          )}
+        </div>
+      )}
       {activity.editDiffs && activity.editDiffs.length > 0 && (
         <InlineEditDiff edits={activity.editDiffs} omitted={activity.editDiffsOmitted} />
       )}
@@ -217,37 +254,92 @@ interface ToolRowProps {
   activity: ToolActivity
   isExpanded: boolean
   onToggleExpand: (id: string) => void
+  /** Workspace root — enables language icons + fallback open root. */
+  workspacePath?: string
+  /** Conversation whose track the file belongs to — preferred open root. */
+  conversationId?: string
+  /** Blueprint whose execution track the file belongs to — preferred over workspacePath. */
+  blueprintId?: string
+  /** Whether a viewer is mounted for this surface — gates the Open file button. */
+  canOpenFile?: boolean
+  /** Called after a file is opened (e.g. to switch the parent tab). */
+  onFileOpened?: () => void
 }
 
-function ToolRow({ activity, isExpanded, onToggleExpand }: ToolRowProps): React.JSX.Element {
+function ToolRow({
+  activity,
+  isExpanded,
+  onToggleExpand,
+  workspacePath,
+  conversationId,
+  blueprintId,
+  canOpenFile = false,
+  onFileOpened
+}: ToolRowProps): React.JSX.Element {
   const expandable = hasExpandableContent(activity)
   const opConfig = resolveOpConfig(activity)
   const CategoryIcon = opConfig.icon
   const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
+  const statusDot = STATUS_DOT_COLORS[activity.status] ?? STATUS_DOT_COLORS.completed
   const isRunning = activity.status === 'running'
+
+  // File rows (edit/write/read with a path) get the language icon; everything
+  // else keeps the category icon with status color.
+  const isFileRow =
+    (activity.operationType === 'edit' ||
+      activity.operationType === 'write' ||
+      activity.operationType === 'read') &&
+    Boolean(activity.filePath)
+
+  const openFile = useFileViewerStore((s) => s.openFile)
+
+  const handleOpenFile = (filePath: string): void => {
+    // Prefer the owner's track (branch-per-chat / blueprint execution track) so
+    // the viewer shows the tree the agent actually wrote to; fall back to the
+    // primary checkout. Include every available field — resolveViewerRoot picks
+    // conversationId → blueprintId → workspacePath, so a deleted conversation
+    // degrades to the primary checkout instead of erroring.
+    const ctx: FileViewerCtx = {}
+    if (conversationId) ctx.conversationId = conversationId
+    if (blueprintId) ctx.blueprintId = blueprintId
+    if (workspacePath) ctx.workspacePath = workspacePath
+    void openFile(filePath, ctx)
+    onFileOpened?.()
+  }
 
   return (
     <div key={activity.id} data-testid="tool-activity-row" className="min-w-0">
-      {/* Clickable row with subtle left-border */}
+      {/* Clickable row with subtle left-border + status dot */}
       <button
         type="button"
         onClick={() => expandable && onToggleExpand(activity.id)}
-        className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 border-l-border-subtle ${
-          expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'
-        } ${isExpanded ? 'bg-surface-overlay/40' : ''}`}
+        className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 ${
+          isFileRow ? statusDot : 'border-l-border-subtle'
+        } ${expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'} ${
+          isExpanded ? 'bg-surface-overlay/40' : ''
+        }`}
         data-testid="tool-activity-expand"
         aria-expanded={expandable ? isExpanded : undefined}
       >
-        {/* Category icon — color = status */}
-        <span className={`flex items-center flex-shrink-0 mt-0.5 ${statusStyle.iconColor}`}>
-          <CategoryIcon size={13} />
+        {/* Left icon — language icon for file rows, category icon otherwise */}
+        <span
+          className={`flex items-center flex-shrink-0 mt-0.5 ${
+            isFileRow ? '' : statusStyle.iconColor
+          }`}
+        >
+          {isFileRow ? (
+            <FileLanguageIcon filePath={activity.filePath as string} size={14} />
+          ) : (
+            <CategoryIcon size={13} />
+          )}
         </span>
 
         {/* Main content */}
         <ToolRowSummary activity={activity} />
 
-        {/* Right side — elapsed time + expand chevron */}
+        {/* Right side — diff stat + elapsed time + expand chevron */}
         <span className="flex items-center gap-1.5 flex-shrink-0 ml-auto mt-0.5">
+          {activity.editDiffs?.length ? <DiffStatBadge edits={activity.editDiffs} /> : null}
           {isRunning && activity.elapsedSeconds !== undefined && (
             <span className="text-[11px] text-purple-400 tabular-nums">
               {activity.elapsedSeconds}s
@@ -266,7 +358,16 @@ function ToolRow({ activity, isExpanded, onToggleExpand }: ToolRowProps): React.
       </button>
 
       {/* Expand panel */}
-      {isExpanded && <ToolRowExpandedPanel activity={activity} />}
+      {isExpanded && (
+        <ToolRowExpandedPanel
+          activity={activity}
+          onOpenFile={
+            canOpenFile && activity.filePath && (conversationId || blueprintId || workspacePath)
+              ? handleOpenFile
+              : undefined
+          }
+        />
+      )}
     </div>
   )
 }
@@ -277,6 +378,16 @@ interface ToolActivityBlockProps {
   activities: ToolActivity[]
   /** When true, the tool list starts expanded (e.g., during streaming). Default false. */
   defaultExpanded?: boolean
+  /** Workspace root — enables language icons + fallback open root on file rows. */
+  workspacePath?: string
+  /** Conversation whose track file rows should open against (branch-per-chat). */
+  conversationId?: string
+  /** Blueprint whose execution track file rows should open against. */
+  blueprintId?: string
+  /** Whether a viewer is mounted for this surface — gates the Open file button. Default false. */
+  canOpenFile?: boolean
+  /** Called after a file is opened via the expand panel (e.g. switch tab). */
+  onFileOpened?: () => void
 }
 
 /**
@@ -288,7 +399,12 @@ const VISIBLE_ACTIVITY_LIMIT = 20
 
 export default function ToolActivityBlock({
   activities,
-  defaultExpanded = false
+  defaultExpanded = false,
+  workspacePath,
+  conversationId,
+  blueprintId,
+  canOpenFile = false,
+  onFileOpened
 }: ToolActivityBlockProps): React.JSX.Element | null {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -354,6 +470,11 @@ export default function ToolActivityBlock({
               activity={a}
               isExpanded={expandedIds.has(a.id)}
               onToggleExpand={toggleActivityExpand}
+              workspacePath={workspacePath}
+              conversationId={conversationId}
+              blueprintId={blueprintId}
+              canOpenFile={canOpenFile}
+              onFileOpened={onFileOpened}
             />
           ))}
         </div>
@@ -385,6 +506,11 @@ export default function ToolActivityBlock({
                   activity={a}
                   isExpanded={expandedIds.has(a.id)}
                   onToggleExpand={toggleActivityExpand}
+                  workspacePath={workspacePath}
+                  conversationId={conversationId}
+                  blueprintId={blueprintId}
+                  canOpenFile={canOpenFile}
+                  onFileOpened={onFileOpened}
                 />
               ))}
             </div>

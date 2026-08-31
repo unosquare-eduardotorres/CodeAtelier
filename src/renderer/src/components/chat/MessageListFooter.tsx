@@ -56,17 +56,21 @@ export default function MessageListFooter({
 
   const hasLiveContent = liveContent.trim().length > 0
 
-  // Synthetic message backing the live bubble — identity is supplied via identityOverride
+  // Synthetic message backing the live bubble — identity is supplied via identityOverride.
+  // GAP-1: carry the REAL active conversation id so Open-file on a live tool row
+  // resolves the conversation's track (branch-per-chat) instead of erroring on
+  // the synthetic 'streaming' id. viewerContext stays 'chat' (default) — the
+  // chat surface owns the Files tab the button switches to.
   const liveMessage = useMemo<Message>(
     () => ({
       id: 'streaming-live',
-      conversationId: 'streaming',
+      conversationId: activeConversationId ?? 'streaming',
       role: 'specialist',
       contentMd: liveContent,
       attachmentsJson: '[]',
       createdAt: new Date().toISOString()
     }),
-    [liveContent]
+    [liveContent, activeConversationId]
   )
 
   // Stable identity ref — avoids busting React.memo on MessageBubble when thinkingIdentity hasn't changed
@@ -212,6 +216,8 @@ export default function MessageListFooter({
             }}
             toolActivities={allStreamingTools}
             showHookIndicator
+            canOpenFile
+            conversationId={activeConversationId ?? undefined}
           />
         ))}
     </div>

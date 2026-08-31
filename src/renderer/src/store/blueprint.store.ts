@@ -1459,6 +1459,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} task ${data.taskId} ${data.status}`)
+      // F9: the task is terminal — snapshot its lane and release the segment
+      // accumulator. Completed lanes stay alive across waves (FIX-B), so without
+      // this each lane's segments + tool activities grow renderer memory for the
+      // rest of the multi-wave build. finalize() is idempotent, so the
+      // complete/failed/skipped statuses all funnel here safely.
+      useBlueprintLaneStore.getState().finalizeLane(data.taskId)
       set((state) => ({
         waveTasks: {
           ...state.waveTasks,

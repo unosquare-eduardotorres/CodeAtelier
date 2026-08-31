@@ -1350,6 +1350,23 @@ const api = {
     }>
   > => ipcRenderer.invoke(IPC_CHANNELS.REPO_GET_FILE_DETAILS, args),
 
+  // ── File Viewer ──
+  filesViewerRead: (args: {
+    conversationId?: string
+    blueprintId?: string
+    workspacePath?: string
+    filePath: string
+  }): Promise<{ content: string; size: number; truncated: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.FILES_VIEWER_READ, args),
+
+  // ── Blueprint modified files (VERIFY deliverable) ──
+  getBlueprintModifiedFiles: (args: {
+    blueprintId: string
+  }): Promise<{
+    files: Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>
+    source: 'git' | 'none'
+  }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_MODIFIED_FILES, args),
+
   getFileDiff: (args: {
     conversationId: string
     filePath: string

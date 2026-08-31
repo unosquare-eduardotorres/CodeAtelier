@@ -47,6 +47,21 @@ interface StreamingTranscriptProps<T> {
   transformContent?: (raw: string) => string
 
   /**
+   * Real owner id for the synthetic segment/tail messages — a conversation id
+   * on chat-live surfaces. When omitted the legacy 'streaming' placeholder is
+   * used; with `viewerContext="other"` the id never reaches the file viewer.
+   */
+  conversationId?: string
+  /** Blueprint whose execution track live tool rows open against — set when
+   * the host surface mounts a viewer drawer (viewerContext='blueprint'). */
+  blueprintId?: string
+  /** Surface the internal bubbles render on — see MessageBubble.viewerContext.
+   * 'blueprint' surfaces mount their own viewer drawer (open-file enabled);
+   * grill/audit pass 'other' (no dead Open-file buttons); chat-live surfaces
+   * omit it to keep the 'chat' default. */
+  viewerContext?: 'chat' | 'other' | 'blueprint'
+
+  /**
    * When true, suppress the live **tail** bubble — only show ThinkingIndicator
    * (with in-flight tools) while streaming. Finalized segments ALWAYS render;
    * callers that want to suppress everything pass `segments={[]}`. Complete
@@ -87,27 +102,37 @@ const LIVE_TAIL_MESSAGE_ID = 'streaming-live-tail'
  * because segments are immutable and never shared across surfaces (each store
  * owns its own segment objects).
  */
-const segmentMessageCache = new WeakMap<StreamSegment, Message>()
+const segmentMessageCache = new WeakMap<StreamSegment, { cid: string; message: Message }>()
 
 function segmentToMessage(
   segment: StreamSegment,
-  index: number,
-  transformContent?: (raw: string) => string
+  _index: number,
+  transformContent?: (raw: string) => string,
+  conversationId?: string
 ): Message {
-  let message = segmentMessageCache.get(segment)
-  if (!message) {
-    message = {
-      id: `streaming-segment-${index}`,
-      conversationId: 'streaming',
-      role: 'specialist',
-      contentMd: transformContent ? transformContent(segment.content) : segment.content,
-      attachmentsJson: '[]',
-      createdAt: new Date(segment.timestamp).toISOString(),
-      toolActivities: segment.toolActivities
+  // GAP-1: the owner id is part of the cache key — a segment re-rendered under
+  // a different surface owner must not reuse the previous synthetic id.
+  const cid = conversationId ?? 'streaming'
+  let cached = segmentMessageCache.get(segment)
+  if (!cached || cached.cid !== cid) {
+    cached = {
+      cid,
+      message: {
+        // N2 FIX: id from the accumulator's monotonic seq, not the array index —
+        // the store exposes only uncommitted segments, so indices restart at 0
+        // after clearCommittedSegments() and would collide with committed ids.
+        id: `streaming-segment-${segment.seq}`,
+        conversationId: cid,
+        role: 'specialist',
+        contentMd: transformContent ? transformContent(segment.content) : segment.content,
+        attachmentsJson: '[]',
+        createdAt: new Date(segment.timestamp).toISOString(),
+        toolActivities: segment.toolActivities
+      }
     }
-    segmentMessageCache.set(segment, message)
+    segmentMessageCache.set(segment, cached)
   }
-  return message
+  return cached.message
 }
 
 export default function StreamingTranscript<T>({
@@ -121,6 +146,9 @@ export default function StreamingTranscript<T>({
   thinkingLabel,
   showHookIndicator = false,
   transformContent,
+  conversationId,
+  blueprintId,
+  viewerContext,
   suppressLiveBubble = false,
   header,
   footer,
@@ -143,16 +171,19 @@ export default function StreamingTranscript<T>({
   const tailToolActivities = currentToolActivities
 
   // Synthetic message backing the live tail bubble — identity is supplied via override.
+  // GAP-1: carry the real owner id when the surface has one, so Open-file on a
+  // live tool row resolves the conversation's track instead of erroring on a
+  // synthetic 'streaming' id.
   const tailMessage = useMemo<Message>(
     () => ({
       id: LIVE_TAIL_MESSAGE_ID,
-      conversationId: 'streaming',
+      conversationId: conversationId ?? 'streaming',
       role: 'specialist',
       contentMd: tailContent,
       attachmentsJson: '[]',
       createdAt: new Date().toISOString()
     }),
-    [tailContent]
+    [tailContent, conversationId]
   )
 
   // Stable signal for caller-supplied scroll deps (avoids a spread in the array).
@@ -187,12 +218,17 @@ export default function StreamingTranscript<T>({
               {/* A2 FIX: finalized segments render as individual memoized bubbles.
                * Each gets a stable `message` prop (WeakMap-cached) so committed
                * content is parsed once, not on every tail flush. */}
-              {segments.map((segment, index) => (
+              {segments.map((segment) => (
                 <MessageBubble
-                  key={`live-seg-${index}`}
-                  message={segmentToMessage(segment, index, transformContent)}
+                  /* N2 FIX: key from the monotonic seq — array indices restart at 0
+                   * after clearCommittedSegments(), reusing keys across the
+                   * committed boundary and resurrecting stale DOM. */
+                  key={`live-seg-${segment.seq}`}
+                  message={segmentToMessage(segment, 0, transformContent, conversationId)}
                   identityOverride={identity}
                   toolActivities={segment.toolActivities}
+                  viewerContext={viewerContext}
+                  blueprintId={blueprintId}
                 />
               ))}
               {hasTailContent && !suppressLiveBubble ? (
@@ -205,6 +241,8 @@ export default function StreamingTranscript<T>({
                   identityOverride={identity}
                   isStreaming
                   toolActivities={tailToolActivities}
+                  viewerContext={viewerContext}
+                  blueprintId={blueprintId}
                 />
               ) : (
                 /* No live tail content yet (or suppressLiveBubble): full ThinkingIndicator with avatar + label + tools */
@@ -217,6 +255,9 @@ export default function StreamingTranscript<T>({
                   toolActivities={tailToolActivities}
                   label={thinkingLabel}
                   showHookIndicator={showHookIndicator}
+                  canOpenFile={viewerContext === 'chat' || viewerContext === 'blueprint'}
+                  conversationId={viewerContext === 'chat' ? conversationId : undefined}
+                  blueprintId={viewerContext === 'blueprint' ? blueprintId : undefined}
                 />
               )}
             </>

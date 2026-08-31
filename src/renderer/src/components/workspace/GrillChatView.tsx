@@ -85,6 +85,7 @@ function renderGrillMessage(
           key={`msg-${i}`}
           message={grillAgentToMessage(msg.content, msg.toolActivities, i)}
           identityOverride={GRILL_IDENTITY}
+          viewerContext="other"
         />
       )
     case 'evaluation':
@@ -200,6 +201,7 @@ export default function GrillChatView({
         identity={GRILL_IDENTITY}
         thinkingLabel="Analyzing your requirement…"
         transformContent={stripGrillEvaluationBlocks}
+        viewerContext="other"
         header={header}
         footer={footer}
         scrollDeps={[phase]}

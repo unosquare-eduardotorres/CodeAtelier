@@ -22,6 +22,15 @@ import type { ToolActivity } from '../../../shared/types'
 // ── Public types ──────────────────────────────────────────────────────────
 
 export interface StreamSegment {
+  /**
+   * N2 FIX: monotonic sequence id, unique for the lifetime of the accumulator
+   * (never reset by reset()). The store exposes only UNCOMMITTED segments
+   * (slice(committedCount)), so array indices restart at 0 after
+   * clearCommittedSegments() — React keys and message ids derived from the
+   * index then collide with already-committed segments. Consumers must use
+   * this id, not the array position.
+   */
+  seq: number
   content: string
   toolActivities: ToolActivity[]
   timestamp: number
@@ -44,6 +53,8 @@ export class StreamSegmentAccumulator {
   private currentContent = ''
   private currentToolActivities: ToolActivity[] = []
   private currentSegmentStartedAt: number = Date.now()
+  /** N2 FIX: monotonic segment counter — survives reset() so ids never repeat. */
+  private segmentSeq = 0
   /** Reentrance guard — prevents nested emitChange when onChange triggers resetAccumulator */
   private isFlushing = false
   /** A2 FIX: fence parity across the current segment — a split must never land inside a fenced code block. */
@@ -137,6 +148,7 @@ export class StreamSegmentAccumulator {
           (canSplit && hasToolsBeforeNewText)
         ) {
           this.segments.push({
+            seq: ++this.segmentSeq,
             content: this.currentContent,
             toolActivities: this.currentToolActivities,
             timestamp: this.currentSegmentStartedAt

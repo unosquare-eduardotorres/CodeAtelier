@@ -13,6 +13,7 @@ import { AlertTriangle, CheckCircle2, Loader2, Clock } from 'lucide-react'
 import ToolActivityBlock from '../../chat/ToolActivityBlock'
 import ReactMarkdown from 'react-markdown'
 import AdvisorIcon from './AdvisorIcon'
+import { useWorkspaceStore } from '@renderer/store'
 import type {
   CouncilAdvisorRole,
   CouncilMemberStatus,
@@ -92,6 +93,7 @@ export default function CouncilMemberColumn({
   review
 }: CouncilMemberColumnProps): React.JSX.Element {
   const advisor = COUNCIL_ADVISORS[role]
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
 
   const allContent = useMemo(() => {
     const parts = segments.map((s) => s.content).join('')
@@ -141,6 +143,7 @@ export default function CouncilMemberColumn({
           <ToolActivityBlock
             activities={allToolActivities}
             defaultExpanded={status === 'running'}
+            workspacePath={activeWorkspace?.repoPath}
           />
         )}
       </div>

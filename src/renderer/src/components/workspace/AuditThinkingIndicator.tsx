@@ -8,6 +8,7 @@
 import { Avatar } from '@renderer/components/common'
 import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import ToolActivityBlock from '../chat/ToolActivityBlock'
+import { useWorkspaceStore } from '@renderer/store'
 import type { ToolActivity } from '../../../../shared/types'
 
 interface AuditThinkingIndicatorProps {
@@ -20,6 +21,7 @@ export default function AuditThinkingIndicator({
   toolActivities
 }: AuditThinkingIndicatorProps): React.JSX.Element {
   const avatarSize = useChatAvatarSize()
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   return (
     <div className="flex gap-3 flex-row">
       <div className="flex-shrink-0 mt-0.5">
@@ -37,7 +39,11 @@ export default function AuditThinkingIndicator({
           </p>
           {toolActivities.length > 0 && (
             <div className="mt-2">
-              <ToolActivityBlock activities={toolActivities} defaultExpanded />
+              <ToolActivityBlock
+                activities={toolActivities}
+                defaultExpanded
+                workspacePath={activeWorkspace?.repoPath}
+              />
             </div>
           )}
         </div>

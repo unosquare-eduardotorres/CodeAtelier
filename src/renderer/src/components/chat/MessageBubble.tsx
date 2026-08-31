@@ -22,6 +22,7 @@ import { useMessageContent } from './useMessageContent'
 import { useMessageIdentity } from './useMessageIdentity'
 import type { MessageIdentity } from './useMessageIdentity'
 import { useChatBubbleSize, useChatAvatarSize, useWorkspaceStore } from '@renderer/store'
+import { useChatUiStore } from '@renderer/store/chat-ui.store'
 import type { ChatBubbleSize } from '../../../../shared/types'
 import { Avatar } from '@renderer/components/common'
 
@@ -45,6 +46,15 @@ interface MessageBubbleProps {
   /** True when this message contains the most recent plan in the conversation.
    *  Older plan messages show a "superseded" label on the slim indicator. */
   isLatestPlan?: boolean
+  /** Surface this bubble renders on. 'chat' switches to the Files tab when a
+   *  file is opened; 'blueprint' opens against the blueprint's execution track
+   * (requires `blueprintId`) where a viewer drawer is mounted; other surfaces
+   * (grill, audit, blueprint execution tab) show icons + diff badges only —
+   * no tab switch, no dead Open-file buttons. Default 'chat'. */
+  viewerContext?: 'chat' | 'other' | 'blueprint'
+  /** Blueprint whose execution track file rows open against — only used when
+   *  viewerContext is 'blueprint'. */
+  blueprintId?: string
 }
 
 function formatTime(dateStr: string): string {
@@ -336,18 +346,46 @@ interface BubbleFooterActionsProps {
   isUser: boolean
   isStreaming?: boolean
   toolActivities?: ToolActivity[]
+  viewerContext?: 'chat' | 'other' | 'blueprint'
+  blueprintId?: string
 }
 
 function BubbleFooterActions({
   message,
   isUser,
   isStreaming,
-  toolActivities
+  toolActivities,
+  viewerContext = 'chat',
+  blueprintId
 }: BubbleFooterActionsProps): React.JSX.Element {
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
+  const setActiveTab = useChatUiStore((s) => s.setActiveTab)
+
   return (
     <>
       {toolActivities && toolActivities.length > 0 && (
-        <ToolActivityBlock activities={toolActivities} defaultExpanded={!!isStreaming} />
+        <ToolActivityBlock
+          activities={toolActivities}
+          defaultExpanded={!!isStreaming}
+          workspacePath={activeWorkspace?.repoPath}
+          /* Real conversation id only on the chat surface — grill/audit adapters
+           * synthesize fake ids ('grill-session', 'blueprint-session') that would
+           * fail track lookup. */
+          conversationId={viewerContext === 'chat' ? message.conversationId : undefined}
+          /* Blueprint surfaces open against the blueprint's execution track —
+           * the tree BUILD actually wrote to. */
+          blueprintId={viewerContext === 'blueprint' ? blueprintId : undefined}
+          /* Only surfaces with a mounted viewer get the Open-file button: chat
+           * (Files tab) and blueprint detail (drawer). Grill/audit/execution-tab
+           * get icons + diff badges but no dead button. */
+          canOpenFile={viewerContext === 'chat' || viewerContext === 'blueprint'}
+          onFileOpened={() => {
+            // Only the chat surface owns a Files tab to switch to. Blueprint
+            // detail renders its own drawer inline — switching the chat tab
+            // underneath would be a visible non-sequitur.
+            if (viewerContext === 'chat') setActiveTab('files')
+          }}
+        />
       )}
 
       {/* Hook execution indicator — only during streaming, renders null when no hooks active */}
@@ -397,7 +435,9 @@ function MessageBubbleInner({
   toolActivities,
   actions: _actions,
   identityOverride,
-  isLatestPlan
+  isLatestPlan,
+  viewerContext = 'chat',
+  blueprintId
 }: MessageBubbleProps): React.JSX.Element {
   const isUser = message.role === 'user'
   const bubbleSize = useChatBubbleSize()
@@ -479,6 +519,8 @@ function MessageBubbleInner({
           isUser={isUser}
           isStreaming={isStreaming}
           toolActivities={toolActivities}
+          viewerContext={viewerContext}
+          blueprintId={blueprintId}
         />
       </div>
     </div>

@@ -63,6 +63,8 @@ const BLUEPRINT_IDENTITY: MessageIdentity = {
 interface BlueprintChatViewProps {
   messages: BlueprintChatMessage[]
   isStreaming: boolean
+  /** Blueprint id — enables open-file on tool rows (host must mount the viewer drawer). */
+  blueprintId?: string
   /** Optional slot rendered below the live region (interactive footer). */
   footer?: React.ReactNode
   /** G3: Currently running tasks during build phase. */
@@ -330,7 +332,9 @@ const agentMessageCache = new WeakMap<BlueprintChatMessage, Message>()
 function renderBlueprintMessage(
   msg: BlueprintChatMessage,
   i: number,
-  avatarSize: 'md' | 'lg' | 'xl'
+  avatarSize: 'md' | 'lg' | 'xl',
+  viewerContext: 'chat' | 'other' | 'blueprint' = 'other',
+  blueprintId?: string
 ): React.ReactNode {
   switch (msg.type) {
     case 'agent': {
@@ -345,6 +349,8 @@ function renderBlueprintMessage(
           message={message}
           toolActivities={msg.toolActivities}
           identityOverride={BLUEPRINT_IDENTITY}
+          viewerContext={viewerContext}
+          blueprintId={blueprintId}
         />
       )
     }
@@ -399,28 +405,62 @@ function renderBlueprintMessage(
 function LaneStreamContent({
   store,
   isRunning,
+  blueprintId,
   innerClassName
 }: {
   store: UseBoundStore<StoreApi<StreamingStoreState>>
   isRunning: boolean
+  blueprintId?: string
   innerClassName?: string
 }): React.JSX.Element {
   const segments = store((s) => s.segments)
   const currentContent = store((s) => s.currentContent)
   const currentToolActivities = store((s) => s.currentToolActivities)
+  const finalSnapshot = store((s) => s.finalSnapshot)
 
   // When the lane has finished, render its accumulated content as a committed
   // agent bubble so the transcript isn't blank once isStreaming flips false.
+  // F9: prefer the finalize() snapshot — the accumulator internals are already
+  // released, so segments/currentContent are empty by the time this runs. The
+  // flatten fallback covers lanes that end without a terminal event (defensive).
   // Content lives only in renderer memory — after app reload completed cards
   // will be empty (pre-existing limitation; snapshot sync doesn't carry stream text).
   const completedMessages = useMemo(() => {
     if (isRunning) return []
+    if (finalSnapshot) {
+      const content = stripBlueprintBlocks(finalSnapshot.content)
+      if (!content.trim() && finalSnapshot.toolActivities.length === 0) return []
+      return [
+        {
+          type: 'agent' as const,
+          content,
+          toolActivities: finalSnapshot.toolActivities,
+          timestamp: finalSnapshot.finalizedAt
+        }
+      ]
+    }
     const slice = { segments, currentContent, currentToolActivities }
     const content = stripBlueprintBlocks(getFlatContent(slice))
     const toolActivities = getFlatToolActivities(slice)
     if (!content.trim() && toolActivities.length === 0) return []
-    return [{ type: 'agent' as const, content, toolActivities, timestamp: Date.now() }]
-  }, [isRunning, segments, currentContent, currentToolActivities])
+    // N3 FIX: derive from the last segment's timestamp (or the last tool's
+    // completion) instead of Date.now() — a fresh timestamp on every recompute
+    // minted new object identity per store notify, defeating MessageBubble
+    // memoization for a lane that is already finished.
+    const lastSegmentTs = segments.length > 0 ? segments[segments.length - 1].timestamp : 0
+    const lastToolTs = toolActivities.reduce(
+      (acc, t) => Math.max(acc, t.completedAt ?? t.startedAt ?? 0),
+      0
+    )
+    return [
+      {
+        type: 'agent' as const,
+        content,
+        toolActivities,
+        timestamp: lastSegmentTs || lastToolTs || 0
+      }
+    ]
+  }, [isRunning, finalSnapshot, segments, currentContent, currentToolActivities])
 
   return (
     <StreamingTranscript
@@ -431,6 +471,8 @@ function LaneStreamContent({
           message={blueprintAgentToMessage(msg.content, msg.toolActivities, i)}
           toolActivities={msg.toolActivities}
           identityOverride={BLUEPRINT_IDENTITY}
+          viewerContext={blueprintId ? 'blueprint' : 'other'}
+          blueprintId={blueprintId}
         />
       )}
       segments={segments}
@@ -440,6 +482,8 @@ function LaneStreamContent({
       identity={BLUEPRINT_IDENTITY}
       thinkingLabel="Building…"
       transformContent={stripBlueprintBlocks}
+      viewerContext={blueprintId ? 'blueprint' : 'other'}
+      blueprintId={blueprintId}
       scrollDeps={[isRunning, segments.length]}
       innerClassName={innerClassName ?? 'space-y-2'}
     />
@@ -452,14 +496,16 @@ function LaneStreamContent({
 
 function SingleLaneBuildStream({
   laneId,
-  isRunning
+  isRunning,
+  blueprintId
 }: {
   laneId: string
   isRunning: boolean
+  blueprintId?: string
 }): React.JSX.Element | null {
   const laneStore = useBlueprintLaneStore((s) => s.lanes[laneId])
   if (!laneStore) return null
-  return <LaneStreamContent store={laneStore} isRunning={isRunning} />
+  return <LaneStreamContent store={laneStore} isRunning={isRunning} blueprintId={blueprintId} />
 }
 
 // ── Build Lane Card (collapsible per-task stream) ───────────────────────────
@@ -467,11 +513,13 @@ function SingleLaneBuildStream({
 function BuildLaneCard({
   taskId,
   description,
-  status
+  status,
+  blueprintId
 }: {
   taskId: string
   description: string
   status: 'running' | 'complete' | 'failed' | string
+  blueprintId?: string
 }): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(status !== 'running')
   const laneStore = useBlueprintLaneStore((s) => s.lanes[taskId])
@@ -503,7 +551,7 @@ function BuildLaneCard({
       </button>
       {!collapsed && laneStore && (
         <div className="px-3 pb-3 pt-1 border-t border-border/20 max-h-96 overflow-y-auto">
-          <LaneStreamContent store={laneStore} isRunning={isRunning} />
+          <LaneStreamContent store={laneStore} isRunning={isRunning} blueprintId={blueprintId} />
         </div>
       )}
     </div>
@@ -515,6 +563,7 @@ function BuildLaneCard({
 export default function BlueprintChatView({
   messages,
   isStreaming,
+  blueprintId,
   footer,
   runningTasks,
   waveTasks,
@@ -559,7 +608,15 @@ export default function BlueprintChatView({
     <div data-testid="blueprint-chat-view" className="flex flex-col h-full min-h-0">
       <StreamingTranscript
         messages={messages}
-        renderMessage={(msg, i) => renderBlueprintMessage(msg, i, avatarSize)}
+        renderMessage={(msg, i) =>
+          renderBlueprintMessage(
+            msg,
+            i,
+            avatarSize,
+            blueprintId ? 'blueprint' : 'other',
+            blueprintId
+          )
+        }
         segments={hasAnyLanes ? [] : segments}
         currentContent={hasAnyLanes ? '' : currentContent}
         currentToolActivities={hasAnyLanes ? [] : currentToolActivities}
@@ -568,11 +625,18 @@ export default function BlueprintChatView({
         identity={BLUEPRINT_IDENTITY}
         thinkingLabel="Analyzing…"
         transformContent={stripBlueprintBlocks}
+        viewerContext={blueprintId ? 'blueprint' : 'other'}
+        blueprintId={blueprintId}
         footer={
           <>
             {/* C1 FIX: Single-lane build — render full-width without card chrome */}
             {hasSingleLane && (
-              <SingleLaneBuildStream key={laneIds[0]} laneId={laneIds[0]} isRunning={isStreaming} />
+              <SingleLaneBuildStream
+                key={laneIds[0]}
+                laneId={laneIds[0]}
+                isRunning={isStreaming}
+                blueprintId={blueprintId}
+              />
             )}
             {/* Multi-lane build — collapsible lane cards */}
             {hasMultipleLanes && (
@@ -586,6 +650,7 @@ export default function BlueprintChatView({
                       taskId={taskId}
                       description={task?.description ?? taskId}
                       status={status}
+                      blueprintId={blueprintId}
                     />
                   )
                 })}

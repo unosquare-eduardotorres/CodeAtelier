@@ -14,6 +14,7 @@ import { Avatar } from '@renderer/components/common'
 import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import ToolActivityBlock from '@renderer/components/chat/ToolActivityBlock'
 import HookActivityIndicator from '@renderer/components/chat/HookActivityIndicator'
+import { useWorkspaceStore } from '@renderer/store'
 import type { ToolActivity } from '../../../../shared/types'
 
 export interface ThinkingIndicatorIdentity {
@@ -29,15 +30,25 @@ interface ThinkingIndicatorProps {
   label?: string
   /** Render the hook-execution indicator (chat only). */
   showHookIndicator?: boolean
+  /** Whether a viewer is mounted for this surface — gates the Open file button. */
+  canOpenFile?: boolean
+  /** Conversation whose track file rows should open against (chat only). */
+  conversationId?: string
+  /** Blueprint whose execution track file rows should open against. */
+  blueprintId?: string
 }
 
 export default function ThinkingIndicator({
   identity,
   toolActivities,
   label = 'Let me take a look…',
-  showHookIndicator = false
+  showHookIndicator = false,
+  canOpenFile = false,
+  conversationId,
+  blueprintId
 }: ThinkingIndicatorProps): React.JSX.Element {
   const avatarSize = useChatAvatarSize()
+  const activeWorkspace = useWorkspaceStore((s) => s.activeWorkspace)
   return (
     <div className="flex gap-3 flex-row">
       <div className="flex-shrink-0 mt-0.5">
@@ -57,7 +68,14 @@ export default function ThinkingIndicator({
           <p className="text-sm text-text-muted italic animate-thinking-pulse">{label}</p>
           {toolActivities.length > 0 && (
             <div className="mt-2">
-              <ToolActivityBlock activities={toolActivities} defaultExpanded />
+              <ToolActivityBlock
+                activities={toolActivities}
+                defaultExpanded
+                workspacePath={activeWorkspace?.repoPath}
+                canOpenFile={canOpenFile}
+                conversationId={conversationId}
+                blueprintId={blueprintId}
+              />
             </div>
           )}
           {showHookIndicator && <HookActivityIndicator />}

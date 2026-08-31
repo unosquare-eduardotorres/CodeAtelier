@@ -26,6 +26,11 @@ export interface StreamingStoreState {
   /** Tool activities for the current segment */
   currentToolActivities: ToolActivity[]
   isStreaming: boolean
+  /**
+   * Flat snapshot taken by finalize() — the lane's full content/tools with the
+   * accumulator internals released. Non-null only between finalize() and reset().
+   */
+  finalSnapshot: StreamingFinalSnapshot | null
 
   handleStreamChunk: (data: {
     type: string
@@ -40,10 +45,28 @@ export interface StreamingStoreState {
    */
   clearCommittedSegments: () => void
   /**
+   * Terminal: flush the accumulator, snapshot its flat content/tools, then
+   * release the accumulator internals (segments array, current buffers).
+   * Idempotent — a second call is a no-op. reset() clears the snapshot.
+   *
+   * F9: completed build lanes stay alive across waves (FIX-B), so without this
+   * each lane's segment array (each segment up to SEGMENT_HARD_CAP_CHARS) plus
+   * tool activities grow renderer memory for the whole multi-wave build.
+   */
+  finalize: () => void
+  /**
    * Register/unregister a callback that fires when a new segment is finalized.
    * Pass `null` to unregister (e.g. on component unmount).
    */
   setOnSegmentCommit: (cb: ((segment: StreamSegment) => void) | null) => void
+}
+
+/** Flat end-state captured by finalize() — see StreamingStoreState.finalSnapshot. */
+export interface StreamingFinalSnapshot {
+  content: string
+  toolActivities: ToolActivity[]
+  /** When finalize() ran — stable timestamp for completed-message rendering. */
+  finalizedAt: number
 }
 
 /** Minimal shape the flat-content helpers need (lets callers pass any superset). */
@@ -70,7 +93,7 @@ export function getFlatToolActivities(state: StreamingSlice): ToolActivity[] {
  * Only clears via explicit `reset()` — callers decide when a stream ends.
  */
 export function createStreamingStore(): UseBoundStore<StoreApi<StreamingStoreState>> {
-  return create<StreamingStoreState>((set) => {
+  return create<StreamingStoreState>((set, get) => {
     // Mutable closure state for progressive segment commitment.
     let onSegmentCommit: ((segment: StreamSegment) => void) | null = null
     let committedCount = 0
@@ -105,6 +128,7 @@ export function createStreamingStore(): UseBoundStore<StoreApi<StreamingStoreSta
       currentContent: '',
       currentToolActivities: [],
       isStreaming: false,
+      finalSnapshot: null,
 
       handleStreamChunk: (data) => {
         if (data.type === 'text' && data.content) {
@@ -129,7 +153,33 @@ export function createStreamingStore(): UseBoundStore<StoreApi<StreamingStoreSta
           segments: [],
           currentContent: '',
           currentToolActivities: [],
-          isStreaming: false
+          isStreaming: false,
+          finalSnapshot: null
+        })
+      },
+
+      finalize: () => {
+        // Idempotent: once a snapshot exists, later calls (duplicate terminal
+        // events, late chunks) must not overwrite it with empty content.
+        if (get().finalSnapshot) return
+        accumulator.flush()
+        const slice = get()
+        const snapshot: StreamingFinalSnapshot = {
+          content: getFlatContent(slice),
+          toolActivities: getFlatToolActivities(slice),
+          finalizedAt: Date.now()
+        }
+        // Release the accumulator internals — reset() does not emit, so no
+        // intermediate store notification races the snapshot set below.
+        accumulator.reset()
+        committedCount = 0
+        lastKnownSegmentTotal = 0
+        set({
+          segments: [],
+          currentContent: '',
+          currentToolActivities: [],
+          isStreaming: false,
+          finalSnapshot: snapshot
         })
       },
 

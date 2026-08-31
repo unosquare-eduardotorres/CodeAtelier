@@ -38,6 +38,11 @@ interface BlueprintLaneStoreState {
   removeLane: (taskId: string) => void
   /** Reset all lanes (e.g. on wave start). */
   resetAll: () => void
+  /**
+   * F9: finalize a lane's accumulator (snapshot + release) when its task ends.
+   * No-op for unknown taskIds — a task with no streamed content never got a lane.
+   */
+  finalizeLane: (taskId: string) => void
 }
 
 export const useBlueprintLaneStore = create<BlueprintLaneStoreState>((set, get) => ({
@@ -68,5 +73,10 @@ export const useBlueprintLaneStore = create<BlueprintLaneStoreState>((set, get) 
       lane.getState().reset()
     }
     set({ lanes: {} })
+  },
+
+  finalizeLane: (taskId: string) => {
+    const lane = get().lanes[taskId]
+    if (lane) lane.getState().finalize()
   }
 }))

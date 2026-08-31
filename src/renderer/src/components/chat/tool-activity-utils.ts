@@ -1,4 +1,5 @@
 import { MCP_DISPLAY_NAMES } from '../../../../shared/constants'
+import type { ToolEditDiff } from '../../../../shared/types'
 
 /**
  * Shortens an absolute path to its last 2 meaningful segments.
@@ -54,4 +55,34 @@ export function getToolDisplayName(toolName: string): string {
     return parts.length >= 3 ? `${parts[1]} · ${parts[2]}` : toolName
   }
   return toolName
+}
+
+// ── Diff line counting ──
+
+/** Count trailing newlines so "a\n" and "a" both count as 1 line. */
+function countLines(s: string): number {
+  if (s === '') return 0
+  const stripped = s.replace(/\n+$/, '')
+  return stripped.split('\n').length
+}
+
+export interface DiffLineCounts {
+  additions: number
+  deletions: number
+}
+
+/**
+ * Line-based +/- counts for a set of edit diffs. For each pair, old lines count
+ * as deletions and new lines as additions. A pure heuristic — it does not run a
+ * real LCS diff — but for badge display ("+12 −4") it is the standard cheap
+ * approximation and matches what the inline diff visually suggests.
+ */
+export function countDiffLines(edits: ToolEditDiff[]): DiffLineCounts {
+  let additions = 0
+  let deletions = 0
+  for (const edit of edits) {
+    deletions += countLines(edit.oldString)
+    additions += countLines(edit.newString)
+  }
+  return { additions, deletions }
 }

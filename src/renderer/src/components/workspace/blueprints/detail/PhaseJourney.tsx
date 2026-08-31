@@ -58,12 +58,15 @@ interface PhaseJourneyProps {
   tasks: BlueprintTask[]
   /** Auto-expand active/failed phases on mount */
   autoExpandActive?: boolean
+  /** Threads through to VerifyDeliverable's Modified Files section. */
+  blueprintId?: string
 }
 
 export function PhaseJourney({
   phases,
   tasks,
-  autoExpandActive = true
+  autoExpandActive = true,
+  blueprintId
 }: PhaseJourneyProps): JSX.Element {
   // Track which phases are expanded — auto-expand active + failed
   const [expandedSet, setExpandedSet] = useState<Set<string>>(() => {
@@ -180,7 +183,7 @@ export function PhaseJourney({
             {/* Expanded content */}
             {isExpanded && isExpandable && (
               <div className="border-t border-border-subtle px-4 py-3">
-                <PhaseJourneyItemContent phase={phase} tasks={tasks} />
+                <PhaseJourneyItemContent phase={phase} tasks={tasks} blueprintId={blueprintId} />
               </div>
             )}
           </div>

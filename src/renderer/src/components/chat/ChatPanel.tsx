@@ -23,6 +23,10 @@ import TurnLimitBanner from './TurnLimitBanner'
 import NewChatPage from './NewChatPage'
 import ChatTabButton from './ChatTabButton'
 import CodeChangesPanel from './CodeChangesPanel'
+import FileViewerPanel from '../common/FileViewerPanel'
+import { useChatUiStore, type ChatTab } from '@renderer/store/chat-ui.store'
+import { useFileViewerStore } from '@renderer/store/file-viewer.store'
+import FileLanguageIcon from '../common/FileLanguageIcon'
 import McpPill from './McpPill'
 import EffortPill from './EffortPill'
 import ContextUsageIndicator from './ContextUsageIndicator'
@@ -39,8 +43,6 @@ import { useSessionRecoveryState } from './useSessionRecoveryState'
 import { useMcpIntegrations } from './useMcpIntegrations'
 import ApiRetryBanner from './ApiRetryBanner'
 import ModelConfigPopover from './ModelConfigPopover'
-
-type ChatTab = 'chat' | 'code-changes'
 
 interface ChatPanelProps {
   onCreateIdea?: (data: { title: string; description?: string }) => void
@@ -378,7 +380,6 @@ function useChatPanelLocalEffects({
   }, [showSearch, searchInputRef])
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveTab('chat')
   }, [conversationId, setActiveTab])
 
@@ -440,6 +441,49 @@ function EmptyConversationState({
   )
 }
 
+// ── ChatFilesTab ────────────────────────────────────────────────────────
+
+function ChatFilesTab(): React.JSX.Element {
+  const { recentFiles, activeFile, openFile } = useFileViewerStore()
+
+  return (
+    <div className="flex-1 flex min-h-0" data-testid="chat-files-tab">
+      {/* Left: recent files list */}
+      <div className="w-56 flex-shrink-0 border-r border-border-subtle overflow-y-auto py-2">
+        <div className="px-3 pb-1 text-[10px] uppercase tracking-wider text-text-muted font-medium">
+          Recent files
+        </div>
+        {recentFiles.length === 0 && (
+          <div className="px-3 py-2 text-xs text-text-muted">
+            Open a file from a tool row to see it here.
+          </div>
+        )}
+        {recentFiles.map((f) => (
+          <button
+            key={f.path}
+            type="button"
+            onClick={() => void openFile(f.path, f.ctx)}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 text-left transition-colors ${
+              activeFile === f.path
+                ? 'bg-surface-overlay text-text-primary'
+                : 'text-text-secondary hover:bg-surface-overlay/50 hover:text-text-primary'
+            }`}
+            title={f.path}
+          >
+            <FileLanguageIcon filePath={f.path} size={14} />
+            <span className="font-mono text-[11px] truncate min-w-0">{f.path}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Right: viewer */}
+      <div className="flex-1 min-w-0 p-3">
+        <FileViewerPanel />
+      </div>
+    </div>
+  )
+}
+
 // ── ChatPanel ───────────────────────────────────────────────────────────
 
 export default function ChatPanel({
@@ -459,7 +503,8 @@ export default function ChatPanel({
   const [attachments, setAttachments] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
-  const [activeTab, setActiveTab] = useState<ChatTab>('chat')
+  const activeTab = useChatUiStore((s) => s.activeTab)
+  const setActiveTab = useChatUiStore((s) => s.setActiveTab)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
   // ── Execution panel state (persisted to localStorage) ──
@@ -658,6 +703,9 @@ export default function ChatPanel({
             badge={pendingChangesCount}
           >
             Code Changes
+          </ChatTabButton>
+          <ChatTabButton active={activeTab === 'files'} onClick={() => setActiveTab('files')}>
+            Files
           </ChatTabButton>
         </div>
         {activeTab === 'chat' && (
@@ -859,6 +907,8 @@ export default function ChatPanel({
           onNavigateToSettings={onNavigateToSettings}
         />
       )}
+
+      {activeTab === 'files' && <ChatFilesTab />}
     </div>
   )
 }
