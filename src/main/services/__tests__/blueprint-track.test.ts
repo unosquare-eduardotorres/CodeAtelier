@@ -72,7 +72,9 @@ if (!gitAvailable || !dbContext) {
     resolveBlueprintTrack,
     reserveBlueprintBranch,
     blueprintTrackBranch,
-    blueprintTrackOwner
+    blueprintTrackOwner,
+    findHandoffHolder,
+    branchHeldElsewhereError
   } = blueprintTrackMod
   const { verifyTaskFileClaims } = require('../blueprint-task-verification')
 
@@ -275,6 +277,12 @@ if (!gitAvailable || !dbContext) {
         assert.match(target.reason ?? '', /feat\/busy/)
         assert.match(target.reason ?? '', /streaming a reply/)
 
+        // ...and the holder comes back as data, not only as prose: BUILD refuses
+        // on this field, and the message it prints names the chat to go and end.
+        assert.equal(target.heldBy?.branchName, 'feat/busy')
+        assert.equal(target.heldBy?.ownerKind, 'chat')
+        assert.equal(target.heldBy?.ownerId, chatOwner)
+
         // The chat still owns its tree; nothing was taken.
         assert.ok(trackRepository.findByOwner('chat', chatOwner))
         assert.equal(trackRepository.findByOwner('blueprint', bpId), undefined)
@@ -302,6 +310,11 @@ if (!gitAvailable || !dbContext) {
           /already on main/,
           'the user asked for a branch and is getting the shared tree — that must be stated'
         )
+        assert.equal(
+          target.heldBy,
+          undefined,
+          'the checkout IS on the branch, so writes here do join it — this must keep running'
+        )
       })
     })
 
@@ -318,6 +331,7 @@ if (!gitAvailable || !dbContext) {
         assert.equal(target.isolated, false)
         assert.equal(target.path, dir)
         assert.match(target.reason ?? '', /workspace checkout/)
+        assert.equal(target.heldBy, undefined, 'a deliberate choice is not a split brain')
         assert.equal(trackRepository.findByOwner('blueprint', bpId), undefined)
       })
     })
@@ -348,6 +362,7 @@ if (!gitAvailable || !dbContext) {
         assert.equal(target.isolated, false)
         assert.equal(target.path, dir)
         assert.match(target.reason ?? '', /no commits yet/)
+        assert.equal(target.heldBy, undefined, 'nothing holds a branch that does not exist')
         assert.equal(trackRepository.findByOwner('blueprint', bp.id), undefined)
       } finally {
         await rm(dir, { recursive: true, force: true })
@@ -690,16 +705,21 @@ if (!gitAvailable || !dbContext) {
           })
           assert.equal(target.isolated, false)
           assert.equal(target.path, dir)
+          assert.equal(
+            target.heldBy,
+            undefined,
+            'opting out is not a split brain — BUILD must still run'
+          )
         },
         { gitAutoBranch: false }
       )
     })
 
-    test('a branch already held by other work degrades instead of throwing', async () => {
+    test('a branch already held by other work degrades, and names the holder', async () => {
       await withBlueprint(async ({ dir, wsId, bpId }) => {
         // Somebody else owns the branch this blueprint wants.
         const branch = blueprintTrackBranch(bpId, 'Add retry to uploads')
-        await trackService.ensureTrack({
+        const squatter = await trackService.ensureTrack({
           ownerKind: 'manual',
           ownerId: `squatter-${bpId}`,
           workspaceId: wsId,
@@ -715,8 +735,77 @@ if (!gitAvailable || !dbContext) {
         assert.equal(target.isolated, false, 'degrades to the primary tree')
         assert.equal(target.path, dir)
 
+        // R046: the fallback itself was never the bug — running anyway was. The
+        // holder has to come back as data so BUILD can refuse on it.
+        assert.equal(target.heldBy?.branchName, branch)
+        assert.equal(target.heldBy?.ownerKind, 'manual')
+        assert.equal(target.heldBy?.ownerId, `squatter-${bpId}`)
+        assert.equal(target.heldBy?.path, squatter.path, 'names the tree the writes belong in')
+
         await trackService.releaseTrack('manual', `squatter-${bpId}`, { discard: true })
       })
+    })
+
+    test('R046: a branch handed to a chat is reported held, not silently shared', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        // Exactly the incident: BUILD makes its tree, then the branch is handed
+        // to a chat (transfer, mode=take) and never handed back. The blueprint's
+        // next phase looks up by owner, finds nothing, and falls back to the
+        // primary tree — which is on `main` and cannot reach that branch.
+        const built = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        assert.equal(built.isolated, true)
+
+        const row = trackRepository.findByOwner('blueprint', bpId)
+        assert.ok(row)
+        const chatOwner = `chat-took-${bpId}`
+        const moved = trackService.transferOwner(row.id, {
+          ownerKind: 'chat',
+          ownerId: chatOwner
+        })
+        assert.equal(moved.ok, true, 'the handoff itself is ordinary and allowed')
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+
+        assert.equal(target.isolated, false)
+        assert.equal(target.path, dir)
+        assert.equal(target.heldBy?.ownerKind, 'chat')
+        assert.equal(target.heldBy?.ownerId, chatOwner)
+        assert.equal(
+          target.heldBy?.path,
+          built.path,
+          'the worktree the agent actually writes in — the tree verification never looked at'
+        )
+
+        // The same fact is reachable from the VERIFY side, which resolves rather
+        // than ensures.
+        const viaResolve = findHandoffHolder(bpId)
+        assert.equal(viaResolve?.ownerId, chatOwner)
+        assert.equal(resolveBlueprintTrack(bpId, dir).path, dir)
+
+        await trackService.releaseTrack('chat', chatOwner, { discard: true })
+      })
+    })
+
+    test('the refusal names the holder, the tree and both ways out', () => {
+      const msg = branchHeldElsewhereError({
+        branchName: 'blueprint/data-agent-445eeb12',
+        ownerKind: 'chat',
+        ownerId: 'dea19fc2c83ea2d68423e32f964139f6',
+        path: '/wt/ce8325fc/blueprint-data-agent-445-445eeb12'
+      }).message
+
+      assert.match(msg, /blueprint\/data-agent-445eeb12/)
+      assert.match(msg, /dea19fc2c83ea2d68423e32f964139f6/, 'the id the user cannot otherwise see')
+      assert.match(msg, /wt\/ce8325fc/)
+      assert.match(msg, /takeover/, 'and how to get out of it without ending the chat')
     })
 
     test('resolve falls back to the primary tree when no track exists', async () => {

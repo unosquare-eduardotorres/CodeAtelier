@@ -1011,11 +1011,18 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
 
       const model = modelConfigService.getModel(workspacePath ?? undefined, 'memoryFeed')
 
+      // Prompt on stdin, not argv — same reason as spawnSummarizer: a positional
+      // prompt counts against the OS command-line ceiling (~32K on Windows).
+      // This classifier's prompt is small today, but it is the identical shape
+      // and would drift into the same failure the moment it grows.
       const child = spawn(
         'claude',
-        ['-p', prompt, '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
-        { stdio: ['ignore', 'pipe', 'pipe'], env, signal: controller.signal, windowsHide: true }
+        ['-p', '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
+        { stdio: ['pipe', 'pipe', 'pipe'], env, signal: controller.signal, windowsHide: true }
       )
+
+      child.stdin?.on('error', () => {})
+      child.stdin?.end(prompt)
 
       let stdout = ''
       const MAX_OUTPUT = 1024

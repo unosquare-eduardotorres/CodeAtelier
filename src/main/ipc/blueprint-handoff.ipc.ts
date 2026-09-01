@@ -30,7 +30,11 @@ import { conversationRepository } from '../db/repositories'
 import { handleCreateConversation } from './conversation-crud.ipc'
 import type { BranchTakeoverResult } from './conversation-crud.ipc'
 import { readBranchChoice, blueprintTrackBranch } from '../services/blueprint-track'
-import { readBlueprintBranchName, readJiraIssueKey } from '../../shared/blueprint-branch-name'
+import {
+  readBlueprintBranchName,
+  readJiraIssueKey,
+  readJiraIssueKeys
+} from '../../shared/blueprint-branch-name'
 import {
   resolveHandoffIntent,
   isBlueprintHandoffIntent,
@@ -181,6 +185,7 @@ export async function executeBlueprintHandoffToChat(args: {
   const title = `${spec.titlePrefix}: ${blueprint.title}`.slice(0, 500)
 
   const jiraIssueKey = readJiraIssueKey(blueprint.settingsJson)
+  const jiraIssueKeys = readJiraIssueKeys(blueprint.settingsJson)
 
   // Derived from what the transfer actually did, never inferred from the branch
   // name surviving: a track row that outlived its directory reuses the ref and
@@ -222,7 +227,8 @@ export async function executeBlueprintHandoffToChat(args: {
     branchName: conversation.branchName ?? null,
     inheritedTrack,
     unclaimedBranch: conversation.branchName ? null : options.branchName,
-    jiraIssueKey
+    jiraIssueKey,
+    jiraIssueKeys
   })
 
   conversationRepository.updateHandoffContext(conversation.id, action.handoffContextCompact)

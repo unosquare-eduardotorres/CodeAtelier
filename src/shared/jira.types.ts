@@ -25,6 +25,23 @@ export interface JiraIssueRow {
   priority?: string
   /** Epic or parent issue key, when the issue has one. */
   parentKey?: string
+  /**
+   * Summary of that parent, when Jira returned it.
+   *
+   * Jira nests it inside the `parent` field it already sends, so this costs no
+   * extra round trip. Absent on Jira Server / DC classic projects, where the
+   * epic link is a per-instance custom field rather than `parent`.
+   */
+  parentSummary?: string
+  /**
+   * Issue type of that parent, e.g. "Epic" or "Story".
+   *
+   * On Cloud `parent` is the epic for a story *and* the story for a sub-task,
+   * so the type is the only thing that says which of the two you are looking
+   * at. Carried so a grouped brief can name it correctly instead of calling
+   * every shared parent an epic.
+   */
+  parentType?: string
   /** ISO timestamp from Jira */
   updated?: string
   /** ISO timestamp from Jira */
@@ -65,6 +82,10 @@ export interface JiraIssueDetail {
   reporter?: string
   labels: string[]
   parent?: string
+  /** Summary of the parent/epic, when Jira returned it. See `JiraIssueRow`. */
+  parentSummary?: string
+  /** Issue type of the parent, e.g. "Epic" or "Story". See `JiraIssueRow`. */
+  parentType?: string
   resolution?: string
   created?: string
   updated?: string
@@ -133,11 +154,18 @@ export interface JiraCurrentUser {
   name?: string
 }
 
-/** Per-ticket outcome of a bulk convert-to-blueprint run. */
+/**
+ * The one blueprint a convert run produced.
+ *
+ * A selection converts to a *single* blueprint rather than one per ticket: ten
+ * tickets under an epic are one piece of work, and ten blueprints would mean ten
+ * branches and ten Specify runs for it.
+ */
 export interface JiraBlueprintConversion {
-  issueKey: string
   blueprintId: string
   title: string
+  /** Every ticket folded into this blueprint, in selection order. */
+  issueKeys: string[]
 }
 
 export interface JiraConversionFailure {
@@ -152,7 +180,8 @@ export interface JiraConversionSkip {
 }
 
 export interface JiraCreateBlueprintsResult {
-  created: JiraBlueprintConversion[]
+  /** Null when every selected ticket was skipped or failed. */
+  created: JiraBlueprintConversion | null
   failed: JiraConversionFailure[]
   /** Skipped as already converted — reported so the dedupe is visible, not silent. */
   skipped: JiraConversionSkip[]
@@ -204,7 +233,8 @@ export const JIRA_MAX_JQL_CHARS = 2000
 export const JIRA_MAX_LOADED_ROWS = 500
 
 /**
- * Largest selection the bulk convert-to-blueprint action accepts.
+ * Largest selection the convert-to-blueprint action accepts — i.e. how many
+ * tickets may be folded into one blueprint.
  *
  * Mirrored from the IPC handler's own guard so the toolbar can cap the
  * selection with a visible reason instead of letting the call be rejected.

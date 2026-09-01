@@ -191,16 +191,27 @@ export class RecoveryNudgeService {
     const sessionIdNotCliShaped = opts.sessionId !== undefined && !isUuidSessionId(opts.sessionId)
     if (opts.opencodeRecovery) {
       // OPENCODE-RECOVERY: the session service supplies the backend-aware turn.
-      // The prompt asks for the summary only — same contract as the CLI branch.
+      // The prompt asks for the summary only (or, for phases that require one,
+      // the structured completion block — see OPENCODE-RECOVERY-STRICT below).
       this.log.info(
         `[PIPELINE:recovery-nudge-opencode] conversationId=${opts.conversationId} — ` +
           `sending recovery turn through the OpenCode session`
       )
+      // OPENCODE-RECOVERY-STRICT: when the phase prompt requires a structured
+      // completion block, the recovery turn gets exactly one job — re-emit it.
+      // Asking for a prose summary *and* the block reliably produced only prose
+      // (verify 8bb7c4de: recovery text recovered, block still absent). The
+      // phase name is not hardcoded — it is dictated by the system prompt the
+      // model is already running under, so this stays correct for every phase.
+      const needsCompletionBlock = opts.systemPrompt.includes('blueprint-phase-complete')
+      const recoveryPrompt = needsCompletionBlock
+        ? '[System: Your previous response ended without the required structured output block. Respond with ONLY the required ```blueprint-phase-complete fence block containing overallStatus, findings, and recommendation — no prose before or after. Do NOT use tools.]'
+        : opts.isBuildMode
+          ? '[System: Your previous response ended after tool calls without a final summary. Summarize what you found and executed in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
+          : '[System: Your previous response ended after tool calls without providing a summary. Summarize what you found in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
       try {
         const text = await opts.opencodeRecovery({
-          prompt: opts.isBuildMode
-            ? '[System: Your previous response ended after tool calls without a final summary. Summarize what you found and executed in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
-            : '[System: Your previous response ended after tool calls without providing a summary. Summarize what you found in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]',
+          prompt: recoveryPrompt,
           onChunk: opts.onChunk
         })
         if (text && text.trim().length > 0) {

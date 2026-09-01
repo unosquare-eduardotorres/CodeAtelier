@@ -404,6 +404,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-parallel-scheduler.test',
   '../services/__tests__/blueprint-dag-scheduler.test',
   '../services/__tests__/blueprint-verify-extractor.test',
+  '../services/__tests__/blueprint-verify-salvage.test',
   // ─── Phase 21: Coverage Mega-Push ───
   '../services/__tests__/memory-engine-extraction-deep.test',
   '../services/__tests__/blueprint-services-deep-phase21.test',
@@ -416,6 +417,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/ipc-track-handlers.test',
   '../services/__tests__/mcp-config-worktree.test',
   '../services/__tests__/blueprint-track.test',
+  // R046 — BUILD refuses to start when its branch is held by other work.
+  '../services/__tests__/blueprint-build-branch-held.test',
   '../services/__tests__/blueprint-branch-name.test',
   '../services/__tests__/landing.service.test',
   '../services/__tests__/track-claims.test',

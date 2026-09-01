@@ -12,6 +12,9 @@ import JiraIssueActions from './JiraIssueActions'
  * rather than mutating state in place. That is what keeps the load effect free
  * of the "reset every field first" block that would otherwise be needed to stop
  * the previous ticket's body and half-typed comment leaking into the new one.
+ *
+ * It fills the right-hand aside rather than being one: the aside is now a
+ * two-tab panel (Ticket / Selected) and owns its own width and border.
  */
 export default function JiraTicketDetail({
   workspaceId,
@@ -74,10 +77,7 @@ export default function JiraTicketDetail({
   }
 
   return (
-    <aside
-      data-testid="jira-ticket-detail"
-      className="w-96 shrink-0 border-l border-border-subtle bg-surface-base flex flex-col min-h-0"
-    >
+    <div data-testid="jira-ticket-detail" className="flex-1 flex flex-col min-h-0">
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-border-subtle shrink-0">
         <span className="font-mono text-[11px] text-accent">{issueKey}</span>
         {issue && (
@@ -216,6 +216,6 @@ export default function JiraTicketDetail({
           </Button>
         </div>
       )}
-    </aside>
+    </div>
   )
 }

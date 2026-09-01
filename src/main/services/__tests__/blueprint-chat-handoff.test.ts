@@ -174,6 +174,46 @@ describe('composeHandoffMessage', () => {
     assert.ok(msg.includes('mcp__jira__add_comment'), 'must name the tool that answers the ticket')
   })
 
+  test('a blueprint built from several tickets names every one of them', () => {
+    // The anchor is the epic, which was never itself selected — telling the
+    // agent only about it would under-report the scope by three tickets.
+    const msg = composeHandoffMessage({
+      contextMarkdown: 'ctx',
+      spec,
+      branchName: 'feature/CHR-12-checkout-revamp',
+      inheritedTrack: true,
+      jiraIssueKey: 'CHR-12',
+      jiraIssueKeys: ['CHR-40', 'CHR-41', 'CHR-42']
+    })
+    assert.ok(msg.includes('It covers `CHR-40`, `CHR-41`, `CHR-42`'))
+    assert.ok(!msg.includes('It also covers'), 'the epic is not one of the covered tickets')
+  })
+
+  test('when the anchor is itself a ticket, the rest are named as additional', () => {
+    const msg = composeHandoffMessage({
+      contextMarkdown: 'ctx',
+      spec,
+      branchName: 'feature/CHR-40-totals',
+      inheritedTrack: true,
+      jiraIssueKey: 'CHR-40',
+      jiraIssueKeys: ['CHR-40', 'NSLJD-7']
+    })
+    assert.ok(msg.includes('It also covers `NSLJD-7`'))
+    assert.ok(!msg.includes('`CHR-40`, `NSLJD-7`'), 'the anchor must not be listed twice')
+  })
+
+  test('a single-ticket blueprint gains no extra coverage sentence', () => {
+    const msg = composeHandoffMessage({
+      contextMarkdown: 'ctx',
+      spec,
+      branchName: 'feature/MUL-2336-rename-billing',
+      inheritedTrack: true,
+      jiraIssueKey: 'MUL-2336',
+      jiraIssueKeys: ['MUL-2336']
+    })
+    assert.ok(!msg.includes('covers'), 'one ticket is fully described by the sentence above')
+  })
+
   test('a blueprint with no Jira origin says nothing about Jira', () => {
     const msg = composeHandoffMessage({
       contextMarkdown: 'ctx',

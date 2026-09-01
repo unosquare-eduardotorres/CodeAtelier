@@ -14,6 +14,8 @@ interface SelectMenuProps<T extends string> {
   options: readonly SelectOption<T>[]
   onChange: (value: T) => void
   ariaLabel: string
+  /** Passed through to the trigger as data-testid so E2E hooks survive. */
+  testId?: string
   className?: string
 }
 
@@ -28,6 +30,7 @@ export default function SelectMenu<T extends string>({
   options,
   onChange,
   ariaLabel,
+  testId,
   className = ''
 }: SelectMenuProps<T>): React.JSX.Element {
   const current = options.find((o) => o.value === value)
@@ -40,6 +43,7 @@ export default function SelectMenu<T extends string>({
         <button
           type="button"
           aria-label={ariaLabel}
+          data-testid={testId}
           {...props}
           className={`inline-flex items-center gap-1.5 h-7 px-2.5 text-xs rounded-md border border-border-default bg-surface-overlay text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-input-focus ${className}`}
         >

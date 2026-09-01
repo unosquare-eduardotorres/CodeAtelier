@@ -9,6 +9,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
+import {
+  extractVerifyCompletion,
+  type ExtractorDeps
+} from '../blueprint-verify-extractor'
+import type { GlmConfig } from '../model-config.service'
 
 // ── Replicate parseExtractionResponse logic for hermetic testing ──
 // (avoids importing the real module which pulls in electron-log)
@@ -406,6 +411,139 @@ describe('source-guard: VALID_OVERALL_STATUSES in blueprint-verify.service.ts', 
       source.includes('delete completion.overallStatus'),
       'Expected service to delete invalid overallStatus values'
     )
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════
+// BP-VERIFY-GLM-EXTRACT — claude ×2 → GLM ×1 → null fallback ordering
+// ════════════════════════════════════════════════════════════════════════
+
+const VALID_EXTRACTION_JSON = JSON.stringify({
+  overallStatus: 'gaps_found',
+  recommendation: 'Two files are stubs',
+  findings: [{ description: 'stub impl', severity: 'major', files: ['src/a.ts'] }],
+  artifacts: { missing: 0, stub: 2, orphaned: 0 },
+  remediationTasks: [{ taskId: 'R001', description: 'implement a.ts', files: [], dependsOn: [] }]
+})
+
+const GLM_CONFIG = {
+  endpointMode: 'zai-coding',
+  baseUrl: 'https://api.z.ai/api/coding/paas/v4/',
+  apiKey: 'k',
+  modelId: 'glm-4.6',
+  smallModelId: 'glm-4.5-flash'
+} as GlmConfig
+
+/** Params long enough to clear the 100-char guard. */
+const EXTRACT_PARAMS = {
+  text: 'The verify agent output. '.repeat(20),
+  blueprintId: 'bp-1',
+  workspaceId: 'ws-1',
+  workspacePath: '/ws'
+}
+
+function makeDeps(over: {
+  claude?: () => Promise<unknown>
+  local?: () => Promise<unknown>
+  isGlm?: boolean
+}): { deps: ExtractorDeps; counts: { claude: number; local: number } } {
+  const counts = { claude: 0, local: 0 }
+  const deps = {
+    runClaude: async () => {
+      counts.claude++
+      if (over.claude) return await over.claude()
+      throw new Error('claude not configured for this test')
+    },
+    runLocal: async () => {
+      counts.local++
+      if (over.local) return await over.local()
+      throw new Error('local not configured for this test')
+    },
+    isGlmProvider: () => over.isGlm ?? true,
+    getGlmConfig: () => GLM_CONFIG
+  } as unknown as ExtractorDeps
+  return { deps, counts }
+}
+
+describe('extractVerifyCompletion › GLM fallback', () => {
+  test('claude fails twice → GLM extraction parses the completion', async () => {
+    const { deps, counts } = makeDeps({
+      claude: async () => {
+        throw new Error('weekly limit reached')
+      },
+      local: async () => ({ text: VALID_EXTRACTION_JSON })
+    })
+
+    const result = await extractVerifyCompletion(EXTRACT_PARAMS, deps)
+
+    assert.ok(result, 'expected a parsed completion from the GLM fallback')
+    assert.equal(result.overallStatus, 'gaps_found')
+    assert.equal(result.phase, 'verify')
+    assert.equal(counts.claude, 2, 'claude must still get exactly 2 attempts')
+    assert.equal(counts.local, 1, 'GLM must be tried exactly once')
+  })
+
+  test('claude fails twice + GLM returns empty text → null', async () => {
+    const { deps, counts } = makeDeps({
+      claude: async () => {
+        throw new Error('weekly limit reached')
+      },
+      // runOneShotLocal resolves { text: '' } instead of throwing when it has
+      // no claude fallback configured.
+      local: async () => ({ text: '' })
+    })
+
+    assert.equal(await extractVerifyCompletion(EXTRACT_PARAMS, deps), null)
+    assert.equal(counts.local, 1)
+  })
+
+  test('claude fails twice + GLM throws → null (never rethrows)', async () => {
+    const { deps } = makeDeps({
+      claude: async () => {
+        throw new Error('weekly limit reached')
+      },
+      local: async () => {
+        throw new Error('glm endpoint down')
+      }
+    })
+
+    assert.equal(await extractVerifyCompletion(EXTRACT_PARAMS, deps), null)
+  })
+
+  test('non-GLM workspace → GLM path skipped entirely', async () => {
+    const { deps, counts } = makeDeps({
+      claude: async () => {
+        throw new Error('weekly limit reached')
+      },
+      isGlm: false
+    })
+
+    assert.equal(await extractVerifyCompletion(EXTRACT_PARAMS, deps), null)
+    assert.equal(counts.local, 0, 'runLocal must not be called on non-GLM workspaces')
+  })
+
+  test('claude succeeds on the first attempt → GLM never runs', async () => {
+    const { deps, counts } = makeDeps({
+      claude: async () => ({ text: VALID_EXTRACTION_JSON })
+    })
+
+    const result = await extractVerifyCompletion(EXTRACT_PARAMS, deps)
+
+    assert.ok(result)
+    assert.equal(result.overallStatus, 'gaps_found')
+    assert.equal(counts.claude, 1)
+    assert.equal(counts.local, 0)
+  })
+
+  test('text under 100 chars → no provider is called at all', async () => {
+    const { deps, counts } = makeDeps({})
+
+    assert.equal(
+      await extractVerifyCompletion({ ...EXTRACT_PARAMS, text: 'too short' }, deps),
+      null
+    )
+    assert.equal(counts.claude, 0)
+    assert.equal(counts.local, 0)
   })
 })
 

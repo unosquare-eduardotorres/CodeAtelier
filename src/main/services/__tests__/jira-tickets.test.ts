@@ -32,6 +32,7 @@ import {
   formatBoards,
   formatCurrentUser,
   formatProjects,
+  formatIssue,
   formatSearchRows,
   formatSprints,
   formatTransitions,
@@ -49,16 +50,24 @@ import {
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_ISSUE,
+  attachmentDestFilename,
   safeAttachmentFilename,
   selectAttachments
 } from '../jira-attachments'
 import type { JiraAttachment } from '../../../shared/jira.types'
 import {
   buildJiraChatPrompt,
+  deriveGroupPriority,
+  deriveGroupTitle,
+  formatGroupedIssueBrief,
   formatIssueBrief,
+  groupTicketOf,
   indexBlueprintsByJiraKey,
-  mapJiraPriority
+  mapJiraPriority,
+  resolveGroupAnchor,
+  sharedParentOf
 } from '../../../shared/jira-format'
+import { readJiraIssueKeys } from '../../../shared/blueprint-branch-name'
 import type { JiraIssueDetail } from '../../../shared/jira.types'
 import { JIRA_MAX_JQL_CHARS, JIRA_QUICK_FILTERS } from '../../../shared/jira.types'
 
@@ -402,12 +411,310 @@ describe('jira-attachments — selectAttachments', () => {
 
 describe('jira-format — buildJiraChatPrompt', () => {
   test('is the brief plus an explicit instruction', () => {
-    const prompt = buildJiraChatPrompt(issue())
+    const prompt = buildJiraChatPrompt([issue()])
     assert.ok(
       prompt.startsWith(formatIssueBrief(issue())),
       'chat prompt must reuse the same brief the blueprint gets'
     )
     assert.match(prompt, /plan how to implement it against this codebase/)
+  })
+
+  test('a group gets the grouped brief and plural instructions', () => {
+    const prompt = buildJiraChatPrompt([
+      issue({ key: 'PROJ-1' }),
+      issue({ key: 'PROJ-2', browseUrl: `${CLOUD}/browse/PROJ-2` })
+    ])
+    assert.match(prompt, /2 Jira tickets, one blueprint/)
+    assert.match(prompt, /plan how to implement them against this codebase/)
+  })
+})
+
+// ── Grouping: N tickets, one blueprint ──
+
+/** Ticket under a parent, with the parent's summary attached as Jira sends it. */
+function child(
+  key: string,
+  summary: string,
+  parent?: string,
+  parentSummary?: string,
+  parentType?: string
+) {
+  return issue({
+    key,
+    summary,
+    parent,
+    parentSummary,
+    parentType,
+    browseUrl: `${CLOUD}/browse/${key}`
+  })
+}
+
+describe('jira-format — sharedParentOf', () => {
+  test('a single ticket is never a group, so it has no shared parent', () => {
+    assert.equal(sharedParentOf([{ key: 'CHR-40', summary: 'x', parentKey: 'CHR-12' }]), null)
+  })
+
+  test('reports the epic when every ticket hangs off it', () => {
+    assert.deepEqual(
+      sharedParentOf([
+        {
+          key: 'CHR-40',
+          summary: 'a',
+          parentKey: 'CHR-12',
+          parentSummary: 'Checkout revamp',
+          parentType: 'Epic'
+        },
+        {
+          key: 'CHR-41',
+          summary: 'b',
+          parentKey: 'CHR-12',
+          parentSummary: 'Checkout revamp',
+          parentType: 'Epic'
+        }
+      ]),
+      { key: 'CHR-12', summary: 'Checkout revamp', type: 'Epic' }
+    )
+  })
+
+  test('sub-tasks share a Story, and the type says so rather than lying “Epic”', () => {
+    // Cloud reuses `parent` for both relationships. Grouping is still right — a
+    // shared parent is a shared unit of work — but it is not an epic.
+    assert.deepEqual(
+      sharedParentOf([
+        {
+          key: 'CHR-40',
+          summary: 'a',
+          parentKey: 'CHR-9',
+          parentSummary: 'Rework totals',
+          parentType: 'Story'
+        },
+        {
+          key: 'CHR-41',
+          summary: 'b',
+          parentKey: 'CHR-9',
+          parentSummary: 'Rework totals',
+          parentType: 'Story'
+        }
+      ]),
+      { key: 'CHR-9', summary: 'Rework totals', type: 'Story' }
+    )
+  })
+
+  test('one ticket under a different parent breaks the group', () => {
+    assert.equal(
+      sharedParentOf([
+        { key: 'CHR-40', summary: 'a', parentKey: 'CHR-12', parentSummary: 'Checkout revamp' },
+        { key: 'CHR-41', summary: 'b', parentKey: 'CHR-99', parentSummary: 'Something else' }
+      ]),
+      null
+    )
+  })
+
+  test('a parentless ticket breaks the group — Server/DC never populates parent', () => {
+    assert.equal(
+      sharedParentOf([
+        { key: 'CHR-40', summary: 'a', parentKey: 'CHR-12', parentSummary: 'Checkout revamp' },
+        { key: 'CHR-41', summary: 'b' }
+      ]),
+      null
+    )
+  })
+
+  test('a parent key with no summary is not usable as a title, so it is not reported', () => {
+    assert.equal(
+      sharedParentOf([
+        { key: 'CHR-40', summary: 'a', parentKey: 'CHR-12' },
+        { key: 'CHR-41', summary: 'b', parentKey: 'CHR-12' }
+      ]),
+      null
+    )
+  })
+})
+
+describe('jira-format — deriveGroupTitle', () => {
+  test('one ticket keeps the title it has always had', () => {
+    assert.equal(
+      deriveGroupTitle([groupTicketOf(issue())]),
+      'PROJ-42: Checkout total ignores discounts'
+    )
+  })
+
+  test('a shared epic titles the blueprint after the epic', () => {
+    const title = deriveGroupTitle(
+      [
+        child('CHR-40', 'Totals ignore discounts', 'CHR-12', 'Checkout revamp', 'Epic'),
+        child('CHR-41', 'Coupon field rejects spaces', 'CHR-12', 'Checkout revamp', 'Epic'),
+        child('CHR-42', 'Tax line is stale', 'CHR-12', 'Checkout revamp', 'Epic')
+      ].map(groupTicketOf)
+    )
+    assert.equal(title, 'CHR-12: Checkout revamp')
+  })
+
+  test('tickets with no shared epic fall back to the first plus a count', () => {
+    const title = deriveGroupTitle(
+      [
+        child('CHR-40', 'Totals ignore discounts'),
+        child('NSLJD-7', 'Login loops'),
+        child('CHR-41', 'Coupon field rejects spaces')
+      ].map(groupTicketOf)
+    )
+    assert.equal(title, 'CHR-40 +2 more: Totals ignore discounts')
+  })
+
+  test('an epic key without a summary degrades to the ticket-derived rule', () => {
+    // This is the Jira Server / DC classic case: `parent` is not the epic link
+    // there, so no summary ever arrives and the epic rule must not half-fire.
+    const title = deriveGroupTitle(
+      [
+        child('CHR-40', 'Totals ignore discounts', 'CHR-12'),
+        child('CHR-41', 'Coupon', 'CHR-12')
+      ].map(groupTicketOf)
+    )
+    assert.equal(title, 'CHR-40 +1 more: Totals ignore discounts')
+  })
+
+  test('an absurd summary cannot produce an unbounded title', () => {
+    const title = deriveGroupTitle([{ key: 'CHR-1', summary: 'x'.repeat(4000) }])
+    assert.ok(title.length <= 200)
+  })
+
+  test('an empty selection has a title rather than throwing', () => {
+    assert.equal(deriveGroupTitle([]), 'Jira tickets')
+  })
+})
+
+describe('jira-format — resolveGroupAnchor', () => {
+  test('with no shared epic the first ticket is the anchor', () => {
+    const anchor = resolveGroupAnchor([child('CHR-40', 'a'), child('NSLJD-7', 'b')])
+    assert.deepEqual(anchor.issueKeys, ['CHR-40', 'NSLJD-7'])
+    assert.equal(anchor.anchorKey, 'CHR-40')
+    assert.equal(anchor.anchorUrl, `${CLOUD}/browse/CHR-40`)
+    assert.equal(anchor.epicKey, undefined)
+  })
+
+  test('a shared epic becomes the anchor, so the branch is named after it', () => {
+    const anchor = resolveGroupAnchor([
+      child('CHR-40', 'a', 'CHR-12', 'Checkout revamp', 'Epic'),
+      child('CHR-41', 'b', 'CHR-12', 'Checkout revamp', 'Epic')
+    ])
+    assert.equal(anchor.anchorKey, 'CHR-12')
+    assert.equal(anchor.epicKey, 'CHR-12')
+    assert.equal(anchor.epicSummary, 'Checkout revamp')
+    assert.equal(anchor.epicType, 'Epic')
+    // Derived from a ticket's own browse URL, so it points at the same site.
+    assert.equal(anchor.anchorUrl, `${CLOUD}/browse/CHR-12`)
+    // The epic itself was never selected and must not be recorded as covered.
+    assert.deepEqual(anchor.issueKeys, ['CHR-40', 'CHR-41'])
+  })
+
+  test('a browse URL in an unexpected shape is passed through, not mangled', () => {
+    const anchor = resolveGroupAnchor([
+      issue({ key: 'CHR-40', parent: 'CHR-12', parentSummary: 'Epic', browseUrl: 'not-a-url' }),
+      issue({ key: 'CHR-41', parent: 'CHR-12', parentSummary: 'Epic', browseUrl: 'not-a-url' })
+    ])
+    assert.equal(anchor.anchorUrl, 'not-a-url')
+  })
+})
+
+describe('jira-format — deriveGroupPriority', () => {
+  test('the most urgent ticket sets the blueprint priority', () => {
+    assert.equal(
+      deriveGroupPriority([{ priority: 'Low' }, { priority: 'Blocker' }, { priority: 'Medium' }]),
+      'P1'
+    )
+  })
+
+  test('a group of ordinary tickets is not escalated', () => {
+    assert.equal(deriveGroupPriority([{ priority: 'Medium' }, { priority: 'Low' }]), 'P3')
+  })
+
+  test('High wins over Medium without reaching P1', () => {
+    assert.equal(deriveGroupPriority([{ priority: 'Medium' }, { priority: 'High' }]), 'P2')
+  })
+
+  test('unrecognised and absent priorities do not outrank a real one', () => {
+    assert.equal(deriveGroupPriority([{ priority: undefined }, { priority: 'High' }]), 'P2')
+    assert.equal(deriveGroupPriority([{ priority: 'Wibble' }, { priority: 'Blocker' }]), 'P1')
+  })
+
+  test('an empty group falls back rather than throwing', () => {
+    assert.equal(deriveGroupPriority([]), 'P3')
+  })
+})
+
+describe('jira-format — formatGroupedIssueBrief', () => {
+  test('one ticket is the single brief verbatim, so the two cannot drift', () => {
+    assert.equal(formatGroupedIssueBrief([issue()]), formatIssueBrief(issue()))
+  })
+
+  test('every ticket appears, in selection order, after the index', () => {
+    const brief = formatGroupedIssueBrief([
+      child('CHR-40', 'Totals ignore discounts'),
+      child('CHR-41', 'Coupon field rejects spaces')
+    ])
+    assert.match(brief, /# 2 Jira tickets, one blueprint/)
+    assert.match(brief, /### Tickets in this blueprint/)
+    assert.ok(
+      brief.indexOf('## CHR-40:') < brief.indexOf('## CHR-41:'),
+      'briefs must follow selection order'
+    )
+    assert.match(brief, /\[CHR-41\]\(https:\/\/acme\.atlassian\.net\/browse\/CHR-41\)/)
+  })
+
+  test('the epic is named at the top when there is one', () => {
+    const brief = formatGroupedIssueBrief(
+      [
+        child('CHR-40', 'a', 'CHR-12', 'Checkout revamp', 'Epic'),
+        child('CHR-41', 'b', 'CHR-12', 'Checkout revamp', 'Epic')
+      ],
+      { key: 'CHR-12', summary: 'Checkout revamp', type: 'Epic', url: `${CLOUD}/browse/CHR-12` }
+    )
+    assert.match(brief, /\*\*Epic:\*\* \[CHR-12\]\(.*\) — Checkout revamp/)
+  })
+
+  test('a shared Story is labelled Story, not Epic', () => {
+    const brief = formatGroupedIssueBrief(
+      [child('CHR-40', 'a', 'CHR-9', 'Rework totals', 'Story'), child('CHR-41', 'b')],
+      { key: 'CHR-9', summary: 'Rework totals', type: 'Story', url: `${CLOUD}/browse/CHR-9` }
+    )
+    assert.match(brief, /\*\*Story:\*\* \[CHR-9\]/)
+    assert.doesNotMatch(brief, /\*\*Epic:\*\*/)
+  })
+
+  test('a parent of unknown type is labelled neutrally rather than guessed', () => {
+    const brief = formatGroupedIssueBrief([child('CHR-40', 'a'), child('CHR-41', 'b')], {
+      key: 'CHR-12',
+      summary: 'Checkout revamp'
+    })
+    assert.match(brief, /\*\*Parent:\*\* `CHR-12` — Checkout revamp/)
+  })
+
+  test('one enormous ticket is clipped rather than swallowing the budget', () => {
+    const brief = formatGroupedIssueBrief([
+      child('CHR-40', 'huge'),
+      issue({ key: 'CHR-41', description: 'x'.repeat(40_000), browseUrl: `${CLOUD}/browse/CHR-41` })
+    ])
+    assert.match(brief, /_\[…truncated\]_/)
+    assert.ok(brief.length < 30_000, `per-ticket budget must bound the brief (got ${brief.length})`)
+  })
+
+  test('the whole-group budget holds even for a full selection of large tickets', () => {
+    const issues = Array.from({ length: 25 }, (_, i) =>
+      issue({
+        key: `CHR-${i}`,
+        description: 'y'.repeat(50_000),
+        browseUrl: `${CLOUD}/browse/CHR-${i}`
+      })
+    )
+    const brief = formatGroupedIssueBrief(issues)
+    assert.ok(brief.length < 80_000, `grouped brief must stay bounded (got ${brief.length})`)
+    // Anything dropped is still listed in the index and said to be dropped.
+    assert.match(brief, /further ticket\(s\) omitted/)
+    assert.match(brief, /- \[CHR-24\]/)
+  })
+
+  test('an empty selection is an empty brief, not a header with nothing under it', () => {
+    assert.equal(formatGroupedIssueBrief([]), '')
   })
 })
 
@@ -451,6 +758,175 @@ describe('jira-format — indexBlueprintsByJiraKey', () => {
 
   test('an empty workspace produces an empty index', () => {
     assert.equal(indexBlueprintsByJiraKey([]).size, 0)
+  })
+
+  test('every ticket in a group resolves to the one blueprint', () => {
+    const index = indexBlueprintsByJiraKey([
+      bp('b1', {
+        jiraIssueKeys: ['CHR-40', 'CHR-41', 'CHR-42'],
+        jiraIssueKey: 'CHR-12',
+        jiraEpicKey: 'CHR-12'
+      })
+    ])
+    assert.equal(index.get('CHR-40'), 'b1')
+    assert.equal(index.get('CHR-41'), 'b1')
+    assert.equal(index.get('CHR-42'), 'b1')
+  })
+
+  test('the epic anchor is not badged — it was never one of the selected tickets', () => {
+    const index = indexBlueprintsByJiraKey([
+      bp('b1', { jiraIssueKeys: ['CHR-40', 'CHR-41'], jiraIssueKey: 'CHR-12' })
+    ])
+    assert.equal(index.get('CHR-12'), undefined)
+    assert.equal(index.size, 2)
+  })
+
+  test('a blueprint predating grouping still resolves through jiraIssueKey', () => {
+    const index = indexBlueprintsByJiraKey([bp('legacy', { jiraIssueKey: 'PROJ-1' })])
+    assert.equal(index.get('PROJ-1'), 'legacy')
+  })
+
+  test('an unusable jiraIssueKeys value falls back rather than indexing nothing', () => {
+    const index = indexBlueprintsByJiraKey([
+      bp('b1', { jiraIssueKeys: [], jiraIssueKey: 'PROJ-1' }),
+      bp('b2', { jiraIssueKeys: 'PROJ-2', jiraIssueKey: 'PROJ-2' }),
+      bp('b3', { jiraIssueKeys: [7, '', 'PROJ-3'] })
+    ])
+    assert.equal(index.get('PROJ-1'), 'b1')
+    assert.equal(index.get('PROJ-2'), 'b2')
+    assert.equal(index.get('PROJ-3'), 'b3')
+    assert.equal(index.size, 3)
+  })
+})
+
+describe('blueprint-branch-name — readJiraIssueKeys', () => {
+  test('reads the group list when there is one', () => {
+    assert.deepEqual(readJiraIssueKeys({ jiraIssueKeys: ['A-1', 'A-2'], jiraIssueKey: 'A-9' }), [
+      'A-1',
+      'A-2'
+    ])
+  })
+
+  test('falls back to the single key for blueprints predating grouping', () => {
+    assert.deepEqual(readJiraIssueKeys({ jiraIssueKey: 'A-1' }), ['A-1'])
+  })
+
+  test('a blueprint with no Jira origin has no keys', () => {
+    assert.deepEqual(readJiraIssueKeys({}), [])
+    assert.deepEqual(readJiraIssueKeys(null), [])
+    assert.deepEqual(readJiraIssueKeys({ jiraIssueKeys: [1, 2] }), [])
+  })
+})
+
+describe('jira-attachments — attachmentDestFilename', () => {
+  test('two tickets attaching the same filename cannot collide', () => {
+    assert.notEqual(
+      attachmentDestFilename('CHR-40', 0, 'screenshot.png'),
+      attachmentDestFilename('CHR-41', 0, 'screenshot.png')
+    )
+  })
+
+  test('two files with one name on one ticket still cannot collide', () => {
+    assert.notEqual(
+      attachmentDestFilename('CHR-40', 0, 'screenshot.png'),
+      attachmentDestFilename('CHR-40', 1, 'screenshot.png')
+    )
+  })
+
+  test('the key is sanitised too — it reaches a filesystem path', () => {
+    assert.equal(
+      attachmentDestFilename('../../etc', 0, 'passwd.txt'),
+      attachmentDestFilename('etc', 0, 'passwd.txt')
+    )
+    assert.doesNotMatch(attachmentDestFilename('../../etc', 0, 'passwd.txt'), /[/\\]/)
+  })
+
+  test('the extension survives, because the document loader dispatches on it', () => {
+    assert.ok(attachmentDestFilename('CHR-40', 0, 'spec.pdf').endsWith('.pdf'))
+  })
+})
+
+describe('jira-api — parentSummary', () => {
+  test('formatIssue captures the epic summary and type Jira nests under parent', () => {
+    const shaped = formatIssue({
+      key: 'CHR-40',
+      fields: {
+        summary: 'Totals ignore discounts',
+        parent: {
+          key: 'CHR-12',
+          fields: { summary: 'Checkout revamp', issuetype: { name: 'Epic' } }
+        }
+      }
+    } as never)
+    assert.equal(shaped.parent, 'CHR-12')
+    assert.equal(shaped.parentSummary, 'Checkout revamp')
+    assert.equal(shaped.parentType, 'Epic')
+  })
+
+  test('formatSearchRows captures them too, so the list can title a group', () => {
+    const rows = formatSearchRows({
+      issues: [
+        {
+          key: 'CHR-40',
+          fields: {
+            summary: 'Totals ignore discounts',
+            parent: {
+              key: 'CHR-12',
+              fields: { summary: 'Checkout revamp', issuetype: { name: 'Epic' } }
+            }
+          }
+        }
+      ]
+    })
+    assert.equal(rows.issues[0].parentKey, 'CHR-12')
+    assert.equal(rows.issues[0].parentSummary, 'Checkout revamp')
+    assert.equal(rows.issues[0].parentType, 'Epic')
+  })
+
+  test('an un-nested parent shape is read too, rather than silently losing the title', () => {
+    // Cloud nests the parent-s own fields under `fields`; not every surface
+    // that hands us a parent object does.
+    const shaped = formatIssue({
+      key: 'CHR-40',
+      fields: {
+        summary: 's',
+        parent: { key: 'CHR-12', summary: 'Checkout revamp', issuetype: { name: 'Epic' } }
+      }
+    } as never)
+    assert.equal(shaped.parentSummary, 'Checkout revamp')
+    assert.equal(shaped.parentType, 'Epic')
+  })
+
+  test('a sub-task reports its Story parent, which is what stops the Epic label', () => {
+    const shaped = formatIssue({
+      key: 'CHR-40',
+      fields: {
+        summary: 'Adjust the totals helper',
+        parent: { key: 'CHR-9', fields: { summary: 'Rework totals', issuetype: { name: 'Story' } } }
+      }
+    } as never)
+    assert.equal(shaped.parentType, 'Story')
+  })
+
+  test('a parent with no summary is absent, not an empty string', () => {
+    // Jira Server / DC classic: `parent` is a sub-task link at best, and the
+    // epic lives in a per-instance custom field this never sees.
+    const shaped = formatIssue({
+      key: 'CHR-40',
+      fields: { summary: 's', parent: { key: 'CHR-12' } }
+    } as never)
+    assert.equal(shaped.parentSummary, undefined)
+  })
+
+  test('no parent at all does not throw', () => {
+    assert.equal(
+      formatIssue({ key: 'CHR-40', fields: { summary: 's' } } as never).parent,
+      undefined
+    )
+    assert.equal(
+      formatSearchRows({ issues: [{ key: 'X-1', fields: {} }] }).issues[0].parentKey,
+      undefined
+    )
   })
 })
 

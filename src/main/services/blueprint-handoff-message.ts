@@ -37,11 +37,26 @@ export interface HandoffMessageParams {
    * something it is expected to read and answer to.
    */
   jiraIssueKey?: string
+  /**
+   * Every ticket the blueprint covers, when it was built from a selection.
+   *
+   * Without it the agent is told about the anchor alone — which on an
+   * epic-grouped blueprint is the epic, and on an unparented group is one
+   * arbitrary ticket. Either way it would silently under-report the scope.
+   */
+  jiraIssueKeys?: readonly string[]
 }
 
 export function composeHandoffMessage(params: HandoffMessageParams): string {
-  const { contextMarkdown, spec, branchName, inheritedTrack, unclaimedBranch, jiraIssueKey } =
-    params
+  const {
+    contextMarkdown,
+    spec,
+    branchName,
+    inheritedTrack,
+    unclaimedBranch,
+    jiraIssueKey,
+    jiraIssueKeys
+  } = params
   const lines: string[] = [contextMarkdown.trimEnd(), '', '### Where this work lives', '']
 
   // Which of these three is true changes the agent's first move, and it cannot
@@ -71,6 +86,12 @@ export function composeHandoffMessage(params: HandoffMessageParams): string {
     )
   }
 
+  const allKeys = jiraIssueKeys ?? []
+  // When the anchor is a shared epic it was never itself selected, so every
+  // listed key is additional. When it is one of the tickets, the rest are.
+  const anchorIsTicket = jiraIssueKey !== undefined && allKeys.includes(jiraIssueKey)
+  const alsoCovered = allKeys.filter((key) => key !== jiraIssueKey)
+
   if (jiraIssueKey) {
     lines.push(
       '',
@@ -78,6 +99,14 @@ export function composeHandoffMessage(params: HandoffMessageParams): string {
         `record — read it with \`mcp__jira__get_issue\` rather than inferring it from the title, ` +
         `and use \`mcp__jira__add_comment\` to post back to it when asked.`
     )
+    if (alsoCovered.length > 0) {
+      const list = alsoCovered.map((key) => `\`${key}\``).join(', ')
+      lines.push(
+        '',
+        `${anchorIsTicket ? 'It also covers' : 'It covers'} ${list}. Read every one of them ` +
+          `before planning — the scope is all of them together, not just the ticket named above.`
+      )
+    }
   }
 
   lines.push('', '### What I want you to do next', '', spec.instruction)

@@ -399,9 +399,10 @@ class MemoryBootstrapService {
       })
       const summary = memoryBootstrapRepository.getRun(runId)
       const facts = summary?.factsCreated ?? 0
-      emit('finalize', `Complete — ${facts} memories created`, 'done')
+      const failures = this.failureNote(runId, summary?.itemsFailed ?? 0)
+      emit('finalize', `Complete — ${facts} memories created${failures}`, 'done')
 
-      bsLog.info(`[driveRun] Run ${runId} complete: ${facts} facts (mode=${mode})`)
+      bsLog.info(`[driveRun] Run ${runId} complete: ${facts} facts${failures} (mode=${mode})`)
       return { jobId, runId, factsCreated: facts }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -418,6 +419,36 @@ class MemoryBootstrapService {
       memoryEngineService.setBootstrapActive(false)
       this.active.delete(workspaceId)
     }
+  }
+
+  /**
+   * One clause describing what the run lost, or '' when it lost nothing.
+   *
+   * `executeFile` already records "N/M chunks failed" on every failed item, but
+   * the completion line only ever reported the fact count — so a run that
+   * dropped a third of its chunks (a missing CLI, a rate-limit storm) read as
+   * an unqualified success in both the log and the Brain panel. Derived from
+   * the queue rows that already exist; no new column, no migration.
+   */
+  private failureNote(runId: string, itemsFailed: number): string {
+    if (itemsFailed <= 0) return ''
+    const files = `${itemsFailed} file${itemsFailed === 1 ? '' : 's'}`
+    try {
+      const { items } = memoryBootstrapRepository.listItems(runId, {
+        status: 'failed',
+        limit: 500
+      })
+      let chunks = 0
+      for (const item of items) {
+        const match = /^(\d+)\/\d+ chunks failed/.exec(item.error ?? '')
+        if (match) chunks += Number(match[1])
+      }
+      if (chunks > 0) return `, ${chunks} chunks failed across ${files}`
+    } catch (err) {
+      // Reporting must never be the thing that fails a completed run.
+      bsLog.warn(`[failureNote] Could not read failed items for run ${runId}:`, err)
+    }
+    return `, ${files} failed`
   }
 
   private finishCancelled(

@@ -1,10 +1,8 @@
 import { useState } from 'react'
-import { Pin, X } from 'lucide-react'
+import { Pin } from 'lucide-react'
+import { Chip } from '@renderer/components/common/ui'
 import { JIRA_QUICK_FILTERS } from '../../../../../shared/jira.types'
 import { JIRA_MAX_SAVED_FILTERS, type JiraSavedFilter } from './jira-view-state'
-
-const CHIP_CLASS =
-  'text-[11px] px-2 py-0.5 rounded-full border border-border-subtle text-text-secondary hover:border-accent hover:text-accent transition-colors'
 
 /**
  * The JQL shortcut row: four built-in chips plus whatever the user has pinned.
@@ -38,53 +36,34 @@ export default function JiraFilterChips({
   return (
     <div className="flex flex-wrap items-center gap-1.5" data-testid="jira-filter-chips">
       {JIRA_QUICK_FILTERS.map((filter) => (
-        <button
-          key={filter.id}
-          type="button"
-          onClick={() => onApply(filter.jql)}
-          className={CHIP_CLASS}
-        >
+        <Chip key={filter.id} onClick={() => onApply(filter.jql)}>
           {filter.label}
-        </button>
+        </Chip>
       ))}
 
       {savedFilters.map((filter) => (
-        <span
+        <Chip
           key={filter.id}
+          active
           data-testid={`jira-saved-filter-${filter.id}`}
-          className="flex items-center rounded-full border border-accent/30 text-accent"
+          title={filter.jql}
+          onClick={() => onApply(filter.jql)}
+          onDismiss={() => onRemove(filter.id)}
         >
-          <button
-            type="button"
-            onClick={() => onApply(filter.jql)}
-            title={filter.jql}
-            className="text-[11px] pl-2 pr-1 py-0.5 hover:underline"
-          >
-            {filter.label}
-          </button>
-          <button
-            type="button"
-            aria-label={`Remove ${filter.label}`}
-            onClick={() => onRemove(filter.id)}
-            className="pr-1.5 pl-0.5 text-text-muted hover:text-danger transition-colors"
-          >
-            <X size={10} />
-          </button>
-        </span>
+          {filter.label}
+        </Chip>
       ))}
 
       {label === null ? (
         savedFilters.length < JIRA_MAX_SAVED_FILTERS && (
-          <button
-            type="button"
+          <Chip
             data-testid="jira-pin-filter"
             title="Pin the current JQL as a chip"
             onClick={() => setLabel('')}
-            className={`${CHIP_CLASS} flex items-center gap-1`}
           >
-            <Pin size={10} />
+            <Pin size={11} />
             Pin current
-          </button>
+          </Chip>
         )
       ) : (
         <input

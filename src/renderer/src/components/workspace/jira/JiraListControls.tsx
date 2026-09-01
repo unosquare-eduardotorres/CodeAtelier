@@ -1,4 +1,5 @@
 import { ArrowDownWideNarrow, ArrowUpNarrowWide, Filter, Layers } from 'lucide-react'
+import { SelectMenu, StatPill } from '@renderer/components/common/ui'
 import {
   JIRA_SORT_FIELDS,
   JIRA_SORT_LABELS,
@@ -6,8 +7,10 @@ import {
   type JiraSortField
 } from '../../../../../shared/jira-list-view'
 
-const SELECT_CLASS =
-  'bg-surface-overlay border border-border-default rounded px-1.5 py-1 text-[11px] text-text-primary'
+const SORT_OPTIONS = JIRA_SORT_FIELDS.map((field) => ({
+  value: field,
+  label: JIRA_SORT_LABELS[field]
+}))
 
 /**
  * Filter / sort / group controls for the loaded ticket rows.
@@ -57,22 +60,14 @@ export default function JiraListControls({
         />
       </div>
 
-      <label className="flex items-center gap-1 text-[11px] text-text-muted">
-        Sort
-        <select
-          aria-label="Sort field"
-          data-testid="jira-sort-field"
-          value={sortField}
-          onChange={(e) => onSortChange(e.target.value as JiraSortField, sortDir)}
-          className={SELECT_CLASS}
-        >
-          {JIRA_SORT_FIELDS.map((field) => (
-            <option key={field} value={field}>
-              {JIRA_SORT_LABELS[field]}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectMenu
+        label="Sort"
+        ariaLabel="Sort field"
+        testId="jira-sort-field"
+        value={sortField}
+        options={SORT_OPTIONS}
+        onChange={(field) => onSortChange(field, sortDir)}
+      />
 
       <button
         type="button"
@@ -90,12 +85,12 @@ export default function JiraListControls({
       </button>
 
       {isServerSorted && (
-        <span
-          data-testid="jira-sorted-in-jira"
-          title="More pages exist, so Jira applied this ordering across the whole result set rather than the panel ordering the loaded page."
-          className="text-[10px] px-1.5 py-0.5 rounded-full border border-info/20 bg-info-muted text-info"
-        >
-          sorted in Jira
+        <span data-testid="jira-sorted-in-jira">
+          <StatPill
+            label="sorted in Jira"
+            tone="info"
+            title="More pages exist, so Jira applied this ordering across the whole result set rather than the panel ordering the loaded page."
+          />
         </span>
       )}
 

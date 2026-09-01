@@ -268,6 +268,41 @@ describe('agent-recovery-nudge › OPENCODE-RECOVERY (verify 8bb7c4de incident)'
     assert.equal(result.recovered, false)
     assert.match(result.text, /didn't produce a summary/)
   })
+
+  test('OPENCODE-RECOVERY-STRICT: phase systemPrompt → recovery demands ONLY the block', async () => {
+    let captured = ''
+    const opts = baseOpts({
+      sessionId: 'ses_opencode123',
+      systemPrompt: 'Emit a ```blueprint-phase-complete fence block when finished.',
+      opencodeRecovery: async ({ prompt }) => {
+        captured = prompt
+        return 'ok'
+      }
+    })
+    await new RecoveryNudgeService().attemptRecovery(opts)
+
+    assert.match(captured, /ONLY the required/)
+    assert.match(captured, /no prose before or after/)
+    assert.match(captured, /blueprint-phase-complete/)
+    // The prose-summary contract must be gone on this turn.
+    assert.ok(!/Summarize what you found/.test(captured))
+  })
+
+  test('OPENCODE-RECOVERY-STRICT: plain chat systemPrompt keeps the summary prompt', async () => {
+    let captured = ''
+    const opts = baseOpts({
+      sessionId: 'ses_opencode123',
+      systemPrompt: 'You are a helpful assistant.',
+      opencodeRecovery: async ({ prompt }) => {
+        captured = prompt
+        return 'ok'
+      }
+    })
+    await new RecoveryNudgeService().attemptRecovery(opts)
+
+    assert.match(captured, /Summarize what you found/)
+    assert.ok(!/ONLY the required/.test(captured))
+  })
 })
 
 describe('agent-recovery-nudge › SSE-RETRY FIX (C): opencode session-ID guard', () => {

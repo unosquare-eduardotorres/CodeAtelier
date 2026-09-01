@@ -15,7 +15,6 @@ import { join } from 'node:path'
 import log from 'electron-log/main'
 import { IPC_CHANNELS } from '../../shared/constants'
 import type {
-  JiraAttachment,
   JiraBoard,
   JiraCreateBlueprintsResult,
   JiraCurrentUser,
@@ -27,9 +26,12 @@ import type {
 } from '../../shared/jira.types'
 import { JIRA_MAX_BULK_ISSUES, JIRA_MAX_JQL_CHARS } from '../../shared/jira.types'
 import {
-  formatIssueBrief,
+  deriveGroupPriority,
+  deriveGroupTitle,
+  formatGroupedIssueBrief,
+  groupTicketOf,
   indexBlueprintsByJiraKey,
-  mapJiraPriority
+  resolveGroupAnchor
 } from '../../shared/jira-format'
 import { validateSender } from './validate-sender'
 import {
@@ -57,7 +59,8 @@ import { blueprintRepository } from '../db/repositories/blueprint.repository'
 import { getManagedDocsDir } from './blueprint.ipc'
 import {
   MAX_ATTACHMENT_BYTES,
-  safeAttachmentFilename,
+  MAX_ATTACHMENTS_PER_GROUP,
+  attachmentDestFilename,
   selectAttachments
 } from '../services/jira-attachments'
 
@@ -67,9 +70,9 @@ const jiraIpcLog = log.scope('jira-ipc')
 const MAX_COMMENT_CHARS = 30_000
 
 /**
- * Bulk-convert ceiling — each ticket costs one Jira round trip.
- * Shared with the renderer so the toolbar can cap the selection with a visible
- * reason instead of letting the call be rejected after the click.
+ * How many tickets may be folded into one blueprint — each costs one Jira round
+ * trip. Shared with the renderer so the toolbar can cap the selection with a
+ * visible reason instead of letting the call be rejected after the click.
  */
 const MAX_BULK_ISSUES = JIRA_MAX_BULK_ISSUES
 
@@ -77,46 +80,74 @@ const MAX_BULK_ISSUES = JIRA_MAX_BULK_ISSUES
 const DUPLICATE_SCAN_LIMIT = 500
 
 /**
- * Download an issue's attachments into the blueprint's managed docs directory
- * and return them as reference documents.
+ * Download every issue's attachments into the blueprint's managed docs
+ * directory and return them as reference documents.
  *
  * The managed directory is the same one copy-on-attach uses, so these files are
  * already covered by the loader whitelist and by the cleanup that runs when the
  * blueprint is deleted.
  *
+ * Filenames are prefixed with the issue key as well as an index: one blueprint
+ * can now be built from several tickets, and two tickets both attaching
+ * `screenshot.png` is the common case, not an edge one.
+ *
  * A failed download is logged and skipped: losing one screenshot is a far
- * better outcome than failing the whole ticket conversion.
+ * better outcome than failing the whole conversion.
  */
 async function importAttachments(
   workspaceId: string,
   blueprintId: string,
-  attachments: JiraAttachment[]
+  issues: readonly JiraIssueDetail[]
 ): Promise<Array<{ type: string; path: string; name: string }>> {
-  const wanted = selectAttachments(attachments)
-  if (wanted.length === 0) return []
-
-  const dir = getManagedDocsDir(workspaceId, blueprintId)
-  mkdirSync(dir, { recursive: true })
-
+  const grouped = issues.length > 1
   const docs: Array<{ type: string; path: string; name: string }> = []
-  for (const [i, attachment] of wanted.entries()) {
-    try {
-      const bytes = await downloadAttachment(
-        workspaceId,
-        attachment.contentUrl,
-        MAX_ATTACHMENT_BYTES
-      )
-      // Index prefix: two attachments on one ticket may share a filename.
-      const dest = join(dir, `${i}-${safeAttachmentFilename(attachment.filename)}`)
-      writeFileSync(dest, bytes)
-      docs.push({ type: 'file', path: dest, name: attachment.filename })
-    } catch (err) {
-      jiraIpcLog.warn(
-        `Attachment "${attachment.filename}" skipped: ${err instanceof Error ? err.message : String(err)}`
-      )
+  let dir: string | null = null
+
+  for (const issue of issues) {
+    for (const [i, attachment] of selectAttachments(issue.attachments ?? []).entries()) {
+      if (docs.length >= MAX_ATTACHMENTS_PER_GROUP) {
+        jiraIpcLog.warn(
+          `Attachment budget of ${MAX_ATTACHMENTS_PER_GROUP} reached; remaining files skipped.`
+        )
+        return docs
+      }
+      try {
+        const bytes = await downloadAttachment(
+          workspaceId,
+          attachment.contentUrl,
+          MAX_ATTACHMENT_BYTES
+        )
+        // Created lazily so a group with no readable attachments leaves no
+        // empty directory behind.
+        if (dir === null) {
+          dir = getManagedDocsDir(workspaceId, blueprintId)
+          mkdirSync(dir, { recursive: true })
+        }
+        const dest = join(dir, attachmentDestFilename(issue.key, i, attachment.filename))
+        writeFileSync(dest, bytes)
+        docs.push({
+          type: 'file',
+          path: dest,
+          // The key is part of the display name too, so a list of five
+          // `screenshot.png` rows says which ticket each came from.
+          name: grouped ? `${issue.key} — ${attachment.filename}` : attachment.filename
+        })
+      } catch (err) {
+        jiraIpcLog.warn(
+          `Attachment "${attachment.filename}" on ${issue.key} skipped: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        )
+      }
     }
   }
   return docs
+}
+
+/** A Jira or unexpected error, reduced to something safe to show the user. */
+function errorText(err: unknown): string {
+  if (err instanceof JiraRequestError) return err.message
+  return err instanceof Error ? err.message : String(err)
 }
 
 /**
@@ -324,7 +355,11 @@ export function registerJiraIpc(): void {
     }
   )
 
-  // ── Bulk convert issues to blueprints ──
+  // ── Convert a selection of issues into ONE blueprint ──
+  //
+  // One blueprint, not one per ticket. Ten tickets under an epic are ten
+  // branches, ten Specify runs and ten plans that each know about a tenth of the
+  // work — which is not what "convert these" means to anyone selecting them.
   ipcMain.handle(
     IPC_CHANNELS.JIRA_CREATE_BLUEPRINTS,
     async (event, rawArgs: unknown): Promise<JiraCreateBlueprintsResult> => {
@@ -340,74 +375,102 @@ export function registerJiraIpc(): void {
         )
       }
 
-      const result: JiraCreateBlueprintsResult = { created: [], failed: [], skipped: [] }
+      const result: JiraCreateBlueprintsResult = { created: null, failed: [], skipped: [] }
 
-      // Read the existing blueprints once, not per ticket: converting the same
-      // ticket twice is the easy mistake to make (the list keeps showing it) and
-      // two blueprints for one ticket is invisible until someone builds both.
+      // Read the existing blueprints once: converting the same ticket twice is
+      // the easy mistake to make (the list keeps showing it) and two blueprints
+      // for one ticket is invisible until someone builds both.
       const existing = indexBlueprintsByJiraKey(
         blueprintRepository.findByWorkspace(workspaceId, DUPLICATE_SCAN_LIMIT)
       )
 
-      // Sequential on purpose: a burst of parallel requests against an on-prem
-      // Jira behind a VPN is what trips rate limiting. One partial failure must
-      // not abort the rest, so each ticket is isolated.
-      for (const issueKey of issueKeys) {
+      // Partial overlap is resolved by skipping, not by refusing: a selection of
+      // three where one is already converted builds the blueprint from the other
+      // two and reports both outcomes.
+      const pending = issueKeys.filter((issueKey) => {
         const alreadyConverted = existing.get(issueKey.trim().toUpperCase())
-        if (alreadyConverted) {
-          result.skipped.push({ issueKey, blueprintId: alreadyConverted })
-          continue
-        }
+        if (!alreadyConverted) return true
+        result.skipped.push({ issueKey, blueprintId: alreadyConverted })
+        return false
+      })
 
+      // Sequential on purpose: a burst of parallel requests against an on-prem
+      // Jira behind a VPN is what trips rate limiting. One unreadable ticket must
+      // not lose the rest of the group, so each fetch is isolated.
+      const issues: JiraIssueDetail[] = []
+      for (const issueKey of pending) {
         try {
-          const issue = await getIssue(workspaceId, issueKey)
-          const title = `${issue.key}: ${issue.summary}`
-          const blueprint = blueprintService.create({
-            workspaceId,
-            title,
-            description: formatIssueBrief(issue),
-            priority: mapJiraPriority(issue.priority),
-            settingsJson: {
-              jiraIssueKey: issue.key,
-              jiraUrl: issue.browseUrl
-            }
-          })
-
-          // Attachments need the blueprint id to know where to land, so they
-          // are fetched after create and folded back into settings_json.
-          const referenceDocuments = await importAttachments(
-            workspaceId,
-            blueprint.id,
-            issue.attachments ?? []
-          )
-          if (referenceDocuments.length > 0) {
-            blueprintRepository.update(blueprint.id, {
-              settingsJson: {
-                jiraIssueKey: issue.key,
-                jiraUrl: issue.browseUrl,
-                referenceDocuments
-              }
-            })
-            jiraIpcLog.info(
-              `Imported ${referenceDocuments.length} attachment(s) for ${issue.key} → ${blueprint.id}`
-            )
-          }
-
-          result.created.push({ issueKey: issue.key, blueprintId: blueprint.id, title })
+          issues.push(await getIssue(workspaceId, issueKey))
         } catch (err) {
-          const message =
-            err instanceof JiraRequestError
-              ? err.message
-              : err instanceof Error
-                ? err.message
-                : String(err)
-          jiraIpcLog.warn(`Blueprint conversion failed for ${issueKey}: ${message}`)
+          const message = errorText(err)
+          jiraIpcLog.warn(`Could not read ${issueKey}: ${message}`)
           result.failed.push({ issueKey, error: message })
         }
       }
 
+      if (issues.length === 0) {
+        jiraIpcLog.info(
+          `No blueprint created — ${result.skipped.length} already converted, ` +
+            `${result.failed.length} unreadable`
+        )
+        return result
+      }
+
+      const anchor = resolveGroupAnchor(issues)
+      const title = deriveGroupTitle(issues.map(groupTicketOf))
+      const epic = anchor.epicKey
+        ? {
+            key: anchor.epicKey,
+            summary: anchor.epicSummary,
+            type: anchor.epicType,
+            url: anchor.epicUrl
+          }
+        : undefined
+
+      // `jiraIssueKey` is kept alongside the list: branch naming and the
+      // blueprint→chat handoff both read it, and it is what makes a grouped
+      // blueprint land on the epic's branch rather than the first ticket's.
+      const settingsJson: Record<string, unknown> = {
+        jiraIssueKeys: anchor.issueKeys,
+        jiraIssueKey: anchor.anchorKey,
+        ...(anchor.epicKey ? { jiraEpicKey: anchor.epicKey } : {}),
+        jiraUrl: anchor.anchorUrl
+      }
+
+      try {
+        const blueprint = blueprintService.create({
+          workspaceId,
+          title,
+          description: formatGroupedIssueBrief(issues, epic),
+          priority: deriveGroupPriority(issues),
+          settingsJson
+        })
+
+        // Attachments need the blueprint id to know where to land, so they are
+        // fetched after create and folded back into settings_json.
+        const referenceDocuments = await importAttachments(workspaceId, blueprint.id, issues)
+        if (referenceDocuments.length > 0) {
+          blueprintRepository.update(blueprint.id, {
+            settingsJson: { ...settingsJson, referenceDocuments }
+          })
+          jiraIpcLog.info(
+            `Imported ${referenceDocuments.length} attachment(s) for ${anchor.issueKeys.join(
+              ', '
+            )} → ${blueprint.id}`
+          )
+        }
+
+        result.created = { blueprintId: blueprint.id, title, issueKeys: anchor.issueKeys }
+      } catch (err) {
+        const message = errorText(err)
+        jiraIpcLog.warn(
+          `Blueprint conversion failed for ${anchor.issueKeys.join(', ')}: ${message}`
+        )
+        for (const issue of issues) result.failed.push({ issueKey: issue.key, error: message })
+      }
+
       jiraIpcLog.info(
-        `Converted ${result.created.length} issue(s) to blueprints, ` +
+        `${result.created ? `Created 1 blueprint from ${result.created.issueKeys.length} issue(s)` : 'Created no blueprint'}, ` +
           `${result.skipped.length} already converted, ${result.failed.length} failed`
       )
       return result

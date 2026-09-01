@@ -1,7 +1,8 @@
+import { SelectMenu } from '@renderer/components/common/ui'
 import type { JiraBoard, JiraProject, JiraSprint } from '../../../../../shared/jira.types'
 
-const SELECT_CLASS =
-  'bg-surface-overlay border border-border-default rounded px-1.5 py-1 text-[11px] text-text-primary max-w-[200px]'
+/** `''` is the "no scope" option — SelectMenu values are strings. */
+const ANY = ''
 
 /**
  * Server-side scoping: project, then board, then sprint.
@@ -39,63 +40,50 @@ export default function JiraScopeControls({
 }): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 flex-wrap" data-testid="jira-scope-controls">
-      <label className="flex items-center gap-1 text-[11px] text-text-muted">
-        Project
-        <select
-          aria-label="Project"
-          data-testid="jira-project-select"
-          value={projectKey ?? ''}
-          onChange={(e) => onProjectChange(e.target.value === '' ? null : e.target.value)}
-          className={SELECT_CLASS}
-        >
-          <option value="">All projects</option>
-          {projects.map((project) => (
-            <option key={project.key} value={project.key}>
-              {project.key} — {project.name}
-            </option>
-          ))}
-        </select>
-      </label>
+      <SelectMenu
+        label="Project"
+        ariaLabel="Project"
+        testId="jira-project-select"
+        value={projectKey ?? ANY}
+        options={[
+          { value: ANY, label: 'All projects' },
+          ...projects.map((project) => ({
+            value: project.key,
+            label: `${project.key} — ${project.name}`
+          }))
+        ]}
+        onChange={(key) => onProjectChange(key === ANY ? null : key)}
+      />
 
       {boards.length > 0 && (
-        <label className="flex items-center gap-1 text-[11px] text-text-muted">
-          Board
-          <select
-            aria-label="Board"
-            data-testid="jira-board-select"
-            value={boardId ?? ''}
-            onChange={(e) => onBoardChange(e.target.value === '' ? null : Number(e.target.value))}
-            className={SELECT_CLASS}
-          >
-            <option value="">All boards</option>
-            {boards.map((board) => (
-              <option key={board.id} value={board.id}>
-                {board.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectMenu
+          label="Board"
+          ariaLabel="Board"
+          testId="jira-board-select"
+          value={boardId === null ? ANY : String(boardId)}
+          options={[
+            { value: ANY, label: 'All boards' },
+            ...boards.map((board) => ({ value: String(board.id), label: board.name }))
+          ]}
+          onChange={(id) => onBoardChange(id === ANY ? null : Number(id))}
+        />
       )}
 
       {sprints.length > 0 && (
-        <label className="flex items-center gap-1 text-[11px] text-text-muted">
-          Sprint
-          <select
-            aria-label="Sprint"
-            data-testid="jira-sprint-select"
-            value={sprintId ?? ''}
-            onChange={(e) => onSprintChange(e.target.value === '' ? null : Number(e.target.value))}
-            className={SELECT_CLASS}
-          >
-            <option value="">Any sprint</option>
-            {sprints.map((sprint) => (
-              <option key={sprint.id} value={sprint.id}>
-                {sprint.name}
-                {sprint.state ? ` (${sprint.state})` : ''}
-              </option>
-            ))}
-          </select>
-        </label>
+        <SelectMenu
+          label="Sprint"
+          ariaLabel="Sprint"
+          testId="jira-sprint-select"
+          value={sprintId === null ? ANY : String(sprintId)}
+          options={[
+            { value: ANY, label: 'Any sprint' },
+            ...sprints.map((sprint) => ({
+              value: String(sprint.id),
+              label: `${sprint.name}${sprint.state ? ` (${sprint.state})` : ''}`
+            }))
+          ]}
+          onChange={(id) => onSprintChange(id === ANY ? null : Number(id))}
+        />
       )}
     </div>
   )

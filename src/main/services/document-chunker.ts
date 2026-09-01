@@ -387,6 +387,11 @@ function chunkPlainText(content: string): DocumentChunk[] {
 
 /**
  * Split a long text into roughly equal parts, breaking on line boundaries.
+ *
+ * `maxChars` is a ceiling, not a target: a single line longer than the limit
+ * (a wide markdown table row, a minified bundle, a one-line task blob) has no
+ * line boundary to break on, so it is hard-sliced. Emitting it whole would
+ * hand the extractor a chunk many times the size it asked for.
  */
 function splitLongText(text: string, maxChars: number): string[] {
   const lines = text.split('\n')
@@ -397,6 +402,12 @@ function splitLongText(text: string, maxChars: number): string[] {
     if (current.length + line.length + 1 > maxChars && current.length > 0) {
       parts.push(current)
       current = ''
+    }
+    if (line.length > maxChars) {
+      for (let i = 0; i < line.length; i += maxChars) {
+        parts.push(line.slice(i, i + maxChars))
+      }
+      continue
     }
     current += (current ? '\n' : '') + line
   }

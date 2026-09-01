@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   BookOpen,
   ChevronDown,
+  ListChecks,
   Loader2,
   MessageSquare,
   RefreshCw,
@@ -10,16 +11,26 @@ import {
   Settings2,
   SquareKanban
 } from 'lucide-react'
-import { Button } from '@renderer/components/common/ui'
+import { Button, Tabs } from '@renderer/components/common/ui'
 import { useChatActions, useWorkspaceStore } from '@renderer/store'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../../../../shared/constants'
 import type { IntegrationCredentialStatus } from '../../../../../shared/integration-credentials.types'
-import type { JiraCreateBlueprintsResult, JiraTransition } from '../../../../../shared/jira.types'
+import type {
+  JiraCreateBlueprintsResult,
+  JiraIssueDetail,
+  JiraTransition
+} from '../../../../../shared/jira.types'
 import { JIRA_MAX_BULK_ISSUES, JIRA_MAX_LOADED_ROWS } from '../../../../../shared/jira.types'
-import { buildJiraChatPrompt } from '../../../../../shared/jira-format'
+import {
+  buildJiraChatPrompt,
+  deriveGroupTitle,
+  groupTicketOf,
+  resolveGroupAnchor
+} from '../../../../../shared/jira-format'
 import { IntegrationCard } from '../integrations'
 import JiraTicketList from './JiraTicketList'
 import JiraTicketDetail from './JiraTicketDetail'
+import JiraSelectionTray from './JiraSelectionTray'
 import JiraListControls from './JiraListControls'
 import JiraScopeControls from './JiraScopeControls'
 import JiraFilterChips from './JiraFilterChips'
@@ -40,6 +51,9 @@ function findInProgress(transitions: JiraTransition[]): JiraTransition | null {
     ) ?? null
   )
 }
+
+/** Which half of the right-hand aside is showing. */
+type AsideTab = 'ticket' | 'selected'
 
 /**
  * Jira tickets panel.
@@ -71,28 +85,57 @@ export default function JiraTicketsPage({
   const [busy, setBusy] = useState<null | 'blueprints' | 'chat'>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [conversionResult, setConversionResult] = useState<JiraCreateBlueprintsResult | null>(null)
-  // Both are stamped with the ticket they belong to rather than reset on
-  // selection change: changing the selection then implicitly un-ticks the box
-  // and drops the stale transition, with no effect writing state to do it.
-  const [transitionFor, setTransitionFor] = useState<{
-    issueKey: string
-    transition: JiraTransition | null
-  } | null>(null)
-  const [moveIssueKey, setMoveIssueKey] = useState<string | null>(null)
+  const [asideTab, setAsideTab] = useState<AsideTab>('ticket')
+  // `workspaceId:issueKey` → its "start work" transition, or null when the
+  // workflow offers none. Cached because probing costs one Jira request per
+  // ticket: without it, ticking ten rows one at a time would cost fifty-five.
+  //
+  // Keyed by workspace rather than reset on switch: transition ids are
+  // per-workflow ("In Progress" is 21 on one project and 4 on the next), and a
+  // namespaced key makes a stale hit impossible without an effect to clear it.
+  const [transitionByKey, setTransitionByKey] = useState<Record<string, JiraTransition | null>>({})
+  // Stamped with the selection it was ticked for, so changing the selection
+  // implicitly un-ticks the box with no effect writing state to do it.
+  const [moveForSelection, setMoveForSelection] = useState<string | null>(null)
 
   const filterInputRef = useRef<HTMLInputElement | null>(null)
+  /** Keys already asked about, so a re-render cannot re-request them. */
+  const probedKeys = useRef<Set<string>>(new Set())
+  const mounted = useRef(true)
+  useEffect(
+    () => () => {
+      mounted.current = false
+    },
+    []
+  )
 
   const isConnected = credentialStatus?.configured === true
 
   const tickets = useJiraTickets(workspaceId, isConnected)
   const selectedCount = tickets.selectedKeys.size
   const selectedKeyList = useMemo(() => [...tickets.selectedKeys], [tickets.selectedKeys])
-  /** The one selected ticket, or null — the chat handoff only works on one. */
-  const singleKey = selectedKeyList.length === 1 ? selectedKeyList[0] : null
+  // Carries the workspace so a selection cannot survive a switch as "ticked".
+  const selectionSignature = `${workspaceId}|${selectedKeyList.join(',')}`
+  const cacheKey = (issueKey: string): string => `${workspaceId}:${issueKey}`
 
-  const inProgressTransition =
-    singleKey !== null && transitionFor?.issueKey === singleKey ? transitionFor.transition : null
-  const moveToInProgress = singleKey !== null && moveIssueKey === singleKey
+  /** The selected rows, in selection order, resolved against every loaded page. */
+  const selectedRows = useMemo(() => {
+    const byKey = new Map(tickets.issues.map((issue) => [issue.key, issue]))
+    return selectedKeyList
+      .map((key) => byKey.get(key))
+      .filter((issue): issue is NonNullable<typeof issue> => issue !== undefined)
+  }, [tickets.issues, selectedKeyList])
+
+  // Offered only when *every* selected ticket has such a transition: a checkbox
+  // that silently moves six of ten tickets is worse than no checkbox.
+  const selectedTransitions = selectedKeyList.map((key) => transitionByKey[cacheKey(key)])
+  const canMoveAll =
+    selectedKeyList.length > 0 && selectedTransitions.every((t) => t !== undefined && t !== null)
+  const moveTargets = new Set(
+    selectedTransitions.map((t) => (t ? (t.toStatus ?? t.name) : '')).filter(Boolean)
+  )
+  const moveLabel = moveTargets.size === 1 ? [...moveTargets][0] : 'In Progress'
+  const moveToInProgress = canMoveAll && moveForSelection === selectionSignature
 
   useJiraKeyboard({
     enabled: isConnected,
@@ -150,26 +193,51 @@ export default function JiraTicketsPage({
     []
   )
 
-  // ── "Move to In Progress" opt-in, for the single-ticket chat handoff ──
+  // ── "Move to In Progress" opt-in for the chat handoff ──
 
   useEffect(() => {
-    if (!workspaceId || singleKey === null) return
-    let cancelled = false
-    window.api
-      .jiraListTransitions({ workspaceId, issueKey: singleKey })
-      .then((transitions) => {
-        if (!cancelled) {
-          setTransitionFor({ issueKey: singleKey, transition: findInProgress(transitions) })
+    if (!workspaceId) return
+    const missing = selectedKeyList.filter((key) => !probedKeys.current.has(cacheKey(key)))
+    if (missing.length === 0) return
+    for (const key of missing) probedKeys.current.add(cacheKey(key))
+
+    // Sequential and never cancelled: the answer is cached per key, so a result
+    // that lands after the selection moved on is still correct for that key.
+    void (async () => {
+      for (const issueKey of missing) {
+        let transition: JiraTransition | null = null
+        try {
+          transition = findInProgress(
+            await window.api.jiraListTransitions({ workspaceId, issueKey })
+          )
+        } catch {
+          // No transitions readable means no checkbox — never an error banner.
         }
-      })
-      // No transitions readable means no checkbox — never an error banner.
-      .catch(() => {
-        if (!cancelled) setTransitionFor({ issueKey: singleKey, transition: null })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId, singleKey])
+        if (!mounted.current) return
+        setTransitionByKey((prev) => ({ ...prev, [`${workspaceId}:${issueKey}`]: transition }))
+      }
+    })()
+    // `cacheKey` closes over workspaceId, which is already a dependency.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, selectedKeyList])
+
+  // ── Aside tabs ──
+
+  // The tray is only worth interrupting for once the selection stops being a
+  // single ticket — that is the point at which what will be built stops being
+  // obvious from the row itself.
+  const previousCount = useRef(selectedCount)
+  useEffect(() => {
+    if (selectedCount > 1 && previousCount.current <= 1) setAsideTab('selected')
+    previousCount.current = selectedCount
+  }, [selectedCount])
+
+  const activeTab: AsideTab =
+    asideTab === 'ticket' && tickets.activeKey === null
+      ? 'selected'
+      : asideTab === 'selected' && selectedCount === 0
+        ? 'ticket'
+        : asideTab
 
   // ── Conversions ──
 
@@ -188,7 +256,7 @@ export default function JiraTicketsPage({
       // that succeeded — and the ones that already had a blueprint — so a second
       // click cannot duplicate them.
       tickets.deselect([
-        ...result.created.map((c) => c.issueKey),
+        ...(result.created?.issueKeys ?? []),
         ...result.skipped.map((s) => s.issueKey)
       ])
       // Badge the newly converted rows without a re-search.
@@ -201,24 +269,55 @@ export default function JiraTicketsPage({
   }
 
   const handleStartChat = async (): Promise<void> => {
-    if (!workspaceId || singleKey === null) return
-    const issueKey = singleKey
+    if (!workspaceId || selectedKeyList.length === 0) return
     setBusy('chat')
     setActionError(null)
     try {
-      const issue = await window.api.jiraGetIssue({ workspaceId, issueKey })
-
-      // The status move happens first and on its own: if the workflow rejects
-      // it, nothing has been created yet and the user can retry or untick the
-      // box. Doing it after the chat exists would leave a half-done handoff
-      // behind an error the navigation immediately hides.
-      if (moveToInProgress && inProgressTransition) {
-        await window.api.jiraTransitionIssue({
-          workspaceId,
-          issueKey,
-          transitionId: inProgressTransition.id
-        })
+      // Sequential, like the blueprint conversion: a burst of parallel requests
+      // against an on-prem Jira behind a VPN is what trips rate limiting.
+      const issues: JiraIssueDetail[] = []
+      for (const issueKey of selectedKeyList) {
+        issues.push(await window.api.jiraGetIssue({ workspaceId, issueKey }))
       }
+
+      // The status moves happen first and on their own: if the workflow rejects
+      // one, nothing has been created yet and the user can retry or untick the
+      // box. Doing it after the chat exists would leave a half-done handoff
+      // behind an error the navigation immediately hides. Retrying is safe —
+      // Jira stops offering a transition into a state an issue is already in.
+      if (moveToInProgress) {
+        const moved: string[] = []
+        for (const issue of issues) {
+          const transition = transitionByKey[cacheKey(issue.key)]
+          if (!transition) continue
+          try {
+            await window.api.jiraTransitionIssue({
+              workspaceId,
+              issueKey: issue.key,
+              transitionId: transition.id
+            })
+            moved.push(issue.key)
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'the transition was rejected'
+            setActionError(
+              `${issue.key} could not be moved: ${message}. ` +
+                `${moved.length > 0 ? `Already moved: ${moved.join(', ')}. ` : ''}` +
+                'No chat was created — untick the box or retry.'
+            )
+            return
+          }
+        }
+      }
+
+      const anchor = resolveGroupAnchor(issues)
+      const epic = anchor.epicKey
+        ? {
+            key: anchor.epicKey,
+            summary: anchor.epicSummary,
+            type: anchor.epicType,
+            url: anchor.epicUrl
+          }
+        : undefined
 
       // IPC directly rather than the store action: the store's createConversation
       // returns void and bails without setting state when another switch races
@@ -228,7 +327,7 @@ export default function JiraTicketsPage({
       const conversation = await window.api.createConversation({
         workspaceId,
         mode: 'build',
-        title: `${issue.key}: ${issue.summary}`,
+        title: deriveGroupTitle(issues.map(groupTicketOf)),
         // Activates the Jira MCP pill for this chat. The executor ANDs this with
         // the workspace-level toggle, so it is a no-op until Jira is enabled.
         mcpOverrides: { jira: true },
@@ -236,7 +335,7 @@ export default function JiraTicketsPage({
       })
       await loadConversations(workspaceId)
       await selectConversation(conversation.id)
-      await sendMessage(buildJiraChatPrompt(issue))
+      await sendMessage(buildJiraChatPrompt(issues, epic))
       onNavigateToChat()
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Failed to start chat.')
@@ -279,8 +378,8 @@ export default function JiraTicketsPage({
             </Button>
           </div>
           <p className="text-xs text-text-secondary">
-            Browse your board, then turn tickets into blueprints in bulk — or take one into a chat
-            on its own branch.
+            Browse your board, then fold a selection into one blueprint — or take it into a chat on
+            its own branch.
           </p>
 
           {showConnection && (
@@ -382,23 +481,30 @@ export default function JiraTicketsPage({
               data-testid="jira-create-blueprints"
               onClick={handleCreateBlueprints}
               disabled={busy !== null}
+              title={
+                selectedCount === 1
+                  ? 'Create a blueprint from this ticket'
+                  : `Fold all ${selectedCount} tickets into one blueprint on one branch`
+              }
             >
               {busy === 'blueprints' ? (
                 <Loader2 size={11} className="animate-spin" />
               ) : (
                 <BookOpen size={11} />
               )}
-              Create {selectedCount} blueprint{selectedCount === 1 ? '' : 's'}
+              {selectedCount === 1
+                ? 'Create blueprint'
+                : `Create 1 blueprint from ${selectedCount}`}
             </Button>
             <Button
               size="xs"
               data-testid="jira-start-chat"
               onClick={handleStartChat}
-              disabled={busy !== null || selectedCount !== 1}
+              disabled={busy !== null}
               title={
                 selectedCount === 1
                   ? 'Create a chat and a git branch for this ticket'
-                  : 'Select exactly one ticket to start a chat'
+                  : `Create one chat and one git branch covering all ${selectedCount} tickets`
               }
             >
               {busy === 'chat' ? (
@@ -409,17 +515,31 @@ export default function JiraTicketsPage({
               Chat + branch
             </Button>
 
-            {/* Opt-in, never implicit: this writes to a ticket the whole team
-                reads, and the target status is named on the label. */}
-            {selectedCount === 1 && inProgressTransition && (
+            <Button
+              size="xs"
+              variant="ghost"
+              data-testid="jira-review-selection"
+              onClick={() => setAsideTab('selected')}
+              title="See what these become before converting"
+            >
+              <ListChecks size={11} />
+              Review
+            </Button>
+
+            {/* Opt-in, never implicit: this writes to tickets the whole team
+                reads, and the target status is named on the label. Offered only
+                when every selected ticket has such a transition. */}
+            {canMoveAll && (
               <label className="flex items-center gap-1 text-[11px] text-text-secondary">
                 <input
                   type="checkbox"
                   data-testid="jira-move-in-progress"
                   checked={moveToInProgress}
-                  onChange={(e) => setMoveIssueKey(e.target.checked ? singleKey : null)}
+                  onChange={(e) =>
+                    setMoveForSelection(e.target.checked ? selectionSignature : null)
+                  }
                 />
-                Move to “{inProgressTransition.toStatus ?? inProgressTransition.name}”
+                Move {selectedCount === 1 ? 'it' : `all ${selectedCount}`} to “{moveLabel}”
               </label>
             )}
 
@@ -429,7 +549,8 @@ export default function JiraTicketsPage({
 
             {tickets.selectionAtCap && (
               <span className="text-[11px] text-text-muted" data-testid="jira-selection-cap-note">
-                Capped at {JIRA_MAX_BULK_ISSUES} — each ticket costs one Jira request.
+                Capped at {JIRA_MAX_BULK_ISSUES} tickets per blueprint — each costs one Jira
+                request.
               </span>
             )}
 
@@ -455,10 +576,13 @@ export default function JiraTicketsPage({
               data-testid="jira-conversion-result"
               className="rounded-md border border-border-subtle bg-surface-overlay p-2.5 text-[11px] text-text-secondary space-y-1"
             >
-              {conversionResult.created.length > 0 && (
-                <p>
-                  Created {conversionResult.created.length} blueprint
-                  {conversionResult.created.length === 1 ? '' : 's'}.{' '}
+              {conversionResult.created && (
+                <p data-testid="jira-conversion-created">
+                  Created{' '}
+                  <span className="text-text-primary">{conversionResult.created.title}</span> from{' '}
+                  {conversionResult.created.issueKeys.length} ticket
+                  {conversionResult.created.issueKeys.length === 1 ? '' : 's'} (
+                  {conversionResult.created.issueKeys.join(', ')}).{' '}
                   <button
                     type="button"
                     onClick={onNavigateToBlueprints}
@@ -586,14 +710,53 @@ export default function JiraTicketsPage({
         </div>
       </div>
 
-      {isConnected && tickets.activeKey && workspaceId && (
-        <JiraTicketDetail
-          // Remount on ticket change so no state survives the switch.
-          key={tickets.activeKey}
-          workspaceId={workspaceId}
-          issueKey={tickets.activeKey}
-          onClose={() => tickets.setActiveKey(null)}
-        />
+      {/* One aside, two tabs. A second right-hand panel for the selection would
+          have to fight the detail pane for the same space; switching inside the
+          panel is the arbitration every other page here uses. */}
+      {isConnected && workspaceId && (tickets.activeKey !== null || selectedCount > 0) && (
+        <aside className="w-96 shrink-0 border-l border-border-subtle bg-surface-base flex flex-col min-h-0">
+          <div className="px-2 pt-1 border-b border-border-subtle shrink-0">
+            <Tabs
+              ariaLabel="Ticket panel"
+              idPrefix="jira-aside-"
+              value={activeTab}
+              onChange={setAsideTab}
+              items={[
+                ...(tickets.activeKey !== null
+                  ? [{ key: 'ticket' as const, label: 'Ticket', testId: 'jira-aside-tab-ticket' }]
+                  : []),
+                ...(selectedCount > 0
+                  ? [
+                      {
+                        key: 'selected' as const,
+                        label: 'Selected',
+                        badge: selectedCount,
+                        testId: 'jira-aside-tab-selected'
+                      }
+                    ]
+                  : [])
+              ]}
+            />
+          </div>
+
+          {activeTab === 'ticket' && tickets.activeKey !== null ? (
+            <JiraTicketDetail
+              // Remount on ticket change so no state survives the switch.
+              key={tickets.activeKey}
+              workspaceId={workspaceId}
+              issueKey={tickets.activeKey}
+              onClose={() => tickets.setActiveKey(null)}
+            />
+          ) : (
+            <JiraSelectionTray
+              selected={selectedRows}
+              convertedKeys={tickets.convertedKeys}
+              onRemove={tickets.toggleSelected}
+              onClear={tickets.clearSelection}
+              onOpenBlueprint={onNavigateToBlueprints}
+            />
+          )}
+        </aside>
       )}
     </div>
   )

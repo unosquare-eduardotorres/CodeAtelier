@@ -317,6 +317,38 @@ function nameOf(value: unknown): string | undefined {
   return v.displayName ?? v.name ?? v.value
 }
 
+/** The epic / parent key Jira nests under the `parent` field. */
+function parentKeyOf(parent: unknown): string | undefined {
+  return (parent as { key?: string } | undefined)?.key
+}
+
+/**
+ * The parent's summary, which Jira ships inside the same `parent` object.
+ *
+ * Free of charge wherever `parent` is populated, which is Jira Cloud and modern
+ * team-managed projects. Server / DC classic projects carry the epic link in a
+ * per-instance custom field instead, so this is simply absent there.
+ */
+function parentSummaryOf(parent: unknown): string | undefined {
+  const p = parent as { summary?: unknown; fields?: { summary?: unknown } } | undefined
+  // Cloud nests the parent's own fields under `fields`; both shapes are read
+  // because this is one field on one object and guessing wrong loses the title.
+  const summary = p?.fields?.summary ?? p?.summary
+  return typeof summary === 'string' && summary.length > 0 ? summary : undefined
+}
+
+/**
+ * The parent's issue type name — "Epic" for a story's parent, "Story" for a
+ * sub-task's.
+ *
+ * Cloud reuses one `parent` field for both relationships, so without this a
+ * group of sub-tasks would be presented to the agent as an epic.
+ */
+function parentTypeOf(parent: unknown): string | undefined {
+  const p = parent as { issuetype?: unknown; fields?: { issuetype?: unknown } } | undefined
+  return nameOf(p?.fields?.issuetype ?? p?.issuetype)
+}
+
 /** Compact, LLM-friendly shape for a single issue. */
 export function formatIssue(
   raw: JiraIssueRaw,
@@ -349,7 +381,9 @@ export function formatIssue(
     assignee: nameOf(f.assignee) ?? 'Unassigned',
     reporter: nameOf(f.reporter),
     labels: Array.isArray(f.labels) ? f.labels : [],
-    parent: (f.parent as { key?: string } | undefined)?.key,
+    parent: parentKeyOf(f.parent),
+    parentSummary: parentSummaryOf(f.parent),
+    parentType: parentTypeOf(f.parent),
     resolution: nameOf(f.resolution),
     created: f.created,
     updated: f.updated,
@@ -433,7 +467,9 @@ export function formatSearchRows(
         type: nameOf(f.issuetype),
         assignee: nameOf(f.assignee) ?? 'Unassigned',
         priority: nameOf(f.priority),
-        parentKey: (f.parent as { key?: string } | undefined)?.key,
+        parentKey: parentKeyOf(f.parent),
+        parentSummary: parentSummaryOf(f.parent),
+        parentType: parentTypeOf(f.parent),
         updated: f.updated,
         created: f.created
       }

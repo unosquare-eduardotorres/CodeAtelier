@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Loader2, UserCheck } from 'lucide-react'
-import { Button } from '@renderer/components/common/ui'
+import { Button, SelectMenu } from '@renderer/components/common/ui'
 import type { JiraTransition } from '../../../../../shared/jira.types'
 
 /**
@@ -101,20 +101,19 @@ export default function JiraIssueActions({
 
         {transitions.length > 0 && (
           <>
-            <select
-              aria-label="Move to status"
-              data-testid="jira-transition-select"
+            <SelectMenu
+              ariaLabel="Move to status"
+              testId="jira-transition-select"
               value={transitionId}
-              onChange={(e) => setTransitionId(e.target.value)}
-              className="bg-surface-overlay border border-border-default rounded px-1.5 py-1 text-[11px] text-text-primary max-w-[150px]"
-            >
-              <option value="">Move to…</option>
-              {transitions.map((transition) => (
-                <option key={transition.id} value={transition.id}>
-                  {transition.toStatus ?? transition.name}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: '', label: 'Move to…' },
+                ...transitions.map((transition) => ({
+                  value: transition.id,
+                  label: transition.toStatus ?? transition.name
+                }))
+              ]}
+              onChange={setTransitionId}
+            />
             <Button
               size="xs"
               data-testid="jira-transition-submit"

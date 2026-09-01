@@ -170,6 +170,54 @@ describe('chunk capping', () => {
   })
 })
 
+// ── Chunk size ceiling ──────────────────────────────────────────────────────
+
+/**
+ * The 10K target is a ceiling, not an average. A document with one enormous
+ * line (a wide table row, a minified blob, a single-line task list) has no
+ * line boundary to break on, and used to be emitted whole — handing the
+ * extractor a chunk many times the size it asked for.
+ */
+describe('single over-long line', () => {
+  const TARGET_CHUNK_CHARS = 10_000
+
+  test('markdown: an 80K single-line section is sliced to the target', () => {
+    const md = `# Wide Table\n\n${'x'.repeat(80_000)}`
+    const chunks = chunkDocument(md, 'markdown', 'doc.md')
+
+    assert.ok(chunks.length > 1, `expected the line to be split (got ${chunks.length} chunk)`)
+    for (const chunk of chunks) {
+      assert.ok(
+        chunk.content.length <= TARGET_CHUNK_CHARS,
+        `chunk ${chunk.index} is ${chunk.content.length} chars, above the ${TARGET_CHUNK_CHARS} ceiling`
+      )
+    }
+  })
+
+  test('code: an over-long line is sliced too (same helper)', () => {
+    const code = `const bundle = "${'y'.repeat(60_000)}"`
+    const chunks = chunkDocument(code, 'code')
+
+    assert.ok(chunks.length > 1, 'expected the minified line to be split')
+    for (const chunk of chunks) {
+      assert.ok(
+        chunk.content.length <= TARGET_CHUNK_CHARS,
+        `chunk ${chunk.index} is ${chunk.content.length} chars, above the ceiling`
+      )
+    }
+  })
+
+  test('content is preserved across the slices', () => {
+    const line = 'z'.repeat(25_000)
+    const chunks = chunkDocument(`# Blob\n\n${line}`, 'markdown')
+    const rejoined = chunks.map((c) => c.content).join('')
+    assert.ok(
+      rejoined.includes('z'.repeat(24_000)),
+      'slicing must not drop characters from the middle of the line'
+    )
+  })
+})
+
 // ── Breadcrumb tracking ─────────────────────────────────────────────────────
 
 describe('breadcrumb tracking', () => {

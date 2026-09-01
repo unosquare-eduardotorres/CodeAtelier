@@ -61,6 +61,29 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
+/**
+ * Subscribe to the OS resume event. Lazily required so this module still loads
+ * where Electron does not exist (unit tests, worker processes); returns a
+ * no-op unsubscribe there. See the deadline logic in `spawnSummarizer`.
+ */
+function onHostResume(fn: () => void): () => void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
+    const { powerMonitor } = require('electron') as typeof import('electron')
+    if (typeof powerMonitor?.on !== 'function') return () => {}
+    powerMonitor.on('resume', fn)
+    return () => {
+      try {
+        powerMonitor.removeListener('resume', fn)
+      } catch {
+        /* listener registry gone with the app — nothing to detach */
+      }
+    }
+  } catch {
+    return () => {}
+  }
+}
+
 /** Failure shapes already logged — a storm must not repeat the same line 400 times. */
 const loggedFailureShapes = new Set<string>()
 const MAX_LOGGED_FAILURE_SHAPES = 5
@@ -1079,23 +1102,90 @@ class MemoryExtractionService {
       const { signal } = controller
       this.liveAbortControllers.add(controller)
 
+      // A plain wall-clock timeout charges the child for every hour the laptop
+      // spent in Modern Standby: the timer fires the instant the host wakes and
+      // kills an extraction that was frozen, not hung. Arm against a deadline
+      // instead, and read a timer that fires far later than it was scheduled
+      // for as evidence of a suspend rather than of a stuck process.
       const TIMEOUT_MS = 5 * 60 * 1000
-      const timer = setTimeout(() => {
+      /** Lateness above which the host slept — no timer drifts 30s on its own. */
+      const SUSPEND_SLACK_MS = 30_000
+      let deadline = Date.now() + TIMEOUT_MS
+      let timer: NodeJS.Timeout | null = null
+      let timedOut = false
+      let spawned = false
+
+      const armTimer = (ms: number): void => {
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(() => onDeadline(), Math.max(1, ms))
+      }
+
+      const onDeadline = (): void => {
+        const now = Date.now()
+        const overshoot = now - deadline
+        if (overshoot > SUSPEND_SLACK_MS) {
+          log.info(
+            `Extraction timer fired ${Math.round(overshoot / 1000)}s late — host was suspended, ` +
+              'granting the child a fresh window'
+          )
+          deadline = now + TIMEOUT_MS
+          armTimer(TIMEOUT_MS)
+          return
+        }
+        if (now < deadline) {
+          armTimer(deadline - now)
+          return
+        }
+        timedOut = true
         log.warn('Extraction summarizer timed out after 5 minutes')
         controller.abort()
-      }, TIMEOUT_MS)
+      }
+
+      armTimer(TIMEOUT_MS)
+
+      // Waking with the budget already spent would kill the child on the next
+      // tick, before it has had a single scheduled millisecond post-resume.
+      const stopResumeWatch = onHostResume(() => {
+        deadline = Date.now() + TIMEOUT_MS
+        armTimer(TIMEOUT_MS)
+      })
+
+      const cleanup = (): void => {
+        if (timer) {
+          clearTimeout(timer)
+          timer = null
+        }
+        stopResumeWatch()
+        this.liveAbortControllers.delete(controller)
+      }
 
       const env = buildEnvWithPath()
 
       const model = modelConfigService.getModel(workspacePath ?? undefined, 'memoryFeed')
 
+      // Logged before the spawn, not after: when the prompt is what breaks the
+      // spawn, logging afterwards means the one number identifying the guilty
+      // chunk is missing from exactly the runs that failed.
+      log.info(`Extraction summarizer spawning (prompt length: ${prompt.length} chars)`)
+
+      // The prompt travels on stdin, never argv. As a positional argument it
+      // counted against the OS command-line ceiling (~32K on Windows), so any
+      // chunk above that could not be spawned at all — deterministically, and
+      // with an error that looked nothing like "prompt too long".
       const child = spawn(
         'claude',
-        ['-p', prompt, '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
-        { stdio: ['ignore', 'pipe', 'pipe'], env, signal, windowsHide: true }
+        ['-p', '--model', model, '--output-format', 'text', '--permission-mode', 'plan'],
+        { stdio: ['pipe', 'pipe', 'pipe'], env, signal, windowsHide: true }
       )
 
-      log.info(`Extraction summarizer spawned (prompt length: ${prompt.length} chars)`)
+      child.on('spawn', () => {
+        spawned = true
+      })
+
+      // A child that dies before the write drains surfaces as EPIPE here; the
+      // exit/error handlers are the ones that report why.
+      child.stdin?.on('error', () => {})
+      child.stdin?.end(prompt)
 
       let stdout = ''
       let stderr = ''
@@ -1112,8 +1202,11 @@ class MemoryExtractionService {
       })
 
       child.on('exit', (code) => {
-        clearTimeout(timer)
-        this.liveAbortControllers.delete(controller)
+        cleanup()
+        if (timedOut) {
+          reject(new Error('Extraction summarizer timed out after 5 minutes'))
+          return
+        }
         if (code === 0 && stdout.trim()) {
           resolve(stdout.trim())
         } else {
@@ -1124,9 +1217,21 @@ class MemoryExtractionService {
       })
 
       child.on('error', (err) => {
-        clearTimeout(timer)
-        this.liveAbortControllers.delete(controller)
-        reject(new Error(`Failed to spawn extraction summarizer: ${err.message}`))
+        cleanup()
+        if (timedOut) {
+          reject(new Error('Extraction summarizer timed out after 5 minutes'))
+          return
+        }
+        // A spawn that never happened and a child killed mid-flight used to read
+        // identically in the log, which made a missing CLI indistinguishable
+        // from a crash halfway through a five-minute extraction.
+        reject(
+          new Error(
+            spawned
+              ? `Extraction summarizer died after spawn: ${err.message}`
+              : `Failed to spawn extraction summarizer: ${err.message}`
+          )
+        )
       })
     })
   }

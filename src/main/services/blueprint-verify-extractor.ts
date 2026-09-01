@@ -12,7 +12,8 @@
 
 import log from 'electron-log'
 import { runOneShotClaude } from './one-shot-claude'
-import { modelConfigService } from './model-config.service'
+import { runOneShotLocal } from './one-shot-local'
+import { modelConfigService, type GlmConfig } from './model-config.service'
 import type { BlueprintPhaseCompletion } from '../../shared/blueprint-types'
 
 const extractorLog = log.scope('blueprint-verify-extractor')
@@ -57,6 +58,24 @@ You MUST output ONLY valid JSON matching this exact schema — no markdown, no c
 const MAX_EXTRACTION_INPUT_CHARS = 80_000
 
 /**
+ * Injectable dependencies — lets tests drive the claude → GLM fallback ordering
+ * without module mocking. Defaults are the real implementations.
+ */
+export interface ExtractorDeps {
+  runClaude: typeof runOneShotClaude
+  runLocal: typeof runOneShotLocal
+  isGlmProvider: (workspacePath: string) => boolean
+  getGlmConfig: (workspacePath: string) => GlmConfig
+}
+
+const DEFAULT_DEPS: ExtractorDeps = {
+  runClaude: runOneShotClaude,
+  runLocal: runOneShotLocal,
+  isGlmProvider: (workspacePath) => modelConfigService.isGlmProvider(workspacePath),
+  getGlmConfig: (workspacePath) => modelConfigService.getGlmConfig(workspacePath)
+}
+
+/**
  * Extract structured verify findings from raw agent output text.
  *
  * Makes a one-shot Haiku call with the raw text and returns a parsed
@@ -66,12 +85,16 @@ const MAX_EXTRACTION_INPUT_CHARS = 80_000
  * on any error — the caller should treat null as "extraction failed,
  * use existing fallback behavior."
  */
-export async function extractVerifyCompletion(params: {
-  text: string
-  blueprintId: string
-  workspaceId: string
-}): Promise<BlueprintPhaseCompletion | null> {
-  const { text, blueprintId, workspaceId } = params
+export async function extractVerifyCompletion(
+  params: {
+    text: string
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+  },
+  deps: ExtractorDeps = DEFAULT_DEPS
+): Promise<BlueprintPhaseCompletion | null> {
+  const { text, blueprintId, workspaceId, workspacePath } = params
 
   // Guard: too little text to extract from
   if (text.length < 100) {
@@ -105,7 +128,7 @@ export async function extractVerifyCompletion(params: {
   // 2-attempt loop — transient CLI failures shouldn't dead-end the pipeline
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const { text: responseText } = await runOneShotClaude({
+      const { text: responseText } = await deps.runClaude({
         feature: 'verify_extract',
         model,
         workspaceId,
@@ -130,11 +153,42 @@ export async function extractVerifyCompletion(params: {
         `[extractVerifyCompletion] Attempt ${attempt}/2 failed for blueprint ${blueprintId}:`,
         err
       )
-      if (attempt === 2) return null
+      if (attempt === 2) break
     }
   }
 
-  return null // unreachable — satisfies TS2366
+  // BP-VERIFY-GLM-EXTRACT: the Claude CLI path is a single point of failure —
+  // an exhausted Anthropic weekly limit dead-ended verify three times in a row
+  // while the workspace's own GLM key was live and had just run the phase.
+  // Same shape as memory-extraction.service.ts, NO claude fallback (a GLM
+  // failure must surface, not silently spend Anthropic credits).
+  if (deps.isGlmProvider(workspacePath)) {
+    try {
+      const glm = deps.getGlmConfig(workspacePath)
+      const result = await deps.runLocal({
+        systemPrompt: EXTRACTION_SYSTEM_PROMPT,
+        userMessage,
+        baseUrl: glm.baseUrl.replace(/\/$/, ''),
+        model: glm.smallModelId || glm.modelId,
+        apiKey: glm.apiKey,
+        feature: 'verify_extract',
+        workspaceId,
+        maxTokens: 4096,
+        timeoutMs: 60_000,
+        chatCompletionsPath: '/chat/completions'
+      })
+      // runOneShotLocal with no claudeFallbackArgs resolves { text: '' } rather
+      // than throwing — an empty body is a failure, not an extraction.
+      if (result.text.trim()) return parseExtractionResponse(result.text, blueprintId)
+      extractorLog.warn(
+        `[extractVerifyCompletion] GLM fallback returned empty text for ${blueprintId}`
+      )
+    } catch (err) {
+      extractorLog.warn(`[extractVerifyCompletion] GLM fallback failed for ${blueprintId}:`, err)
+    }
+  }
+
+  return null
 }
 
 /**

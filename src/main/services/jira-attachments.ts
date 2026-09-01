@@ -36,9 +36,16 @@ export const ATTACHMENT_EXTENSIONS = new Set([
   '.docx'
 ])
 
-/** Per-issue and per-file download ceilings. A bulk convert multiplies both. */
+/** Per-issue and per-file download ceilings. */
 export const MAX_ATTACHMENTS_PER_ISSUE = 10
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+/**
+ * Whole-group ceiling, since one blueprint can now be built from many tickets.
+ * Without it, twenty-five tickets at ten attachments each is 250 downloads and
+ * up to 2.5 GB of managed docs for a single conversion.
+ */
+export const MAX_ATTACHMENTS_PER_GROUP = 30
 
 /** Longest filename we will write, before the index prefix. */
 const MAX_FILENAME_CHARS = 120
@@ -59,6 +66,18 @@ export function safeAttachmentFilename(name: string): string {
   const clipped = stripped.slice(-MAX_FILENAME_CHARS)
   if (!clipped || /^\.+$/.test(clipped)) return 'attachment'
   return clipped
+}
+
+/**
+ * Name an attachment will be written under inside the managed docs directory.
+ *
+ * Both prefixes earn their place: the index disambiguates two files with the
+ * same name on one ticket, and the issue key disambiguates them across tickets
+ * — one blueprint can be built from a whole selection, and two tickets each
+ * attaching `screenshot.png` is the common case, not an edge one.
+ */
+export function attachmentDestFilename(issueKey: string, index: number, filename: string): string {
+  return `${safeAttachmentFilename(issueKey)}-${index}-${safeAttachmentFilename(filename)}`
 }
 
 /** Which attachments are worth fetching, in Jira's order, within the caps. */

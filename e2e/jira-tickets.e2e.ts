@@ -126,8 +126,10 @@ test.describe('Jira Tickets panel', () => {
     await expect(page.locator('[data-testid="jira-group-toggle"]')).toBeVisible()
 
     // Sorting is a local operation while the whole result set is loaded, so
-    // changing it must not clear the list or raise a search error.
-    await page.locator('[data-testid="jira-sort-field"]').selectOption('priority')
+    // changing it must not clear the list or raise a search error. The control
+    // is a SelectMenu, not a native <select> — OS chrome in a dark UI.
+    await page.locator('[data-testid="jira-sort-field"]').click()
+    await page.getByRole('menuitemradio', { name: 'Priority' }).click()
     await page.waitForTimeout(500)
     await expect(page.locator('[data-testid="jira-search-error"]')).toHaveCount(0)
   })
@@ -175,5 +177,42 @@ test.describe('Jira Tickets panel', () => {
     await page.locator('[data-testid="jira-filter-input"]').fill('')
     await page.waitForTimeout(300)
     await expect(list).toBeVisible()
+  })
+
+  test('the Selected tab reviews a multi-ticket selection and can prune it', async ({
+    electronPage: page
+  }) => {
+    if (!(await navigateToJira(page))) {
+      test.skip()
+      return
+    }
+
+    const rows = page.locator('[data-testid^="jira-ticket-select-"]')
+    if ((await rows.count()) < 2) {
+      // No credentials, or fewer than two rows — there is no group to review.
+      test.skip()
+      return
+    }
+
+    await rows.nth(0).click()
+    await rows.nth(1).click()
+
+    // Two selected is the point at which what will be built stops being obvious
+    // from the rows, so the aside switches to the tray on its own.
+    const tab = page.locator('[data-testid="jira-aside-tab-selected"]')
+    await expect(tab).toBeVisible({ timeout: 5_000 })
+    await expect(tab).toContainText('2')
+
+    const tray = page.locator('[data-testid="jira-selection-tray"]')
+    await expect(tray).toBeVisible()
+    // The title the conversion will actually use, shown before the click.
+    await expect(page.locator('[data-testid="jira-tray-derived-title"]')).toHaveText(/.+/)
+
+    const items = tray.locator('[data-testid^="jira-tray-item-"]')
+    await expect(items).toHaveCount(2)
+
+    await tray.locator('[data-testid^="jira-tray-remove-"]').first().click()
+    await expect(items).toHaveCount(1)
+    await expect(tab).toContainText('1')
   })
 })

@@ -97,7 +97,11 @@ import {
   scanGateCommands
 } from './blueprint-preflight.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
-import { ensureBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
+import {
+  ensureBlueprintTrack,
+  blueprintTrackOwner,
+  branchHeldElsewhereError
+} from './blueprint-track'
 import { recordBaselineCommit } from './blueprint-modified-files'
 
 const bpLog = log.scope('blueprint-build')
@@ -364,6 +368,10 @@ export class BlueprintBuildService extends EventEmitter {
     const primaryTreeOwnerId = `blueprint:${blueprintId}`
     let holdsPrimaryTree = false
     let executionPath = workspacePath
+    // Set when the run is refused for a reason no retry can change, so the
+    // catch below can tag the retry context environmental rather than leaving
+    // the user a Retry button that is guaranteed to lose.
+    let environmentalBlocker: string | undefined
 
     try {
       // BP-PHASE-TRYCATCH-SCOPE-01: All initialization inside try so
@@ -375,6 +383,28 @@ export class BlueprintBuildService extends EventEmitter {
 
       const track = await ensureBlueprintTrack({ blueprintId, workspaceId, workspacePath })
       executionPath = track.path
+
+      // R046 — split brain. The branch this run's work lives on is checked out
+      // by somebody else, so BUILD fell back to the primary tree: its writes
+      // could not reach that branch, and verification would stat a tree the
+      // agents never wrote in and report finished work as missing. The app
+      // already detected this exact condition and logged it at warn level while
+      // running the phase anyway — two attempts, 754s of model time, same
+      // deterministic verdict. It is a precondition, not a warning.
+      //
+      // Only `heldBy` blocks. The other non-isolated cases (auto-branching off,
+      // the blueprint set to run in the checkout, no commits yet, the checkout
+      // already on the branch) are legitimate and keep running.
+      if (!track.isolated && track.heldBy) {
+        // Resolve the phase row before throwing: the normal lookup is further
+        // down (past the lock), and finalizeFailed needs an id to mark failed —
+        // the renderer finds the environmental banner via the failed phase's
+        // context snapshot, so without this the refusal would be invisible.
+        buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+        const refusal = branchHeldElsewhereError(track.heldBy)
+        environmentalBlocker = refusal.message
+        throw refusal
+      }
 
       // Baseline for the VERIFY "Modified Files" section — snapshot HEAD of
       // the tree BUILD will run in before any task touches it. Best-effort:
@@ -876,7 +906,8 @@ export class BlueprintBuildService extends EventEmitter {
           filesModified: result.filesModified,
           filesCreated: result.filesCreated,
           tasksCompleted: result.tasksCompleted,
-          totalTasks
+          totalTasks,
+          environmentalFailure: environmentalBlocker
         })
       } catch {
         /* best effort */

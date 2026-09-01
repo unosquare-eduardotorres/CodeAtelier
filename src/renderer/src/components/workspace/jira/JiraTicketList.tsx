@@ -130,9 +130,9 @@ function JiraTicketRow({
           data-testid={`jira-ticket-converted-${issue.key}`}
           title="Already converted — open the blueprint"
           onClick={() => onOpenBlueprint(blueprintId)}
-          className="flex items-center gap-1 shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border border-success/20 bg-success-muted text-success hover:border-success/50 transition-colors"
+          className="flex items-center gap-1 shrink-0 text-[11px] px-1.5 py-0.5 rounded-full border border-success/20 bg-success-muted text-success hover:border-success/50 transition-colors"
         >
-          <BookOpen size={10} />
+          <BookOpen size={11} />
           Blueprint
         </button>
       )}

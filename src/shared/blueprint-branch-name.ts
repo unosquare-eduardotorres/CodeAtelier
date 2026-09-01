@@ -68,12 +68,33 @@ export function readBlueprintBranchName(
   return typeof raw === 'string' && raw ? raw : null
 }
 
-/** The Jira ticket key a blueprint was imported from, if any. */
+/**
+ * The anchor Jira key a blueprint was imported from, if any.
+ *
+ * On a blueprint built from several tickets this is the shared epic, which is
+ * exactly what branch naming wants: the epic is the unit of work.
+ */
 export function readJiraIssueKey(
   settings: Record<string, unknown> | null | undefined
 ): string | undefined {
   const raw = settings?.jiraIssueKey
   return typeof raw === 'string' && raw ? raw : undefined
+}
+
+/**
+ * Every Jira ticket a blueprint covers, newest schema first.
+ *
+ * Falls back to the single `jiraIssueKey` for blueprints created before a
+ * selection could be folded into one blueprint.
+ */
+export function readJiraIssueKeys(settings: Record<string, unknown> | null | undefined): string[] {
+  const raw = settings?.jiraIssueKeys
+  if (Array.isArray(raw)) {
+    const keys = raw.filter((key): key is string => typeof key === 'string' && key.length > 0)
+    if (keys.length > 0) return keys
+  }
+  const single = readJiraIssueKey(settings)
+  return single ? [single] : []
 }
 
 export interface BlueprintBranchNameParams {

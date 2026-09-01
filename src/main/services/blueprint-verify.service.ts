@@ -94,6 +94,33 @@ function isNonRemediablePath(path: string): boolean {
   return NON_REMEDIABLE_PATH_RX.test(trimmed)
 }
 
+/**
+ * BP-VERIFY-GATE-SALVAGE: When the agent verdict cannot be extracted at all
+ * (no fence block, post-hoc extraction returned null) but the deterministic
+ * gates ran and came back green, the pipeline has real evidence the code is
+ * sound — failing the phase throws that away. Synthesize a conservative
+ * 'human_needed' completion: verify finishes, the report stays readable,
+ * nothing is claimed as a clean pass, remediation is not triggered.
+ * Returns null when salvage does not apply (caller keeps current behaviour).
+ */
+export function salvageCompletionFromGates(
+  completion: BlueprintPhaseCompletion | undefined,
+  gateResults: { failed: boolean; gatesAvailable: boolean }
+): BlueprintPhaseCompletion | null {
+  if (completion?.overallStatus) return null // verdict exists — nothing to salvage
+  if (!gateResults.gatesAvailable || gateResults.failed) return null // no green evidence
+  return {
+    ...(completion ?? {}),
+    phase: 'verify',
+    status: 'complete',
+    overallStatus: 'human_needed',
+    recommendation:
+      'Deterministic gates passed (full-suite, structural) but the agent verdict could not be extracted — review the verify report.',
+    findings: [],
+    gateSalvaged: true
+  } as BlueprintPhaseCompletion
+}
+
 /** Run a git subcommand in the execution tree (sync, best-effort). */
 function gitSync(args: string[], cwd: string): string | null {
   try {
@@ -368,7 +395,8 @@ export class BlueprintVerifyService extends EventEmitter {
           const extracted = await extractVerifyCompletion({
             text,
             blueprintId,
-            workspaceId
+            workspaceId,
+            workspacePath
           })
           if (extracted) {
             bpLog.info(
@@ -478,6 +506,23 @@ export class BlueprintVerifyService extends EventEmitter {
           workspaceId,
           phase: 'verify',
           text: 'Verify agent did not report running quality gates — deterministic gates ran independently',
+          kind: 'system'
+        })
+      }
+
+      // BP-VERIFY-GATE-SALVAGE (see helper): green gates rescue an unextractable verdict.
+      const salvaged = salvageCompletionFromGates(completion, gateResults)
+      if (salvaged) {
+        bpLog.warn(
+          `[startVerifyPhase] Blueprint ${blueprintId}: no extractable verdict but deterministic ` +
+            `gates are green — salvaging to 'human_needed'`
+        )
+        completion = salvaged
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'verify',
+          text: 'Verify agent verdict could not be extracted, but all deterministic quality gates passed — completing as "needs human review". Review the report below.',
           kind: 'system'
         })
       }

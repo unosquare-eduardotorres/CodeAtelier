@@ -375,6 +375,8 @@ const TEST_FILES: string[] = [
   './handoff-context-injection.test',
   // ─── Blueprint Verify Extractor (post-hoc structured extraction) ───
   './blueprint-verify-extractor.test',
+  // ─── Blueprint Verify gate-salvage (unextractable verdict + green gates) ───
+  './blueprint-verify-salvage.test',
   // ─── OS Notification Service (dispatch routing, rate limiting, preferences) ───
   './notification.service.test',
   // ─── Phase 20A: Coverage Mega-Push VI — giant services deep ───
@@ -398,6 +400,8 @@ const TEST_FILES: string[] = [
   './ipc-track-handlers.test',
   './mcp-config-worktree.test',
   './blueprint-track.test',
+  // R046 — BUILD refuses to start when its branch is held by other work.
+  './blueprint-build-branch-held.test',
   './blueprint-branch-name.test',
   './landing.service.test',
   './track-claims.test',

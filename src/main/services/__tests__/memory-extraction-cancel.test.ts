@@ -19,6 +19,7 @@
  */
 
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { test, describe, summaryAsync, runExclusive } from './test-harness'
 import { setupElectronStub } from './electron-stub'
 
@@ -166,6 +167,155 @@ describe('extraction retry loop honours the cancel signal', () => {
       attempts,
       2,
       'if this were 1 the cancelled case above would pass for the wrong reason'
+    )
+  })
+})
+
+// ── Spawn shape ──────────────────────────────────────────────────────────────
+
+const childProcess = require('node:child_process')
+
+/** The slice of the ChildProcess surface `spawnSummarizer` actually touches. */
+class FakeChild extends EventEmitter {
+  stdout = new EventEmitter()
+  stderr = new EventEmitter()
+  stdinWrites: string[] = []
+  stdin = {
+    on: (): void => {},
+    end: (data?: string): void => {
+      if (data !== undefined) this.stdinWrites.push(data)
+    }
+  }
+}
+
+interface SpawnCall {
+  args: string[]
+  opts: any
+  child: FakeChild
+}
+
+/**
+ * Swap `child_process.spawn` for the duration of `fn`. The service resolves
+ * `spawn` off the module object at call time, so replacing the property is
+ * enough — no loader hook needed, and nothing is actually executed.
+ */
+async function withFakeSpawn<T>(fn: (calls: SpawnCall[]) => Promise<T>): Promise<T> {
+  const calls: SpawnCall[] = []
+  const original = childProcess.spawn
+  childProcess.spawn = (_cmd: string, args: string[], opts: any): FakeChild => {
+    const child = new FakeChild()
+    calls.push({ args, opts, child })
+    return child
+  }
+  try {
+    return await fn(calls)
+  } finally {
+    childProcess.spawn = original
+  }
+}
+
+const spawnSummarizer = (): any => Object.getPrototypeOf(memoryExtractionService).spawnSummarizer
+
+/**
+ * A prompt passed as a positional argument counts against the OS command-line
+ * ceiling — 32,767 characters on Windows, environment included. Every chunk
+ * above it failed to spawn at all, deterministically, with an error that named
+ * neither the prompt nor its size. The prompt belongs on stdin.
+ */
+describe('spawnSummarizer keeps the prompt off the command line', () => {
+  const WINDOWS_ARGV_CEILING = 32_767
+
+  test('a 200K prompt leaves argv small and arrives on stdin', async () => {
+    if (!loaded) return
+    const prompt = 'X'.repeat(200_000)
+
+    const out = await runExclusive(() =>
+      withFakeSpawn(async (calls) => {
+        const promise: Promise<string> = spawnSummarizer().call(memoryExtractionService, prompt)
+
+        assert.equal(calls.length, 1, 'expected exactly one spawn')
+        const { args, opts, child } = calls[0]
+
+        assert.ok(
+          !args.includes(prompt),
+          'the prompt must not be a positional argument — that is the ENAMETOOLONG path'
+        )
+        assert.ok(
+          args.join(' ').length < WINDOWS_ARGV_CEILING,
+          `argv is ${args.join(' ').length} chars, above the ${WINDOWS_ARGV_CEILING} Windows ceiling`
+        )
+        assert.equal(opts.stdio[0], 'pipe', 'stdin must be a pipe for the prompt to be writable')
+        assert.equal(
+          child.stdinWrites.join(''),
+          prompt,
+          'the whole prompt must reach the child on stdin'
+        )
+
+        child.stdout.emit('data', Buffer.from('FACT: something'))
+        child.emit('exit', 0)
+        return promise
+      })
+    )
+
+    assert.equal(out, 'FACT: something')
+  })
+
+  test('-p stays a bare flag so --model is not swallowed as its value', async () => {
+    if (!loaded) return
+    await runExclusive(() =>
+      withFakeSpawn(async (calls) => {
+        const promise: Promise<string> = spawnSummarizer().call(memoryExtractionService, 'hello')
+        const { args, child } = calls[0]
+
+        assert.equal(args[0], '-p')
+        assert.equal(args[1], '--model', '`-p` is boolean --print; the next arg must be --model')
+        assert.ok(args.includes('--output-format'))
+
+        child.stdout.emit('data', Buffer.from('ok'))
+        child.emit('exit', 0)
+        await promise
+      })
+    )
+  })
+})
+
+// ── Suspend-aware timeout ───────────────────────────────────────────────────────
+
+/**
+ * A laptop that sleeps mid-extraction burns the 5-minute budget on wall clock
+ * the child never got to use, so the timer fires the instant the host wakes and
+ * kills healthy work. The child must survive the wake.
+ */
+describe('extraction timeout survives a host suspend', () => {
+  test('a resume event re-arms the timer instead of aborting the child', async () => {
+    if (!loaded) return
+    const electron = require('electron')
+    const before = electron.__powerMonitorMock.listenerCount('resume')
+
+    await runExclusive(() =>
+      withFakeSpawn(async (calls) => {
+        const promise: Promise<string> = spawnSummarizer().call(memoryExtractionService, 'hello')
+        const { opts, child } = calls[0]
+
+        assert.equal(
+          electron.__powerMonitorMock.listenerCount('resume'),
+          before + 1,
+          'an in-flight extraction must watch for the host waking up'
+        )
+
+        electron.__powerMonitorMock.emit('resume')
+        assert.equal(opts.signal.aborted, false, 'waking the host must not kill a healthy child')
+
+        child.stdout.emit('data', Buffer.from('ok'))
+        child.emit('exit', 0)
+        await promise
+
+        assert.equal(
+          electron.__powerMonitorMock.listenerCount('resume'),
+          before,
+          'the listener must be released when the child exits, or every spawn leaks one'
+        )
+      })
     )
   })
 })

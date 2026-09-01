@@ -1,6 +1,7 @@
 export { default as JiraTicketsPage } from './JiraTicketsPage'
 export { default as JiraTicketList } from './JiraTicketList'
 export { default as JiraTicketDetail } from './JiraTicketDetail'
+export { default as JiraSelectionTray } from './JiraSelectionTray'
 export { default as JiraListControls } from './JiraListControls'
 export { default as JiraScopeControls } from './JiraScopeControls'
 export { default as JiraFilterChips } from './JiraFilterChips'
