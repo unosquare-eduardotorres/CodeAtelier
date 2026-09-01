@@ -28,6 +28,14 @@ export interface WorkspaceManifests {
   hasPytestConfig?: boolean
   /** Raw contents of the root `go.mod`, if present. */
   goMod?: string
+  /**
+   * Absolute path to the project's virtualenv interpreter, verified on disk by
+   * the CALLER against the source workspace (not the worktree — a .gitignored
+   * `.venv` never exists inside a blueprint git worktree).
+   */
+  venvPython?: string
+  /** True when `uv.lock` is present at the root. */
+  hasUvLock?: boolean
 }
 
 /** `npm test` on a scaffolded project. Detecting this as a test gate is worse than detecting nothing. */
@@ -87,6 +95,42 @@ function dotnetCwd(projects: readonly string[]): string | undefined {
   return dir === '' ? undefined : dir
 }
 
+/** Quote a path that would otherwise split into multiple shell arguments. */
+function quoteIfNeeded(path: string): string {
+  return /\s/.test(path) ? `"${path}"` : path
+}
+
+/**
+ * The Python runner prefix, most environment-aware first.
+ *
+ * A bare `pytest` only works when the runner is on PATH — which is exactly what
+ * a .gitignored virtualenv guarantees it is NOT inside a blueprint worktree.
+ * Preference chain (incident 2026-08: bare `pytest` failed ~20 consecutive
+ * BUILD retries on a machine whose only pytest lived in the source checkout's
+ * `.venv`):
+ *   1. the project's own venv interpreter (caller-verified on disk)
+ *   2. `uv run` when the project is uv-managed (`[tool.uv]` / `uv.lock`)
+ *   3. `python -m` (modern project; honest "No module named" if absent)
+ *   4. `''` — bare command (last resort — config-only legacy environments)
+ *
+ * Exported so the per-task test template (`buildTestCommand`) can reuse the
+ * exact same chain: without it, per-task gates degrade to bare `pytest` and
+ * silently lose the red→green proof on every Python task.
+ */
+export function pythonRunnerPrefix(manifests: WorkspaceManifests): string {
+  if (manifests.venvPython) return `${quoteIfNeeded(manifests.venvPython)} -m`
+  if (manifests.hasUvLock || manifests.pyprojectToml?.includes('[tool.uv]')) {
+    return 'uv run'
+  }
+  if (manifests.pyprojectToml) return 'python -m'
+  return ''
+}
+
+/** The full-suite pytest invocation: the runner prefix plus `pytest`. */
+function pythonTestCommand(manifests: WorkspaceManifests): string {
+  return `${pythonRunnerPrefix(manifests)} pytest`.trim()
+}
+
 export function detectGateCommands(manifests: WorkspaceManifests): GateCommandSet {
   const out: GateCommandSet = {}
 
@@ -139,7 +183,7 @@ export function detectGateCommands(manifests: WorkspaceManifests): GateCommandSe
   // ── Python ──
   const pyproject = manifests.pyprojectToml
   if (pyproject || manifests.hasPytestConfig) {
-    if (!out.test) out.test = { command: 'pytest' }
+    if (!out.test) out.test = { command: pythonTestCommand(manifests) }
     // Only claim a linter/typechecker the project actually configures.
     if (!out.lint && pyproject?.includes('[tool.ruff')) out.lint = { command: 'ruff check .' }
     if (!out.build && pyproject?.includes('[tool.mypy')) out.build = { command: 'mypy .' }

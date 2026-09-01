@@ -84,6 +84,25 @@ export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> =
 
 // ── Helpers ──
 
+/**
+ * F4 — stable identity of a phase error for recurrence detection.
+ *
+ * Strips the parts that legitimately vary between attempts (task ids, counts,
+ * timestamps, paths) so "R045: verification failed" and "R041: verification
+ * failed" fingerprint as the SAME failure — which they were, 20 times in a
+ * row, while nothing in the loop noticed it was not converging.
+ */
+function fingerprintPhaseError(error: string): string {
+  return error
+    .replace(/\b[TWR]\d{2,}\b/g, 'T###') // task ids R045, T003, W10
+    .replace(/\b\d+(?:\.\d+)?\b/g, '#') // counts, versions, timings
+    .replace(/[A-Za-z]:\\[^\s;]+/g, '<path>') // Windows paths
+    .replace(/(?:\/|\\)[\w.-]+(?:\/|\\)[\w.-]+/g, '<path>') // posix-ish paths
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200)
+}
+
 /** Validate and extract grill decisions from an unknown settingsJson value. */
 function parseGrillDecisions(raw: unknown): GrillDecisionForBlueprint[] | undefined {
   if (!raw || !Array.isArray(raw)) return undefined
@@ -1760,6 +1779,13 @@ export class BlueprintService extends EventEmitter {
       filesCreated?: string[]
       tasksCompleted?: number
       totalTasks?: number
+      /**
+       * F4 — human-readable environmental blocker (e.g. "full-suite gate could
+       * not run — pytest is not installed on this machine"), set when the
+       * failing gates included `command_missing`/`command_error`. Persisted in
+       * the snapshot so the renderer can gate the Retry button after reload.
+       */
+      environmentalFailure?: string
     }
   ): void {
     const phaseRecord = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, phase)
@@ -1769,6 +1795,17 @@ export class BlueprintService extends EventEmitter {
     const existing = safeParseJSON<Record<string, unknown>>(phaseRecord.contextSnapshot, {})
     const attempt = (typeof existing.attempt === 'number' ? existing.attempt : 0) + 1
 
+    // F4 — recurrence fingerprint: the same failure signature on consecutive
+    // attempts means the failure is deterministic (environmental or a hard
+    // code defect), and no number of retries can change it. Incident 2026-08:
+    // the attempt counter reached 10 with the identical gate failure every
+    // time and nothing in the loop noticed it was not converging.
+    const fingerprint = fingerprintPhaseError(context.error)
+    const recurrence =
+      typeof existing.fingerprint === 'string' && existing.fingerprint === fingerprint
+        ? (typeof existing.recurrence === 'number' ? existing.recurrence : 0) + 1
+        : 1
+
     const snapshot = JSON.stringify({
       attempt,
       previousError: context.error.slice(0, 500),
@@ -1776,11 +1813,45 @@ export class BlueprintService extends EventEmitter {
       filesModified: context.filesModified ?? [],
       filesCreated: context.filesCreated ?? [],
       tasksCompleted: context.tasksCompleted ?? 0,
-      totalTasks: context.totalTasks ?? 0
+      totalTasks: context.totalTasks ?? 0,
+      fingerprint,
+      recurrence,
+      // F4 — persisted (not just emitted) so the Retry-gating survives app
+      // reload: the renderer reads it back from the phase record's snapshot.
+      ...(context.environmentalFailure
+        ? { environmentalFailure: context.environmentalFailure }
+        : {})
     })
 
     blueprintPhaseRepository.saveContextSnapshot(phaseRecord.id, snapshot)
     bpLog.info(`[saveRetryContext] Saved retry context for ${phase} phase (attempt ${attempt})`)
+
+    // F4 — escalate when retrying provably cannot help: either the failure was
+    // classified environmental (the host lacks a tool — deterministic), or the
+    // same signature has recurred 3+ times. The user pressing Retry is
+    // guaranteed to lose, so say so instead of accepting attempt 11.
+    if (context.environmentalFailure || recurrence >= 3) {
+      const text = context.environmentalFailure
+        ? `⚠ Environmental failure — retrying cannot fix this: ${context.environmentalFailure}. ` +
+          'Fix the toolchain on PATH, or declare gate-commands in the plan artifact to override detection.'
+        : `⚠ This failure has recurred ${recurrence} times unchanged — it is likely ` +
+          'environmental (a missing tool or service on this machine), and retrying is unlikely to help. ' +
+          `Last error: ${context.error.slice(0, 200)}`
+      bpLog.warn(
+        `[saveRetryContext] ${
+          context.environmentalFailure
+            ? `Environmental failure for ${phase} — retry will not help`
+            : `Identical failure has recurred ${recurrence}× for ${phase} — likely environmental; retrying is unlikely to help`
+        }`
+      )
+      this.emit('phaseProgress', {
+        blueprintId,
+        workspaceId: blueprintRepository.findById(blueprintId)?.workspaceId ?? '',
+        phase,
+        text,
+        kind: 'system'
+      })
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

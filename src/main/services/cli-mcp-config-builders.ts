@@ -33,6 +33,12 @@ export interface BuildCoreServersParams {
   ipcSocketPath?: string
   serverBasePath: string
   dbDir: string
+  /**
+   * Command that runs Node on this machine. Defaults to `process.execPath`
+   * (Electron-as-Node — see node-runtime.ts); injectable to keep this module
+   * pure and testable.
+   */
+  nodeCommand?: string
 }
 
 // ── Core Servers ──
@@ -47,13 +53,18 @@ export function buildCoreServers(
   const servers: Record<string, CliMcpServerEntry> = {}
   const { featureFlags, workspaceId, workspacePath, serverBasePath, dbDir } = params
   const join = (...parts: string[]): string => parts.join('/')
+  // Bundled servers run via the app binary with ELECTRON_RUN_AS_NODE=1 — a
+  // literal `node` does not exist on machines without a Node install (F2).
+  const node = params.nodeCommand ?? process.execPath
+  const nodeEnv = { ELECTRON_RUN_AS_NODE: '1' }
 
   // ── Code Graph ──
   if (featureFlags.repomapEnabled && workspaceId) {
     servers['code-graph'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'code-graph-server.js')],
       env: {
+        ...nodeEnv,
         WORKSPACE_ID: workspaceId,
         WORKSPACE_PATH: workspacePath,
         DB_PATH: dbDir
@@ -64,24 +75,25 @@ export function buildCoreServers(
   // ── Semantic Search ──
   if (featureFlags.semanticSearchEnabled && workspaceId) {
     servers['semantic-search'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'semantic-search-server.js')],
-      env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
+      env: { ...nodeEnv, WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
     }
   }
 
   // ── Git Context ──
   servers['git-context'] = {
-    command: 'node',
+    command: node,
     args: [join(serverBasePath, 'git-context-server.js')],
-    env: { WORKSPACE_PATH: workspacePath }
+    env: { ...nodeEnv, WORKSPACE_PATH: workspacePath }
   }
 
   // ── Code Analysis ──
   servers['code-analysis'] = {
-    command: 'node',
+    command: node,
     args: [join(serverBasePath, 'code-analysis-server.js')],
     env: {
+      ...nodeEnv,
       WORKSPACE_PATH: workspacePath,
       ...(workspaceId ? { WORKSPACE_ID: workspaceId } : {})
     }
@@ -89,6 +101,7 @@ export function buildCoreServers(
 
   // ── Control Actions ──
   const controlEnv: Record<string, string> = {
+    ...nodeEnv,
     WORKSPACE_PATH: workspacePath,
     CONVERSATION_MODE: params.mode
   }
@@ -99,7 +112,7 @@ export function buildCoreServers(
     controlEnv.CONVERSATION_ID = params.conversationId
   }
   servers['control-actions'] = {
-    command: 'node',
+    command: node,
     args: [join(serverBasePath, 'control-actions-server.js')],
     env: controlEnv
   }
@@ -123,7 +136,9 @@ export function mountExternalIntegrations(
   externalActive: Record<string, boolean>,
   envByIntegration: Record<string, Record<string, string>>,
   homePath: string,
-  serverBasePath: string
+  serverBasePath: string,
+  /** Node command for bundled servers; defaults to `process.execPath` (F2). */
+  nodeCmd: string = process.execPath
 ): void {
   for (const integration of EXTERNAL_MCP_INTEGRATIONS) {
     if (!externalActive[integration.id]) continue
@@ -133,9 +148,9 @@ export function mountExternalIntegrations(
 
     if (integration.bundledServerEntry) {
       servers[integration.id] = {
-        command: 'node',
+        command: nodeCmd,
         args: [[serverBasePath, `${integration.bundledServerEntry}.js`].join('/')],
-        ...(Object.keys(env).length > 0 ? { env } : {})
+        env: { ELECTRON_RUN_AS_NODE: '1', ...env }
       }
       continue
     }

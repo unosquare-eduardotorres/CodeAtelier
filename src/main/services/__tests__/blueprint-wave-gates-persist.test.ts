@@ -167,6 +167,170 @@ if (!env) {
         assert.deepEqual(waves, [1, 2], 'one artifact per wave, in order')
       })
     })
+
+    /**
+     * F4 — environmental failure classification + retry gating.
+     *
+     * A failing wave report that ALSO contains command_missing/command_error
+     * means part of the failure is deterministic on this machine: no retry can
+     * make the missing tool appear (incident 2026-08, ~20 blind retries).
+     * pushWaveGateFailure must tag the BuildResult, saveRetryContext must
+     * persist the tag, and the escalation emit must fire for it.
+     */
+    describe('F4 — environmental failure classification', () => {
+      const mkResult = (): any => ({
+        tasksCompleted: 0,
+        tasksResumed: 0,
+        filesCreated: [],
+        filesModified: [],
+        failed: false,
+        discoveries: [],
+        taskTimings: [],
+        taskFailures: []
+      })
+
+      test('command_missing beside a red gate → environmentalFailure set, red entry unflagged', () => {
+        const result = mkResult()
+        ;(blueprintBuildService as any).pushWaveGateFailure(result, 'W10', {
+          gates: [
+            {
+              name: 'full-suite',
+              verdict: 'unverifiable',
+              reason: 'command_missing',
+              evidence: ['pytest — the runner is not installed on this machine'],
+              durationMs: 76
+            },
+            {
+              name: 'lint',
+              verdict: 'fail',
+              evidence: ['src/x.ts:1:1 — semicolon expected'],
+              durationMs: 50
+            }
+          ],
+          overall: 'fail'
+        })
+
+        assert.equal(result.taskFailures.length, 1, 'only the failed gate becomes a taskFailure')
+        assert.equal(result.taskFailures[0].taskId, 'W10')
+        assert.equal(
+          result.taskFailures[0].environmental,
+          undefined,
+          'a genuinely-red gate is agent-fixable, not environmental'
+        )
+        assert.ok(
+          typeof result.environmentalFailure === 'string' &&
+            result.environmentalFailure.includes('full-suite gate could not run'),
+          `environmentalFailure names the gate — got: ${result.environmentalFailure}`
+        )
+        assert.ok(
+          result.environmentalFailure.includes('pytest'),
+          'environmentalFailure carries the first evidence line'
+        )
+      })
+
+      test('a red suite with no environmental reason → environmentalFailure stays unset', () => {
+        const result = mkResult()
+        ;(blueprintBuildService as any).pushWaveGateFailure(result, 'W9', {
+          gates: [
+            {
+              name: 'full-suite',
+              verdict: 'fail',
+              evidence: ['2 failed, 82 passed in 1.36s'],
+              durationMs: 1360
+            }
+          ],
+          overall: 'fail'
+        })
+
+        assert.equal(result.taskFailures.length, 1)
+        assert.equal(
+          result.environmentalFailure,
+          undefined,
+          'a red suite is agent-fixable — retry remains enabled'
+        )
+      })
+
+      test('saveRetryContext persists environmentalFailure into the phase snapshot', () => {
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'F4 env persist' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        const blueprintService = require('../blueprint.service').blueprintService
+
+        blueprintService.saveRetryContext(bp.id, 'build', {
+          error: 'W10: gate lint failed — semicolon expected',
+          environmentalFailure: 'full-suite gate could not run — pytest is not installed'
+        })
+
+        const rec = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'build')
+        const snap = JSON.parse(rec.contextSnapshot)
+        assert.equal(snap.attempt, 1)
+        assert.equal(
+          snap.environmentalFailure,
+          'full-suite gate could not run — pytest is not installed',
+          'the snapshot carries the environmental tag so the UI can gate Retry after reload'
+        )
+      })
+
+      test('environmental failure emits the specific escalation on the FIRST attempt', () => {
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'F4 env emit' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        const blueprintService = require('../blueprint.service').blueprintService
+
+        const events: Array<Record<string, unknown>> = []
+        const handler = (e: Record<string, unknown>): void => {
+          if (e.blueprintId === bp.id) events.push(e)
+        }
+        blueprintService.on('phaseProgress', handler)
+        try {
+          blueprintService.saveRetryContext(bp.id, 'build', {
+            error: 'W10: gate lint failed',
+            environmentalFailure: 'full-suite gate could not run — pytest is not installed'
+          })
+        } finally {
+          blueprintService.off('phaseProgress', handler)
+        }
+
+        assert.equal(events.length, 1, 'environmental failure escalates immediately, not at recurrence 3')
+        const text = String(events[0].text)
+        assert.ok(text.includes('retrying cannot fix this'), `emit says retry cannot help — got: ${text}`)
+        assert.ok(text.includes('pytest'), 'emit names the missing tool')
+      })
+
+      test('recurrence >= 3 without environmental tag still escalates (pre-existing path intact)', () => {
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'F4 recurrence' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        const blueprintService = require('../blueprint.service').blueprintService
+
+        const events: Array<Record<string, unknown>> = []
+        const handler = (e: Record<string, unknown>): void => {
+          if (e.blueprintId === bp.id) events.push(e)
+        }
+        blueprintService.on('phaseProgress', handler)
+        try {
+          for (let i = 0; i < 3; i++) {
+            blueprintService.saveRetryContext(bp.id, 'build', {
+              error: 'R045: verification failed — 2 planned missing'
+            })
+          }
+        } finally {
+          blueprintService.off('phaseProgress', handler)
+        }
+
+        assert.equal(events.length, 1, 'first escalation lands at recurrence 3, not before')
+        const snap = JSON.parse(
+          blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'build').contextSnapshot
+        )
+        assert.equal(snap.recurrence, 3)
+        assert.equal(
+          snap.environmentalFailure,
+          undefined,
+          'no environmental tag when the failure is agent-fixable'
+        )
+        assert.ok(
+          String(events[0].text).includes('recurred 3 times'),
+          'recurrence emit keeps its original wording'
+        )
+      })
+    })
   }
 }
 

@@ -85,6 +85,23 @@ export class IpcBridge extends EventEmitter {
       return this.socketPath
     }
 
+    // F6 — Windows has no Unix domain socket support in tmpdir(); the probe
+    // fails with EACCES on every single turn and falls back to TCP anyway.
+    // Go straight to the TCP path that already works there.
+    if (process.platform === 'win32') {
+      bridgeLog.info('[ipc-bridge] Windows: using TCP loopback (no Unix socket probe)')
+      try {
+        const port = await this.listenOnTcp()
+        this.socketPath = `tcp:127.0.0.1:${port}`
+        bridgeLog.info(`[ipc-bridge] Listening on TCP loopback: ${this.socketPath}`)
+        this.startHeartbeat()
+        return this.socketPath
+      } catch (err) {
+        bridgeLog.error(`[ipc-bridge] TCP loopback failed: ${(err as Error).message}`)
+        throw err
+      }
+    }
+
     // Try Unix domain socket first (fast, no port allocation, works on macOS/Linux)
     const id = randomUUID().slice(0, 8)
     const unixPath = join(tmpdir(), `code-atelier-ipc-${id}.sock`)

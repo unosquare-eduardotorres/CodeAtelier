@@ -187,7 +187,14 @@ interface BuildResult {
   /** Phase 0: Per-task timing data for build performance analysis. */
   taskTimings: TaskTiming[]
   /** Per-task failure summaries for UI surfacing instead of generic message. */
-  taskFailures: Array<{ taskId: string; reason: string }>
+  taskFailures: Array<{ taskId: string; reason: string; environmental?: boolean }>
+  /**
+   * F4 — set when a failing wave-gate report also contains an environmental
+   * reason (`command_missing` / `command_error`): the host lacks a tool, so
+   * retrying cannot change the outcome. Human-readable; flows into the retry
+   * context snapshot so the UI can disable the Retry button after reload.
+   */
+  environmentalFailure?: string
   /** DAG scheduler observability — quantifies the parallelism win and diagnoses stalls. */
   scheduler?: SchedulerStats
 }
@@ -774,7 +781,8 @@ export class BlueprintBuildService extends EventEmitter {
             filesModified: result.filesModified,
             filesCreated: result.filesCreated,
             tasksCompleted: result.tasksCompleted,
-            totalTasks
+            totalTasks,
+            environmentalFailure: result.environmentalFailure
           })
         } catch {
           /* best effort */
@@ -1128,6 +1136,7 @@ export class BlueprintBuildService extends EventEmitter {
       if (report.overall === 'fail') {
         result.failed = true
         draining = true
+        this.pushWaveGateFailure(result, `W${maxWave}`, report)
         this.safeEmit('phaseProgress', {
           blueprintId,
           workspaceId,
@@ -1932,6 +1941,7 @@ export class BlueprintBuildService extends EventEmitter {
       })
       if (waveReport.overall === 'fail') {
         result.failed = true
+        this.pushWaveGateFailure(result, `W${waveNum}`, waveReport)
         this.safeEmit('phaseProgress', {
           blueprintId,
           workspaceId,
@@ -2430,6 +2440,53 @@ export class BlueprintBuildService extends EventEmitter {
       for (const f of entry.task.packetJson?.allowedFiles ?? []) exempt.add(f)
     }
     gateCtx.exemptFiles = [...exempt]
+  }
+
+  /**
+   * F1d — turn a failing wave-gate report into a `taskFailures` entry so the
+   * phase-failure summary (and the retry context / UI) says WHY, not just
+   * "One or more build tasks failed". Gate name + verdict + the first few
+   * evidence lines — the shell's "'pytest' is not recognized" line used to be
+   * captured and never shown (incident 2026-08, ~20 blind retries).
+   */
+  private pushWaveGateFailure(
+    result: BuildResult,
+    waveLabel: string,
+    report: GateReport
+  ): void {
+    const failed = report.gates.filter((g) => g.verdict === 'fail')
+    for (const gate of failed) {
+      const evidence = gate.evidence.slice(0, 3).join(' | ')
+      result.taskFailures.push({
+        taskId: waveLabel,
+        reason: `gate ${gate.name} failed${evidence ? ` — ${evidence}` : ''}`,
+        // F4 — a FAILED gate whose reason says the runner was absent is
+        // environmental. Post-F1c these are normally `unverifiable`, but the
+        // flag keeps the entry self-describing if a future path grades them.
+        ...(gate.reason === 'command_missing' || gate.reason === 'command_error'
+          ? { environmental: true }
+          : {})
+      })
+    }
+
+    // F4 — environmental classification: scan the WHOLE report, not just the
+    // failed set. Post-F1c a missing runner is `unverifiable(command_missing)`
+    // — it sits beside the genuinely-red gates that failed the wave. Its
+    // presence means part of this failure is deterministic on this machine:
+    // no retry can make the missing tool appear (incident 2026-08, ~20 blind
+    // retries). Tag the result so the retry context — and the UI's Retry
+    // button — can say so specifically.
+    const environmental = report.gates.find(
+      (g) => g.reason === 'command_missing' || g.reason === 'command_error'
+    )
+    if (environmental && !result.environmentalFailure) {
+      const firstEvidence = (environmental.evidence[0] ?? '').trim().slice(0, 200)
+      result.environmentalFailure =
+        `${environmental.name} gate could not run` +
+        (firstEvidence
+          ? ` — ${firstEvidence}`
+          : ' — the command runner is not available on this machine')
+    }
   }
 
   /**
@@ -3225,40 +3282,61 @@ export class BlueprintBuildService extends EventEmitter {
             outcomeKind: 'unproven'
           }
         } else if (!verification.ok) {
+          // F5 — all-zero discrepancy: `!ok` with zero missing/stale/planned means
+          // there was no completion block to verify against (the turn likely
+          // died in an API/transport error before emitting one). The generic
+          // counts message would render "0 claimed missing, 0 stale, 0 planned
+          // missing" — three empty sections that explain nothing.
+          const allZero =
+            verification.missingClaimed.length === 0 &&
+            verification.staleClaimed.length === 0 &&
+            verification.missingPlanned.length === 0
           const missingList =
             verification.missingClaimed.length > 0
               ? verification.missingClaimed
               : verification.missingPlanned
-          bpLog.error(
-            `[executeTask] Task ${task.taskId} FAILED verification — ` +
-              `${verification.missingClaimed.length} claimed missing, ` +
-              `${verification.staleClaimed.length} stale, ` +
-              `${verification.missingPlanned.length} planned missing: ` +
-              `${missingList.slice(0, 10).join(', ')}${missingList.length > 10 ? ` (+${missingList.length - 10} more)` : ''}`
-          )
+          if (allZero) {
+            bpLog.error(
+              `[executeTask] Task ${task.taskId} FAILED verification — no completion block ` +
+                `in CLI output (the turn likely ended in an API/transport error); ` +
+                `no file discrepancies found`
+            )
+          } else {
+            bpLog.error(
+              `[executeTask] Task ${task.taskId} FAILED verification — ` +
+                `${verification.missingClaimed.length} claimed missing, ` +
+                `${verification.staleClaimed.length} stale, ` +
+                `${verification.missingPlanned.length} planned missing: ` +
+                `${missingList.slice(0, 10).join(', ')}${missingList.length > 10 ? ` (+${missingList.length - 10} more)` : ''}`
+            )
+          }
 
           // Append artifact so the discrepancy is visible in Deliverables
           const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
           if (buildPhase) {
             blueprintPhaseRepository.appendArtifact(buildPhase.id, {
               type: 'verification-failure',
-              contentMd:
-                `## Task ${task.taskId} — claimed files missing on disk\n\n` +
-                (verification.missingClaimed.length > 0
-                  ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
-                    verification.missingClaimed.map((f) => `- \`${f}\``).join('\n') +
-                    '\n\n'
-                  : '') +
-                (verification.staleClaimed.length > 0
-                  ? `**Claimed but stale (${verification.staleClaimed.length}):**\n` +
-                    verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
-                    '\n\n'
-                  : '') +
-                (verification.missingPlanned.length > 0
-                  ? `**Planned but absent (${verification.missingPlanned.length}):**\n` +
-                    verification.missingPlanned.map((f) => `- \`${f}\``).join('\n') +
-                    '\n'
-                  : '')
+              contentMd: allZero
+                ? `## Task ${task.taskId} — status could not be determined\n\n` +
+                  `The CLI output contained no completion block, so there were no claims ` +
+                  `to verify. This usually means the turn ended in an API or transport ` +
+                  `error before the agent could report. No file discrepancies were found.\n`
+                : `## Task ${task.taskId} — claimed files missing on disk\n\n` +
+                  (verification.missingClaimed.length > 0
+                    ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
+                      verification.missingClaimed.map((f) => `- \`${f}\``).join('\n') +
+                      '\n\n'
+                    : '') +
+                  (verification.staleClaimed.length > 0
+                    ? `**Claimed but stale (${verification.staleClaimed.length}):**\n` +
+                      verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
+                      '\n\n'
+                    : '') +
+                  (verification.missingPlanned.length > 0
+                    ? `**Planned but absent (${verification.missingPlanned.length}):**\n` +
+                      verification.missingPlanned.map((f) => `- \`${f}\``).join('\n') +
+                      '\n'
+                    : '')
             })
           }
 
@@ -3268,11 +3346,13 @@ export class BlueprintBuildService extends EventEmitter {
             blueprintId,
             workspaceId,
             phase: 'build',
-            text:
-              `⚠ Task ${task.taskId} marked FAILED — ` +
-              (verification.missingClaimed.length > 0
-                ? `claimed ${claimedFiles} file(s), ${verification.missingClaimed.length} missing on disk`
-                : `no output files found (${verification.missingPlanned.length} planned files absent)`),
+            text: allZero
+              ? `⚠ Task ${task.taskId} marked FAILED — no completion block in CLI output ` +
+                `(the turn likely ended in an API/transport error); no file discrepancies found`
+              : `⚠ Task ${task.taskId} marked FAILED — ` +
+                (verification.missingClaimed.length > 0
+                  ? `claimed ${claimedFiles} file(s), ${verification.missingClaimed.length} missing on disk`
+                  : `no output files found (${verification.missingPlanned.length} planned files absent)`),
             kind: 'system'
           })
 
@@ -3291,7 +3371,9 @@ export class BlueprintBuildService extends EventEmitter {
             verifyFailParts.push(`${verification.staleClaimed.length} stale`)
           if (verification.missingPlanned.length > 0)
             verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
-          const verifyFailReason = `verification failed — ${verifyFailParts.join(', ')}`
+          const verifyFailReason = allZero
+            ? 'verification failed — no completion block in CLI output (turn likely ended in an API/transport error)'
+            : `verification failed — ${verifyFailParts.join(', ')}`
 
           // WAVE-RACE FIX: when the session never produced a completion block
           // AND the executor emitted an error, the error is the actionable

@@ -126,6 +126,11 @@ export interface CLIExecuteOptions {
   /** MCP tool name to use for permission prompts (--permission-prompt-tool flag).
    *  When set, the CLI invokes this tool instead of auto-denying permission-gated operations. */
   permissionPromptTool?: string
+  /**
+   * F3 internal — set on the one-shot rescue respawn after the CLI rejected
+   * --permission-prompt-tool, so the retry can never recurse. Not for callers.
+   */
+  _permissionPromptRetry?: boolean
   /** Session ID for resuming an existing conversation */
   resume?: string
   /** AbortController for cancelling the CLI process */
@@ -293,6 +298,16 @@ export class CLIExecutor {
    * beta, so a request sized for the beta window overflows and yields nothing.
    */
   private betasRejected = false
+  /**
+   * F3 — stderr carried the CLI's fatal "MCP tool …permission_prompt … not
+   * found" rejection this execution. Happens when the control-actions server
+   * is in the config but failed to CONNECT: the CLI treats the flag as a
+   * guaranteed-fatal error and exits within seconds, killing the turn. Detected
+   * so the executor can strip the flag and respawn once instead of losing the
+   * turn (the permission mode — acceptEdits/bypassPermissions — is passed
+   * separately and keeps the turn alive).
+   */
+  private permissionPromptToolRejected = false
   /**
    * ToolTracker for the in-flight execute(). Exposed via getPendingToolNames()
    * so lifecycle code (the recovery nudge) can tell a live turn from an idle one
@@ -642,6 +657,7 @@ export class CLIExecutor {
     this.lastStderrError = null
     this.lastExitCode = null
     this.betasRejected = false
+    this.permissionPromptToolRejected = false
     // Belongs to the turn about to run, not the one that just ended.
     this.turnGracefullyCancelled = false
 
@@ -902,6 +918,34 @@ export class CLIExecutor {
         stderrError: this.lastStderrError
       })
       if (emptyTurn) {
+        // F3 — one-shot rescue: the turn died because the CLI rejected
+        // --permission-prompt-tool (control-actions server failed to connect).
+        // That is a spawn-configuration problem, not a session problem: strip
+        // the flag and respawn the SAME turn once. The permission mode
+        // (acceptEdits / bypassPermissions) is a separate flag that keeps the
+        // respawned turn alive. Without this, the turn is lost and the session
+        // is poisoned for good measure.
+        if (this.permissionPromptToolRejected && !options._permissionPromptRetry) {
+          executorLog.error(
+            '[CLI:permission-prompt-rescue] Turn died on --permission-prompt-tool rejection ' +
+              '(control-actions MCP server not connected) — stripping the flag and respawning once'
+          )
+          yield* this.execute({
+            ...options,
+            permissionPromptTool: undefined,
+            // Resume is SAFE here and must be preserved: the CLI rejects the
+            // flag at startup, BEFORE any turn writes to the session, so the
+            // session is clean and resumable. Stripping resume would orphan
+            // the session history this turn belongs to. Only the fatal flag is
+            // removed; `continueSession: false` forces the fresh spawn that
+            // carries the same resume id. If the resumed session then yields
+            // zero output, the poisoned-session path below handles it — no new
+            // machinery needed.
+            continueSession: false,
+            _permissionPromptRetry: true
+          })
+          return
+        }
         executorLog.error(
           `[CLI:empty-turn] reason=${emptyTurn.reason} exitCode=${this.lastExitCode ?? 'null'} ` +
             `— process produced zero NDJSON messages`
@@ -1501,6 +1545,15 @@ export class CLIExecutor {
       // empty turn can be classified rather than reported as a generic crash.
       if (/Custom betas are only available for API key users/i.test(text)) {
         this.betasRejected = true
+      }
+      // F3 — fatal permission-prompt-tool rejection: the control-actions MCP
+      // server did not connect, so the tool the flag names does not exist.
+      if (
+        /MCP tool\s+\S*permission_prompt\s+\(passed via --permission-prompt-tool\)\s+not found/i.test(
+          text
+        )
+      ) {
+        this.permissionPromptToolRejected = true
       }
       if (STDERR_ERROR_PATTERN.test(text)) {
         executorLog.error(`[CLI:stderr-ERROR] ${text.slice(0, 500)}`)

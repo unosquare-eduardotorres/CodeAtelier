@@ -126,7 +126,10 @@ describe('mountExternalMcps — bundled server entry', () => {
   test('bundled entry becomes `node <basePath>/<entry>.js`, never a PATH lookup', () => {
     withShellEnv(SHELL_JIRA, () => {
       const jira = build({ externalMcpActive: { jira: true } }).mcpServers!.jira
-      assert.equal(jira.command, 'node')
+      // F2 — bundled servers run via our own binary with ELECTRON_RUN_AS_NODE=1:
+      // a bare `node` does not exist on machines without a Node install.
+      assert.equal(jira.command, process.execPath)
+      assert.equal(jira.env?.ELECTRON_RUN_AS_NODE, '1')
       assert.equal(jira.args.length, 1)
       assert.match(jira.args[0], /mcp-servers[/\\]jira-server\.js$/)
       assert.equal(jira.type, 'stdio')

@@ -44,6 +44,11 @@ function safeFiles(files: readonly string[]): string[] {
 /**
  * Build the narrow test command for `files` under `toolchain`.
  *
+ * `pythonPrefix` (from `pythonRunnerPrefix`) prepends the environment-aware
+ * runner to the `pytest` template — the same venv/uv/`python -m` chain the
+ * full-suite gate uses. Without it a per-task gate emits bare `pytest`, which
+ * a .gitignored venv guarantees is missing inside a blueprint worktree.
+ *
  * Returns null when the toolchain cannot honestly target the given files
  * (e.g. `cargo test` has no file filter, `dotnet test` filters by test name
  * not path) — the caller then reports `no_command`, which is the truthful
@@ -51,7 +56,8 @@ function safeFiles(files: readonly string[]): string[] {
  */
 export function buildTestCommand(
   toolchain: TestTargetingToolchain | undefined,
-  files: readonly string[]
+  files: readonly string[],
+  pythonPrefix = ''
 ): string | null {
   if (!toolchain) return null
   const safe = safeFiles(files)
@@ -65,7 +71,7 @@ export function buildTestCommand(
       // Jest takes positional regex patterns; exact-ish paths work as patterns.
       return `npx jest ${safe.join(' ')}`
     case 'pytest':
-      return `pytest ${safe.join(' ')}`
+      return `${pythonPrefix} pytest ${safe.join(' ')}`.trim()
     case 'go': {
       // Go targets PACKAGES, not files: map each _test.go file to its package
       // directory. Non-test files contribute their package too — the task's

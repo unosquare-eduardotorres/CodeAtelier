@@ -33,6 +33,7 @@ import { appPreferenceRepository } from '../db/repositories/app-preference.repos
 import { workspaceRepository } from '../db/repositories/workspace.repository'
 import { mountExternalIntegrations } from './cli-mcp-config-builders'
 import { resolveActiveIntegrationEnvs } from './integration-credentials'
+import { nodeCommand, withNodeRuntimeEnv } from './node-runtime'
 
 const configLog = log.scope('CliMcpConfigWriter')
 
@@ -192,9 +193,12 @@ export class CliMcpConfigWriter {
         )
       : join(__dirname, 'mcp-servers')
 
-    // DB-backed MCP servers run as plain `node` (no Electron app global), so they can't
+    // DB-backed MCP servers run as plain Node (no Electron app global), so they can't
     // resolve app.getPath('userData'). Pass the userData dir explicitly via DB_PATH.
+    // Spawned via the app binary with ELECTRON_RUN_AS_NODE=1 — never a PATH `node`,
+    // which does not exist on end-user machines without a Node install (F2).
     const dbDir = app.getPath('userData')
+    const node = nodeCommand()
 
     log.info(`[cli-mcp-config] serverBasePath=${serverBasePath} isPackaged=${app.isPackaged}`)
 
@@ -236,36 +240,36 @@ export class CliMcpConfigWriter {
         DB_PATH: dbDir
       }
       servers['code-graph'] = {
-        command: 'node',
+        command: node,
         args: [join(serverBasePath, 'code-graph-server.js')],
-        env: codeGraphEnv
+        env: withNodeRuntimeEnv(codeGraphEnv)
       }
     }
 
     // ── Semantic Search ── (also repo-wide; embeddings are indexed per workspace)
     if (featureFlags.semanticSearchEnabled && workspaceId) {
       servers['semantic-search'] = {
-        command: 'node',
+        command: node,
         args: [join(serverBasePath, 'semantic-search-server.js')],
-        env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
+        env: withNodeRuntimeEnv({ WORKSPACE_ID: workspaceId, DB_PATH: dbDir })
       }
     }
 
     // ── Memory ──
     if (workspaceId) {
       servers['memory'] = {
-        command: 'node',
+        command: node,
         args: [join(serverBasePath, 'memory-server.js')],
-        env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
+        env: withNodeRuntimeEnv({ WORKSPACE_ID: workspaceId, DB_PATH: dbDir })
       }
     }
 
     // ── Recall ── (past plans + surrounding conversation)
     if (workspaceId) {
       servers['recall'] = {
-        command: 'node',
+        command: node,
         args: [join(serverBasePath, 'recall-server.js')],
-        env: { WORKSPACE_ID: workspaceId, DB_PATH: dbDir }
+        env: withNodeRuntimeEnv({ WORKSPACE_ID: workspaceId, DB_PATH: dbDir })
       }
     }
 
@@ -275,9 +279,9 @@ export class CliMcpConfigWriter {
     // Pointed at the primary tree it answered "what changed" with the user's
     // uncommitted edits instead of the agent's.
     servers['git-context'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'git-context-server.js')],
-      env: { WORKSPACE_PATH: executionPath }
+      env: withNodeRuntimeEnv({ WORKSPACE_PATH: executionPath })
     }
 
     // ── Code Analysis ── (per-tree: lints and typechecks the files it wrote)
@@ -289,16 +293,16 @@ export class CliMcpConfigWriter {
     const context7Key = appPreferenceRepository.get('context7_api_key')
     if (context7Key) codeAnalysisEnv.CONTEXT7_API_KEY = context7Key
     servers['code-analysis'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'code-analysis-server.js')],
-      env: codeAnalysisEnv
+      env: withNodeRuntimeEnv(codeAnalysisEnv)
     }
 
     // ── Process Manager ── (per-tree: dev servers run against the tree's code)
     servers['process-manager'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'process-manager-server.js')],
-      env: { WORKSPACE_PATH: executionPath }
+      env: withNodeRuntimeEnv({ WORKSPACE_PATH: executionPath })
     }
 
     // ── Control Actions ── (per-tree: file actions resolve against the cwd)
@@ -313,9 +317,9 @@ export class CliMcpConfigWriter {
       controlEnv.CONVERSATION_ID = opts.conversationId
     }
     servers['control-actions'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'control-actions-server.js')],
-      env: controlEnv
+      env: withNodeRuntimeEnv(controlEnv)
     }
 
     // ── External MCP Integrations (Maestro, Jira, etc.) ──

@@ -38,7 +38,7 @@ import {
   type ResolvedGateCommands
 } from '../../shared/gate-command-types'
 import { buildTestCommand, detectTestToolchain } from '../../shared/gate-test-targeting'
-import type { WorkspaceManifests } from '../../shared/gate-command-detect'
+import { pythonRunnerPrefix, type WorkspaceManifests } from '../../shared/gate-command-detect'
 import {
   countTests,
   evaluateTestIntegrity,
@@ -442,7 +442,11 @@ function taskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined 
   const testFiles = ctx.packet?.testFiles
   if (testFiles?.length) {
     const toolchain = ctx.manifests ? detectTestToolchain(ctx.manifests) : null
-    const template = buildTestCommand(toolchain ?? undefined, testFiles)
+    // Same environment-aware runner chain as the full-suite gate: a bare
+    // `pytest` template is unverifiable-by-construction inside a worktree
+    // whose .gitignored venv never made it there.
+    const pythonPrefix = ctx.manifests ? pythonRunnerPrefix(ctx.manifests) : ''
+    const template = buildTestCommand(toolchain ?? undefined, testFiles, pythonPrefix)
     if (template) {
       if (!isSafeGateCommand(template)) {
         gateLog.warn(
@@ -484,6 +488,34 @@ const unverifiable = (
   evidence: string[],
   durationMs = 0
 ): GateResult => result(name, 'unverifiable', evidence, { reason, durationMs })
+
+/**
+ * Shell signatures of "the runner itself is not installed on this machine".
+ *
+ * With `shell: true` a missing binary is NOT a spawnError — the shell starts
+ * fine and exits 1, so `exitCode !== 0` alone cannot distinguish a red suite
+ * from an absent tool. These strings can (incident 2026-08: bare `pytest` on a
+ * machine with no PATH pytest failed ~20 consecutive BUILD retries, each in
+ * <100ms, because the shell's "'pytest' is not recognized" line was captured
+ * but never inspected).
+ */
+const MISSING_COMMAND_SIGNATURES = [
+  'is not recognized as', // cmd.exe / PowerShell
+  'command not found', // sh / bash / zsh
+  'no module named' // `python -m <runner>` with the runner absent
+] as const
+
+/** True when the output shows the command's binary was never executed. */
+function isCommandMissing(output: readonly string[]): boolean {
+  // Only the first two lines are scanned: every shell prints its "not found"
+  // signature as the FIRST line of output, before any runner header. A red
+  // suite's assertion text can legitimately quote those strings (a test
+  // asserting on subprocess error text) — that appears AFTER the header, and
+  // matching it would flip a real regression to `unverifiable`, failing open.
+  return output
+    .slice(0, 2)
+    .some((line) => MISSING_COMMAND_SIGNATURES.some((sig) => line.toLowerCase().includes(sig)))
+}
 
 // ── Change collection ──
 
@@ -775,6 +807,19 @@ async function gateCommand(
     )
   }
   if (outcome.exitCode !== 0) {
+    // A missing runner is environmental, not a code failure: grading it `fail`
+    // fails the phase deterministically and no retry can ever change it.
+    if (isCommandMissing(outcome.output)) {
+      return unverifiable(
+        name,
+        'command_missing',
+        [
+          `${command.command} — the runner is not installed on this machine`,
+          ...outcome.output
+        ],
+        outcome.durationMs
+      )
+    }
     return result(
       name,
       'fail',
@@ -832,6 +877,19 @@ async function gateTaskTests(
     )
   }
   if (outcome.exitCode !== 0 || outcome.timedOut) {
+    // Same environmental distinction as `gateCommand`: a task-test command whose
+    // binary is absent is `unverifiable`, never a red-suite `fail`.
+    if (!outcome.timedOut && isCommandMissing(outcome.output)) {
+      return unverifiable(
+        'task-tests',
+        'command_missing',
+        [
+          `${command.command} — the runner is not installed on this machine`,
+          ...outcome.output
+        ],
+        outcome.durationMs
+      )
+    }
     return result(
       'task-tests',
       'fail',

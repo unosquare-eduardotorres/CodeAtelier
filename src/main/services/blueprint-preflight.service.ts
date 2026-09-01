@@ -813,6 +813,28 @@ function findDotnetProjects(root: string): string[] {
 }
 
 /**
+ * Locate the project's virtualenv interpreter, resolved against the SOURCE
+ * workspace — never the worktree. A `.venv` is almost always .gitignored, so
+ * it does not exist inside a blueprint git worktree; resolving against the
+ * source checkout is what makes the gate runnable there (incident 2026-08:
+ * bare `pytest` failed ~20 consecutive BUILD retries for exactly this reason).
+ */
+function findVenvPython(workspacePath: string): string | undefined {
+  const candidates =
+    process.platform === 'win32'
+      ? [join(workspacePath, '.venv', 'Scripts', 'python.exe'), join(workspacePath, 'venv', 'Scripts', 'python.exe')]
+      : [join(workspacePath, '.venv', 'bin', 'python'), join(workspacePath, 'venv', 'bin', 'python')]
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate)) return candidate
+    } catch {
+      // Unreadable dir — try the next candidate.
+    }
+  }
+  return undefined
+}
+
+/**
  * Read the workspace's toolchain manifests into the pure detector's input shape.
  *
  * All I/O lives here so `detectGateCommands` stays a pure function over a
@@ -837,7 +859,9 @@ export function readWorkspaceManifests(workspacePath: string): WorkspaceManifest
     pyprojectToml: readIfExists(join(workspacePath, 'pyproject.toml')),
     hasPytestConfig:
       present.has('pytest.ini') || present.has('tox.ini') || present.has('setup.cfg'),
-    goMod: readIfExists(join(workspacePath, 'go.mod'))
+    goMod: readIfExists(join(workspacePath, 'go.mod')),
+    venvPython: findVenvPython(workspacePath),
+    hasUvLock: present.has('uv.lock')
   }
 }
 

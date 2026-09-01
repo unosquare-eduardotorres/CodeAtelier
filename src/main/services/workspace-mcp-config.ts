@@ -271,11 +271,15 @@ function mountExternalMcps(
           resolveIntegrationEnv(integration, workspaceId)
         )
 
+        // Bundled first-party servers run via our own binary with
+        // ELECTRON_RUN_AS_NODE=1 — never a PATH `node`, which does not exist on
+        // machines without a Node install (F2).
+        const bundled = Boolean(integration.bundledServerEntry)
         const stdioConfig: McpServerConfig = {
           type: 'stdio',
-          ...(integration.bundledServerEntry
+          ...(bundled
             ? {
-                command: 'node',
+                command: process.execPath,
                 args: [join(resolveMcpServerBasePath(), `${integration.bundledServerEntry}.js`)]
               }
             : {
@@ -283,7 +287,11 @@ function mountExternalMcps(
                 args: [...integration.args]
               }),
           alwaysLoad: true,
-          ...(finalEnv ? { env: finalEnv } : {})
+          ...(bundled
+            ? { env: { ELECTRON_RUN_AS_NODE: '1', ...(finalEnv ?? {}) } }
+            : finalEnv
+              ? { env: finalEnv }
+              : {})
         }
         servers[integration.id] = stdioConfig
 

@@ -59,6 +59,12 @@ export type UnverifiableReason =
   | 'timeout'
   /** The command could not be spawned at all (binary missing, cwd gone). */
   | 'command_error'
+  /**
+   * The command ran but its output shows the RUNNER itself is absent from this
+   * machine ("is not recognized as", "command not found", "No module named").
+   * Environmental, not a code failure — retrying cannot change it.
+   */
+  | 'command_missing'
   /** The packet declared test files, but none of them exist on disk. */
   | 'no_tests'
   /** The task's tests were green BEFORE the build session — they prove nothing. */
