@@ -408,6 +408,7 @@ export class AgentRecoveryManager {
         `[PIPELINE:recovery-nudge-triggered] conversationId=${conversationId} ` +
           `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
       )
+      const isOpencodeBackend = this.s.executorBackend === 'opencode'
       const recoveryResult = await this.s.recoveryNudge.attemptRecovery({
         cliExecutor: nudgeExecutor!,
         systemPrompt,
@@ -422,8 +423,46 @@ export class AgentRecoveryManager {
         // SSE-RETRY FIX (C): never spawn the Claude CLI nudge when the
         // conversation runs on the OpenCode backend — its `ses_…` session IDs
         // are not CLI UUIDs and `claude --resume` rejects them.
-        skipCliTurn:
-          this.s.llmProvider === 'local-llm' || this.s.executorBackend === 'opencode',
+        // OPENCODE-RECOVERY (verify 8bb7c4de incident): instead of skipping to
+        // the italic fallback, route the recovery turn through the OpenCode
+        // executor on the SAME session — the model gets a real chance to emit
+        // the summary/completion block it omitted.
+        ...(isOpencodeBackend
+          ? {
+              opencodeRecovery: async (o: {
+                prompt: string
+                onChunk: (chunk: StreamChunk) => void
+              }): Promise<string | null> => {
+                const sid = this.s.sessionMap.get(conversationId)
+                if (!sid) {
+                  this.s.log.warn(
+                    `[PIPELINE:recovery-nudge-opencode-no-session] conversationId=${conversationId} — no OpenCode session mapped`
+                  )
+                  return null
+                }
+                let text = ''
+                try {
+                  const iter = this.s.executeOpenCodeRecoveryTurn({
+                    sessionId: sid,
+                    prompt: o.prompt,
+                    onChunk: (c) => {
+                      if (c.type === 'text' && c.content) text += c.content
+                      o.onChunk(c)
+                    }
+                  })
+                  for await (const _c of iter) {
+                    /* chunks already forwarded via onChunk */
+                  }
+                } catch (err) {
+                  this.s.log.error('[PIPELINE:recovery-nudge-opencode-exec-failed]', err)
+                  return null
+                }
+                return text.trim() ? text : null
+              }
+            }
+          : {
+              skipCliTurn: this.s.llmProvider === 'local-llm'
+            }),
         sessionId: this.s.sessionMap.get(conversationId),
         conversationId,
         workspaceId: this.s.workspaceId,

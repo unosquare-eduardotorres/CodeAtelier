@@ -157,6 +157,16 @@ export interface AgentSessionHost {
   clearSession(conversationId: string): void
   /** Save local plan state for the given conversation (used by circuit breaker recovery) */
   saveCurrentPlanState(conversationId: string): void
+  /**
+   * OPENCODE-RECOVERY: one-shot recovery turn on an existing OpenCode session
+   * (recovery-nudge path — the main turn ended without a summary/completion
+   * block). Fresh abort scope; chunks forwarded via onChunk.
+   */
+  executeOpenCodeRecoveryTurn(params: {
+    sessionId: string
+    prompt: string
+    onChunk: (chunk: StreamChunk) => void
+  }): AsyncGenerator<StreamChunk>
 }
 
 // ── Static constants (replicated from AgentSessionService) ──

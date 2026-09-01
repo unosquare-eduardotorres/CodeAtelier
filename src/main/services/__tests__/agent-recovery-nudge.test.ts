@@ -220,6 +220,56 @@ describe('agent-recovery-nudge › attemptRecovery', () => {
   })
 })
 
+describe('agent-recovery-nudge › OPENCODE-RECOVERY (verify 8bb7c4de incident)', () => {
+  test('opencodeRecovery callback replaces the CLI turn and its text counts as recovered', async () => {
+    let cliExecutions = 0
+    const cliExec = {
+      execute: async function* (): AsyncGenerator<StreamChunk> {
+        cliExecutions++
+        yield { type: 'text', content: 'SHOULD NOT APPEAR' } as StreamChunk
+      }
+    } as unknown as CLIExecutor
+    const opts = baseOpts({
+      cliExecutor: cliExec,
+      sessionId: 'ses_opencode123',
+      opencodeRecovery: async ({ onChunk }) => {
+        onChunk({ type: 'text', content: 'Here is my summary.' })
+        return 'Here is my summary.'
+      }
+    })
+    const result = await new RecoveryNudgeService().attemptRecovery(opts)
+
+    assert.equal(result.recovered, true)
+    assert.equal(result.text, 'Here is my summary.')
+    // The CLI executor must NEVER be touched — recovery went through OpenCode.
+    assert.equal(cliExecutions, 0)
+  })
+
+  test('opencodeRecovery returning null falls through to the fallback message', async () => {
+    const opts = baseOpts({
+      sessionId: 'ses_opencode123',
+      opencodeRecovery: async () => null
+    })
+    const result = await new RecoveryNudgeService().attemptRecovery(opts)
+
+    assert.equal(result.recovered, false)
+    assert.match(result.text, /didn't produce a summary/)
+  })
+
+  test('opencodeRecovery throwing is swallowed → fallback message (never wedges)', async () => {
+    const opts = baseOpts({
+      sessionId: 'ses_opencode123',
+      opencodeRecovery: async () => {
+        throw new Error('server gone')
+      }
+    })
+    const result = await new RecoveryNudgeService().attemptRecovery(opts)
+
+    assert.equal(result.recovered, false)
+    assert.match(result.text, /didn't produce a summary/)
+  })
+})
+
 describe('agent-recovery-nudge › SSE-RETRY FIX (C): opencode session-ID guard', () => {
   test('isUuidSessionId accepts canonical UUIDs (case-insensitive)', () => {
     assert.ok(isUuidSessionId('a1b2c3d4-e5f6-7890-abcd-ef1234567890'))

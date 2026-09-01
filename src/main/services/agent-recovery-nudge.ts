@@ -33,6 +33,20 @@ export interface RecoveryNudgeOptions {
    * Claude CLI.
    */
   skipCliTurn?: boolean
+  /**
+   * OPENCODE-RECOVERY (verify 8bb7c4de incident): recovery turn for OpenCode
+   * sessions. The CLI resume path cannot resume a `ses_…` ID, so without this
+   * the nudge skipped the actual recovery and emitted only the italic fallback
+   * — a model that ended its turn without the required completion block then
+   * failed the whole phase (live: verify gates all green, parser null,
+   * phase 'failed'). The callback fires promptAsync-shaped recovery on the
+   * SAME OpenCode session and awaits its text; when provided it replaces the
+   * CLI turn entirely.
+   */
+  opencodeRecovery?: (opts: {
+    prompt: string
+    onChunk: (chunk: StreamChunk) => void
+  }) => Promise<string | null>
   /** Callback to capture new session ID from recovery response */
   onSessionCapture: (sessionId: string) => void
   /** Callback to emit stream chunks to the renderer */
@@ -175,7 +189,31 @@ export class RecoveryNudgeService {
     // is rejected by the CLI and only produces garbage fallback text). An
     // undefined sessionId is fine: the nudge then spawns a fresh CLI session.
     const sessionIdNotCliShaped = opts.sessionId !== undefined && !isUuidSessionId(opts.sessionId)
-    if (opts.skipCliTurn || sessionIdNotCliShaped) {
+    if (opts.opencodeRecovery) {
+      // OPENCODE-RECOVERY: the session service supplies the backend-aware turn.
+      // The prompt asks for the summary only — same contract as the CLI branch.
+      this.log.info(
+        `[PIPELINE:recovery-nudge-opencode] conversationId=${opts.conversationId} — ` +
+          `sending recovery turn through the OpenCode session`
+      )
+      try {
+        const text = await opts.opencodeRecovery({
+          prompt: opts.isBuildMode
+            ? '[System: Your previous response ended after tool calls without a final summary. Summarize what you found and executed in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
+            : '[System: Your previous response ended after tool calls without providing a summary. Summarize what you found in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]',
+          onChunk: opts.onChunk
+        })
+        if (text && text.trim().length > 0) {
+          recovered = true
+          recoveredText = text
+          this.log.info(
+            `[PIPELINE:recovery-nudge-opencode-success] conversationId=${opts.conversationId} textLen=${text.length}`
+          )
+        }
+      } catch (err) {
+        this.log.error('[PIPELINE:recovery-nudge-opencode-failed]', err)
+      }
+    } else if (opts.skipCliTurn || sessionIdNotCliShaped) {
       this.log.info(
         `[PIPELINE:recovery-nudge-skip-cli] ${
           sessionIdNotCliShaped

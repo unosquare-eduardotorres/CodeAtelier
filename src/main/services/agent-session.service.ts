@@ -2454,6 +2454,62 @@ export class AgentSessionService extends AgentBaseService {
    * Supports 75+ providers through a single executor. Uses OpenCode's
    * built-in agent loop, MCP support, and session management.
    */
+  /**
+   * OPENCODE-RECOVERY (verify 8bb7c4de incident): a one-shot recovery turn on
+   * an EXISTING OpenCode session, for the recovery-nudge path. The main stream
+   * already ended (turn closed without a summary/completion block); this
+   * re-prompts the same session so the model can emit what it omitted.
+   * Reuses the same provider/config resolution as executeOpenCodeStream and a
+   * fresh abort scope so it cannot be cancelled by the completed main turn.
+   */
+  async *executeOpenCodeRecoveryTurn(params: {
+    sessionId: string
+    prompt: string
+    onChunk: (chunk: StreamChunk) => void
+  }): AsyncGenerator<StreamChunk> {
+    let providerConfig: OpenCodeProviderConfig
+    try {
+      providerConfig = this.resolveOpenCodeProviderConfig()
+    } catch {
+      providerConfig = {
+        providerId: 'anthropic',
+        modelId: 'claude-sonnet-4-6',
+        baseUrl: undefined,
+        apiKey: undefined
+      }
+    }
+
+    // Recovery runs after the main turn — do NOT reuse its AbortController.
+    const abortController = new AbortController()
+    const RECOVERY_TIMEOUT_MS = 120_000
+    const timeoutId = setTimeout(() => abortController.abort(), RECOVERY_TIMEOUT_MS)
+    let textLen = 0
+    try {
+      for await (const chunk of openCodeExecutor.execute({
+        prompt: params.prompt,
+        systemPrompt: '',
+        provider: providerConfig,
+        cwd: this.workspacePath!,
+        abortController,
+        conversationId: this.currentConversationId ?? undefined,
+        maxTurns: 0
+        // Session resume: execute() resolves the session via the
+        // conversationId -> sessionMap pairing (getOrCreateSession), which the
+        // recovery manager already verified holds the sessionId — the map IS
+        // the resume mechanism.
+      })) {
+        if (chunk.type === 'text' && chunk.content) textLen += chunk.content.length
+        params.onChunk(chunk)
+        yield chunk
+      }
+    } finally {
+      clearTimeout(timeoutId)
+      this.log.info(
+        `[opencode] Recovery turn complete — textLen=${textLen} (session=${params.sessionId})`
+      )
+    }
+  }
+
   private async *executeOpenCodeStream(params: {
     prompt: string
     images?: ImageAttachment[]
