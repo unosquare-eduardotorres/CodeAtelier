@@ -369,11 +369,40 @@ export function BlueprintDetailView({
             const failedPhase = bp.phases.find((p) => p.status === 'failed')
             const errorMsg = lastError?.blueprintId === bp.id ? lastError.message : null
 
+            // F4 — environmental blocker from the persisted retry-context
+            // snapshot. saveRetryContext writes `environmentalFailure` when the
+            // failing gates included command_missing/command_error: the host
+            // lacks a tool, so no retry can succeed (incident 2026-08, ~20
+            // blind retries). Read from the phase record — survives reload.
+            let environmentalFailure: string | null = null
+            if (failedPhase?.contextSnapshot) {
+              try {
+                const snap = JSON.parse(failedPhase.contextSnapshot) as Record<string, unknown>
+                if (typeof snap.environmentalFailure === 'string' && snap.environmentalFailure) {
+                  environmentalFailure = snap.environmentalFailure
+                }
+              } catch {
+                /* malformed snapshot — treat as absent */
+              }
+            }
+
             // When lastError is null (ephemeral, or gaps_found path), derive context
             // from the phase's own artifact data.
-            let failureContext: { title: string; description: string; isGaps: boolean } | null =
-              null
-            if (!errorMsg && failedPhase) {
+            let failureContext: {
+              title: string
+              description: string
+              isGaps: boolean
+              isEnvironmental?: boolean
+            } | null = null
+            if (environmentalFailure) {
+              // Environmental outranks gaps: it explains why retrying cannot help.
+              failureContext = {
+                title: 'Environmental Failure — Retry Disabled',
+                description: environmentalFailure,
+                isGaps: false,
+                isEnvironmental: true
+              }
+            } else if (!errorMsg && failedPhase) {
               const verifyArt = findArtifact(failedPhase.artifactsJson, 'verify', 'verification')
               const json = verifyArt?.contentJson as Record<string, unknown> | undefined
               const overallStatus = json?.overallStatus as string | undefined
@@ -418,12 +447,12 @@ export function BlueprintDetailView({
               <div className="flex flex-col gap-2" key="failed-banner">
                 <div
                   className={`flex items-start gap-3 px-4 py-3 rounded-xl border ${
-                    failureContext?.isGaps
+                    failureContext?.isGaps || failureContext?.isEnvironmental
                       ? 'border-warning/20 bg-warning/5 text-warning'
                       : 'border-danger/20 bg-danger-muted text-danger'
                   }`}
                 >
-                  {failureContext?.isGaps ? (
+                  {failureContext?.isGaps || failureContext?.isEnvironmental ? (
                     <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
                   ) : (
                     <XCircle size={16} className="mt-0.5 flex-shrink-0" />
@@ -438,18 +467,50 @@ export function BlueprintDetailView({
                         errorMsg ??
                         'An error occurred during this phase. Retry to try again.'}
                     </span>
+                    {failureContext?.isEnvironmental && (
+                      <span className="text-[11px] opacity-70 leading-relaxed">
+                        Retrying cannot fix this — the failure is on this machine, not in the code.
+                        Install the missing tool (or make sure it is on PATH), or declare a fenced
+                        <code className="mx-1 px-1 py-0.5 rounded bg-warning/10 font-mono text-[10px]">
+                          gate-commands
+                        </code>
+                        block in the plan artifact to override detection. Then retry.
+                      </span>
+                    )}
                   </div>
-                  <button
-                    onClick={onRetryPhase}
-                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
-                      failureContext?.isGaps
-                        ? 'bg-warning hover:bg-warning/80'
-                        : 'bg-danger hover:bg-danger/80'
-                    }`}
-                  >
-                    <RotateCcw size={12} />
-                    {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
-                  </button>
+                  <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                    <button
+                      onClick={onRetryPhase}
+                      disabled={failureContext?.isEnvironmental === true}
+                      title={
+                        failureContext?.isEnvironmental
+                          ? 'Retry is disabled: this failure is environmental and deterministic — retrying cannot change it'
+                          : undefined
+                      }
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors flex-shrink-0 ${
+                        failureContext?.isEnvironmental
+                          ? 'bg-text-muted opacity-50 cursor-not-allowed'
+                          : failureContext?.isGaps
+                            ? 'bg-warning hover:bg-warning/80'
+                            : 'bg-danger hover:bg-danger/80'
+                      }`}
+                    >
+                      <RotateCcw size={12} />
+                      {failureContext?.isGaps ? 'Fix Gaps' : 'Retry'}
+                    </button>
+                    {/* F4 — recovery path: the disable breaks the blind-retry loop,
+                        but the user who HAS remediated (installed the tool,
+                        declared gate-commands) must still be able to retry. */}
+                    {failureContext?.isEnvironmental && (
+                      <button
+                        type="button"
+                        onClick={onRetryPhase}
+                        className="text-[10px] underline underline-offset-2 opacity-70 hover:opacity-100 transition-opacity"
+                      >
+                        I&apos;ve fixed it — retry anyway
+                      </button>
+                    )}
+                  </div>
                 </div>
                 {failedTaskList && failedTaskList.shown.length > 0 && (
                   <div className="px-4 py-3 rounded-xl border border-danger/20 bg-danger-muted/40 text-danger">
