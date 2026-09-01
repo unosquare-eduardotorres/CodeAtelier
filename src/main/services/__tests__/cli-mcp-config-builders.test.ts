@@ -52,6 +52,18 @@ describe('buildCoreServers', () => {
     assert.equal(servers['code-graph'].env?.DB_PATH, '/app/data')
   })
 
+  test('F2: every server spawns via execPath with ELECTRON_RUN_AS_NODE=1', () => {
+    const servers = buildCoreServers(makeParams())
+    for (const [id, entry] of Object.entries(servers)) {
+      assert.equal(
+        entry.command,
+        process.execPath,
+        `${id} must spawn the app binary, not a PATH 'node'`
+      )
+      assert.equal(entry.env?.ELECTRON_RUN_AS_NODE, '1', `${id} must set ELECTRON_RUN_AS_NODE`)
+    }
+  })
+
   test('repomapEnabled=false → no code-graph server', () => {
     const servers = buildCoreServers(
       makeParams({
@@ -224,13 +236,13 @@ describe('mountExternalIntegrations', () => {
     assert.deepEqual(servers['maestro'].env, env)
   })
 
-  test('empty resolved env → env property omitted', () => {
+  test('empty resolved env → env property omitted for non-bundled', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
     mountExternalIntegrations(servers, { maestro: true }, { maestro: {} }, '/nonexistent', BASE)
     assert.equal(servers['maestro'].env, undefined)
   })
 
-  test('bundledServerEntry → mounted as node <basePath>/<entry>.js', () => {
+  test('bundledServerEntry → mounted as execPath <basePath>/<entry>.js with ELECTRON_RUN_AS_NODE', () => {
     const servers: Record<string, CliMcpServerEntry> = {}
     mountExternalIntegrations(
       servers,
@@ -239,8 +251,12 @@ describe('mountExternalIntegrations', () => {
       '/nonexistent',
       BASE
     )
-    assert.equal(servers['jira'].command, 'node')
+    // F2: bundled servers run via the app binary (Electron-as-Node), never a
+    // PATH `node` — end-user machines frequently have no Node installed.
+    assert.equal(servers['jira'].command, process.execPath)
     assert.deepEqual(servers['jira'].args, [`${BASE}/jira-server.js`])
+    assert.equal(servers['jira'].env?.ELECTRON_RUN_AS_NODE, '1')
+    assert.equal(servers['jira'].env?.JIRA_BASE_URL, 'https://x.atlassian.net')
   })
 
   test('commandPaths resolution → uses first existing path', () => {

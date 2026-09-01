@@ -113,7 +113,9 @@ describe('buildMinimalMcpConfig', () => {
     const mem = config.mcpServers['memory']
     assert.equal(mem.env.WORKSPACE_ID, 'ws-123')
     assert.ok(mem.env.DB_PATH, 'should have DB_PATH')
-    assert.equal(mem.command, 'node')
+    // F2: app binary with ELECTRON_RUN_AS_NODE, never a PATH `node`.
+    assert.equal(mem.command, process.execPath)
+    assert.equal(mem.env.ELECTRON_RUN_AS_NODE, '1')
     assert.ok(
       mem.args[0].endsWith('memory-server.js'),
       `expected memory-server.js, got ${mem.args[0]}`
@@ -126,7 +128,8 @@ describe('buildMinimalMcpConfig', () => {
     assert.equal(cg.env.WORKSPACE_ID, 'ws-123')
     assert.equal(cg.env.WORKSPACE_PATH, '/workspace/path')
     assert.ok(cg.env.DB_PATH, 'should have DB_PATH')
-    assert.equal(cg.command, 'node')
+    assert.equal(cg.command, process.execPath)
+    assert.equal(cg.env.ELECTRON_RUN_AS_NODE, '1')
     assert.ok(
       cg.args[0].endsWith('code-graph-server.js'),
       `expected code-graph-server.js, got ${cg.args[0]}`

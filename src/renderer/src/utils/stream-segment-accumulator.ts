@@ -76,11 +76,16 @@ export class StreamSegmentAccumulator {
     // Splitting happens when new text arrives after tools (in the SentenceBuffer callback).
     const existingIdx = this.currentToolActivities.findIndex((a) => a.id === activity.id)
     if (existingIdx >= 0) {
+      // Undefined-skipping merge — an emitter listing a field explicitly with
+      // an undefined value (e.g. editDiffs on a tool_result frame) must never
+      // clobber the value captured at tool_use time.
+      const existing = this.currentToolActivities[existingIdx]
+      const merged = { ...existing }
+      for (const [k, v] of Object.entries(activity)) {
+        if (v !== undefined) (merged as Record<string, unknown>)[k] = v
+      }
       this.currentToolActivities = [...this.currentToolActivities]
-      this.currentToolActivities[existingIdx] = {
-        ...this.currentToolActivities[existingIdx],
-        ...activity
-      } as ToolActivity
+      this.currentToolActivities[existingIdx] = merged as ToolActivity
     } else {
       // Defence in depth: an elapsed-only heartbeat update must never create a
       // row. Progress frames carry no startedAt/completedAt, so a row minted

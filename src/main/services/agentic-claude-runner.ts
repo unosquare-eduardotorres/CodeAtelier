@@ -87,12 +87,17 @@ export function buildMinimalMcpConfig(
 
   const dbDir = app.getPath('userData')
   const mcpServers: Record<string, McpServerEntry> = {}
+  // Bundled servers run via the app binary with ELECTRON_RUN_AS_NODE=1 — a
+  // literal `node` does not exist on machines without a Node install (F2).
+  const node = process.execPath
+  const nodeEnv = { ELECTRON_RUN_AS_NODE: '1' }
 
   if (servers.includes('code-graph')) {
     mcpServers['code-graph'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'code-graph-server.js')],
       env: {
+        ...nodeEnv,
         WORKSPACE_ID: workspaceId,
         WORKSPACE_PATH: workspacePath,
         DB_PATH: dbDir
@@ -102,9 +107,10 @@ export function buildMinimalMcpConfig(
 
   if (servers.includes('memory')) {
     mcpServers['memory'] = {
-      command: 'node',
+      command: node,
       args: [join(serverBasePath, 'memory-server.js')],
       env: {
+        ...nodeEnv,
         WORKSPACE_ID: workspaceId,
         DB_PATH: dbDir
       }

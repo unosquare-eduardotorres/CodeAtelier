@@ -132,8 +132,10 @@ export function buildLocalMcpServersFromRegistry(
     }
     servers[def.id] = {
       type: 'local',
-      command: ['node', join(serverBasePath, def.serverScript)],
-      ...(Object.keys(env).length > 0 ? { environment: env } : {}),
+      // App binary with ELECTRON_RUN_AS_NODE=1 — a literal `node` does not
+      // exist on machines without a Node install (F2).
+      command: [process.execPath, join(serverBasePath, def.serverScript)],
+      environment: { ELECTRON_RUN_AS_NODE: '1', ...env },
       timeout: def.timeout
     }
   }

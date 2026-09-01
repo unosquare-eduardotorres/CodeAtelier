@@ -73,27 +73,31 @@ export function forwardBlueprintChunk(
     })
 
     if (processed) {
+      const ta = processed.toolActivity
       emit('phaseProgress', {
         blueprintId: ctx.blueprintId,
         workspaceId: ctx.workspaceId,
         phase: ctx.phase,
-        text: processed.toolActivity.toolName,
+        text: ta.toolName,
         kind: 'tool',
         toolActivity: {
-          id: processed.toolActivity.id,
-          toolName: processed.toolActivity.toolName,
-          status: processed.toolActivity.status,
-          input: processed.toolActivity.input,
-          result: processed.toolActivity.result,
-          resultDetail: processed.toolActivity.resultDetail,
-          startedAt: processed.toolActivity.startedAt,
-          completedAt: processed.toolActivity.completedAt,
-          elapsedSeconds: processed.toolActivity.elapsedSeconds,
-          filePath: processed.toolActivity.filePath,
-          lineRange: processed.toolActivity.lineRange,
-          operationType: processed.toolActivity.operationType,
-          editDiffs: processed.toolActivity.editDiffs,
-          editDiffsOmitted: processed.toolActivity.editDiffsOmitted
+          id: ta.id,
+          toolName: ta.toolName,
+          status: ta.status,
+          input: ta.input,
+          result: ta.result,
+          resultDetail: ta.resultDetail,
+          startedAt: ta.startedAt,
+          completedAt: ta.completedAt,
+          elapsedSeconds: ta.elapsedSeconds,
+          filePath: ta.filePath,
+          lineRange: ta.lineRange,
+          operationType: ta.operationType,
+          // Only when present — an explicit undefined at tool_result time would
+          // clobber diffs captured at tool_use time in the accumulator merge.
+          ...(ta.editDiffs
+            ? { editDiffs: ta.editDiffs, editDiffsOmitted: ta.editDiffsOmitted }
+            : {})
         },
         ...(ctx.taskId ? { taskId: ctx.taskId } : {})
       })

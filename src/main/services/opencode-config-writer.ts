@@ -882,8 +882,9 @@ export class OpenCodeConfigWriter {
 
       let command: string[]
       if (integration.bundledServerEntry) {
+        // App binary with ELECTRON_RUN_AS_NODE=1 — never a PATH `node` (F2).
         command = [
-          'node',
+          process.execPath,
           join(this.resolveMcpServerBasePath(), `${integration.bundledServerEntry}.js`)
         ]
       } else {
@@ -904,7 +905,11 @@ export class OpenCodeConfigWriter {
       servers[integration.id] = {
         type: 'local',
         command,
-        environment: Object.keys(env).length > 0 ? env : undefined
+        environment: integration.bundledServerEntry
+          ? { ELECTRON_RUN_AS_NODE: '1', ...env }
+          : Object.keys(env).length > 0
+            ? env
+            : undefined
       }
       configLog.info(`[opencode-config] Mounted external MCP: ${integration.id}`)
     }

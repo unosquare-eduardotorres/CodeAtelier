@@ -748,6 +748,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/task-dag.test',
   '../../shared/__tests__/blueprint-dag-ui.test',
   '../services/__tests__/blueprint-gates.test',
+  '../services/__tests__/gate-command-missing.test',
   '../services/__tests__/blueprint-verify-gates.test',
   '../services/__tests__/blueprint-gates-remediation.test',
   '../services/__tests__/blueprint-gate-ladder.test',

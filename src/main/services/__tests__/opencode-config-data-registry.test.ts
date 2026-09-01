@@ -55,7 +55,10 @@ describe('buildLocalMcpServersFromRegistry', () => {
     const result = buildLocalMcpServersFromRegistry(defs, minimalOpts as any, '/servers')
     assert.ok(result['my-server'])
     assert.equal(result['my-server'].type, 'local')
-    assert.deepEqual(result['my-server'].command, ['node', '/servers/my-server.js'])
+    // F2: bundled servers spawn the app binary (Electron-as-Node), never a
+    // PATH `node` — end-user machines frequently have no Node installed.
+    assert.deepEqual(result['my-server'].command, [process.execPath, '/servers/my-server.js'])
+    assert.equal(result['my-server'].environment?.ELECTRON_RUN_AS_NODE, '1')
     assert.equal(result['my-server'].timeout, 7000)
   })
 
@@ -70,10 +73,10 @@ describe('buildLocalMcpServersFromRegistry', () => {
     assert.equal(result['test-server'].environment!.WORKSPACE_PATH, '/workspace')
   })
 
-  test('server with empty environment → environment omitted', () => {
+  test('server with empty environment → only ELECTRON_RUN_AS_NODE remains', () => {
     const defs = [makeDef({ environment: () => ({}) })]
     const result = buildLocalMcpServersFromRegistry(defs, minimalOpts as any, '/servers')
-    assert.equal(result['test-server'].environment, undefined, 'empty env should be omitted')
+    assert.deepEqual(result['test-server'].environment, { ELECTRON_RUN_AS_NODE: '1' })
   })
 
   test('DB-backed server (code-graph) with dbDir → DB_PATH injected', () => {

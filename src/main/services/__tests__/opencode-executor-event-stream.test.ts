@@ -219,6 +219,7 @@ function fakeClient(): {
 function resubscribingClient(streams: AsyncIterable<unknown>[]): {
   client: Record<string, unknown>
   subscribes: number
+  subscribeArgs: unknown[]
   prompts: number
   aborts: number
 } {

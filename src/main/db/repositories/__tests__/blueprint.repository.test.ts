@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict'
 import { test, describe } from '../../../services/__tests__/test-harness'
 import { trySetupTestDb, seedConversation } from './db-test-helper'
+import { BLUEPRINT_PHASE_ORDER } from '../../../../shared/blueprint-types'
 
 const env = trySetupTestDb()
 
@@ -236,10 +237,10 @@ if (!env) {
       assert.ok(phase.conversationId)
     })
 
-    test('createAllPhases() creates all 7 phase records', () => {
+    test('createAllPhases() creates all 8 phase records', () => {
       const bp = blueprintRepository.create({ workspaceId: wsId, title: 'All Phases' })
       const phases = blueprintPhaseRepository.createAllPhases(bp.id)
-      assert.equal(phases.length, 7)
+      assert.equal(phases.length, BLUEPRINT_PHASE_ORDER.length)
       const phaseNames = phases.map((p: any) => p.phase)
       assert.ok(phaseNames.includes('specify'))
       assert.ok(phaseNames.includes('verify'))
@@ -250,7 +251,7 @@ if (!env) {
       blueprintPhaseRepository.createAllPhases(bp.id)
       const phases = blueprintPhaseRepository.findByBlueprint(bp.id)
       assert.equal(phases[0].phase, 'specify')
-      assert.equal(phases[6].phase, 'verify')
+      assert.equal(phases[BLUEPRINT_PHASE_ORDER.length - 1].phase, 'verify')
     })
 
     test('findByBlueprintAndPhase() returns specific phase', () => {

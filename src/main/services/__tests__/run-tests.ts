@@ -627,6 +627,7 @@ const TEST_FILES: string[] = [
   // ─── DAG scheduling UI derivations (DAG BUILD D4) ───
   '../../../shared/__tests__/blueprint-dag-ui.test',
   './blueprint-gates.test',
+  './gate-command-missing.test',
   './blueprint-verify-gates.test',
   './blueprint-gates-remediation.test',
   './blueprint-gate-ladder.test',

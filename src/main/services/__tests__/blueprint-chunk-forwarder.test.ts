@@ -2,10 +2,16 @@
  * Unit tests for blueprint-chunk-forwarder.ts — verifies that tool chunks
  * produce full ToolActivity objects via processToolChunk, and that text
  * chunks / control-tool chunks are handled correctly.
+ *
+ * Regression coverage: editDiffs captured at tool_use time must survive the
+ * tool_result emission and the renderer accumulator merge — an explicit
+ * `undefined` key in the phaseProgress payload used to clobber them, making
+ * edit rows unclickable (no expandable inline diff).
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { forwardBlueprintChunk } from '../blueprint-chunk-forwarder'
+import { StreamSegmentAccumulator } from '../../../renderer/src/utils/stream-segment-accumulator'
 import type { StreamChunk } from '../agent-base.service'
 import type { BlueprintPhaseProgressPayload } from '../../../shared/blueprint-types'
 import type { BlueprintChunkForwarderCtx } from '../blueprint-chunk-forwarder'
@@ -159,6 +165,97 @@ describe('forwardBlueprintChunk', () => {
     assert.equal(emitted[0].phase, 'build')
     assert.equal(emitted[0].blueprintId, 'bp-123')
     assert.equal(emitted[0].workspaceId, 'ws-456')
+  })
+})
+
+describe('forwardBlueprintChunk — editDiffs preservation (regression)', () => {
+  /** tool_use for an Edit call — diffs extracted from toolInputRaw. */
+  const editUse: StreamChunk = {
+    type: 'tool_use',
+    toolName: 'Edit',
+    toolId: 'tool-edit-1',
+    toolInputRaw: JSON.stringify({
+      file_path: 'src/foo.ts',
+      old_string: 'const a = 1',
+      new_string: 'const a = 2'
+    })
+  }
+
+  /** tool_result for the same call — no toolInput/toolInputRaw, so
+   *  processToolChunk produces NO editDiffs (the pre-fix clobber vector). */
+  const editResult: StreamChunk = {
+    type: 'tool_result',
+    toolName: 'Edit',
+    toolId: 'tool-edit-1',
+    content: 'The file src/foo.ts has been updated.'
+  }
+
+  test('tool_use payload carries editDiffs extracted from the input', () => {
+    const [p] = collect(editUse)
+    assert.ok(p.toolActivity, 'toolActivity should be present')
+    assert.ok(Array.isArray(p.toolActivity.editDiffs), 'editDiffs array expected')
+    assert.equal(p.toolActivity.editDiffs!.length, 1)
+    assert.equal(p.toolActivity.editDiffs![0].oldString, 'const a = 1')
+    assert.equal(p.toolActivity.editDiffs![0].newString, 'const a = 2')
+  })
+
+  test('tool_result payload has NO own-property editDiffs key (clobber vector)', () => {
+    const [p] = collect(editResult)
+    assert.ok(p.toolActivity, 'toolActivity should be present')
+    // The exact bug: an explicit `editDiffs: undefined` key survives Electron's
+    // structured clone and clobbers tool_use-captured diffs in the accumulator
+    // merge. The key must be absent entirely, not merely undefined.
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(p.toolActivity, 'editDiffs'),
+      false,
+      'editDiffs key must not be an own property of the tool_result payload'
+    )
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(p.toolActivity, 'editDiffsOmitted'),
+      false,
+      'editDiffsOmitted key must not be an own property of the tool_result payload'
+    )
+  })
+
+  test('accumulator merge preserves editDiffs across tool_use → tool_result', () => {
+    const [usePayload] = collect(editUse)
+    const [resultPayload] = collect(editResult)
+
+    const acc = new StreamSegmentAccumulator(() => {})
+    acc.handleToolActivity(usePayload.toolActivity!)
+    acc.handleToolActivity(resultPayload.toolActivity!)
+
+    const tools = acc.getState().currentToolActivities
+    assert.equal(tools.length, 1, 'same id — merged into one activity')
+    assert.equal(tools[0].status, 'completed', 'result status wins the merge')
+    assert.ok(Array.isArray(tools[0].editDiffs), 'editDiffs must survive the merge')
+    assert.equal(tools[0].editDiffs![0].newString, 'const a = 2')
+  })
+
+  test('accumulator merge skips explicit undefined keys (defense in depth)', () => {
+    // Even if some emitter lists editDiffs explicitly as undefined, the
+    // accumulator's undefined-skipping merge must not clobber existing values.
+    const acc = new StreamSegmentAccumulator(() => {})
+    acc.handleToolActivity({
+      id: 'tool-edit-2',
+      toolName: 'Edit',
+      status: 'running',
+      startedAt: 1,
+      editDiffs: [{ oldString: 'x', newString: 'y' }]
+    })
+    acc.handleToolActivity({
+      id: 'tool-edit-2',
+      toolName: 'Edit',
+      status: 'completed',
+      completedAt: 2,
+      editDiffs: undefined
+    })
+
+    const tools = acc.getState().currentToolActivities
+    assert.equal(tools.length, 1)
+    assert.equal(tools[0].status, 'completed')
+    assert.ok(Array.isArray(tools[0].editDiffs), 'undefined key must not clobber diffs')
+    assert.equal(tools[0].editDiffs![0].oldString, 'x')
   })
 })
 
