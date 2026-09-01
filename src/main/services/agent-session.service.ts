@@ -2484,12 +2484,20 @@ export class AgentSessionService extends AgentBaseService {
     const RECOVERY_TIMEOUT_MS = 120_000
     const timeoutId = setTimeout(() => abortController.abort(), RECOVERY_TIMEOUT_MS)
     let textLen = 0
+    // WORKTREE-SSE (retry 2 of verify 8bb7c4de): the recovery turn MUST resolve
+    // the same execution path as the main stream. The session was created with
+    // directory=<worktree> and publishes its events on that instance's bus; a
+    // recovery turn that passes the workspace root subscribes to the WRONG bus
+    // and watches 120s of silence while the model answers on the other one
+    // (live: prompt accepted 204, textLen=0, phase failed again).
+    const recoveryCwd =
+      this.resolveExecutionPath(this.currentConversationId ?? undefined) || this.workspacePath!
     try {
       for await (const chunk of openCodeExecutor.execute({
         prompt: params.prompt,
         systemPrompt: '',
         provider: providerConfig,
-        cwd: this.workspacePath!,
+        cwd: recoveryCwd,
         abortController,
         conversationId: this.currentConversationId ?? undefined,
         maxTurns: 0
