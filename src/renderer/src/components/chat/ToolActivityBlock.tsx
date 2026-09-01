@@ -130,13 +130,6 @@ const STATUS_STYLES: Record<
   }
 }
 
-/** Left-border status dot color — replaces icon color for file rows. */
-const STATUS_DOT_COLORS: Record<string, string> = {
-  running: 'bg-purple-400',
-  error: 'bg-danger',
-  completed: 'bg-emerald-400'
-}
-
 // ── ToolRow sub-components ──
 
 function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Element {
@@ -208,7 +201,11 @@ function ToolRowExpandedPanel({
         </div>
       )}
       {activity.editDiffs && activity.editDiffs.length > 0 && (
-        <InlineEditDiff edits={activity.editDiffs} omitted={activity.editDiffsOmitted} />
+        <InlineEditDiff
+          edits={activity.editDiffs}
+          omitted={activity.editDiffsOmitted}
+          filePath={activity.filePath}
+        />
       )}
       {activity.input && (activity.operationType === 'shell' || activity.input.length > 30) && (
         <div className="px-3 py-2 border-b border-border-subtle/50">
@@ -280,7 +277,6 @@ function ToolRow({
   const opConfig = resolveOpConfig(activity)
   const CategoryIcon = opConfig.icon
   const statusStyle = STATUS_STYLES[activity.status] ?? STATUS_STYLES.completed
-  const statusDot = STATUS_DOT_COLORS[activity.status] ?? STATUS_DOT_COLORS.completed
   const isRunning = activity.status === 'running'
 
   // File rows (edit/write/read with a path) get the language icon; everything
@@ -313,9 +309,7 @@ function ToolRow({
       <button
         type="button"
         onClick={() => expandable && onToggleExpand(activity.id)}
-        className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 ${
-          isFileRow ? statusDot : 'border-l-border-subtle'
-        } ${expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'} ${
+        className={`w-full text-left flex items-start gap-2 min-w-0 rounded-sm pl-2.5 pr-2 py-1 transition-colors group border-l-2 border-l-border-subtle ${expandable ? 'cursor-pointer hover:bg-surface-overlay/50' : 'cursor-default'} ${
           isExpanded ? 'bg-surface-overlay/40' : ''
         }`}
         data-testid="tool-activity-expand"

@@ -763,7 +763,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/e2e-runners-chat-checkpoint.test',
   '../services/__tests__/e2e-runners-mpa-grill-audit.test',
   '../services/__tests__/e2e-runners-idea-specialist.test',
-  '../services/__tests__/e2e-runner-preflight.test'
+  '../services/__tests__/e2e-runner-preflight.test',
+  // ─── Shared prism language map + lazy grammar loader ───
+  '../services/__tests__/prism-languages.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

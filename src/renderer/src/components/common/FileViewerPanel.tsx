@@ -1,11 +1,17 @@
-import { useMemo } from 'react'
+import { useMemo, useEffect, useState, useSyncExternalStore } from 'react'
 import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { Copy, Check, X, AlertCircle, Loader2 } from 'lucide-react'
-import { useState } from 'react'
 import { useAppTheme } from '@renderer/store'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
 import { useFileViewerStore } from '@renderer/store/file-viewer.store'
-import FileLanguageIcon, { getExtensionForIcon } from '../common/FileLanguageIcon'
+import FileLanguageIcon from '../common/FileLanguageIcon'
+import {
+  languageForPath,
+  ensurePrismLanguage,
+  isLanguageReady,
+  subscribePrismLanguages,
+  getLoadedLanguageCount
+} from '@renderer/utils/prism-languages'
 
 /** Map app theme → Prism highlight theme (mirrors CodeBlock). */
 const PRISM_THEME_MAP: Record<string, PrismTheme> = {
@@ -15,66 +21,8 @@ const PRISM_THEME_MAP: Record<string, PrismTheme> = {
   developer: themes.vsDark
 }
 
-/** extension → prism language token. Only mappings that differ from the ext. */
-const EXT_TO_PRISM_LANG: Record<string, string> = {
-  ts: 'typescript',
-  tsx: 'tsx',
-  js: 'javascript',
-  jsx: 'jsx',
-  mjs: 'javascript',
-  cjs: 'javascript',
-  md: 'markdown',
-  mdx: 'markdown',
-  rb: 'ruby',
-  rs: 'rust',
-  py: 'python',
-  go: 'go',
-  java: 'java',
-  kt: 'kotlin',
-  kts: 'kotlin',
-  swift: 'swift',
-  c: 'c',
-  h: 'c',
-  cpp: 'cpp',
-  cc: 'cpp',
-  cxx: 'cpp',
-  hpp: 'cpp',
-  hh: 'cpp',
-  cs: 'csharp',
-  php: 'php',
-  sql: 'sql',
-  sh: 'bash',
-  bash: 'bash',
-  zsh: 'bash',
-  yml: 'yaml',
-  yaml: 'yaml',
-  toml: 'ini',
-  ini: 'ini',
-  gitignore: 'bash',
-  editorconfig: 'ini',
-  html: 'markup',
-  htm: 'markup',
-  xml: 'markup',
-  svg: 'markup',
-  vue: 'markup',
-  css: 'css',
-  scss: 'css',
-  sass: 'css',
-  less: 'css',
-  json: 'json',
-  webmanifest: 'json',
-  graphql: 'graphql',
-  dart: 'dart',
-  scala: 'scala'
-}
-
 /** Highlight cap — beyond this, Prism's per-line tokenization stalls the renderer. */
 const MAX_HIGHLIGHT_LINES = 5_000
-
-function resolvePrismLanguage(filePath: string): string {
-  const ext = getExtensionForIcon(filePath)
-  return EXT_TO_PRISM_LANG[ext] ?? (ext || 'text')
-}
 
 interface FileViewerPanelProps {
   /** Compact variant for embedding in a tab/drawer (default full-height). */
@@ -93,9 +41,20 @@ export default function FileViewerPanel({ className }: FileViewerPanelProps): Re
 
   const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])
   const language = useMemo(
-    () => (activeFile ? resolvePrismLanguage(activeFile) : 'text'),
+    () => (activeFile ? languageForPath(activeFile) || 'text' : 'text'),
     [activeFile]
   )
+
+  // Non-vendored grammars (ruby, dart, scala, …) load lazily from prismjs
+  // chunks. The store subscription re-renders the viewer the moment the
+  // grammar registers; until then it renders plain.
+  useSyncExternalStore(subscribePrismLanguages, getLoadedLanguageCount)
+  useEffect(() => {
+    if (language !== 'text' && !isLanguageReady(language)) {
+      void ensurePrismLanguage(language)
+    }
+  }, [language])
+  const grammarReady = language === 'text' || isLanguageReady(language)
 
   // Cap highlighted lines — a 50K-line generated file tokenized by Prism
   // freezes the renderer for seconds; plain text renders fine.
@@ -176,7 +135,11 @@ export default function FileViewerPanel({ className }: FileViewerPanelProps): Re
               {totalLines.toLocaleString()} (syntax highlighting capped)
             </div>
           )}
-          <Highlight theme={prismTheme} code={displayContent} language={language}>
+          <Highlight
+            theme={prismTheme}
+            code={displayContent}
+            language={grammarReady ? language : 'text'}
+          >
             {({ tokens, getLineProps, getTokenProps }) => (
               <pre
                 className="text-[12px] leading-[1.55] font-mono m-0 p-0"

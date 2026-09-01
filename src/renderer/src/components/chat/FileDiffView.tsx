@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { AlertTriangle, FileCode, FileQuestion, Loader2 } from 'lucide-react'
 import ReactDiffViewer, { DiffMethod } from 'react-diff-viewer-continued'
-import { codeAtelierDiffStyles } from './diff-theme'
+import { codeAtelierDiffStyles, nightOwlHighlightTheme } from './diff-theme'
+import { languageForPath } from '@renderer/utils/prism-languages'
 import { describeIdenticalReason, resolveDiffState } from './file-diff-state'
 import type { FileDiffResult } from '../../../../shared/types'
 
@@ -35,6 +36,10 @@ export default function FileDiffView({
   // Small files read better with full context; only collapse unchanged
   // regions once the file is large enough for it to matter.
   const isLargeFile = (stats?.totalLines ?? 0) > 400
+
+  // Syntax highlighting language — resolved from the file path; unknown
+  // extensions highlight nothing (library degrades gracefully).
+  const language = useMemo(() => (filePath ? languageForPath(filePath) : ''), [filePath])
 
   if (!filePath) {
     return (
@@ -146,6 +151,8 @@ export default function FileDiffView({
             rightTitle={rightLabel}
             showDiffOnly={isLargeFile}
             styles={codeAtelierDiffStyles}
+            {...(language ? { highlightLanguage: language } : {})}
+            highlightTheme={nightOwlHighlightTheme}
           />
         </div>
       )}

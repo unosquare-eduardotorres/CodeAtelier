@@ -48,6 +48,7 @@
     "jsdom": "^29.1.1",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
+    "prismjs": "^1.30.0",
     "react-force-graph-3d": "^1.29.1",
     "repomap-mcp": "^0.1.1",
     "three": "^0.185.1",

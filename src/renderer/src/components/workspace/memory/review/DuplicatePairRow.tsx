@@ -179,7 +179,6 @@ export default function DuplicatePairRow({
               useDarkTheme={true}
               compareMethod={DiffMethod.WORDS}
               showDiffOnly={false}
-              hideLineNumbers={true}
               styles={compactDiffStyles}
             />
           </div>

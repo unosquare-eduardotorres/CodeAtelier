@@ -2,12 +2,19 @@
  * CodeBlock — renders fenced code blocks with syntax highlighting, copy button,
  * and Mermaid support. Uses prism-react-renderer for token coloring.
  */
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useSyncExternalStore } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { MermaidDiagram } from '@renderer/components/common'
 import { useAppTheme } from '@renderer/store'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
+import {
+  languageForFenceTag,
+  ensurePrismLanguage,
+  isLanguageReady,
+  subscribePrismLanguages,
+  getLoadedLanguageCount
+} from '@renderer/utils/prism-languages'
 
 /** Best-effort language detection for untagged code blocks */
 function detectLanguage(code: string): string {
@@ -115,7 +122,19 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
     rawChildren != null ? String(rawChildren) : extractTextContent(children)
   ).replace(/\n$/, '')
 
-  const language = explicitLang || detectLanguage(codeText)
+  const language = explicitLang ? languageForFenceTag(explicitLang) : detectLanguage(codeText)
+
+  // Non-vendored grammars (ruby, java, php, …) load lazily from prismjs
+  // chunks. The store subscription re-renders this block the moment the
+  // grammar registers; until then it renders plain (first paint is never
+  // blocked on a chunk fetch).
+  useSyncExternalStore(subscribePrismLanguages, getLoadedLanguageCount)
+  useEffect(() => {
+    if (language && !isLanguageReady(language)) {
+      void ensurePrismLanguage(language)
+    }
+  }, [language])
+  const grammarReady = !language || isLanguageReady(language)
 
   const prismTheme = useMemo(() => PRISM_THEME_MAP[appTheme] ?? themes.nightOwl, [appTheme])
 
@@ -167,7 +186,11 @@ export function CodeBlock({ children }: { children: React.ReactNode }): React.JS
           )}
         </button>
       </div>
-      <Highlight theme={prismTheme} code={codeText} language={language || 'text'}>
+      <Highlight
+        theme={prismTheme}
+        code={codeText}
+        language={grammarReady && language ? language : 'text'}
+      >
         {({ tokens, getLineProps, getTokenProps, style }) => {
           const showLineNumbers = tokens.length > LINE_NUMBER_THRESHOLD
           return (
