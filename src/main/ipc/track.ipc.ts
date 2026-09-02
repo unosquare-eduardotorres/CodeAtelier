@@ -20,6 +20,7 @@ import type {
   TrackListResult,
   LandingResult,
   LandingPreview,
+  MainlineSyncResult,
   TrackLandingMode
 } from '../../shared/track-types'
 
@@ -54,7 +55,14 @@ export function registerTrackIpc(): void {
 
       const tracks = await trackService.summarize(workspaceId)
       const totalBytes = tracks.reduce((sum, t) => sum + t.diskBytes, 0)
-      return { tracks, totalBytes, budgetBytes: DISK_BUDGET_BYTES }
+      // Read-only, and a repo it cannot read is not a reason to fail the list.
+      let mainline: TrackListResult['mainline'] = null
+      try {
+        mainline = await landingService.mainlineStatus(workspaceId)
+      } catch (err) {
+        trackLog.warn(`[list] mainline status unavailable: ${(err as Error).message}`)
+      }
+      return { tracks, totalBytes, budgetBytes: DISK_BUDGET_BYTES, mainline }
     }
   )
 
@@ -133,6 +141,26 @@ export function registerTrackIpc(): void {
 
       // Read-only, so unlike `land` it is not queued and takes no lock.
       return landingService.previewLanding(trackId, { baseBranch, mode })
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.TRACK_SYNC_MAINLINE,
+    async (event, rawArgs: unknown): Promise<MainlineSyncResult> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.TRACK_SYNC_MAINLINE
+      const args = requireObject(rawArgs, ch)
+      const workspaceId = requireString(args, 'workspaceId', ch)
+
+      // Blueprints land into the integration branch on their own; this is the
+      // step that never happens without the user asking, because it is the only
+      // one that moves the branch they are standing on.
+      const result = await landingService.syncMainline(workspaceId)
+      trackLog.info(
+        `[syncMainline] workspace=${workspaceId} outcome=${result.outcome} ` +
+          `commits=${result.commitCount}`
+      )
+      return result
     }
   )
 }

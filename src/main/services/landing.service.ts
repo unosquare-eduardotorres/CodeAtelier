@@ -46,6 +46,8 @@ import type {
   ConflictForecast,
   LandingPreview,
   LandingResult,
+  MainlineSyncResult,
+  MainlineSyncStatus,
   TrackLandingMode,
   WorkTrack
 } from '../../shared/track-types'
@@ -83,7 +85,17 @@ export interface LandOptions {
  */
 export function integrationBranchFor(baseBranch: string): string {
   const slug = baseBranch.replace(/[^a-zA-Z0-9._/-]+/g, '-')
-  return `integration/${slug || 'main'}`
+  if (!slug) return 'integration/main'
+  // Already an integration branch — it is its own target.
+  //
+  // Blueprints fork from `integration/<base>` once it exists and is ahead, so
+  // their track records that as its base. Deriving blindly would give the next
+  // run `integration/integration/<base>`, and the run after that another level
+  // — a fresh empty branch per blueprint, which is the exact accumulation
+  // problem the integration branch exists to solve. Fork from it, land back
+  // into it.
+  if (slug.startsWith('integration/')) return slug
+  return `integration/${slug}`
 }
 
 /** Owner key for the worktree this service merges in. One per workspace. */
@@ -257,7 +269,7 @@ class LandingService {
     landLog.info(`[land] ${track.branchName} → mode=${mode}`)
 
     return mode === 'integration'
-      ? this.landIntegration(track, commitHash)
+      ? this.landIntegration(track, opts, commitHash)
       : this.landIndependent(track, opts, commitHash)
   }
 
@@ -352,6 +364,7 @@ class LandingService {
    */
   private async landIntegration(
     track: WorkTrack,
+    opts: LandOptions,
     commitHash: string | undefined
   ): Promise<LandingResult> {
     const base = track.baseBranch
@@ -375,9 +388,23 @@ class LandingService {
     // so the promise resolves and the conflict looks like success. The state of
     // the index is the only trustworthy signal, which is what
     // `--diff-filter=U` reads. (Same quirk TrackService.branchExists documents.)
+    // `-m` rather than `--no-edit`, because the caller's subject is the only
+    // place some of this work is described. `commitPending` writes it to a
+    // commit ONLY when the track had uncommitted files; an agent that committed
+    // as it went leaves nothing to commit, and the landing would then be
+    // recorded as git's default "Merge branch 'x'". That loses the blueprint
+    // title, and — the reason this matters — the `[human-review-needed]` tag,
+    // whose entire job is to be readable in `git log` on the integration branch
+    // before anything gets promoted to mainline.
     let mergeError: Error | null = null
     try {
-      await git.raw(['merge', '--no-ff', '--no-edit', track.branchName])
+      await git.raw([
+        'merge',
+        '--no-ff',
+        '-m',
+        `${opts.commitMessage}\n\nMerge ${track.branchName} into ${integrationBranch}.`,
+        track.branchName
+      ])
     } catch (err) {
       mergeError = err as Error
     }
@@ -514,6 +541,36 @@ class LandingService {
     }
   }
 
+  /**
+   * Is this landed track's work provably somewhere else before we delete it?
+   *
+   * `findLanded` selects on `landed_at IS NOT NULL` alone, and `landed_at` is
+   * written by `landIndependent` after a push whose failure is only a warning —
+   * a repo with no remote, or an expired credential, both mark the track landed
+   * with the commits still living nowhere but this branch. GC then force-deletes
+   * it. The bookkeeping flag is therefore not evidence, and this asks git for
+   * the fact instead: nothing on the branch that the target does not already
+   * have.
+   *
+   * Errors keep the branch. `hasCommitsBeyond` reports "there is work" when the
+   * comparison cannot be made, which is the safe answer for both of its callers
+   * — landing proceeds, and GC declines.
+   */
+  private async isReclaimable(repoGit: SimpleGit, track: WorkTrack): Promise<boolean> {
+    if (!track.landedInto) {
+      landLog.warn(`[gc] ${track.branchName} is marked landed with no target — keeping`)
+      return false
+    }
+    if (await this.hasCommitsBeyond(repoGit, track.landedInto, track.branchName)) {
+      landLog.warn(
+        `[gc] ${track.branchName} is marked landed into ${track.landedInto} but still holds ` +
+          `commits that branch does not — keeping. The landing pushed or merged only partially.`
+      )
+      return false
+    }
+    return true
+  }
+
   /** Is `ref` resolvable in this repository? */
   private async refExists(git: SimpleGit, ref: string): Promise<boolean> {
     try {
@@ -586,6 +643,258 @@ class LandingService {
     }
   }
 
+  // ── Integration → mainline ──────────────────────────────────────
+
+  /**
+   * Where the integration branch stands against the mainline it feeds.
+   *
+   * Read-only and cheap enough to sit on the Tracks list. The counts are the
+   * early warning for the failure this design is most exposed to: blueprints
+   * land into the integration branch unattended, so the gap between it and the
+   * branch the user works on grows on its own, and a single direct commit to
+   * the mainline turns every future promotion from a fast-forward into a PR
+   * without announcing it.
+   */
+  async mainlineStatus(workspaceId: string): Promise<MainlineSyncStatus | null> {
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace?.repoPath || !existsSync(workspace.repoPath)) return null
+
+    const git = simpleGit(workspace.repoPath)
+    let base: string
+    try {
+      base = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim()
+    } catch (err) {
+      landLog.warn(`[mainline] no HEAD in ${workspace.repoPath}: ${(err as Error).message}`)
+      return null
+    }
+    if (!base || base === 'HEAD') return null
+
+    const integrationBranch = integrationBranchFor(base)
+    const empty: MainlineSyncStatus = {
+      baseBranch: base,
+      integrationBranch,
+      exists: false,
+      ahead: 0,
+      behind: 0,
+      humanReviewCount: 0,
+      canFastForward: false,
+      primaryTreeDirty: false
+    }
+
+    // The checkout IS the integration branch. Nothing to promote to, and the
+    // question is meaningless rather than answerable-as-zero.
+    if (base === integrationBranch) return null
+    if (!(await this.refExists(git, integrationBranch))) return empty
+
+    const ahead = await this.countCommitsBeyond(git, base, integrationBranch)
+    const behind = await this.countCommitsBeyond(git, integrationBranch, base)
+    const dirty = await this.hasTrackedChanges(git)
+
+    return {
+      ...empty,
+      exists: true,
+      ahead,
+      behind,
+      humanReviewCount: await this.countHumanReviewCommits(git, base, integrationBranch),
+      canFastForward: ahead > 0 && behind === 0 && !dirty,
+      primaryTreeDirty: dirty
+    }
+  }
+
+  /**
+   * Tracked modifications in a working tree — the ones a merge can collide with.
+   *
+   * Deliberately NOT `pendingPaths`, which counts untracked files too. That is
+   * the right question for landing, where an untracked file is work the agent
+   * produced and the commit must sweep up. It is the wrong question here: a
+   * fast-forward only fails on files git is already tracking, and a repo with a
+   * stray scratch file in it is every repo. Reusing `pendingPaths` would leave
+   * the Sync button permanently disabled for a tree that is perfectly safe to
+   * fast-forward.
+   */
+  private async hasTrackedChanges(git: SimpleGit): Promise<boolean> {
+    try {
+      const status = await git.status()
+      return (
+        status.modified.length > 0 ||
+        status.created.length > 0 ||
+        status.deleted.length > 0 ||
+        status.renamed.length > 0 ||
+        status.staged.length > 0 ||
+        status.conflicted.length > 0
+      )
+    } catch (err) {
+      // Unknown state is treated as dirty: the only thing gated on this moves
+      // the user's own checkout.
+      landLog.warn(`[mainline] could not read working tree status: ${(err as Error).message}`)
+      return true
+    }
+  }
+
+  /**
+   * Waiting commits that were landed by a blueprint nobody signed off.
+   *
+   * Matches the tag `autoLandBlueprint` writes into the merge subject. A count
+   * rather than a list because its only job is to be a number beside a button:
+   * "12 commits waiting, 4 unreviewed" is a different decision from "12 waiting".
+   */
+  private async countHumanReviewCommits(
+    git: SimpleGit,
+    base: string,
+    integrationBranch: string
+  ): Promise<number> {
+    try {
+      const out = await git.raw([
+        'rev-list',
+        '--count',
+        '--grep=human-review-needed',
+        `${base}..${integrationBranch}`
+      ])
+      const n = Number.parseInt(out.trim(), 10)
+      return Number.isFinite(n) ? n : 0
+    } catch (err) {
+      landLog.warn(`[mainline] review-tag count failed: ${(err as Error).message}`)
+      return 0
+    }
+  }
+
+  /**
+   * Move the integration branch's work on to the mainline.
+   *
+   * The one operation in this service that touches the user's checkout, which
+   * is why it is a button and never a consequence of anything finishing. Two
+   * outcomes are possible and the difference is not ours to choose:
+   *
+   *  - The mainline has not moved since the integration branch forked, so this
+   *    is a fast-forward: no merge commit, no conflict possible, and
+   *    `--ff-only` makes git refuse rather than improvise if that turns out to
+   *    be untrue between the check and the command.
+   *  - The mainline HAS moved, so promoting means a real merge with a real
+   *    chance of conflict — in the user's working copy, mid-whatever-they-are-
+   *    doing. That is exactly what this service refuses to do anywhere else, so
+   *    it opens a pull request and leaves the merge to a place with a UI for it.
+   *
+   * A dirty checkout blocks both: `merge --ff-only` can fail partway through
+   * with local modifications in the way, and nothing here is worth risking a
+   * user's uncommitted work over.
+   */
+  async syncMainline(workspaceId: string): Promise<MainlineSyncResult> {
+    const status = await this.mainlineStatus(workspaceId)
+    if (!status) throw new Error('This workspace has no git repository to sync.')
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) throw new Error(`Workspace ${workspaceId} not found`)
+
+    const base: MainlineSyncResult = {
+      outcome: 'up-to-date',
+      baseBranch: status.baseBranch,
+      integrationBranch: status.integrationBranch,
+      commitCount: 0
+    }
+
+    if (!status.exists || status.ahead === 0) return base
+
+    const git = simpleGit(workspace.repoPath)
+
+    if (status.behind === 0) {
+      // Only the fast-forward path cares: it moves the checkout's HEAD. The PR
+      // path below never touches the working tree, so a dirty one is irrelevant
+      // there — and blocking it would be a refusal with no reason behind it.
+      if (status.primaryTreeDirty) {
+        return {
+          ...base,
+          outcome: 'blocked',
+          reason:
+            `Your checkout has uncommitted changes. Commit or stash them, then sync — ` +
+            `${status.integrationBranch} is not going anywhere.`
+        }
+      }
+      try {
+        await git.raw(['merge', '--ff-only', status.integrationBranch])
+        landLog.info(
+          `[mainline] fast-forwarded ${status.baseBranch} to ${status.integrationBranch} ` +
+            `(${status.ahead} commit(s))`
+        )
+        return { ...base, outcome: 'fast-forwarded', commitCount: status.ahead }
+      } catch (err) {
+        // Something moved between the count and the merge, or the tree was not
+        // as clean as `git status` suggested. Never retried as a real merge.
+        return {
+          ...base,
+          outcome: 'blocked',
+          reason: `Fast-forward refused: ${(err as Error).message}`
+        }
+      }
+    }
+
+    return this.openMainlinePr(workspaceId, workspace.repoPath, status, base)
+  }
+
+  /**
+   * Diverged: promote by pull request instead of merging into the checkout.
+   *
+   * Best-effort push for the same reason `landIndependent` pushes best-effort —
+   * a local-only repo is a normal setup — but here a failed push means the PR
+   * cannot exist at all, so unlike landing it is reported rather than shrugged off.
+   */
+  private async openMainlinePr(
+    workspaceId: string,
+    repoPath: string,
+    status: MainlineSyncStatus,
+    base: MainlineSyncResult
+  ): Promise<MainlineSyncResult> {
+    if (!githubService.isConfigured(workspaceId)) {
+      return {
+        ...base,
+        outcome: 'blocked',
+        reason:
+          `${status.baseBranch} has ${status.behind} commit(s) ${status.integrationBranch} ` +
+          `does not, so this is a merge rather than a fast-forward. Connect GitHub to open a ` +
+          `pull request, or merge ${status.integrationBranch} yourself.`
+      }
+    }
+
+    const git = simpleGit(repoPath)
+    try {
+      await git.push('origin', status.integrationBranch, ['--set-upstream'])
+    } catch (err) {
+      return {
+        ...base,
+        outcome: 'blocked',
+        reason: `Could not push ${status.integrationBranch}: ${(err as Error).message}`
+      }
+    }
+
+    try {
+      const pr = await githubService.createPullRequest({
+        workspaceId,
+        repoPath,
+        head: status.integrationBranch,
+        base: status.baseBranch,
+        title: `Merge ${status.integrationBranch} into ${status.baseBranch}`,
+        body:
+          `${status.ahead} commit(s) landed by completed blueprints.` +
+          (status.humanReviewCount > 0
+            ? `\n\n⚠️ ${status.humanReviewCount} of them were landed by a blueprint that ` +
+              `completed without being fully verified (tagged \`human-review-needed\`).`
+            : '')
+      })
+      landLog.info(`[mainline] PR ${pr.prUrl} opened for ${status.integrationBranch}`)
+      return {
+        ...base,
+        outcome: 'pull-request',
+        prUrl: pr.prUrl,
+        prNumber: pr.prNumber
+      }
+    } catch (err) {
+      return {
+        ...base,
+        outcome: 'blocked',
+        reason: `Pull request could not be opened: ${(err as Error).message}`
+      }
+    }
+  }
+
   // ── Branch GC ─────────────────────────────────────────────────────
 
   /**
@@ -647,6 +956,8 @@ class LandingService {
     const workspace = workspaceRepository.findById(workspaceId)
     if (!workspace) return 0
 
+    const repoGit = simpleGit(workspace.repoPath)
+
     let reclaimed = 0
     for (const row of trackRepository.findLanded(workspaceId)) {
       if (row.status === 'conflicted') continue
@@ -654,6 +965,7 @@ class LandingService {
         landLog.info(`[gc] ${row.branchName} landed but has new uncommitted work — keeping`)
         continue
       }
+      if (!(await this.isReclaimable(repoGit, row))) continue
 
       // Removes the worktree and deregisters it; without this git refuses to
       // delete a branch that is still checked out somewhere.

@@ -143,6 +143,59 @@ export interface LandingPreview {
   opensPullRequest: boolean
 }
 
+/**
+ * Where the integration branch stands relative to the mainline it feeds.
+ *
+ * Blueprints land into `integration/<base>` automatically, and nothing moves
+ * that work on to the mainline without the user. Two counts are the whole story
+ * and neither is derivable from the other: `ahead` is what is waiting, `behind`
+ * is whether it can still arrive as a fast-forward. A user who commits directly
+ * to the mainline pushes `behind` above zero, at which point the promotion
+ * quietly stops being a fast-forward forever — so the number is shown rather
+ * than discovered.
+ */
+export interface MainlineSyncStatus {
+  /** The mainline: whatever the primary checkout has checked out. */
+  baseBranch: string
+  integrationBranch: string
+  /** False before any landing has happened — there is simply nothing to sync. */
+  exists: boolean
+  /** Commits on the integration branch the mainline does not have. */
+  ahead: number
+  /** Commits on the mainline the integration branch does not have (divergence). */
+  behind: number
+  /**
+   * How many of the waiting commits were landed by a blueprint that completed
+   * without being fully verified. Counted from the `[human-review-needed]` tag
+   * auto-landing writes into the merge subject.
+   */
+  humanReviewCount: number
+  /** The mainline can be advanced by a fast-forward: work waiting, no divergence. */
+  canFastForward: boolean
+  /** Uncommitted changes in the primary checkout, which block a fast-forward. */
+  primaryTreeDirty: boolean
+}
+
+/**
+ * What promoting the integration branch to the mainline did.
+ *
+ * `blocked` is the honest answer for the cases this deliberately will not force:
+ * a dirty checkout, or a diverged branch with no GitHub to open a PR against.
+ */
+export type MainlineSyncOutcome = 'fast-forwarded' | 'pull-request' | 'up-to-date' | 'blocked'
+
+export interface MainlineSyncResult {
+  outcome: MainlineSyncOutcome
+  baseBranch: string
+  integrationBranch: string
+  /** Commits the mainline gained. Zero for every outcome but `fast-forwarded`. */
+  commitCount: number
+  prUrl?: string
+  prNumber?: number
+  /** Why nothing happened. Set for `blocked`. */
+  reason?: string
+}
+
 /** One unit of parallel work: a branch, a worktree and an owner. */
 export interface WorkTrack {
   id: string
@@ -251,4 +304,13 @@ export interface TrackListResult {
   totalBytes: number
   /** Threshold above which the UI warns. Never enforced automatically. */
   budgetBytes: number
+  /**
+   * The integration branch's standing against the mainline.
+   *
+   * Travels with the list because it is the same question asked at a different
+   * scale: the rows say where each piece of work is, this says whether any of
+   * it has reached the branch the user actually works on. Null when the
+   * workspace has no repository to ask.
+   */
+  mainline: MainlineSyncStatus | null
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   AlertTriangle,
+  CheckCircle2,
   FolderOpen,
   GitBranch,
   GitMerge,
+  GitPullRequest,
   HardDrive,
   Loader2,
   MessageSquarePlus,
@@ -13,6 +15,7 @@ import {
 import { useWorkspaceStore } from '@renderer/store'
 import { useChatStore } from '@renderer/store/chat.store'
 import type {
+  MainlineSyncStatus,
   TrackLandingMode,
   TrackListResult,
   TrackSummary
@@ -57,6 +60,115 @@ const STATE_STYLES: Record<string, string> = {
   retained: 'bg-accent/15 text-accent',
   removing: 'bg-surface-overlay text-text-secondary',
   conflicted: 'bg-danger/15 text-danger'
+}
+
+/**
+ * The integration branch's standing against the mainline, and the one button
+ * that closes the loop.
+ *
+ * Completed blueprints merge themselves into the integration branch, and
+ * nothing moves that work on to the branch the user actually works on. Without
+ * this card that is invisible: the Tracks list would show nine landed tracks
+ * and give no hint that none of it had reached the mainline. `behind` is shown
+ * even though the user cannot act on it directly, because it is the number that
+ * silently decides whether syncing stays a fast-forward or becomes a PR forever.
+ */
+function MainlineCard({
+  mainline,
+  busy,
+  onSync
+}: {
+  mainline: MainlineSyncStatus
+  busy: boolean
+  onSync: () => void
+}): React.JSX.Element | null {
+  // Nothing has ever landed here, so there is no relationship to describe yet.
+  if (!mainline.exists) return null
+
+  const waiting = mainline.ahead > 0
+  const diverged = mainline.behind > 0
+  const blockedReason = mainline.primaryTreeDirty
+    ? 'Your checkout has uncommitted changes — commit or stash them first.'
+    : null
+
+  return (
+    <div
+      data-testid="mainline-sync"
+      className="flex items-start gap-3 p-3 rounded-lg border border-border-subtle bg-surface-overlay"
+    >
+      <GitMerge size={16} className="mt-0.5 shrink-0 text-accent" />
+
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-text-primary truncate">
+          {mainline.integrationBranch} → {mainline.baseBranch}
+        </div>
+
+        <div className="mt-1 text-xs text-text-secondary">
+          {waiting ? (
+            <>
+              {mainline.ahead} commit{mainline.ahead === 1 ? '' : 's'} waiting
+              {diverged && (
+                <>
+                  {' · '}
+                  <span className="text-warning">
+                    {mainline.baseBranch} is {mainline.behind} ahead
+                  </span>
+                </>
+              )}
+            </>
+          ) : (
+            <span className="inline-flex items-center gap-1.5">
+              <CheckCircle2 size={12} className="text-success" />
+              {mainline.baseBranch} already has everything landed here
+            </span>
+          )}
+        </div>
+
+        {waiting && mainline.humanReviewCount > 0 && (
+          <div className="mt-1.5 flex items-start gap-1.5 text-[11px] text-warning">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+            <span>
+              {mainline.humanReviewCount} of them were landed by a blueprint that completed without
+              being fully verified. Review before promoting.
+            </span>
+          </div>
+        )}
+
+        {waiting && diverged && (
+          <div className="mt-1.5 text-[11px] text-text-secondary/70">
+            {mainline.baseBranch} has moved since these forked, so this is a merge rather than a
+            fast-forward — it opens a pull request instead of touching your checkout.
+          </div>
+        )}
+
+        {waiting && blockedReason && (
+          <div className="mt-1.5 text-[11px] text-warning">{blockedReason}</div>
+        )}
+      </div>
+
+      <button
+        onClick={onSync}
+        disabled={busy || !waiting || (!diverged && mainline.primaryTreeDirty)}
+        title={
+          waiting
+            ? diverged
+              ? `Open a pull request to merge ${mainline.integrationBranch} into ${mainline.baseBranch}`
+              : `Fast-forward ${mainline.baseBranch} to ${mainline.integrationBranch}`
+            : 'Nothing is waiting to be promoted'
+        }
+        className="flex items-center gap-1.5 shrink-0 px-2.5 py-1.5 rounded-lg text-xs bg-accent/15 text-accent hover:bg-accent/25 disabled:opacity-40"
+      >
+        {busy ? (
+          <Loader2 size={13} className="animate-spin" />
+        ) : diverged ? (
+          <GitPullRequest size={13} />
+        ) : (
+          <GitMerge size={13} />
+        )}
+        {diverged ? 'Open pull request' : 'Sync mainline'}
+      </button>
+    </div>
+  )
 }
 
 interface TrackRowProps {
@@ -206,6 +318,8 @@ export default function TracksSettingsTab({
   const [error, setError] = useState<string | null>(null)
   const [confirmDiscardId, setConfirmDiscardId] = useState<string | null>(null)
   const [landingId, setLandingId] = useState<string | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
 
   const workspaceId = activeWorkspace?.id
 
@@ -282,6 +396,42 @@ export default function TracksSettingsTab({
     }
   }
 
+  /**
+   * Promote the integration branch to the mainline.
+   *
+   * `blocked` is reported as an error and everything else as a notice, because
+   * blocked is the only outcome where the user has something to do next — a
+   * dirty checkout to clean, or a GitHub connection to make.
+   */
+  const syncMainline = async (): Promise<void> => {
+    if (!workspaceId) return
+    setSyncing(true)
+    setNotice(null)
+    setError(null)
+    try {
+      const result = await window.api.trackSyncMainline({ workspaceId })
+      if (result.outcome === 'fast-forwarded') {
+        setNotice(
+          `${result.baseBranch} fast-forwarded ${result.commitCount} commit` +
+            `${result.commitCount === 1 ? '' : 's'} from ${result.integrationBranch}.`
+        )
+      } else if (result.outcome === 'pull-request') {
+        setNotice(
+          `Opened ${result.prUrl ?? 'a pull request'} to merge ${result.integrationBranch} into ${result.baseBranch}.`
+        )
+      } else if (result.outcome === 'up-to-date') {
+        setNotice(`${result.baseBranch} already has everything on ${result.integrationBranch}.`)
+      } else {
+        setError(result.reason ?? 'Nothing was promoted.')
+      }
+      await load()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   const run = async (trackId: string, fn: () => Promise<unknown>): Promise<void> => {
     setBusyId(trackId)
     try {
@@ -327,6 +477,17 @@ export default function TracksSettingsTab({
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
+      )}
+
+      {notice && (
+        <div className="flex items-start gap-2 p-3 rounded-lg bg-success-muted text-success text-xs">
+          <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
+          <span>{notice}</span>
+        </div>
+      )}
+
+      {result?.mainline && (
+        <MainlineCard mainline={result.mainline} busy={syncing} onSync={() => void syncMainline()} />
       )}
 
       {result && (

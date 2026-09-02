@@ -128,6 +128,7 @@ import type {
   TrackListResult,
   LandingResult,
   LandingPreview,
+  MainlineSyncResult,
   TrackLandingMode
 } from '../shared/track-types'
 import type { BlueprintBranchOptions, BlueprintBranchChoice } from '../shared/blueprint-types'
@@ -2147,6 +2148,7 @@ interface Api {
     baseBranch?: string
     mode?: TrackLandingMode
   }) => Promise<LandingPreview>
+  trackSyncMainline: (args: { workspaceId: string }) => Promise<MainlineSyncResult>
   onTrackChanged: (cb: (data: { workspaceId: string | null }) => void) => () => void
 
   onTrayNavigate: (cb: (data: { view: string; workspaceId?: string }) => void) => () => void

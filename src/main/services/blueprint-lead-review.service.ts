@@ -45,6 +45,7 @@ import { parseLeadReview } from '../../shared/blueprint-artifact-parsers'
 import type { LeadReviewResult, ReviewFinding } from '../../shared/task-review-types'
 import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { syncBlueprintDone } from './jira-issue-sync.service'
+import { autoLandBlueprint } from './blueprint-track'
 import {
   blueprintRepository,
   blueprintPhaseRepository,
@@ -519,6 +520,18 @@ export class BlueprintLeadReviewService extends EventEmitter {
 
     blueprintRepository.updateStatus(blueprintId, 'complete')
     void syncBlueprintDone(blueprintId)
+
+    // Auto-land parity with the verify service. This pass has no
+    // `overallStatus` of its own — it hardcodes `passed` below — so the
+    // unverified ledger is the signal here: two of the three routes into this
+    // method are degraded ones (no diff, pass errored) that append to it, and
+    // findings that survived the fix wave land in it too. A non-empty ledger is
+    // precisely "completed without being proven".
+    void autoLandBlueprint({
+      blueprintId,
+      workspaceId,
+      humanReviewNeeded: (blueprintRepository.findById(blueprintId)?.unverifiedJson ?? []).length > 0
+    })
 
     this.safeEmit('phaseComplete', {
       blueprintId,

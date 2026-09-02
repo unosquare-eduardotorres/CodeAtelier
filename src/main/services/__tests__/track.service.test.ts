@@ -464,6 +464,146 @@ if (!gitAvailable || !dbContext) {
         )
       })
     })
+
+    /**
+     * A multi-project repo that is NOT an npm workspace: root `package.json`
+     * with no `workspaces` key, each app with its own `package.json` and its
+     * own `node_modules`. Linking only the root leaves every nested app
+     * without dependencies, and the agent meets that as `Cannot find module`
+     * inside a build task rather than as a setup failure.
+     */
+    async function withMultiProjectRepo(
+      fn: (git: Git, dir: string, wsId: string) => Promise<void>
+    ): Promise<void> {
+      await withRepo(async (git, dir, wsId) => {
+        await writeFile(join(dir, '.gitignore'), 'node_modules/\n')
+        await writeFile(join(dir, 'package.json'), '{"name":"congruity"}\n')
+        for (const app of ['enrollment', 'web']) {
+          await mkdir(join(dir, 'apps', app), { recursive: true })
+          await writeFile(join(dir, 'apps', app, 'package.json'), `{"name":"${app}"}\n`)
+          await mkdir(join(dir, 'apps', app, 'node_modules', 'pdf-lib'), { recursive: true })
+          await writeFile(
+            join(dir, 'apps', app, 'node_modules', 'pdf-lib', 'index.js'),
+            `module.exports='${app}'\n`
+          )
+        }
+        await mkdir(join(dir, 'node_modules', 'left-pad'), { recursive: true })
+        await git.add('.')
+        await git.commit('multi-project')
+
+        await fn(git, dir, wsId)
+      })
+    }
+
+    test('links every nested project, not just the repo root', async () => {
+      await withMultiProjectRepo(async (_git, dir, wsId) => {
+        const conv = seedConv(wsId)
+        const target = await trackService.ensure({
+          conversationId: conv,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/multi-project'
+        })
+
+        for (const app of ['enrollment', 'web']) {
+          const linked = join(target.path, 'apps', app, 'node_modules')
+          assert.ok(
+            lstatSync(linked).isSymbolicLink(),
+            `apps/${app}/node_modules must be linked, not absent`
+          )
+          assert.equal(
+            await readFile(join(linked, 'pdf-lib', 'index.js'), 'utf8'),
+            `module.exports='${app}'\n`,
+            'each app resolves ITS OWN dependencies, not the root ones'
+          )
+        }
+        assert.ok(lstatSync(join(target.path, 'node_modules')).isSymbolicLink())
+
+        await trackService.release(conv)
+      })
+    })
+
+    test('reports failure when a project is left without dependencies', async () => {
+      await withRepo(async (git, dir, wsId) => {
+        await writeFile(join(dir, '.gitignore'), 'node_modules/\n')
+        await mkdir(join(dir, 'node_modules', 'left-pad'), { recursive: true })
+        // Committed, so it exists in the worktree — but never installed, so
+        // the primary has nothing to link there.
+        await mkdir(join(dir, 'apps', 'api'), { recursive: true })
+        await writeFile(join(dir, 'apps', 'api', 'package.json'), '{"name":"api"}\n')
+        await git.add('.')
+        await git.commit('uninstalled app')
+
+        const conv = seedConv(wsId)
+        const target = await trackService.ensure({
+          conversationId: conv,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/bare-project'
+        })
+
+        // Called directly: the verdict is otherwise only visible in a log line,
+        // and reporting success while a project sits bare is the defect.
+        // Idempotent — the links it already made are skipped.
+        assert.equal(
+          trackService.linkNodeModules(dir, target.path),
+          false,
+          'a bare nested project must be reported, not silently accepted'
+        )
+
+        await trackService.release(conv)
+      })
+    })
+
+    test('release never deletes nested project dependencies through their links', async () => {
+      await withMultiProjectRepo(async (_git, dir, wsId) => {
+        const sentinel = join(dir, 'apps', 'web', 'node_modules', 'pdf-lib', 'index.js')
+        const conv = seedConv(wsId)
+        await trackService.ensure({
+          conversationId: conv,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/nested-safe-teardown'
+        })
+
+        await trackService.release(conv)
+
+        assert.ok(
+          existsSync(sentinel),
+          'a nested link left in place is a forced delete into the real dependency tree'
+        )
+      })
+    })
+
+    test('nested links do not make a tree look dirty forever', async () => {
+      await withRepo(async (git, dir, wsId) => {
+        // No .gitignore on purpose: every link this service creates shows up as
+        // `?? <path>/node_modules`, and a permanently dirty tree is never
+        // reclaimable.
+        await mkdir(join(dir, 'apps', 'web'), { recursive: true })
+        await writeFile(join(dir, 'apps', 'web', 'package.json'), '{"name":"web"}\n')
+        await git.add('.')
+        await git.commit('nested app')
+        await mkdir(join(dir, 'apps', 'web', 'node_modules', 'pdf-lib'), { recursive: true })
+        await mkdir(join(dir, 'node_modules', 'left-pad'), { recursive: true })
+
+        const conv = seedConv(wsId)
+        const target = await trackService.ensure({
+          conversationId: conv,
+          workspaceId: wsId,
+          repoPath: dir,
+          branchName: 'feat/nested-deps-only'
+        })
+
+        assert.equal(
+          await trackService.hasUncommittedWork(target.path),
+          false,
+          'a nested node_modules link is this service’s own doing, not user work'
+        )
+        assert.equal(await trackService.release(conv), 'removed')
+        assert.equal(existsSync(target.path), false)
+      })
+    })
   })
 
   // ── Never lose work ────────────────────────────────────────────

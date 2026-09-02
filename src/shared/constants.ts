@@ -107,6 +107,12 @@ export const IPC_CHANNELS = {
    */
   TRACK_LAND_PREVIEW: 'track:landPreview',
   /**
+   * Renderer → Main: promote the integration branch to the mainline —
+   * fast-forward when it is one, otherwise open a PR. The only track operation
+   * that touches the user's own checkout, so it is never automatic.
+   */
+  TRACK_SYNC_MAINLINE: 'track:syncMainline',
+  /**
    * Main → Renderer: a workspace's track list changed (created, retained,
    * removed, adopted, reaped). `workspaceId` is null when the change spanned
    * workspaces (the reaper), meaning "refresh regardless".

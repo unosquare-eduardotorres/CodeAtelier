@@ -258,6 +258,15 @@ if (!gitAvailable || !dbContext) {
       assert.equal(integrationBranchFor('main'), 'integration/main')
       assert.equal(integrationBranchFor('develop'), 'integration/develop')
     })
+
+    test('an integration branch is its own target — the prefix never compounds', () => {
+      // Blueprints fork from the integration branch once it is ahead, so their
+      // track's base IS `integration/<x>`. Deriving blindly would send the next
+      // landing to `integration/integration/<x>` — a fresh empty branch per
+      // run, which is the exact accumulation the integration branch prevents.
+      assert.equal(integrationBranchFor('integration/main'), 'integration/main')
+      assert.equal(integrationBranchFor(integrationBranchFor('develop')), 'integration/develop')
+    })
   })
 
   // ── Independent landing — the default, and what every isolated chat gets ──
@@ -616,6 +625,35 @@ if (!gitAvailable || !dbContext) {
       })
     })
 
+    test('a track marked landed whose work never arrived is not collected', async () => {
+      await withRepo(async ({ dir, wsId }) => {
+        const t = await makeTrack(wsId, dir, `gc-d-${wsId}`, 'feat/gc-d', 'gc.txt', 'gc\n')
+        const git = simpleGit(t.path)
+        await git.add('.')
+        await git.commit('work that exists nowhere else')
+        const head = (await git.revparse(['HEAD'])).trim()
+
+        // Exactly the state a failed push leaves behind: `landIndependent`
+        // pushes best-effort, only warns when that fails, and marks the track
+        // landed regardless. `findLanded` selects on that flag alone, so GC
+        // would force-delete a branch holding the only copy of this commit.
+        trackRepository.markLanded(t.id, 'main')
+
+        await landingService.gcLandedTracks(wsId)
+
+        assert.ok(trackRepository.findById(t.id), 'the row survived')
+        const branches = await simpleGit(dir).branchLocal()
+        assert.equal(branches.all.includes('feat/gc-d'), true, 'the branch survived')
+        assert.equal(
+          (await simpleGit(dir).revparse(['feat/gc-d'])).trim(),
+          head,
+          'and still points at the unreachable commit'
+        )
+
+        await trackService.discard(t.id)
+      })
+    })
+
     test('a conflicted track is never collected', async () => {
       await withRepo(async ({ dir, wsId }) => {
         const t = await makeTrack(wsId, dir, `gc-c-${wsId}`, 'feat/gc-c', 'gc.txt', 'gc\n')
@@ -628,6 +666,174 @@ if (!gitAvailable || !dbContext) {
         await trackService.discard(t.id)
         const integration = trackRepository.findByOwner('manual', `integration:${wsId}`)
         if (integration) await trackService.discard(integration.id)
+      })
+    })
+  })
+
+  // ── Integration → mainline ──────────────────────────────────
+
+  /**
+   * Blueprints land into the integration branch on their own; nothing moves
+   * that work on to the mainline without the user. These cover the one step
+   * that touches the user's checkout, and every case where it must refuse to.
+   */
+  describe('integration → mainline', () => {
+    /** A landed track whose merge commit carries `subject`. */
+    async function landOne(
+      wsId: string,
+      dir: string,
+      name: string,
+      file: string,
+      subject: string
+    ): Promise<{ id: string; path: string }> {
+      const t = await makeTrack(wsId, dir, `${name}-${wsId}`, `feat/${name}`, file, `${file}\n`)
+      // Committed inside the track, so the subject has nowhere to land but the
+      // merge commit — the case where the review tag used to disappear.
+      const git = simpleGit(t.path)
+      await git.add('.')
+      await git.commit(`agent committed ${file}`)
+      const result = await landingService.land(t.id, { commitMessage: subject })
+      assert.equal(result.outcome, 'landed')
+      return t
+    }
+
+    test('the merge commit carries the caller’s subject, not git’s default', async () => {
+      await withRepo(async ({ dir, wsId }) => {
+        const subject = '[human-review-needed] Add m (blueprint abc12345)'
+        const t = await landOne(wsId, dir, 'msg-a', 'm.txt', subject)
+
+        const integration = trackRepository.findByOwner('manual', `integration:${wsId}`)!
+        const actual = (
+          await simpleGit(integration.path).raw(['log', '-1', '--format=%s'])
+        ).trim()
+        // `--no-edit` would have written "Merge branch 'feat/msg-a'", losing the
+        // blueprint title and the tag that keeps unproven work identifiable.
+        assert.equal(actual, subject)
+
+        await trackService.discard(t.id)
+        await trackService.discard(integration.id)
+      })
+    })
+
+    test('reports what is waiting, then fast-forwards it on request', async () => {
+      await withRepo(async ({ dir, wsId }) => {
+        const t = await landOne(wsId, dir, 'ml-a', 'ml.txt', '[human-review-needed] unproven')
+
+        const before = (await landingService.mainlineStatus(wsId))!
+        assert.equal(before.baseBranch, 'main')
+        assert.equal(before.integrationBranch, 'integration/main')
+        assert.equal(before.exists, true)
+        assert.equal(before.ahead, 2, 'the track commit and the merge commit')
+        assert.equal(before.behind, 0)
+        assert.equal(before.humanReviewCount, 1, 'only the tagged merge commit counts')
+        assert.equal(before.primaryTreeDirty, false)
+        assert.equal(before.canFastForward, true)
+
+        const result = await landingService.syncMainline(wsId)
+        assert.equal(result.outcome, 'fast-forwarded')
+        assert.equal(result.commitCount, 2)
+
+        // The point of the whole exercise: the work is finally on the branch
+        // the user actually works on.
+        assert.equal(await headOf(dir), 'main')
+        assert.equal(existsSync(join(dir, 'ml.txt')), true)
+
+        const after = (await landingService.mainlineStatus(wsId))!
+        assert.equal(after.ahead, 0)
+        assert.equal(after.canFastForward, false)
+
+        // Idempotent: nothing waiting means nothing done.
+        assert.equal((await landingService.syncMainline(wsId)).outcome, 'up-to-date')
+
+        await trackService.discard(t.id)
+        const integration = trackRepository.findByOwner('manual', `integration:${wsId}`)
+        if (integration) await trackService.discard(integration.id)
+      })
+    })
+
+    test('a mainline that has moved is never merged into the checkout', async () => {
+      await withRepo(async ({ dir, wsId }) => {
+        const t = await landOne(wsId, dir, 'ml-b', 'mlb.txt', 'landed work')
+
+        // The user commits directly to the mainline, so promotion stops being a
+        // fast-forward. GitHub is not configured here, so there is nowhere to
+        // put a PR — and the answer must be "blocked", never a local merge.
+        const mainGit = simpleGit(dir)
+        await writeFile(join(dir, 'shared.txt'), 'user edit\n')
+        await mainGit.add('.')
+        await mainGit.commit('direct to main')
+        const headBefore = (await mainGit.revparse(['HEAD'])).trim()
+
+        const status = (await landingService.mainlineStatus(wsId))!
+        assert.ok(status.behind > 0, 'divergence is visible before the button is pressed')
+        assert.equal(status.canFastForward, false)
+
+        const result = await landingService.syncMainline(wsId)
+        assert.equal(result.outcome, 'blocked')
+        assert.match(result.reason ?? '', /pull request/)
+
+        assert.equal((await mainGit.revparse(['HEAD'])).trim(), headBefore, 'main did not move')
+        assert.equal(existsSync(join(dir, 'mlb.txt')), false, 'and gained nothing')
+
+        await trackService.discard(t.id)
+        const integration = trackRepository.findByOwner('manual', `integration:${wsId}`)
+        if (integration) await trackService.discard(integration.id)
+      })
+    })
+
+    test('a dirty checkout blocks the fast-forward instead of risking it', async () => {
+      await withRepo(async ({ dir, wsId }) => {
+        const t = await landOne(wsId, dir, 'ml-c', 'mlc.txt', 'landed work')
+
+        // A tracked file modified in the user's own checkout.
+        await writeFile(join(dir, 'shared.txt'), 'half-finished\n')
+
+        const status = (await landingService.mainlineStatus(wsId))!
+        assert.equal(status.primaryTreeDirty, true)
+        assert.equal(status.canFastForward, false, 'ahead, but not safely')
+
+        const result = await landingService.syncMainline(wsId)
+        assert.equal(result.outcome, 'blocked')
+        assert.match(result.reason ?? '', /uncommitted changes/)
+        assert.equal(
+          (await readFile(join(dir, 'shared.txt'), 'utf8')).trim(),
+          'half-finished',
+          'the user’s in-progress edit is exactly as they left it'
+        )
+
+        await trackService.discard(t.id)
+        const integration = trackRepository.findByOwner('manual', `integration:${wsId}`)
+        if (integration) await trackService.discard(integration.id)
+      })
+    })
+
+    test('an untracked stray file does not block anything', async () => {
+      await withRepo(async ({ dir, wsId }) => {
+        const t = await landOne(wsId, dir, 'ml-d', 'mld.txt', 'landed work')
+
+        // Every repo has one of these. A fast-forward cannot collide with a file
+        // git is not tracking, so counting it as dirty would disable the button
+        // permanently for no reason.
+        await writeFile(join(dir, 'scratch.local'), 'notes\n')
+
+        const status = (await landingService.mainlineStatus(wsId))!
+        assert.equal(status.primaryTreeDirty, false)
+        assert.equal(status.canFastForward, true)
+        assert.equal((await landingService.syncMainline(wsId)).outcome, 'fast-forwarded')
+
+        await trackService.discard(t.id)
+        const integration = trackRepository.findByOwner('manual', `integration:${wsId}`)
+        if (integration) await trackService.discard(integration.id)
+      })
+    })
+
+    test('a workspace where nothing has landed has nothing to promote', async () => {
+      await withRepo(async ({ wsId }) => {
+        const status = (await landingService.mainlineStatus(wsId))!
+        assert.equal(status.exists, false, 'integration/main is not a ref yet')
+        assert.equal(status.ahead, 0)
+        assert.equal(status.canFastForward, false)
+        assert.equal((await landingService.syncMainline(wsId)).outcome, 'up-to-date')
       })
     })
   })

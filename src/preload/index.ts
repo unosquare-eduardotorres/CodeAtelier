@@ -3025,6 +3025,16 @@ const api = {
     ipcRenderer.invoke(IPC_CHANNELS.TRACK_LAND_PREVIEW, args),
 
   /**
+   * Promote the integration branch to the mainline: fast-forward when it is
+   * one, otherwise open a PR. Touches the user's checkout, so it is only ever
+   * called from an explicit button press.
+   */
+  trackSyncMainline: (args: {
+    workspaceId: string
+  }): Promise<import('../shared/track-types').MainlineSyncResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TRACK_SYNC_MAINLINE, args),
+
+  /**
    * Listen for track list changes (created, retained, removed, adopted, reaped).
    * `workspaceId` is null when the change crossed workspaces — refresh anyway.
    */

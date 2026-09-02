@@ -33,6 +33,18 @@ import {
 
 const trackLog = log.scope('blueprint-track')
 
+/**
+ * Marks an auto-landed merge whose blueprint was not fully proven.
+ *
+ * VERIFY's `human_needed` — and the lead-review pass's degraded paths — both
+ * finish a blueprint as `complete`, so auto-landing merges work nobody has
+ * looked at. The integration branch makes that safe (it is not mainline, and
+ * the merge is reversible), but safe is not the same as visible: this tag is
+ * what stops it reaching mainline unnoticed, because it survives into
+ * `git log integration/<base>` where the Phase-4 promotion step reads it.
+ */
+export const HUMAN_REVIEW_TAG = '[human-review-needed]'
+
 /** Owner kind + id every blueprint phase resolves its execution path by. */
 export function blueprintTrackOwner(blueprintId: string): {
   ownerKind: 'blueprint'
@@ -175,6 +187,60 @@ export async function repoHasCommits(repoPath: string): Promise<boolean> {
   }
 }
 
+/**
+ * Where a blueprint should fork from when the user has not said.
+ *
+ * Blueprints forked from whatever the primary checkout had checked out at the
+ * moment they started, which is correct exactly once. As soon as landing sends
+ * finished runs to `integration/<base>` — and it must, because merging into the
+ * user's own checkout is the one thing landing refuses to do — the primary
+ * branch stops moving, and every subsequent blueprint forks from a base that
+ * has none of the previous runs in it. Work accumulates somewhere new runs
+ * never look, which is strictly worse than never landing at all.
+ *
+ * So: fork from the integration branch when there is one and it is genuinely
+ * ahead. "Ahead" is the whole condition — an integration branch level with the
+ * base carries nothing, and forking from it would only make the resulting
+ * track's base read confusingly.
+ *
+ * Returns undefined for every other case, which restores the old behaviour of
+ * forking from primary HEAD. Never throws: a fork point is not worth failing a
+ * run over.
+ */
+async function resolveAutoForkBase(repoPath: string): Promise<string | undefined> {
+  try {
+    const git = simpleGit(repoPath)
+    const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim()
+    if (!current || current === 'HEAD') return undefined
+
+    const { integrationBranchFor } = await import('./landing.service')
+    const integration = integrationBranchFor(current)
+    if (integration === current) return undefined
+
+    // Unresolvable ref — no landing has happened in this workspace yet.
+    try {
+      await git.raw(['rev-parse', '--verify', `${integration}^{commit}`])
+    } catch {
+      return undefined
+    }
+
+    const ahead = Number.parseInt(
+      (await git.raw(['rev-list', '--count', `${current}..${integration}`])).trim(),
+      10
+    )
+    if (!Number.isFinite(ahead) || ahead <= 0) return undefined
+
+    trackLog.info(
+      `[fork] ${integration} is ${ahead} commit(s) ahead of ${current} — forking from it ` +
+        `so this run builds on the work already landed there`
+    )
+    return integration
+  } catch (err) {
+    trackLog.debug(`[fork] could not resolve an integration base: ${(err as Error).message}`)
+    return undefined
+  }
+}
+
 /** Merge the resolved branch name into a blueprint's settings blob. */
 function persistBranchName(
   blueprintId: string,
@@ -240,7 +306,9 @@ export async function reserveBlueprintBranch(params: {
       if (track.branchName) taken.add(track.branchName)
     }
 
-    const baseBranch = choice.mode === 'fork' ? choice.branch : undefined
+    // An explicit fork choice is the user's, and is never second-guessed.
+    const baseBranch =
+      choice.mode === 'fork' ? choice.branch : await resolveAutoForkBase(workspacePath)
     const branchName =
       choice.mode === 'fork' && choice.name
         ? choice.name
@@ -340,6 +408,16 @@ export async function ensureBlueprintTrack(params: {
     if (choice.mode === 'fork') {
       branchName = choice.name ?? autoName
       baseBranch = choice.branch
+    } else if (choice.mode === 'auto') {
+      // Same fork point `reserveBlueprintBranch` chose at run start. Recomputed
+      // rather than read back because BUILD can be the first code to run for a
+      // blueprint whose branch was never reserved (reservation is best-effort).
+      //
+      // This is also what the track's `baseBranch` column ends up holding, and
+      // that column is what landing derives its target from — so a run forked
+      // from the integration branch lands back into it rather than spawning a
+      // nested one. `integrationBranchFor` is idempotent for exactly this.
+      baseBranch = await resolveAutoForkBase(workspacePath)
     } else if (choice.mode === 'takeover') {
       if (choice.branch) branchName = choice.branch
       else trackLog.warn(`[ensure] blueprint ${blueprintId}: takeover with no branch — using auto`)
@@ -380,13 +458,20 @@ export async function ensureBlueprintTrack(params: {
       }
     }
 
+    // Blueprint tracks land into the integration branch, not as their own PR.
+    // `independent` is the right default for a chat — one topic, one PR — but a
+    // blueprint's whole value is that run N+1 builds on run N, and independent
+    // mode pushes a branch and changes nothing locally, so the next run has
+    // nothing to fork from. Recorded on the row rather than forced at land time
+    // so a manual Land from the Tracks tab behaves the same as the automatic one.
     const target = await trackService.ensureTrack({
       ownerKind: 'blueprint',
       ownerId: blueprintId,
       workspaceId,
       repoPath: workspacePath,
       branchName,
-      baseBranch
+      baseBranch,
+      landingMode: 'integration'
     })
 
     if (target.isolated) {
@@ -488,5 +573,130 @@ export function findHandoffHolder(blueprintId: string): BranchHolder | null {
     // Diagnostics must never break the execution path they describe.
     trackLog.debug(`[resolve] hand-off check failed for ${blueprintId}: ${(err as Error).message}`)
     return null
+  }
+}
+
+// ── Landing ───────────────────────────────────────────────────────
+
+/**
+ * Merge a finished blueprint's branch into the workspace's integration branch.
+ *
+ * Landing machinery has existed since tracks shipped and the blueprint pipeline
+ * never called it: a run reached `complete` and its branch simply stopped
+ * moving, which is why a workspace accumulates blueprint branches that were
+ * never merged into anything and why blueprint N+1 cannot see blueprint N's
+ * work. This is the call that was missing.
+ *
+ * Three properties, each load-bearing because this runs without anyone asking:
+ *
+ *  1. **It cannot fail the blueprint.** The run is already `complete` and its
+ *     terminal event is already out. Every path here resolves; a landing
+ *     problem is reported, never thrown back into the pipeline.
+ *
+ *  2. **The target is always the integration branch.** Never the user's
+ *     checkout (git cannot safely merge into a branch someone is standing on,
+ *     and it may be dirty) and never mainline (nothing unattended should write
+ *     there). `mode` is forced rather than resolved so a workspace whose
+ *     default is `independent` does not turn this into an automatic PR.
+ *
+ *  3. **A conflict is a normal outcome.** `landIntegration` aborts the merge and
+ *     leaves both branches exactly as they were. The only thing owed to the user
+ *     is being told — hence the notification, because a fire-and-forget failure
+ *     that only reaches the log is a failure nobody sees.
+ *
+ * Idempotent: a second call lands nothing, because the track already has no
+ * commits the integration branch lacks.
+ */
+export async function autoLandBlueprint(params: {
+  blueprintId: string
+  workspaceId: string
+  /** Verify's own words. Becomes the merge commit body. */
+  summary?: string
+  /** Tag the merge subject — this work completed without being fully proven. */
+  humanReviewNeeded: boolean
+}): Promise<void> {
+  const { blueprintId, workspaceId, summary, humanReviewNeeded } = params
+
+  try {
+    const { landingService } = await import('./landing.service')
+    const blueprint = blueprintRepository.findById(blueprintId)
+    const title = blueprint?.title?.trim() || 'Blueprint'
+    const shortId = blueprintId.slice(0, 8)
+    const tag = humanReviewNeeded ? `${HUMAN_REVIEW_TAG} ` : ''
+
+    const result = await landingService.landOwner('blueprint', blueprintId, {
+      commitMessage: `${tag}${title} (blueprint ${shortId})`,
+      description: summary,
+      mode: 'integration'
+    })
+
+    // No track: the run used the primary tree (auto-branching off, no commits,
+    // branch held elsewhere). Its output is already in the user's checkout, so
+    // there is nothing to merge and nothing wrong.
+    if (!result) {
+      trackLog.info(`[land] blueprint ${blueprintId} has no track of its own — nothing to land`)
+      return
+    }
+
+    if (result.outcome === 'conflicted') {
+      trackLog.warn(
+        `[land] blueprint ${blueprintId} (${result.branch}) conflicts with the integration ` +
+          `branch — nothing merged, both branches intact`
+      )
+      await notifyLanding(
+        workspaceId,
+        blueprintId,
+        'needs_input',
+        `“${title}” finished, but its branch conflicts with the integration branch. ` +
+          `Nothing was merged — resolve it from Tracks.`
+      )
+      return
+    }
+
+    trackLog.info(
+      `[land] blueprint ${blueprintId} (${result.branch}): ${result.outcome}` +
+        (result.landedInto ? ` → ${result.landedInto}` : '')
+    )
+  } catch (err) {
+    // Reaching here means landing could not even be attempted — most often
+    // `ensureIntegrationTree` refusing because the user has the integration
+    // branch checked out. Silent is the one thing this must not be.
+    const message = (err as Error).message
+    trackLog.error(`[land] blueprint ${blueprintId} could not be landed: ${message}`)
+    await notifyLanding(
+      workspaceId,
+      blueprintId,
+      'failed',
+      `Blueprint finished but its work could not be landed: ${message}`
+    )
+  }
+}
+
+/**
+ * Tell the user about a landing that needs them.
+ *
+ * Imported lazily for the same reason the rest of this module's cross-service
+ * calls are: the notification service reaches for Electron at load, and this
+ * module is exercised in unit contexts that have none.
+ */
+async function notifyLanding(
+  workspaceId: string,
+  blueprintId: string,
+  status: 'needs_input' | 'failed',
+  summary: string
+): Promise<void> {
+  try {
+    const { notificationService } = await import('./notification.service')
+    notificationService.dispatch({
+      workspaceId,
+      workspaceName: workspaceRepository.findById(workspaceId)?.name ?? 'Workspace',
+      service: 'blueprint',
+      status,
+      summary,
+      targetPage: 'blueprints',
+      entityId: blueprintId
+    })
+  } catch (err) {
+    trackLog.warn(`[land] could not notify about ${blueprintId}: ${(err as Error).message}`)
   }
 }

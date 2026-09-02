@@ -37,7 +37,16 @@
  *     trees are parked as `retained` instead — a visible state, not a leak.
  */
 
-import { existsSync, mkdirSync, rmSync, symlinkSync, lstatSync, unlinkSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  lstatSync,
+  unlinkSync,
+  type Dirent
+} from 'node:fs'
 import { readdir, stat } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import simpleGit from 'simple-git'
@@ -51,6 +60,7 @@ import { conversationRepository } from '../db/repositories/conversation.reposito
 import type {
   WorkTrack,
   TrackOwnerKind,
+  TrackLandingMode,
   TrackSummary,
   ExecutionTarget,
   ReleaseOutcome,
@@ -91,6 +101,21 @@ export const DISK_BUDGET_BYTES = 10 * 1024 * 1024 * 1024
 
 /** Bound on the directory walk behind `diskBytes`, so a huge tree can't stall a list call. */
 const MAX_WALK_ENTRIES = 50_000
+
+/** Directories the nested-project walk never descends into. */
+const PROJECT_WALK_SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next'])
+
+/**
+ * How deep the nested-project walk looks.
+ *
+ * Three levels covers the shapes that actually occur — `apps/web`,
+ * `packages/ui`, `connectors/isolved-odata-mcp` — without turning track
+ * creation into a full-tree scan.
+ */
+const MAX_PROJECT_DEPTH = 3
+
+/** Bound on the nested-project walk, so a pathological tree can't stall track creation. */
+const MAX_PROJECT_DIRS = 2_000
 
 function getElectronApp(): typeof import('electron').app {
   // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy so this module loads without Electron (unit tests)
@@ -391,6 +416,14 @@ export interface EnsureTrackOptions {
   branchName: string | null
   /** Fork point for a branch that does not exist yet. Defaults to primary HEAD. */
   baseBranch?: string
+  /**
+   * Landing mode recorded on the track at creation.
+   *
+   * Only read on the insert: re-`ensureTrack`ing an existing track must not
+   * overwrite a mode the user has since changed by hand. Omit to inherit the
+   * workspace default, which is what every chat track does.
+   */
+  landingMode?: TrackLandingMode
 }
 
 /** Chat-shaped options, kept so the chat call sites read the same as before. */
@@ -633,7 +666,8 @@ export class TrackService {
       ownerId,
       branchName,
       path,
-      baseBranch
+      baseBranch,
+      landingMode: opts.landingMode
     })
     trackRepository.touch(created.id)
 
@@ -1012,7 +1046,9 @@ export class TrackService {
    *
    * `node_modules` is filtered out because this service created that symlink.
    * Repos that do not gitignore it would otherwise report every worktree as
-   * permanently dirty, and nothing would ever be reclaimable.
+   * permanently dirty, and nothing would ever be reclaimable. The path prefix
+   * is part of the pattern because a multi-project repo gets one link per
+   * project (`?? apps/web/node_modules`), not just one at the root.
    */
   async hasUncommittedWork(path: string): Promise<boolean> {
     if (!existsSync(path)) return false
@@ -1023,7 +1059,7 @@ export class TrackService {
         .split('\n')
         .map((line) => line.trim())
         .filter(Boolean)
-        .some((line) => !/^\?\?\s+node_modules\/?$/.test(line))
+        .some((line) => !/^\?\?\s+(?:.*\/)?node_modules\/?$/.test(line))
     } catch (err) {
       wtLog.warn(
         `[hasUncommittedWork] status failed for ${path}: ${(err as Error).message} — ` +
@@ -1064,7 +1100,69 @@ export class TrackService {
   }
 
   /**
-   * Symlink the primary tree's `node_modules` into the worktree.
+   * Every directory under `root` that could hold an npm project, relative to
+   * it (`''` is the root itself).
+   *
+   * Bounded on purpose: this runs on the track-creation path, in front of the
+   * agent's first turn, so a full-tree scan of a large repo would surface as a
+   * stall. `isDirectory()` is false for a symlink, so the walk never follows a
+   * link out of the tree it was pointed at.
+   */
+  private walkProjectDirs(root: string): string[] {
+    const found: string[] = ['']
+    const queue: Array<{ rel: string; depth: number }> = [{ rel: '', depth: 0 }]
+
+    while (queue.length > 0 && found.length < MAX_PROJECT_DIRS) {
+      const { rel, depth } = queue.shift()!
+      if (depth >= MAX_PROJECT_DEPTH) continue
+
+      let entries: Dirent[] = []
+      try {
+        entries = readdirSync(join(root, rel), { withFileTypes: true })
+      } catch {
+        continue // an unreadable directory is not worth failing track creation over
+      }
+
+      for (const entry of entries) {
+        if (found.length >= MAX_PROJECT_DIRS) break
+        if (!entry.isDirectory() || PROJECT_WALK_SKIP.has(entry.name)) continue
+        const child = rel ? `${rel}/${entry.name}` : entry.name
+        found.push(child)
+        queue.push({ rel: child, depth: depth + 1 })
+      }
+    }
+
+    return found
+  }
+
+  /**
+   * Project directories in the primary tree that actually have dependencies
+   * installed, relative to it.
+   *
+   * A multi-project repo that is not an npm workspace — root `package.json`
+   * with no `workspaces` key, `apps/*` each with their own lockfile and their
+   * own `node_modules` — has one dependency tree per project. Linking only the
+   * root leaves every nested app bare, and the agent meets that as
+   * `Cannot find module '<dep>'` inside a build task, where it reads as a code
+   * defect rather than the setup defect it is.
+   *
+   * The rule is deliberately dumb: *if the primary tree has dependencies
+   * there, mirror them*. Guessing which nested projects are real build targets
+   * can be wrong; one extra symlink cannot. The root is the only special case,
+   * and only because a `node_modules` without a sibling `package.json` is
+   * still worth linking there.
+   */
+  private discoverDependencyRoots(primaryPath: string): string[] {
+    return this.walkProjectDirs(primaryPath).filter(
+      (rel) =>
+        existsSync(join(primaryPath, rel, 'node_modules')) &&
+        (rel === '' || existsSync(join(primaryPath, rel, 'package.json')))
+    )
+  }
+
+  /**
+   * Symlink the primary tree's `node_modules` — every project's, not just the
+   * root's — into the worktree.
    *
    * Without this every worktree is a broken dev environment — no typecheck, no
    * tests, no lint — which defeats the point of giving an agent its own tree.
@@ -1072,31 +1170,59 @@ export class TrackService {
    *
    * Best-effort: a worktree without dependencies is degraded, not broken, so a
    * symlink failure (Windows without developer mode, for instance) must not
-   * abort track creation.
+   * abort track creation — and one project's failure must not skip the rest.
    */
   private linkNodeModules(repoPath: string, worktreePath: string): boolean {
-    const source = join(repoPath, 'node_modules')
-    const target = join(worktreePath, 'node_modules')
-    if (!existsSync(source)) return true // nothing to link — not a degradation
-    if (existsSync(target)) return true
+    for (const rel of this.discoverDependencyRoots(repoPath)) {
+      const target = join(worktreePath, rel, 'node_modules')
+      if (existsSync(target)) continue
+      // A project the primary has but this branch does not is not ours to
+      // create: an untracked `apps/foo/` would report as `?? apps/foo/` for
+      // ever, and a permanently dirty tree is never reclaimable.
+      if (!existsSync(join(worktreePath, rel))) continue
 
-    try {
-      symlinkSync(source, target, 'junction')
-      wtLog.info(`[linkNodeModules] linked node_modules into ${worktreePath}`)
-      return true
-    } catch (err) {
-      // Windows refuses junction creation without the right privileges, and it
-      // is the one failure here a user can actually fix — so say what broke and
-      // what it costs, rather than logging a bare errno and letting the agent
-      // discover it as "npm test doesn't work in this directory".
-      wtLog.warn(
-        `[linkNodeModules] could not link dependencies into ${worktreePath}: ` +
-          `${(err as Error).message}. The tree is usable for editing and git, but ` +
-          `builds, tests and lint will not run in it until dependencies are installed ` +
-          `there (or, on Windows, developer mode / elevated privileges allow the junction).`
-      )
-      return false
+      try {
+        symlinkSync(join(repoPath, rel, 'node_modules'), target, 'junction')
+        wtLog.info(`[linkNodeModules] linked ${rel || '.'} dependencies into ${worktreePath}`)
+      } catch (err) {
+        // Windows refuses junction creation without the right privileges, and
+        // it is the one failure here a user can actually fix — so say what
+        // broke rather than logging a bare errno.
+        wtLog.warn(
+          `[linkNodeModules] could not link ${rel || '.'} dependencies into ` +
+            `${worktreePath}: ${(err as Error).message}`
+        )
+      }
     }
+
+    return this.reportBareProjects(worktreePath)
+  }
+
+  /**
+   * Name every project left without dependencies, and report the tree as
+   * degraded when any is.
+   *
+   * This is the half that was actually broken. The old code returned `true` on
+   * three paths — no root `node_modules`, target already present, root link
+   * succeeded — so the warning below, the only user-visible signal at setup
+   * time, could not fire for the case that hurts: a nested project left bare
+   * while the root link reported success.
+   */
+  private reportBareProjects(worktreePath: string): boolean {
+    const bare = this.walkProjectDirs(worktreePath).filter(
+      (rel) =>
+        existsSync(join(worktreePath, rel, 'package.json')) &&
+        !existsSync(join(worktreePath, rel, 'node_modules'))
+    )
+    if (bare.length === 0) return true
+
+    wtLog.warn(
+      `[linkNodeModules] ${bare.length} project(s) in ${worktreePath} have no dependencies: ` +
+        `${bare.map((rel) => rel || '.').join(', ')}. The tree is usable for editing and git, ` +
+        `but builds, tests and lint will not run in those directories until dependencies are ` +
+        `installed there (or, on Windows, developer mode / elevated privileges allow the junction).`
+    )
+    return false
   }
 
   /** The owning workspace's primary working tree, if it is still on disk. */
@@ -1201,15 +1327,23 @@ export class TrackService {
     }
   }
 
-  /** Remove the node_modules symlink without touching what it points at. */
+  /**
+   * Remove every node_modules symlink without touching what they point at.
+   *
+   * All of them, not just the root's: teardown is `rmSync(recursive, force)`,
+   * and a nested link left in place is a walk straight into the primary tree's
+   * dependencies.
+   */
   private unlinkNodeModules(worktreePath: string): void {
-    const target = join(worktreePath, 'node_modules')
-    try {
-      // lstat, not stat: we must detect the link itself, not its destination.
-      if (!lstatSync(target).isSymbolicLink()) return
-      unlinkSync(target)
-    } catch {
-      /* absent or already gone — nothing to protect */
+    for (const rel of this.walkProjectDirs(worktreePath)) {
+      const target = join(worktreePath, rel, 'node_modules')
+      try {
+        // lstat, not stat: we must detect the link itself, not its destination.
+        if (!lstatSync(target).isSymbolicLink()) continue
+        unlinkSync(target)
+      } catch {
+        /* absent or already gone — nothing to protect */
+      }
     }
   }
 }

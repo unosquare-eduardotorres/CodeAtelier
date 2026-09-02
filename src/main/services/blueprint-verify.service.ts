@@ -55,7 +55,7 @@ import type { GateCommandSet } from '../../shared/gate-command-types'
 import { scanGateCommands } from './blueprint-preflight.service'
 import { codeGraphService } from './code-graph.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
-import { resolveBlueprintTrack, blueprintTrackOwner } from './blueprint-track'
+import { resolveBlueprintTrack, blueprintTrackOwner, autoLandBlueprint } from './blueprint-track'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -826,6 +826,18 @@ export class BlueprintVerifyService extends EventEmitter {
             if (overallStatus === 'passed' || overallStatus === 'human_needed') {
               blueprintRepository.updateStatus(blueprintId, 'complete')
               void syncBlueprintDone(blueprintId)
+
+              // Send the work to the integration branch. Fire-and-forget for
+              // the same reason the Jira sync above is: the blueprint has
+              // already completed, and a merge is not allowed to un-complete it.
+              // `human_needed` completes too, so the tag is what keeps salvaged
+              // work distinguishable once it is on the integration branch.
+              void autoLandBlueprint({
+                blueprintId,
+                workspaceId,
+                summary: typeof completion?.summary === 'string' ? completion.summary : undefined,
+                humanReviewNeeded: overallStatus === 'human_needed'
+              })
             } else {
               // BP-RETRY-CONTEXT: Save retry context for gaps_found/unknown failures
               try {
