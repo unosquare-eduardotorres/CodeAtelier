@@ -18,10 +18,12 @@
 
 import { useState, useEffect, useCallback, type JSX } from 'react'
 import { GitBranch, AlertTriangle, Loader2 } from 'lucide-react'
+import { summariseResolvedBase } from '../../../../../shared/blueprint-base-summary'
 import type {
   BlueprintBranchChoice,
   BlueprintBranchMode,
-  BlueprintBranchOptions
+  BlueprintBranchOptions,
+  ResolvedBlueprintBase
 } from '../../../../../shared/blueprint-types'
 
 interface BlueprintBranchPickerProps {
@@ -31,7 +33,14 @@ interface BlueprintBranchPickerProps {
 }
 
 const MODE_LABELS: { mode: BlueprintBranchMode; label: string; hint: string }[] = [
-  { mode: 'auto', label: 'New branch', hint: 'Named after this blueprint, cut from your HEAD' },
+  // Deliberately no longer "cut from your HEAD": that stopped being true the
+  // moment a base could be pinned or upgraded to an integration branch, and the
+  // resolved-base line below states the real answer instead of predicting it.
+  {
+    mode: 'auto',
+    label: 'New branch',
+    hint: 'Named after this blueprint, cut from the base below'
+  },
   { mode: 'fork', label: 'Branch from…', hint: 'A new branch taken from one you choose' },
   { mode: 'takeover', label: 'Work on…', hint: 'Continue an existing branch, taking it over' },
   { mode: 'primary', label: 'Workspace checkout', hint: 'No separate worktree' }
@@ -45,6 +54,7 @@ export function BlueprintBranchPicker({
   const [options, setOptions] = useState<BlueprintBranchOptions | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [resolvedBase, setResolvedBase] = useState<ResolvedBlueprintBase | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -76,6 +86,36 @@ export function BlueprintBranchPicker({
     // every parent render, and the preselect above must happen exactly once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId])
+
+  // Only `auto` and `fork` cut a new branch, so only they have a base to
+  // resolve. Re-asked when the fork target changes, because the integration
+  // upgrade is a property of the chosen base rather than of the workspace.
+  const forkTarget = value.mode === 'fork' ? (value.branch ?? null) : null
+  const resolvesBase = value.mode === 'auto' || value.mode === 'fork'
+
+  useEffect(() => {
+    // Not cleared for the modes that have no base: clearing here would be a
+    // synchronous setState in an effect body (cascading render), and the render
+    // below already gates on the mode, so a value left behind is unreachable.
+    if (!resolvesBase) return
+    let cancelled = false
+    window.api
+      .blueprintResolveBase({
+        workspaceId,
+        choice: forkTarget ? { mode: 'fork', branch: forkTarget } : { mode: 'auto' }
+      })
+      .then((result) => {
+        if (!cancelled) setResolvedBase(result)
+      })
+      .catch(() => {
+        // The picker still works without it — this line is explanation, not a
+        // control, so a failure hides it rather than shouting.
+        if (!cancelled) setResolvedBase(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, resolvesBase, forkTarget])
 
   const selectMode = useCallback(
     (mode: BlueprintBranchMode) => {
@@ -157,6 +197,28 @@ export function BlueprintBranchPicker({
             </option>
           ))}
         </select>
+      )}
+
+      {/*
+        Where this run will actually start, for every mode. R4: a configured
+        base nobody can see before BUILD is the same as no base at all — the
+        point is to notice a wrong one before an hour of agents runs against it.
+      */}
+      {!noCommits && !loading && (
+        <p data-testid="blueprint-resolved-base" className="text-[10px] text-text-muted">
+          {value.mode === 'primary' ? (
+            <>
+              Runs in your workspace checkout
+              {options?.currentBranch ? ` (${options.currentBranch})` : ''} — no separate branch.
+            </>
+          ) : value.mode === 'takeover' ? (
+            value.branch ? (
+              <>Continues {value.branch} from its own tip — nothing is forked.</>
+            ) : null
+          ) : resolvedBase ? (
+            summariseResolvedBase(resolvedBase)
+          ) : null}
+        </p>
       )}
 
       {/* Taking a branch the checkout is on is legal, and means no isolation. */}

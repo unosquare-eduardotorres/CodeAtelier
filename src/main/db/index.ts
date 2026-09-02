@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 152
+export const CURRENT_SCHEMA_VERSION = 153
 
 export interface Migration {
   version: number
@@ -4683,6 +4683,32 @@ export const migrations: Migration[] = [
       db.exec(`ALTER TABLE turn_usage ADD COLUMN prefix_tokens INTEGER`)
 
       dbLogger.info('[migration-152] ✓ Added turn_usage.prefix_tokens')
+    }
+  },
+  {
+    version: 153,
+    name: 'track-base-source',
+    up: (db) => {
+      // `base_branch` says WHERE a track forked from; it never said WHY, and
+      // the why is the part that cannot be recovered later. The checkout moves,
+      // the workspace setting changes, the integration branch advances — so by
+      // the time somebody asks "why did this blueprint fork from there?", every
+      // input to that decision has already changed underneath them. That is the
+      // exact shape of the incident this column exists to prevent recurring.
+      //
+      // Values are the resolution rules in order ('blueprint-fork',
+      // 'workspace-setting', 'checkout', 'repo-default', 'fallback') plus
+      // 'existing-branch', which is not a rule: it records that the branch was
+      // already present, so `worktree add` used its own tip and no base was
+      // consulted at all.
+      //
+      // Nullable and additive: existing tracks keep NULL (their source is not
+      // reconstructible, and inventing 'checkout' for all of them would be the
+      // same confident guess this column exists to replace), and ignoring the
+      // column reverts the change.
+      db.exec(`ALTER TABLE work_tracks ADD COLUMN base_source TEXT`)
+
+      dbLogger.info('[migration-153] ✓ Added work_tracks.base_source')
     }
   }
 ]

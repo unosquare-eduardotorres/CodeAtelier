@@ -24,7 +24,12 @@ import { trackRepository } from '../db/repositories/track.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
 import { blueprintRepository } from '../db/repositories/blueprint.repository'
 import type { ExecutionTarget, TrackOwnerKind } from '../../shared/track-types'
-import type { BlueprintBranchChoice } from '../../shared/blueprint-types'
+import type {
+  BlueprintBranchChoice,
+  BlueprintBaseSource,
+  ResolvedBlueprintBase
+} from '../../shared/blueprint-types'
+import { FOLLOW_CHECKOUT } from '../../shared/constants'
 import {
   buildBlueprintBranchName,
   readBlueprintBranchName,
@@ -188,56 +193,217 @@ export async function repoHasCommits(repoPath: string): Promise<boolean> {
 }
 
 /**
- * Where a blueprint should fork from when the user has not said.
+ * Resolve `ref` to a commit, or null when it does not exist.
  *
- * Blueprints forked from whatever the primary checkout had checked out at the
- * moment they started, which is correct exactly once. As soon as landing sends
- * finished runs to `integration/<base>` — and it must, because merging into the
- * user's own checkout is the one thing landing refuses to do — the primary
- * branch stops moving, and every subsequent blueprint forks from a base that
- * has none of the previous runs in it. Work accumulates somewhere new runs
- * never look, which is strictly worse than never landing at all.
- *
- * So: fork from the integration branch when there is one and it is genuinely
- * ahead. "Ahead" is the whole condition — an integration branch level with the
- * base carries nothing, and forking from it would only make the resulting
- * track's base read confusingly.
- *
- * Returns undefined for every other case, which restores the old behaviour of
- * forking from primary HEAD. Never throws: a fork point is not worth failing a
- * run over.
+ * Rejects a leading `-` before asking git. Two of the candidates below arrive
+ * from the renderer (the blueprint's fork choice and the workspace setting) and
+ * simple-git passes argv straight through — no shell, so nothing can be
+ * injected, but `-x` would still be read as an option rather than as a ref.
  */
-async function resolveAutoForkBase(repoPath: string): Promise<string | undefined> {
+async function verifyRef(repoPath: string, ref: string): Promise<string | null> {
+  if (!ref || ref.startsWith('-')) return null
+  try {
+    return (await simpleGit(repoPath).raw(['rev-parse', '--verify', `${ref}^{commit}`])).trim()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The repository's own idea of its default branch.
+ *
+ * Only reached on a detached HEAD, where there is no checkout to follow and
+ * guessing `main` would be wrong for every repo whose mainline is `develop` or
+ * `master`. `refs/remotes/<remote>/HEAD` is what `git clone` writes and is the
+ * only recorded answer that does not require a network call.
+ */
+async function repoDefaultBranch(repoPath: string): Promise<string | null> {
   try {
     const git = simpleGit(repoPath)
-    const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim()
-    if (!current || current === 'HEAD') return undefined
-
-    const { integrationBranchFor } = await import('./landing.service')
-    const integration = integrationBranchFor(current)
-    if (integration === current) return undefined
-
-    // Unresolvable ref — no landing has happened in this workspace yet.
-    try {
-      await git.raw(['rev-parse', '--verify', `${integration}^{commit}`])
-    } catch {
-      return undefined
+    const remotes = await git.getRemotes(false)
+    for (const remote of remotes.length > 0 ? remotes.map((r) => r.name) : ['origin']) {
+      try {
+        const ref = (
+          await git.raw(['symbolic-ref', '--short', `refs/remotes/${remote}/HEAD`])
+        ).trim()
+        // `origin/main` → `main`: the local branch is what a fork point needs.
+        const local = ref.startsWith(`${remote}/`) ? ref.slice(remote.length + 1) : ref
+        if (local) return local
+      } catch {
+        // This remote has no recorded HEAD. Try the next one.
+      }
     }
+  } catch (err) {
+    trackLog.debug(`[base] no repo default branch: ${(err as Error).message}`)
+  }
+  return null
+}
+
+/**
+ * Where a blueprint's branch gets cut from, and why.
+ *
+ * Two problems are solved together here, and the order they are solved in is
+ * the whole design.
+ *
+ * The first is that blueprints forked from whatever the primary checkout had
+ * checked out, which is correct exactly once. As soon as landing sends finished
+ * runs to `integration/<base>` — and it must, because merging into the user's
+ * own checkout is the one thing landing refuses to do — the primary branch
+ * stops moving, and every subsequent blueprint forks from a base with none of
+ * the previous runs in it. Work accumulates somewhere new runs never look.
+ *
+ * The second is that "whatever is checked out" is not a choice anybody made.
+ * An incidentally-checked-out branch would acquire an integration branch
+ * derived from it, blueprints would land there, it would become ahead, and
+ * every later run would keep choosing it — a wrong base gathering momentum.
+ *
+ * So the integration branch is NOT a rule competing with the others. A base is
+ * resolved first:
+ *
+ *   1. the blueprint's own `fork` choice
+ *   2. the workspace's pinned `blueprintBaseBranch`
+ *   3. the primary checkout's HEAD
+ *   4. the repository's default branch (detached HEAD only)
+ *   5. the `main` literal
+ *
+ * and only then is `integration/<winner>` substituted, when it exists and is
+ * strictly ahead. Ahead-ness is the whole condition: an integration branch
+ * level with its base carries nothing, and forking from it would only make the
+ * track's recorded base read confusingly.
+ *
+ * Resolving before upgrading is what makes a pinned base actually pinned. The
+ * obvious alternative — rank the integration branch above the setting — reads
+ * the live checkout to derive its candidate, so switching branches would
+ * silently override the pin.
+ *
+ * Every candidate is verified against real git, and a configured base that no
+ * longer exists falls explicitly to the next rule with a warning rather than
+ * silently becoming `main`. Never throws: a fork point is not worth failing a
+ * run over.
+ */
+export async function resolveBlueprintBase(params: {
+  workspaceId: string
+  repoPath: string
+  choice: BlueprintBranchChoice
+}): Promise<ResolvedBlueprintBase> {
+  const { workspaceId, repoPath, choice } = params
+
+  const candidates: { branch: string | null; source: BlueprintBaseSource; configured: boolean }[] =
+    []
+
+  // 1. The blueprint's own fork choice.
+  candidates.push({
+    branch: choice.mode === 'fork' && choice.branch ? choice.branch : null,
+    source: 'blueprint-fork',
+    configured: true
+  })
+
+  // 2. The workspace pin. Absent and the sentinel mean the same thing, which is
+  //    what gives every pre-existing workspace today's behaviour with no
+  //    migration and no backfill.
+  let pinned: string | null = null
+  try {
+    const configured = workspaceRepository.getSettings(workspaceId).blueprintBaseBranch
+    if (typeof configured === 'string' && configured && configured !== FOLLOW_CHECKOUT) {
+      pinned = configured
+    }
+  } catch (err) {
+    trackLog.debug(`[base] could not read workspace settings: ${(err as Error).message}`)
+  }
+  candidates.push({ branch: pinned, source: 'workspace-setting', configured: true })
+
+  // 3. The primary checkout. Null on a detached HEAD, which is R8's whole case.
+  let checkout: string | null = null
+  try {
+    const head = (await simpleGit(repoPath).revparse(['--abbrev-ref', 'HEAD'])).trim()
+    if (head && head !== 'HEAD') checkout = head
+  } catch (err) {
+    trackLog.debug(`[base] could not read HEAD: ${(err as Error).message}`)
+  }
+  candidates.push({ branch: checkout, source: 'checkout', configured: false })
+
+  // 4 & 5. Detached-HEAD fallbacks.
+  candidates.push({
+    branch: checkout ? null : await repoDefaultBranch(repoPath),
+    source: 'repo-default',
+    configured: false
+  })
+  candidates.push({ branch: 'main', source: 'fallback', configured: false })
+
+  let resolved: { branch: string; source: BlueprintBaseSource; commit: string } | null = null
+  for (const candidate of candidates) {
+    if (!candidate.branch) continue
+    const commit = await verifyRef(repoPath, candidate.branch)
+    if (commit) {
+      resolved = { branch: candidate.branch, source: candidate.source, commit }
+      break
+    }
+    // A base somebody deliberately chose and that no longer exists is the one
+    // fall-through worth hearing about: the run still works, but not where the
+    // user believes it does.
+    if (candidate.configured) {
+      trackLog.warn(
+        `[base] ${candidate.source} names ${candidate.branch}, which no longer exists — ` +
+          `falling through to the next rule`
+      )
+    }
+  }
+
+  // Every rule failed, `main` included: an empty or unborn repository. Callers
+  // check `commit` before handing this to git.
+  if (!resolved) {
+    return {
+      branch: 'main',
+      source: 'fallback',
+      upgradedToIntegration: false,
+      resolvedFrom: 'main',
+      aheadOfResolved: 0,
+      commit: null
+    }
+  }
+
+  const base: ResolvedBlueprintBase = {
+    branch: resolved.branch,
+    source: resolved.source,
+    upgradedToIntegration: false,
+    resolvedFrom: resolved.branch,
+    aheadOfResolved: 0,
+    commit: resolved.commit
+  }
+
+  // ── The upgrade ──
+  try {
+    const { integrationBranchFor } = await import('./landing.service')
+    const integration = integrationBranchFor(resolved.branch)
+    // Idempotent for an already-integration base: it is its own target.
+    if (integration === resolved.branch) return base
+
+    const integrationCommit = await verifyRef(repoPath, integration)
+    // No landing has happened in this workspace yet.
+    if (!integrationCommit) return base
 
     const ahead = Number.parseInt(
-      (await git.raw(['rev-list', '--count', `${current}..${integration}`])).trim(),
+      (
+        await simpleGit(repoPath).raw(['rev-list', '--count', `${resolved.branch}..${integration}`])
+      ).trim(),
       10
     )
-    if (!Number.isFinite(ahead) || ahead <= 0) return undefined
+    if (!Number.isFinite(ahead) || ahead <= 0) return base
 
     trackLog.info(
-      `[fork] ${integration} is ${ahead} commit(s) ahead of ${current} — forking from it ` +
-        `so this run builds on the work already landed there`
+      `[base] ${integration} is ${ahead} commit(s) ahead of ${resolved.branch} (${resolved.source}) — ` +
+        `forking from it so this run builds on the work already landed there`
     )
-    return integration
+    return {
+      ...base,
+      branch: integration,
+      upgradedToIntegration: true,
+      aheadOfResolved: ahead,
+      commit: integrationCommit
+    }
   } catch (err) {
-    trackLog.debug(`[fork] could not resolve an integration base: ${(err as Error).message}`)
-    return undefined
+    trackLog.debug(`[base] integration upgrade skipped: ${(err as Error).message}`)
+    return base
   }
 }
 
@@ -306,9 +472,10 @@ export async function reserveBlueprintBranch(params: {
       if (track.branchName) taken.add(track.branchName)
     }
 
-    // An explicit fork choice is the user's, and is never second-guessed.
-    const baseBranch =
-      choice.mode === 'fork' ? choice.branch : await resolveAutoForkBase(workspacePath)
+    // Same chain BUILD re-runs later. Resolved rather than assumed even for an
+    // explicit fork choice, so a base the user picked and has since deleted
+    // falls through visibly instead of making `git branch` fail the run.
+    const base = await resolveBlueprintBase({ workspaceId, repoPath: workspacePath, choice })
     const branchName =
       choice.mode === 'fork' && choice.name
         ? choice.name
@@ -322,8 +489,14 @@ export async function reserveBlueprintBranch(params: {
     if (local.all.includes(branchName)) {
       trackLog.info(`[reserve] blueprint ${blueprintId} reuses existing branch ${branchName}`)
     } else {
-      await git.raw(baseBranch ? ['branch', branchName, baseBranch] : ['branch', branchName])
-      trackLog.info(`[reserve] blueprint ${blueprintId} → ${branchName} (created, not checked out)`)
+      // A null commit means not even `main` resolved, which `repoHasCommits`
+      // above should have caught — but `git branch <name> <missing-ref>` fails
+      // the whole reservation, and bare `git branch <name>` off HEAD does not.
+      await git.raw(base.commit ? ['branch', branchName, base.branch] : ['branch', branchName])
+      trackLog.info(
+        `[reserve] blueprint ${blueprintId} → ${branchName} ` +
+          `(created from ${base.branch} [${base.source}], not checked out)`
+      )
     }
 
     persistBranchName(blueprintId, blueprint.settingsJson, branchName)
@@ -404,11 +577,10 @@ export async function ensureBlueprintTrack(params: {
       blueprintTrackBranch(blueprintId, blueprint?.title)
     let branchName = autoName
     let baseBranch: string | undefined
+    let baseSource: BlueprintBaseSource | undefined
 
-    if (choice.mode === 'fork') {
-      branchName = choice.name ?? autoName
-      baseBranch = choice.branch
-    } else if (choice.mode === 'auto') {
+    if (choice.mode === 'fork' || choice.mode === 'auto') {
+      if (choice.mode === 'fork') branchName = choice.name ?? autoName
       // Same fork point `reserveBlueprintBranch` chose at run start. Recomputed
       // rather than read back because BUILD can be the first code to run for a
       // blueprint whose branch was never reserved (reservation is best-effort).
@@ -417,7 +589,9 @@ export async function ensureBlueprintTrack(params: {
       // that column is what landing derives its target from — so a run forked
       // from the integration branch lands back into it rather than spawning a
       // nested one. `integrationBranchFor` is idempotent for exactly this.
-      baseBranch = await resolveAutoForkBase(workspacePath)
+      const base = await resolveBlueprintBase({ workspaceId, repoPath: workspacePath, choice })
+      baseBranch = base.commit ? base.branch : undefined
+      baseSource = base.source
     } else if (choice.mode === 'takeover') {
       if (choice.branch) branchName = choice.branch
       else trackLog.warn(`[ensure] blueprint ${blueprintId}: takeover with no branch — using auto`)
@@ -471,6 +645,7 @@ export async function ensureBlueprintTrack(params: {
       repoPath: workspacePath,
       branchName,
       baseBranch,
+      baseSource,
       landingMode: 'integration'
     })
 

@@ -18,7 +18,8 @@ import { FileEdit, PlayCircle, Paperclip, Save, X, Upload, GitBranch } from 'luc
 import type {
   BlueprintWithDetails,
   BlueprintBranchChoice,
-  ReferenceDocument
+  ReferenceDocument,
+  ResolvedBlueprintBase
 } from '../../../../../../shared/blueprint-types'
 import {
   buildBlueprintBranchName,
@@ -88,11 +89,37 @@ export function DraftPanel({ blueprint, workspaceId }: DraftPanelProps): JSX.Ele
     readBranchChoice(blueprint.settingsJson)
   )
 
-  const savedBranch = describeBranch(
-    blueprint,
-    readBranchChoice(blueprint.settingsJson),
-    blueprint.title
-  )
+  const savedChoice = readBranchChoice(blueprint.settingsJson)
+  const savedBranch = describeBranch(blueprint, savedChoice, blueprint.title)
+
+  // The base is as much a prediction as the branch name is — nothing is
+  // reserved until Start — but it is the half that used to be invisible, and
+  // the half a wrong workspace setting shows up in.
+  const [resolvedBase, setResolvedBase] = useState<ResolvedBlueprintBase | null>(null)
+  const savedForkTarget = savedChoice.mode === 'fork' ? (savedChoice.branch ?? null) : null
+  const savedResolvesBase = savedChoice.mode === 'auto' || savedChoice.mode === 'fork'
+
+  useEffect(() => {
+    // Deliberately not cleared for takeover/primary: a synchronous setState in
+    // an effect body cascades a render, and those modes never fetched a base in
+    // the first place, so there is nothing stale to clear.
+    if (!workspaceId || !savedResolvesBase) return
+    let cancelled = false
+    window.api
+      .blueprintResolveBase({
+        workspaceId,
+        choice: savedForkTarget ? { mode: 'fork', branch: savedForkTarget } : { mode: 'auto' }
+      })
+      .then((result) => {
+        if (!cancelled) setResolvedBase(result)
+      })
+      .catch(() => {
+        if (!cancelled) setResolvedBase(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId, savedResolvesBase, savedForkTarget])
 
   const beginEdit = useCallback(() => {
     setTitle(blueprint.title)
@@ -366,6 +393,12 @@ export function DraftPanel({ blueprint, workspaceId }: DraftPanelProps): JSX.Ele
             {savedBranch ? (
               <>
                 Will run on <span className="font-mono truncate">{savedBranch}</span>
+                {resolvedBase?.commit && (
+                  <>
+                    , forked from <span className="font-mono truncate">{resolvedBase.branch}</span>{' '}
+                    <span className="font-mono">({resolvedBase.commit.slice(0, 7)})</span>
+                  </>
+                )}
               </>
             ) : (
               <>Will run in your workspace checkout</>

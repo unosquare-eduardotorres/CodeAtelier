@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useWorkspaceStore } from '@renderer/store'
 import type { RepoInfo } from '../../../../shared/types'
 import type { GateCommandSet } from '../../../../shared/gate-command-types'
+import type { ResolvedBlueprintBase } from '../../../../shared/blueprint-types'
 import {
   GitConfigSection,
   GitHubTokenSection,
@@ -30,6 +31,11 @@ export default function RepositorySettingsTab(): React.JSX.Element {
   // Automation toggles
   const [settings, setSettings] = useState<Record<string, unknown>>({})
 
+  // Blueprint base branch: the branches it may be pinned to, and what the
+  // resolution chain currently answers. Both are read-only queries.
+  const [branches, setBranches] = useState<string[]>([])
+  const [resolvedBase, setResolvedBase] = useState<ResolvedBlueprintBase | null>(null)
+
   useEffect(() => {
     if (activeWorkspace) {
       loadRepoInfo(activeWorkspace.id)
@@ -37,8 +43,33 @@ export default function RepositorySettingsTab(): React.JSX.Element {
       window.api.getWorkspaceSettings({ workspaceId: activeWorkspace.id }).then((s) => {
         setSettings(s)
       })
+      // Both degrade to "nothing to show" rather than an error banner: a repo
+      // with no commits legitimately has neither, and the rows above it are
+      // still worth rendering.
+      window.api
+        .blueprintBranchOptions({ workspaceId: activeWorkspace.id })
+        .then((o) => setBranches(o.branches.map((b) => b.name)))
+        .catch(() => setBranches([]))
     }
   }, [activeWorkspace, loadRepoInfo, loadGitHubStatus])
+
+  /**
+   * Re-ask where new work would fork from.
+   *
+   * Called on mount and after every save, because the answer is derived from
+   * the setting the user just changed — showing a stale one would make the
+   * control look like it had not taken effect.
+   */
+  const refreshResolvedBase = useCallback((workspaceId: string) => {
+    window.api
+      .blueprintResolveBase({ workspaceId })
+      .then(setResolvedBase)
+      .catch(() => setResolvedBase(null))
+  }, [])
+
+  useEffect(() => {
+    if (activeWorkspace) refreshResolvedBase(activeWorkspace.id)
+  }, [activeWorkspace, refreshResolvedBase])
 
   useEffect(() => {
     // Sync from store — intentional when parent repoInfo changes
@@ -120,6 +151,20 @@ export default function RepositorySettingsTab(): React.JSX.Element {
     })
   }
 
+  /**
+   * Persist a string-valued setting. Sibling of `handleToggleSetting`, which
+   * only handles booleans, and bound by the same send-only-the-changed-key rule.
+   */
+  const handleSetSetting = async (key: string, value: string): Promise<void> => {
+    if (!activeWorkspace) return
+    setSettings((prev) => ({ ...prev, [key]: value }))
+    await window.api.updateWorkspaceSettings({
+      workspaceId: activeWorkspace.id,
+      settings: { [key]: value }
+    })
+    refreshResolvedBase(activeWorkspace.id)
+  }
+
   // M9.5 — persist gate-command overrides. Same single-key merge rule.
   const handleSaveGateCommands = async (
     workspaceId: string,
@@ -159,6 +204,10 @@ export default function RepositorySettingsTab(): React.JSX.Element {
         onCancelEditRemote={() => setIsEditingRemote(false)}
         onSaveRemote={handleSaveRemote}
         onInitRepo={handleInitRepo}
+        baseBranch={settings.blueprintBaseBranch as string | undefined}
+        branches={branches}
+        resolvedBase={resolvedBase}
+        onBaseBranchChange={(v) => void handleSetSetting('blueprintBaseBranch', v)}
       />
 
       <GitHubTokenSection

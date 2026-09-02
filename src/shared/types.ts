@@ -2023,6 +2023,21 @@ export interface WorkspaceSettings {
    * `work_tracks.landing_mode`.
    */
   landingMode?: 'independent' | 'integration'
+  /**
+   * Branch new blueprint branches are cut from.
+   *
+   * `FOLLOW_CHECKOUT` — or absent, which means the same thing — is "whatever
+   * the primary checkout has checked out", the behaviour every workspace had
+   * before this setting existed. Absence and the sentinel being equivalent is
+   * what makes this migration-free: nothing is backfilled, and the UI always
+   * writes an explicit value so clearing never has to round-trip an
+   * `undefined` through the settings merge.
+   *
+   * Deliberately NOT auto-populated on upgrade: pinning a workspace to
+   * whatever branch it happened to be on would bake an accident into
+   * configuration. It is surfaced in Repository settings instead.
+   */
+  blueprintBaseBranch?: string
   /** Show Ollama provider option in Settings (default false) */
   showOllamaProvider?: boolean
 

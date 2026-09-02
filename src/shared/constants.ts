@@ -668,6 +668,13 @@ export const IPC_CHANNELS = {
 
   BLUEPRINT_CREATE: 'blueprint:create',
   BLUEPRINT_BRANCH_OPTIONS: 'blueprint:branchOptions',
+  /**
+   * Renderer → Main: where a blueprint's branch would be cut from, and why.
+   *
+   * Read-only — it verifies refs and counts commits, and creates nothing. Safe
+   * to call from settings and from the picker on every keystroke-free change.
+   */
+  BLUEPRINT_RESOLVE_BASE: 'blueprint:resolveBase',
   BLUEPRINT_CREATE_FROM_IDEA: 'blueprint:createFromIdea',
   BLUEPRINT_GET: 'blueprint:get',
   BLUEPRINT_GET_DETAILS: 'blueprint:getDetails',
@@ -787,6 +794,17 @@ export const IPC_CHANNELS = {
 
 /** Attribution trailer appended to commits made through the app UI. */
 export const COMMIT_ATTRIBUTION = '✨ Generated with Code Atelier'
+
+/**
+ * `WorkspaceSettings.blueprintBaseBranch` value meaning "do not pin a base".
+ *
+ * A sentinel rather than `undefined` because settings are merged with
+ * `{ ...existing, ...incoming }` over IPC: sending `undefined` to clear a key
+ * is implicit, does not survive structured cloning as a distinct instruction,
+ * and would leave the stored value in place. `@checkout` cannot collide with a
+ * real branch — git refuses `@` as a complete ref name.
+ */
+export const FOLLOW_CHECKOUT = '@checkout'
 
 /** Model used for activation CLAUDE.md generation (structured output — Haiku-tier) */
 export const ACTIVATION_MODEL_ID = 'claude-haiku-4-5-20251001' as const

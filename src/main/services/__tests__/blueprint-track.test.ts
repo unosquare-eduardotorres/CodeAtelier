@@ -71,11 +71,13 @@ if (!gitAvailable || !dbContext) {
     ensureBlueprintTrack,
     resolveBlueprintTrack,
     reserveBlueprintBranch,
+    resolveBlueprintBase,
     blueprintTrackBranch,
     blueprintTrackOwner,
     findHandoffHolder,
     branchHeldElsewhereError
   } = blueprintTrackMod
+  const { FOLLOW_CHECKOUT } = require('../../../shared/constants')
   const { verifyTaskFileClaims } = require('../blueprint-task-verification')
 
   /**
@@ -158,6 +160,36 @@ if (!gitAvailable || !dbContext) {
 
   const statusOf = async (dir: string): Promise<string> =>
     (await simpleGit(dir).raw(['status', '--porcelain'])).trim()
+
+  /** Write a workspace's settings blob, the way the settings tab does. */
+  function setWorkspaceSettings(wsId: string, settings: Record<string, unknown>): void {
+    db()
+      .prepare('UPDATE workspaces SET settings_json = ? WHERE id = ?')
+      .run(JSON.stringify(settings), wsId)
+  }
+
+  /**
+   * Put a commit on `branch`, creating it from `from`, and return HEAD to where
+   * it started. The checkout is restored on purpose: the whole question these
+   * tests ask is whether the resolved base survives HEAD moving.
+   */
+  async function commitOnBranch(
+    dir: string,
+    branch: string,
+    from = 'main',
+    file = `${branch.replace(/\W+/g, '-')}.md`
+  ): Promise<void> {
+    const git = simpleGit(dir)
+    const back = await headOf(dir)
+    await git.raw(['checkout', '-B', branch, from])
+    await writeFile(join(dir, file), `${branch}\n`)
+    await git.add('.')
+    await git.commit(`work on ${branch}`)
+    if (back && back !== 'HEAD') await git.checkout(back)
+  }
+
+  /** The `auto` choice every blueprint gets when the user says nothing. */
+  const AUTO = { mode: 'auto' as const }
 
   // ── Branch selection ──────────────────────────────────────────
 
@@ -367,6 +399,223 @@ if (!gitAvailable || !dbContext) {
       } finally {
         await rm(dir, { recursive: true, force: true })
       }
+    })
+  })
+
+  // ── Base resolution ────────────────────────────────────
+  //
+  // The chain is resolve-then-upgrade: a base wins outright, and only then is
+  // `integration/<it>` substituted. Ordering it the other way — ranking the
+  // integration branch above the workspace setting — reads the live checkout to
+  // derive its candidate, so switching branches would silently override a pin.
+  // The pair of tests that would fail under that ordering are marked below.
+
+  describe('resolving the base a blueprint forks from', () => {
+    test('with nothing configured, follows the checkout — unchanged for every existing workspace', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        await simpleGit(dir).checkout('feat/x')
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.branch, 'feat/x')
+        assert.equal(base.source, 'checkout')
+        assert.equal(base.upgradedToIntegration, false)
+        assert.ok(base.commit, 'a real base resolves to a real commit')
+      })
+    })
+
+    test('the follow-checkout sentinel is treated exactly as absence', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        await simpleGit(dir).checkout('feat/x')
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: FOLLOW_CHECKOUT })
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.branch, 'feat/x')
+        assert.equal(base.source, 'checkout')
+      })
+    })
+
+    // AC2. Fails under the doc's original precedence.
+    test('a pinned base outranks the checkout, and moving the checkout does not change it', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+
+        const onMain = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: AUTO
+        })
+        await simpleGit(dir).checkout('feat/x')
+        const onFeature = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: AUTO
+        })
+
+        assert.equal(onMain.branch, 'main')
+        assert.equal(onFeature.branch, 'main', 'the pin survives a checkout switch')
+        assert.equal(onFeature.source, 'workspace-setting')
+      })
+    })
+
+    // AC2 + AC5 together — the pair the doc's own precedence could not satisfy.
+    // Under "integration branch beats the setting", the candidate would be
+    // integration/feat/x (derived from the live checkout) and the pin lost.
+    test('the integration branch upgrades the PINNED base, not the checked-out one', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        await commitOnBranch(dir, 'integration/main', 'main')
+        await commitOnBranch(dir, 'integration/feat/x', 'feat/x')
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+        await simpleGit(dir).checkout('feat/x')
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.branch, 'integration/main')
+        assert.equal(base.resolvedFrom, 'main', 'the pin is what got upgraded')
+        assert.equal(base.source, 'workspace-setting', 'the upgrade is a modifier, not a rule')
+        assert.equal(base.upgradedToIntegration, true)
+        assert.equal(base.aheadOfResolved, 1)
+      })
+    })
+
+    test('an integration branch level with its base is not used — it carries nothing', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await simpleGit(dir).raw(['branch', 'integration/main', 'main'])
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.branch, 'main')
+        assert.equal(base.upgradedToIntegration, false)
+        assert.equal(base.aheadOfResolved, 0)
+      })
+    })
+
+    // R5.
+    test('a pinned base that no longer exists falls through to the next rule, not to main', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        await simpleGit(dir).checkout('feat/x')
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'release/deleted' })
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.branch, 'feat/x', 'the checkout is the next rule, main is the last one')
+        assert.equal(base.source, 'checkout')
+      })
+    })
+
+    // Precedence rule 1.
+    test('an explicit fork choice outranks the workspace pin', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'feat/x' }
+        })
+
+        assert.equal(base.branch, 'feat/x')
+        assert.equal(base.source, 'blueprint-fork')
+      })
+    })
+
+    // R8.
+    test('a detached HEAD falls to the repository default rather than guessing main', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        const git = simpleGit(dir)
+        // A repo whose mainline is `develop`, recorded the way `git clone` does.
+        await commitOnBranch(dir, 'develop')
+        await git.raw(['update-ref', 'refs/remotes/origin/develop', 'develop'])
+        await git.raw(['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/develop'])
+        await git.addRemote('origin', dir)
+        await git.raw(['checkout', '--detach', 'HEAD'])
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.branch, 'develop')
+        assert.equal(base.source, 'repo-default')
+      })
+    })
+
+    test('a ref shaped like an option is refused rather than handed to git', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: '--upload-pack=touch /tmp/pwn' })
+
+        const base = await resolveBlueprintBase({ workspaceId: wsId, repoPath: dir, choice: AUTO })
+
+        assert.equal(base.source, 'checkout')
+        assert.equal(base.branch, 'main')
+      })
+    })
+  })
+
+  // ── Provenance ─────────────────────────────────────────
+
+  describe('the base a run actually used is recorded on its track', () => {
+    test('reservation cuts the branch from the pinned base, not from HEAD', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        await commitOnBranch(dir, 'feat/x')
+        await simpleGit(dir).checkout('feat/x')
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+
+        const name = await reserveBlueprintBranch({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        assert.ok(name)
+
+        const git = simpleGit(dir)
+        const tip = (await git.revparse([name as string])).trim()
+        const mainTip = (await git.revparse(['main'])).trim()
+        const featTip = (await git.revparse(['feat/x'])).trim()
+        assert.equal(tip, mainTip, 'forked from the pin')
+        assert.notEqual(tip, featTip, 'not from the checkout it happened to be on')
+      })
+    })
+
+    test('ensureTrack stores which rule chose the base', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        assert.equal(target.isolated, true)
+
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        assert.equal(track?.baseBranch, 'main')
+        assert.equal(track?.baseSource, 'workspace-setting')
+      })
+    })
+
+    // R6 / premortem 4: an existing branch keeps its own tip, so the base was
+    // never consulted. Recording the rule that picked an unused base would be a
+    // confident lie the next reader has no way to detect.
+    test('a branch that already exists records existing-branch, not the base', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        await commitOnBranch(dir, 'feat/handover')
+        setBranchChoice(bpId, { mode: 'fork', branch: 'main', name: 'feat/handover' })
+
+        const target = await ensureBlueprintTrack({
+          blueprintId: bpId,
+          workspaceId: wsId,
+          workspacePath: dir
+        })
+        assert.equal(target.isolated, true)
+
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        assert.equal(track?.baseSource, 'existing-branch')
+      })
     })
   })
 

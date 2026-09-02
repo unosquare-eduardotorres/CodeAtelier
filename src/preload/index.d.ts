@@ -131,7 +131,11 @@ import type {
   MainlineSyncResult,
   TrackLandingMode
 } from '../shared/track-types'
-import type { BlueprintBranchOptions, BlueprintBranchChoice } from '../shared/blueprint-types'
+import type {
+  BlueprintBranchOptions,
+  BlueprintBranchChoice,
+  ResolvedBlueprintBase
+} from '../shared/blueprint-types'
 import type {
   BlueprintHandoffIntent,
   BlueprintBranchMode,
@@ -1617,6 +1621,10 @@ interface Api {
     settingsJson?: Record<string, unknown>
   }) => Promise<unknown>
   blueprintBranchOptions: (args: { workspaceId: string }) => Promise<BlueprintBranchOptions>
+  blueprintResolveBase: (args: {
+    workspaceId: string
+    choice?: BlueprintBranchChoice
+  }) => Promise<ResolvedBlueprintBase>
   blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }) => Promise<unknown>
   blueprintStartSpecify: (args: {
     blueprintId: string

@@ -1,7 +1,10 @@
 import React from 'react'
 import { GitBranch, Check, Pencil, Loader2 } from 'lucide-react'
 import { SettingsCard } from '@renderer/components/common'
+import { FOLLOW_CHECKOUT } from '../../../../../shared/constants'
+import { summariseResolvedBase } from '../../../../../shared/blueprint-base-summary'
 import type { RepoInfo } from '../../../../../shared/types'
+import type { ResolvedBlueprintBase } from '../../../../../shared/blueprint-types'
 
 interface GitConfigSectionProps {
   activeWorkspacePath: string
@@ -11,11 +14,18 @@ interface GitConfigSectionProps {
   remoteSaved: boolean
   isSavingRemote: boolean
   isInitializingRepo: boolean
+  /** Raw `blueprintBaseBranch` setting. Undefined and the sentinel both mean "follow the checkout". */
+  baseBranch: string | undefined
+  /** Local branch names the base may be pinned to. */
+  branches: string[]
+  /** What the chain currently resolves to — null while it is still loading. */
+  resolvedBase: ResolvedBlueprintBase | null
   onRemoteUrlChange: (url: string) => void
   onEditRemote: () => void
   onCancelEditRemote: () => void
   onSaveRemote: () => void
   onInitRepo: () => void
+  onBaseBranchChange: (value: string) => void
 }
 
 export default function GitConfigSection({
@@ -26,13 +36,26 @@ export default function GitConfigSection({
   remoteSaved,
   isSavingRemote,
   isInitializingRepo,
+  baseBranch,
+  branches,
+  resolvedBase,
   onRemoteUrlChange,
   onEditRemote,
   onCancelEditRemote,
   onSaveRemote,
-  onInitRepo
+  onInitRepo,
+  onBaseBranchChange
 }: GitConfigSectionProps): React.JSX.Element {
   const hasRemote = localRepoInfo?.hasRemote && localRepoInfo?.remoteUrl
+
+  // Absence and the sentinel are the same state, and the select has to collapse
+  // them into one option or it would render blank for every existing workspace.
+  const pinned = baseBranch && baseBranch !== FOLLOW_CHECKOUT ? baseBranch : null
+  // A pin whose branch has since been deleted still resolves — to the NEXT rule
+  // in the chain. Dropping it from the list would make that fall-through
+  // invisible, which is the failure this row exists to prevent.
+  const pinIsStale = pinned !== null && !branches.includes(pinned)
+  const currentBranch = localRepoInfo?.currentBranch
 
   return (
     <section>
@@ -52,16 +75,75 @@ export default function GitConfigSection({
         {localRepoInfo?.isRepo ? (
           <>
             {/* Fix #6: Grid layout for info rows */}
-            <div className="grid grid-cols-[80px_1fr] gap-y-2.5 gap-x-3 items-baseline">
+            <div className="grid grid-cols-[130px_1fr] gap-y-2.5 gap-x-3 items-baseline">
               <span className="text-xs text-text-secondary">Path</span>
               <span className="text-sm text-text-body font-mono truncate">
                 {activeWorkspacePath}
               </span>
               {/* Fix #1: Removed redundant Status row — badge handles it */}
-              <span className="text-xs text-text-secondary">Branch</span>
+              {/*
+                "Branch" read as "the branch this workspace works on", which is
+                exactly the misreading that let a wrong fork point go unnoticed.
+                It is the checkout and nothing more — the row below is the one
+                that decides where new work starts.
+              */}
+              <span className="text-xs text-text-secondary">Checked out</span>
               <span className="text-sm text-text-body font-mono">
                 {localRepoInfo.currentBranch}
               </span>
+
+              <span className="text-xs text-text-secondary">Base for new work</span>
+              <div className="min-w-0 space-y-1.5">
+                <select
+                  data-testid="blueprint-base-branch"
+                  value={pinned ?? FOLLOW_CHECKOUT}
+                  onChange={(e) => onBaseBranchChange(e.target.value)}
+                  className="w-full px-2 py-1 bg-surface-base border border-border-default rounded text-xs text-text-body font-mono focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                >
+                  <option value={FOLLOW_CHECKOUT}>
+                    Follow checked-out branch{currentBranch ? ` (${currentBranch})` : ''}
+                  </option>
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                  {pinIsStale && pinned && (
+                    <option value={pinned}>{pinned} — no longer exists</option>
+                  )}
+                </select>
+
+                {!pinned && (
+                  <p className="text-xs text-text-muted">
+                    Blueprints fork from whatever is checked out. Pin a base to make this
+                    deliberate.
+                    {currentBranch && (
+                      <>
+                        {' '}
+                        <button
+                          type="button"
+                          onClick={() => onBaseBranchChange(currentBranch)}
+                          className="text-primary-text hover:underline"
+                        >
+                          Pin {currentBranch}
+                        </button>
+                      </>
+                    )}
+                  </p>
+                )}
+
+                {pinIsStale && (
+                  <p className="text-xs text-warning">
+                    {pinned} no longer exists, so new work falls through to the next rule below.
+                  </p>
+                )}
+
+                {resolvedBase && (
+                  <p data-testid="blueprint-base-effective" className="text-xs text-text-secondary">
+                    {summariseResolvedBase(resolvedBase)}
+                  </p>
+                )}
+              </div>
               {/* Fix #9: Removed colon from "Remote:" */}
               <span className="text-xs text-text-secondary">Remote</span>
               {hasRemote && !isEditingRemote ? (

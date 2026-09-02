@@ -196,6 +196,27 @@ export interface MainlineSyncResult {
   reason?: string
 }
 
+/**
+ * Which rule supplied a track's `baseBranch`.
+ *
+ * Recorded because "why did it fork from there?" otherwise requires
+ * re-deriving state that has since moved: the checkout, the workspace setting
+ * and the integration branch all change underneath a finished run, so the
+ * answer degrades from the moment it is needed.
+ *
+ * Ordered as the resolution chain is, with the one non-chain value last:
+ * `existing-branch` means the branch was already present, so `worktree add`
+ * used its own tip and the base was never consulted. Recording the base that
+ * was never used would be a confident lie.
+ */
+export type TrackBaseSource =
+  | 'blueprint-fork'
+  | 'workspace-setting'
+  | 'checkout'
+  | 'repo-default'
+  | 'fallback'
+  | 'existing-branch'
+
 /** One unit of parallel work: a branch, a worktree and an owner. */
 export interface WorkTrack {
   id: string
@@ -213,6 +234,8 @@ export interface WorkTrack {
   path: string
   /** Branch this track was forked from, needed to compute the merge base. */
   baseBranch: string
+  /** Which rule supplied `baseBranch`. Null on tracks created before this was recorded. */
+  baseSource: TrackBaseSource | null
   status: TrackStatus
   /** Per-track override; null means "inherit the workspace default". */
   landingMode: TrackLandingMode | null

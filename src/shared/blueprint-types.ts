@@ -10,7 +10,7 @@ import type { GateReport, UnverifiedItem } from './gate-types'
 
 // ── Phase & Status Enums ──
 
-import type { TrackOwnerKind } from './track-types'
+import type { TrackOwnerKind, TrackBaseSource } from './track-types'
 
 export type BlueprintPhaseType =
   | 'specify'
@@ -291,6 +291,50 @@ export interface BlueprintBranchOption {
     /** Chat title where resolvable; otherwise the owner id. */
     label: string | null
   } | null
+}
+
+/**
+ * Which rule in the base-resolution chain supplied a blueprint's fork point.
+ *
+ * Every `TrackBaseSource` except `existing-branch`, which is not a rule — it
+ * records that the branch already existed and no base was consulted at all, a
+ * fact only the track layer is in a position to know.
+ *
+ *  - `blueprint-fork`    — `BlueprintBranchChoice.branch` on a `fork` blueprint
+ *  - `workspace-setting` — `blueprintBaseBranch`, pinned to something real
+ *  - `checkout`          — the primary checkout's HEAD (the old behaviour)
+ *  - `repo-default`      — `refs/remotes/<remote>/HEAD`, detached HEAD only
+ *  - `fallback`          — the bare `main` literal: nothing above it resolved
+ */
+export type BlueprintBaseSource = Exclude<TrackBaseSource, 'existing-branch'>
+
+/**
+ * Where a blueprint's branch will be cut from, and why.
+ *
+ * Resolution is "pick a base, then upgrade it": the chain above settles on one
+ * branch, and `integration/<that>` replaces it only when it exists and is
+ * strictly ahead. Ordering it this way is what lets a pinned base stay pinned
+ * — the integration branch is a modifier on the winner, not a competitor to it,
+ * so moving the primary checkout cannot change the answer.
+ */
+export interface ResolvedBlueprintBase {
+  /** The branch the new blueprint branch is actually cut from. */
+  branch: string
+  source: BlueprintBaseSource
+  /** True when `branch` is `integration/<resolvedFrom>` rather than the rule's own answer. */
+  upgradedToIntegration: boolean
+  /** The rule's answer before the upgrade. Equals `branch` when none was applied. */
+  resolvedFrom: string
+  /** Commits `branch` has beyond `resolvedFrom`. Zero unless upgraded. */
+  aheadOfResolved: number
+  /**
+   * Resolved commit of `branch`.
+   *
+   * Null is the only "this base does not exist" signal, and it is reachable
+   * exactly once: when every rule including the `main` fallback failed to
+   * verify. Callers must not hand a null-commit base to `git branch`.
+   */
+  commit: string | null
 }
 
 export interface BlueprintBranchOptions {

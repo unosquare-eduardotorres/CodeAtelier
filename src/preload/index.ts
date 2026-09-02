@@ -110,7 +110,11 @@ import type {
   ArtifactRef,
   CodeAnchor
 } from '../shared/handoff-types'
-import type { BlueprintBranchOptions, BlueprintBranchChoice } from '../shared/blueprint-types'
+import type {
+  BlueprintBranchOptions,
+  BlueprintBranchChoice,
+  ResolvedBlueprintBase
+} from '../shared/blueprint-types'
 import type {
   BlueprintHandoffIntent,
   BlueprintBranchMode,
@@ -3091,6 +3095,17 @@ const api = {
 
   blueprintBranchOptions: (args: { workspaceId: string }): Promise<BlueprintBranchOptions> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_BRANCH_OPTIONS, args),
+
+  /**
+   * Where a blueprint's branch would be cut from, and why. Read-only — nothing
+   * is reserved or created. Omit `choice` to ask about a default (`auto`) run,
+   * which is what the workspace settings row wants.
+   */
+  blueprintResolveBase: (args: {
+    workspaceId: string
+    choice?: BlueprintBranchChoice
+  }): Promise<ResolvedBlueprintBase> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_RESOLVE_BASE, args),
 
   blueprintCreateFromIdea: (args: { ideaId: string; workspaceId: string }): Promise<unknown> =>
     ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_CREATE_FROM_IDEA, args),

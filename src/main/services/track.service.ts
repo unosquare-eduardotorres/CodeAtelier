@@ -61,6 +61,7 @@ import type {
   WorkTrack,
   TrackOwnerKind,
   TrackLandingMode,
+  TrackBaseSource,
   TrackSummary,
   ExecutionTarget,
   ReleaseOutcome,
@@ -417,6 +418,15 @@ export interface EnsureTrackOptions {
   /** Fork point for a branch that does not exist yet. Defaults to primary HEAD. */
   baseBranch?: string
   /**
+   * Which rule supplied `baseBranch`, recorded on the row for provenance.
+   *
+   * Overridden with `existing-branch` when the branch turns out to already
+   * exist, because `worktree add` then uses its own tip and the base is never
+   * consulted — storing the rule that chose an unused base would be a lie the
+   * next reader has no way to detect.
+   */
+  baseSource?: TrackBaseSource
+  /**
    * Landing mode recorded on the track at creation.
    *
    * Only read on the insert: re-`ensureTrack`ing an existing track must not
@@ -655,7 +665,11 @@ export class TrackService {
     const baseBranch = opts.baseBranch ?? primaryBranch ?? 'main'
     const path = this.pathFor(workspaceId, ownerId, branchName)
 
-    await this.gitAddWorktree(git, path, branchName, baseBranch)
+    // Hoisted out of `gitAddWorktree` so the row can record that the base was
+    // never consulted. Same single git call, asked one level higher.
+    const branchAlreadyExists = await this.branchExists(git, branchName)
+
+    await this.gitAddWorktree(git, path, branchName, baseBranch, branchAlreadyExists)
     // Best-effort: a worktree without dependencies is degraded, not broken, so
     // a failure here must not abort track creation. It is logged loudly instead.
     const linked = this.linkNodeModules(repoPath, path)
@@ -667,6 +681,7 @@ export class TrackService {
       branchName,
       path,
       baseBranch,
+      baseSource: branchAlreadyExists ? 'existing-branch' : opts.baseSource,
       landingMode: opts.landingMode
     })
     trackRepository.touch(created.id)
@@ -1073,7 +1088,9 @@ export class TrackService {
     git: ReturnType<typeof simpleGit>,
     path: string,
     branch: string,
-    baseBranch: string
+    baseBranch: string,
+    /** Resolved by the caller, which needs the same answer for provenance. */
+    branchAlreadyExists?: boolean
   ): Promise<void> {
     mkdirSync(dirname(path), { recursive: true })
 
@@ -1091,7 +1108,7 @@ export class TrackService {
       wtLog.warn(`[gitAddWorktree] prune failed (continuing): ${(err as Error).message}`)
     }
 
-    const exists = await this.branchExists(git, branch)
+    const exists = branchAlreadyExists ?? (await this.branchExists(git, branch))
     const args = exists
       ? ['worktree', 'add', path, branch]
       : ['worktree', 'add', '-b', branch, path, baseBranch]

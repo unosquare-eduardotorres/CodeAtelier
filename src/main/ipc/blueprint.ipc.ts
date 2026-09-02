@@ -50,7 +50,11 @@ import type {
   BlueprintBranchChoice
 } from '../../shared/blueprint-types'
 import { runPreflightChecks } from '../services/blueprint-preflight.service'
-import { reserveBlueprintBranch } from '../services/blueprint-track'
+import {
+  reserveBlueprintBranch,
+  resolveBlueprintBase,
+  readBranchChoice
+} from '../services/blueprint-track'
 
 const bpLog = log.scope('blueprint-ipc')
 
@@ -298,6 +302,32 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const workspaceId = requireString(args, 'workspaceId', ch)
 
     return loadBranchOptions(workspaceId)
+  })
+
+  // ── blueprint:resolveBase — where a run would fork from, and why ──
+  //
+  // Answering this is the whole point of the setting: a base that is configured
+  // but never shown is indistinguishable from one that is not, which is how the
+  // wrong fork point went unnoticed in the first place. Read-only — it verifies
+  // refs and counts commits, and creates nothing.
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_RESOLVE_BASE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_RESOLVE_BASE
+    const args = requireObject(rawArgs, ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    // The picker asks about a choice the user has not saved yet, so the choice
+    // comes over the wire rather than out of the blueprint row. Read through
+    // `readBranchChoice`, which is the same defensive parse the run path uses.
+    const choice = readBranchChoice(
+      (args.choice as Record<string, unknown> | undefined) ? { branchChoice: args.choice } : {}
+    )
+
+    return resolveBlueprintBase({ workspaceId, repoPath: workspace.repoPath, choice })
   })
 
   // ── blueprint:get — Get a blueprint with phases ──

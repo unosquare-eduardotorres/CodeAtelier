@@ -3,7 +3,8 @@ import type {
   WorkTrack,
   TrackOwnerKind,
   TrackStatus,
-  TrackLandingMode
+  TrackLandingMode,
+  TrackBaseSource
 } from '../../../shared/track-types'
 
 interface TrackRow {
@@ -15,6 +16,7 @@ interface TrackRow {
   branch_name: string
   path: string
   base_branch: string
+  base_source: string | null
   status: string
   landing_mode: string | null
   landed_at: string | null
@@ -32,6 +34,7 @@ function toModel(row: TrackRow): WorkTrack {
     branchName: row.branch_name,
     path: row.path,
     baseBranch: row.base_branch,
+    baseSource: row.base_source as TrackBaseSource | null,
     status: row.status as TrackStatus,
     landingMode: row.landing_mode as TrackLandingMode | null,
     landedAt: row.landed_at,
@@ -48,6 +51,8 @@ export interface CreateTrackInput {
   branchName: string
   path: string
   baseBranch: string
+  /** Which rule supplied `baseBranch`. Omitted by callers that do not resolve one. */
+  baseSource?: TrackBaseSource
   landingMode?: TrackLandingMode
 }
 
@@ -78,8 +83,9 @@ export class TrackRepository extends BaseRepository<TrackRow, WorkTrack> {
     const row = this.db()
       .prepare(
         `INSERT INTO work_tracks
-           (workspace_id, owner_kind, owner_id, branch_name, path, base_branch, status, landing_mode)
-         VALUES (?, ?, ?, ?, ?, ?, 'active', ?)
+           (workspace_id, owner_kind, owner_id, branch_name, path, base_branch, base_source,
+            status, landing_mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
          RETURNING *`
       )
       .get(
@@ -89,6 +95,7 @@ export class TrackRepository extends BaseRepository<TrackRow, WorkTrack> {
         input.branchName,
         input.path,
         input.baseBranch,
+        input.baseSource ?? null,
         input.landingMode ?? null
       ) as TrackRow
     return toModel(row)
