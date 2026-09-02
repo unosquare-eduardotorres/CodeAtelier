@@ -41,6 +41,15 @@ export interface ExecutorTokenUsage {
    * usage (e.g. OpenCode) omit it, and consumers fall back to the summed totals.
    */
   contextWindowTokens?: number
+  /**
+   * Prompt size of the FIRST API round-trip of the turn — the invariant prefix
+   * (system prompt + tool schemas + user message) before any tool result was
+   * appended. Unlike `contextWindowTokens` it is never overwritten, so it is
+   * the only quantity against which prefix-reduction work can be measured.
+   * Omitted by backends that report no per-call usage (e.g. OpenCode); there is
+   * NO summed-total fallback — the sum over-counts by ~10-30x.
+   */
+  firstCallContextTokens?: number
 }
 
 /**

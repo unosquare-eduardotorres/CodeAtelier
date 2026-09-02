@@ -103,7 +103,21 @@ export class AgentStreamProcessor {
       modelAction,
       isBuild
     )
-    const { totalTokens } = this.s.tokenTracker.recordTurn(meta, {
+    // Provider attribution. `model` cannot stand in for this — OpenCode serves
+    // Claude-named models, so a row reading 'claude-opus-5' is ambiguous about
+    // which path produced it.
+    //
+    // We record the LLM provider, not the executor backend: the backend is a
+    // pure function of the provider (`claude` → cli, everything else → opencode)
+    // so nothing is lost, whereas storing the backend would merge free local
+    // models and paid GLM into one indistinguishable 'opencode' bucket.
+    //
+    // Prefer the stream's resolved provider; fall back to the session default
+    // only if the stream did not record one.
+    const provider = streamState.llmProvider ?? this.s.llmProvider
+    const telemetry = this.s.adapter.telemetryContext
+
+    const { totalTokens, turnRecorded } = this.s.tokenTracker.recordTurn(meta, {
       turnCount,
       conversationId,
       dbSessionId: this.s.dbSessionId,
@@ -111,7 +125,11 @@ export class AgentStreamProcessor {
       feature: featureForAgentRole(this.s.adapter.role),
       agentType: this.s.adapter.agentId,
       model: resolvedModel,
-      workspaceId: this.s.workspaceId
+      workspaceId: this.s.workspaceId,
+      provider: provider ?? null,
+      blueprintId: telemetry?.blueprintId ?? null,
+      taskId: telemetry?.taskId ?? null,
+      attempt: telemetry?.attempt ?? null
     })
     // TOKEN-OVERFLOW-01: Guard against NaN/negative/undefined values from malformed
     // executor reports. A single corrupt value would silently poison all downstream
@@ -146,6 +164,13 @@ export class AgentStreamProcessor {
     const contextWindowTokens = safeToken(meta.tokenUsage.contextWindowTokens)
     const totalContextTokens = contextWindowTokens > 0 ? contextWindowTokens : summedContextTokens
     const consumedContextTokens = totalContextTokens
+
+    // The invariant prefix = the FIRST round-trip's prompt size. Deliberately
+    // NO fallback to `summedContextTokens`: the sum is the whole turn's billed
+    // input across every round-trip, which over-counts a prefix by ~10-30x.
+    // A backend with no per-call snapshot (OpenCode) records NULL instead — an
+    // absence can be filtered out of an average, a wrong number cannot.
+    const prefixTokens = safeToken(meta.tokenUsage.firstCallContextTokens)
 
     // Update lastContextTokens for all backends (badge, compact modal, etc.)
     this.s.lastContextTokens = totalContextTokens
@@ -191,9 +216,21 @@ export class AgentStreamProcessor {
     // F3: Persist per-turn context tokens to DB for dashboard analytics.
     // Previously referenced undefined `sdkContextData` — now uses the
     // `totalContextTokens` already computed above from CLI token usage fields.
-    if (this.s.dbSessionId && conversationId && totalContextTokens > 0) {
+    //
+    // Gated on `turnRecorded`, not on dbSessionId alone: the repository updates
+    // the NEWEST turn_usage row for the conversation, so if this turn did not
+    // produce one (all-zero usage) the value would be written onto the previous,
+    // legitimate turn. `contextWindowTokens` survives a result message that
+    // zeroes the token fields, so all-zero usage with a non-zero context
+    // snapshot is reachable — observed once in the dev DB (turn 6, 120,354 ctx,
+    // every token field 0).
+    if (turnRecorded && totalContextTokens > 0) {
       try {
-        turnUsageRepository.updateLastTurnContextTokens(conversationId, totalContextTokens)
+        turnUsageRepository.updateLastTurnContextTokens(
+          conversationId,
+          totalContextTokens,
+          prefixTokens
+        )
       } catch (err) {
         this.s.log.warn('Failed to persist context tokens:', err)
       }

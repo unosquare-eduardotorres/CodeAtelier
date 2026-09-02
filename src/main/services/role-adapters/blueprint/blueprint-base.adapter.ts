@@ -14,7 +14,8 @@ import type {
   AdapterPromptResult,
   AdapterMcpContext,
   AdapterMcpResult,
-  AdapterIntentContext
+  AdapterIntentContext,
+  AgentTelemetryContext
 } from '../../agent-session.types'
 import type { AgentRole, ModelAction } from '../../../../shared/types'
 import { workspaceRepository } from '../../../db/repositories'
@@ -46,10 +47,30 @@ export abstract class BlueprintBaseAdapter extends BaseRoleAdapter {
   /** Resolved model ID for lean prompt gating (undefined for local LLMs) */
   protected resolvedModel: string | undefined
 
-  constructor(params: { workspaceId: string; blueprintId: string }) {
+  /**
+   * Attribution stamped on every usage row this phase produces. Declared on the
+   * base rather than on the build adapter so all blueprint phases are covered:
+   * without it, only BUILD rows carry a `blueprint_id` and "what did this
+   * blueprint cost" silently means "what did its BUILD phase cost".
+   */
+  readonly telemetryContext: AgentTelemetryContext
+
+  constructor(params: {
+    workspaceId: string
+    blueprintId: string
+    /** Set by phases that execute a specific task (BUILD). */
+    taskId?: string
+    /** 1-based position in the builder retry ladder. */
+    attempt?: number
+  }) {
     super()
     this.workspaceId = params.workspaceId
     this.blueprintId = params.blueprintId
+    this.telemetryContext = {
+      blueprintId: params.blueprintId,
+      ...(params.taskId ? { taskId: params.taskId } : {}),
+      ...(params.attempt != null ? { attempt: params.attempt } : {})
+    }
   }
 
   /** Set the /goal completion condition before starting the phase. */

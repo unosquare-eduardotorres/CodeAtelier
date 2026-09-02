@@ -14,6 +14,10 @@ interface UsageLogRow {
   cache_read_tokens: number
   cache_creation_tokens: number
   cost_cents: number
+  provider: string | null
+  blueprint_id: string | null
+  task_id: string | null
+  attempt: number | null
   created_at: string
 }
 
@@ -31,6 +35,15 @@ export interface UsageLogEntry {
   cacheReadTokens: number
   cacheCreationTokens: number
   costCents: number
+  /**
+   * LLM provider that served the call: 'claude' | 'local-llm' | 'glm'.
+   * The executor backend is derivable ('claude' → cli, else opencode).
+   * Null on pre-v150 rows — not inferable after the fact.
+   */
+  provider: string | null
+  blueprintId: string | null
+  taskId: string | null
+  attempt: number | null
   createdAt: string
 }
 
@@ -47,6 +60,11 @@ export interface RecordUsageLogInput {
   cacheReadTokens?: number
   cacheCreationTokens?: number
   costCents?: number
+  /** LLM provider that served the call: 'claude' | 'local-llm' | 'glm'. */
+  provider?: string | null
+  blueprintId?: string | null
+  taskId?: string | null
+  attempt?: number | null
 }
 
 export interface FeatureUsage {
@@ -81,6 +99,10 @@ function toModel(row: UsageLogRow): UsageLogEntry {
     cacheReadTokens: row.cache_read_tokens,
     cacheCreationTokens: row.cache_creation_tokens,
     costCents: row.cost_cents,
+    provider: row.provider ?? null,
+    blueprintId: row.blueprint_id ?? null,
+    taskId: row.task_id ?? null,
+    attempt: row.attempt ?? null,
     createdAt: row.created_at
   }
 }
@@ -113,9 +135,10 @@ export class UsageLogRepository extends BaseRepository<UsageLogRow, UsageLogEntr
       .prepare(
         `INSERT INTO usage_log (
            feature, agent_type, model, workspace_id, conversation_id, session_id, turn_number,
-           input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents
+           input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_cents,
+           provider, blueprint_id, task_id, attempt
          )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -130,7 +153,11 @@ export class UsageLogRepository extends BaseRepository<UsageLogRow, UsageLogEntr
         input.outputTokens ?? 0,
         input.cacheReadTokens ?? 0,
         input.cacheCreationTokens ?? 0,
-        input.costCents ?? 0
+        input.costCents ?? 0,
+        input.provider ?? null,
+        input.blueprintId ?? null,
+        input.taskId ?? null,
+        input.attempt ?? null
       ) as UsageLogRow
     return toModel(row)
   }

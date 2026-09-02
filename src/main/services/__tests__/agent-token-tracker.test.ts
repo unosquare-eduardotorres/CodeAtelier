@@ -159,6 +159,206 @@ describe('AgentTokenTracker — usage_log dual-write', () => {
     },
     dbAvailable ? undefined : { skipReason: 'no DB' }
   )
+
+  let turnUsageRepository: typeof import('../../db/repositories/turn-usage.repository').turnUsageRepository
+  if (dbAvailable) {
+    turnUsageRepository = require('../../db/repositories/turn-usage.repository').turnUsageRepository
+  }
+
+  test(
+    'recordTurn writes attribution to both usage_log and turn_usage',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      tracker.recordTurn(mockMeta(1000, 500, 0, 0) as any, {
+        turnCount: 1,
+        conversationId: 'conv-attr',
+        dbSessionId: 'sess-attr',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        agentType: 'blueprint-build-bp-1',
+        model: 'claude-opus-4-8',
+        workspaceId: 'ws-attr',
+        provider: 'opencode',
+        blueprintId: 'bp-1',
+        taskId: 'T3',
+        attempt: 2
+      })
+
+      const turns = turnUsageRepository.findByConversation('conv-attr')
+      assert.equal(turns.length, 1)
+      assert.equal(turns[0].provider, 'opencode')
+      assert.equal(turns[0].blueprintId, 'bp-1')
+      assert.equal(turns[0].taskId, 'T3')
+      assert.equal(turns[0].attempt, 2)
+
+      const logId = (
+        require('../../db/index')
+          .getDatabase()
+          .prepare(`SELECT id FROM usage_log WHERE workspace_id = ?`)
+          .get('ws-attr') as { id: string }
+      ).id
+      const logEntry = usageLogRepository.findById(logId)
+      assert.ok(logEntry)
+      // `model` cannot answer "which backend served this" — OpenCode serves
+      // Claude-named models, so the provider column is the only reliable source.
+      assert.equal(logEntry.model, 'claude-opus-4-8')
+      assert.equal(logEntry.provider, 'opencode')
+      assert.equal(logEntry.blueprintId, 'bp-1')
+      assert.equal(logEntry.taskId, 'T3')
+      assert.equal(logEntry.attempt, 2)
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'recordTurn leaves attribution NULL for non-blueprint features',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      tracker.recordTurn(mockMeta(1000, 500, 0, 0) as any, {
+        turnCount: 1,
+        conversationId: 'conv-plain',
+        dbSessionId: 'sess-plain',
+        workspacePath: '/test/workspace',
+        feature: 'chat',
+        model: 'claude-opus-4-8',
+        workspaceId: 'ws-plain'
+      })
+
+      const turns = turnUsageRepository.findByConversation('conv-plain')
+      assert.equal(turns.length, 1, 'a real turn is still recorded')
+      assert.equal(turns[0].provider, null)
+      assert.equal(turns[0].blueprintId, null)
+      assert.equal(turns[0].taskId, null)
+      assert.equal(turns[0].attempt, null)
+
+      // Nothing else regresses: feature + cost attribution is unchanged.
+      const summary = usageLogRepository.getWorkspaceSummary('ws-plain')
+      assert.equal(summary.byFeature[0].feature, 'chat')
+      assert.equal(summary.totalCostCents, 2)
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'recordTurn skips turn_usage for an all-zero meta chunk',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      tracker.recordTurn(mockMeta(0, 0, 0, 0) as any, {
+        turnCount: 1,
+        conversationId: 'conv-zero',
+        dbSessionId: 'sess-zero',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        model: 'claude-opus-4-8',
+        workspaceId: 'ws-zero'
+      })
+
+      // A zero-usage row could never receive context_tokens (the stream
+      // processor's backfill is guarded on > 0 and only targets the latest
+      // turn), so it was a permanent hole in the Gate T denominator.
+      assert.equal(
+        turnUsageRepository.findByConversation('conv-zero').length,
+        0,
+        'no analytics row is created for a turn that consumed nothing'
+      )
+
+      // usage_log is the cost ledger and still sees the turn.
+      const summary = usageLogRepository.getWorkspaceSummary('ws-zero')
+      assert.equal(summary.byFeature.length, 1)
+      assert.equal(summary.byFeature[0].calls, 1)
+
+      // The caller must be told no row exists, or its context-token back-fill
+      // lands on the previous turn.
+      const res = tracker.recordTurn(mockMeta(0, 0, 0, 0) as any, {
+        turnCount: 2,
+        conversationId: 'conv-zero',
+        dbSessionId: 'sess-zero',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        workspaceId: 'ws-zero'
+      })
+      assert.equal(res.turnRecorded, false)
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'a zero-usage turn cannot overwrite the previous turn context_tokens',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+      const opts = (turnCount: number) => ({
+        turnCount,
+        conversationId: 'conv-ctx',
+        dbSessionId: 'sess-ctx',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        workspaceId: 'ws-ctx'
+      })
+
+      // Turn 1 is real and carries a measured context size.
+      const first = tracker.recordTurn(mockMeta(5000, 200, 0, 0) as any, opts(1))
+      assert.equal(first.turnRecorded, true)
+      turnUsageRepository.updateLastTurnContextTokens('conv-ctx', 103_527)
+
+      // Turn 2 reports all-zero usage. A result message can zero the token
+      // fields while `contextWindowTokens` keeps a stale non-zero snapshot, so
+      // the stream processor would still compute totalContextTokens > 0 and
+      // back-fill — onto turn 1, the only row there is.
+      const second = tracker.recordTurn(mockMeta(0, 0, 0, 0) as any, opts(2))
+      assert.equal(second.turnRecorded, false, 'caller is told not to back-fill')
+
+      // Simulate the caller honouring the flag.
+      if (second.turnRecorded) {
+        turnUsageRepository.updateLastTurnContextTokens('conv-ctx', 120_354)
+      }
+
+      const turns = turnUsageRepository.findByConversation('conv-ctx')
+      assert.equal(turns.length, 1)
+      assert.equal(
+        turns[0].contextTokens,
+        103_527,
+        "turn 1's measured context survives the zero-usage turn"
+      )
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'recordTurn still records a turn when only cache tokens are non-zero',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      // A fully-cached round-trip reports input=0/output=0 but real cache reads.
+      // That is a real turn and must not be swept up by the zero-usage guard.
+      tracker.recordTurn(mockMeta(0, 0, 4000, 0) as any, {
+        turnCount: 1,
+        conversationId: 'conv-cached',
+        dbSessionId: 'sess-cached',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        model: 'claude-opus-4-8',
+        workspaceId: 'ws-cached'
+      })
+
+      const turns = turnUsageRepository.findByConversation('conv-cached')
+      assert.equal(turns.length, 1)
+      assert.equal(turns[0].cacheReadTokens, 4000)
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
 })
 
 describe('AgentTokenTracker — reset & resetSession', () => {

@@ -100,5 +100,48 @@ if (!env) {
       const deleted = usageLogRepository.pruneOlderThan(30)
       assert.equal(deleted, 0, 'freshly-inserted rows are not pruned')
     })
+
+    // ── v150 attribution ──
+    // Scoped to their own workspace/conversation ids so the exact-total
+    // assertions in the summary tests above stay valid.
+
+    test('record() round-trips provider/blueprint/task/attempt', () => {
+      const entry = usageLogRepository.record({
+        feature: 'blueprint-build',
+        workspaceId: 'ws-attribution',
+        conversationId: 'conv-attribution',
+        inputTokens: 10,
+        outputTokens: 5,
+        provider: 'opencode',
+        blueprintId: 'bp-1',
+        taskId: 'T3',
+        attempt: 2
+      })
+      assert.equal(entry.provider, 'opencode')
+      assert.equal(entry.blueprintId, 'bp-1')
+      assert.equal(entry.taskId, 'T3')
+      assert.equal(entry.attempt, 2)
+
+      // Survives a re-read, not just the RETURNING row.
+      const reread = usageLogRepository.findById(entry.id)
+      assert.ok(reread)
+      assert.equal(reread.provider, 'opencode')
+      assert.equal(reread.blueprintId, 'bp-1')
+      assert.equal(reread.taskId, 'T3')
+      assert.equal(reread.attempt, 2)
+    })
+
+    test('record() leaves attribution NULL when omitted', () => {
+      const entry = usageLogRepository.record({
+        feature: 'chat',
+        workspaceId: 'ws-attribution',
+        inputTokens: 1,
+        outputTokens: 1
+      })
+      assert.equal(entry.provider, null)
+      assert.equal(entry.blueprintId, null)
+      assert.equal(entry.taskId, null)
+      assert.equal(entry.attempt, null)
+    })
   })
 }

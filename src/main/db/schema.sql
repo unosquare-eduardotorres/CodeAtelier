@@ -423,11 +423,26 @@ CREATE TABLE IF NOT EXISTS turn_usage (
   cache_read_tokens INTEGER DEFAULT 0,
   cache_creation_tokens INTEGER DEFAULT 0,
   context_tokens INTEGER DEFAULT 0,
+  -- Prefix floor (v152): prompt size of the FIRST API round-trip of the turn --
+  -- system prompt + tool schemas + user message, before any tool result was
+  -- appended. context_tokens above is a LAST-round-trip snapshot (end-of-loop
+  -- occupancy), so it cannot be used to measure prefix-reduction work.
+  -- NULL when the backend reports no per-call usage (e.g. OpenCode).
+  prefix_tokens INTEGER,
   model TEXT,
+  -- Attribution (v150): which LLM provider served the turn ('claude'|'local-llm'
+  -- |'glm') and which unit of work asked for it. The executor backend is
+  -- derivable ('claude' -> cli, else opencode). All nullable -- non-blueprint
+  -- features leave blueprint_id/task_id/attempt NULL.
+  provider TEXT,
+  blueprint_id TEXT,
+  task_id TEXT,
+  attempt INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_blueprint ON turn_usage(blueprint_id);
 
 -- ── Unified Token Usage Log ────────────────────────────────────────────────
 
@@ -447,12 +462,19 @@ CREATE TABLE IF NOT EXISTS usage_log (
   cache_read_tokens INTEGER DEFAULT 0,
   cache_creation_tokens INTEGER DEFAULT 0,
   cost_cents INTEGER DEFAULT 0,
+  -- Attribution (v150): `model` is not a reliable provider proxy (OpenCode
+  -- serves Claude-named models), so the provider is recorded explicitly.
+  provider TEXT,
+  blueprint_id TEXT,
+  task_id TEXT,
+  attempt INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_usage_log_workspace ON usage_log(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_usage_log_feature ON usage_log(feature);
 CREATE INDEX IF NOT EXISTS idx_usage_log_conversation ON usage_log(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_log_blueprint ON usage_log(blueprint_id);
 
 -- ── Workspace Health: Audit Runs & Results ────────────────────────────────────
 

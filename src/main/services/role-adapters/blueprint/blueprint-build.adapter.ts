@@ -37,8 +37,17 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
      * prompt, same tools, stronger model. Defaults to `blueprint:build`.
      */
     modelAction?: ModelAction
+    /** Task under execution — recorded on every usage row for this session. */
+    taskId?: string
+    /** 1-based position in the builder retry ladder. */
+    attempt?: number
   }) {
-    super({ workspaceId: params.workspaceId, blueprintId: params.blueprintId })
+    super({
+      workspaceId: params.workspaceId,
+      blueprintId: params.blueprintId,
+      ...(params.taskId ? { taskId: params.taskId } : {}),
+      ...(params.attempt != null ? { attempt: params.attempt } : {})
+    })
     this.phaseContext = params.phaseContext
     this.taskContext = params.taskContext
     this.modelAction = params.modelAction ?? 'blueprint:build'

@@ -3033,12 +3033,19 @@ export class BlueprintBuildService extends EventEmitter {
       modelConfigService.isLocalProvider(workspacePath)
     )
 
+    // Attribution for this session's usage rows. `recordAttempt` bumps the
+    // counter AFTER executeTask returns, so the stored value is the number of
+    // prior attempts and this run is the next one.
+    const attempt = (blueprintTaskRepository.findById(task.id)?.attempts ?? 0) + 1
+
     // Create adapter + session
     const adapter = new BlueprintBuildAdapter({
       workspaceId,
       blueprintId,
       phaseContext,
       taskContext,
+      taskId: task.taskId,
+      attempt,
       ...(params.modelAction ? { modelAction: params.modelAction } : {})
     })
     adapter.setGoalCondition(buildBuildGoalCondition(task.taskId, task.description), 'enforce')

@@ -49,6 +49,15 @@ export interface RecordUsageInput {
   conversationId?: string | null
   sessionId?: string | null
   turnNumber?: number | null
+  /**
+   * LLM provider that served the call: 'claude' | 'local-llm' | 'glm'. Taken
+   * from the resolved provider — never guessed from the model name, since
+   * OpenCode serves Claude-named models.
+   */
+  provider?: string | null
+  blueprintId?: string | null
+  taskId?: string | null
+  attempt?: number | null
   tokens: UsageTokens
 }
 
@@ -77,6 +86,10 @@ class UsageTrackerService {
         conversationId: input.conversationId ?? null,
         sessionId: input.sessionId ?? null,
         turnNumber: input.turnNumber ?? null,
+        provider: input.provider ?? null,
+        blueprintId: input.blueprintId ?? null,
+        taskId: input.taskId ?? null,
+        attempt: input.attempt ?? null,
         inputTokens,
         outputTokens,
         cacheReadTokens,

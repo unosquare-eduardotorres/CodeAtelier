@@ -69,8 +69,19 @@ export class AgentTokenTracker {
       model?: string
       /** Workspace id (nullable). */
       workspaceId?: string | null
+      /**
+       * LLM provider that served this turn: 'claude' | 'local-llm' | 'glm'.
+       * Derived from the resolved provider, not from the model name — OpenCode
+       * serves Claude-named models, so `model` is not a provider proxy.
+       */
+      provider?: string | null
+      /** Blueprint attribution — null for every non-blueprint feature. */
+      blueprintId?: string | null
+      taskId?: string | null
+      /** 1-based builder attempt for this task (retry ladder position). */
+      attempt?: number | null
     }
-  ): { totalTokens: number } {
+  ): { totalTokens: number; turnRecorded: boolean } {
     const { cacheReadInputTokens, cacheCreationInputTokens } = meta.tokenUsage
     const totalTokens = meta.tokenUsage.input + meta.tokenUsage.output
 
@@ -113,8 +124,28 @@ export class AgentTokenTracker {
       timestamp: Date.now()
     })
 
+    // A meta chunk can report all-zero usage (e.g. a turn that produced no API
+    // round-trip). Recording it as a turn_usage row created a permanent hole:
+    // the row's context_tokens stays 0 because the stream processor's
+    // updateLastTurnContextTokens call is guarded on totalContextTokens > 0, and
+    // updates target only the LATEST turn — so the zero row is never backfilled.
+    // Measured: those rows were 100% of the blueprint-build turns missing
+    // context_tokens, dragging the Gate T denominator down to 43% coverage.
+    // Skipping them leaves the analytics table describing only real turns.
+    const isZeroUsageTurn =
+      meta.tokenUsage.input === 0 &&
+      meta.tokenUsage.output === 0 &&
+      cacheReadInputTokens === 0 &&
+      cacheCreationInputTokens === 0
+
+    // Whether a turn_usage row exists for THIS turn. The caller must not
+    // back-fill context tokens when it does not — `updateLastTurnContextTokens`
+    // targets the newest row for the conversation, so with no row of our own the
+    // write would land on the PREVIOUS turn and overwrite its real value.
+    let turnRecorded = false
+
     // Per-turn token breakdown storage — enables cost debugging and cache rate trends
-    if (opts.dbSessionId && opts.conversationId) {
+    if (opts.dbSessionId && opts.conversationId && !isZeroUsageTurn) {
       try {
         const previousTurn = turnUsageRepository.getLastTurn(opts.conversationId)
         turnUsageRepository.record({
@@ -125,8 +156,13 @@ export class AgentTokenTracker {
           outputTokens: meta.tokenUsage.output,
           cacheReadTokens: cacheReadInputTokens,
           cacheCreationTokens: cacheCreationInputTokens,
-          model: opts.model ?? modelConfigService.getModel(opts.workspacePath, 'specialist')
+          model: opts.model ?? modelConfigService.getModel(opts.workspacePath, 'specialist'),
+          provider: opts.provider ?? null,
+          blueprintId: opts.blueprintId ?? null,
+          taskId: opts.taskId ?? null,
+          attempt: opts.attempt ?? null
         })
+        turnRecorded = true
         // Token growth rate alert — warn if input tokens spiked >30%
         if (previousTurn && previousTurn.inputTokens > 0) {
           const growthRate =
@@ -154,6 +190,10 @@ export class AgentTokenTracker {
       conversationId: opts.conversationId,
       sessionId: opts.dbSessionId,
       turnNumber: opts.turnCount,
+      provider: opts.provider ?? null,
+      blueprintId: opts.blueprintId ?? null,
+      taskId: opts.taskId ?? null,
+      attempt: opts.attempt ?? null,
       tokens: {
         input: meta.tokenUsage.input,
         output: meta.tokenUsage.output,
@@ -162,7 +202,7 @@ export class AgentTokenTracker {
       }
     })
 
-    return { totalTokens }
+    return { totalTokens, turnRecorded }
   }
 
   /**

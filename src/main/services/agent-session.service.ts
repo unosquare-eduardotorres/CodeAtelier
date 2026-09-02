@@ -121,6 +121,8 @@ interface StreamLoopState {
   sessionRecoveryNeeded: boolean
   /** Set when api_retry chunks indicate server overload (529/503/overloaded) */
   overloadDetected?: boolean
+  /** Provider actually serving this stream — used for token attribution. */
+  llmProvider?: LLMProvider
 }
 
 /** Options bag for the executeStream orchestrator. */
@@ -2051,7 +2053,8 @@ export class AgentSessionService extends AgentBaseService {
         hasTextAfterLastTool: true,
         lastTerminalReason: undefined,
         sessionRecoveryNeeded: false,
-        overloadDetected: false
+        overloadDetected: false,
+        llmProvider: llmProvider ?? this.llmProvider
       }
 
       // ── Select executor backend ──

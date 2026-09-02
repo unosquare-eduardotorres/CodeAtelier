@@ -23,6 +23,18 @@ export interface TokenUsage {
    * occupancy is ~60K). This snapshot reflects the true current context size.
    */
   contextWindowTokens: number
+  /**
+   * Prompt size of the FIRST API round-trip of the turn — the invariant prefix
+   * (system prompt + tool schemas + the user message) before any tool result
+   * has been appended.
+   *
+   * `contextWindowTokens` answers "how full is the window right now"; it is
+   * overwritten on every round-trip, so by the end of an agentic loop it
+   * describes end-of-loop occupancy, not the prompt we sent. Those are
+   * different quantities and prefix-reduction work can only be judged against
+   * this one. Set once and never overwritten — that is the whole point.
+   */
+  firstCallContextTokens: number
 }
 
 export class TokenAccountant {
@@ -31,7 +43,8 @@ export class TokenAccountant {
     output: 0,
     cacheReadInputTokens: 0,
     cacheCreationInputTokens: 0,
-    contextWindowTokens: 0
+    contextWindowTokens: 0,
+    firstCallContextTokens: 0
   }
 
   /**
@@ -50,6 +63,13 @@ export class TokenAccountant {
       (startUsage.cache_read_input_tokens ?? 0) +
       (startUsage.cache_creation_input_tokens ?? 0)
     if (callContext > 0) this.usage.contextWindowTokens = callContext
+
+    // Prefix snapshot = the FIRST call's prompt size. Deliberately never
+    // overwritten: subsequent round-trips carry accumulated tool output, which
+    // is exactly the component we are trying to separate out.
+    if (callContext > 0 && this.usage.firstCallContextTokens === 0) {
+      this.usage.firstCallContextTokens = callContext
+    }
   }
 
   /**
@@ -88,6 +108,11 @@ export class TokenAccountant {
         (resultUsage.cache_creation_input_tokens ?? resultUsage.cacheCreationInputTokens ?? 0)
       if (resultContext > 0) this.usage.contextWindowTokens = resultContext
     }
+
+    // No equivalent fallback for firstCallContextTokens: result usage is the
+    // CUMULATIVE total for the turn, so it cannot stand in for a first call.
+    // A stream with no message_start leaves the prefix unmeasured (0), which
+    // downstream records as NULL — an absence is analysable, a wrong number is not.
   }
 
   /**

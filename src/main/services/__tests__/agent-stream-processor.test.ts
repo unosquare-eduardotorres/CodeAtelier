@@ -558,6 +558,354 @@ describe('AgentStreamProcessor.processContentChunk — 80% tool budget is silent
   })
 })
 
+// ── processMetaChunk attribution derivation ───────────────────────────
+//
+// This is the seam the repository and token-tracker tests cannot reach: they
+// call recordTurn with provider/blueprintId/taskId/attempt already populated,
+// so nothing pinned the code that DERIVES them. Deleting the four attribution
+// lines below the recordTurn call, or the streamState.llmProvider plumbing,
+// used to leave every other test green while all four columns went NULL.
+//
+// The token tracker is stubbed, so no DB write happens; resolveModelFromSnapshot
+// still reads, hence the test DB.
+describe('AgentStreamProcessor.processMetaChunk — usage attribution', () => {
+  let dbAvailable = false
+  let createTestDb: typeof import('../../db/test-helpers').createTestDb
+  let _setDatabaseForTesting: typeof import('../../db/index')._setDatabaseForTesting
+  try {
+    createTestDb = require('../../db/test-helpers').createTestDb
+    _setDatabaseForTesting = require('../../db/index')._setDatabaseForTesting
+    const probe = createTestDb()
+    probe.close()
+    dbAvailable = true
+  } catch {
+    dbAvailable = false
+  }
+
+  interface RecordedOpts {
+    provider?: string | null
+    blueprintId?: string | null
+    taskId?: string | null
+    attempt?: number | null
+    feature?: string
+  }
+
+  /** Host wired just far enough for processMetaChunk, with a capturing tracker. */
+  function makeMetaHost(over: {
+    adapterRole?: string
+    telemetryContext?: unknown
+    streamLlmProvider?: string
+    sessionLlmProvider?: string
+    /** Whether the tracker claims to have inserted a turn_usage row for THIS turn. */
+    turnRecorded?: boolean
+  }): { host: Record<string, unknown>; recorded: RecordedOpts[] } {
+    const noop = (): void => {}
+    const recorded: RecordedOpts[] = []
+    const host = {
+      emit: createSpy(),
+      log: { info: noop, warn: noop, debug: noop, error: noop },
+      sessionMap: new Map<string, string>(),
+      adapter: {
+        role: over.adapterRole ?? 'blueprint-build',
+        agentId: 'blueprint-build-bp-1',
+        telemetryContext: over.telemetryContext
+      },
+      currentMode: 'build',
+      workspacePath: '/test/workspace',
+      workspaceId: 'ws-1',
+      dbSessionId: 'sess-1',
+      llmProvider: over.sessionLlmProvider ?? 'claude',
+      tokenUsage: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      lastContextTokens: 0,
+      effectiveContextWindow: 200_000,
+      compactAutoThreshold: 800_000,
+      compactSuggestThreshold: 500_000,
+      compactSuggested: false,
+      turnsSinceCompactSuggestion: 0,
+      resolveLocalContextWindow: () => 64_000,
+      tokenTracker: {
+        recordTurn: (_meta: unknown, opts: RecordedOpts) => {
+          recorded.push(opts)
+          // Default turnRecorded:false keeps the context back-fill (and its DB
+          // write) out of the attribution tests — that path is covered by the
+          // prefix tests below, which opt in.
+          return { totalTokens: 1500, turnRecorded: over.turnRecorded ?? false }
+        },
+        getCacheEfficiency: () => ({
+          hitRate: 0,
+          savedTokens: 0,
+          totalInput: 0,
+          turns: 0,
+          turnBreakdown: []
+        })
+      }
+    }
+    return { host, recorded }
+  }
+
+  const meta = {
+    tokenUsage: {
+      input: 1000,
+      output: 500,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      contextWindowTokens: 120_000
+    }
+  }
+
+  const streamState = (): Record<string, unknown> => ({
+    messageStopReceived: false,
+    hasTextAfterLastTool: true,
+    lastTerminalReason: undefined,
+    sessionRecoveryNeeded: false,
+    overloadDetected: false
+  })
+
+  test(
+    'blueprint task identity reaches recordTurn from the adapter',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { host, recorded } = makeMetaHost({
+        telemetryContext: { blueprintId: 'bp-1', taskId: 'T3', attempt: 2 }
+      })
+      const proc = new AgentStreamProcessor(host)
+      await proc.processMetaChunk(meta as never, {
+        conversationId: 'conv-1',
+        turnCount: 1,
+        streamState: { ...streamState(), llmProvider: 'claude' } as never
+      })
+
+      assert.equal(recorded.length, 1)
+      assert.equal(recorded[0].blueprintId, 'bp-1')
+      assert.equal(recorded[0].taskId, 'T3')
+      assert.equal(recorded[0].attempt, 2)
+      assert.equal(recorded[0].feature, 'blueprint-build')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'provider comes from the stream, and local-llm stays distinct from glm',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+
+      // The whole point of storing the provider rather than the executor
+      // backend: both of these resolve to the 'opencode' backend, and merging
+      // them would bill a free local run at GLM prices.
+      for (const provider of ['claude', 'local-llm', 'glm']) {
+        const { host, recorded } = makeMetaHost({ telemetryContext: undefined })
+        const proc = new AgentStreamProcessor(host)
+        await proc.processMetaChunk(meta as never, {
+          conversationId: 'conv-1',
+          turnCount: 1,
+          streamState: { ...streamState(), llmProvider: provider } as never
+        })
+        assert.equal(recorded[0].provider, provider)
+      }
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'falls back to the session provider when the stream did not record one',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { host, recorded } = makeMetaHost({ sessionLlmProvider: 'glm' })
+      const proc = new AgentStreamProcessor(host)
+      await proc.processMetaChunk(meta as never, {
+        conversationId: 'conv-1',
+        turnCount: 1,
+        streamState: streamState() as never // no llmProvider
+      })
+      assert.equal(recorded[0].provider, 'glm')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'a non-blueprint adapter records no blueprint attribution',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { host, recorded } = makeMetaHost({
+        adapterRole: 'specialist',
+        telemetryContext: undefined
+      })
+      const proc = new AgentStreamProcessor(host)
+      await proc.processMetaChunk(meta as never, {
+        conversationId: 'conv-1',
+        turnCount: 1,
+        streamState: { ...streamState(), llmProvider: 'claude' } as never
+      })
+
+      assert.equal(recorded[0].feature, 'chat')
+      assert.equal(recorded[0].blueprintId, null)
+      assert.equal(recorded[0].taskId, null)
+      assert.equal(recorded[0].attempt, null)
+      assert.equal(recorded[0].provider, 'claude', 'provider is recorded for every feature')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  // ── prefix_tokens persistence ──
+  //
+  // context_tokens is a LAST-round-trip snapshot; prefix_tokens is the FIRST.
+  // Nothing else pins that the processor forwards the second one, and a silent
+  // regression would look exactly like "the prefix was never measured".
+
+  interface ContextWrite {
+    conversationId: string
+    contextTokens: number
+    prefixTokens?: number
+  }
+
+  /**
+   * Capture the repository write instead of asserting on a row.
+   *
+   * The harness starts every async test immediately and awaits them together,
+   * so the `_setDatabaseForTesting` calls in this describe interleave: a row
+   * seeded before an await is not guaranteed to be in the DB the repository
+   * resolves after it. Intercepting the singleton's method is deterministic,
+   * and no other test in this file touches it.
+   */
+  async function captureContextWrites(run: () => Promise<void>): Promise<ContextWrite[]> {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy: the DB module must not load before the test DB is installed
+    const { turnUsageRepository } = require('../../db/repositories/turn-usage.repository')
+    const original = turnUsageRepository.updateLastTurnContextTokens
+    const writes: ContextWrite[] = []
+    turnUsageRepository.updateLastTurnContextTokens = (
+      conversationId: string,
+      contextTokens: number,
+      prefixTokens?: number
+    ): void => {
+      writes.push({ conversationId, contextTokens, prefixTokens })
+    }
+    try {
+      await run()
+    } finally {
+      turnUsageRepository.updateLastTurnContextTokens = original
+    }
+    return writes
+  }
+
+  test(
+    'the first-call prefix is persisted alongside end-of-loop context',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+
+      const { host } = makeMetaHost({
+        telemetryContext: { blueprintId: 'bp-1', taskId: 'T3', attempt: 1 },
+        turnRecorded: true
+      })
+      const proc = new AgentStreamProcessor(host)
+      const writes = await captureContextWrites(() =>
+        proc.processMetaChunk(
+          {
+            tokenUsage: {
+              input: 22,
+              output: 500,
+              cacheReadInputTokens: 1_014_653,
+              cacheCreationInputTokens: 0,
+              contextWindowTokens: 102_986,
+              firstCallContextTokens: 28_400
+            }
+          } as never,
+          {
+            conversationId: 'conv-prefix',
+            turnCount: 1,
+            streamState: { ...streamState(), llmProvider: 'claude' } as never
+          }
+        )
+      )
+
+      assert.equal(writes.length, 1)
+      assert.equal(writes[0].contextTokens, 102_986, 'end-of-loop occupancy, unchanged')
+      assert.equal(writes[0].prefixTokens, 28_400, 'the prompt we actually sent')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'a backend with no per-call snapshot reports no prefix, not the summed total',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+
+      // OpenCode's executor only accumulates totals. Falling back to the sum
+      // would report 1,014,675 as a "prefix" — a ~30x over-count that averages
+      // in silently. 0 here becomes NULL in the column, which is the honest answer.
+      const { host } = makeMetaHost({ turnRecorded: true })
+      const proc = new AgentStreamProcessor(host)
+      const writes = await captureContextWrites(() =>
+        proc.processMetaChunk(
+          {
+            tokenUsage: {
+              input: 22,
+              output: 500,
+              cacheReadInputTokens: 1_014_653,
+              cacheCreationInputTokens: 0
+            }
+          } as never,
+          {
+            conversationId: 'conv-opencode',
+            turnCount: 1,
+            streamState: { ...streamState(), llmProvider: 'glm' } as never
+          }
+        )
+      )
+
+      assert.equal(writes.length, 1)
+      assert.equal(writes[0].prefixTokens, 0, 'no prefix is invented from the sum')
+      assert.equal(writes[0].contextTokens, 1_014_675, 'occupancy keeps its existing fallback')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'nothing is written when this turn recorded no row of its own',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+
+      // turnRecorded:false — the UPDATE targets the NEWEST row for the
+      // conversation, so writing here would stamp this turn's prefix onto the
+      // PREVIOUS turn's row.
+      const { host } = makeMetaHost({ turnRecorded: false })
+      const proc = new AgentStreamProcessor(host)
+      const writes = await captureContextWrites(() =>
+        proc.processMetaChunk(
+          {
+            tokenUsage: {
+              input: 0,
+              output: 0,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              contextWindowTokens: 120_354,
+              firstCallContextTokens: 31_000
+            }
+          } as never,
+          {
+            conversationId: 'conv-zero',
+            turnCount: 2,
+            streamState: { ...streamState(), llmProvider: 'claude' } as never
+          }
+        )
+      )
+
+      assert.equal(writes.length, 0, "turn 1's row is not stamped with turn 2's prefix")
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }

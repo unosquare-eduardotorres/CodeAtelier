@@ -36,7 +36,8 @@ describe('TelemetryRecorder — recordFailure', () => {
       output: 0,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     assert.equal(entry.status, 'failed')
     assert.equal(entry.error, 'connection timeout')
@@ -50,7 +51,8 @@ describe('TelemetryRecorder — recordFailure', () => {
       output: 0,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     assert.equal(typeof entry.durationMs, 'number')
     assert.ok(entry.durationMs! >= 0)
@@ -65,7 +67,8 @@ describe('TelemetryRecorder — finalize', () => {
       output: 50,
       cacheReadInputTokens: 10,
       cacheCreationInputTokens: 5,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     assert.equal(entry.status, 'succeeded')
     assert.equal(entry.model, 'haiku')
@@ -79,7 +82,8 @@ describe('TelemetryRecorder — finalize', () => {
       output: 50,
       cacheReadInputTokens: 10,
       cacheCreationInputTokens: 5,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     }
     const entry = recorder.finalize(tokens)
     // Mutate original — entry should be unaffected
@@ -95,7 +99,8 @@ describe('TelemetryRecorder — finalize', () => {
       output: 200,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     assert.equal(entry.status, 'failed')
     assert.equal(entry.error, 'boom')
@@ -110,14 +115,16 @@ describe('TelemetryRecorder — finalize', () => {
       output: 5,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     const entry2 = recorder.finalize({
       input: 99,
       output: 99,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     // Both should be identical since finalize only sets on first call
     assert.equal(entry1.tokenUsage!.input, 10)
@@ -133,7 +140,8 @@ describe('TelemetryRecorder — finalize', () => {
       output: 0,
       cacheReadInputTokens: 0,
       cacheCreationInputTokens: 0,
-      contextWindowTokens: 0
+      contextWindowTokens: 0,
+      firstCallContextTokens: 0
     })
     assert.equal(entry.requestId, recorder.requestId)
   })

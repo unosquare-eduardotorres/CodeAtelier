@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 149
+export const CURRENT_SCHEMA_VERSION = 152
 
 export interface Migration {
   version: number
@@ -4564,6 +4564,125 @@ export const migrations: Migration[] = [
       db.exec(`ALTER TABLE blueprints ADD COLUMN unverified_json TEXT`)
 
       dbLogger.info('[migration-149] ✓ Added blueprint quality-gate columns')
+    }
+  },
+  {
+    version: 150,
+    name: 'usage-attribution',
+    up: (db) => {
+      // Token rows recorded WHICH model burned the tokens but not which provider
+      // served it or which unit of work asked for it. `model` was the only proxy
+      // for provider and it is unreliable — OpenCode serves Claude-named models,
+      // so a row reading 'claude-opus-5' could have come from either path. The
+      // question "what does a blueprint cost on OpenCode vs Claude" was not
+      // answerable even in principle.
+      //
+      // `provider` stores the LLM provider ('claude'|'local-llm'|'glm'), not the
+      // executor backend: the backend is a pure function of the provider, so
+      // nothing is lost, while storing the backend would merge free local models
+      // and paid GLM into one 'opencode' bucket.
+      //
+      // blueprint_id / task_id / attempt exist for the same reason: joining a
+      // usage row back to a blueprint meant string-parsing conversation_id.
+      //
+      // Additive ALTERs, all nullable — every existing row and every non-blueprint
+      // feature keeps working, and ignoring the columns reverts the change.
+      db.exec(`ALTER TABLE usage_log ADD COLUMN provider TEXT`)
+      db.exec(`ALTER TABLE usage_log ADD COLUMN blueprint_id TEXT`)
+      db.exec(`ALTER TABLE usage_log ADD COLUMN task_id TEXT`)
+      db.exec(`ALTER TABLE usage_log ADD COLUMN attempt INTEGER`)
+
+      db.exec(`ALTER TABLE turn_usage ADD COLUMN provider TEXT`)
+      db.exec(`ALTER TABLE turn_usage ADD COLUMN blueprint_id TEXT`)
+      db.exec(`ALTER TABLE turn_usage ADD COLUMN task_id TEXT`)
+      db.exec(`ALTER TABLE turn_usage ADD COLUMN attempt INTEGER`)
+
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_log_blueprint ON usage_log(blueprint_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_usage_blueprint ON turn_usage(blueprint_id)`)
+
+      // Historical rows keep NULL provider — the backend that served them is not
+      // inferable after the fact, and a guess would be worse than an absence.
+      dbLogger.info('[migration-150] ✓ Added usage attribution columns')
+    }
+  },
+  {
+    version: 151,
+    name: 'memory-legacy-tier-amnesty',
+    up: (db) => {
+      // Migration 119 replaced the bare `confirmation_count` with an event log,
+      // and in doing so destroyed the history it was migrating. It backfilled
+      // every historical confirmation as source_type='auto_dedup' — which the
+      // promotion rules filter out of the evidence set entirely — gave every
+      // backfilled row the fact's own created_at (so distinctDays = 1), and then
+      // demoted every active T2/T3 fact to T1.
+      //
+      // The net effect on any workspace that predates 119: years of corroboration
+      // became invisible, the tiers that corroboration had earned were reset, and
+      // no amount of re-evaluation could recover either. Facts do not un-become
+      // true because we changed how we store evidence.
+      //
+      // This grants back a tier derived from the surviving `confirmation_count`,
+      // and only to facts whose evidence is *entirely* the 119 backfill (weight
+      // 0.5 is that backfill's fingerprint — nothing else has ever written it).
+      // A fact that has earned real evidence since is left alone: the normal
+      // gates already speak for it.
+      //
+      // Capped at T2. T3 keeps its human gate — amnesty restores what was taken,
+      // it does not hand out a tier that always required a person to agree.
+      const grant = (minCount: number, tier: number): number =>
+        db
+          .prepare(
+            `UPDATE memory_facts SET tier = ?, updated_at = datetime('now')
+             WHERE status = 'active'
+               AND volatile = 0
+               AND tier < ?
+               AND confirmation_count >= ?
+               AND EXISTS (
+                 SELECT 1 FROM memory_confirmations c
+                 WHERE c.fact_id = memory_facts.id
+                   AND c.source_type = 'auto_dedup' AND c.weight = 0.5
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM memory_confirmations c
+                 WHERE c.fact_id = memory_facts.id AND c.source_type != 'auto_dedup'
+               )`
+          )
+          .run(tier, tier, minCount).changes
+
+      // T2 first: the `tier < ?` guard then excludes those rows from the T1 pass,
+      // so a 5-confirm fact is never walked back down to T1.
+      const toT2 = grant(5, 2)
+      const toT1 = grant(3, 1)
+
+      if (toT1 + toT2 > 0) {
+        dbLogger.info(`[migration-151] Restored ${toT1} facts to T1 and ${toT2} to T2`)
+      }
+      dbLogger.info('[migration-151] ✓ Legacy memory tier amnesty complete')
+    }
+  },
+  {
+    version: 152,
+    name: 'turn-usage-prefix-tokens',
+    up: (db) => {
+      // `context_tokens` was being read as "the prefix floor" and it is not that.
+      // TokenAccountant.accumulateFromMessageStart OVERWRITES its snapshot on
+      // every API round-trip, so the stored value is the LAST call of an agentic
+      // loop — after every tool result has accumulated — not the prompt we sent.
+      // Measured on the packaged DB: a blueprint task with input_tokens = 22 and
+      // cache_read = 1,014,653 stored context_tokens = 102,986, i.e. ~10 round
+      // trips each re-reading ~103 K. The statically measured BUILD prefix is
+      // ~22-35 K tokens, so ~68-78 % of that "floor" is in-loop accumulation.
+      //
+      // prefix_tokens records the FIRST round-trip's prompt size instead — the
+      // invariant prefix, the only quantity prefix-reduction work can be judged
+      // against. context_tokens keeps its current meaning (end-of-loop occupancy,
+      // which the compaction badge and modal read).
+      //
+      // Nullable and additive: historical rows keep NULL (it is not
+      // reconstructible), and ignoring the column reverts the change.
+      db.exec(`ALTER TABLE turn_usage ADD COLUMN prefix_tokens INTEGER`)
+
+      dbLogger.info('[migration-152] ✓ Added turn_usage.prefix_tokens')
     }
   }
 ]

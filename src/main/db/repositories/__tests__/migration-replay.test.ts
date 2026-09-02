@@ -865,6 +865,119 @@ if (!env) {
     })
   })
 
+  describe('Migration Replay — v150 usage attribution', () => {
+    test('adds_attribution_columns_leaving_existing_rows_null', () => {
+      const db = createSchemaDb()
+      try {
+        runBatch(db, 1, 149)
+
+        // createSchemaDb() builds from the CURRENT schema.sql, which already
+        // declares the v150 columns for fresh installs — and runBatch (like
+        // production) swallows duplicate-column errors. Asserting the columns
+        // exist after runBatch(150) would therefore pass without the migration
+        // running at all. Reproduce the genuine pre-v150 shape first so the
+        // ALTERs are actually exercised.
+        db.exec(`DROP INDEX IF EXISTS idx_usage_log_blueprint`)
+        db.exec(`DROP INDEX IF EXISTS idx_turn_usage_blueprint`)
+        for (const table of ['usage_log', 'turn_usage']) {
+          for (const col of ['provider', 'blueprint_id', 'task_id', 'attempt']) {
+            db.exec(`ALTER TABLE ${table} DROP COLUMN ${col}`)
+          }
+          const before = getColumnNames(db, table)
+          assert.ok(!before.includes('provider'), `${table} is at the pre-v150 shape`)
+        }
+
+        // Usage rows recorded before attribution existed — the upgrade path of
+        // anyone with history.
+        db.prepare(
+          `INSERT INTO usage_log (id, feature, model, input_tokens, output_tokens)
+           VALUES ('u-1', 'blueprint-build', 'claude-opus-5', 100, 50)`
+        ).run()
+        db.prepare(
+          `INSERT INTO turn_usage (id, session_id, conversation_id, turn_number, input_tokens)
+           VALUES ('tu-1', 's-1', 'c-1', 1, 100)`
+        ).run()
+
+        const { applied } = runBatch(db, 150, 150)
+        assert.equal(applied, 1, 'migration 150 ran rather than being skipped as duplicate')
+
+        for (const table of ['usage_log', 'turn_usage']) {
+          const cols = getColumnNames(db, table)
+          for (const col of ['provider', 'blueprint_id', 'task_id', 'attempt']) {
+            assert.ok(cols.includes(col), `${table}.${col} added`)
+          }
+          assert.ok(
+            getIndexNames(db, table).some((n) => n.endsWith('_blueprint')),
+            `${table} blueprint index created`
+          )
+        }
+
+        const logRow = db.prepare(`SELECT * FROM usage_log WHERE id = 'u-1'`).get() as Record<
+          string,
+          unknown
+        >
+        // The backend that served a historical row is not inferable after the
+        // fact — a guess would be worse than an absence.
+        assert.equal(logRow.provider, null, 'no provider is invented for historical rows')
+        assert.equal(logRow.blueprint_id, null)
+        assert.equal(logRow.task_id, null)
+        assert.equal(logRow.attempt, null)
+        assert.equal(logRow.input_tokens, 100, 'existing token data survives')
+        assert.equal(logRow.model, 'claude-opus-5', 'existing model survives')
+
+        const turnRow = db.prepare(`SELECT * FROM turn_usage WHERE id = 'tu-1'`).get() as Record<
+          string,
+          unknown
+        >
+        assert.equal(turnRow.provider, null)
+        assert.equal(turnRow.blueprint_id, null)
+        assert.equal(turnRow.input_tokens, 100, 'existing token data survives')
+      } finally {
+        db.close()
+      }
+    })
+  })
+
+  describe('Migration Replay — v152 turn_usage prefix tokens', () => {
+    test('adds_prefix_tokens_leaving_historical_rows_null', () => {
+      const db = createSchemaDb()
+      try {
+        runBatch(db, 1, 151)
+
+        // Same trap as v150: createSchemaDb() builds from the CURRENT schema.sql,
+        // which already declares prefix_tokens, and runBatch swallows
+        // duplicate-column errors — so asserting the column exists would pass
+        // without the migration running. Reproduce the pre-v152 shape first.
+        db.exec(`ALTER TABLE turn_usage DROP COLUMN prefix_tokens`)
+        assert.ok(
+          !getColumnNames(db, 'turn_usage').includes('prefix_tokens'),
+          'turn_usage is at the pre-v152 shape'
+        )
+
+        db.prepare(
+          `INSERT INTO turn_usage (id, session_id, conversation_id, turn_number, input_tokens, context_tokens)
+           VALUES ('tu-152', 's-1', 'c-1', 1, 22, 102986)`
+        ).run()
+
+        const { applied } = runBatch(db, 152, 152)
+        assert.equal(applied, 1, 'migration 152 ran rather than being skipped as duplicate')
+        assert.ok(getColumnNames(db, 'turn_usage').includes('prefix_tokens'))
+
+        const row = db.prepare(`SELECT * FROM turn_usage WHERE id = 'tu-152'`).get() as Record<
+          string,
+          unknown
+        >
+        // The prefix of a historical turn is not reconstructible — context_tokens
+        // is an end-of-loop snapshot, not a prompt size, so copying it across
+        // would manufacture the very number the column exists to correct.
+        assert.equal(row.prefix_tokens, null, 'no prefix is invented for historical rows')
+        assert.equal(row.context_tokens, 102986, 'existing context data survives')
+      } finally {
+        db.close()
+      }
+    })
+  })
+
   describe('Migration Replay — invariants', () => {
     test('all_migration_versions_are_sequential', () => {
       for (let i = 0; i < migrations.length; i++) {

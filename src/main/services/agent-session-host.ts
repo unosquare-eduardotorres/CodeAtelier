@@ -62,6 +62,18 @@ export interface StreamLoopState {
   planModeBlockedTool?: string
   /** Set when api_retry chunks indicate server overload (529/503/overloaded) */
   overloadDetected?: boolean
+  /**
+   * LLM provider actually serving this stream, resolved from the conversation
+   * rather than the session default (they differ when a conversation overrides
+   * the workspace provider). Carried here so token attribution records the
+   * provider that ran the turn, not the one the session started on.
+   *
+   * The provider is stored rather than the derived `ExecutorBackend` because the
+   * backend is a pure function of it (`claude` → cli, everything else → opencode)
+   * while the reverse is lossy — `opencode` alone cannot distinguish a free
+   * local model from paid GLM.
+   */
+  llmProvider?: LLMProvider
 }
 
 /**

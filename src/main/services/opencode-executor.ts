@@ -2284,6 +2284,13 @@ Troubleshooting:
    * ISO string depending on version) — all three are parsed. A message with no
    * parsable timestamp is counted (fail-open): under-counting a turn that ran
    * is worse than occasionally including a boundary message.
+   *
+   * KNOWN GAP: this only accumulates totals — it records no per-call snapshot,
+   * so `contextWindowTokens` and `firstCallContextTokens` are never set on this
+   * path and `turn_usage.prefix_tokens` stays NULL for OpenCode turns. That is
+   * deliberate: the accumulated sum spans every round-trip of the agentic loop
+   * and would over-state a first-call prefix by ~10-30x. Fixing it means
+   * tracking per-message input+cache here and setting first/last snapshots.
    */
   private async sumAssistantTokensSince(
     sessionId: string,

@@ -96,6 +96,21 @@ export type AgentSessionEventName =
 
 // ── Role adapter interface ───────────────────────────────────────────
 
+/**
+ * Unit-of-work identity attached to every usage row the session records.
+ *
+ * The stream processor writes the token rows but only sees session state; the
+ * blueprint/task identity lives in blueprint-build.service. The adapter is the
+ * one object that spans both, so it carries the attribution. Adapters with no
+ * unit of work to declare simply omit it and the columns stay NULL.
+ */
+export interface AgentTelemetryContext {
+  blueprintId?: string
+  taskId?: string
+  /** 1-based position in the builder retry ladder. */
+  attempt?: number
+}
+
 export interface AgentRoleAdapter {
   /** Which role this adapter implements. */
   readonly role: AgentRole
@@ -187,6 +202,12 @@ export interface AgentRoleAdapter {
    * should confirm consumption here. Default: no-op.
    */
   onSendSuccess?(conversationId: string): void
+
+  /**
+   * Optional unit-of-work attribution for usage rows (blueprint / task /
+   * attempt). Read by the stream processor at token-record time.
+   */
+  readonly telemetryContext?: AgentTelemetryContext
 
   /** Reset adapter state when the session stops. */
   onSessionStop(): void

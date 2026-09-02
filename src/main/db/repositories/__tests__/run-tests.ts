@@ -65,6 +65,11 @@ import './track.repository.test'
 // ─── Audit finding handoff markers (migration 145) ───
 import './audit-handoff.repository.test'
 
+// ─── Usage attribution (migration 150) ───
+// turn-usage was registered in run-all.ts but not here, so its assertions never
+// ran under the repository runner.
+import './turn-usage.repository.test'
+
 import { passed, failed, skipped } from '../../../services/__tests__/test-harness'
 
 console.log(`\nRepository tests: ${passed} passed, ${failed} failed, ${skipped} skipped`)

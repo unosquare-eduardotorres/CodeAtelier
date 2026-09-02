@@ -192,6 +192,8 @@ export interface CLIExecuteResult {
     cacheCreationInputTokens: number
     /** Current context occupancy (latest round-trip prompt size, not the sum). */
     contextWindowTokens?: number
+    /** Prompt size of the FIRST round-trip — the invariant prefix, never overwritten. */
+    firstCallContextTokens?: number
   }
 }
 
