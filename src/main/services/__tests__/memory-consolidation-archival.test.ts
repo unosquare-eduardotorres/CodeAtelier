@@ -223,6 +223,96 @@ if (dbAvailable) {
       db.close()
     })
 
+    test('getConfirmationsForFacts batches what the sweep used to fetch per fact', () => {
+      const db = createTestDb()
+      _setDatabaseForTesting(db)
+      const ws = seedWorkspace(db)
+
+      const factA = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Fact A',
+        content: 'Two events',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+      const factB = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Fact B',
+        content: 'One event',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+      const factNone = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Fact C',
+        content: 'No events',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+
+      memoryFactRepository.addConfirmation(factA.id, 'human', 1)
+      // auto_dedup rows are kept: filtering them is the promotion rule's job,
+      // not the query's, and the archival predicate needs to see them.
+      memoryFactRepository.addConfirmation(factA.id, 'auto_dedup', 0)
+      memoryFactRepository.addConfirmation(factB.id, 'extraction', 1)
+
+      const byFact = memoryFactRepository.getConfirmationsForFacts([
+        factA.id,
+        factB.id,
+        factNone.id
+      ])
+
+      assert.equal(byFact.get(factA.id)?.length, 2, 'Fact A should carry both events')
+      assert.equal(byFact.get(factB.id)?.length, 1, 'Fact B should carry its one event')
+      assert.equal(byFact.has(factNone.id), false, 'Fact with no events should be absent')
+
+      // Matches the per-fact query it replaces, event for event.
+      assert.deepEqual(
+        byFact.get(factA.id),
+        memoryFactRepository.getConfirmations(factA.id),
+        'batched result must match getConfirmations for the same fact'
+      )
+
+      assert.equal(memoryFactRepository.getConfirmationsForFacts([]).size, 0)
+
+      db.close()
+    })
+
+    test('findByWorkspace includes global facts, so the sweep re-tiers them too', () => {
+      const db = createTestDb()
+      _setDatabaseForTesting(db)
+      const ws = seedWorkspace(db)
+
+      const scoped = memoryFactRepository.createFact({
+        workspaceId: ws,
+        category: 'convention',
+        title: 'Workspace-scoped fact',
+        content: 'Belongs to one workspace',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+      const global = memoryFactRepository.createFact({
+        workspaceId: null,
+        category: 'convention',
+        title: 'Global fact',
+        content: 'Applies everywhere',
+        sourceType: 'session',
+        embeddingPending: false
+      })
+
+      // runPromotionSweep iterates exactly this list. A global fact accrues
+      // evidence from every workspace but is owned by none, so if this query
+      // excluded it, it would be the one class of fact that could never promote.
+      const ids = memoryFactRepository.findByWorkspace(ws, 'active').map((f) => f.id)
+      assert.ok(ids.includes(scoped.id), 'workspace-scoped fact should be swept')
+      assert.ok(ids.includes(global.id), 'global fact should be swept')
+
+      db.close()
+    })
+
     test('archival flips status to archived for selected facts', () => {
       const db = createTestDb()
       _setDatabaseForTesting(db)

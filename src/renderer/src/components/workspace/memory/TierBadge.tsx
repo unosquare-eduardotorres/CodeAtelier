@@ -12,19 +12,21 @@ const TIER_META: Record<
     label: 'T0',
     name: 'Observed',
     color: 'text-text-muted',
-    nextHint: '3 confirmations promote to T1 Confirmed.'
+    nextHint: '3 confirmations on 3 separate days promote to T1 Confirmed.'
   },
   1: {
     label: 'T1',
     name: 'Confirmed',
     color: 'text-info',
-    nextHint: '5 total confirmations promote to T2 Established.'
+    nextHint:
+      '5 confirmations from 2+ source kinds, spanning 14+ days at ≥75% confidence, promote to T2 Established.'
   },
   2: {
     label: 'T2',
     name: 'Established',
     color: 'text-success',
-    nextHint: '8 total confirmations promote to T3 Wisdom.'
+    nextHint:
+      '8 weighted confirmations including 2 human ones, spanning 30+ days at ≥90% confidence, promote to T3 Wisdom.'
   },
   3: {
     label: 'T3',
@@ -97,7 +99,9 @@ export default function TierBadge({ tier, confidence }: TierBadgeProps): React.J
           </p>
           <p>{meta.nextHint}</p>
           <p className="mt-1 text-text-muted">
-            Higher tiers rank higher in retrieval and survive longer.
+            Higher tiers rank higher in retrieval and survive longer. Spans are measured from the
+            oldest confirmation to now and tiers are re-evaluated during consolidation, so evidence
+            corroborated on more than one day keeps maturing without a new confirmation.
           </p>
           <p className="mt-1 text-text-muted">Confidence: {(confidence * 100).toFixed(0)}%</p>
         </div>

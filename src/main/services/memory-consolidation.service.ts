@@ -69,6 +69,7 @@ interface ConsolidationResult {
   staleArchived: number
   contradictionsPruned: number
   reviewQueueCapped: number
+  promoted: number
 }
 
 class MemoryConsolidationService {
@@ -108,10 +109,15 @@ class MemoryConsolidationService {
   private consolidate(workspaceId: string): ConsolidationResult {
     const embedded = memoryFactRepository.findWithEmbeddings(workspaceId)
     if (embedded.length < 2) {
+      // Tier re-evaluation does not depend on embeddings, so a workspace too
+      // sparse to cluster still gets its aged evidence re-scored. The main
+      // sweep is below, after the merge loop; this call only covers the path
+      // that never reaches it. The sweep is idempotent, so both is harmless.
+      const { promoted } = memoryEngineService.runPromotionSweep(workspaceId)
       log.info(
         `[Consolidation] Only ${embedded.length} facts with embeddings, nothing to consolidate`
       )
-      return emptyResult()
+      return { ...emptyResult(), promoted }
     }
 
     log.info(`[Consolidation] Processing ${embedded.length} embedded facts`)
@@ -184,6 +190,13 @@ class MemoryConsolidationService {
       }
     }
 
+    // Promotion sweep runs *after* the merge loop, not before it: merging is
+    // precisely what hands a canonical fact new evidence (reparentConfirmations
+    // moves the rows, and nothing on that path recomputes a tier). Sweeping
+    // first would evaluate pre-merge evidence and leave the inherited rows
+    // waiting for the next pass.
+    const { promoted } = memoryEngineService.runPromotionSweep(workspaceId)
+
     // Run cleanup tasks
     const staleArchived = this.archiveStaleT0Facts(workspaceId)
     const contradictionsPruned = this.pruneOldContradictions()
@@ -195,13 +208,14 @@ class MemoryConsolidationService {
       reviewItemsCreated,
       staleArchived,
       contradictionsPruned,
-      reviewQueueCapped
+      reviewQueueCapped,
+      promoted
     }
 
     log.info(
       `[Consolidation] Complete: ${clusters.length} clusters, ${autoMerged} merged, ` +
         `${reviewItemsCreated} review items, ${staleArchived} stale archived, ` +
-        `${contradictionsPruned} contradictions pruned`
+        `${contradictionsPruned} contradictions pruned, ${promoted} promoted`
     )
 
     return result
@@ -399,10 +413,21 @@ class MemoryConsolidationService {
       // 4. Cap review queue
       this.capReviewQueue()
 
-      // 5. Run decay sweep
+      // 5. Promotion sweep — re-evaluate tiers whose evidence has aged in.
+      //    Ordered after step 1 because the merge there reparents confirmations
+      //    onto canonical facts without recomputing their tier; this is the only
+      //    thing that settles that debt.
+      //
+      //    Its position relative to the decay sweep below is incidental, not a
+      //    guarantee: runDecaySweepIfDue is also called at app launch and is
+      //    throttled to 24h, so on a normal session decay has usually already
+      //    run minutes before this job fires.
+      memoryEngineService.runPromotionSweep(workspaceId)
+
+      // 6. Run decay sweep
       memoryEngineService.runDecaySweepIfDue()
 
-      // 6. Reflection — synthesise parent facts from clusters. Opt-in per
+      // 7. Reflection — synthesise parent facts from clusters. Opt-in per
       //    workspace and capped per run; it is the only step that calls an LLM.
       await this.runReflectionIfEnabled(workspaceId)
 
@@ -453,7 +478,8 @@ function emptyResult(): ConsolidationResult {
     reviewItemsCreated: 0,
     staleArchived: 0,
     contradictionsPruned: 0,
-    reviewQueueCapped: 0
+    reviewQueueCapped: 0,
+    promoted: 0
   }
 }
 

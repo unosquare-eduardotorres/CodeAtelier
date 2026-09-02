@@ -51,6 +51,19 @@ const MAX_FACTS_PER_SESSION = 2 // lowered from 3 — quality over quantity
 const MAX_FACTS_PER_COMMIT = 1 // lowered from 2 — one key insight per commit
 
 // ── Volatility detection patterns ───────────────────────────────────────────
+/**
+ * Highest tier a volatile fact may hold.
+ *
+ * Volatile facts are version numbers and counts — current-state snapshots that
+ * are overwritten in place, not knowledge that accumulates corroboration. A
+ * tier on one would claim durability the value does not have.
+ *
+ * Single source of truth for the cap: the confirm path returns it, the
+ * promotion sweep refuses to raise past it, and the manual-promote IPC rejects
+ * volatile facts outright. Previously each of those three had its own answer.
+ */
+const VOLATILE_MAX_TIER = 0 as MemoryFactTier
+
 const VOLATILE_PATTERNS = [
   /schema[_\s]?version/i,
   /CURRENT_SCHEMA_VERSION/,
@@ -650,13 +663,73 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
   /** Compute the new tier after a confirmation, using evidence-based rules. */
   private computePromotionTier(fact: MemoryFact): MemoryFactTier {
     // Volatile facts (version numbers, counts) never promote — they are
-    // current-state snapshots, not knowledge. Capped at T0.
+    // current-state snapshots, not knowledge. VOLATILE_MAX_TIER is the one
+    // place that cap is defined; see its declaration.
     if (fact.volatile) {
-      return 0 as MemoryFactTier
+      return VOLATILE_MAX_TIER
     }
 
     const confirmations = memoryFactRepository.getConfirmations(fact.id)
     return computePromotionTierPure(fact.tier, fact.confidence, confirmations)
+  }
+
+  /**
+   * Re-evaluate the tier of every active fact in a workspace.
+   *
+   * Promotion is otherwise computed only when a confirmation arrives, and
+   * confirmations stop arriving precisely when a fact has settled into stable
+   * knowledge. Four things go unnoticed without this sweep:
+   *
+   *  1. Ageing evidence. `daySpan` counts time since the oldest confirmation,
+   *     so a fact can cross a span gate with no new event to trigger the check.
+   *  2. Inherited evidence. `scanForDuplicates` reparents confirmations onto a
+   *     canonical fact and then merges — neither step recomputes a tier.
+   *  3. Gate changes. Relaxing a rule is retroactive only if something re-runs
+   *     it over the existing corpus.
+   *  4. Backlog. The confirm path advances at most one tier per event, so a
+   *     fact can sit below what its evidence already supports.
+   *
+   * Evidence-neutral by construction: the tier is written with `updateFact`,
+   * never `confirmFact`, so a sweep cannot fabricate a confirmation event or
+   * inflate confidence. That also makes it idempotent.
+   */
+  runPromotionSweep(workspaceId: string): { promoted: number } {
+    const facts = memoryFactRepository.findByWorkspace(workspaceId, 'active')
+    let promoted = 0
+
+    // One batched query rather than one per fact: this runs over every active
+    // fact in the workspace, synchronously, on the main thread.
+    const confirmationsByFact = memoryFactRepository.getConfirmationsForFacts(
+      facts.map((f) => f.id)
+    )
+
+    for (const fact of facts) {
+      // Volatile facts are capped at VOLATILE_MAX_TIER. The sweep only ever
+      // raises a tier, so honouring the cap here means skipping them outright —
+      // pulling one back down is the confirm path's job, not a sweep's.
+      if (fact.volatile) continue
+
+      const confirmations = confirmationsByFact.get(fact.id) ?? []
+
+      // computePromotionTierPure advances at most one tier per call. Iterate to
+      // a fixpoint so a long-dormant fact with rich history climbs in one pass
+      // instead of waiting one idle cycle (6h) per step.
+      let tier = fact.tier
+      for (let step = 0; step < 3; step++) {
+        const next = computePromotionTierPure(tier, fact.confidence, confirmations)
+        if (next <= tier) break
+        tier = next
+      }
+
+      if (tier > fact.tier) {
+        memoryFactRepository.updateFact(fact.id, { tier })
+        promoted++
+        log.info(`[MemoryEngine] Promoted ${fact.id}: T${fact.tier} → T${tier}`)
+      }
+    }
+
+    if (promoted > 0) log.info(`[MemoryEngine] Promotion sweep: ${promoted} facts promoted`)
+    return { promoted }
   }
 
   // ── Capture caps ──────────────────────────────────────────────────────
@@ -1071,10 +1144,29 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 /**
  * Pure promotion logic — implements evidence-based rules (tightened 2026-07):
  *   T0→T1: ≥3 confirms on ≥3 distinct days
- *   T1→T2: ≥5 confirms across ≥3 distinct source types over 14+ days, confidence ≥ 0.75
+ *   T1→T2: ≥5 confirms across ≥2 distinct source types over 14+ days, confidence ≥ 0.75
  *   T2→T3: ≥2 human confirms required + ≥8 weighted confirms over 30+ days, confidence ≥ 0.90
  *
  * Auto-dedup confirms record events but weigh 0.0 (repetition ≠ evidence).
+ *
+ * The T1→T2 source-type gate is 2, not 3: only three evidence types are
+ * actually producible (human, tool, extraction — everything else collapses
+ * into `extraction`, and `auto_dedup` is filtered out), so requiring 3 meant
+ * "a human must click", duplicating the T2→T3 human gate and making automatic
+ * promotion unreachable. Two types still means two independent kinds of
+ * evidence, which is the intent.
+ *
+ * `daySpan` means "this evidence has stood unchallenged for N days", not
+ * "the confirmations were spread over N days". Measured only between the
+ * confirmations, the span is frozen the moment the last one lands — a fact
+ * whose evidence merely ages can never cross a span gate, which made the
+ * whole "tiers re-evaluate over time" story unimplementable. Time since the
+ * oldest evidence therefore counts too.
+ *
+ * The `distinctDays >= 2` floor is what stops that from degrading into "old
+ * means true": a single-day burst of confirmations never ages its way up, no
+ * matter how long ago it happened. It needs corroboration on a second day
+ * before the clock is allowed to run for it.
  */
 function computePromotionTierPure(
   tier: MemoryFactTier,
@@ -1090,11 +1182,15 @@ function computePromotionTierPure(
   const weightedSum = evidence.reduce((sum, c) => sum + c.weight, 0)
   const totalCount = evidence.length
 
-  // Compute day span (earliest to latest evidence confirmation)
+  // Compute day span — see the docblock: "how long this evidence has stood",
+  // gated on corroboration across at least two days.
   let daySpan = 0
   if (evidence.length >= 2) {
     const dates = evidence.map((c) => new Date(c.createdAt).getTime())
-    daySpan = Math.floor((Math.max(...dates) - Math.min(...dates)) / (24 * 60 * 60 * 1000))
+    const oldest = Math.min(...dates)
+    const evidenceSpan = Math.max(...dates) - oldest
+    const standingSpan = distinctDays >= 2 ? Date.now() - oldest : 0
+    daySpan = Math.floor(Math.max(evidenceSpan, standingSpan) / (24 * 60 * 60 * 1000))
   }
 
   // Count human confirmations specifically for T2→T3
@@ -1103,8 +1199,8 @@ function computePromotionTierPure(
   // T0 → T1: 3+ confirms on 3+ distinct days
   if (tier === 0 && totalCount >= 3 && distinctDays >= 3) return 1
 
-  // T1 → T2: 5+ confirms across 3+ source types over 14+ days, confidence ≥ 0.75
-  if (tier === 1 && totalCount >= 5 && distinctSources >= 3 && daySpan >= 14 && confidence >= 0.75)
+  // T1 → T2: 5+ confirms across 2+ source types over 14+ days, confidence ≥ 0.75
+  if (tier === 1 && totalCount >= 5 && distinctSources >= 2 && daySpan >= 14 && confidence >= 0.75)
     return 2
 
   // T2 → T3: 2+ human confirms + 8+ weighted confirms over 30+ days, confidence ≥ 0.90
@@ -1121,7 +1217,7 @@ export const CAPTURE_CAPS = {
 } as const
 
 /** Volatile detection patterns — exported for testing. */
-export { VOLATILE_PATTERNS }
+export { VOLATILE_PATTERNS, VOLATILE_MAX_TIER }
 
 export { cosineSimilarity, computePromotionTierPure }
 export const memoryEngineService = new MemoryEngineService()

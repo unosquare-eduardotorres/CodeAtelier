@@ -8,17 +8,20 @@ import {
   FolderTree,
   Globe,
   MoreHorizontal,
-  Trash2
+  Trash2,
+  TrendingUp
 } from 'lucide-react'
 
 import { ConfirmDialog } from '@renderer/components/common'
 import { Meter, Popover, Tooltip } from '@renderer/components/common/ui'
 import { CATEGORY_META } from '../category-meta'
 import { TIER_DOT, TIER_LABELS, TIER_TEXT, relativeDate } from './types'
-import type { MemoryFact } from '../../../../../../shared/types'
+import type { MemoryFact, MemoryFactTier } from '../../../../../../shared/types'
 
 export interface FactRowHandlers {
   onConfirm?: (id: string) => void
+  /** Manual tier bump — the escape hatch when evidence gates lag reality. */
+  onPromote?: (id: string, tier: MemoryFactTier) => void
   onArchive?: (id: string) => void
   onDelete?: (id: string) => void
   onScopeToggle?: (fact: MemoryFact) => void
@@ -61,6 +64,7 @@ export default function FactRow({
   onToggleExpand,
   dimmed,
   onConfirm,
+  onPromote,
   onArchive,
   onDelete,
   onScopeToggle,
@@ -152,6 +156,18 @@ export default function FactRow({
                     className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded text-text-secondary hover:bg-surface-overlay hover:text-success"
                   >
                     <CheckCircle className="w-3.5 h-3.5" /> Confirm
+                  </button>
+                </li>
+              )}
+              {onPromote && fact.status === 'active' && fact.tier < 3 && !fact.volatile && (
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => onPromote(fact.id, (fact.tier + 1) as MemoryFactTier)}
+                    className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded text-text-secondary hover:bg-surface-overlay hover:text-info"
+                  >
+                    <TrendingUp className="w-3.5 h-3.5" /> Promote to {TIER_LABELS[tier + 1]}
                   </button>
                 </li>
               )}

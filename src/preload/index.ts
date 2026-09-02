@@ -726,6 +726,7 @@ const api = {
     staleArchived: number
     contradictionsPruned: number
     reviewQueueCapped: number
+    promoted: number
   }> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONSOLIDATE, args),
 
   memoryReadClaudeMd: (args: {

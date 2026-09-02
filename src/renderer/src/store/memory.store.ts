@@ -9,6 +9,7 @@ import type {
   MemoryFactCategory,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
+  MemoryFactTier,
   MemorySourceType,
   IngestionProgress,
   BootstrapProgress,
@@ -65,6 +66,7 @@ interface MemoryState {
   searchFacts: (workspaceId: string, query: string, category?: MemoryFactCategory) => Promise<void>
   archiveFact: (id: string, workspaceId: string) => Promise<void>
   confirmFact: (id: string, workspaceId: string) => Promise<void>
+  promoteFact: (id: string, tier: MemoryFactTier) => Promise<void>
   deleteFact: (id: string) => Promise<void>
   updateFact: (
     id: string,
@@ -110,9 +112,12 @@ interface MemoryState {
 
   // Dedup & Consolidation
   scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
-  runConsolidation: (
-    workspaceId: string
-  ) => Promise<{ clustersFound: number; autoMerged: number; staleArchived: number }>
+  runConsolidation: (workspaceId: string) => Promise<{
+    clustersFound: number
+    autoMerged: number
+    staleArchived: number
+    promoted: number
+  }>
 
   // Search
   setSearchQuery: (query: string) => void
@@ -235,6 +240,17 @@ export const useMemoryStore = create<MemoryState>((set) => ({
       }))
     } catch (error) {
       rendererLog.error('Failed to confirm fact:', error)
+    }
+  },
+
+  promoteFact: async (id, tier) => {
+    try {
+      const promoted = await window.api.memoryFactsPromote({ id, tier })
+      set((state) => ({
+        facts: state.facts.map((f) => (f.id === id ? promoted : f))
+      }))
+    } catch (error) {
+      rendererLog.error('Failed to promote fact:', error)
     }
   },
 
@@ -431,7 +447,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
       return result
     } catch (error) {
       rendererLog.error('Failed to run consolidation:', error)
-      return { clustersFound: 0, autoMerged: 0, staleArchived: 0 }
+      return { clustersFound: 0, autoMerged: 0, staleArchived: 0, promoted: 0 }
     }
   },
 

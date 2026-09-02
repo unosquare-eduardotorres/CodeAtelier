@@ -1111,7 +1111,7 @@ export interface MemoryFact {
   status: MemoryFactStatus
   supersededBy: string | null // id of the fact that superseded this one
   mergedInto: string | null // id of canonical fact after cluster merge
-  volatile: boolean // version/count facts: always UPDATE-in-place, never promoted past T1
+  volatile: boolean // version/count facts: always UPDATE-in-place, capped at T0 (VOLATILE_MAX_TIER)
   sourceType: MemorySourceType
   sourceRef: string | null // conversation id / commit sha / doc path
   embeddingPending: boolean

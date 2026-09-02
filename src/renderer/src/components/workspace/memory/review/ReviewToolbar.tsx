@@ -1,4 +1,4 @@
-import { Copy, Keyboard, Zap } from 'lucide-react'
+import { Copy, Keyboard, Sparkles, Zap } from 'lucide-react'
 
 import { Button, Popover } from '@renderer/components/common/ui'
 
@@ -11,6 +11,8 @@ interface ReviewToolbarProps {
   autoResolving: boolean
   onAutoResolve: () => void
   canAutoResolve: boolean
+  consolidating: boolean
+  onConsolidate: () => void
   message: string | null
 }
 
@@ -39,6 +41,8 @@ export default function ReviewToolbar({
   autoResolving,
   onAutoResolve,
   canAutoResolve,
+  consolidating,
+  onConsolidate,
   message
 }: ReviewToolbarProps): React.JSX.Element {
   return (
@@ -59,6 +63,16 @@ export default function ReviewToolbar({
           {autoResolving ? 'Resolving…' : `Auto-resolve ≥${threshold.toFixed(2)}`}
         </Button>
       )}
+
+      <Button
+        variant="secondary"
+        onClick={onConsolidate}
+        disabled={consolidating}
+        title="Merge duplicates, archive stale facts and re-evaluate every tier now, instead of waiting for the background pass"
+      >
+        <Sparkles className="w-3.5 h-3.5" />
+        {consolidating ? 'Consolidating…' : 'Consolidate now'}
+      </Button>
 
       <label className="flex items-center gap-2 text-[11px] text-text-muted">
         Similarity ≥

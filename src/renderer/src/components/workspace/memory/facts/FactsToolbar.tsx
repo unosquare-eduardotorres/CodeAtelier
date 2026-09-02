@@ -295,8 +295,12 @@ function ExplainerContent(): React.JSX.Element {
           ))}
         </ul>
         <p className="mt-2 text-text-muted leading-relaxed">
-          Higher tiers rank higher in retrieval and survive longer. Wisdom additionally requires
-          human confirmations and a 30-day evidence span.
+          Higher tiers rank higher in retrieval and survive longer. Established also needs two kinds
+          of evidence over a 14-day span; Wisdom additionally requires human confirmations and a
+          30-day span. Spans are measured from the oldest confirmation to now, and tiers are
+          re-evaluated during consolidation — so evidence corroborated on more than one day keeps
+          maturing without a new confirmation. A single day&rsquo;s confirmations never age up on
+          their own.
         </p>
       </div>
       <div>

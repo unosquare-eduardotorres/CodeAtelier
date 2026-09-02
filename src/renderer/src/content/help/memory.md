@@ -8,7 +8,8 @@ The **Memory** tab shows how Code Atelier remembers important information about 
 
 The **Knowledge Engine** is a fact-based memory system that automatically captures and manages workspace knowledge. Facts are:
 
-- **Tiered** — Data (T0) → Information (T1, 3 confirms) → Knowledge (T2, 5 confirms) → Wisdom (T3, 8 confirms)
+- **Tiered** — Data (T0) → Information (T1, 3 confirms over 3 days) → Knowledge (T2, 5 confirms from 2+ source kinds over 14 days) → Wisdom (T3, 8 weighted confirms incl. 2 human, over 30 days)
+- **Self-promoting** — Day spans are measured from the oldest confirmation to now, and consolidation re-evaluates every fact's tier — so evidence corroborated on more than one day keeps maturing without a new confirmation. A single day's confirmations never age up on their own.
 - **Deduplicated** — Embedding-based similarity prevents storing the same fact twice
 - **Contradiction-aware** — Conflicting facts are detected, the newer fact supersedes the older one
 - **Context-injected** — Relevant facts are prepended to each prompt, with per-session deduplication

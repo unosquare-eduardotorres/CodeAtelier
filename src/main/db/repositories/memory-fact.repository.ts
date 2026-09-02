@@ -1006,6 +1006,38 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     return row.total
   }
 
+  /**
+   * Map of factId → its confirmation events, for a set of facts.
+   *
+   * The promotion sweep needs the full event list for every active fact in a
+   * workspace; calling `getConfirmations` per fact is one prepare+execute each,
+   * synchronously on the main thread. Chunked because SQLite caps bound
+   * parameters per statement.
+   */
+  getConfirmationsForFacts(ids: string[]): Map<string, MemoryConfirmation[]> {
+    const byFact = new Map<string, MemoryConfirmation[]>()
+    if (ids.length === 0) return byFact
+
+    const CHUNK = 500
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK)
+      const placeholders = chunk.map(() => '?').join(',')
+      const rows = this.db()
+        .prepare(
+          `SELECT * FROM memory_confirmations
+           WHERE fact_id IN (${placeholders})
+           ORDER BY created_at ASC`
+        )
+        .all(...chunk) as ConfirmationRow[]
+      for (const row of rows) {
+        const list = byFact.get(row.fact_id)
+        if (list) list.push(mapConfirmationRow(row))
+        else byFact.set(row.fact_id, [mapConfirmationRow(row)])
+      }
+    }
+    return byFact
+  }
+
   /** Map of factId → non-auto_dedup confirmation count, for a set of facts. */
   getEvidenceCounts(ids: string[]): Map<string, number> {
     const counts = new Map<string, number>()

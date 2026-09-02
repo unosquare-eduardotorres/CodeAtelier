@@ -509,6 +509,7 @@ interface Api {
     staleArchived: number
     contradictionsPruned: number
     reviewQueueCapped: number
+    promoted: number
   }>
   memoryReadClaudeMd: (args: {
     workspacePath: string

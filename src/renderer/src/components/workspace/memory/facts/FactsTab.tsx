@@ -7,7 +7,7 @@ import FactsToolbar from './FactsToolbar'
 import { useDebouncedValue, useFactsModel } from './useFactsModel'
 import { readFilters, writeFilters } from './facts-prefs'
 import { type SearchMode, type SortMode, type StatusFilter } from './types'
-import type { MemoryFactCategory } from '../../../../../../shared/types'
+import type { MemoryFactCategory, MemoryFactTier } from '../../../../../../shared/types'
 
 interface FactsTabProps {
   workspaceId: string
@@ -27,6 +27,7 @@ export default function FactsTab({ workspaceId }: FactsTabProps): React.JSX.Elem
     loadFacts,
     searchFacts,
     confirmFact,
+    promoteFact,
     archiveFact,
     deleteFact,
     toggleScope,
@@ -112,13 +113,14 @@ export default function FactsTab({ workspaceId }: FactsTabProps): React.JSX.Elem
   const handlers = useMemo(
     () => ({
       onConfirm: (id: string) => confirmFact(id, workspaceId),
+      onPromote: (id: string, tier: MemoryFactTier) => promoteFact(id, tier),
       onArchive: (id: string) => archiveFact(id, workspaceId),
       onDelete: (id: string) => deleteFact(id),
       onScopeToggle: (fact: { id: string; workspaceId: string | null }) =>
         toggleScope(fact.id, !!fact.workspaceId, fact.workspaceId ? undefined : workspaceId),
       onScopePathsChange: (id: string, scopePaths: string[]) => updateFact(id, { scopePaths })
     }),
-    [workspaceId, confirmFact, archiveFact, deleteFact, toggleScope, updateFact]
+    [workspaceId, confirmFact, promoteFact, archiveFact, deleteFact, toggleScope, updateFact]
   )
 
   return (

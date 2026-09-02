@@ -167,10 +167,26 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     return memoryEngineService.confirmFactWithPromotion(args.id)
   })
 
+  // Manual promote is the escape hatch for when the evidence gates lag reality.
+  // It is a promote, not a tier setter: the UI only ever offers tier + 1 on a
+  // non-volatile active fact, and the handler enforces the same envelope rather
+  // than trusting it — an unvalidated tier field here could demote a fact,
+  // write a tier outside 0–3, or hand a version number a Wisdom badge.
   ipcMain.handle(
     IPC_CHANNELS.MEMORY_FACTS_PROMOTE,
     (event, args: { id: string; tier: MemoryFactTier }) => {
       validateSender(event)
+      const fact = memoryFactRepository.findById(args.id)
+      if (!fact) throw new Error(`Fact not found: ${args.id}`)
+      if (fact.volatile) {
+        throw new Error(`Cannot promote a volatile fact: ${args.id}`)
+      }
+      if (!Number.isInteger(args.tier) || args.tier < 1 || args.tier > 3) {
+        throw new Error(`Invalid tier: ${args.tier}`)
+      }
+      if (args.tier <= fact.tier) {
+        throw new Error(`Cannot promote ${args.id} from T${fact.tier} to T${args.tier}`)
+      }
       return memoryFactRepository.updateFact(args.id, { tier: args.tier })
     }
   )

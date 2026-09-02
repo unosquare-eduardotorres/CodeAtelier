@@ -26,12 +26,14 @@ export default function ReviewTab({ workspaceId }: ReviewTabProps): React.JSX.El
     loadContradictions,
     resolveContradiction,
     autoResolveDuplicates,
-    scanForDuplicates
+    scanForDuplicates,
+    runConsolidation
   } = useMemoryStore()
 
   const [threshold, setThreshold] = useState(0.95)
   const [scanning, setScanning] = useState(false)
   const [autoResolving, setAutoResolving] = useState(false)
+  const [consolidating, setConsolidating] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
@@ -131,6 +133,22 @@ export default function ReviewTab({ workspaceId }: ReviewTabProps): React.JSX.El
     setAutoResolving(false)
   }, [workspaceId, threshold, autoResolveDuplicates])
 
+  // The same pass the idle job runs, on demand. Promotions are the part users
+  // cannot otherwise observe — they happen in the background with no badge
+  // change until a reload — so the count is always reported, including zero.
+  const handleConsolidate = useCallback(async () => {
+    setConsolidating(true)
+    setMessage(null)
+    const result = await runConsolidation(workspaceId)
+    const parts = [
+      `${result.autoMerged} merged`,
+      `${result.staleArchived} archived`,
+      `${result.promoted} promoted`
+    ]
+    setMessage(parts.join(' · '))
+    setConsolidating(false)
+  }, [workspaceId, runConsolidation])
+
   const bulkResolve = useCallback(() => {
     for (const pair of visible) {
       if (selected.has(pair.contradiction.id) && pair.contradiction.status === 'pending') {
@@ -157,6 +175,8 @@ export default function ReviewTab({ workspaceId }: ReviewTabProps): React.JSX.El
         autoResolving={autoResolving}
         onAutoResolve={() => void handleAutoResolve()}
         canAutoResolve={contradictionsTotal > 0}
+        consolidating={consolidating}
+        onConsolidate={() => void handleConsolidate()}
         message={message}
       />
 

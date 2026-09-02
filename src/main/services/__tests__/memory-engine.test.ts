@@ -468,6 +468,274 @@ test('regression A4: scanForDuplicates reparents confirmations before mergeFact'
   )
 })
 
+// ── Promotion sweep (runPromotionSweep) ──
+
+type StubFact = { id: string; tier: number; confidence: number; volatile: boolean }
+type StubConfirm = ReturnType<typeof makeConfirm>
+
+/**
+ * Drive runPromotionSweep against a stubbed repository so the sweep can be
+ * exercised without a database. Records every write it attempts.
+ */
+async function sweepWithStubs(
+  stubFacts: StubFact[],
+  confirms: Record<string, StubConfirm[]>,
+  runs = 1
+): Promise<{
+  results: Array<{ promoted: number }>
+  updates: Array<{ id: string; params: Record<string, unknown> }>
+  confirmCalls: string[]
+  facts: StubFact[]
+}> {
+  const { memoryEngineService } = await import('../memory-engine.service')
+  const repoModule = await import('../../db/repositories/memory-fact.repository')
+  const repo = repoModule.memoryFactRepository as unknown as Record<string, unknown>
+
+  const original = {
+    findByWorkspace: repo.findByWorkspace,
+    getConfirmations: repo.getConfirmations,
+    getConfirmationsForFacts: repo.getConfirmationsForFacts,
+    updateFact: repo.updateFact,
+    confirmFact: repo.confirmFact
+  }
+
+  const live = stubFacts.map((f) => ({ ...f }))
+  const updates: Array<{ id: string; params: Record<string, unknown> }> = []
+  const confirmCalls: string[] = []
+
+  repo.findByWorkspace = () => live
+  repo.getConfirmations = (id: string) => confirms[id] ?? []
+  // The sweep reads evidence in one batched query rather than per fact.
+  repo.getConfirmationsForFacts = (ids: string[]) =>
+    new Map(ids.filter((id) => confirms[id]).map((id) => [id, confirms[id]]))
+  repo.updateFact = (id: string, params: Record<string, unknown>) => {
+    updates.push({ id, params })
+    const target = live.find((f) => f.id === id)
+    if (target && typeof params.tier === 'number') target.tier = params.tier
+    return target
+  }
+  repo.confirmFact = (id: string) => {
+    confirmCalls.push(id)
+    return live.find((f) => f.id === id)
+  }
+
+  try {
+    const results: Array<{ promoted: number }> = []
+    for (let i = 0; i < runs; i++) {
+      results.push(memoryEngineService.runPromotionSweep('ws-1'))
+    }
+    return { results, updates, confirmCalls, facts: live }
+  } finally {
+    Object.assign(repo, original)
+  }
+}
+
+/** 5 confirms, 2 source kinds, 40-day span — all of it stale. */
+function agedT2Evidence(): StubConfirm[] {
+  return [
+    makeConfirm('extraction', 60),
+    makeConfirm('tool', 55),
+    makeConfirm('extraction', 45),
+    makeConfirm('tool', 30),
+    makeConfirm('extraction', 20)
+  ]
+}
+
+test('promotion sweep: promotes a fact whose evidence aged past daySpan without a new confirm', async () => {
+  const { results, updates, confirmCalls } = await sweepWithStubs(
+    [{ id: 'f1', tier: 1, confidence: 0.8, volatile: false }],
+    { f1: agedT2Evidence() }
+  )
+  assert.equal(results[0].promoted, 1)
+  assert.deepEqual(updates, [{ id: 'f1', params: { tier: 2 } }])
+  assert.deepEqual(confirmCalls, [], 'sweep must not fabricate a confirmation')
+})
+
+test('promotion sweep: skips volatile facts', async () => {
+  const { results, updates } = await sweepWithStubs(
+    [{ id: 'f1', tier: 1, confidence: 0.9, volatile: true }],
+    { f1: agedT2Evidence() }
+  )
+  assert.equal(results[0].promoted, 0)
+  assert.equal(updates.length, 0)
+})
+
+test('promotion sweep: never lowers a tier and never writes confidence', async () => {
+  // T2 fact with a single stale confirm — nowhere near the T2→T3 gates.
+  const { results, updates, confirmCalls, facts } = await sweepWithStubs(
+    [{ id: 'f1', tier: 2, confidence: 0.95, volatile: false }],
+    { f1: [makeConfirm('extraction', 40)] }
+  )
+  assert.equal(results[0].promoted, 0)
+  assert.equal(updates.length, 0, 'no write at all when the tier does not change')
+  assert.deepEqual(confirmCalls, [])
+  assert.equal(facts[0].tier, 2)
+  assert.equal(facts[0].confidence, 0.95)
+})
+
+test('promotion sweep: is idempotent across consecutive runs', async () => {
+  const { results, updates } = await sweepWithStubs(
+    [{ id: 'f1', tier: 1, confidence: 0.8, volatile: false }],
+    { f1: agedT2Evidence() },
+    2
+  )
+  assert.equal(results[0].promoted, 1)
+  assert.equal(results[1].promoted, 0, 'second run finds nothing left to promote')
+  assert.equal(updates.length, 1)
+})
+
+test('promotion sweep: climbs multiple tiers in one pass', async () => {
+  // Rich, old history: 8 confirms incl. 2 human, 3 source kinds, 50-day span.
+  const confirms = [
+    makeConfirm('human', 50),
+    makeConfirm('human', 45),
+    makeConfirm('tool', 40),
+    makeConfirm('extraction', 35),
+    makeConfirm('tool', 25),
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 10),
+    makeConfirm('extraction', 5)
+  ]
+  const { results, updates } = await sweepWithStubs(
+    [{ id: 'f1', tier: 0, confidence: 0.95, volatile: false }],
+    { f1: confirms }
+  )
+  assert.equal(results[0].promoted, 1)
+  assert.deepEqual(updates, [{ id: 'f1', params: { tier: 3 } }], 'T0 → T3 in a single sweep')
+})
+
+// ── T1→T2 distinct-source-type boundary (gate is 2, not 3) ──
+
+test('promotion: T1 → T2 with exactly 2 distinct source types', () => {
+  const confirms = [
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 15),
+    makeConfirm('extraction', 10),
+    makeConfirm('tool', 5),
+    makeConfirm('extraction', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 2)
+})
+
+test('promotion: T1 stays T1 with 1 distinct source type (needs 2)', () => {
+  const confirms = [
+    makeConfirm('extraction', 20),
+    makeConfirm('extraction', 15),
+    makeConfirm('extraction', 10),
+    makeConfirm('extraction', 5),
+    makeConfirm('extraction', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
+})
+
+// ── daySpan semantics: "stood for N days", not "confirmed across N days" ──
+//
+// Measured only between confirmations, a span freezes the moment the last one
+// lands — which made the daySpan gates unreachable for exactly the dormant,
+// well-evidenced facts the sweep exists to promote. These pin the replacement.
+
+test('daySpan: counts time since the oldest confirmation, not just the gap between them', () => {
+  // 5 confirms, 2 source kinds, all of it landing within 24h — but 20 days ago.
+  // Evidence-only span is 1 day (fails the 14-day gate); standing span is 20.
+  const confirms = [
+    makeConfirm('extraction', 20),
+    makeConfirm('tool', 20),
+    makeConfirm('extraction', 19),
+    makeConfirm('tool', 19),
+    makeConfirm('extraction', 19)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 2)
+})
+
+test('daySpan: a single day of confirmations never ages its way up', () => {
+  // The floor. Same 5 confirms and 2 source kinds, 100 days old — but every one
+  // of them on the same day, so nothing ever corroborated it a second time.
+  // Age alone must not be evidence, or "old" starts to mean "true".
+  const confirms = [
+    makeConfirm('extraction', 100),
+    makeConfirm('tool', 100),
+    makeConfirm('extraction', 100),
+    makeConfirm('tool', 100),
+    makeConfirm('extraction', 100)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
+})
+
+test('daySpan: freshly corroborated evidence still has to wait out the span', () => {
+  // 2 distinct days, so the clock runs — but it has only been running 3 days.
+  const confirms = [
+    makeConfirm('extraction', 3),
+    makeConfirm('tool', 3),
+    makeConfirm('extraction', 2),
+    makeConfirm('tool', 2),
+    makeConfirm('extraction', 2)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.8, confirms), 1)
+})
+
+test('promotion sweep: promotes a dormant fact once its evidence has stood long enough', async () => {
+  const { results, updates, confirmCalls } = await sweepWithStubs(
+    [{ id: 'f1', tier: 1, confidence: 0.8, volatile: false }],
+    {
+      f1: [
+        makeConfirm('extraction', 20),
+        makeConfirm('tool', 20),
+        makeConfirm('extraction', 19),
+        makeConfirm('tool', 19),
+        makeConfirm('extraction', 19)
+      ]
+    }
+  )
+  assert.equal(results[0].promoted, 1)
+  assert.deepEqual(updates, [{ id: 'f1', params: { tier: 2 } }])
+  assert.deepEqual(confirmCalls, [], 'sweep must not fabricate a confirmation')
+})
+
+// ── Sweep ordering inside consolidation ──
+
+test('regression: consolidate() sweeps AFTER the merge loop', () => {
+  // Merging is what hands a canonical fact new evidence — reparentConfirmations
+  // moves the rows and nothing on that path recomputes a tier. Sweeping first
+  // evaluates pre-merge evidence and leaves the inherited rows for the next run.
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'memory-consolidation.service.ts'),
+    'utf-8'
+  )
+
+  const body = source.slice(
+    source.indexOf('private consolidate(workspaceId'),
+    source.indexOf('private mergeCluster(')
+  )
+  assert.ok(body.length > 0, 'consolidate() body not found')
+
+  const mergeIdx = body.indexOf('this.mergeCluster(clusterFacts)')
+  const sweepIdx = body.lastIndexOf('runPromotionSweep')
+  assert.ok(mergeIdx > 0, 'consolidate() should call mergeCluster')
+  assert.ok(sweepIdx > 0, 'consolidate() should call runPromotionSweep')
+  assert.ok(
+    sweepIdx > mergeIdx,
+    'the promotion sweep must run after the cluster/merge loop in consolidate()'
+  )
+})
+
+test('regression: idle consolidation sweeps AFTER scanForDuplicates', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'memory-consolidation.service.ts'),
+    'utf-8'
+  )
+
+  const body = source.slice(source.indexOf('private async runIdleConsolidation('))
+  const scanIdx = body.indexOf('scanForDuplicates(workspaceId)')
+  const sweepIdx = body.indexOf('runPromotionSweep(workspaceId)')
+  assert.ok(scanIdx > 0, 'idle consolidation should call scanForDuplicates')
+  assert.ok(sweepIdx > 0, 'idle consolidation should call runPromotionSweep')
+  assert.ok(sweepIdx > scanIdx, 'the promotion sweep must run after the merge step')
+})
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   void summaryAsync()
 }
