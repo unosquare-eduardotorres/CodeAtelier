@@ -98,19 +98,65 @@ const PLAN_PROJECTION_KEYS = new Set([
   'scope'
 ])
 
-// Fields to keep when projecting tasks JSON
+/**
+ * Fields kept when projecting tasks JSON.
+ *
+ * MUST mirror the shape TASKS actually emits (tasks-phase.md:145):
+ *   {totalTasks, waves: [{wave, name, tasks: [...]}], userStoryPhases, mvpScope}
+ * The previous set listed only per-task leaf keys, so projectFields matched NO
+ * top-level key and returned `{}` — REVIEW was asked for a task-coverage matrix
+ * (review-phase.md:121) while receiving an empty object.
+ *
+ * `packet` is excluded deliberately: it is BUILD's execution contract
+ * (interfaces, allowedFiles, conventions, testCommand), it is the bulk of the
+ * JSON by size, and BUILD receives it per task from the DB. Same for the
+ * scheduler hints `isParallel` / `includesTests` / `parallelOpportunities`.
+ */
 const TASKS_PROJECTION_KEYS = new Set([
+  // containers
+  'totalTasks',
+  'waves',
+  'wave',
+  'name',
+  'tasks',
+  'userStoryPhases',
+  'story',
+  'priority',
+  'taskIds',
+  'mvpScope',
+  // per task — what REVIEW judges coverage with
+  'taskId',
+  'description',
+  'files',
+  'userStory',
+  'dependsOn',
+  // pre-existing keys, kept for older artifacts
   'id',
   'title',
-  'wave',
-  'files',
   'scope',
   'status',
-  'taskId',
-  'userStory',
-  'filePathsJson',
-  'description'
+  'filePathsJson'
 ])
+
+/**
+ * Cap on tasks rendered inside the projected tasks JSON.
+ *
+ * formatArtifacts Stage 4 truncates whole artifacts from the tail and `tasks`
+ * renders last, so an oversized list is dropped in its entirety rather than
+ * trimmed. Keeping the head of the list is strictly better than losing all of
+ * it.
+ *
+ * Measured, at ~250 rendered chars per task: 40 tasks ≈ 10.0K chars, 60 ≈ 14.9K,
+ * 120 ≈ 29.7K. So this cap is what keeps the artifact inside the MEDIUM (50K)
+ * and LARGE (100K) tier budgets. It does NOT rescue the small tier — 25K is
+ * already exceeded at the cap itself, so a 100+ task blueprint on a small-window
+ * model still loses the whole block to Stage 4. That is not a regression (the
+ * artifact rendered as `{}` before this projection was fixed at all) and the
+ * agent at least gets a truncation marker naming the file, but if small-tier
+ * REVIEW coverage matters later, the fix is a tier-aware cap here, not a
+ * larger budget.
+ */
+const MAX_TASKS_RENDERED = 120
 
 /** Per-phase char budget for the formatted artifacts block. */
 export const ARTIFACT_BUDGET_CHARS = 50_000
@@ -136,6 +182,103 @@ export function artifactBudgetForTier(contextWindowTokens: number): number {
 
 /** Max number of consolidated discovery entries before truncation. */
 const MAX_DISCOVERY_ENTRIES = 30
+
+// ── Blueprint context JSON projection (E7) ──
+
+/**
+ * E7 — keys of `blueprint.settings` that may be serialised into
+ * {{BLUEPRINT_CONTEXT_JSON}}.
+ *
+ * `settingsJson` is a free-form bag, and it accumulated two LEDGERS:
+ * `grillDecisions` and `revisionRequests`. Both already have purpose-built
+ * formatters ({{GRILL_DECISIONS}}, {{REVISION_FEEDBACK}}) that render them with
+ * the framing the agent needs — so the raw JSON copy was the same content a
+ * second time, at full pretty-printed width, in a block the agent is told to
+ * treat as metadata. Grill decisions reached the specify prompt a THIRD time
+ * via blueprint-specify.adapter.ts.
+ *
+ * A whitelist rather than a denylist: this block sits in the task-invariant
+ * prefix of every phase, so an unrecognised future setting must stay OUT by
+ * default and be added here deliberately. If you add a setting the AGENT needs
+ * to reason about, add it here; if a formatter already renders it, do not.
+ */
+const BLUEPRINT_SETTINGS_PROMPT_KEYS = new Set([
+  'branchName',
+  'branchChoice',
+  'jiraIssueKey',
+  'jiraIssueKeys'
+])
+
+/**
+ * Settings deliberately kept out of the prompt — pipeline bookkeeping, or
+ * ledgers with their own formatter. Listed only so the drop-diagnostic below
+ * stays quiet about them and loud about everything else.
+ */
+const KNOWN_NON_PROMPT_SETTINGS = new Set([
+  'grillDecisions', // rendered by {{GRILL_DECISIONS}}
+  'revisionRequests', // rendered by {{REVISION_FEEDBACK}}
+  'baselineCommit',
+  'referenceDocuments'
+])
+
+/**
+ * Project the blueprint header down to what belongs in the prompt.
+ * Returns the header unchanged when it carries no settings.
+ */
+export function projectBlueprintForPrompt(
+  blueprint: PhaseContext['blueprint']
+): PhaseContext['blueprint'] {
+  const settings = blueprint.settings
+  if (!settings || typeof settings !== 'object') return blueprint
+
+  const projected: Record<string, unknown> = {}
+  const dropped: string[] = []
+  for (const key of Object.keys(settings)) {
+    if (BLUEPRINT_SETTINGS_PROMPT_KEYS.has(key)) projected[key] = settings[key]
+    else if (!KNOWN_NON_PROMPT_SETTINGS.has(key)) dropped.push(key)
+  }
+  // A whitelist fails SILENTLY by design, which is the right default and the
+  // wrong debugging experience: a future settingsJson.targetBranch would simply
+  // never reach the agent, with nothing anywhere saying so. Name the keys that
+  // are neither whitelisted nor knowingly excluded.
+  if (dropped.length > 0) {
+    promptLog.debug(
+      `[projectBlueprintForPrompt] settings not in the prompt whitelist, dropped: ${dropped.join(', ')} ` +
+        `— add to BLUEPRINT_SETTINGS_PROMPT_KEYS if the agent must reason about them`
+    )
+  }
+  return { ...blueprint, settings: projected }
+}
+
+// ── Constitution cap (E7) ──
+
+/**
+ * Tier-scaled cap for {{CONSTITUTION_CONTENT}}.
+ *
+ * The constitution was the last uncapped block in the prefix: it is injected
+ * into every phase, is fully task-invariant, and is authored by hand — nothing
+ * bounded its growth. Caps are generous because a constitution the agent must
+ * obey is the worst thing to truncate; the point is a ceiling, not compression.
+ */
+export const CONSTITUTION_CAPS_BY_TIER: Record<ContextWindowTier, number> = {
+  small: 8_000,
+  medium: 20_000,
+  large: 40_000
+}
+
+/** Cap the constitution for a tier, appending a marker when it was cut. */
+export function capConstitution(
+  constitution: string,
+  tier: ContextWindowTier = 'medium'
+): string {
+  const cap = CONSTITUTION_CAPS_BY_TIER[tier]
+  if (constitution.length <= cap) return constitution
+  return (
+    constitution.slice(0, cap) +
+    `\n\n[… constitution truncated at ${cap.toLocaleString()} chars — ` +
+    `the remainder is in the workspace constitution, use Read if you need it]`
+  )
+}
 
 /**
  * Project only the allowed keys from an object (shallow, one level + recurse into arrays).
@@ -238,6 +381,43 @@ export function formatArtifacts(
   return budgeted.join('\n\n---\n\n')
 }
 
+/**
+ * Trim a projected tasks object to at most MAX_TASKS_RENDERED tasks, in wave
+ * order. Returns the (possibly new) object and how many tasks were dropped.
+ * Never mutates the input — the caller's artifact is shared with other phases.
+ */
+function capTaskList(json: Record<string, unknown>): {
+  json: Record<string, unknown>
+  omitted: number
+} {
+  const waves = Array.isArray(json.waves) ? (json.waves as Record<string, unknown>[]) : null
+  const flat = Array.isArray(json.tasks) ? (json.tasks as unknown[]) : null
+
+  const total =
+    (waves?.reduce((n, w) => n + (Array.isArray(w?.tasks) ? w.tasks.length : 0), 0) ?? 0) +
+    (flat?.length ?? 0)
+  if (total <= MAX_TASKS_RENDERED) return { json, omitted: 0 }
+
+  let budget = MAX_TASKS_RENDERED
+  const out: Record<string, unknown> = { ...json }
+
+  if (waves) {
+    out.waves = waves.map((w) => {
+      if (!Array.isArray(w?.tasks)) return w
+      const keep = w.tasks.slice(0, Math.max(0, budget))
+      budget -= keep.length
+      return { ...w, tasks: keep }
+    })
+  }
+  if (flat) {
+    const keep = flat.slice(0, Math.max(0, budget))
+    budget -= keep.length
+    out.tasks = keep
+  }
+
+  return { json: out, omitted: total - MAX_TASKS_RENDERED }
+}
+
 /** Render a single non-discovery artifact to markdown. */
 function renderSingleArtifact(a: BlueprintArtifact): string {
   const parts: string[] = [`### Artifact: ${a.type}`]
@@ -248,24 +428,39 @@ function renderSingleArtifact(a: BlueprintArtifact): string {
   const preferCompactJson = (a.type === 'plan' || a.type === 'tasks') && a.contentJson
 
   if (preferCompactJson) {
-    let json = a.contentJson!
-    if (a.type === 'plan') json = projectFields(json, PLAN_PROJECTION_KEYS)
-    else if (a.type === 'tasks') json = projectFields(json, TASKS_PROJECTION_KEYS)
+    const { json, omitted } = projectArtifactJson(a.type, a.contentJson!)
     parts.push('```json\n' + JSON.stringify(json) + '\n```')
+    // Marker sits OUTSIDE the fence so the JSON block stays parseable.
+    if (omitted > 0) pushOmissionMarker(parts, omitted, a.filePath)
     if (a.filePath) {
       parts.push(`_(Full agent output available at ${a.filePath} — use Read for complete details)_`)
     }
   } else if (a.contentMd) {
     parts.push(a.contentMd)
   } else if (a.contentJson) {
-    // Field projection for known large artifact types
-    let json = a.contentJson
-    if (a.type === 'plan') json = projectFields(json, PLAN_PROJECTION_KEYS)
-    else if (a.type === 'tasks') json = projectFields(json, TASKS_PROJECTION_KEYS)
-    // Compact JSON (no pretty-printing) for ~30-40% savings
+    // Field projection for known large artifact types.
+    // Compact JSON (no pretty-printing) for ~30-40% savings.
+    const { json, omitted } = projectArtifactJson(a.type, a.contentJson)
     parts.push('```json\n' + JSON.stringify(json) + '\n```')
+    if (omitted > 0) pushOmissionMarker(parts, omitted, a.filePath)
   }
   return parts.join('\n')
+}
+
+/** Project + cap an artifact's JSON for the known large artifact types. */
+function projectArtifactJson(
+  type: string,
+  contentJson: Record<string, unknown>
+): { json: Record<string, unknown>; omitted: number } {
+  if (type === 'plan') return { json: projectFields(contentJson, PLAN_PROJECTION_KEYS), omitted: 0 }
+  if (type === 'tasks') return capTaskList(projectFields(contentJson, TASKS_PROJECTION_KEYS))
+  return { json: contentJson, omitted: 0 }
+}
+
+function pushOmissionMarker(parts: string[], omitted: number, filePath?: string): void {
+  const total = omitted + MAX_TASKS_RENDERED
+  const where = filePath ? ` — Read ${filePath} for the full list` : ''
+  parts.push(`_(${omitted} of ${total} tasks omitted${where})_`)
 }
 
 // ── Main Prompt Builder ──
@@ -325,6 +520,15 @@ export function buildLeadReviewPassSystemPrompt(context: PhaseContext): string {
  * Like the lead-review pass, this is not a pipeline phase — the loader points
  * at its dedicated prompt file and reuses the phase context-variable
  * replacement.
+ *
+ * FOOTGUN: `context` here is a LITE context (assembleLitePhaseContext) —
+ * previousArtifacts is always empty and workspaceDocs always absent, because
+ * peer-review-pass.md interpolates NOTHING and the full assembly's disk mirror
+ * races the wave-siblings still reading blueprints/<name>/*.md. If you add
+ * {{PREVIOUS_PHASE_ARTIFACTS}} or {{WORKSPACE_DOCS}} to that file they will
+ * render as their "nothing available" placeholders, not as content. Making them
+ * real means changing the CALLER in blueprint-peer-review.service.ts — and
+ * paying that race back.
  */
 export function buildPeerReviewSystemPrompt(context: PhaseContext): string {
   let prompt = readBlueprintFile('prompts/peer-review-pass.md')
@@ -449,10 +653,20 @@ function replaceVariables(
 ): string {
   return (
     prompt
-      // Blueprint context JSON (injected as structured data)
-      .replace('{{BLUEPRINT_CONTEXT_JSON}}', JSON.stringify(context.blueprint, null, 2))
-      // Constitution content
-      .replace('{{CONSTITUTION_CONTENT}}', context.constitution || '(No constitution defined.)')
+      // Blueprint context JSON (injected as structured data).
+      // E7: settings are whitelist-projected — the grill/revision LEDGERS are
+      // rendered by their own formatters below and must not ride along here too.
+      .replace(
+        '{{BLUEPRINT_CONTEXT_JSON}}',
+        JSON.stringify(projectBlueprintForPrompt(context.blueprint), null, 2)
+      )
+      // Constitution content — capped to the same tier as the artifacts block.
+      .replace(
+        '{{CONSTITUTION_CONTENT}}',
+        context.constitution
+          ? capConstitution(context.constitution, context.contextTier)
+          : '(No constitution defined.)'
+      )
       // Previous phase artifacts — budget scales with the phase model's context
       // tier when the assembler knew it, else the static default.
       .replace(

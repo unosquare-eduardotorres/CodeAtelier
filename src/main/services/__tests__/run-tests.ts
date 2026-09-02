@@ -420,6 +420,10 @@ const TEST_FILES: string[] = [
   './blueprint-dependson-scheduling.test',
   './blueprint-plan-revision.test',
   './blueprint-artifact-cap.test',
+  // ─── BUILD prefix size ratchet (token-reduction characterization) ───
+  './blueprint-prefix-size.test',
+  './blueprint-workspace-docs.test',
+  './blueprint-prompt-dedupe.test',
   // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───
   './blueprint-send-outcome.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
@@ -707,6 +711,8 @@ const TEST_FILES: string[] = [
   './ipc-integrations-handlers.test',
   './jira-tickets.test',
   './jira-list-view.test',
+  // ─── Jira status write-back (transition matcher + blueprint sync) ───
+  './jira-issue-sync.test',
   '../../mcp-servers/__tests__/jira-server.test',
   // ─── Plan section icon ids ───
   '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test',

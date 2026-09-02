@@ -15,6 +15,7 @@ import { DEFAULT_PROMPTS } from '../services/default-prompts'
 import { runProjectSpecialistMigration } from './migrations/project-specialist-migration'
 import { runDropSpecialistMcpColumnsMigration } from './migrations/drop-specialist-mcp-columns-migration'
 import { runAddDangerModeMigration } from './migrations/add-danger-mode-migration'
+import { maybeVacuumInBackground } from './maintenance'
 import { resolveAssignment } from '../services/model-config.service'
 import type { LLMProvider, LocalLLMBackend, ModelRoleMap, ModelOverrides } from '../../shared/types'
 
@@ -4764,16 +4765,34 @@ export function getDatabase(): Database.Database {
 
   // DB-MAINT: reclaim freelist pages in the background if they exceed the
   // threshold (v1.0.89: 454MB of the 579MB packaged store was freelist).
-  // Deferred via lazy require to avoid a circular import at module load —
-  // blueprint.service imports db/index for getDatabase().
+  //
+  // blueprint.service imports db/index for getDatabase(), so it is pulled in
+  // lazily to avoid a load-time cycle — but with import(), never require().
+  // A relative require() is emitted verbatim by electron-vite and then resolves
+  // against the flat out/main layout instead of the source tree: that is how
+  // `require('./maintenance')` threw MODULE_NOT_FOUND on every boot from 1.0.94
+  // to 1.0.99, silently disabling VACUUM. import() is rewritten to the emitted
+  // chunk and keeps the module in the bundle graph.
   if (!isStandaloneMcpServer) {
-    try {
-      const { maybeVacuumInBackground } = require('./maintenance') as typeof import('./maintenance')
-      const { blueprintService } = require('../services/blueprint.service') as typeof import('../services/blueprint.service')
-      maybeVacuumInBackground(db, dbPath, () => blueprintService.hasAnyRunningPipeline())
-    } catch (err) {
-      dbLogger.warn('[DB] Failed to schedule maintenance VACUUM:', err)
-    }
+    // Bind the handle we just opened rather than re-reading the module-level
+    // `db`, which may have been reassigned by the time the import resolves.
+    const opened = db
+    void import('../services/blueprint.service')
+      .then(({ blueprintService }) => {
+        maybeVacuumInBackground(opened, dbPath, () => blueprintService.hasAnyRunningPipeline())
+      })
+      .catch((err: NodeJS.ErrnoException) => {
+        // A missing module is a broken build, never a runtime condition to
+        // tolerate — keep it distinct from "deferred because the DB was busy".
+        if (err?.code === 'MODULE_NOT_FOUND') {
+          dbLogger.error(
+            '[DB] VACUUM disabled — maintenance dependency missing from this build:',
+            err
+          )
+        } else {
+          dbLogger.warn('[DB] Failed to schedule maintenance VACUUM:', err)
+        }
+      })
   }
 
   return db

@@ -612,7 +612,14 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, ch)
     const blueprintId = requireString(args, 'blueprintId', ch)
     const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
-    return { prompt: await blueprintService.buildSystemPrompt(blueprintId, phase) }
+    // Pass the workspace path: without it the preview assembles with NO
+    // workspace docs and medium-tier caps, while the real phase run gets both.
+    // A preview that does not match what executes is worse than none.
+    const blueprint = blueprintRepository.findById(blueprintId)
+    const workspacePath = blueprint
+      ? workspaceRepository.findById(blueprint.workspaceId)?.repoPath
+      : undefined
+    return { prompt: await blueprintService.buildSystemPrompt(blueprintId, phase, workspacePath) }
   })
 
   // ── blueprint:saveArtifact — Save a phase artifact ──

@@ -118,6 +118,82 @@ if (!env) {
     return 'x'.repeat(n - tail.length) + tail
   }
 
+  describe('A9 — the tasks artifact reaches REVIEW, not BUILD', () => {
+    test('assemblePhaseContext: review gets tasks, build does not', async () => {
+      const id = seedBlueprint()
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'plan')
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+      blueprintPhaseRepository.appendArtifact(planPhase.id, {
+        type: 'plan',
+        contentMd: bigBody(2_000, 'PLAN-TAIL')
+      })
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        type: 'tasks',
+        contentMd: bigBody(2_000, 'TASKS-TAIL')
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-cap-a9-'))
+      const types = async (phase: string): Promise<string[]> => {
+        const ctx = await blueprintService.assemblePhaseContext(id, phase, wsPath, 200_000)
+        return ctx.previousArtifacts.map((a: any) => a.type)
+      }
+
+      const review = await types('review')
+      assert.ok(review.includes('tasks'), 'REVIEW performs the cross-artifact coverage analysis')
+
+      const build = await types('build')
+      assert.ok(
+        !build.includes('tasks'),
+        'BUILD reads its task from `## Current Task` (blueprint_tasks rows)'
+      )
+      assert.ok(build.includes('plan'), 'BUILD still receives the plan')
+    })
+
+    test('REGRESSION: tasks.md is mirrored during BUILD even though tasks is not in context', async () => {
+      // The disk mirror used to run on the relevance-filtered artifact list, so
+      // dropping `tasks` from BUILD also stopped tasks.md being written. REVIEW
+      // was then the only phase that mirrored it — and REVIEW is skippable,
+      // while verify-phase.md:32-37 tells VERIFY to load tasks.md and VERIFY
+      // deliberately carries no tasks JSON in context. This simulates the skip
+      // by assembling BUILD directly, without REVIEW ever having assembled.
+      const id = seedBlueprint()
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        type: 'tasks',
+        contentMd: bigBody(3_000, 'TASKS-ON-DISK')
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-cap-mirror-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'build', wsPath, 200_000)
+
+      assert.ok(
+        !ctx.previousArtifacts.some((a: any) => a.type === 'tasks'),
+        'precondition: BUILD does not carry the tasks artifact in context'
+      )
+
+      const bp = blueprintRepository.findById(id)
+      const diskPath = resolvePath(wsPath, `blueprints/${bp.shortName || id}/tasks.md`)
+      const disk = readFileSync(diskPath, 'utf-8')
+      assert.ok(
+        disk.endsWith('TASKS-ON-DISK'),
+        'tasks.md must reach disk for VERIFY even when no phase carries it in context'
+      )
+    })
+
+    test('discoveries still reach BUILD', async () => {
+      const id = seedBlueprint()
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        type: 'discoveries',
+        contentJson: { entries: ['auth flows through session.ts'] }
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-cap-a9-disc-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'build', wsPath, 200_000)
+      assert.ok(ctx.previousArtifacts.some((a: any) => a.type === 'discoveries'))
+    })
+  })
+
   describe('disk mirror carries full text (THE REGRESSION)', () => {
     test('a >60K tasks artifact: disk file is full, context copy is capped', async () => {
       const id = seedBlueprint()
@@ -148,6 +224,31 @@ if (!env) {
       assert.equal(disk.length, 80_000, 'disk mirror holds the full artifact')
       assert.ok(disk.endsWith(tail), 'the disk file reaches the end of the text')
       assert.ok(!disk.includes('truncated'), 'no truncation marker on disk')
+    })
+
+    test('the mirror is written atomically — no temp file survives', async () => {
+      // BUILD assembles its context ONCE per phase, so the concurrent readers
+      // are the review passes: review-phase.md:21 points its agent at
+      // blueprints/<name>/plan.md while those mirrors are being rewritten, so a
+      // bare writeFileSync could hand it a truncated file. Write-then-rename
+      // closes that window; this pins the observable half — the artifact lands
+      // and nothing else is left behind.
+      const id = seedBlueprint()
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'plan')
+      blueprintPhaseRepository.appendArtifact(planPhase.id, {
+        type: 'plan',
+        contentMd: bigBody(20_000, 'ATOMIC-TAIL')
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-cap-atomic-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'tasks', wsPath, 200_000)
+      const plan = ctx.previousArtifacts.find((a: any) => a.type === 'plan')
+      const dir = resolvePath(wsPath, plan.filePath.slice(0, plan.filePath.lastIndexOf('/')))
+
+      const { readdirSync } = require('node:fs')
+      const leftovers = readdirSync(dir).filter((f: string) => f.includes('.tmp-'))
+      assert.deepEqual(leftovers, [], 'no temp files left in the artifact directory')
+      assert.ok(readFileSync(resolvePath(wsPath, plan.filePath), 'utf-8').endsWith('ATOMIC-TAIL'))
     })
 
     test("the capped copy's marker references the real disk path", async () => {
@@ -236,6 +337,154 @@ if (!env) {
       assert.ok(tasks.contentMd.length > 60_000 && tasks.contentMd.length <= 60_000 + 200)
       assert.ok(tasks.contentMd.includes('60,000'), 'marker names the static 60K cap')
       assert.equal(ctx.artifactBudgetChars, undefined, 'no budget override without model info')
+    })
+  })
+
+  describe('A9 — newest artifact per type reaches context', () => {
+    test('two plans: only the newest is in context, both are on disk', async () => {
+      const id = seedBlueprint()
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'plan')
+      blueprintPhaseRepository.appendArtifact(planPhase.id, {
+        type: 'plan',
+        contentMd: bigBody(30_000, 'OLD-PLAN')
+      })
+      blueprintPhaseRepository.appendArtifact(planPhase.id, {
+        type: 'plan',
+        contentMd: bigBody(30_000, 'NEW-PLAN')
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-a9-newest-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'tasks', wsPath, 200_000)
+
+      const plans = ctx.previousArtifacts.filter((a: any) => a.type === 'plan')
+      assert.equal(plans.length, 1, 'the superseded plan never reaches context')
+      assert.ok(plans[0].contentMd.endsWith('NEW-PLAN'), 'and the survivor is the newest')
+
+      // The disk mirror still carries BOTH — the agent can Read the old one.
+      const dir = plans[0].filePath.slice(0, plans[0].filePath.lastIndexOf('/'))
+      assert.ok(
+        readFileSync(resolvePath(wsPath, `${dir}/plan-1.md`), 'utf-8').endsWith('OLD-PLAN')
+      )
+      assert.ok(readFileSync(resolvePath(wsPath, `${dir}/plan.md`), 'utf-8').endsWith('NEW-PLAN'))
+    })
+
+    test('NOT SUPERSEDABLE: both build reports reach VERIFY', async () => {
+      // blueprint-build.service.ts appends ONE build summary per BUILD run, and
+      // VERIFY re-triggers BUILD for up to two remediation rounds. The second
+      // report covers only the remediation tasks, so deduping to "newest" would
+      // hand VERIFY a partial file list on exactly the runs that already went
+      // wrong. `build` must accumulate.
+      const id = seedBlueprint()
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'build')
+      blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+        type: 'build',
+        contentMd: '# Build\nfirst pass: src/a.ts, src/b.ts FIRST-BUILD'
+      })
+      blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+        type: 'build',
+        contentMd: '# Build\nremediation: src/c.ts REMEDIATION-BUILD'
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-a9-build-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'verify', wsPath, 200_000)
+
+      const builds = ctx.previousArtifacts.filter((a: any) => a.type === 'build')
+      assert.equal(builds.length, 2, 'both build reports survive into VERIFY context')
+      assert.ok(
+        builds.some((a: any) => a.contentMd.includes('FIRST-BUILD')),
+        'the original build report is not evicted by the remediation one'
+      )
+      assert.ok(builds.some((a: any) => a.contentMd.includes('REMEDIATION-BUILD')))
+    })
+
+    test('NOT SUPERSEDABLE: both build reports reach CODE-REVIEW too', async () => {
+      const id = seedBlueprint()
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'build')
+      for (const tail of ['CR-FIRST', 'CR-SECOND']) {
+        blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+          type: 'build',
+          contentMd: `# Build\n${tail}`
+        })
+      }
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-a9-build-cr-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'code-review', wsPath, 200_000)
+      assert.equal(
+        ctx.previousArtifacts.filter((a: any) => a.type === 'build').length,
+        2,
+        'code-review sees every build report, not just the newest'
+      )
+    })
+
+    test('NOT SUPERSEDABLE: three discovery artifacts all survive — entries are merged', async () => {
+      // formatArtifacts consolidates entries ACROSS discovery artifacts, so
+      // deduping them would silently drop history rather than duplication.
+      // The allow-list keeps 'discoveries' out by construction; asserted here
+      // because the INTENT is load-bearing, not the mechanism.
+      const id = seedBlueprint()
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+      for (const n of ['one', 'two', 'three']) {
+        blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+          type: 'discoveries',
+          contentJson: { phase: 'tasks', entries: [`discovery-${n}`] }
+        })
+      }
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-a9-discoveries-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'review', wsPath, 200_000)
+
+      const discoveries = ctx.previousArtifacts.filter((a: any) => a.type === 'discoveries')
+      assert.equal(discoveries.length, 3, 'discoveries are not superseded by the newest')
+
+      const loader = require('../blueprint-prompt-loader')
+      const rendered = loader.formatArtifacts(ctx.previousArtifacts, ctx.artifactBudgetChars)
+      for (const n of ['one', 'two', 'three']) {
+        assert.ok(rendered.includes(`discovery-${n}`), `entry ${n} survives the merge`)
+      }
+    })
+
+    test('NOT SUPERSEDABLE: a *-partial artifact rides along with its parent type', async () => {
+      // '<phase>-partial' is the retry payload. It accompanies the parent
+      // artifact rather than superseding it, so newest-only must not treat the
+      // pair as duplicates of one another. Kept out of the allow-list
+      // deliberately — asserted so a future widening of the list trips here.
+      const id = seedBlueprint()
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'plan')
+      blueprintPhaseRepository.appendArtifact(planPhase.id, {
+        type: 'plan',
+        contentMd: '# Plan\nthe real thing'
+      })
+      // The partial lives on the CURRENT phase's record, not a prior one.
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        type: 'tasks-partial',
+        contentMd: 'streamed output from the failed attempt'
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-a9-partial-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'tasks', wsPath, 200_000)
+
+      const types = ctx.previousArtifacts.map((a: any) => a.type)
+      assert.ok(types.includes('plan'), 'the parent artifact is present')
+      assert.ok(types.includes('tasks-partial'), 'the retry payload is present')
+    })
+
+    test('two *-partial artifacts both survive (retry history is not deduped)', async () => {
+      const id = seedBlueprint()
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        type: 'tasks-partial',
+        contentMd: 'attempt one'
+      })
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+        type: 'tasks-partial',
+        contentMd: 'attempt two'
+      })
+
+      const wsPath = mkdtempSync(join(tmpdir(), 'bp-a9-partial2-'))
+      const ctx = await blueprintService.assemblePhaseContext(id, 'tasks', wsPath, 200_000)
+      const partials = ctx.previousArtifacts.filter((a: any) => a.type === 'tasks-partial')
+      assert.equal(partials.length, 2)
     })
   })
 

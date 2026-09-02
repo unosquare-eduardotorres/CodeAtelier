@@ -355,6 +355,18 @@ export interface PhaseContext {
    * loader's static default (ARTIFACT_BUDGET_CHARS).
    */
   artifactBudgetChars?: number
+  /**
+   * Context-window tier the assembler resolved for this phase's model. Set
+   * alongside `artifactBudgetChars`; absent → the prompt loader treats the
+   * phase as `medium`, which equals the historical static caps.
+   *
+   * Kept as the tier rather than another char budget because more than one
+   * block scales with it (constitution, workspace docs).
+   *
+   * Spelled out rather than imported: this is `ContextWindowTier` from
+   * `main/services/context-management`, and shared/ must not import from main/.
+   */
+  contextTier?: 'small' | 'medium' | 'large'
   /** Structured retry context — populated only when retrying a failed phase */
   retryContext?: {
     attempt: number

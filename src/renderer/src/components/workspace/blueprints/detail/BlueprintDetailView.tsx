@@ -27,6 +27,7 @@ import {
 } from 'lucide-react'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
 import { summarizeLedger } from '../../../../../../shared/gate-types'
+import { readJiraSyncLog } from '../../../../../../shared/jira.types'
 import { useBlueprintStore, type BlueprintChatMessage } from '@renderer/store/blueprint.store'
 import { useChatAvatarSize } from '@renderer/hooks/useChatAvatarSize'
 import { renderBlueprintMessage } from '../BlueprintChatView'
@@ -43,6 +44,56 @@ import { BlueprintAttachments } from './BlueprintAttachments'
 import { extractReferenceDocs, readBlueprintBranchName } from './reference-docs'
 import { DraftPanel } from './DraftPanel'
 import BlueprintFileViewerDrawer from '../BlueprintFileViewerDrawer'
+
+// ── Jira write-back summary ──
+
+/**
+ * What the pipeline actually did to the linked Jira tickets.
+ *
+ * Shown rather than only logged because a *failed* write is worse than none: a
+ * silent failure leaves the board looking current when it is not, and whoever
+ * reads it has no reason to doubt it.
+ */
+function JiraSyncNote({ settings }: { settings: Record<string, unknown> }): JSX.Element | null {
+  const entries = Object.values(readJiraSyncLog(settings))
+  if (entries.length === 0) return null
+
+  return (
+    <div
+      data-testid="blueprint-jira-sync"
+      className="rounded-xl border border-border-subtle bg-surface-raised px-4 py-3 space-y-1"
+    >
+      {entries.map((entry) => {
+        const target = entry.intent === 'done' ? 'Done' : 'In Progress'
+        return (
+          <div key={entry.intent} className="space-y-0.5">
+            {entry.moved.length > 0 && (
+              <p className="text-xs text-text-secondary">
+                Moved {entry.moved.join(', ')} to {target}
+              </p>
+            )}
+            {(entry.commented?.length ?? 0) > 0 && (
+              <p className="text-xs text-text-secondary">
+                Commented on {entry.commented?.join(', ')} — status left unchanged because checks
+                could not be verified
+              </p>
+            )}
+            {entry.skipped.length > 0 && (
+              <p className="text-xs text-text-muted">
+                {entry.skipped.join(', ')} skipped — workflow offers no {target} transition
+              </p>
+            )}
+            {entry.failed.map((failure) => (
+              <p key={failure.key} className="text-xs text-warning">
+                {failure.key} could not be moved to {target}: {failure.error}
+              </p>
+            ))}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
 
 // ── Markdown Description Block (collapsible) ──
 
@@ -304,6 +355,8 @@ export function BlueprintDetailView({
             </div>
           </div>
         )}
+
+        <JiraSyncNote settings={bp.settingsJson} />
 
         {/* ── Human review needed banner (unacknowledged) with Mark as Verified + Re-verify ── */}
         {isComplete &&

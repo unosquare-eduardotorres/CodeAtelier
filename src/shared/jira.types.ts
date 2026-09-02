@@ -144,6 +144,77 @@ export interface JiraTransition {
   name: string
   /** Status the issue lands in if this transition is executed. */
   toStatus?: string
+  /**
+   * Jira's own classification of that landing status — `new`, `indeterminate`
+   * or `done`.
+   *
+   * The only signal that survives a non-English workflow, where matching on
+   * "In Progress" or "Done" finds nothing. Absent on responses that did not
+   * expand the status category (older Server / DC).
+   */
+  toCategory?: 'new' | 'indeterminate' | 'done'
+}
+
+/** What a pipeline-driven status write was trying to say about the work. */
+export type JiraSyncIntent = 'in-progress' | 'done'
+
+/**
+ * What one automatic write-back actually did, per ticket.
+ *
+ * Recorded on the blueprint rather than only logged: a write to a board the
+ * whole team reads should be visible where the run is, and a *failed* write is
+ * worse than none — without this the board looks current when it is not.
+ */
+export interface JiraSyncOutcome {
+  intent: JiraSyncIntent
+  /** ISO timestamp of the attempt. */
+  at: string
+  /** Tickets that changed status. */
+  moved: string[]
+  /** Tickets whose workflow offered no matching transition — not a failure. */
+  skipped: string[]
+  failed: { key: string; error: string }[]
+  /**
+   * Tickets that got a comment instead of a transition, because the run
+   * finished with unverified checks. Only ever set for `done`.
+   */
+  commented?: string[]
+}
+
+/** At most one outcome per intent, newest write wins. */
+export type JiraSyncLog = Partial<Record<JiraSyncIntent, JiraSyncOutcome>>
+
+/**
+ * Read the sync ledger off a blueprint's `settingsJson`.
+ *
+ * Shape-checked rather than cast: `settings_json` is a free-form column written
+ * by several code paths, and a malformed entry must render as "no sync" instead
+ * of throwing inside a detail pane.
+ */
+export function readJiraSyncLog(settings: Record<string, unknown> | null | undefined): JiraSyncLog {
+  const raw = settings?.jiraSync
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const log: JiraSyncLog = {}
+  for (const intent of ['in-progress', 'done'] as const) {
+    const entry = (raw as Record<string, unknown>)[intent]
+    if (!entry || typeof entry !== 'object') continue
+    const e = entry as Partial<JiraSyncOutcome>
+    if (!Array.isArray(e.moved) || !Array.isArray(e.skipped) || !Array.isArray(e.failed)) continue
+    log[intent] = {
+      intent,
+      at: typeof e.at === 'string' ? e.at : '',
+      moved: e.moved.filter((k): k is string => typeof k === 'string'),
+      skipped: e.skipped.filter((k): k is string => typeof k === 'string'),
+      failed: e.failed.filter(
+        (f): f is { key: string; error: string } =>
+          !!f && typeof f === 'object' && typeof f.key === 'string'
+      ),
+      ...(Array.isArray(e.commented)
+        ? { commented: e.commented.filter((k): k is string => typeof k === 'string') }
+        : {})
+    }
+  }
+  return log
 }
 
 /** The account the stored credentials belong to. */

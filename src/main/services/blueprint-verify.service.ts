@@ -31,6 +31,7 @@ import { parsePhaseCompletionBlock, asStringArray } from './blueprint-artifact-p
 import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
 import { scanCompletedTaskFiles, applyDeterministicFileCheck } from './blueprint-task-verification'
 import { blueprintService, capArtifactForIpc } from './blueprint.service'
+import { syncBlueprintDone } from './jira-issue-sync.service'
 import { modelConfigService } from './model-config.service'
 import {
   blueprintRepository,
@@ -824,6 +825,7 @@ export class BlueprintVerifyService extends EventEmitter {
           if (currentStatus !== 'cancelled') {
             if (overallStatus === 'passed' || overallStatus === 'human_needed') {
               blueprintRepository.updateStatus(blueprintId, 'complete')
+              void syncBlueprintDone(blueprintId)
             } else {
               // BP-RETRY-CONTEXT: Save retry context for gaps_found/unknown failures
               try {

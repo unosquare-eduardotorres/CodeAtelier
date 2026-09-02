@@ -55,6 +55,7 @@ import {
   transitionIssue
 } from '../services/jira-rest.service'
 import { blueprintService } from '../services/blueprint.service'
+import { syncBlueprintInProgress } from '../services/jira-issue-sync.service'
 import { blueprintRepository } from '../db/repositories/blueprint.repository'
 import { getManagedDocsDir } from './blueprint.ipc'
 import {
@@ -461,6 +462,15 @@ export function registerJiraIpc(): void {
         }
 
         result.created = { blueprintId: blueprint.id, title, issueKeys: anchor.issueKeys }
+
+        // Move the tickets to In Progress, if the workspace opted in. Deliberately
+        // not awaited: a slow or unreachable Jira must not stall the response for
+        // a blueprint that already exists. The service never throws and records
+        // what it did on the blueprint, so nothing is lost by letting it run on.
+        //
+        // This is the one call to move if the board should instead reflect work
+        // actually underway — BUILD-phase start rather than conversion.
+        void syncBlueprintInProgress(blueprint.id)
       } catch (err) {
         const message = errorText(err)
         jiraIpcLog.warn(

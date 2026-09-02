@@ -9,6 +9,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { resolve, normalize, isAbsolute, extname, basename, join } from 'node:path'
 import log from 'electron-log'
+import type { ContextWindowTier } from './context-management'
 /** Inline type — ReferenceDocument was removed from shared/blueprint-types */
 interface ReferenceDocument {
   type: 'file' | 'workspace-file' | 'url'
@@ -264,41 +265,153 @@ export async function buildReferenceDocsBlock(
 /** Maximum characters per workspace doc (CLAUDE.md, README.md, etc.) */
 const MAX_WORKSPACE_DOC_CHARS = 30_000
 
-/** Well-known workspace documentation files to pre-read for prompt injection. */
+/**
+ * E8 — tier-scaled TOTAL budget for the whole {{WORKSPACE_DOCS}} block.
+ *
+ * The per-file cap alone left the block unbounded: four files × 30K = up to
+ * 120K chars (~30K tokens) of task-invariant prefix, re-sent on every one of
+ * the ~31 API calls of every build attempt. `medium` deliberately equals the
+ * old single-file cap, so a repo whose docs already fit sees no change.
+ */
+export const WORKSPACE_DOCS_BUDGET_BY_TIER: Record<ContextWindowTier, number> = {
+  small: 12_000,
+  medium: 30_000,
+  large: 60_000
+}
+
+/**
+ * Below this many remaining chars a doc is dropped rather than sliced — a
+ * 300-char fragment of a README costs prefix and teaches the agent nothing.
+ */
+const MIN_USEFUL_DOC_CHARS = 1_500
+
+/**
+ * Well-known workspace documentation files, in PRIORITY order.
+ *
+ * Order matters now that a total budget can run out: CLAUDE.md is the
+ * conventions the agent must obey, package.json is the least informative per
+ * char, so it goes last and is summarised rather than injected whole.
+ */
 const WORKSPACE_DOC_FILES = [
   { name: 'CLAUDE.md', path: 'CLAUDE.md' },
   { name: 'README.md', path: 'README.md' },
-  { name: 'package.json', path: 'package.json' },
-  { name: 'PLAN.md', path: 'PLAN.md' }
+  { name: 'PLAN.md', path: 'PLAN.md' },
+  { name: 'package.json', path: 'package.json' }
 ] as const
 
 /**
+ * Reduce a dependency range to its MAJOR only: `^19.0.1` → `^19`.
+ *
+ * The major is the whole signal a builder needs — it decides which API it is
+ * writing against (a React 18 hook is not a React 19 one) — while the patch
+ * digits are pure noise repeated once per dependency. Anything that is not a
+ * plain `<prefix><major>.<rest>` range (`workspace:*`, `latest`, `github:…`,
+ * `^1 || ^2`) is passed through untouched rather than mangled.
+ */
+function majorOnlyRange(range: string): string {
+  const match = /^(\D*)(\d+)\.[\w.-]*$/.exec(range.trim())
+  return match ? `${match[1]}${match[2]}` : range
+}
+
+/**
+ * Reduce package.json to the keys an agent actually reasons about.
+ *
+ * A real package.json is mostly dependency pins and tool config — several KB
+ * that answer no question the builder asks. What does: name, scripts (how to
+ * build and test), the dependency names at MAJOR precision (what is available,
+ * and which API generation), and the small set of keys that change how the
+ * code the agent writes must be SHAPED — `type` (ESM vs CJS for every new
+ * file), `engines`, `packageManager`. Dropping those saved ~40 chars and cost a
+ * retry when the builder guessed CJS in a `"type": "module"` package.
+ *
+ * Falls back to the raw text if the file is not parseable JSON.
+ */
+function summarizePackageJson(raw: string): string {
+  try {
+    const pkg = JSON.parse(raw) as Record<string, unknown>
+    const majors = (field: unknown): Record<string, string> => {
+      const out: Record<string, string> = {}
+      for (const [name, range] of Object.entries((field as Record<string, string>) ?? {})) {
+        out[name] = typeof range === 'string' ? majorOnlyRange(range) : ''
+      }
+      return out
+    }
+    return JSON.stringify(
+      {
+        name: pkg.name,
+        version: pkg.version,
+        // Module system, runtime floor, package manager — constraints on the
+        // code the agent writes, not metadata.
+        type: pkg.type,
+        engines: pkg.engines,
+        packageManager: pkg.packageManager,
+        scripts: pkg.scripts,
+        dependencies: majors(pkg.dependencies),
+        devDependencies: majors(pkg.devDependencies)
+      },
+      null,
+      2
+    )
+  } catch {
+    return raw
+  }
+}
+
+/**
  * Pre-read key workspace documentation files for prompt injection.
- * Reads CLAUDE.md, README.md, package.json, and PLAN.md from workspace root.
+ * Reads CLAUDE.md, README.md, PLAN.md and package.json from workspace root.
  * Returns a formatted markdown block or undefined if no files found.
  *
- * Each file is capped at MAX_WORKSPACE_DOC_CHARS to avoid context overflow.
+ * Each file is capped at MAX_WORKSPACE_DOC_CHARS. When `tier` is supplied the
+ * block also honours a TOTAL budget (WORKSPACE_DOCS_BUDGET_BY_TIER), spent in
+ * the priority order above; docs that no longer fit are named rather than
+ * silently dropped, so the agent knows to Read them. Without `tier` the
+ * historical per-file-only behaviour is preserved for other callers.
+ *
  * Files that don't exist are silently skipped.
  */
-export async function buildWorkspaceDocsBlock(workspacePath: string): Promise<string | undefined> {
+export async function buildWorkspaceDocsBlock(
+  workspacePath: string,
+  tier?: ContextWindowTier
+): Promise<string | undefined> {
+  const totalBudget = tier ? WORKSPACE_DOCS_BUDGET_BY_TIER[tier] : Infinity
   const parts: string[] = []
+  const omitted: string[] = []
+  let spent = 0
 
   for (const doc of WORKSPACE_DOC_FILES) {
     const fullPath = resolve(workspacePath, doc.path)
-    if (existsSync(fullPath)) {
-      try {
-        let content = readFileSync(fullPath, 'utf-8')
-        if (content.length > MAX_WORKSPACE_DOC_CHARS) {
-          content = content.slice(0, MAX_WORKSPACE_DOC_CHARS) + '\n\n[… truncated]'
-        }
-        parts.push(`### ${doc.name}\n\n${content}`)
-      } catch (err) {
-        docLog.warn(`Failed to read workspace doc "${doc.name}": ${err}`)
+    if (!existsSync(fullPath)) continue
+
+    try {
+      let content = readFileSync(fullPath, 'utf-8')
+      if (doc.name === 'package.json') content = summarizePackageJson(content)
+
+      const remaining = totalBudget - spent
+      const cap = Math.min(MAX_WORKSPACE_DOC_CHARS, remaining)
+
+      if (cap < MIN_USEFUL_DOC_CHARS && content.length > cap) {
+        omitted.push(doc.name)
+        continue
       }
+      if (content.length > cap) {
+        content = content.slice(0, cap) + '\n\n[… truncated — use Read for the full file]'
+      }
+
+      spent += content.length
+      parts.push(`### ${doc.name}\n\n${content}`)
+    } catch (err) {
+      docLog.warn(`Failed to read workspace doc "${doc.name}": ${err}`)
     }
   }
 
-  return parts.length > 0 ? parts.join('\n\n---\n\n') : undefined
+  if (parts.length === 0) return undefined
+  if (omitted.length > 0) {
+    parts.push(
+      `_(Omitted to stay within the documentation budget: ${omitted.join(', ')} — use Read if you need them.)_`
+    )
+  }
+  return parts.join('\n\n---\n\n')
 }
 
 // ── Internal Helpers ─────────────────────────────────────────────────────────

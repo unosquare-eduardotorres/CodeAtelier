@@ -6,8 +6,12 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
-import { BlueprintService, PHASE_ARTIFACT_RELEVANCE } from '../blueprint.service'
-import type { BlueprintPhaseType } from '../../../shared/blueprint-types'
+import {
+  BlueprintService,
+  PHASE_ARTIFACT_RELEVANCE,
+  keepNewestArtifactPerType
+} from '../blueprint.service'
+import type { BlueprintArtifact, BlueprintPhaseType } from '../../../shared/blueprint-types'
 
 describe('BlueprintService.parsePhaseCompletion', () => {
   const svc = new BlueprintService()
@@ -392,13 +396,16 @@ describe('PHASE_ARTIFACT_RELEVANCE', () => {
     assert.equal(r.size, 4)
   })
 
-  test('build_needs_plan_tasks_discoveries_but_not_spec', () => {
+  test('build_needs_plan_discoveries_but_not_spec_or_tasks', () => {
     const b = PHASE_ARTIFACT_RELEVANCE.build
     assert.ok(b.has('plan'))
-    assert.ok(b.has('tasks'))
     assert.ok(b.has('discoveries'))
     assert.ok(!b.has('spec'), 'build should NOT include spec')
-    assert.equal(b.size, 3)
+    assert.ok(
+      !b.has('tasks'),
+      'build gets its task from `## Current Task` (blueprint_tasks rows), not the tasks artifact'
+    )
+    assert.equal(b.size, 2)
   })
 
   test('verify_needs_spec_plan_build_discoveries_but_not_tasks', () => {
@@ -444,6 +451,60 @@ describe('PHASE_ARTIFACT_RELEVANCE', () => {
     for (const phase of phases) {
       assert.ok(phase in PHASE_ARTIFACT_RELEVANCE, `Missing phase: ${phase}`)
     }
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+//  A9 — keepNewestArtifactPerType (pure)
+// ══════════════════════════════════════════════════════════════════
+
+describe('keepNewestArtifactPerType', () => {
+  const a = (type: string, contentMd: string): BlueprintArtifact =>
+    ({ type, contentMd }) as BlueprintArtifact
+
+  test('keeps the last artifact of each duplicated type', () => {
+    const out = keepNewestArtifactPerType([a('plan', 'v1'), a('plan', 'v2'), a('spec', 's')])
+    assert.deepEqual(
+      out.map((x) => x.contentMd),
+      ['v2', 's']
+    )
+  })
+
+  test('preserves relative order of the survivors', () => {
+    const out = keepNewestArtifactPerType([
+      a('spec', 's1'),
+      a('plan', 'p1'),
+      a('spec', 's2'),
+      a('tasks', 't1')
+    ])
+    assert.deepEqual(
+      out.map((x) => x.type),
+      ['plan', 'spec', 'tasks']
+    )
+  })
+
+  test('discoveries are exempt — formatArtifacts merges entries across them', () => {
+    const out = keepNewestArtifactPerType([
+      a('discoveries', 'd1'),
+      a('discoveries', 'd2'),
+      a('discoveries', 'd3')
+    ])
+    assert.equal(out.length, 3)
+  })
+
+  test('*-partial artifacts are exempt — they are the retry payload', () => {
+    const out = keepNewestArtifactPerType([
+      a('plan', 'p'),
+      a('plan-partial', 'attempt-1'),
+      a('plan-partial', 'attempt-2')
+    ])
+    assert.equal(out.length, 3)
+  })
+
+  test('empty input and single artifacts pass through untouched', () => {
+    assert.deepEqual(keepNewestArtifactPerType([]), [])
+    const one = [a('plan', 'only')]
+    assert.deepEqual(keepNewestArtifactPerType(one), one)
   })
 })
 

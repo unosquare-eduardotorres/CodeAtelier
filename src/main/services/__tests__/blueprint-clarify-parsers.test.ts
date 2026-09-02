@@ -108,6 +108,45 @@ More text.`
       const result = parseClarifyFindings(text)
       assert.equal(result, null)
     })
+
+    test('preserves resolvedBy through the parse round-trip', () => {
+      const text = `\`\`\`blueprint-clarify-findings
+{
+  "findings": [{"id": "f1", "category": "missing_requirements", "severity": "high", "status": "resolved", "title": "T", "description": "D", "specRefs": [], "recommendation": "R", "resolvedBy": "CLAUDE.md — design tokens spec"}],
+  "summary": ""
+}
+\`\`\``
+      const result = parseClarifyFindings(text)
+      assert.ok(result)
+      assert.equal(result.findings[0].resolvedBy, 'CLAUDE.md — design tokens spec')
+    })
+
+    test('leaves resolvedBy undefined when absent — not an empty string', () => {
+      const text = `\`\`\`blueprint-clarify-findings
+{
+  "findings": [{"id": "f1", "category": "security_gaps", "severity": "low", "status": "outstanding", "title": "T", "description": "D", "specRefs": [], "recommendation": "R"}],
+  "summary": ""
+}
+\`\`\``
+      const result = parseClarifyFindings(text)
+      assert.ok(result)
+      assert.equal(result.findings[0].resolvedBy, undefined)
+    })
+
+    test('keeps resolvedBy on a resolved finding that also needs coercion', () => {
+      const text = `\`\`\`blueprint-clarify-findings
+{
+  "findings": [{"category": "unknown_thing", "status": "resolved", "title": "T", "resolvedBy": "src/theme.ts:12"}],
+  "summary": ""
+}
+\`\`\``
+      const result = parseClarifyFindings(text)
+      assert.ok(result)
+      assert.equal(result.findings[0].id, 'f1')
+      assert.equal(result.findings[0].category, 'missing_requirements')
+      assert.equal(result.findings[0].status, 'resolved')
+      assert.equal(result.findings[0].resolvedBy, 'src/theme.ts:12')
+    })
   })
 
   // ── parseClarifyQuestions ──

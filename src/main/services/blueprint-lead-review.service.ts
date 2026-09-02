@@ -44,6 +44,7 @@ import { buildLeadReviewPassGoalCondition } from './blueprint-goal-conditions'
 import { parseLeadReview } from '../../shared/blueprint-artifact-parsers'
 import type { LeadReviewResult, ReviewFinding } from '../../shared/task-review-types'
 import { blueprintService, capArtifactForIpc } from './blueprint.service'
+import { syncBlueprintDone } from './jira-issue-sync.service'
 import {
   blueprintRepository,
   blueprintPhaseRepository,
@@ -517,6 +518,7 @@ export class BlueprintLeadReviewService extends EventEmitter {
     if (currentStatus === 'cancelled') return
 
     blueprintRepository.updateStatus(blueprintId, 'complete')
+    void syncBlueprintDone(blueprintId)
 
     this.safeEmit('phaseComplete', {
       blueprintId,

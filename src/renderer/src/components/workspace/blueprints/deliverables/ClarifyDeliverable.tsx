@@ -33,6 +33,8 @@ interface ClarifyFinding {
   title: string
   description: string
   recommendation: string
+  /** Citation the agent gave for auto-resolving instead of asking. */
+  resolvedBy?: string
 }
 
 // ── Helpers ──
@@ -50,7 +52,8 @@ function extractFindings(phase: BlueprintPhase): ClarifyFinding[] {
         status: (f.status as ClarifyFinding['status']) ?? 'outstanding',
         title: String(f.title ?? ''),
         description: String(f.description ?? ''),
-        recommendation: String(f.recommendation ?? '')
+        recommendation: String(f.recommendation ?? ''),
+        resolvedBy: f.resolvedBy ? String(f.resolvedBy) : undefined
       }))
     }
   }
@@ -67,7 +70,8 @@ function extractFindings(phase: BlueprintPhase): ClarifyFinding[] {
           status: f.status === 'deferred' ? 'outstanding' : f.status,
           title: f.title,
           description: f.description,
-          recommendation: f.recommendation
+          recommendation: f.recommendation,
+          resolvedBy: f.resolvedBy
         }))
       }
     }
@@ -130,6 +134,12 @@ function FindingsSection({ findings }: { findings: ClarifyFinding[] }): JSX.Elem
           {f.recommendation && (
             <p className="text-xs text-text-muted italic border-l-2 border-accent/30 pl-3">
               {f.recommendation}
+            </p>
+          )}
+          {f.resolvedBy && (
+            <p className="text-xs text-success/80 mt-2">
+              <span className="text-text-muted">Resolved by: </span>
+              <span className="font-mono">{f.resolvedBy}</span>
             </p>
           )}
         </div>

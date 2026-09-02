@@ -117,13 +117,13 @@ export class BlueprintPeerReviewService extends EventEmitter {
         return empty
       }
 
-      // 2. Phase context — the reviewer reads the same context the builder did.
-      const phaseContext = await blueprintService.assemblePhaseContext(
-        blueprintId,
-        'build',
-        workspacePath,
-        blueprintService.resolveWorkspaceContextWindow(workspacePath)
-      )
+      // 2. Phase context — LITE, and deliberately so. peer-review-pass.md has no
+      // {{…}} placeholders, so the full assembly's output was discarded whole;
+      // all it contributed was per-task DB + doc reads and a truncate-then-write
+      // over blueprints/<name>/{plan,tasks,spec,build}.md — the exact paths this
+      // task's still-running wave siblings are told to Read. The reviewer's real
+      // context is the diff and the work packet, both passed to the adapter.
+      const phaseContext = await blueprintService.assembleLitePhaseContext(blueprintId, 'build')
 
       // 3. Adapter + session
       const adapter = new BlueprintPeerReviewAdapter({

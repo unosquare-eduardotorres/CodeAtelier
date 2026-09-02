@@ -9,7 +9,7 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import log from 'electron-log'
 import {
@@ -54,6 +54,7 @@ import {
 import { resolveContextTier } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { contextWindowResolver } from './context-window-resolver'
+import { syncBlueprintDone } from './jira-issue-sync.service'
 
 export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 
@@ -75,12 +76,40 @@ export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> =
   plan: new Set(['spec']), // clarify merges resolutions into spec in-place (finalizeClarifyPhase)
   tasks: new Set(['spec', 'plan']), // needs spec + plan to decompose
   review: new Set(['spec', 'plan', 'tasks', 'discoveries']), // cross-artifact analysis needs all three
-  build: new Set(['plan', 'tasks', 'discoveries']), // + current wave's tasks (injected separately)
+  // BUILD gets its task from `## Current Task` (buildTaskContext), sourced from
+  // blueprint_tasks rows — the authoritative record the scheduler executes.
+  // build-phase.md:74 tells the agent to reference the plan and spec, not tasks.
+  // The artifact only ever rendered as `{}` here; now that it renders for real,
+  // injecting the whole list would duplicate per-task context in the phase that
+  // is 77-82% of all tokens.
+  build: new Set(['plan', 'discoveries']),
   // Adversarial reviewer reads intent (spec/plan) and what BUILD claims it did;
   // the diff itself is injected separately by the adapter, not as an artifact.
   'code-review': new Set(['spec', 'plan', 'build']),
   verify: new Set(['spec', 'plan', 'build', 'discoveries']) // NOT full tasks JSON — uses build report
 }
+
+/**
+ * Artifact types mirrored to `blueprints/<name>/<type>.md`.
+ *
+ * Deliberately NOT derived from PHASE_ARTIFACT_RELEVANCE. The two answer
+ * different questions: the relevance map decides what goes in the *prefix*,
+ * this set decides which *files the prompts promise an agent can Read*.
+ *
+ * They were the same list once, and that coupling was a latent bug: the mirror
+ * only ever wrote the types the assembling phase happened to carry in context.
+ * Dropping `tasks` from BUILD's relevance set exposed it — REVIEW became the
+ * only phase that mirrored tasks.md, and REVIEW is skippable
+ * (BLUEPRINT_SKIP_PHASE), while `verify-phase.md:32-37` instructs VERIFY to
+ * load spec.md / plan.md / tasks.md / build report and VERIFY deliberately does
+ * not carry the tasks JSON in context. Skip REVIEW and VERIFY was pointed at a
+ * file nobody had written.
+ *
+ * `discoveries` is excluded because formatArtifacts merges its entries across
+ * artifacts rather than rendering one document, and `*-partial` types are
+ * excluded by construction (they are retry payloads, not deliverables).
+ */
+const MIRRORED_ARTIFACT_TYPES = new Set(['spec', 'plan', 'tasks', 'build'])
 
 // ── Helpers ──
 
@@ -101,6 +130,129 @@ function fingerprintPhaseError(error: string): string {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 200)
+}
+
+/**
+ * Types whose newest artifact SUPERSEDES the older ones.
+ *
+ * Deliberately an ALLOW-LIST. A deny-list would dedupe every newly-introduced
+ * artifact type by default, and the two failure modes are not symmetric:
+ * over-deduping drops something the agent needed (correctness), under-deduping
+ * only spends tokens. `build` is the proof — blueprint-build.service.ts appends
+ * one build summary per BUILD run and VERIFY re-triggers BUILD for up to two
+ * remediation rounds, so those reports ACCUMULATE: the second covers only the
+ * remediation tasks. Deduping them hands VERIFY and CODE-REVIEW a partial file
+ * list on exactly the runs that already went wrong.
+ *
+ * `spec` / `plan` / `tasks` are safe: `plan` (blueprint-plan.service.ts) and
+ * `tasks` (blueprint-tasks.service.ts) already write via replaceArtifactOfType,
+ * and a SPECIFY re-run legitimately replaces its predecessor. The same
+ * reasoning keeps `discoveries` out (formatArtifacts MERGES entries across
+ * every discovery artifact, so deduping drops history) and `*-partial` out (the
+ * retry payload accompanies its parent rather than replacing it).
+ */
+const SUPERSEDABLE_ARTIFACT_TYPES = new Set(['spec', 'plan', 'tasks'])
+
+/**
+ * A9 — for superseded-by-newest types, keep only the newest in the CONTEXT copy.
+ *
+ * `appendArtifact` is still live at ~15 write sites, so a re-run of PLAN or
+ * TASKS (revision, retry, phase rewind) leaves two artifacts of the same type
+ * on the phase record, and assemblePhaseContextInner used to inject both.
+ *
+ * That is not merely wasteful. formatArtifacts renders in array order and
+ * truncates the TAIL once the budget is hit, so the superseded copy renders
+ * first and eats the budget — and the artifact dropped with
+ * "_(N artifact(s) truncated…)_" is the NEWEST one. A duplicate could hand the
+ * builder a plan the human had already replaced.
+ *
+ * Fixing it here, on the read side, covers every write site at once.
+ *
+ * Ordering signal is array append order: BlueprintArtifact carries no
+ * timestamp, and the disk mirror already treats append order as recency via its
+ * totalByType/seenByType numbering.
+ *
+ * The disk mirror is deliberately left alone: it keeps writing every version
+ * (plan-1.md, plan-2.md, plan.md), so the truncation marker's "full text on
+ * disk" promise still holds. Note that nothing in the context NAMES the
+ * numbered paths, so a superseded version is reachable only by an agent that
+ * lists the directory — acceptable, since the whole point is that the newest
+ * one supersedes it.
+ *
+ * @internal Exported for testing
+ */
+export function keepNewestArtifactPerType(artifacts: BlueprintArtifact[]): BlueprintArtifact[] {
+  const newestIndexByType = new Map<string, number>()
+  artifacts.forEach((a, i) => {
+    if (SUPERSEDABLE_ARTIFACT_TYPES.has(a.type)) newestIndexByType.set(a.type, i)
+  })
+  return artifacts.filter(
+    (a, i) => !SUPERSEDABLE_ARTIFACT_TYPES.has(a.type) || newestIndexByType.get(a.type) === i
+  )
+}
+
+/** Monotonic suffix so two writers in this process cannot collide on a temp name. */
+let artifactTmpCounter = 0
+
+/**
+ * Write-then-rename, because readers are concurrent.
+ *
+ * BUILD assembles its phase context ONCE and threads it to every task, so the
+ * concurrent writers are not the builders: they are the review passes that
+ * assemble around them, and review-phase.md:21 points its agent at
+ * blueprints/<name>/spec.md, plan.md and tasks.md while those mirrors are being
+ * rewritten. A bare writeFileSync truncates the file before it writes, so a
+ * reader can observe an empty or half-written document — silently, since the
+ * content is usually identical to what it expected. rename(2) is atomic on
+ * POSIX and Windows: a reader sees either the old file or the new one, never a
+ * partial one.
+ */
+function writeAtomically(absPath: string, content: string): void {
+  const tmpPath = `${absPath}.tmp-${process.pid}-${artifactTmpCounter++}`
+  try {
+    writeFileSync(tmpPath, content, 'utf-8')
+    renameSync(tmpPath, absPath)
+  } catch (err) {
+    // Never leave the temp file behind to be mistaken for an artifact.
+    try {
+      unlinkSync(tmpPath)
+    } catch {
+      /* already gone */
+    }
+    throw err
+  }
+}
+
+/**
+ * The identity half of a PhaseContext: header, constitution, paths, grill
+ * decisions. No artifact collection, no workspace doc reads, no disk writes —
+ * every field is already in hand from the blueprint row.
+ *
+ * Two callers, for the same reason: the SIZE-GUARD fallback (assembly must
+ * never throw) and assembleLitePhaseContext (assembly must never be paid for
+ * when nothing reads it).
+ */
+function buildMinimalPhaseContext(blueprint: Blueprint, phase: BlueprintPhaseType): PhaseContext {
+  const dir = `blueprints/${blueprint.shortName || blueprint.id}`
+  return {
+    blueprint: {
+      id: blueprint.id,
+      title: blueprint.title,
+      shortName: blueprint.shortName,
+      description: blueprint.description,
+      priority: blueprint.priority,
+      currentPhase: phase,
+      settings: blueprint.settingsJson
+    },
+    constitution: blueprint.constitutionSnapshot,
+    previousArtifacts: [],
+    specFilePath: `${dir}/spec.md`,
+    blueprintDir: dir,
+    grillDecisions: parseGrillDecisions(blueprint.settingsJson?.grillDecisions),
+    workspaceDocs: undefined,
+    retryContext: undefined,
+    revisionRequests: []
+  }
 }
 
 /** Validate and extract grill decisions from an unknown settingsJson value. */
@@ -949,6 +1101,7 @@ export class BlueprintService extends EventEmitter {
     if (nextIdx >= BLUEPRINT_PHASE_ORDER.length) {
       // All phases complete
       blueprintRepository.updateStatus(blueprintId, 'complete')
+      void syncBlueprintDone(blueprintId)
       bpLog.info(`[advancePhase] Blueprint ${blueprintId} — all phases complete`)
       return null
     }
@@ -994,6 +1147,7 @@ export class BlueprintService extends EventEmitter {
     if (nextIdx >= BLUEPRINT_PHASE_ORDER.length) {
       // Every remaining phase was optional and disabled — the run is complete.
       blueprintRepository.updateStatus(blueprintId, 'complete')
+      void syncBlueprintDone(blueprintId)
       bpLog.info(
         `[advancePhase] Blueprint ${blueprintId} — all remaining phases skipped/complete`
       )
@@ -1481,26 +1635,36 @@ export class BlueprintService extends EventEmitter {
         `[assemblePhaseContext] Context assembly failed — degrading to minimal context:`,
         err
       )
-      return {
-        blueprint: {
-          id: blueprint.id,
-          title: blueprint.title,
-          shortName: blueprint.shortName,
-          description: blueprint.description,
-          priority: blueprint.priority,
-          currentPhase: phase,
-          settings: blueprint.settingsJson
-        },
-        constitution: blueprint.constitutionSnapshot,
-        previousArtifacts: [],
-        specFilePath: `blueprints/${blueprint.shortName || blueprint.id}/spec.md`,
-        blueprintDir: `blueprints/${blueprint.shortName || blueprint.id}`,
-        grillDecisions: parseGrillDecisions(blueprint.settingsJson?.grillDecisions),
-        workspaceDocs: undefined,
-        retryContext: undefined,
-        revisionRequests: []
-      }
+      return buildMinimalPhaseContext(blueprint, phase)
     }
+  }
+
+  /**
+   * The identity half of a phase context — no artifacts, no workspace docs, and
+   * crucially NO DISK WRITES.
+   *
+   * For consumers whose prompt does not interpolate context but whose adapter
+   * still demands a PhaseContext. Peer review is the case: peer-review-pass.md
+   * contains zero `{{…}}` placeholders, so the full assembly it used to call was
+   * discarded in its entirety — while its side effects were not. It ran once per
+   * TASK, and `runPeerReviewIfEnabled` fires from inside executeTaskWithGates the
+   * moment ONE task's gates pass, with its wave-siblings still running. The
+   * artifact disk mirror truncates `blueprints/<name>/plan.md` before rewriting
+   * it, and build-phase.md tells those siblings to Read exactly that path — so
+   * the assembly was racing concurrent readers for no gain at all.
+   *
+   * Identical in shape to the SIZE-GUARD degradation, deliberately: the two want
+   * the same thing (a context that cannot fail and cannot touch the workspace).
+   */
+  async assembleLitePhaseContext(
+    blueprintId: string,
+    phase: BlueprintPhaseType
+  ): Promise<PhaseContext> {
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) {
+      throw new Error(`Blueprint not found: ${blueprintId}`)
+    }
+    return buildMinimalPhaseContext(blueprint, phase)
   }
 
   private async assemblePhaseContextInner(
@@ -1532,12 +1696,19 @@ export class BlueprintService extends EventEmitter {
     const currentIdx = BLUEPRINT_PHASE_ORDER.indexOf(phase)
     const relevantTypes = PHASE_ARTIFACT_RELEVANCE[phase]
     const rawArtifacts: BlueprintArtifact[] = []
+    // Mirrored independently of relevance — see MIRRORED_ARTIFACT_TYPES. Same
+    // object references as rawArtifacts, so the `a.filePath = ...` assignment in
+    // the mirror below still reaches the context copies.
+    const mirrorArtifacts: BlueprintArtifact[] = []
     for (const p of phases) {
       const pIdx = BLUEPRINT_PHASE_ORDER.indexOf(p.phase)
       if (pIdx < currentIdx && p.artifactsJson.length > 0) {
         for (const artifact of p.artifactsJson) {
           if (relevantTypes.has(artifact.type)) {
             rawArtifacts.push(artifact)
+          }
+          if (MIRRORED_ARTIFACT_TYPES.has(artifact.type)) {
+            mirrorArtifacts.push(artifact)
           }
         }
       }
@@ -1569,10 +1740,12 @@ export class BlueprintService extends EventEmitter {
     // Extract grill decisions from settings if available (with runtime validation)
     const grillDecisions = parseGrillDecisions(blueprint.settingsJson?.grillDecisions)
 
-    // Pre-read workspace docs (CLAUDE.md, README.md, package.json, PLAN.md) if workspace path provided
+    // Pre-read workspace docs (CLAUDE.md, README.md, PLAN.md, package.json) if
+    // workspace path provided. E8: the tier caps the block as a WHOLE — the
+    // per-file cap alone let four docs put up to 120K chars in the prefix.
     let workspaceDocs: string | undefined
     if (workspacePath) {
-      workspaceDocs = await buildWorkspaceDocsBlock(workspacePath)
+      workspaceDocs = await buildWorkspaceDocsBlock(workspacePath, tier)
     }
 
     // BP-RETRY-CONTEXT-01: Read structured retry context from context_snapshot.
@@ -1599,7 +1772,7 @@ export class BlueprintService extends EventEmitter {
     // context. Runs on the RAW artifacts — full text on disk — BEFORE the
     // context copies are capped, so the truncation marker's disk reference
     // points at the complete artifact.
-    if (workspacePath && rawArtifacts.length > 0) {
+    if (workspacePath && mirrorArtifacts.length > 0) {
       const artifactDir = resolve(
         workspacePath,
         `blueprints/${blueprint.shortName || blueprint.id}`
@@ -1613,9 +1786,9 @@ export class BlueprintService extends EventEmitter {
         // review-phase.md tells the agent to Read exactly spec.md / plan.md /
         // tasks.md, so the current artifact has to own the unsuffixed path.
         // Three plans give plan-1.md, plan-2.md, plan.md.
-        const writable = rawArtifacts.filter(
-          (a) => !a.type.endsWith('-partial') && a.type !== 'discoveries'
-        )
+        // No filtering needed: MIRRORED_ARTIFACT_TYPES already excludes
+        // `discoveries` and every `*-partial` type by construction.
+        const writable = mirrorArtifacts
         const totalByType = new Map<string, number>()
         for (const a of writable) totalByType.set(a.type, (totalByType.get(a.type) ?? 0) + 1)
 
@@ -1630,7 +1803,7 @@ export class BlueprintService extends EventEmitter {
             a.contentMd ??
             (a.contentJson ? '```json\n' + JSON.stringify(a.contentJson, null, 2) + '\n```' : null)
           if (content) {
-            writeFileSync(absPath, content, 'utf-8')
+            writeAtomically(absPath, content)
             a.filePath = relativePath // set for renderSingleArtifact() to display
           }
         }
@@ -1639,10 +1812,16 @@ export class BlueprintService extends EventEmitter {
       }
     }
 
+    // A9: newest-per-type for the CONTEXT copy only. Runs after the disk
+    // mirror so every version still reaches disk (superseded copies keep their
+    // numbered paths), and before the cap so a superseded artifact can no
+    // longer consume the budget the current one needs.
+    const contextArtifacts = keepNewestArtifactPerType(rawArtifacts)
+
     // Cap for context AFTER the disk mirror — the spread-copies inherit
     // filePath from the raw objects, so the marker's "full text on disk at
     // <path>" is true.
-    const previousArtifacts = rawArtifacts.map((a) =>
+    const previousArtifacts = contextArtifacts.map((a) =>
       capArtifactForContext(a, mdCaps, mdDefaultCap)
     )
 
@@ -1664,7 +1843,9 @@ export class BlueprintService extends EventEmitter {
       workspaceDocs,
       retryContext,
       revisionRequests: this.getRevisionRequests(blueprintId),
-      ...(artifactBudgetChars !== undefined ? { artifactBudgetChars } : {})
+      // Both are set only when the caller knew the model's context window, so a
+      // caller without model info still gets the historical medium-tier caps.
+      ...(artifactBudgetChars !== undefined ? { artifactBudgetChars, contextTier: tier } : {})
     }
   }
 
@@ -1755,13 +1936,24 @@ export class BlueprintService extends EventEmitter {
 
   /**
    * Build the full system prompt for a phase (convenience wrapper).
+   *
+   * Resolves the context window itself rather than taking it as an argument:
+   * this is the PREVIEW path, and a preview that silently shows medium-tier
+   * caps while the real run gets large-tier ones is a preview of a prompt that
+   * never executes. Without a workspacePath there is nothing to resolve from,
+   * so it degrades to the historical medium-tier defaults.
    */
   async buildSystemPrompt(
     blueprintId: string,
     phase: BlueprintPhaseType,
     workspacePath?: string
   ): Promise<string> {
-    const context = await this.assemblePhaseContext(blueprintId, phase, workspacePath)
+    const context = await this.assemblePhaseContext(
+      blueprintId,
+      phase,
+      workspacePath,
+      this.resolveWorkspaceContextWindow(workspacePath)
+    )
     return buildPhaseSystemPrompt(phase, context)
   }
 

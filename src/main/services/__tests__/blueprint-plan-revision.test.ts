@@ -729,12 +729,19 @@ if (!env) {
       const wsPath = mkdtempSync(join(tmpdir(), 'bp-artifact-paths-'))
       const ctx = await blueprintService.assemblePhaseContext(id, 'tasks', wsPath)
       const plans = ctx.previousArtifacts.filter((a: { type: string }) => a.type === 'plan')
-      assert.equal(plans.length, 2)
-      assert.notEqual(plans[0].filePath, plans[1].filePath, 'paths must not collide')
-      assert.ok(plans[0].filePath.endsWith('/plan-1.md'), 'the older one is numbered')
-      assert.ok(plans[1].filePath.endsWith('/plan.md'), 'the newest one is canonical')
-      assert.equal(readFileSync(resolvePath(wsPath, plans[0].filePath), 'utf-8'), 'FIRST')
-      assert.equal(readFileSync(resolvePath(wsPath, plans[1].filePath), 'utf-8'), 'SECOND')
+
+      // A9: only the newest plan reaches CONTEXT. The superseded copy used to
+      // render first and eat the artifact budget, which could push the current
+      // plan out with the "artifact(s) truncated" marker.
+      assert.equal(plans.length, 1, 'context carries one plan — the current one')
+      assert.equal(plans[0].contentMd, 'SECOND')
+      assert.ok(plans[0].filePath.endsWith('/plan.md'), 'the newest one is canonical')
+
+      // Both versions still reach DISK, older one numbered, so the truncation
+      // marker's "full text on disk" promise holds for every version.
+      const dir = plans[0].filePath.slice(0, plans[0].filePath.lastIndexOf('/'))
+      assert.equal(readFileSync(resolvePath(wsPath, `${dir}/plan-1.md`), 'utf-8'), 'FIRST')
+      assert.equal(readFileSync(resolvePath(wsPath, `${dir}/plan.md`), 'utf-8'), 'SECOND')
     })
 
     test('three duplicates number the two older ones and leave <type>.md current', async () => {
@@ -751,18 +758,18 @@ if (!env) {
       const wsPath = mkdtempSync(join(tmpdir(), 'bp-artifact-paths3-'))
       const ctx = await blueprintService.assemblePhaseContext(id, 'review', wsPath)
       const tasks = ctx.previousArtifacts.filter((a: { type: string }) => a.type === 'tasks')
-      assert.equal(tasks.length, 3)
-      assert.deepEqual(
-        tasks.map((a: { filePath: string }) => a.filePath.split('/').pop()),
-        ['tasks-1.md', 'tasks-2.md', 'tasks.md']
+
+      // A9: one task list in context — the newest.
+      assert.equal(tasks.length, 1)
+      assert.equal(tasks[0].contentMd, 'T3')
+      assert.ok(tasks[0].filePath.endsWith('/tasks.md'))
+
+      // All three still on disk, the two older ones numbered.
+      const dir = tasks[0].filePath.slice(0, tasks[0].filePath.lastIndexOf('/'))
+      const onDisk = ['tasks-1.md', 'tasks-2.md', 'tasks.md'].map((f) =>
+        readFileSync(resolvePath(wsPath, `${dir}/${f}`), 'utf-8')
       )
-      for (const a of tasks) {
-        assert.equal(
-          readFileSync(resolvePath(wsPath, a.filePath), 'utf-8'),
-          a.contentMd,
-          'each path holds its own artifact'
-        )
-      }
+      assert.deepEqual(onDisk, ['T1', 'T2', 'T3'], 'each path holds its own version')
     })
   })
 

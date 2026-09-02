@@ -43,6 +43,55 @@ function makePhaseContext(overrides: Partial<PhaseContext> = {}): PhaseContext {
   }
 }
 
+/**
+ * A tasks artifact in the shape TASKS actually emits (`tasks-phase.md:145`):
+ * {totalTasks, waves[{wave, name, tasks[]}], userStoryPhases, mvpScope}.
+ *
+ * The previous fixture here was `{id, title, wave}` — a flat shape production
+ * never produces — which is exactly why the projection bug survived: the test
+ * pinned an invented shape, so the allow-list looked correct while matching NO
+ * top-level key of the real one.
+ */
+function emittedTasksJson(taskCount: number): Record<string, unknown> {
+  const perWave = 6
+  const waveCount = Math.ceil(taskCount / perWave)
+  return {
+    totalTasks: taskCount,
+    waves: Array.from({ length: waveCount }, (_, w) => ({
+      wave: w + 1,
+      name: `Wave ${w + 1}`,
+      tasks: Array.from(
+        { length: Math.min(perWave, taskCount - w * perWave) },
+        (_, i) => ({
+          taskId: `T${w * perWave + i}`,
+          description: `Do the thing ${w * perWave + i}`,
+          files: [`src/mod-${w * perWave + i}.ts`],
+          userStory: `US${w}`,
+          isParallel: true,
+          dependsOn: [],
+          includesTests: true,
+          packet: {
+            interfaces: ['export function f(): void'],
+            acceptanceCriteria: [{ text: 'it works', howVerified: 'npm test' }],
+            allowedFiles: [`src/mod-${w * perWave + i}.ts`],
+            testCommand: 'npm test'
+          }
+        })
+      )
+    })),
+    userStoryPhases: [{ story: 'US0', title: 'Story 0', priority: 'P1', taskIds: ['T0'] }],
+    parallelOpportunities: 4,
+    mvpScope: ['T0', 'T1']
+  }
+}
+
+/** Pull the first fenced JSON block out of a rendered artifacts string. */
+function firstJsonBlock(rendered: string): string {
+  const m = rendered.match(/```json\n([\s\S]*?)\n```/)
+  assert.ok(m, 'expected a fenced JSON block')
+  return m![1]
+}
+
 describe('buildPhaseSystemPrompt — fallback prompts', () => {
   // ── Each phase produces a valid prompt ──
 
@@ -328,10 +377,10 @@ describe('formatArtifacts — rendering preference', () => {
       {
         type: 'tasks',
         contentMd: 'Very long agent reasoning about tasks...',
-        contentJson: { id: 'T1', title: 'Task 1', wave: 1 }
+        contentJson: emittedTasksJson(1)
       }
     ])
-    assert.ok(result.includes('"title"'), 'Tasks should use projected JSON')
+    assert.ok(result.includes('"taskId"'), 'Tasks should use projected JSON')
     assert.ok(!result.includes('Very long agent reasoning'), 'Tasks should not use contentMd')
   })
 
@@ -358,6 +407,107 @@ describe('formatArtifacts — rendering preference', () => {
 
   test('empty_artifacts_returns_no_artifacts_message', () => {
     assert.equal(formatArtifacts([]), '(No previous artifacts available.)')
+  })
+})
+
+describe('formatArtifacts — tasks projection matches the emitted shape (A9)', () => {
+  test('regression_guard_leaf_only_key_set_would_render_empty_object', () => {
+    // Characterization of the bug. The pre-A9 allow-list was per-task leaf keys
+    // only; none of them is a TOP-LEVEL key of what TASKS emits, and
+    // projectFields is shallow at the top level — so the whole artifact
+    // collapsed to `{}`. Kept so re-narrowing the set fails loudly.
+    const leafOnlyKeys = new Set([
+      'id',
+      'title',
+      'wave',
+      'files',
+      'scope',
+      'status',
+      'taskId',
+      'userStory',
+      'filePathsJson',
+      'description'
+    ])
+    const emitted = emittedTasksJson(12)
+    const matched = Object.keys(emitted).filter((k) => leafOnlyKeys.has(k))
+    assert.deepEqual(
+      matched,
+      [],
+      'the old key set matched no top-level key of the emitted shape — hence `{}`'
+    )
+  })
+
+  test('renders_wave_containers_and_per_task_coverage_fields', () => {
+    const rendered = formatArtifacts([{ type: 'tasks', contentJson: emittedTasksJson(12) }])
+    const json = firstJsonBlock(rendered)
+    for (const key of [
+      'totalTasks',
+      'waves',
+      'wave',
+      'tasks',
+      'taskId',
+      'description',
+      'files',
+      'dependsOn',
+      'userStory',
+      'userStoryPhases',
+      'mvpScope'
+    ]) {
+      assert.ok(json.includes(`"${key}"`), `REVIEW needs "${key}" to judge coverage`)
+    }
+    assert.notEqual(json.trim(), '{}', 'the artifact must not render as an empty object')
+  })
+
+  test('excludes_packet_internals_which_build_gets_from_the_db', () => {
+    const rendered = formatArtifacts([{ type: 'tasks', contentJson: emittedTasksJson(12) }])
+    const json = firstJsonBlock(rendered)
+    for (const key of [
+      'packet',
+      'allowedFiles',
+      'testCommand',
+      'interfaces',
+      'acceptanceCriteria',
+      'isParallel',
+      'includesTests',
+      'parallelOpportunities'
+    ]) {
+      assert.ok(!json.includes(`"${key}"`), `"${key}" is BUILD's execution contract, not REVIEW's`)
+    }
+  })
+
+  test('over_cap_task_list_keeps_first_N_and_stays_parseable', () => {
+    const rendered = formatArtifacts(
+      [{ type: 'tasks', filePath: 'blueprints/x/tasks.md', contentJson: emittedTasksJson(150) }],
+      1_000_000 // no budget truncation — isolate the task cap
+    )
+    const json = firstJsonBlock(rendered)
+
+    const parsed = JSON.parse(json) as {
+      totalTasks: number
+      waves: { tasks: unknown[] }[]
+    }
+    const kept = parsed.waves.reduce((n, w) => n + w.tasks.length, 0)
+    assert.equal(kept, 120, 'should keep exactly MAX_TASKS_RENDERED tasks')
+    assert.equal(parsed.totalTasks, 150, 'the true total stays visible to the reader')
+
+    assert.ok(
+      rendered.includes('30 of 150 tasks omitted'),
+      'omission marker should state how many were dropped'
+    )
+    assert.ok(
+      rendered.includes('Read blueprints/x/tasks.md'),
+      'omission marker should point at the full list'
+    )
+    assert.ok(
+      !json.includes('tasks omitted'),
+      'marker must sit OUTSIDE the fence so the JSON stays parseable'
+    )
+  })
+
+  test('under_cap_task_list_has_no_omission_marker', () => {
+    const rendered = formatArtifacts([{ type: 'tasks', contentJson: emittedTasksJson(12) }])
+    assert.ok(!rendered.includes('tasks omitted'))
+    assert.equal(JSON.parse(firstJsonBlock(rendered)).totalTasks, 12)
   })
 })
 

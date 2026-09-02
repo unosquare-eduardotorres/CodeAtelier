@@ -1,3 +1,6 @@
+<!-- Fed a LITE context on purpose: artifact/doc placeholders render EMPTY here.
+     Read buildPeerReviewSystemPrompt before adding any {{...}} to this file. -->
+
 # Peer Review Pass
 
 You are a peer reviewer for one build task in a Blueprint pipeline.

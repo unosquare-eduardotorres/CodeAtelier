@@ -3,8 +3,10 @@
  * Shows severity-grouped findings with category icons, status chips, and spec refs.
  */
 
-import type { JSX } from 'react'
+import { useState, type JSX } from 'react'
 import {
+  ChevronDown,
+  ChevronRight,
   FileQuestion,
   MessageSquareWarning,
   Eye,
@@ -81,8 +83,13 @@ interface BlueprintFindingsCardProps {
 export function BlueprintFindingsCard({ findings }: BlueprintFindingsCardProps): JSX.Element {
   const { findings: items, summary } = findings
 
-  // Group by severity
-  const grouped = groupBySeverity(items)
+  // The clarify prompt asks for auto-resolved items to be shown separately, so
+  // they don't sit inline with things that still need the user's attention.
+  const autoResolved = items.filter((f) => f.status === 'resolved')
+  const outstanding = items.filter((f) => f.status !== 'resolved')
+
+  // Group by severity (outstanding/deferred only)
+  const grouped = groupBySeverity(outstanding)
   const severityOrder: ClarifyFindingSeverity[] = ['critical', 'high', 'medium', 'low']
 
   return (
@@ -102,6 +109,9 @@ export function BlueprintFindingsCard({ findings }: BlueprintFindingsCardProps):
           {summary}
         </div>
       )}
+
+      {/* Auto-resolved — collapsed by default: the count is the signal */}
+      {autoResolved.length > 0 && <AutoResolvedGroup findings={autoResolved} />}
 
       {/* Findings Table */}
       <div className="divide-y divide-border/20">
@@ -133,6 +143,45 @@ export function BlueprintFindingsCard({ findings }: BlueprintFindingsCardProps):
   )
 }
 
+// ── Auto-Resolved Group ──
+
+function AutoResolvedGroup({ findings }: { findings: ClarifyFinding[] }): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const Chevron = expanded ? ChevronDown : ChevronRight
+
+  return (
+    <div
+      data-testid="blueprint-findings-auto-resolved"
+      className="border-b border-border/20 bg-surface-inset/30"
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="w-full px-4 py-2 flex items-center gap-1.5 text-left hover:bg-surface-inset/50"
+      >
+        <Chevron size={12} className="text-text-muted shrink-0" />
+        <CheckCircle2 size={12} className="text-green-400 shrink-0" />
+        <span className="text-[10px] font-medium text-text-secondary">
+          Auto-resolved ({findings.length})
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-4 pb-2 space-y-1.5">
+          {findings.map((finding) => (
+            <div key={finding.id} className="pl-5">
+              <p className="text-xs text-text-primary truncate">{finding.title}</p>
+              {finding.resolvedBy && (
+                <p className="text-[10px] text-green-400/80">Resolved by: {finding.resolvedBy}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Finding Row ──
 
 function FindingRow({ finding }: { finding: ClarifyFinding }): JSX.Element {
@@ -152,6 +201,9 @@ function FindingRow({ finding }: { finding: ClarifyFinding }): JSX.Element {
           </span>
         </div>
         <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">{finding.description}</p>
+        {finding.resolvedBy && (
+          <p className="text-[10px] text-green-400/80 mt-0.5">Resolved by: {finding.resolvedBy}</p>
+        )}
         {finding.specRefs.length > 0 && (
           <div className="flex gap-1 mt-1 flex-wrap">
             {finding.specRefs.map((ref) => (

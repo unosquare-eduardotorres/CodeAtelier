@@ -297,6 +297,99 @@ if (!env) {
     })
   })
 
+  // ── E5: the pass takes a LITE context, and that is not a downgrade ──
+
+  describe('E5 — peer review assembles a lite context (no artifacts, no disk writes)', () => {
+    const { mkdtempSync, readdirSync, existsSync } = require('node:fs')
+    const { tmpdir } = require('node:os')
+    const { join } = require('node:path')
+    const blueprintService = require('../blueprint.service').blueprintService
+    const blueprintPhaseRepository =
+      require('../../db/repositories/blueprint.repository').blueprintPhaseRepository
+
+    /** A blueprint carrying artifacts the FULL assembly would mirror to disk. */
+    function seedWithArtifacts(title: string): string {
+      const bp = blueprintRepository.create({ workspaceId: wsId, title })
+      blueprintPhaseRepository.createAllPhases(bp.id)
+      for (const [phase, type] of [
+        ['plan', 'plan'],
+        ['tasks', 'tasks']
+      ] as const) {
+        const rec = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, phase)
+        blueprintPhaseRepository.appendArtifact(rec.id, {
+          type,
+          contentMd: `# ${type}\nbody`
+        })
+      }
+      return bp.id
+    }
+
+    test('THE RACE: the lite context writes nothing under blueprints/, the full one does', async () => {
+      // runPeerReviewIfEnabled fires from inside executeTaskWithGates the moment
+      // ONE task's gates pass — its wave siblings are still running, and
+      // build-phase.md tells them to Read blueprints/<name>/plan.md. The full
+      // assembly truncates that file before rewriting it. The pass has no use
+      // for the result, so it must not take the risk.
+      const id = seedWithArtifacts('Peer lite-context test')
+      const shortName = blueprintRepository.findById(id).shortName || id
+
+      const wsLite = mkdtempSync(join(tmpdir(), 'bp-e5-lite-'))
+      await blueprintService.assembleLitePhaseContext(id, 'build')
+      assert.equal(
+        existsSync(join(wsLite, 'blueprints')),
+        false,
+        'the lite path touches no workspace file at all'
+      )
+
+      // Control: the full assembly on the same blueprint DOES write — proving
+      // the assertion above is about the code path, not an empty fixture.
+      const wsFull = mkdtempSync(join(tmpdir(), 'bp-e5-full-'))
+      await blueprintService.assemblePhaseContext(id, 'build', wsFull, 200_000)
+      assert.ok(
+        readdirSync(join(wsFull, 'blueprints', shortName)).includes('plan.md'),
+        'the full assembly is the writer this pass used to be'
+      )
+    })
+
+    test('THE POINT: the peer-review prompt is byte-identical either way', async () => {
+      // peer-review-pass.md contains zero {{...}} placeholders, so everything
+      // the full assembly collected was discarded. If this ever fails, the
+      // prompt gained a placeholder and the caller must be reconsidered.
+      const { buildPeerReviewSystemPrompt } = require('../blueprint-prompt-loader')
+      const id = seedWithArtifacts('Peer prompt-parity test')
+
+      const wsFull = mkdtempSync(join(tmpdir(), 'bp-e5-parity-'))
+      const full = await blueprintService.assemblePhaseContext(id, 'build', wsFull, 200_000)
+      const lite = await blueprintService.assembleLitePhaseContext(id, 'build')
+
+      assert.ok(full.previousArtifacts.length > 0, 'the full context really carried artifacts')
+      assert.equal(lite.previousArtifacts.length, 0, 'the lite context carries none')
+      assert.equal(
+        buildPeerReviewSystemPrompt(lite),
+        buildPeerReviewSystemPrompt(full),
+        'the discarded context was, in fact, discarded'
+      )
+    })
+
+    test('the lite context still carries the identity fields an adapter reads', async () => {
+      const id = seedWithArtifacts('Peer identity test')
+      const bp = blueprintRepository.findById(id)
+      const lite = await blueprintService.assembleLitePhaseContext(id, 'build')
+
+      assert.equal(lite.blueprint.id, id)
+      assert.equal(lite.blueprint.currentPhase, 'build')
+      assert.equal(lite.blueprintDir, `blueprints/${bp.shortName || id}`)
+      assert.equal(lite.specFilePath, `blueprints/${bp.shortName || id}/spec.md`)
+    })
+
+    test('an unknown blueprint throws rather than yielding a hollow context', async () => {
+      await assert.rejects(
+        () => blueprintService.assembleLitePhaseContext('bp-does-not-exist', 'build'),
+        /Blueprint not found/
+      )
+    })
+  })
+
   // ── Goal condition ──
 
   describe('M5 — buildPeerReviewGoalCondition', () => {

@@ -52,6 +52,14 @@ export class BlueprintSpecifyAdapter extends BlueprintBaseAdapter {
       this.description
     ]
 
+    // E7 note: `specify-phase.md:26` renders {{GRILL_DECISIONS}} from the same
+    // source, so these decisions do reach the agent twice — once here in the
+    // first user message, once in the system prompt. Deliberately left alone:
+    // SPECIFY is ~1.2% of pipeline tokens and a decision ledger is ~1K chars,
+    // so removing it saves nothing measurable while changing what the specify
+    // agent is asked, which no test here can validate. The whitelist projection
+    // in blueprint-prompt-loader removes the THIRD copy (the raw settings dump),
+    // which is the one that rode along into every phase including BUILD.
     if (this.grillDecisions?.length) {
       parts.push(
         '',

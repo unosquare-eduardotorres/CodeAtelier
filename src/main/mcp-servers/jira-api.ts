@@ -715,25 +715,52 @@ export function buildAssigneeBody(
  * Transition ids are per-workflow — "In Progress" is 21 on one project and 4 on
  * the next — so they can never be hardcoded and must be read per issue.
  */
-export function formatTransitions(
-  raw: unknown
-): Array<{ id: string; name: string; toStatus?: string }> {
+export function formatTransitions(raw: unknown): Array<{
+  id: string
+  name: string
+  toStatus?: string
+  toCategory?: 'new' | 'indeterminate' | 'done'
+}> {
   const entries = Array.isArray((raw as { transitions?: unknown[] } | null)?.transitions)
     ? (raw as { transitions: unknown[] }).transitions
     : []
-  const transitions: Array<{ id: string; name: string; toStatus?: string }> = []
+  const transitions: Array<{
+    id: string
+    name: string
+    toStatus?: string
+    toCategory?: 'new' | 'indeterminate' | 'done'
+  }> = []
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object') continue
     const t = entry as { id?: unknown; name?: unknown; to?: unknown }
     if (t.id === undefined || t.id === null) continue
     const toStatus = nameOf(t.to)
+    const toCategory = statusCategoryOf(t.to)
     transitions.push({
       id: String(t.id),
       name: typeof t.name === 'string' ? t.name : String(t.id),
-      ...(toStatus ? { toStatus } : {})
+      ...(toStatus ? { toStatus } : {}),
+      ...(toCategory ? { toCategory } : {})
     })
   }
   return transitions
+}
+
+/** The three keys Jira guarantees; anything else is treated as absent. */
+const STATUS_CATEGORY_KEYS = new Set(['new', 'indeterminate', 'done'])
+
+/**
+ * Jira's language-independent classification of a status.
+ *
+ * Status *names* are whatever the board configured, in whatever language;
+ * `statusCategory.key` is always one of three values, which is what makes
+ * "is this transition a completion?" answerable on a non-English instance.
+ */
+function statusCategoryOf(to: unknown): 'new' | 'indeterminate' | 'done' | undefined {
+  const key = (to as { statusCategory?: { key?: unknown } } | null | undefined)?.statusCategory?.key
+  return typeof key === 'string' && STATUS_CATEGORY_KEYS.has(key)
+    ? (key as 'new' | 'indeterminate' | 'done')
+    : undefined
 }
 
 /** Body for `POST /issue/{key}/transitions`. */

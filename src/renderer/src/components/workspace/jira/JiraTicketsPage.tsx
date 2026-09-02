@@ -11,7 +11,7 @@ import {
   Settings2,
   SquareKanban
 } from 'lucide-react'
-import { Button, Tabs } from '@renderer/components/common/ui'
+import { Button, Switch, Tabs } from '@renderer/components/common/ui'
 import { useChatActions, useWorkspaceStore } from '@renderer/store'
 import { EXTERNAL_MCP_INTEGRATIONS } from '../../../../../shared/constants'
 import type { IntegrationCredentialStatus } from '../../../../../shared/integration-credentials.types'
@@ -21,6 +21,7 @@ import type {
   JiraTransition
 } from '../../../../../shared/jira.types'
 import { JIRA_MAX_BULK_ISSUES, JIRA_MAX_LOADED_ROWS } from '../../../../../shared/jira.types'
+import { findTransitionTo } from '../../../../../shared/jira-transition-match'
 import {
   buildJiraChatPrompt,
   deriveGroupTitle,
@@ -42,15 +43,6 @@ const JIRA_INTEGRATION = EXTERNAL_MCP_INTEGRATIONS.find((i) => i.id === 'jira')!
 
 /** Jira is a bundled server, so there is no CLI to probe on PATH. */
 const BUNDLED_CLI_STATUS = { checked: true, found: true }
-
-/** Transition that means "I have started this", if the workflow offers one. */
-function findInProgress(transitions: JiraTransition[]): JiraTransition | null {
-  return (
-    transitions.find(
-      (t) => /in\s*progress/i.test(t.toStatus ?? '') || /in\s*progress/i.test(t.name)
-    ) ?? null
-  )
-}
 
 /** Which half of the right-hand aside is showing. */
 type AsideTab = 'ticket' | 'selected'
@@ -188,6 +180,27 @@ export default function JiraTicketsPage({
     [workspaceId]
   )
 
+  /**
+   * Write one of the status write-back toggles.
+   *
+   * Optimistic, like `handleToggle`: the switch reflects the click immediately
+   * and a failed write logs rather than banners — nothing has been sent to Jira
+   * yet, so the cost of being wrong is one more click.
+   */
+  const handleSyncSetting = useCallback(
+    async (key: 'jiraSyncStatus' | 'jiraDoneOnWarnings', value: boolean) => {
+      if (!workspaceId) return
+      setSettings((prev) => ({ ...prev, [key]: value }))
+      try {
+        await window.api.updateWorkspaceSettings({ workspaceId, settings: { [key]: value } })
+      } catch (err) {
+        console.error('[JiraTicketsPage] Failed to update Jira sync setting:', err)
+        setSettings((prev) => ({ ...prev, [key]: !value }))
+      }
+    },
+    [workspaceId]
+  )
+
   const handleCredentialStatusChange = useCallback(
     (_id: string, status: IntegrationCredentialStatus) => setCredentialStatus(status),
     []
@@ -207,8 +220,9 @@ export default function JiraTicketsPage({
       for (const issueKey of missing) {
         let transition: JiraTransition | null = null
         try {
-          transition = findInProgress(
-            await window.api.jiraListTransitions({ workspaceId, issueKey })
+          transition = findTransitionTo(
+            await window.api.jiraListTransitions({ workspaceId, issueKey }),
+            'in-progress'
           )
         } catch {
           // No transitions readable means no checkbox — never an error banner.
@@ -383,17 +397,46 @@ export default function JiraTicketsPage({
           </p>
 
           {showConnection && (
-            <IntegrationCard
-              integration={JIRA_INTEGRATION}
-              available={!!settings.jiraAvailable}
-              cliStatus={BUNDLED_CLI_STATUS}
-              onToggle={handleToggle}
-              savingId={savingId}
-              workspaceId={workspaceId}
-              credentialStatus={credentialStatus}
-              onCredentialStatusChange={handleCredentialStatusChange}
-              onCredentialsCleared={reloadSettings}
-            />
+            <>
+              <IntegrationCard
+                integration={JIRA_INTEGRATION}
+                available={!!settings.jiraAvailable}
+                cliStatus={BUNDLED_CLI_STATUS}
+                onToggle={handleToggle}
+                savingId={savingId}
+                workspaceId={workspaceId}
+                credentialStatus={credentialStatus}
+                onCredentialStatusChange={handleCredentialStatusChange}
+                onCredentialsCleared={reloadSettings}
+              />
+
+              {/* Off by default and deliberately so: every other Jira write in
+                  the app is something the user clicked. This one is not, and it
+                  writes to a ticket the whole team reads. */}
+              <div
+                data-testid="jira-sync-settings"
+                className="bg-surface-overlay rounded-lg border border-border-subtle p-3 space-y-3"
+              >
+                <Switch
+                  checked={settings.jiraSyncStatus === true}
+                  onChange={(next) => void handleSyncSetting('jiraSyncStatus', next)}
+                  disabled={!isConnected}
+                  label="Move tickets as blueprints progress"
+                  description="Converting a selection moves its tickets to In Progress; a clean blueprint completion moves them to Done. Tickets whose workflow offers no matching transition are left alone."
+                  title={isConnected ? undefined : 'Connect Jira first'}
+                />
+                <Switch
+                  checked={settings.jiraDoneOnWarnings === true}
+                  onChange={(next) => void handleSyncSetting('jiraDoneOnWarnings', next)}
+                  disabled={!isConnected || settings.jiraSyncStatus !== true}
+                  label="Move to Done even when checks could not be verified"
+                  description="Off: a blueprint that finishes with unverified checks gets a comment naming them, and the status is left unchanged rather than claiming work that was not proven."
+                  title={
+                    settings.jiraSyncStatus === true ? undefined : 'Turn on status moves first'
+                  }
+                />
+              </div>
+            </>
           )}
 
           {isConnected && (

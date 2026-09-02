@@ -52,9 +52,9 @@ if (loaded) {
       assert.ok(PHASE_ARTIFACT_RELEVANCE.clarify.has('spec'))
     })
 
-    test('build includes plan and tasks', () => {
+    test('build includes plan but not tasks', () => {
       assert.ok(PHASE_ARTIFACT_RELEVANCE.build.has('plan'))
-      assert.ok(PHASE_ARTIFACT_RELEVANCE.build.has('tasks'))
+      assert.ok(!PHASE_ARTIFACT_RELEVANCE.build.has('tasks'))
     })
 
     test('verify includes spec, plan, build, discoveries', () => {

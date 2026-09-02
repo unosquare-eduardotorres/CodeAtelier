@@ -3,8 +3,11 @@
  * Memory MCP Server — knowledge-aware fact management for CLI interactive mode.
  *
  * Exposes three tools: memory_search, memory_record, memory_flag.
- * Communicates with the knowledge engine via direct service imports
- * (runs in the Electron main process context, not as a standalone child).
+ * Communicates with the knowledge engine via direct service imports.
+ * Runs as a standalone child process (spawned as the app binary under
+ * ELECTRON_RUN_AS_NODE=1), NOT inside the Electron main process — `electron`
+ * and `electron-log` are stubbed by the build-time standalone shim, and DB_PATH
+ * supplies the userData directory.
  *
  * Architecture:
  *   Tool schemas are registered synchronously (cheap — zod + handler refs),

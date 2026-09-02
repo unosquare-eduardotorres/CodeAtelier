@@ -33,6 +33,12 @@ export interface ClarifyFinding {
   description: string
   specRefs: string[]
   recommendation: string
+  /**
+   * Why this finding was auto-resolved instead of asked about — the citation the
+   * clarify prompt requires. Optional: only resolved findings carry one, and
+   * artifacts written before this field existed have none.
+   */
+  resolvedBy?: string
 }
 
 export interface ClarifyFindingsBlock {
@@ -48,7 +54,10 @@ const FindingSchema = z.object({
   title: z.string().optional().default('Untitled finding'),
   description: z.string().optional().default(''),
   specRefs: z.array(z.string()).optional().default([]),
-  recommendation: z.string().optional().default('')
+  recommendation: z.string().optional().default(''),
+  // No `.default('')` — absence must stay distinguishable from "resolved for no
+  // stated reason", and zod would otherwise strip this key entirely.
+  resolvedBy: z.string().optional()
 })
 
 const FindingsBlockSchema = z.object({
@@ -194,7 +203,8 @@ export function parseClarifyFindings(text: string): ClarifyFindingsBlock | null 
       title: f.title,
       description: f.description,
       specRefs: f.specRefs,
-      recommendation: f.recommendation
+      recommendation: f.recommendation,
+      resolvedBy: f.resolvedBy
     }))
 
     return { findings, summary: block.summary }
