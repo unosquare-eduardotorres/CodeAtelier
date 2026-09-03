@@ -222,9 +222,65 @@ describe('parseBlueprintTasks', () => {
     assert.ok(result)
     assert.equal((result as any).totalTasks, 1)
   })
+
+  // ── BP-FENCE-ANCHOR: the embedded-fence family ──
+
+  /**
+   * Live regression (blueprint 984eac4d, CHR-32). The model emitted a COMPLETE,
+   * valid block — but its first task carried an `excerpt` of template markdown,
+   * and that markdown contains its own ```text fence, escaped inside the JSON
+   * string. The old unanchored regex stopped at that inner fence, capturing
+   * 2,129 of 54,146 chars, and the phase failed blaming the model for a
+   * truncation that never happened. 6 waves / 8 tasks were thrown away.
+   */
+  test('a ``` fence inside a JSON string value does not terminate the block', () => {
+    const excerpt = '# Signature email\\n\\n## Subject\\n\\n```text\\nSignature needed\\n```\\n'
+    const text =
+      'Narrative first.\n\n```blueprint-tasks\n' +
+      '{"totalTasks":2,"waves":[' +
+      '{"wave":1,"tasks":[{"taskId":"T001","description":"a","excerpt":"' +
+      excerpt +
+      '"}]},' +
+      '{"wave":2,"tasks":[{"taskId":"T002","description":"b"}]}' +
+      ']}\n' +
+      '```\n\n```blueprint-phase-complete\n{"phase":"tasks","status":"complete"}\n```'
+    const result = parseBlueprintTasks(text)
+    assert.ok(result, 'an inner ```text fence must not end the block')
+    const waves = (result as any).waves as any[]
+    assert.equal(waves.length, 2, 'both waves survive')
+    assert.equal((result as any).totalTasks, 2)
+    assert.ok(waves[0].tasks[0].excerpt.includes('```text'), 'excerpt kept intact')
+  })
+
+  test('an indented fence still parses', () => {
+    const text =
+      '  ```blueprint-tasks\n{"totalTasks":1,"waves":[{"wave":1,"tasks":[{"taskId":"T001"}]}]}\n  ```'
+    const result = parseBlueprintTasks(text)
+    assert.ok(result)
+    assert.equal(((result as any).waves as any[]).length, 1)
+  })
+
+  test('the last block wins when an earlier partial one is quoted in narrative', () => {
+    const text =
+      '```blueprint-tasks\n{"totalTasks":1,"waves":[{"wave":1,"tasks":[{"taskId":"OLD"}]}]}\n```\n' +
+      'On reflection, revised:\n' +
+      '```blueprint-tasks\n{"totalTasks":1,"waves":[{"wave":1,"tasks":[{"taskId":"NEW"}]}]}\n```'
+    const result = parseBlueprintTasks(text)
+    assert.ok(result)
+    assert.equal(((result as any).waves as any[])[0].tasks[0].taskId, 'NEW')
+  })
 })
 
 describe('parseBlueprintPlan', () => {
+  // BP-FENCE-ANCHOR: same embedded-fence hazard as parseBlueprintTasks.
+  test('a ``` fence inside a JSON string value does not terminate the plan block', () => {
+    const text =
+      '```blueprint-plan\n{"summary":"run ```bash\\nnpm test\\n``` first","items":[{"id":"P1"}]}\n```'
+    const result = parseBlueprintPlan(text)
+    assert.ok(result, 'an inner ```bash fence must not end the block')
+    assert.equal(((result as any).items as any[]).length, 1)
+  })
+
   test('parses valid blueprint-plan block', () => {
     const text = '```blueprint-plan\n{"items":[{"id":"P1","scope":"new file"}]}\n```'
     const result = parseBlueprintPlan(text)

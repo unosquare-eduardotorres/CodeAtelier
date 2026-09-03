@@ -16,9 +16,34 @@ import {
   type ReviewFinding
 } from './task-review-types'
 
+// ── Fenced block extraction ──
+
+/**
+ * Build a regex matching a fenced ```<tag> block, with BOTH fences anchored to
+ * the start of a real line.
+ *
+ * BP-FENCE-ANCHOR: the previous unanchored form (/```tag\s*\n([\s\S]*?)```/)
+ * stopped at the FIRST backtick run anywhere in the stream — including one
+ * sitting inside a JSON string value. The tasks phase emits exactly that
+ * whenever a task carries an `excerpt` of markdown that has its own ```text
+ * fence. Live: blueprint 984eac4d captured 2,129 of 54,146 chars and threw away
+ * 6 waves / 8 tasks on an "unterminated string", with the phase blaming the
+ * model for a truncation that never happened.
+ *
+ * A fence inside a JSON string is always mid-line — its newlines are escaped
+ * two-character \n sequences, not real ones — so `^` can never match it, while
+ * a genuine fence always starts its own line.
+ */
+function fencedBlockRegex(tag: string): RegExp {
+  return new RegExp(
+    `^[ \\t]*\`\`\`${tag}[ \\t]*\\r?$\\n([\\s\\S]*?)\\r?\\n^[ \\t]*\`\`\`[ \\t]*\\r?$`,
+    'gm'
+  )
+}
+
 // ── Plan block ──
 
-const PLAN_REGEX = /```blueprint-plan\s*\n([\s\S]*?)```/g
+const PLAN_REGEX = fencedBlockRegex('blueprint-plan')
 
 /**
  * Parse the last blueprint-plan block from streamed text.
@@ -40,7 +65,7 @@ export function parseBlueprintPlan(text: string): Record<string, unknown> | null
 
 // ── Gate commands block ──
 
-const GATE_COMMANDS_REGEX = /```gate-commands\s*\n([\s\S]*?)```/g
+const GATE_COMMANDS_REGEX = fencedBlockRegex('gate-commands')
 
 /**
  * Parse the last `gate-commands` block declared by the PLAN phase.
@@ -94,7 +119,7 @@ export function parseGateCommands(text: string): GateCommandSet {
 
 // ── Review findings block ──
 
-const REVIEW_REGEX = /```blueprint-review-findings\s*\n([\s\S]*?)```/g
+const REVIEW_REGEX = fencedBlockRegex('blueprint-review-findings')
 
 function parseFinding(
   raw: unknown,
@@ -204,7 +229,7 @@ export function parseLeadReview(text: string): LeadReviewResult {
 
 // ── Tasks block ──
 
-const TASKS_REGEX = /```blueprint-tasks\s*\n([\s\S]*?)```/g
+const TASKS_REGEX = fencedBlockRegex('blueprint-tasks')
 
 /**
  * Repair a truncated blueprint-tasks JSON body by brace-balancing to the last
@@ -318,8 +343,14 @@ export function parseBlueprintTasks(text: string): Record<string, unknown> | nul
     // No closed fence. An opening ```blueprint-tasks with no closing ``` means
     // the stream was cut mid-block (output cap). Treat the rest of the text as
     // the block body and attempt repair.
-    const openMatch = text.match(/```blueprint-tasks\s*\n([\s\S]*)$/)
-    if (openMatch?.[1]) jsonStr = openMatch[1]
+    // BP-FENCE-ANCHOR: anchored like the closed-fence path, and takes the LAST
+    // opening fence — a narrative that quotes an earlier partial block must not
+    // shadow the real one.
+    let bodyStart = -1
+    for (const m of text.matchAll(/^[ \t]*```blueprint-tasks[ \t]*\r?$\n/gm)) {
+      bodyStart = (m.index ?? 0) + m[0].length
+    }
+    if (bodyStart >= 0) jsonStr = text.slice(bodyStart)
   }
 
   if (jsonStr === null) return null
