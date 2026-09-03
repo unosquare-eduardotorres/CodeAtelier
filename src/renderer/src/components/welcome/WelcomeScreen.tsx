@@ -101,12 +101,19 @@ export default function WelcomeScreen(): React.JSX.Element {
   }, [createWorkspace])
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center bg-gradient-to-b from-surface-base via-surface-overlay/20 to-surface-base overflow-y-auto relative">
+    // `justify-center` is deliberately NOT used here: this element is the scroll
+    // container, and centering a flex column that overflows pushes the start of
+    // the content ABOVE the scroll origin, where no amount of scrolling can
+    // reach it. With enough workspaces that silently cropped the hero and the
+    // top row of cards. `my-auto` on the child below centers the short-content
+    // case instead — auto margins resolve to zero once the free space is
+    // negative, so an overflowing page simply starts at the top and scrolls.
+    <div className="flex-1 flex flex-col items-center bg-gradient-to-b from-surface-base via-surface-overlay/20 to-surface-base overflow-y-auto relative">
       {/* Animated background: floating dev icons + mini avatars */}
       <FloatingIconField />
 
       {/* All content stays above floating icons */}
-      <div className="w-full max-w-5xl px-8 py-12 relative z-10">
+      <div className="w-full max-w-5xl px-8 py-12 relative z-10 my-auto">
         {/* Hero: Logo + Tagline */}
         <div className="flex items-center gap-3 mb-10 justify-center">
           <div className="w-14 h-14 rounded-2xl bg-primary-muted border border-primary/30 flex items-center justify-center">
