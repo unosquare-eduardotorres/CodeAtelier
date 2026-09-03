@@ -403,6 +403,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-spec-deep.test',
   '../services/__tests__/blueprint-parallel-scheduler.test',
   '../services/__tests__/blueprint-dag-scheduler.test',
+  '../services/__tests__/blueprint-overload-attempts.test',
   '../services/__tests__/blueprint-verify-extractor.test',
   '../services/__tests__/blueprint-verify-salvage.test',
   // ─── Phase 21: Coverage Mega-Push ───

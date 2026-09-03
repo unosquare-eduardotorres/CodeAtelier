@@ -165,12 +165,9 @@ export class AgentStreamProcessor {
     const totalContextTokens = contextWindowTokens > 0 ? contextWindowTokens : summedContextTokens
     const consumedContextTokens = totalContextTokens
 
-    // The invariant prefix = the FIRST round-trip's prompt size. Deliberately
-    // NO fallback to `summedContextTokens`: the sum is the whole turn's billed
-    // input across every round-trip, which over-counts a prefix by ~10-30x.
-    // A backend with no per-call snapshot (OpenCode) records NULL instead — an
-    // absence can be filtered out of an average, a wrong number cannot.
-    const prefixTokens = safeToken(meta.tokenUsage.firstCallContextTokens)
+    // The FIRST round-trip's prompt size (the invariant prefix) is a different
+    // quantity and is NOT handled here: `recordTurn` writes it at INSERT time
+    // from this same meta chunk, so it never needs the back-fill below.
 
     // Update lastContextTokens for all backends (badge, compact modal, etc.)
     this.s.lastContextTokens = totalContextTokens
@@ -226,11 +223,7 @@ export class AgentStreamProcessor {
     // every token field 0).
     if (turnRecorded && totalContextTokens > 0) {
       try {
-        turnUsageRepository.updateLastTurnContextTokens(
-          conversationId,
-          totalContextTokens,
-          prefixTokens
-        )
+        turnUsageRepository.updateLastTurnContextTokens(conversationId, totalContextTokens)
       } catch (err) {
         this.s.log.warn('Failed to persist context tokens:', err)
       }

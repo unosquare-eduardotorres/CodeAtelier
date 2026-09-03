@@ -507,6 +507,29 @@ describe('normalizeMessage — stream_event/message_start', () => {
     assert.equal(s.input, 200)
     assert.equal(s.cacheReadInputTokens, 100)
   })
+
+  test('the FIRST message_start fixes the prefix; later ones only move occupancy', () => {
+    // This is the seam that carries `firstCallContextTokens` out to the DB
+    // column Gate T is measured on. Every other test in that chain builds its
+    // own usage object, so without this one a normalizer change that stopped
+    // forwarding message_start usage would leave prefix_tokens silently NULL
+    // and nothing would go red.
+    const tokens = new TokenAccountant()
+    const messageStart = (usage: Record<string, number>): Record<string, unknown> => ({
+      type: 'stream_event',
+      event: { type: 'message_start', message: { usage } }
+    })
+
+    collect(messageStart({ input_tokens: 1_000, cache_read_input_tokens: 22_000 }), undefined, tokens)
+    assert.equal(tokens.getSummary().firstCallContextTokens, 23_000)
+
+    // A later round-trip re-reads the whole context plus accumulated tool
+    // output — that is occupancy, not prefix.
+    collect(messageStart({ input_tokens: 22, cache_read_input_tokens: 102_964 }), undefined, tokens)
+    const s = tokens.getSummary()
+    assert.equal(s.firstCallContextTokens, 23_000, 'prefix still describes the first call')
+    assert.equal(s.contextWindowTokens, 102_986, 'occupancy tracks the latest call')
+  })
 })
 
 // ── stream_event/message_delta ───────────────────────────────────────────────

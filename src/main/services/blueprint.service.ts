@@ -24,6 +24,7 @@ import { buildPhaseSystemPrompt, artifactBudgetForTier } from './blueprint-promp
 import { buildWorkspaceDocsBlock } from './blueprint-document-loader'
 import { safeParseJSON } from '../db/json-utils'
 import { validateTaskGraph } from './blueprint-task-validator'
+import { fingerprintPhaseError } from './blueprint-failure-fingerprint'
 import type {
   Blueprint,
   BlueprintPhase,
@@ -112,25 +113,6 @@ export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> =
 const MIRRORED_ARTIFACT_TYPES = new Set(['spec', 'plan', 'tasks', 'build'])
 
 // ── Helpers ──
-
-/**
- * F4 — stable identity of a phase error for recurrence detection.
- *
- * Strips the parts that legitimately vary between attempts (task ids, counts,
- * timestamps, paths) so "R045: verification failed" and "R041: verification
- * failed" fingerprint as the SAME failure — which they were, 20 times in a
- * row, while nothing in the loop noticed it was not converging.
- */
-function fingerprintPhaseError(error: string): string {
-  return error
-    .replace(/\b[TWR]\d{2,}\b/g, 'T###') // task ids R045, T003, W10
-    .replace(/\b\d+(?:\.\d+)?\b/g, '#') // counts, versions, timings
-    .replace(/[A-Za-z]:\\[^\s;]+/g, '<path>') // Windows paths
-    .replace(/(?:\/|\\)[\w.-]+(?:\/|\\)[\w.-]+/g, '<path>') // posix-ish paths
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 200)
-}
 
 /**
  * Types whose newest artifact SUPERSEDES the older ones.

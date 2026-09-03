@@ -596,8 +596,6 @@ describe('AgentStreamProcessor.processMetaChunk — usage attribution', () => {
     telemetryContext?: unknown
     streamLlmProvider?: string
     sessionLlmProvider?: string
-    /** Whether the tracker claims to have inserted a turn_usage row for THIS turn. */
-    turnRecorded?: boolean
   }): { host: Record<string, unknown>; recorded: RecordedOpts[] } {
     const noop = (): void => {}
     const recorded: RecordedOpts[] = []
@@ -630,10 +628,9 @@ describe('AgentStreamProcessor.processMetaChunk — usage attribution', () => {
       tokenTracker: {
         recordTurn: (_meta: unknown, opts: RecordedOpts) => {
           recorded.push(opts)
-          // Default turnRecorded:false keeps the context back-fill (and its DB
-          // write) out of the attribution tests — that path is covered by the
-          // prefix tests below, which opt in.
-          return { totalTokens: 1500, turnRecorded: over.turnRecorded ?? false }
+          // turnRecorded:false keeps the context back-fill (and its DB write)
+          // out of this test — that path has its own coverage.
+          return { totalTokens: 1500, turnRecorded: false }
         },
         getCacheEfficiency: () => ({
           hitRate: 0,
@@ -754,156 +751,9 @@ describe('AgentStreamProcessor.processMetaChunk — usage attribution', () => {
     dbAvailable ? undefined : { skipReason: 'no DB' }
   )
 
-  // ── prefix_tokens persistence ──
-  //
-  // context_tokens is a LAST-round-trip snapshot; prefix_tokens is the FIRST.
-  // Nothing else pins that the processor forwards the second one, and a silent
-  // regression would look exactly like "the prefix was never measured".
-
-  interface ContextWrite {
-    conversationId: string
-    contextTokens: number
-    prefixTokens?: number
-  }
-
-  /**
-   * Capture the repository write instead of asserting on a row.
-   *
-   * The harness starts every async test immediately and awaits them together,
-   * so the `_setDatabaseForTesting` calls in this describe interleave: a row
-   * seeded before an await is not guaranteed to be in the DB the repository
-   * resolves after it. Intercepting the singleton's method is deterministic,
-   * and no other test in this file touches it.
-   */
-  async function captureContextWrites(run: () => Promise<void>): Promise<ContextWrite[]> {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy: the DB module must not load before the test DB is installed
-    const { turnUsageRepository } = require('../../db/repositories/turn-usage.repository')
-    const original = turnUsageRepository.updateLastTurnContextTokens
-    const writes: ContextWrite[] = []
-    turnUsageRepository.updateLastTurnContextTokens = (
-      conversationId: string,
-      contextTokens: number,
-      prefixTokens?: number
-    ): void => {
-      writes.push({ conversationId, contextTokens, prefixTokens })
-    }
-    try {
-      await run()
-    } finally {
-      turnUsageRepository.updateLastTurnContextTokens = original
-    }
-    return writes
-  }
-
-  test(
-    'the first-call prefix is persisted alongside end-of-loop context',
-    async () => {
-      if (!dbAvailable) return
-      _setDatabaseForTesting(createTestDb())
-
-      const { host } = makeMetaHost({
-        telemetryContext: { blueprintId: 'bp-1', taskId: 'T3', attempt: 1 },
-        turnRecorded: true
-      })
-      const proc = new AgentStreamProcessor(host)
-      const writes = await captureContextWrites(() =>
-        proc.processMetaChunk(
-          {
-            tokenUsage: {
-              input: 22,
-              output: 500,
-              cacheReadInputTokens: 1_014_653,
-              cacheCreationInputTokens: 0,
-              contextWindowTokens: 102_986,
-              firstCallContextTokens: 28_400
-            }
-          } as never,
-          {
-            conversationId: 'conv-prefix',
-            turnCount: 1,
-            streamState: { ...streamState(), llmProvider: 'claude' } as never
-          }
-        )
-      )
-
-      assert.equal(writes.length, 1)
-      assert.equal(writes[0].contextTokens, 102_986, 'end-of-loop occupancy, unchanged')
-      assert.equal(writes[0].prefixTokens, 28_400, 'the prompt we actually sent')
-    },
-    dbAvailable ? undefined : { skipReason: 'no DB' }
-  )
-
-  test(
-    'a backend with no per-call snapshot reports no prefix, not the summed total',
-    async () => {
-      if (!dbAvailable) return
-      _setDatabaseForTesting(createTestDb())
-
-      // OpenCode's executor only accumulates totals. Falling back to the sum
-      // would report 1,014,675 as a "prefix" — a ~30x over-count that averages
-      // in silently. 0 here becomes NULL in the column, which is the honest answer.
-      const { host } = makeMetaHost({ turnRecorded: true })
-      const proc = new AgentStreamProcessor(host)
-      const writes = await captureContextWrites(() =>
-        proc.processMetaChunk(
-          {
-            tokenUsage: {
-              input: 22,
-              output: 500,
-              cacheReadInputTokens: 1_014_653,
-              cacheCreationInputTokens: 0
-            }
-          } as never,
-          {
-            conversationId: 'conv-opencode',
-            turnCount: 1,
-            streamState: { ...streamState(), llmProvider: 'glm' } as never
-          }
-        )
-      )
-
-      assert.equal(writes.length, 1)
-      assert.equal(writes[0].prefixTokens, 0, 'no prefix is invented from the sum')
-      assert.equal(writes[0].contextTokens, 1_014_675, 'occupancy keeps its existing fallback')
-    },
-    dbAvailable ? undefined : { skipReason: 'no DB' }
-  )
-
-  test(
-    'nothing is written when this turn recorded no row of its own',
-    async () => {
-      if (!dbAvailable) return
-      _setDatabaseForTesting(createTestDb())
-
-      // turnRecorded:false — the UPDATE targets the NEWEST row for the
-      // conversation, so writing here would stamp this turn's prefix onto the
-      // PREVIOUS turn's row.
-      const { host } = makeMetaHost({ turnRecorded: false })
-      const proc = new AgentStreamProcessor(host)
-      const writes = await captureContextWrites(() =>
-        proc.processMetaChunk(
-          {
-            tokenUsage: {
-              input: 0,
-              output: 0,
-              cacheReadInputTokens: 0,
-              cacheCreationInputTokens: 0,
-              contextWindowTokens: 120_354,
-              firstCallContextTokens: 31_000
-            }
-          } as never,
-          {
-            conversationId: 'conv-zero',
-            turnCount: 2,
-            streamState: { ...streamState(), llmProvider: 'claude' } as never
-          }
-        )
-      )
-
-      assert.equal(writes.length, 0, "turn 1's row is not stamped with turn 2's prefix")
-    },
-    dbAvailable ? undefined : { skipReason: 'no DB' }
-  )
+  // prefix_tokens is NOT written here — `record()` writes it at INSERT time from
+  // the same meta chunk, so its coverage lives in agent-token-tracker.test.ts,
+  // next to the write. Noted because this is the obvious place to look for it.
 })
 
 if (import.meta.url === `file://${process.argv[1]}`) {

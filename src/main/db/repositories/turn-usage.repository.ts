@@ -103,12 +103,21 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
     blueprintId?: string | null
     taskId?: string | null
     attempt?: number | null
+    /**
+     * First round-trip prompt size (the invariant prefix). Written here rather
+     * than back-filled: the caller already holds it when the row is inserted, so
+     * a second statement would only add a window in which it can be lost.
+     * Omitted or non-positive stores NULL — "never measured", not zero.
+     */
+    prefixTokens?: number | null
   }): TurnUsage {
     const db = this.db()
+    const prefixTokens =
+      opts.prefixTokens != null && opts.prefixTokens > 0 ? opts.prefixTokens : null
     const row = db
       .prepare(
-        `INSERT INTO turn_usage (session_id, conversation_id, turn_number, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, model, provider, blueprint_id, task_id, attempt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO turn_usage (session_id, conversation_id, turn_number, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, prefix_tokens, model, provider, blueprint_id, task_id, attempt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -119,6 +128,7 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
         opts.outputTokens,
         opts.cacheReadTokens,
         opts.cacheCreationTokens,
+        prefixTokens,
         opts.model ?? null,
         opts.provider ?? null,
         opts.blueprintId ?? null,
@@ -140,13 +150,20 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
     return rows.map(toModel)
   }
 
-  /** Get the most recent turn's usage for a conversation (for growth rate analysis) */
+  /**
+   * Get the most recent turn's usage for a conversation (for growth rate analysis).
+   *
+   * Tie-broken on `created_at`/`rowid`: `turn_number` is not unique by
+   * construction, and on a tie SQLite returns whichever row the scan reaches
+   * first — the OLDEST. Every blueprint-build conversation stores its single
+   * turn as `turn_number = 1`, so a duplicate would silently resolve backwards.
+   */
   getLastTurn(conversationId: string): TurnUsage | null {
     const db = this.db()
     const row = db
       .prepare(
         `SELECT * FROM turn_usage WHERE conversation_id = ?
-         ORDER BY turn_number DESC LIMIT 1`
+         ORDER BY turn_number DESC, created_at DESC, rowid DESC LIMIT 1`
       )
       .get(conversationId) as TurnUsageRow | undefined
     return row ? toModel(row) : null
@@ -178,28 +195,76 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
    * the original API-reported input_tokens, cache_read_tokens, or cache_creation_tokens.
    * This preserves cache data for analysis while still recording the full context size.
    *
-   * `prefixTokens` (the first round-trip's prompt size) is written in the SAME
-   * statement rather than by a second method: both target "the newest row for
-   * this conversation", and a second lookup is exactly the pattern that already
-   * produced a mis-targeted write. Omitted or non-positive leaves the existing
-   * value alone — NULL means "never measured", not zero.
+   * Deliberately does NOT write `prefix_tokens`: that value is known when the
+   * row is inserted, so `record()` writes it there. This method targets "the
+   * newest row for the conversation" rather than a row it owns, which is the
+   * shape that has already produced one mis-targeted write.
    */
-  updateLastTurnContextTokens(
-    conversationId: string,
-    contextTokens: number,
-    prefixTokens?: number
-  ): void {
+  updateLastTurnContextTokens(conversationId: string, contextTokens: number): void {
     const db = this.db()
-    const prefix = prefixTokens != null && prefixTokens > 0 ? prefixTokens : null
     db.prepare(
       `UPDATE turn_usage
-       SET context_tokens = ?, prefix_tokens = COALESCE(?, prefix_tokens)
+       SET context_tokens = ?
        WHERE id = (
          SELECT id FROM turn_usage
          WHERE conversation_id = ?
-         ORDER BY turn_number DESC LIMIT 1
+         ORDER BY turn_number DESC, created_at DESC, rowid DESC LIMIT 1
        )`
-    ).run(contextTokens, prefix, conversationId)
+    ).run(contextTokens, conversationId)
+  }
+
+  /**
+   * Gate T: the prefix floor over blueprint BUILD turns.
+   *
+   * BUILD turns are identified by `task_id IS NOT NULL`: every blueprint phase
+   * stamps `blueprint_id`, but only per-task BUILD work carries a task id. No
+   * join to `usage_log` is needed — that was only ever a way to reach `feature`
+   * before the v150 attribution columns existed.
+   *
+   * `measured` is deliberately separate from `turns`: the expected failure mode
+   * of this metric is not a wrong number but an absent one (OpenCode records no
+   * per-call snapshot, and neither does any pre-v152 row), and a floor computed
+   * over three rows out of two hundred should not be read as a floor at all.
+   *
+   * Use MIN, not AVG, to judge prefix work: the first-call prompt includes the
+   * per-task user message, so the average moves with task size while the floor
+   * tracks the invariant part.
+   */
+  getBlueprintPrefixStats(blueprintId?: string): {
+    turns: number
+    measured: number
+    minPrefixTokens: number | null
+    avgPrefixTokens: number | null
+    maxPrefixTokens: number | null
+  } {
+    const db = this.db()
+    const row = db
+      .prepare(
+        `SELECT COUNT(*)             AS turns,
+                COUNT(prefix_tokens) AS measured,
+                MIN(prefix_tokens)   AS min_prefix,
+                AVG(prefix_tokens)   AS avg_prefix,
+                MAX(prefix_tokens)   AS max_prefix
+         FROM turn_usage
+         WHERE blueprint_id IS NOT NULL
+           AND task_id IS NOT NULL
+           AND (? IS NULL OR blueprint_id = ?)`
+      )
+      .get(blueprintId ?? null, blueprintId ?? null) as {
+      turns: number
+      measured: number
+      min_prefix: number | null
+      avg_prefix: number | null
+      max_prefix: number | null
+    }
+
+    return {
+      turns: row.turns ?? 0,
+      measured: row.measured ?? 0,
+      minPrefixTokens: row.min_prefix ?? null,
+      avgPrefixTokens: row.avg_prefix != null ? Math.round(row.avg_prefix) : null,
+      maxPrefixTokens: row.max_prefix ?? null
+    }
   }
 
   /** Prune old turn usage records to prevent unbounded growth */

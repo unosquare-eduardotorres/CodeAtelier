@@ -450,6 +450,112 @@ if (!env) {
   })
 }
 
+// ════════════════════════════════════════════════════════════════════════
+// Gate T prediction — keeps §0.1's arithmetic honest
+//
+// DB-free on purpose: it runs even where the fixtures cannot.
+// ════════════════════════════════════════════════════════════════════════
+
+describe('Gate T prediction — the assembled prompt still implies the documented band', () => {
+  test('BASELINE_CHARS + MCP schemas land in the 22-35 K token band §0.1 claims', () => {
+    // docs/blueprint-execution-improvements.md §0.1 retracts "the next lever is
+    // the BUILD prompt scaffold" on the strength of this arithmetic: the whole
+    // invariant prefix is ~22-35 K tokens, so it cannot explain a 103 K "floor".
+    // If the assembled prompt moves far enough that the band no longer holds,
+    // the retraction's premise moved with it and the table needs re-deriving.
+    const CHARS_PER_TOKEN = 4
+    const MCP_SCHEMA_TOKENS = { min: 12_000, max: 16_000 } // 5 servers, §0.1
+    const DOCUMENTED_BAND = { min: 22_000, max: 35_000 }
+    const SLACK = 1_500 // the doc states the band to 1 significant figure
+
+    const predictedMin = Math.round(BASELINE_CHARS.canonical / CHARS_PER_TOKEN) + MCP_SCHEMA_TOKENS.min
+    const predictedMax = Math.round(BASELINE_CHARS.revised / CHARS_PER_TOKEN) + MCP_SCHEMA_TOKENS.max
+
+    console.log(
+      `\n  [prefix:predicted] invariant prefix ≈ ${predictedMin}-${predictedMax} tokens ` +
+        `(documented ${DOCUMENTED_BAND.min}-${DOCUMENTED_BAND.max})`
+    )
+
+    assert.ok(
+      Math.abs(predictedMin - DOCUMENTED_BAND.min) <= SLACK,
+      `predicted prefix floor ${predictedMin} tokens no longer matches the documented ` +
+        `${DOCUMENTED_BAND.min} — re-derive the §0.1 composition table before quoting it`
+    )
+    assert.ok(
+      Math.abs(predictedMax - DOCUMENTED_BAND.max) <= SLACK,
+      `predicted prefix ceiling ${predictedMax} tokens no longer matches the documented ` +
+        `${DOCUMENTED_BAND.max} — re-derive the §0.1 composition table before quoting it`
+    )
+
+    // The falsifier itself: once a run populates turn_usage.prefix_tokens,
+    // MIN() should land in this band. If it comes back near 100 K the fixtures
+    // understate the real prefix and §0.1 is wrong, not the measurement.
+    assert.ok(
+      predictedMax < 65_000,
+      'the predicted prefix exceeds the Gate T target on its own — the target, not the prefix, is the thing to revisit'
+    )
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════
+// BUILD's MCP surface — keeps §0.1's `leanBuildMcp` column honest
+//
+// DB-free on purpose (the adapter's buildMcpConfig reads app preferences, so
+// the tool LIST is asserted from the same constants it composes).
+//
+// §0.1 used to bill `leanBuildMcp` at the full 12–16 K of MCP schemas, which
+// is the cost of ALL FIVE servers. The flag drops two of them. This test is
+// the arithmetic, so the next person to quote a number has to move it here
+// first.
+// ════════════════════════════════════════════════════════════════════════
+
+describe('BUILD MCP surface — the documented per-server split', () => {
+  const { MCP_TOOLS } = require('../../../shared/constants')
+
+  /** The servers `blueprint-build.adapter.ts:99–129` puts in `allowedTools`. */
+  const BUILD_SERVERS = {
+    CODE_GRAPH: 15, // always on — `repomapEnabled && workspaceId`
+    SEMANTIC_SEARCH: 3, // dropped by leanBuildMcp
+    GIT_CONTEXT: 4, // always on — the commit protocol depends on it
+    CODE_ANALYSIS: 7, // dropped by leanBuildMcp
+    MEMORY: 3 // always on — phase prompts call memory_search/memory_record
+  } as const
+  const LEAN_DROPS = ['SEMANTIC_SEARCH', 'CODE_ANALYSIS'] as const
+
+  test('each server still carries the tool count §0.1 bills it for', () => {
+    for (const [server, expected] of Object.entries(BUILD_SERVERS)) {
+      assert.equal(
+        MCP_TOOLS[server]._ALL_NAMES.length,
+        expected,
+        `${server} now exposes ${MCP_TOOLS[server]._ALL_NAMES.length} tools, not ${expected} — ` +
+          're-derive the §0.1 MCP row before quoting it'
+      )
+    }
+  })
+
+  test('leanBuildMcp removes 10 of BUILD’s 32 tools — a third of the block, not all of it', () => {
+    const total = Object.values(BUILD_SERVERS).reduce((a, b) => a + b, 0)
+    const dropped = LEAN_DROPS.reduce((a, s) => a + BUILD_SERVERS[s], 0)
+
+    console.log(
+      `\n  [prefix:mcp] BUILD sends ${total} tools across ${Object.keys(BUILD_SERVERS).length} servers ` +
+        `| leanBuildMcp drops ${dropped} (${((dropped / total) * 100).toFixed(0)} %) ` +
+        `| code-graph alone is ${BUILD_SERVERS.CODE_GRAPH} (${((BUILD_SERVERS.CODE_GRAPH / total) * 100).toFixed(0)} %)`
+    )
+
+    assert.equal(total, 32, 'BUILD’s allowed-tool count moved — update §0.1')
+    assert.equal(dropped, 10, 'the lean flag’s saving moved — update §0.1')
+
+    // The claim the doc now makes, and the reason the flag is NOT the next
+    // lever: code-graph on its own outweighs everything lean mode can remove.
+    assert.ok(
+      BUILD_SERVERS.CODE_GRAPH > dropped,
+      'code-graph is supposed to be the larger candidate — if lean mode now removes more, ' +
+        're-rank the two in §0.1 and §3 Phase T'
+    )
+  })
+})
+
 // summaryAsync() calls process.exit() — only run it as the entry point.
 if (require.main === module) {
   void summaryAsync()

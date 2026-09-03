@@ -13,11 +13,22 @@
  * ledger — plus the ladder-shape invariants (bounded attempts, escalation only
  * after exhaustion, unverifiable never entering the ladder).
  *
+ * B3 adds a shortcut to that ladder: two IDENTICAL gate-failure fingerprints
+ * end the builder rungs early, because a third cold session with the same
+ * prompt cannot change a deterministic failure. Those tests drive the real
+ * `executeTaskWithGates` against a real temp git repo (the baseline capture
+ * needs one) with the session and the grader stubbed.
+ *
  * Run: tsx src/main/services/__tests__/blueprint-gate-ladder.test.ts
  */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 import { setupElectronStub } from './electron-stub'
+import { fingerprintGateFailure, fingerprintPhaseError } from '../blueprint-failure-fingerprint'
 
 setupElectronStub()
 
@@ -60,9 +71,7 @@ if (!env) {
 
   const failReport = (gate: string) => ({
     overall: 'fail',
-    gates: [
-      { name: gate, verdict: 'fail', evidence: ['boom'], durationMs: 1 }
-    ]
+    gates: [{ name: gate, verdict: 'fail', evidence: ['boom'], durationMs: 1 }]
   })
   const unverifiedReport = (gate: string, reason: string) => ({
     overall: 'unverifiable',
@@ -283,6 +292,210 @@ if (!env) {
       assert.equal(cleared.escalatedTo, null)
     })
   })
+
+  // ── B3 — stop-loss on a repeated gate-failure fingerprint ──
+
+  const GIT_AVAILABLE = ((): boolean => {
+    try {
+      execFileSync('git', ['--version'], { stdio: 'ignore' })
+      return true
+    } catch {
+      return false
+    }
+  })()
+
+  /** A one-commit repo — `captureGateBaseline` needs a real HEAD to resolve. */
+  function makeRepo(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'stop-loss-'))
+    execFileSync('git', ['init', '-q'], { cwd: dir })
+    execFileSync('git', ['config', 'user.email', 'ladder@test.local'], { cwd: dir })
+    execFileSync('git', ['config', 'user.name', 'Ladder Test'], { cwd: dir })
+    execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir })
+    writeFileSync(join(dir, 'a.ts'), 'export const a = 1\n')
+    execFileSync('git', ['add', '-A'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: dir })
+    return dir
+  }
+
+  const gateFail = (evidence: string): unknown => ({
+    overall: 'fail',
+    gates: [{ name: 'task-tests', verdict: 'fail', evidence: [evidence], durationMs: 1 }]
+  })
+
+  interface LadderRun {
+    builderRuns: number
+    escalated: boolean
+    attempts: number
+    failureReason: string | null
+  }
+
+  /**
+   * Drive the real `executeTaskWithGates` with the session and the grader
+   * stubbed: `grades[n]` is the verdict handed back for builder attempt n+1.
+   */
+  async function runLadder(grades: unknown[]): Promise<LadderRun> {
+    const dir = makeRepo()
+    const bp = blueprintRepository.create({ workspaceId: wsId, title: 'B3 stop-loss' })
+    const task = blueprintTaskRepository.create({
+      blueprintId: bp.id,
+      taskId: 'T001',
+      wave: 1,
+      description: 'Stop-loss task',
+      filePathsJson: ['a.ts']
+    })
+
+    const { BlueprintBuildService } = require('../blueprint-build.service')
+    const svc = new BlueprintBuildService()
+
+    let builderRuns = 0
+    let escalated = false
+    svc.executeTask = async (): Promise<unknown> => {
+      builderRuns++
+      return { success: true, completion: null, discoveries: [] }
+    }
+    let graded = 0
+    svc.gradeTask = async (): Promise<unknown> => grades[Math.min(graded++, grades.length - 1)]
+    svc.escalateToLead = async (): Promise<unknown> => {
+      escalated = true
+      return { success: false, completion: null, discoveries: [], failureReason: 'lead failed' }
+    }
+    // Keep the ladder off disk-scanning paths that have nothing to say here.
+    svc.resolveGateCommandsFor = (): unknown => ({})
+    svc.readManifestsCached = (): unknown => ({})
+
+    await svc.executeTaskWithGates({
+      task,
+      blueprintId: bp.id,
+      workspaceId: wsId,
+      workspacePath: dir,
+      executionPath: dir,
+      phaseContext: {} as never,
+      priorDiscoveries: [],
+      tDispatch: Date.now(),
+      waveNum: 1
+    })
+
+    const after = blueprintTaskRepository.findById(task.id)
+    // Removed here rather than in a trailing cleanup test: the harness starts
+    // async tests concurrently, so a shared teardown runs before they finish.
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      /* best effort */
+    }
+    return { builderRuns, escalated, attempts: after.attempts, failureReason: after.failureReason }
+  }
+
+  describe('B3 — stop-loss on a repeated gate-failure fingerprint', () => {
+    test(
+      'an identical failure twice cuts the ladder from 3 builder attempts to 2',
+      async () => {
+        const run = await runLadder([
+          gateFail('expected 3 assertions, got 0'),
+          // Same failure, different numbers/paths — the fingerprint normalises
+          // those away, which is the whole point: this is the SAME failure.
+          gateFail('expected 7 assertions, got 0'),
+          gateFail('expected 9 assertions, got 0')
+        ])
+        assert.equal(run.builderRuns, 2, 'the third builder attempt must be skipped')
+        assert.equal(run.escalated, true, 'the ladder still ends at the lead model')
+        assert.equal(run.attempts, 2, 'attempts follow the executions actually spent')
+        assert.match(
+          run.failureReason ?? '',
+          /stop-loss after 2 identical gate failure/,
+          'the skip must be recorded, not silent'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a VARYING failure keeps all 3 builder attempts',
+      async () => {
+        const run = await runLadder([
+          gateFail('unused variable foo'),
+          gateFail('missing return type'),
+          gateFail('unreachable code after return')
+        ])
+        assert.equal(run.builderRuns, 3, 'the builder is still moving — do not cut it short')
+        assert.equal(run.escalated, true)
+        assert.equal(run.attempts, 3)
+        assert.ok(
+          !(run.failureReason ?? '').includes('stop-loss'),
+          'no stop-loss when the fingerprint changes'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a pass on attempt 2 never reaches the stop-loss',
+      async () => {
+        const run = await runLadder([
+          gateFail('expected 3 assertions, got 0'),
+          { overall: 'pass', gates: [] }
+        ])
+        assert.equal(run.builderRuns, 2)
+        assert.equal(run.escalated, false, 'a pass ends the ladder')
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+  })
 }
+
+// ── B3 — the fingerprint itself (pure; runs without a DB) ──
+
+describe('failure fingerprint (B3)', () => {
+  test('normalises the parts that legitimately vary between attempts', () => {
+    const a = fingerprintPhaseError('R045: verification failed after 3 checks in src/main/a.ts')
+    const b = fingerprintPhaseError('R041: verification failed after 9 checks in src/main/b.ts')
+    assert.equal(a, b, 'task id, count and path must not make two identical failures differ')
+  })
+
+  test('keeps genuinely different failures apart', () => {
+    assert.notEqual(
+      fingerprintPhaseError('lint failed: unused variable'),
+      fingerprintPhaseError('lint failed: missing return type')
+    )
+  })
+
+  test('gate order does not change the fingerprint', () => {
+    const g = (name: string, evidence: string): unknown => ({
+      name,
+      verdict: 'fail',
+      evidence: [evidence],
+      durationMs: 1
+    })
+    const forward = fingerprintGateFailure({
+      overall: 'fail',
+      gates: [g('lint', 'unused variable'), g('task-tests', 'assertion failed')]
+    } as never)
+    const reversed = fingerprintGateFailure({
+      overall: 'fail',
+      gates: [g('task-tests', 'assertion failed'), g('lint', 'unused variable')]
+    } as never)
+    assert.equal(forward, reversed)
+  })
+
+  test('passing gates contribute nothing, and a clean report has no fingerprint', () => {
+    const withPass = fingerprintGateFailure({
+      overall: 'fail',
+      gates: [
+        { name: 'lint', verdict: 'pass', evidence: ['ok'], durationMs: 1 },
+        { name: 'task-tests', verdict: 'fail', evidence: ['boom'], durationMs: 1 }
+      ]
+    } as never)
+    const failOnly = fingerprintGateFailure({
+      overall: 'fail',
+      gates: [{ name: 'task-tests', verdict: 'fail', evidence: ['boom'], durationMs: 1 }]
+    } as never)
+    assert.equal(withPass, failOnly)
+
+    // An empty fingerprint must never compare equal to a previous one, or a
+    // report with no failing gate would trip the stop-loss on itself.
+    assert.equal(fingerprintGateFailure({ overall: 'pass', gates: [] } as never), '')
+    assert.equal(fingerprintGateFailure(null), '')
+  })
+})
 
 if (import.meta.url === `file://${process.argv[1]}`) void summaryAsync()

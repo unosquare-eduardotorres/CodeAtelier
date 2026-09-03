@@ -14,13 +14,15 @@ function mockMeta(
   input: number,
   output: number,
   cacheRead = 0,
-  cacheCreation = 0
+  cacheCreation = 0,
+  firstCallContextTokens?: number
 ): {
   tokenUsage: {
     input: number
     output: number
     cacheReadInputTokens: number
     cacheCreationInputTokens: number
+    firstCallContextTokens?: number
   }
 } {
   return {
@@ -28,7 +30,8 @@ function mockMeta(
       input,
       output,
       cacheReadInputTokens: cacheRead,
-      cacheCreationInputTokens: cacheCreation
+      cacheCreationInputTokens: cacheCreation,
+      ...(firstCallContextTokens != null ? { firstCallContextTokens } : {})
     }
   }
 }
@@ -356,6 +359,71 @@ describe('AgentTokenTracker — usage_log dual-write', () => {
       const turns = turnUsageRepository.findByConversation('conv-cached')
       assert.equal(turns.length, 1)
       assert.equal(turns[0].cacheReadTokens, 4000)
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  // ── prefix_tokens ──
+  //
+  // The invariant prefix (first round-trip prompt size) is written HERE, at
+  // INSERT, because the meta chunk that carries it is already in hand. It is a
+  // different quantity from context_tokens, which the stream processor
+  // back-fills from the LAST round-trip.
+
+  test(
+    'the first-call prefix is stored on the row it belongs to',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      // A real blueprint task: 22 input tokens against a 1M cache read, because
+      // ~10 round-trips each re-read the whole context. The prefix is what the
+      // FIRST of those calls sent.
+      tracker.recordTurn(mockMeta(22, 500, 1_014_653, 0, 28_400) as any, {
+        turnCount: 1,
+        conversationId: 'conv-prefix',
+        dbSessionId: 'sess-prefix',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        workspaceId: 'ws-prefix',
+        blueprintId: 'bp-1',
+        taskId: 'T3'
+      })
+
+      const turns = turnUsageRepository.findByConversation('conv-prefix')
+      assert.equal(turns.length, 1)
+      assert.equal(turns[0].prefixTokens, 28_400)
+      assert.equal(turns[0].cacheReadTokens, 1_014_653, 'cache data untouched')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'a backend with no per-call snapshot stores NULL, never the summed total',
+    () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+      const { tracker } = createTokenTracker()
+
+      // OpenCode only accumulates totals. Deriving a prefix from them would
+      // store 1,014,675 — a ~30x over-count that averages in silently. NULL can
+      // be filtered out of an average; a wrong number cannot.
+      tracker.recordTurn(mockMeta(22, 500, 1_014_653, 0) as any, {
+        turnCount: 1,
+        conversationId: 'conv-opencode',
+        dbSessionId: 'sess-opencode',
+        workspacePath: '/test/workspace',
+        feature: 'blueprint-build',
+        workspaceId: 'ws-opencode',
+        provider: 'glm',
+        blueprintId: 'bp-2',
+        taskId: 'T1'
+      })
+
+      const turns = turnUsageRepository.findByConversation('conv-opencode')
+      assert.equal(turns.length, 1)
+      assert.equal(turns[0].prefixTokens, null)
     },
     dbAvailable ? undefined : { skipReason: 'no DB' }
   )

@@ -632,6 +632,7 @@ const TEST_FILES: string[] = [
   // ─── DAG scheduler primitives (DAG BUILD) ───
   '../../../shared/__tests__/task-dag.test',
   './blueprint-dag-scheduler.test',
+  './blueprint-overload-attempts.test',
   // ─── DAG scheduling UI derivations (DAG BUILD D4) ───
   '../../../shared/__tests__/blueprint-dag-ui.test',
   './blueprint-gates.test',

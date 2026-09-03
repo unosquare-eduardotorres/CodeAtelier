@@ -197,11 +197,11 @@ if (!env) {
       // Original cache values preserved
       assert.equal(last!.cacheReadTokens, 100)
       assert.equal(last!.cacheCreationTokens, 50)
-      // Omitting the prefix leaves it unmeasured rather than recording a zero.
+      // The context back-fill must not disturb the prefix recorded at INSERT.
       assert.equal(last!.prefixTokens, null)
     })
 
-    test('updateLastTurnContextTokens() stores prefix and context in one write', () => {
+    test('record() stores the first-call prefix, distinct from context tokens', () => {
       const convId = seedConversation(db, wsId, 'Prefix Tokens')
       const sessionId = seedSession(convId)
       turnUsageRepository.record({
@@ -211,42 +211,115 @@ if (!env) {
         inputTokens: 22,
         outputTokens: 500,
         cacheReadTokens: 1_014_653,
-        cacheCreationTokens: 0
+        cacheCreationTokens: 0,
+        prefixTokens: 28_400
       })
 
-      // The two numbers are deliberately different quantities: 103 K is what the
-      // window held at the END of the agentic loop, 28 K is the prompt that was
-      // actually sent on the first call. Reading the former as a "prefix floor"
-      // is what made Gate T unreachable.
-      turnUsageRepository.updateLastTurnContextTokens(convId, 102_986, 28_400)
+      // Deliberately different quantities: 103 K is what the window held at the
+      // END of the agentic loop, 28 K is the prompt actually sent on the first
+      // call. Reading the former as a "prefix floor" is what made Gate T
+      // unreachable — so a later context back-fill must leave the prefix alone.
+      turnUsageRepository.updateLastTurnContextTokens(convId, 102_986)
+
       const last = turnUsageRepository.getLastTurn(convId)
-      assert.equal(last!.contextTokens, 102_986)
       assert.equal(last!.prefixTokens, 28_400)
+      assert.equal(last!.contextTokens, 102_986)
       assert.equal(last!.cacheReadTokens, 1_014_653, 'cache data untouched')
     })
 
-    test('updateLastTurnContextTokens() does not erase a recorded prefix', () => {
-      const convId = seedConversation(db, wsId, 'Prefix Preserved')
+    test('record() stores NULL for an absent or non-positive prefix', () => {
+      const convId = seedConversation(db, wsId, 'Prefix Absent')
       const sessionId = seedSession(convId)
-      turnUsageRepository.record({
+      const base = {
         sessionId,
         conversationId: convId,
-        turnNumber: 1,
         inputTokens: 100,
         outputTokens: 10,
         cacheReadTokens: 0,
         cacheCreationTokens: 0
+      }
+
+      // NULL means "never measured" — a stored 0 would read as a measurement and
+      // drag any average down. 0 is what a backend with no per-call snapshot
+      // produces, so it must not be written as data.
+      const omitted = turnUsageRepository.record({ ...base, turnNumber: 1 })
+      const zero = turnUsageRepository.record({ ...base, turnNumber: 2, prefixTokens: 0 })
+      const negative = turnUsageRepository.record({ ...base, turnNumber: 3, prefixTokens: -5 })
+
+      assert.equal(omitted.prefixTokens, null)
+      assert.equal(zero.prefixTokens, null)
+      assert.equal(negative.prefixTokens, null)
+    })
+
+    test('getBlueprintPrefixStats() reports the floor and how much of it is measured', () => {
+      const convId = seedConversation(db, wsId, 'Prefix Stats')
+      const sessionId = seedSession(convId)
+      const base = {
+        sessionId,
+        conversationId: convId,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        blueprintId: 'bp-stats'
+      }
+
+      // Three BUILD turns, one of them served by a backend that reports no
+      // per-call snapshot — the realistic mix once anything runs on OpenCode.
+      turnUsageRepository.record({ ...base, turnNumber: 1, inputTokens: 1, taskId: 'T1', prefixTokens: 31_000 })
+      turnUsageRepository.record({ ...base, turnNumber: 2, inputTokens: 1, taskId: 'T2', prefixTokens: 25_000 })
+      turnUsageRepository.record({ ...base, turnNumber: 3, inputTokens: 1, taskId: 'T3' })
+      // A non-BUILD phase turn of the SAME blueprint (blueprint_id, no task_id)
+      // and a chat turn (neither) must not enter the floor.
+      turnUsageRepository.record({ ...base, turnNumber: 4, inputTokens: 1, prefixTokens: 9_000 })
+      turnUsageRepository.record({
+        sessionId,
+        conversationId: convId,
+        turnNumber: 5,
+        inputTokens: 1,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        prefixTokens: 8_000
       })
 
-      turnUsageRepository.updateLastTurnContextTokens(convId, 50_000, 24_000)
-      // A later write with no prefix (or a zero one) must not overwrite the
-      // measurement with an absence.
-      turnUsageRepository.updateLastTurnContextTokens(convId, 90_000)
-      turnUsageRepository.updateLastTurnContextTokens(convId, 95_000, 0)
+      // Scoped to this blueprint: the unscoped call spans the whole table, which
+      // is what Gate T wants on a real DB but not what a shared test DB gives.
+      const stats = turnUsageRepository.getBlueprintPrefixStats('bp-stats')
+      assert.equal(stats.turns, 3, 'only per-task BUILD turns count')
+      assert.equal(stats.measured, 2, 'the unmeasured turn is reported, not silently averaged in')
+      assert.equal(stats.minPrefixTokens, 25_000)
+      assert.equal(stats.maxPrefixTokens, 31_000)
+      assert.equal(stats.avgPrefixTokens, 28_000)
+
+      const scoped = turnUsageRepository.getBlueprintPrefixStats('bp-other')
+      assert.equal(scoped.turns, 0)
+      assert.equal(scoped.measured, 0)
+      assert.equal(scoped.minPrefixTokens, null, 'no rows means no floor, not zero')
+      assert.equal(scoped.avgPrefixTokens, null)
+    })
+
+    test('getLastTurn() breaks a turn_number tie towards the newest row', () => {
+      const convId = seedConversation(db, wsId, 'Turn Tie')
+      const sessionId = seedSession(convId)
+      const base = {
+        sessionId,
+        conversationId: convId,
+        turnNumber: 1,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0
+      }
+
+      // Every blueprint-build conversation stores its single turn as turn 1, so
+      // a duplicate is one bug away. Without a tie-break SQLite returns whichever
+      // row the scan reaches first — the OLDEST — and the context back-fill then
+      // silently lands on the wrong row.
+      turnUsageRepository.record({ ...base, inputTokens: 100, prefixTokens: 11_000 })
+      turnUsageRepository.record({ ...base, inputTokens: 200, prefixTokens: 22_000 })
 
       const last = turnUsageRepository.getLastTurn(convId)
-      assert.equal(last!.contextTokens, 95_000, 'occupancy still tracks the latest value')
-      assert.equal(last!.prefixTokens, 24_000)
+      assert.equal(last!.inputTokens, 200)
+      assert.equal(last!.prefixTokens, 22_000)
     })
 
     test('pruneOlderThan() removes old records', () => {

@@ -51,6 +51,7 @@ import {
   asStringArray
 } from './blueprint-artifact-parsers'
 import { verifyBuildTaskFiles } from './blueprint-task-verification'
+import { fingerprintGateFailure } from './blueprint-failure-fingerprint'
 import {
   buildGateFixInstructions,
   captureGateBaseline,
@@ -1284,8 +1285,8 @@ export class BlueprintBuildService extends EventEmitter {
           const retryFiles = settled.entry.files
           const discoverySnapshot = [...result.discoveries]
           const retryPromise = abortAwareSleep(delay, abortSignal ?? undefined)
-            .then(() =>
-              this.executeTask({
+            .then(async () => {
+              const retryResult = await this.executeTask({
                 task: retryTask,
                 blueprintId,
                 workspaceId,
@@ -1296,7 +1297,15 @@ export class BlueprintBuildService extends EventEmitter {
                 tDispatch: Date.now(),
                 waveNum: retryTask.wave
               })
-            )
+              // An overload re-dispatch is a distinct execution and must count as
+              // one, exactly like the three ladder rungs. Without this the retry
+              // and the attempt it replaced share an attempt number, on precisely
+              // the failure path `turn_usage.attempt` exists to study. Recorded
+              // AFTER the call for the same reason as the ladder sites: executeTask
+              // reads `attempts` to derive its own attempt number.
+              blueprintTaskRepository.recordAttempt(retryTask.id)
+              return retryResult
+            })
             .catch((_err): TaskResult => ({
               success: false,
               completion: null,
@@ -1816,8 +1825,8 @@ export class BlueprintBuildService extends EventEmitter {
           const retryFiles = settled.entry.files
           const discoverySnapshot = [...result.discoveries]
           const retryPromise = abortAwareSleep(delay, abortSignal ?? undefined)
-            .then(() =>
-              this.executeTask({
+            .then(async () => {
+              const retryResult = await this.executeTask({
                 task: retryTask,
                 blueprintId,
                 workspaceId,
@@ -1828,7 +1837,11 @@ export class BlueprintBuildService extends EventEmitter {
                 tDispatch: Date.now(), // Fresh tDispatch for mtime-freshness check
                 waveNum
               })
-            )
+              // Same fix as executeDag: the re-dispatch is its own attempt.
+              // §1.2's standing warning — both schedulers or neither.
+              blueprintTaskRepository.recordAttempt(retryTask.id)
+              return retryResult
+            })
             .catch((_err): TaskResult => {
               // Abort during sleep → treat as failed (flows into drain path)
               return {
@@ -2150,6 +2163,8 @@ export class BlueprintBuildService extends EventEmitter {
 
     let gateFixInstructions: string | undefined
     let lastResult: TaskResult | null = null
+    /** B3 — fingerprint of the previous attempt's gate failure, for the stop-loss. */
+    let lastFingerprint = ''
 
     for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
       // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
@@ -2193,15 +2208,30 @@ export class BlueprintBuildService extends EventEmitter {
         .map((g) => g.name)
         .join(', ')
 
+      // B3 — task-level stop-loss. The phase ladder has carried a recurrence
+      // fingerprint since F4; the task ladder had none, so a deterministic gate
+      // failure bought MAX_BUILDER_ATTEMPTS full cold sessions — each paying the
+      // whole prefix — to produce the same bytes. Two identical fingerprints is
+      // the evidence that the builder is not converging; the only rung left that
+      // can change the outcome is a DIFFERENT model on a different prompt, so go
+      // there now instead of after the third identical failure. A fingerprint
+      // that VARIES keeps today's behaviour exactly — the builder is still moving.
+      const fingerprint = fingerprintGateFailure(report)
+      const stalled = fingerprint !== '' && fingerprint === lastFingerprint
+      lastFingerprint = fingerprint
+
       this.safeEmit('phaseProgress', {
         blueprintId,
         workspaceId,
         phase: 'build',
         text:
           `⚠ Task ${task.taskId} failed quality gate(s): ${failedNames} — ` +
-          (attempt < MAX_BUILDER_ATTEMPTS
-            ? `retrying (attempt ${attempt + 1}/${MAX_BUILDER_ATTEMPTS})`
-            : 'escalating to the lead-review model'),
+          (stalled
+            ? `identical failure ${attempt}× in a row, skipping the remaining builder ` +
+              `attempt(s) — escalating to the lead-review model`
+            : attempt < MAX_BUILDER_ATTEMPTS
+              ? `retrying (attempt ${attempt + 1}/${MAX_BUILDER_ATTEMPTS})`
+              : 'escalating to the lead-review model'),
         kind: 'system'
       })
 
@@ -2210,6 +2240,24 @@ export class BlueprintBuildService extends EventEmitter {
         success: false,
         failureReason: `quality gate failed: ${failedNames}`,
         gateReport: report
+      }
+
+      if (stalled) {
+        // Persist the reason the ladder was cut short. handleTaskCompletion only
+        // records an outcome for the FINAL verdict, and escalation may still
+        // pass — without this the skipped rungs leave no trace at all.
+        blueprintTaskRepository.setOutcome(task.id, {
+          failureReason:
+            `stop-loss after ${attempt} identical gate failure(s) ` +
+            `(${failedNames}) — skipped ${MAX_BUILDER_ATTEMPTS - attempt} builder ` +
+            `attempt(s), escalated to blueprint:lead-review`
+        })
+        bpLog.warn(
+          `[gates] Task ${task.taskId} stop-loss: gate failure fingerprint unchanged ` +
+            `across ${attempt} attempts — skipping ${MAX_BUILDER_ATTEMPTS - attempt} ` +
+            `builder attempt(s) and escalating`
+        )
+        break
       }
     }
 

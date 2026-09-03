@@ -25,7 +25,7 @@ export interface McpServerConfig {
 }
 
 /**
- * Essential code-graph tools for small-tier models (6 tools instead of 13).
+ * Essential code-graph tools for small-tier models (6 tools instead of 15).
  * These cover the core navigation workflow without bloating the 32K window.
  */
 const ESSENTIAL_CODE_GRAPH_TOOLS = [
@@ -367,7 +367,7 @@ function buildLocalProviderMcpConfig(opts: {
 
   // Build allowed tools list — tier-gated subset for code-graph
   const conditionalTools = [
-    // Code graph: small tier → 6 essential tools; medium/large → full 13
+    // Code graph: small tier → 6 essential tools; medium/large → full 15
     ...(codeGraphEnabled
       ? tier === 'small'
         ? [...ESSENTIAL_CODE_GRAPH_TOOLS]

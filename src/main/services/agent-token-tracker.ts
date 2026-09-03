@@ -156,6 +156,15 @@ export class AgentTokenTracker {
           outputTokens: meta.tokenUsage.output,
           cacheReadTokens: cacheReadInputTokens,
           cacheCreationTokens: cacheCreationInputTokens,
+          // The invariant prefix — the FIRST round-trip's prompt size, before any
+          // tool result accumulated. A different quantity from `context_tokens`,
+          // which the stream processor back-fills from the LAST round-trip and is
+          // 3-4x larger on an agentic loop. Never derived from the summed totals:
+          // that sum spans every round-trip and over-states a prefix by ~10-30x,
+          // so a backend reporting no per-call usage (OpenCode) leaves it NULL —
+          // `record()` stores NULL for anything not strictly positive, which also
+          // absorbs a NaN or negative from a malformed executor report.
+          prefixTokens: meta.tokenUsage.firstCallContextTokens,
           model: opts.model ?? modelConfigService.getModel(opts.workspacePath, 'specialist'),
           provider: opts.provider ?? null,
           blueprintId: opts.blueprintId ?? null,
