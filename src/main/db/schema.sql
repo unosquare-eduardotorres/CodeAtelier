@@ -144,15 +144,17 @@ CREATE TABLE IF NOT EXISTS conversation_specialists (
 
 CREATE INDEX IF NOT EXISTS idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id);
+-- idx_messages_parent lives in migration 157: parent_message_id is added by
+-- migration 58, so on an upgrade the column is not there yet when this file runs.
 CREATE INDEX IF NOT EXISTS idx_attachments_conversation ON attachments(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_specialists_priority ON specialists(priority);
 CREATE INDEX IF NOT EXISTS idx_skills_active ON skills(is_active);
 CREATE INDEX IF NOT EXISTS idx_conversation_specialists_conversation ON conversation_specialists(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversation_specialists_specialist ON conversation_specialists(specialist_id);
 -- specialist_conversation_history indexes removed: table was dropped in migration v89
-CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id);
+-- idx_agent_sessions_workspace / idx_agent_sessions_conversation live in
+-- migration 157: both columns are added by migration 10, so on an upgrade from
+-- an older baseline they are not there yet when this file runs.
 
 -- Ideas: quick-capture work item drafts per workspace
 CREATE TABLE IF NOT EXISTS ideas (
@@ -442,7 +444,10 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_turn_usage_session ON turn_usage(session_id);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_conversation ON turn_usage(conversation_id);
-CREATE INDEX IF NOT EXISTS idx_turn_usage_blueprint ON turn_usage(blueprint_id);
+-- idx_turn_usage_blueprint lives in migration 157, NOT here. schema.sql runs
+-- BEFORE the migration chain, and on an UPGRADE the table already exists in its
+-- old shape, so CREATE TABLE IF NOT EXISTS is a no-op and blueprint_id does not
+-- exist yet. Indexing it here threw and aborted the rest of this file.
 
 -- ── Unified Token Usage Log ────────────────────────────────────────────────
 
@@ -474,7 +479,8 @@ CREATE INDEX IF NOT EXISTS idx_usage_log_workspace ON usage_log(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_usage_log_feature ON usage_log(feature);
 CREATE INDEX IF NOT EXISTS idx_usage_log_conversation ON usage_log(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_usage_log_created ON usage_log(created_at);
-CREATE INDEX IF NOT EXISTS idx_usage_log_blueprint ON usage_log(blueprint_id);
+-- idx_usage_log_blueprint lives in migration 157 — see the note on
+-- idx_turn_usage_blueprint above.
 
 -- ── Workspace Health: Audit Runs & Results ────────────────────────────────────
 

@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 156
+export const CURRENT_SCHEMA_VERSION = 157
 
 export interface Migration {
   version: number
@@ -4821,6 +4821,42 @@ export const migrations: Migration[] = [
 
       dbLogger.info('[migration-156] ✓ Added blueprint_telemetry')
     }
+  },
+  {
+    version: 157,
+    name: 'indexes-on-migration-added-columns',
+    up: (db) => {
+      // Every index here used to live in schema.sql, which runs BEFORE the
+      // migration chain. On a fresh database that was fine — schema.sql creates
+      // each table already carrying the column. On an UPGRADE it was not: the
+      // table already exists in its older shape, so CREATE TABLE IF NOT EXISTS
+      // is a no-op, the column is not there yet, and the CREATE INDEX threw.
+      // `db.exec` stops at the first failing statement, so EVERY later statement
+      // in schema.sql was silently skipped — for the blueprint_id pair that
+      // meant the whole `blueprint_telemetry` table — and migrations never ran
+      // at all. Any install below the relevant version came up on its old schema
+      // with no error surfaced. See the guard around `db.exec(SCHEMA_SQL)`.
+      //
+      // Why a migration of their own rather than moving each into the migration
+      // that adds its column: on a fresh database those migrations' first ALTER
+      // raises 'duplicate column name', which rolls the transaction back, so
+      // anything sharing that `up()` never runs. An index-only migration has
+      // nothing that can throw, so it lands on both paths. All statements are
+      // IF NOT EXISTS — on an upgrade most already exist and this is a no-op.
+      // `parent_message_id` comes from migration 58; the `agent_sessions` pair
+      // from migration 10; the `blueprint_id` pair from migration 150.
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_usage_log_blueprint ON usage_log(blueprint_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_turn_usage_blueprint ON turn_usage(blueprint_id)`)
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_message_id)`)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_agent_sessions_workspace ON agent_sessions(workspace_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_agent_sessions_conversation ON agent_sessions(conversation_id)`
+      )
+
+      dbLogger.info('[migration-157] ✓ Indexes on migration-added columns moved out of schema.sql')
+    }
   }
 ]
 
@@ -4944,8 +4980,28 @@ export function getDatabase(): Database.Database {
 
   db.pragma('foreign_keys = ON')
 
-  // Run schema (creates tables if not exist) — inlined at build time via ?raw import
-  db.exec(SCHEMA_SQL)
+  // Run schema (creates tables if not exist) — inlined at build time via ?raw import.
+  //
+  // Guarded exactly like the migration step below, and for the same reason. A
+  // throw here used to escape an ALREADY-ASSIGNED `db`, so the first caller saw
+  // one error and every later `getDatabase()` returned the cached handle at the
+  // top of this function — skipping the rest of the schema AND the entire
+  // migration chain for the life of the process. That is the zombie state the
+  // migration guard was written to prevent, reached through the door next to it:
+  // the app ran on an old schema, and the only symptom was whichever unrelated
+  // query happened to touch a missing column first.
+  try {
+    db.exec(SCHEMA_SQL)
+  } catch (schemaError) {
+    dbLogger.error('[DB] Schema apply failed — closing DB to prevent zombie state:', schemaError)
+    try {
+      db.close()
+    } catch {
+      /* best-effort close */
+    }
+    db = null
+    throw schemaError
+  }
 
   // Run versioned migrations (only pending ones).
   // Standalone MCP-server processes (spawned with DB_PATH) must NOT run migrations —

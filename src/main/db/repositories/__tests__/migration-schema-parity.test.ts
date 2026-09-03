@@ -215,6 +215,89 @@ if (!env) {
       }
     })
 
+    /**
+     * THE UPGRADE-PATH RULE, and the one this suite was missing.
+     *
+     * Both DBs above start empty, so both exercise the FRESH path only. The
+     * failure that actually shipped needs an existing database: schema.sql runs
+     * before the migration chain, and on an upgrade every table already exists
+     * in its old shape, so `CREATE TABLE IF NOT EXISTS` is a no-op. A column a
+     * migration adds is therefore NOT there yet when schema.sql's own
+     * `CREATE INDEX` on it runs — it throws, `db.exec` abandons every later
+     * statement in the file, and migrations never run. The app then comes up on
+     * its old schema with nothing but an unrelated "no such column" warning.
+     *
+     * Static rather than executed, because reconstructing an old baseline is
+     * exactly what this file's header explains is impossible. It needs no
+     * baseline: an index in schema.sql over a column some migration ALTERs in is
+     * a landmine by construction, whatever the installed version happens to be.
+     */
+    test('no index in schema.sql covers a column a migration adds later', () => {
+      // `ALTER TABLE <t> ADD COLUMN <c>` across the whole chain → t → {c}
+      const addedByMigration = new Map<string, Set<string>>()
+      for (const m of migrations) {
+        const body = m.up.toString()
+        const re = /ALTER\s+TABLE\s+`?(\w+)`?\s+ADD\s+COLUMN\s+`?(\w+)`?/gi
+        let hit: RegExpExecArray | null
+        while ((hit = re.exec(body))) {
+          const [, table, column] = hit
+          if (!addedByMigration.has(table)) addedByMigration.set(table, new Set())
+          addedByMigration.get(table)!.add(column)
+        }
+      }
+
+      const offenders: string[] = []
+      const indexRe = /CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+(\w+)\s+ON\s+(\w+)\s*\(([^)]*)\)/gi
+      let idx: RegExpExecArray | null
+      while ((idx = indexRe.exec(SCHEMA_SQL))) {
+        const [, indexName, table, colList] = idx
+        const migrated = addedByMigration.get(table)
+        if (!migrated) continue
+        for (const raw of colList.split(',')) {
+          // Strip DESC/ASC/COLLATE so `(created_at DESC)` still compares as a column.
+          const col = raw.trim().split(/\s+/)[0].replace(/`/g, '')
+          if (migrated.has(col)) offenders.push(`${indexName} → ${table}.${col}`)
+        }
+      }
+
+      assert.deepEqual(
+        offenders,
+        [],
+        `schema.sql indexes a migration-added column: ${offenders.join(', ')}. ` +
+          'On an upgrade that column does not exist when schema.sql runs, so the ' +
+          'statement throws and every LATER statement in schema.sql is skipped. ' +
+          'Move the index into its own migration (see 157).'
+      )
+    })
+
+    test('the indexes moved out of schema.sql still reach a fresh install', () => {
+      // The other half of the same fix: deleting them from schema.sql must not
+      // quietly drop them, and the migration that adds each column cannot carry
+      // them — its first ALTER raises 'duplicate column name' on a fresh DB,
+      // rolling back the whole `up()` before any CREATE INDEX in it runs.
+      const db = migratedDb()
+      try {
+        const names = new Set(
+          (
+            db
+              .prepare(`SELECT name FROM sqlite_master WHERE type='index'`)
+              .all() as { name: string }[]
+          ).map((r) => r.name)
+        )
+        for (const idx of [
+          'idx_usage_log_blueprint',
+          'idx_turn_usage_blueprint',
+          'idx_messages_parent',
+          'idx_agent_sessions_workspace',
+          'idx_agent_sessions_conversation'
+        ]) {
+          assert.ok(names.has(idx), `${idx} is missing from a fresh install`)
+        }
+      } finally {
+        db.close()
+      }
+    })
+
     test('blueprint_telemetry accepts an unknown kind without a schema change', () => {
       const db = migratedDb()
       try {
