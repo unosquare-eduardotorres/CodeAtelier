@@ -507,6 +507,34 @@ export interface AppPreferences {
   dagScheduling: boolean
   /** When true, Blueprint BUILD/VERIFY phases bypass all permission prompts (default: true). */
   blueprintAutoMode: boolean
+  /**
+   * E3 — prepend the whole-feature diff to VERIFY's first message (default: false).
+   *
+   * Off by default on purpose. The failure mode is verify's pass-rate rising
+   * because the agent stopped hunting: levels 1–2 of its methodology are about
+   * what is MISSING, and a diff shows only what was written. Un-flagged, that
+   * looks exactly like success. The success criterion is fewer verify tool-turns
+   * at an UNCHANGED finding rate — which E11's telemetry can now measure.
+   */
+  verifyFeatureDiff: boolean
+  /**
+   * P2 — replace the raw `build-partial` transcript tail injected into a BUILD
+   * retry with a fixed-schema failure memory extracted by one Haiku call
+   * (default: false).
+   *
+   * Scope: `build-partial` is only ever written by an exception handler, so this
+   * affects retries that follow a THROW (stall, transport, spawn) — not retries
+   * that follow a failed quality gate, which carry `gateFixInstructions` and
+   * produce no transcript artifact at all.
+   *
+   * Off by default because the thing being measured is whether structure beats
+   * volume: the raw dump is 4000 unstructured characters of whatever the
+   * attempt happened to end on. The success criterion is the resolution rate of
+   * retries that followed a throw, not a smaller prompt — a cheaper retry that
+   * resolves fewer tasks is a loss. Falls back to the raw dump whenever
+   * extraction fails.
+   */
+  blueprintFailureMemory: boolean
 }
 
 // ── Workspace Deploy Models ──
@@ -1155,7 +1183,14 @@ export const CONFIRMATION_SOURCE_TYPES = [
   'human',
   'tool',
   'extraction',
-  'bootstrap'
+  'bootstrap',
+  /**
+   * The fact was injected into a turn's context. Weak evidence of relevance,
+   * recorded at most once per fact per calendar day, and deliberately excluded
+   * from the distinct-source-type gate — use proves a fact is useful, not that
+   * it is corroborated.
+   */
+  'retrieval'
 ] as const
 
 export type ConfirmationSourceType = (typeof CONFIRMATION_SOURCE_TYPES)[number]
@@ -1411,6 +1446,84 @@ export interface MemoryRetrievalResult {
   fact: MemoryFact
   score: number // combined relevance score
   matchType: 'cosine' | 'keyword' | 'hybrid'
+}
+
+/**
+ * Minimum confidence for a T0 → T1 promotion.
+ *
+ * Sits just above the 0.3 threshold at which `decayFacts` demotes a tier, so a
+ * decayed fact cannot be immediately re-promoted by the next sweep. Shared so
+ * the promotion rule and the diagnostics that explain it cannot drift apart.
+ */
+export const MEMORY_T0_PROMOTION_MIN_CONFIDENCE = 0.35
+
+/** Minimum evidence confirmations (non-`auto_dedup`) for a T0 → T1 promotion. */
+export const MEMORY_T0_PROMOTION_MIN_CONFIRMS = 3
+
+/** Minimum distinct calendar days of evidence for a T0 → T1 promotion. */
+export const MEMORY_T0_PROMOTION_MIN_DAYS = 3
+
+/**
+ * Weight of a `retrieval` confirmation.
+ *
+ * Deliberately far below the 1.0 of real evidence: being read is a much weaker
+ * claim than being independently re-observed. Retrieval is excluded from the
+ * weighted-sum gate outright (see `computePromotionTierPure`), so this weight
+ * is a record of how much the event is worth rather than something promotion
+ * math spends — it stays fractional so that remains true if it is ever used.
+ */
+export const MEMORY_RETRIEVAL_CONFIRMATION_WEIGHT = 0.25
+
+/**
+ * Confidence a fact regains per day on which it was retrieved.
+ *
+ * Without this, decay and the T0→T1 confidence floor combine into a trap: a
+ * fact that decayed below 0.35 stops decaying the moment it is retrieved again
+ * (`findStale` keys off `last_accessed_at`), but nothing raises confidence
+ * except `confirmFact`, which retrieval deliberately bypasses. The fact then
+ * sits at, say, 0.25 forever — retrieved every day, accruing evidence, and
+ * permanently ineligible for promotion. That is exactly the population
+ * retrieval-as-evidence was introduced to rescue.
+ *
+ * Small on purpose: roughly two weeks of daily use to climb back from a single
+ * decay step, so recovery reflects sustained reliance rather than one lookup.
+ */
+export const MEMORY_RETRIEVAL_CONFIDENCE_RECOVERY = 0.01
+
+/**
+ * Ceiling for confidence regained through retrieval alone.
+ *
+ * Equal to the confidence a newly-extracted fact starts at, which is the point:
+ * being read a lot can undo decay, but it can never make a fact *more* certain
+ * than a fresh observation. Anything above this has to be earned with real
+ * corroboration through `confirmFact`.
+ */
+export const MEMORY_RETRIEVAL_CONFIDENCE_CEILING = 0.5
+
+/**
+ * Read-only promotion diagnostics for the Memory page.
+ *
+ * Answers "why is nothing being promoted?" — the tier histogram shows the
+ * shape of the pyramid, and the stuck buckets name the single gate each
+ * eligible-looking T0 fact is failing.
+ */
+export interface MemoryPromotionDiagnostics {
+  /** Active fact count per tier, indexed 0–3. */
+  tierCounts: [number, number, number, number]
+  /**
+   * Active, non-volatile facts still at T0 despite having enough evidence
+   * confirmations to be considered. Each fact lands in exactly one bucket —
+   * the first gate it fails, in the order the promotion rule checks them.
+   */
+  stuck: {
+    total: number
+    /** Has the confirms, but they fall on fewer than 3 distinct days. */
+    needsMoreDays: number
+    /** Has the confirms and the days, but confidence is below the floor. */
+    needsConfidence: number
+    /** Passes every gate — the next promotion sweep should lift these. */
+    awaitingSweep: number
+  }
 }
 
 /** Embedding status summary for the UI banner. */

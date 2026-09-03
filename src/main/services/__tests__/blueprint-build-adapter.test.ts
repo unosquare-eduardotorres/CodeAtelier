@@ -246,7 +246,7 @@ describe('BlueprintBuildAdapter', () => {
 
   // ── Phase 1.2: Prompt reorder dedup ──
 
-  test('buildPhaseSystemPrompt_contains_tool_priority_and_finalization_checklist', () => {
+  test('buildPhaseSystemPrompt_contains_exactly_one_tool_priority_section', () => {
     const adapter = new BlueprintBuildAdapter({
       workspaceId: 'ws-1',
       blueprintId: 'bp-1',
@@ -254,12 +254,60 @@ describe('BlueprintBuildAdapter', () => {
       taskContext: 'Implement auth module'
     })
     const prompt = (adapter as any).buildPhaseSystemPrompt() as string
-    // Template has comprehensive Tool Priority table; TOOL_PRIORITY_DIRECTIVE_BUILDER adds
-    // a condensed reminder + Finalization Checklist. Both are expected.
-    assert.ok(prompt.includes('## Tool Priority'), 'should contain ## Tool Priority')
-    assert.ok(prompt.includes('## Finalization Checklist'), 'should contain Finalization Checklist')
-    // The appendToolGuidance dedup should NOT add a third one
-    // (verified by the base class's includes check)
+
+    // E7. BUILD used to carry TWO `## Tool Priority` sections in its
+    // task-invariant prefix — build-phase.md's routing table plus a concatenated
+    // TOOL_PRIORITY_DIRECTIVE_BUILDER — re-sent on every one of ~31 calls per
+    // attempt in the phase that accounts for most of the pipeline's tokens.
+    // The directive's non-redundant parts now live in the template.
+    const headings = prompt.match(/^## Tool Priority$/gm) ?? []
+    assert.equal(
+      headings.length,
+      1,
+      `expected exactly one '## Tool Priority' section, found ${headings.length}`
+    )
+
+    // The three things the merge had to carry over, or the guidance regressed.
+    assert.ok(
+      prompt.includes('file_outline` **before** `Read`'),
+      'file_outline-before-Read ordering must survive the merge'
+    )
+    assert.ok(
+      prompt.includes('find_references` **before** changing any signature'),
+      'find_references-before-signature-change must survive the merge'
+    )
+    assert.ok(
+      prompt.includes('Inspection vs. execution'),
+      'the inspection-vs-execution rule must survive the merge'
+    )
+    assert.ok(
+      prompt.includes('npm run typecheck'),
+      'the typecheck rung must survive the merge'
+    )
+    assert.ok(
+      prompt.includes('up to 2 rounds'),
+      'Self-Check has no iteration limit of its own — dropping the checklist ' +
+        'without its bound invites lint loops'
+    )
+  })
+
+  // Guard: `base.adapter.ts` appends the GENERIC TOOL_PRIORITY_DIRECTIVE unless
+  // the prompt already contains the literal '## Tool Priority'. That check is
+  // the only thing stopping a second directive from arriving by a different
+  // door now that the builder one is gone — so it is pinned on the exact string.
+  test('buildPhaseSystemPrompt_satisfies_base_adapter_dedup_check', () => {
+    const adapter = new BlueprintBuildAdapter({
+      workspaceId: 'ws-1',
+      blueprintId: 'bp-1',
+      phaseContext: basePhaseContext,
+      taskContext: 'Implement auth module'
+    })
+    const prompt = (adapter as any).buildPhaseSystemPrompt() as string
+    assert.ok(
+      prompt.includes('## Tool Priority'),
+      "base.adapter.ts's appendToolGuidance() keys off this exact heading; if " +
+        'build-phase.md renames it, the generic directive silently returns'
+    )
   })
 
   test('buildPhaseSystemPrompt_task_section_at_end_after_tool_priority', () => {

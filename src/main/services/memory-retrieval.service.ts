@@ -241,7 +241,25 @@ class MemoryRetrievalService {
       }
 
       // Touch accessed facts
-      memoryFactRepository.touchFacts(selected.map((r) => r.fact.id))
+      const accessedIds = selected.map((r) => r.fact.id)
+      memoryFactRepository.touchFacts(accessedIds)
+
+      // Record use as weak evidence. `touchFacts` only moves last_accessed_at,
+      // which protects a fact from decay but can never promote it — so a
+      // convention that was retrieved and relied on every day, and never
+      // contradicted, previously accrued no evidence at all and sat at T0
+      // forever. Rate-limited to once per fact per calendar day inside the
+      // repository, and it does not touch confidence: this writes evidence and
+      // lets the existing promotion sweep decide.
+      //
+      // Caught separately: the context is already built at this point, and
+      // bookkeeping must never cost the turn its memory. The outer catch
+      // returns '', so letting this throw would silently disable injection.
+      try {
+        memoryFactRepository.recordRetrievalConfirmations(accessedIds)
+      } catch (err) {
+        log.warn('[MemoryRetrieval] recording retrieval evidence failed:', err)
+      }
 
       return formatted
     } catch (err) {

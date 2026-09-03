@@ -20,7 +20,6 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { execFileSync } from 'node:child_process'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -53,13 +52,17 @@ import type {
   BlueprintPhaseCompletion
 } from '../../shared/blueprint-types'
 import type { UnverifiedItem } from '../../shared/gate-types'
+import { assembleFeatureDiff, MAX_FEATURE_DIFF_CHARS } from './blueprint-feature-diff'
 
 const bpLog = log.scope('blueprint-code-review')
 
 const PHASE_TIMEOUT_MS = 30 * 60_000 // 30 min
 
-/** Whole-diff cap. A diff beyond this is summarized, not shipped raw. */
-const MAX_DIFF_CHARS = 120_000
+/**
+ * Whole-diff cap. A diff beyond this is summarized, not shipped raw.
+ * E3: re-exported from the shared module so the two review phases cannot drift.
+ */
+const MAX_DIFF_CHARS = MAX_FEATURE_DIFF_CHARS
 
 /** Findings at or above this severity become fix tasks. */
 const FIX_TASK_SEVERITIES = new Set(['critical', 'high'])
@@ -137,19 +140,6 @@ export function parseCodeReviewFindings(
       : 'concerns_noted') as CodeReviewResult['verdict']
 
   return { findings, verdict }
-}
-
-/** Run a git subcommand in the workspace (sync, best-effort). */
-function gitSync(args: string[], cwd: string): string | null {
-  try {
-    return execFileSync('git', args, {
-      cwd,
-      encoding: 'utf-8',
-      maxBuffer: 16 * 1024 * 1024
-    })
-  } catch {
-    return null
-  }
 }
 
 export class BlueprintCodeReviewService extends EventEmitter {
@@ -485,33 +475,16 @@ export class BlueprintCodeReviewService extends EventEmitter {
 
   /**
    * M7.1 — whole-feature diff: `git diff <baseline>..HEAD` where the baseline
-   * is the run's starting commit. Stored on the blueprint record at build
-   * start (settingsJson.buildBaselineCommit, captured by startBuildPhase);
-   * falls back to a merge-base against main.
+   * is the run's starting commit.
+   *
+   * E3: the implementation moved to `blueprint-feature-diff.ts` and is shared
+   * with lead-review (which carried a byte-identical copy) and verify (which
+   * needs the baseline half). The contract — null / '' / capped-string — is
+   * unchanged; the cap is now the module's `MAX_FEATURE_DIFF_CHARS`, which is
+   * the same 120 K this file used to declare for itself.
    */
   private assembleFeatureDiff(blueprintId: string, workspacePath: string): string | null {
-    const blueprint = blueprintRepository.findById(blueprintId)
-    if (!blueprint) return null
-
-    const settings = (blueprint.settingsJson ?? {}) as Record<string, unknown>
-    let baseline: string | null =
-      typeof settings.buildBaselineCommit === 'string' ? settings.buildBaselineCommit : null
-
-    if (!baseline) {
-      // Fallback: merge-base with the default branch — the diff since the
-      // blueprint's branch diverged. Better than nothing; recorded as such.
-      const mb = gitSync(['merge-base', 'HEAD', 'main'], workspacePath)
-      baseline = mb?.trim() || null
-    }
-
-    if (!baseline) return null
-
-    const diff = gitSync(['diff', '--no-color', `${baseline}..HEAD`, '--'], workspacePath)
-    if (diff === null) return null
-    if (diff.trim() === '') return '' // clean tree — nothing built? still reviewable as empty
-    return diff.length > MAX_DIFF_CHARS
-      ? diff.slice(0, MAX_DIFF_CHARS) + '\n… (diff truncated for review)'
-      : diff
+    return assembleFeatureDiff(blueprintId, workspacePath, MAX_DIFF_CHARS)
   }
 
   // ── M7.3: findings → fix tasks + one re-review ──

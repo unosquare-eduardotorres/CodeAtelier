@@ -253,6 +253,69 @@ if (!env) {
     })
   })
 
+  // ── A4 follow-up: five adapters, one role, five usage buckets ──
+
+  describe('blueprint-review adapters declare distinct usage features', () => {
+    const phaseContext = {
+      blueprint: { id: 'bp-1', title: 'T' },
+      constitution: null,
+      previousArtifacts: [],
+      specFilePath: '',
+      blueprintDir: '',
+      grillDecisions: [],
+      workspaceDocs: ''
+    }
+
+    /** Every adapter that shares `role: 'blueprint-review'`, with its own feature. */
+    function buildAll(): { name: string; role: string; feature: unknown }[] {
+      const req = (f: string): any =>
+        require(`../role-adapters/blueprint/blueprint-${f}.adapter`)
+      const base = { workspaceId: 'ws-1', blueprintId: 'bp-1', phaseContext }
+
+      const made: any[] = [
+        new (req('peer-review').BlueprintPeerReviewAdapter)({
+          ...base,
+          diff: '',
+          packet: null,
+          taskDescription: 'T'
+        }),
+        new (req('lead-review').BlueprintLeadReviewAdapter)({ ...base }),
+        new (req('code-review').BlueprintCodeReviewAdapter)({ ...base }),
+        new (req('plan-revision').BlueprintPlanRevisionAdapter)({ ...base }),
+        new (req('review').BlueprintReviewAdapter)({ ...base })
+      ]
+      return made.map((a) => ({
+        name: a.constructor.name,
+        role: a.role,
+        feature: a.telemetryContext?.feature
+      }))
+    }
+
+    test('all five share the blueprint-review role', () => {
+      for (const a of buildAll()) {
+        assert.equal(a.role, 'blueprint-review', `${a.name} must keep the shared CLI profile`)
+      }
+    })
+
+    test('but each carries a DISTINCT telemetry feature', () => {
+      const all = buildAll()
+      const features = all.map((a) => a.feature)
+      for (const a of all) {
+        assert.equal(
+          typeof a.feature,
+          'string',
+          `${a.name} has no usage feature — note that usageFeature is read from the ` +
+            'BASE constructor, so an override that reads an instance field is undefined here'
+        )
+      }
+      assert.equal(
+        new Set(features).size,
+        all.length,
+        `features must be unique, got: ${features.join(', ')}`
+      )
+    })
+  })
+
   // ── Off-rubric rejection integration ──
 
   describe('M5 — off-rubric rejection (parsePeerReview integration)', () => {

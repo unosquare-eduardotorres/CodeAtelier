@@ -188,6 +188,37 @@ if (!gitAvailable || !dbContext) {
     if (back && back !== 'HEAD') await git.checkout(back)
   }
 
+  /**
+   * Make `origin/<branch>` exist, pointing wherever `at` does.
+   *
+   * This is what a fetch leaves behind, and it is all the remote-base code ever
+   * reads — nothing here clones or talks to a network, because nothing in
+   * production does either: the refs are used exactly as they sit on disk.
+   * `origin` is registered as a remote so `getRemotes` returns it, which is how
+   * `origin/x` is recognised as a remote-tracking ref rather than a branch
+   * somebody happened to name with a slash in it.
+   */
+  async function fetchedInto(dir: string, branch: string, at: string): Promise<void> {
+    const git = simpleGit(dir)
+    const remotes = await git.getRemotes(false)
+    if (!remotes.some((r) => r.name === 'origin')) await git.addRemote('origin', dir)
+    await git.raw(['update-ref', `refs/remotes/origin/${branch}`, at])
+  }
+
+  /**
+   * The state remote bases exist for: `origin/main` a commit ahead of local
+   * `main`, with the checkout left on `main`. Returns the origin tip.
+   */
+  async function originAheadOfMain(dir: string): Promise<string> {
+    await commitOnBranch(dir, 'upstream', 'main', 'landed-upstream.md')
+    const tip = (await simpleGit(dir).revparse(['upstream'])).trim()
+    await fetchedInto(dir, 'main', 'upstream')
+    // The local branch that carried the commit is deleted so nothing but the
+    // remote-tracking ref can be the source of a passing assertion.
+    await simpleGit(dir).raw(['branch', '-D', 'upstream'])
+    return tip
+  }
+
   /** The `auto` choice every blueprint gets when the user says nothing. */
   const AUTO = { mode: 'auto' as const }
 
@@ -554,6 +585,124 @@ if (!gitAvailable || !dbContext) {
         assert.equal(base.branch, 'main')
       })
     })
+
+    // ── Remote fork points ──
+    //
+    // A remote ref plays two roles that must not be conflated: the fork point
+    // (which has to stay `origin/main`, or picking it achieved nothing) and the
+    // recorded base (which has to become local `main`, or the run lands in an
+    // `integration/origin/main` no other run will ever look at).
+
+    test('forking from origin/main keeps origin/main as the fork point', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        const originTip = await originAheadOfMain(dir)
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'origin/main' }
+        })
+
+        assert.equal(base.branch, 'origin/main', 'normalising here would fork from the stale tip')
+        assert.equal(base.commit, originTip)
+        assert.equal(base.isRemote, true)
+        assert.equal(base.source, 'blueprint-fork')
+      })
+    })
+
+    test('...while recording the local counterpart as the base', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        await originAheadOfMain(dir)
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'origin/main' }
+        })
+
+        assert.equal(base.integrationBase, 'main')
+      })
+    })
+
+    test('a remote with no local counterpart keeps its own name as the base', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        // Never checked out locally, which is the ordinary state of a colleague's
+        // branch. There is nothing to substitute, so nothing is.
+        await commitOnBranch(dir, 'their-work', 'main', 'theirs.md')
+        await fetchedInto(dir, 'feature-x', 'their-work')
+        await simpleGit(dir).raw(['branch', '-D', 'their-work'])
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'origin/feature-x' }
+        })
+
+        assert.equal(base.branch, 'origin/feature-x')
+        assert.equal(base.integrationBase, 'origin/feature-x')
+        assert.equal(base.isRemote, true)
+      })
+    })
+
+    test('a local branch merely NAMED origin/x is not mistaken for a remote', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        // Legal, and people do it. Rewriting this to `weird` would fork from a
+        // different branch than the one the user picked.
+        await commitOnBranch(dir, 'weird', 'main', 'weird.md')
+        await commitOnBranch(dir, 'origin/weird', 'main', 'named-like-a-remote.md')
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'origin/weird' }
+        })
+
+        assert.equal(base.branch, 'origin/weird')
+        assert.equal(base.integrationBase, 'origin/weird', 'no local counterpart was substituted')
+        assert.equal(base.isRemote, false)
+      })
+    })
+
+    test('the integration upgrade follows the LOCAL counterpart of a remote base', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        // The accumulation guarantee at resolution level: `integration/main` is
+        // where landed work lives, and picking `origin/main` must still find it
+        // rather than looking for an `integration/origin/main` that never exists.
+        await originAheadOfMain(dir)
+        await commitOnBranch(dir, 'integration/main', 'main', 'already-landed.md')
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'origin/main' }
+        })
+
+        assert.equal(base.branch, 'integration/main')
+        assert.equal(base.upgradedToIntegration, true)
+        assert.equal(base.resolvedFrom, 'origin/main')
+        assert.equal(base.integrationBase, 'integration/main', 'it is its own landing target')
+        assert.equal(base.isRemote, false, 'the upgraded branch is local')
+      })
+    })
+
+    test('an integration branch NOT ahead of the remote base is still not used', async () => {
+      await withBlueprint(async ({ dir, wsId }) => {
+        // `integration/main` level with local `main` is behind `origin/main`, so
+        // forking from it would throw away the commits the remote was picked for.
+        await simpleGit(dir).raw(['branch', 'integration/main', 'main'])
+        await originAheadOfMain(dir)
+
+        const base = await resolveBlueprintBase({
+          workspaceId: wsId,
+          repoPath: dir,
+          choice: { mode: 'fork', branch: 'origin/main' }
+        })
+
+        assert.equal(base.branch, 'origin/main')
+        assert.equal(base.upgradedToIntegration, false)
+        assert.equal(base.integrationBase, 'main')
+      })
+    })
   })
 
   // ── Provenance ─────────────────────────────────────────
@@ -581,30 +730,199 @@ if (!gitAvailable || !dbContext) {
       })
     })
 
-    test('ensureTrack stores which rule chose the base', async () => {
+    // Every test below reserves BEFORE building, because that is the only
+    // ordering production ever uses: `blueprint.ipc.ts` reserves the branch
+    // before SPECIFY, so by the time BUILD runs the ref always exists. Calling
+    // `ensureBlueprintTrack` on a repo with no reservation tests a path no real
+    // run takes — and it is exactly what hid the bug these tests now cover.
+    async function reserveThenBuild(
+      dir: string,
+      wsId: string,
+      bpId: string,
+      between?: () => Promise<void>
+    ): Promise<{ name: string; target: { isolated: boolean; path: string } }> {
+      const name = await reserveBlueprintBranch({
+        blueprintId: bpId,
+        workspaceId: wsId,
+        workspacePath: dir
+      })
+      assert.ok(name, 'the reservation must create the branch, as it does in production')
+      await between?.()
+      const target = await ensureBlueprintTrack({
+        blueprintId: bpId,
+        workspaceId: wsId,
+        workspacePath: dir
+      })
+      return { name: name as string, target }
+    }
+
+    const tipOf = async (dir: string, ref: string): Promise<string> =>
+      (await simpleGit(dir).revparse([ref])).trim()
+
+    test('BUILD records the rule that chose the base, not that the branch existed', async () => {
       await withBlueprint(async ({ dir, wsId, bpId }) => {
         setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
 
-        const target = await ensureBlueprintTrack({
-          blueprintId: bpId,
-          workspaceId: wsId,
-          workspacePath: dir
-        })
+        const mainTip = await tipOf(dir, 'main')
+        const { name, target } = await reserveThenBuild(dir, wsId, bpId)
         assert.equal(target.isolated, true)
+
+        // The branch was already exactly at the base, so nothing should have
+        // moved — a reconcile that rewinds an untouched branch is still a bug.
+        assert.equal(await tipOf(dir, name), mainTip, 'nothing was rewound')
 
         const track = trackRepository.findByOwner('blueprint', bpId)
         assert.equal(track?.baseBranch, 'main')
         assert.equal(track?.baseSource, 'workspace-setting')
+        assert.equal(track?.baseCommit, mainTip)
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
       })
     })
 
-    // R6 / premortem 4: an existing branch keeps its own tip, so the base was
-    // never consulted. Recording the rule that picked an unused base would be a
-    // confident lie the next reader has no way to detect.
-    test('a branch that already exists records existing-branch, not the base', async () => {
+    // The defect this whole reconciliation exists for. The branch is cut at run
+    // start; BUILD arrives phases later, and the base has moved on. Without the
+    // fast-forward, `worktree add` uses the branch's stale tip while the row
+    // records the current base name — git and the database disagreeing.
+    test('a base that advanced during the earlier phases is picked up at BUILD', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+
+        const { name, target } = await reserveThenBuild(dir, wsId, bpId, async () => {
+          // Somebody merges to main while SPECIFY→TASKS run. The intervening
+          // phases write artifacts to the DB, never to the branch, so the
+          // blueprint branch still has no commits of its own.
+          await commitOnBranch(dir, 'main', 'main', 'landed-while-planning.md')
+        })
+
+        const mainTip = await tipOf(dir, 'main')
+        assert.equal(target.isolated, true)
+        assert.equal(await tipOf(dir, name), mainTip, 'the branch was fast-forwarded to the base')
+        assert.ok(
+          existsSync(join(target.path, 'landed-while-planning.md')),
+          'BUILD actually works on top of the newer base, not just records it'
+        )
+
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        assert.equal(track?.baseSource, 'workspace-setting', 'the real rule, not existing-branch')
+        assert.equal(track?.baseCommit, mainTip)
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    // The other half: a branch carrying work is never moved, whatever the base
+    // has done since. `existing-branch` is then the honest record — the base
+    // really was not consulted — and a base commit would be a lie.
+    test('a branch with commits of its own is left alone and records existing-branch', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        setWorkspaceSettings(wsId, { blueprintBaseBranch: 'main' })
+
+        let ownTip = ''
+        const { name, target } = await reserveThenBuild(dir, wsId, bpId, async () => {
+          const reserved = readSettings(bpId).branchName as string
+          await commitOnBranch(dir, reserved, reserved, 'own-work.md')
+          ownTip = await tipOf(dir, reserved)
+          await commitOnBranch(dir, 'main', 'main', 'landed-while-planning.md')
+        })
+
+        assert.equal(target.isolated, true)
+        assert.equal(await tipOf(dir, name), ownTip, 'the branch keeps its own tip')
+        assert.ok(
+          existsSync(join(target.path, 'own-work.md')),
+          'and the tree it gets is that branch, not the base'
+        )
+
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        assert.equal(track?.baseSource, 'existing-branch')
+        assert.equal(track?.baseCommit, null, 'no base commit, because no base was used')
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    // ── Remote fork points, end to end ──
+
+    test('a run forked from origin/main is CUT from the origin tip', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const originTip = await originAheadOfMain(dir)
+        const mainTip = await tipOf(dir, 'main')
+        setBranchChoice(bpId, { mode: 'fork', branch: 'origin/main' })
+
+        const { name, target } = await reserveThenBuild(dir, wsId, bpId)
+
+        assert.equal(target.isolated, true)
+        assert.equal(await tipOf(dir, name), originTip, 'forked from the remote, as asked')
+        assert.notEqual(originTip, mainTip, 'the local branch really was behind')
+        assert.ok(
+          existsSync(join(target.path, 'landed-upstream.md')),
+          'and the tree BUILD gets contains the upstream work, not just a ref that names it'
+        )
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    test('...and RECORDS the local counterpart, with the origin tip as its base commit', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        const originTip = await originAheadOfMain(dir)
+        setBranchChoice(bpId, { mode: 'fork', branch: 'origin/main' })
+
+        await reserveThenBuild(dir, wsId, bpId)
+
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        assert.equal(track?.baseBranch, 'main', 'the name landing derives its target from')
+        assert.equal(track?.baseSource, 'blueprint-fork')
+        // Nothing is lost by recording the local NAME: the commit column still
+        // pins the exact origin tip the run was actually cut from.
+        assert.equal(track?.baseCommit, originTip)
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    test('a run forked from origin/main lands in integration/main, not integration/origin/main', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        // The accumulation guarantee, asserted where it actually breaks. Landing
+        // reads `baseBranch` off the row and derives its target from it, so a row
+        // saying `origin/main` would send this run to a branch of its own that no
+        // other run — and no promotion to mainline — will ever look at.
+        await originAheadOfMain(dir)
+        setBranchChoice(bpId, { mode: 'fork', branch: 'origin/main' })
+
+        await reserveThenBuild(dir, wsId, bpId)
+
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        const { integrationBranchFor } = require('../landing.service')
+        assert.equal(integrationBranchFor(track?.baseBranch as string), 'integration/main')
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    test('a remote with no local counterpart is recorded under its own name', async () => {
+      await withBlueprint(async ({ dir, wsId, bpId }) => {
+        await commitOnBranch(dir, 'their-work', 'main', 'theirs.md')
+        const theirTip = await tipOf(dir, 'their-work')
+        await fetchedInto(dir, 'feature-x', 'their-work')
+        await simpleGit(dir).raw(['branch', '-D', 'their-work'])
+        setBranchChoice(bpId, { mode: 'fork', branch: 'origin/feature-x' })
+
+        const { name } = await reserveThenBuild(dir, wsId, bpId)
+
+        assert.equal(await tipOf(dir, name), theirTip)
+        const track = trackRepository.findByOwner('blueprint', bpId)
+        assert.equal(track?.baseBranch, 'origin/feature-x', 'there was nothing to substitute')
+        assert.equal(track?.baseCommit, theirTip)
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
+      })
+    })
+
+    test('a takeover records existing-branch — it continues a branch, it forks nothing', async () => {
       await withBlueprint(async ({ dir, wsId, bpId }) => {
         await commitOnBranch(dir, 'feat/handover')
-        setBranchChoice(bpId, { mode: 'fork', branch: 'main', name: 'feat/handover' })
+        setBranchChoice(bpId, { mode: 'takeover', branch: 'feat/handover' })
 
         const target = await ensureBlueprintTrack({
           blueprintId: bpId,
@@ -615,6 +933,9 @@ if (!gitAvailable || !dbContext) {
 
         const track = trackRepository.findByOwner('blueprint', bpId)
         assert.equal(track?.baseSource, 'existing-branch')
+        assert.equal(track?.baseCommit, null)
+
+        await trackService.releaseTrack('blueprint', bpId, { discard: true })
       })
     })
   })

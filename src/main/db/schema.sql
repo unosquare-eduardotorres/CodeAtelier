@@ -621,6 +621,31 @@ CREATE TABLE IF NOT EXISTS blueprint_tasks (
 CREATE INDEX IF NOT EXISTS idx_bp_tasks_blueprint ON blueprint_tasks(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_bp_tasks_wave ON blueprint_tasks(wave);
 
+-- E11 — attempt-level blueprint execution telemetry (migration 156).
+--
+-- Its own table rather than a widening of `events`: `events.category` carries a
+-- CHECK that has been out of sync between this file and the migrated chain since
+-- migration 44 (which added 'telemetry' here and explicitly skipped the rebuild),
+-- so writing here would pass on a fresh dev DB and violate the CHECK on any
+-- upgraded install. Widening a shared, hot table's CHECK to serve one feature is
+-- how that divergence happened in the first place.
+--
+-- `kind` deliberately has NO CHECK. Adding a telemetry kind must never require a
+-- table rebuild; that is the lesson of migration 44. Values in use:
+--   stall | nudge | auto_retry | overload | escalation | stop_loss | scheduler
+CREATE TABLE IF NOT EXISTS blueprint_telemetry (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  blueprint_id TEXT NOT NULL,
+  phase TEXT,
+  task_id TEXT,
+  attempt INTEGER,
+  kind TEXT NOT NULL,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_bp_telemetry_blueprint ON blueprint_telemetry(blueprint_id);
+CREATE INDEX IF NOT EXISTS idx_bp_telemetry_kind ON blueprint_telemetry(kind, created_at);
+
 -- E2E test runs: track each test execution batch
 CREATE TABLE IF NOT EXISTS e2e_test_runs (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

@@ -9,6 +9,7 @@ import type {
   MemoryFactCategory,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
+  MemoryPromotionDiagnostics,
   MemoryFactTier,
   MemorySourceType,
   IngestionProgress,
@@ -46,6 +47,7 @@ interface MemoryState {
   contradictionsPendingCount: number
   searchQuery: string
   embeddingStatus: MemoryEmbeddingStatus | null
+  promotionDiagnostics: MemoryPromotionDiagnostics | null
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
@@ -107,6 +109,7 @@ interface MemoryState {
 
   // Embedding actions
   loadEmbeddingStatus: (workspaceId: string) => Promise<void>
+  loadPromotionDiagnostics: (workspaceId: string) => Promise<void>
   triggerBackfill: (workspaceId: string) => Promise<void>
   clearBackfillError: () => void
 
@@ -175,6 +178,7 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   contradictionsPendingCount: 0,
   searchQuery: '',
   embeddingStatus: null,
+  promotionDiagnostics: null,
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
@@ -385,6 +389,15 @@ export const useMemoryStore = create<MemoryState>((set) => ({
     }
   },
 
+  loadPromotionDiagnostics: async (workspaceId) => {
+    try {
+      const promotionDiagnostics = await window.api.memoryPromotionDiagnostics({ workspaceId })
+      set({ promotionDiagnostics })
+    } catch (error) {
+      rendererLog.error('Failed to load promotion diagnostics:', error)
+    }
+  },
+
   triggerBackfill: async (workspaceId) => {
     let unsubscribe: (() => void) | null = null
     try {
@@ -441,9 +454,14 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   runConsolidation: async (workspaceId) => {
     try {
       const result = await window.api.memoryConsolidate({ workspaceId })
-      // Refresh facts + contradictions after consolidation
+      // Refresh facts + contradictions after consolidation. Diagnostics too:
+      // consolidation runs the promotion sweep, so it is the one action most
+      // likely to move the tier histogram and empty the stuck buckets — a
+      // promotion panel that still showed the pre-sweep numbers would be
+      // reporting on the question it was just asked to answer.
       await useMemoryStore.getState().loadFacts(workspaceId)
       await useMemoryStore.getState().loadContradictions()
+      await useMemoryStore.getState().loadPromotionDiagnostics(workspaceId)
       return result
     } catch (error) {
       rendererLog.error('Failed to run consolidation:', error)

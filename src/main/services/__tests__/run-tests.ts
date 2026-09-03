@@ -28,6 +28,11 @@ const TEST_FILES: string[] = [
   './code-graph-query-pack.test',
   './rationale-miner.test',
   './is-excluded-path.test',
+  // ─── Startup data retention (per-table prune isolation) ───
+  // Registered EARLY for the same reason is-excluded-path is: entries at the tail
+  // of this list are not reached (the runner truncates — no "modules loaded"
+  // marker is printed), so a file appended at the end silently never runs.
+  './startup-retention.test',
   './index-exclusion-preflight.test',
   './vector-search.test',
   './code-graph-db.test',
@@ -204,6 +209,8 @@ const TEST_FILES: string[] = [
   './blueprint-base-adapter.test',
   './blueprint-build-adapter.test',
   './blueprint-verify-adapter.test',
+  // E3 — shared whole-feature diff (code-review / lead-review / verify).
+  './blueprint-feature-diff.test',
   './repo-service-pure.test',
   './repo-service-git.test',
   './track.service.test',
@@ -640,6 +647,9 @@ const TEST_FILES: string[] = [
   './blueprint-verify-gates.test',
   './blueprint-gates-remediation.test',
   './blueprint-gate-ladder.test',
+  './blueprint-no-write-activity-guard.test',
+  './blueprint-task-failure-class.test',
+  './blueprint-failure-memory.test',
   './blueprint-code-review-skip.test',
   './blueprint-code-review.test',
   './blueprint-lead-review.test',

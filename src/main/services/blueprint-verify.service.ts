@@ -14,7 +14,6 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { execFileSync } from 'node:child_process'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -50,6 +49,7 @@ import {
   summarizeLedger,
   type GateReport
 } from '../../shared/gate-types'
+import { resolveFeatureBaseline } from './blueprint-feature-diff'
 import { resolveGateCommands } from '../../shared/gate-command-resolver'
 import type { GateCommandSet } from '../../shared/gate-command-types'
 import { scanGateCommands } from './blueprint-preflight.service'
@@ -120,15 +120,6 @@ export function salvageCompletionFromGates(
     findings: [],
     gateSalvaged: true
   } as BlueprintPhaseCompletion
-}
-
-/** Run a git subcommand in the execution tree (sync, best-effort). */
-function gitSync(args: string[], cwd: string): string | null {
-  try {
-    return execFileSync('git', args, { cwd, encoding: 'utf-8', maxBuffer: 10 * 1024 * 1024 })
-  } catch {
-    return null
-  }
 }
 
 export class BlueprintVerifyService extends EventEmitter {
@@ -240,7 +231,16 @@ export class BlueprintVerifyService extends EventEmitter {
       )
 
       // 3. Create adapter + session
-      const adapter = new BlueprintVerifyAdapter({ workspaceId, blueprintId, phaseContext })
+      // E3: `executionPath`, not `workspacePath` — the phase runs in the track's
+      // worktree, and that is the tree `resolveFeatureBaseline` and the
+      // structural gate already read. Passing the workspace root would diff a
+      // different checkout.
+      const adapter = new BlueprintVerifyAdapter({
+        workspaceId,
+        blueprintId,
+        phaseContext,
+        workspacePath: executionPath
+      })
 
       const blueprint = blueprintService.getBlueprint(blueprintId)
       adapter.setGoalCondition(buildVerifyGoalCondition(blueprint?.title ?? 'Unknown'), 'enforce')
@@ -1196,17 +1196,11 @@ export class BlueprintVerifyService extends EventEmitter {
    * `assembleFeatureDiff`. Null when neither resolves (⇒ structural `no_git`).
    */
   private resolveFeatureBaseline(blueprintId: string, executionPath: string): string | null {
-    try {
-      const blueprint = blueprintRepository.findById(blueprintId)
-      const settings = (blueprint?.settingsJson ?? {}) as Record<string, unknown>
-      if (typeof settings.buildBaselineCommit === 'string' && settings.buildBaselineCommit) {
-        return settings.buildBaselineCommit
-      }
-      const mb = gitSync(['merge-base', 'HEAD', 'main'], executionPath)
-      return mb?.trim() || null
-    } catch {
-      return null
-    }
+    // E3: shared with both review phases. The null return is load-bearing here
+    // in a way it is not there — `runStructuralGate` turns it into `no_git` — so
+    // the shared helper keeps the same try/catch-to-null contract rather than
+    // throwing on a missing blueprint or an absent git.
+    return resolveFeatureBaseline(blueprintId, executionPath)
   }
 
   // ── Remediation fallback ──────────────────────────────────────────────

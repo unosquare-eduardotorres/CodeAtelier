@@ -77,6 +77,29 @@ describe('humanizeFailureReason — pattern mapping', () => {
     assert.match(humanizeFailureReason('quality gate failed: G3'), /quality gate/)
   })
 
+  test('B3 stop-loss reason reports the repeat count, not the canned sentence', () => {
+    // Exactly the shape blueprint-build.service.ts appends: the escalation
+    // reason first, the stop-loss clause after it.
+    const out = humanizeFailureReason(
+      'quality gate failed: lint — stop-loss after 2 identical gate failure(s) ' +
+        '(lint) — skipped 1 builder attempt(s), escalated to blueprint:lead-review'
+    )
+    assert.match(out, /same quality gate 2× in a row/)
+    assert.match(out, /remaining builder attempts were skipped/)
+    assert.doesNotMatch(
+      out,
+      /failed a deterministic quality gate/,
+      'the generic branch must not win — it discards the counts'
+    )
+  })
+
+  test('a plain gate failure still falls through to the generic sentence', () => {
+    assert.equal(
+      humanizeFailureReason('quality gate failed: lint'),
+      'The task output failed a deterministic quality gate.'
+    )
+  })
+
   test('unknown reason surfaces verbatim (never hidden)', () => {
     assert.equal(humanizeFailureReason('some novel failure xyz'), 'some novel failure xyz')
   })

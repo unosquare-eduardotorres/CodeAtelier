@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 153
+export const CURRENT_SCHEMA_VERSION = 156
 
 export interface Migration {
   version: number
@@ -4709,6 +4709,117 @@ export const migrations: Migration[] = [
       db.exec(`ALTER TABLE work_tracks ADD COLUMN base_source TEXT`)
 
       dbLogger.info('[migration-153] ✓ Added work_tracks.base_source')
+    }
+  },
+  {
+    version: 154,
+    name: 'track-base-commit',
+    up: (db) => {
+      // `base_branch` names a moving target. Asking "what did this run fork
+      // from?" six weeks later resolves that name against a branch that has
+      // since advanced, been rebased, or been deleted — so the honest answer
+      // only exists if it was written down at the time.
+      //
+      // Recorded only when the caller can vouch for it: a blueprint whose
+      // branch was reconciled to its base knows the commit exactly, and a
+      // branch left alone because it carried its own work writes NULL rather
+      // than a tip it never started from.
+      //
+      // Nullable and additive: existing tracks keep NULL (the branch reflog is
+      // the only other record, and it expires), and ignoring the column
+      // reverts the change.
+      db.exec(`ALTER TABLE work_tracks ADD COLUMN base_commit TEXT`)
+
+      dbLogger.info('[migration-154] ✓ Added work_tracks.base_commit')
+    }
+  },
+  {
+    version: 155,
+    name: 'memory-confirmations-retrieval-source-type',
+    // Rebuilds memory_confirmations, which memory_facts is the FK parent of.
+    disableForeignKeys: true,
+    up: (db) => {
+      // Retrieval becomes evidence. Until now the only promotable confirmation
+      // came from a fact being independently re-extracted, so a convention that
+      // was retrieved and used every day — and never contradicted — accrued no
+      // evidence at all and sat at T0 forever. Recording use as a weak,
+      // once-per-day signal is what lets steady usage carry a fact to T1.
+      //
+      // SQLite cannot ALTER a CHECK in place, so this is the rebuild-and-copy
+      // pattern from migration 70.
+      const existing = db
+        .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_confirmations'`)
+        .get() as { sql: string } | undefined
+
+      // Idempotent: skip when the table is absent or already widened.
+      if (!existing || existing.sql.includes("'retrieval'")) {
+        dbLogger.info('[migration-155] ✓ memory_confirmations CHECK already current — skipped')
+        return
+      }
+
+      db.exec(`
+        CREATE TABLE memory_confirmations_new (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          fact_id TEXT NOT NULL REFERENCES memory_facts(id) ON DELETE CASCADE,
+          source_type TEXT NOT NULL CHECK (source_type IN ('auto_dedup','human','tool','extraction','bootstrap','retrieval')),
+          weight REAL NOT NULL DEFAULT 1.0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+        INSERT INTO memory_confirmations_new (id, fact_id, source_type, weight, created_at)
+          SELECT id, fact_id, source_type, weight, created_at FROM memory_confirmations;
+        DROP TABLE memory_confirmations;
+        ALTER TABLE memory_confirmations_new RENAME TO memory_confirmations;
+        CREATE INDEX IF NOT EXISTS idx_memory_confirmations_fact ON memory_confirmations(fact_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_confirmations_date ON memory_confirmations(created_at);
+      `)
+
+      dbLogger.info("[migration-155] ✓ memory_confirmations accepts 'retrieval' source type")
+    }
+  },
+  {
+    version: 156,
+    name: 'blueprint-telemetry',
+    up: (db) => {
+      // E11 — attempt-level telemetry for blueprint execution. Until now the
+      // decisions that matter most operationally (why a task was retried, why a
+      // ladder stopped early, why parallelism dropped) existed only as log lines
+      // and in-memory `SchedulerStats`, so every tuning question about them was
+      // answered by guessing.
+      //
+      // A NEW TABLE, not a widening of `events`. `events.category` carries a
+      // CHECK that schema.sql and the migrated chain have disagreed about since
+      // migration 44: it added 'telemetry' to schema.sql and, in its own comment,
+      // explicitly skipped rebuilding the table for existing installs. Writing
+      // telemetry to `events` would therefore pass on a fresh dev database and
+      // violate the CHECK on any upgraded one. Widening a shared, hot table to
+      // serve one feature is exactly what produced that divergence.
+      //
+      // `kind` has NO CHECK, deliberately: adding a telemetry kind must never
+      // require a table rebuild. That is the lesson of migration 44, applied.
+      //
+      // `blueprint_id` carries no FK. Telemetry outlives the run it describes —
+      // the point is to still have the trail after a blueprint is deleted — and
+      // pruning is by age, via `pruneOlderThan`.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS blueprint_telemetry (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          blueprint_id TEXT NOT NULL,
+          phase TEXT,
+          task_id TEXT,
+          attempt INTEGER,
+          kind TEXT NOT NULL,
+          data_json TEXT NOT NULL DEFAULT '{}',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_bp_telemetry_blueprint ON blueprint_telemetry(blueprint_id)`
+      )
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_bp_telemetry_kind ON blueprint_telemetry(kind, created_at)`
+      )
+
+      dbLogger.info('[migration-156] ✓ Added blueprint_telemetry')
     }
   }
 ]

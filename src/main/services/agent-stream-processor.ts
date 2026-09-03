@@ -122,7 +122,10 @@ export class AgentStreamProcessor {
       conversationId,
       dbSessionId: this.s.dbSessionId,
       workspacePath: this.s.workspacePath!,
-      feature: featureForAgentRole(this.s.adapter.role),
+      // Adapter-declared feature wins over the role-derived one: the five
+      // blueprint review adapters share `role: 'blueprint-review'` (it selects
+      // the CLI profile) and would otherwise be one indistinguishable bucket.
+      feature: telemetry?.feature ?? featureForAgentRole(this.s.adapter.role),
       agentType: this.s.adapter.agentId,
       model: resolvedModel,
       workspaceId: this.s.workspaceId,

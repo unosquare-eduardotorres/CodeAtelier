@@ -12,7 +12,7 @@ const TIER_META: Record<
     label: 'T0',
     name: 'Observed',
     color: 'text-text-muted',
-    nextHint: '3 confirmations on 3 separate days promote to T1 Confirmed.'
+    nextHint: '3 confirmations on 3 separate days at ≥35% confidence promote to T1 Confirmed.'
   },
   1: {
     label: 'T1',

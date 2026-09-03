@@ -72,6 +72,16 @@ export {
   blueprintTaskRepository
 } from './blueprint.repository'
 
+export {
+  BlueprintTelemetryRepository,
+  blueprintTelemetryRepository
+} from './blueprint-telemetry.repository'
+export type {
+  BlueprintTelemetryRow,
+  BlueprintTelemetryKind,
+  RecordTelemetryInput
+} from './blueprint-telemetry.repository'
+
 export { E2ETestRunRepository, e2eTestRunRepository } from './e2e-test-run.repository'
 export type { E2ETestRunRecord } from './e2e-test-run.repository'
 export { E2ETestResultRepository, e2eTestResultRepository } from './e2e-test-result.repository'

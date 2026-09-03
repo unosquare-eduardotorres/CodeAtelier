@@ -11,7 +11,6 @@
 
 import { BlueprintBaseAdapter } from './blueprint-base.adapter'
 import { buildPhaseSystemPrompt } from '../../blueprint-prompt-loader'
-import { TOOL_PRIORITY_DIRECTIVE_BUILDER } from '../../default-prompts'
 import type { AgentRole, ModelAction } from '../../../../shared/types'
 import type { AdapterMcpContext, AdapterMcpResult } from '../../agent-session.types'
 import type { PhaseContext } from '../../../../shared/blueprint-types'
@@ -62,17 +61,25 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
     // Build the base phase prompt with context variables injected
     const basePrompt = buildPhaseSystemPrompt('build', this.phaseContext)
 
-    // Phase 1.2: Maximize prompt-prefix cache hits.
-    // REORDERED: basePrompt + TOOL_PRIORITY_DIRECTIVE_BUILDER + taskSection
-    // All 21 tasks now share the longest identical prefix (basePrompt + tool directive).
-    // Only the task-specific section differs at the end, enabling KV-cache reuse
-    // across tasks within the same build (for providers that support prefix caching).
+    // Phase 1.2: Maximize prompt-prefix cache hits. All tasks in a run share the
+    // longest identical prefix (the whole base prompt); only the task-specific
+    // section differs at the end, enabling KV-cache reuse across tasks (for
+    // providers that support prefix caching).
     //
-    // The base class's appendToolGuidance() will skip the generic directive
-    // because it checks for '## Tool Priority' already present.
+    // E7: `TOOL_PRIORITY_DIRECTIVE_BUILDER` used to be concatenated here, which
+    // gave the pipeline's most expensive phase TWO overlapping `## Tool Priority`
+    // sections in that shared prefix, re-sent on every one of ~31 calls per
+    // attempt. build-phase.md already carries a fuller routing table, so the
+    // directive's non-redundant parts (file_outline/find_references ordering,
+    // inspection-vs-execution, the typecheck rung) were folded into the template
+    // and the concatenation dropped. The prefix shape is unchanged — just shorter.
+    // The constant itself stays: mpa-builder.adapter.ts is its other consumer.
+    //
+    // The base class's appendToolGuidance() still skips the generic directive
+    // because build-phase.md's own '## Tool Priority' heading satisfies its check.
     const taskSection = ['', '## Current Task', '', this.taskContext].join('\n')
 
-    return basePrompt + TOOL_PRIORITY_DIRECTIVE_BUILDER + taskSection
+    return basePrompt + taskSection
   }
 
   getPhaseMessage(): string {

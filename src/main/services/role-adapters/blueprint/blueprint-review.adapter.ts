@@ -14,6 +14,9 @@ import type { PhaseContext } from '../../../../shared/blueprint-types'
 
 export class BlueprintReviewAdapter extends BlueprintBaseAdapter {
   readonly role: AgentRole = 'blueprint-review'
+  protected get usageFeature(): string {
+    return 'blueprint-review'
+  }
   readonly agentId: string
 
   private readonly phaseContext: PhaseContext

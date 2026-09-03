@@ -30,8 +30,6 @@ import {
   agentSessionRepository,
   appPreferenceRepository,
   grillSessionRepository,
-  usageLogRepository,
-  turnUsageRepository,
   workspaceRepository
 } from './db/repositories'
 // Direct module import — bugRepository is not re-exported from the barrel.
@@ -44,7 +42,7 @@ import { memoryExtractionService } from './services/memory-extraction.service'
 import { memoryEngineService } from './services/memory-engine.service'
 import { memoryBootstrapService } from './services/memory-bootstrap.service'
 import { autoUpdateService } from './services/auto-update.service'
-import { eventLoggerService } from './services/event-logger.service'
+import { runStartupRetention } from './services/startup-retention'
 import { trackService, registerTrackBusyProbe } from './services/track.service'
 import { lifecycleRegistry } from './services/conversation-lifecycle'
 import { blueprintService } from './services/blueprint.service'
@@ -465,20 +463,10 @@ function createWindow(): void {
     .catch((error) => log.warn('[Startup] Branch GC failed (non-critical):', error))
   landingService.startBranchGc()
 
-  // Prune old events to prevent unbounded DB growth
-  try {
-    eventLoggerService.prune(30)
-  } catch (error) {
-    dbLogger.debug('Event pruning on startup failed (non-critical):', error)
-  }
-
-  // Prune old token usage to prevent unbounded DB growth (90-day cost history)
-  try {
-    usageLogRepository.pruneOlderThan(90)
-    turnUsageRepository.pruneOlderThan(90)
-  } catch (error) {
-    dbLogger.debug('Token usage pruning on startup failed (non-critical):', error)
-  }
+  // Prune old events, usage and blueprint telemetry to prevent unbounded DB
+  // growth. Extracted so it is reachable from a test and so one divergent table
+  // cannot cancel the prunes that follow it — see startup-retention.ts.
+  runStartupRetention()
 
   // Initialize notification service with main window + load preference
   notificationService.setMainWindow(mainWindow)

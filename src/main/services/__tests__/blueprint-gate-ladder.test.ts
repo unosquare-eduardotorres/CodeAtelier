@@ -326,6 +326,9 @@ if (!env) {
     builderRuns: number
     escalated: boolean
     attempts: number
+    /** `failure_reason` on the task row — nothing writes it on this path. */
+    rowFailureReason: string | null
+    /** The reason on the RETURNED result, which is where the stop-loss note rides. */
     failureReason: string | null
   }
 
@@ -357,13 +360,20 @@ if (!env) {
     svc.gradeTask = async (): Promise<unknown> => grades[Math.min(graded++, grades.length - 1)]
     svc.escalateToLead = async (): Promise<unknown> => {
       escalated = true
-      return { success: false, completion: null, discoveries: [], failureReason: 'lead failed' }
+      return {
+        success: false,
+        completion: null,
+        discoveries: [],
+        failureReason: 'quality gate failed after escalation: task-tests'
+      }
     }
     // Keep the ladder off disk-scanning paths that have nothing to say here.
     svc.resolveGateCommandsFor = (): unknown => ({})
     svc.readManifestsCached = (): unknown => ({})
 
-    await svc.executeTaskWithGates({
+    // The RESULT, not the row: this test calls the ladder directly, so
+    // `handleTaskCompletion` — the only writer of `failure_reason` — never runs.
+    const result = (await svc.executeTaskWithGates({
       task,
       blueprintId: bp.id,
       workspaceId: wsId,
@@ -373,7 +383,7 @@ if (!env) {
       priorDiscoveries: [],
       tDispatch: Date.now(),
       waveNum: 1
-    })
+    })) as { failureReason?: string | null }
 
     const after = blueprintTaskRepository.findById(task.id)
     // Removed here rather than in a trailing cleanup test: the harness starts
@@ -383,7 +393,13 @@ if (!env) {
     } catch {
       /* best effort */
     }
-    return { builderRuns, escalated, attempts: after.attempts, failureReason: after.failureReason }
+    return {
+      builderRuns,
+      escalated,
+      attempts: after.attempts,
+      rowFailureReason: after.failureReason,
+      failureReason: result?.failureReason ?? null
+    }
   }
 
   describe('B3 — stop-loss on a repeated gate-failure fingerprint', () => {
@@ -402,8 +418,20 @@ if (!env) {
         assert.equal(run.attempts, 2, 'attempts follow the executions actually spent')
         assert.match(
           run.failureReason ?? '',
-          /stop-loss after 2 identical gate failure/,
-          'the skip must be recorded, not silent'
+          /quality gate failed after escalation/,
+          'the escalation reason must survive — the renderer keys its explanation off it'
+        )
+        assert.match(
+          run.failureReason ?? '',
+          /stop-loss after 2 identical gate failure\(s\).*skipped 1 builder attempt/,
+          'the skip must ride out on the result, with true counts — a write to the ' +
+            'task row here is overwritten by handleTaskCompletion on every path'
+        )
+        assert.equal(
+          run.rowFailureReason,
+          null,
+          'and the ladder itself writes nothing to the row: `failure_reason` is ' +
+            'handleTaskCompletion’s to set, from the result above'
         )
       },
       { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
@@ -423,6 +451,27 @@ if (!env) {
         assert.ok(
           !(run.failureReason ?? '').includes('stop-loss'),
           'no stop-loss when the fingerprint changes'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a repeat that arrives on the LAST attempt claims no saving it did not make',
+      async () => {
+        // A, B, B — the run of identical failures is 2, but it completes on
+        // attempt 3, where there is no remaining rung to skip. The stop-loss
+        // must stay silent rather than announce "3× in a row, skipped 0".
+        const run = await runLadder([
+          gateFail('unused variable foo'),
+          gateFail('expected 3 assertions, got 0'),
+          gateFail('expected 7 assertions, got 0')
+        ])
+        assert.equal(run.builderRuns, 3, 'nothing was skippable — all three rungs run')
+        assert.equal(run.escalated, true)
+        assert.ok(
+          !(run.failureReason ?? '').includes('stop-loss'),
+          'a stop-loss on the final attempt saves nothing and must not be claimed'
         )
       },
       { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }

@@ -236,6 +236,9 @@ export const IPC_CHANNELS = {
   MEMORY_EMBEDDING_STATUS: 'memory:embedding:status',
   MEMORY_EMBEDDING_BACKFILL: 'memory:embedding:backfill',
   MEMORY_EMBEDDING_PROGRESS: 'memory:embedding:progress',
+
+  // Memory promotion diagnostics (read-only)
+  MEMORY_PROMOTION_DIAGNOSTICS: 'memory:promotion:diagnostics',
   MEMORY_DEDUP_SCAN: 'memory:dedup:scan',
   MEMORY_DEDUP_AUTORESOLVE: 'memory:dedup:autoresolve',
   MEMORY_CONSOLIDATE: 'memory:consolidate',
@@ -801,8 +804,13 @@ export const COMMIT_ATTRIBUTION = '✨ Generated with Code Atelier'
  * A sentinel rather than `undefined` because settings are merged with
  * `{ ...existing, ...incoming }` over IPC: sending `undefined` to clear a key
  * is implicit, does not survive structured cloning as a distinct instruction,
- * and would leave the stored value in place. `@checkout` cannot collide with a
- * real branch — git refuses `@` as a complete ref name.
+ * and would leave the stored value in place.
+ *
+ * `@checkout` is a legal branch name — `git check-ref-format --branch` accepts
+ * it, and accepts a bare `@` too. Nothing stops a repository having one; a
+ * workspace pinned to a real branch called `@checkout` would be read as "not
+ * pinned". Chosen because that collision is vanishingly unlikely and its cost
+ * is today's default behaviour, not because git forbids the name.
  */
 export const FOLLOW_CHECKOUT = '@checkout'
 

@@ -27,7 +27,9 @@ const defaultPreferences: AppPreferences = {
   userAvatarVariant: '1' as UserAvatarVariant,
   maxStreamLifetimeMin: 30,
   dagScheduling: true,
-  blueprintAutoMode: true
+  blueprintAutoMode: true,
+  verifyFeatureDiff: false,
+  blueprintFailureMemory: false
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -47,7 +49,9 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   userAvatarVariant: 'user_avatar_variant',
   maxStreamLifetimeMin: 'max_stream_lifetime_min',
   dagScheduling: 'dag_scheduling',
-  blueprintAutoMode: 'blueprint_auto_mode'
+  blueprintAutoMode: 'blueprint_auto_mode',
+  verifyFeatureDiff: 'verify_feature_diff',
+  blueprintFailureMemory: 'blueprint_failure_memory'
 }
 
 interface AppPreferenceState {
@@ -171,6 +175,12 @@ export const useBlueprintAutoMode = (): boolean =>
 
 export const useDagScheduling = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.dagScheduling)
+
+export const useVerifyFeatureDiff = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.verifyFeatureDiff)
+
+export const useBlueprintFailureMemory = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.blueprintFailureMemory)
 
 export const useUserAvatarVariant = (): UserAvatarVariant =>
   useAppPreferenceStore((state) => state.preferences.userAvatarVariant)

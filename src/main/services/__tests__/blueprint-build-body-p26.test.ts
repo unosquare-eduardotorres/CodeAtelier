@@ -234,21 +234,73 @@ describe('BlueprintBuildService — deep body (P26)', () => {
   })
 
   // ─── handleTaskCompletion ────────────────────────────────────────────────
+
+  /** The BuildResult accumulator shape handleTaskCompletion mutates. */
+  function emptyBuildResult(): any {
+    return {
+      taskTimings: [],
+      taskFailures: [],
+      filesCreated: [],
+      filesModified: [],
+      discoveries: [],
+      tasksCompleted: 0
+    }
+  }
+
   test('handleTaskCompletion updates task status', () => {
     const svc = new BlueprintBuildService()
-    if (typeof svc.handleTaskCompletion === 'function') {
-      taskRepo.updateStatus.mockReturnValue(undefined)
-      taskRepo.setCompletion.mockReturnValue(undefined)
-      try {
-        svc.handleTaskCompletion({
-          task: { id: 't-1', taskId: 'T-001', description: 'test', filePathsJson: '[]' },
-          accumulatedText: 'Result text with artifacts',
-          durationMs: 5000,
-          exitReason: 'complete'
-        })
-      } catch {
-        // May fail on internal state — but exercises the code path
-      }
-    }
+    taskRepo.updateStatus.mockReturnValue(undefined)
+    taskRepo.setCompletion.mockReturnValue(undefined)
+    taskRepo.setOutcome.mockReturnValue(undefined)
+
+    svc.handleTaskCompletion({
+      task: { id: 't-1', taskId: 'T-001', description: 'test', filePathsJson: '[]' },
+      taskResult: {
+        success: true,
+        taskId: 'T-001',
+        discoveries: [],
+        completion: { filesCreated: ['src/a.ts'], filesModified: [] }
+      },
+      blueprintId: 'bp-1',
+      workspaceId: 'ws-1',
+      waveNum: 1,
+      result: emptyBuildResult()
+    })
+
+    assert.deepEqual(taskRepo.updateStatus.lastCall, ['t-1', 'complete'])
+  })
+
+  // B3 — the stop-loss note rides out on the RETURNED TaskResult (escalateToLead
+  // builds its own result, so the ladder cannot write the task row itself).
+  // blueprint-gate-ladder.test.ts asserts the row is null precisely because it
+  // calls the ladder directly. This is the other half of the hop: the note must
+  // survive handleTaskCompletion into `failure_reason`, verbatim — the renderer's
+  // humanizeFailureReason parses the repeat count straight out of that string.
+  test('a stop-loss failureReason is persisted verbatim to failure_reason', () => {
+    const svc = new BlueprintBuildService()
+    taskRepo.updateStatus.mockReturnValue(undefined)
+    taskRepo.setOutcome.mockReturnValue(undefined)
+
+    const reason =
+      'quality gate failed: lint — stop-loss after 2 identical gate failure(s) ' +
+      '(lint) — skipped 1 builder attempt(s), escalated to blueprint:lead-review'
+    const result = emptyBuildResult()
+
+    svc.handleTaskCompletion({
+      task: { id: 't-2', taskId: 'T-002', description: 'test', filePathsJson: '[]' },
+      taskResult: { success: false, taskId: 'T-002', discoveries: [], failureReason: reason },
+      blueprintId: 'bp-1',
+      workspaceId: 'ws-1',
+      waveNum: 1,
+      result
+    })
+
+    assert.deepEqual(taskRepo.updateStatus.lastCall, ['t-2', 'failed'])
+    assert.deepEqual(
+      taskRepo.setOutcome.lastCall,
+      ['t-2', { failureReason: reason, outcomeKind: null }],
+      'the note must not be truncated, prefixed or summarised on the way to the row'
+    )
+    assert.deepEqual(result.taskFailures, [{ taskId: 'T-002', reason }])
   })
 })

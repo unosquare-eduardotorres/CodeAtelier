@@ -23,7 +23,7 @@ import { trackService, TrackConflictError } from './track.service'
 import { trackRepository } from '../db/repositories/track.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
 import { blueprintRepository } from '../db/repositories/blueprint.repository'
-import type { ExecutionTarget, TrackOwnerKind } from '../../shared/track-types'
+import type { ExecutionTarget, TrackOwnerKind, TrackBaseSource } from '../../shared/track-types'
 import type {
   BlueprintBranchChoice,
   BlueprintBaseSource,
@@ -220,8 +220,7 @@ async function verifyRef(repoPath: string, ref: string): Promise<string | null> 
 async function repoDefaultBranch(repoPath: string): Promise<string | null> {
   try {
     const git = simpleGit(repoPath)
-    const remotes = await git.getRemotes(false)
-    for (const remote of remotes.length > 0 ? remotes.map((r) => r.name) : ['origin']) {
+    for (const remote of await remoteNames(repoPath)) {
       try {
         const ref = (
           await git.raw(['symbolic-ref', '--short', `refs/remotes/${remote}/HEAD`])
@@ -237,6 +236,61 @@ async function repoDefaultBranch(repoPath: string): Promise<string | null> {
     trackLog.debug(`[base] no repo default branch: ${(err as Error).message}`)
   }
   return null
+}
+
+/**
+ * Configured remote names, with `origin` assumed when there are none.
+ *
+ * The assumption is not a guess about the network: `refs/remotes/origin/*` can
+ * exist long after the remote itself was removed, and those refs are still the
+ * only recorded answer available without one.
+ */
+async function remoteNames(repoPath: string): Promise<string[]> {
+  try {
+    const remotes = await simpleGit(repoPath).getRemotes(false)
+    return remotes.length > 0 ? remotes.map((r) => r.name) : ['origin']
+  } catch (err) {
+    trackLog.debug(`[base] could not list remotes: ${(err as Error).message}`)
+    return ['origin']
+  }
+}
+
+/**
+ * Split a resolved base into "what git cuts from" and "what gets written down".
+ *
+ * Those two are the same thing for every local branch, and they must not be for
+ * a remote one. Forking from `origin/main` has to use `origin/main` — the whole
+ * reason to pick it is that local `main` is behind — but recording it verbatim
+ * would send the run's landing to `integration/origin/main`, a branch no other
+ * run will ever look at. The recorded name therefore becomes the local
+ * counterpart when one exists, which is what puts this run in the same
+ * `integration/main` everything else accumulates in. `commit` still pins the
+ * exact origin tip, so the substitution loses no provenance.
+ *
+ * A remote with no local counterpart keeps its own name: there is nothing to
+ * substitute, and `integration/origin/feature-x` at least belongs to a base
+ * that genuinely has no local peer to share with.
+ */
+async function classifyBase(
+  repoPath: string,
+  ref: string
+): Promise<{ isRemote: boolean; integrationBase: string }> {
+  // Applied to whatever rule won, not just the fork choice. The guard is that
+  // `refs/remotes/<ref>` has to resolve, so this is a no-op for every local
+  // base — including a local branch somebody named `origin/x`, which is legal
+  // and must not be silently rewritten to `x`.
+  if (!(await verifyRef(repoPath, `refs/remotes/${ref}`))) {
+    return { isRemote: false, integrationBase: ref }
+  }
+
+  for (const remote of await remoteNames(repoPath)) {
+    if (!ref.startsWith(`${remote}/`)) continue
+    const local = ref.slice(remote.length + 1)
+    if (local && (await verifyRef(repoPath, `refs/heads/${local}`))) {
+      return { isRemote: true, integrationBase: local }
+    }
+  }
+  return { isRemote: true, integrationBase: ref }
 }
 
 /**
@@ -354,6 +408,8 @@ export async function resolveBlueprintBase(params: {
   if (!resolved) {
     return {
       branch: 'main',
+      integrationBase: 'main',
+      isRemote: false,
       source: 'fallback',
       upgradedToIntegration: false,
       resolvedFrom: 'main',
@@ -362,8 +418,11 @@ export async function resolveBlueprintBase(params: {
     }
   }
 
+  const { isRemote, integrationBase } = await classifyBase(repoPath, resolved.branch)
   const base: ResolvedBlueprintBase = {
     branch: resolved.branch,
+    integrationBase,
+    isRemote,
     source: resolved.source,
     upgradedToIntegration: false,
     resolvedFrom: resolved.branch,
@@ -374,9 +433,15 @@ export async function resolveBlueprintBase(params: {
   // ── The upgrade ──
   try {
     const { integrationBranchFor } = await import('./landing.service')
-    const integration = integrationBranchFor(resolved.branch)
-    // Idempotent for an already-integration base: it is its own target.
-    if (integration === resolved.branch) return base
+    // Derived from the recorded base, not the fork point: `origin/main` has to
+    // find `integration/main`, which is where every other run forked from main
+    // has been landing, and not the `integration/origin/main` nobody writes to.
+    const integration = integrationBranchFor(integrationBase)
+    // Idempotent for an already-integration base: it is its own target. Compared
+    // against the recorded name rather than the fork point so that a remote
+    // integration ref (`origin/integration/main`) is recognised as one too,
+    // instead of being "upgraded" onto the stale local copy of itself.
+    if (integration === integrationBase) return base
 
     const integrationCommit = await verifyRef(repoPath, integration)
     // No landing has happened in this workspace yet.
@@ -397,6 +462,10 @@ export async function resolveBlueprintBase(params: {
     return {
       ...base,
       branch: integration,
+      // An integration branch is local and is its own landing target, so the
+      // two names converge again the moment the upgrade applies.
+      integrationBase: integration,
+      isRemote: false,
       upgradedToIntegration: true,
       aheadOfResolved: ahead,
       commit: integrationCommit
@@ -404,6 +473,100 @@ export async function resolveBlueprintBase(params: {
   } catch (err) {
     trackLog.debug(`[base] integration upgrade skipped: ${(err as Error).message}`)
     return base
+  }
+}
+
+/** What the branch's relationship to its resolved base turned out to be. */
+interface BranchReconciliation {
+  /** The rule to record on the track, or `existing-branch` when none applies. */
+  source: TrackBaseSource
+  /** Commit the branch actually starts from. Null when that is not knowable. */
+  baseCommit: string | null
+  /** Commits the branch carries that the base does not. Non-zero means diverged. */
+  ownCommits: number
+}
+
+/**
+ * Make the branch match the base BUILD just resolved, when that is provably free.
+ *
+ * `reserveBlueprintBranch` cuts the branch at run start, and BUILD arrives
+ * phases — often an hour — later. Everything in between (SPECIFY, CLARIFY,
+ * PLAN, TASKS) writes artifacts to the database, never to the branch, so the
+ * branch normally still has zero commits of its own when BUILD begins. Two
+ * things follow, and both were wrong before this existed:
+ *
+ *   - `git worktree add <path> <branch>` uses the branch's own tip and ignores
+ *     the base argument entirely, so a base that advanced during those phases
+ *     was silently not used. The database recorded the current base name while
+ *     git built on the stale one.
+ *   - the track would then record `existing-branch` — true of the mechanism,
+ *     useless as provenance, and it is what every real run would have stored,
+ *     because the reservation always runs first.
+ *
+ * So: zero unique commits means fast-forwarding the ref to the base loses
+ * nothing that exists, and the rule that chose the base is the honest answer.
+ * One or more unique commits means somebody's work is on this branch — leave it
+ * exactly where it is, record `existing-branch`, and say so in the log.
+ *
+ * Never throws. A branch that cannot be reconciled is not a reason to fail
+ * BUILD; it is a reason to record `existing-branch` and carry on.
+ */
+async function reconcileBranchToBase(params: {
+  repoPath: string
+  branchName: string
+  base: ResolvedBlueprintBase
+}): Promise<BranchReconciliation> {
+  const { repoPath, branchName, base } = params
+
+  // No base resolved at all: there is nothing to reconcile against, and
+  // `ensureTrack` will fall back to the primary HEAD.
+  if (!base.commit) return { source: base.source, baseCommit: null, ownCommits: 0 }
+
+  const branchCommit = await verifyRef(repoPath, branchName)
+
+  // The branch does not exist yet, so `worktree add -b` really will cut it from
+  // the base. The reservation is best-effort, so this path is reachable.
+  if (!branchCommit) return { source: base.source, baseCommit: base.commit, ownCommits: 0 }
+
+  // Already there. Nothing to move, and nothing to warn about.
+  if (branchCommit === base.commit) {
+    return { source: base.source, baseCommit: base.commit, ownCommits: 0 }
+  }
+
+  try {
+    const git = simpleGit(repoPath)
+    const own = Number(
+      (await git.raw(['rev-list', '--count', `${base.branch}..${branchName}`])).trim()
+    )
+
+    if (Number.isFinite(own) && own > 0) {
+      trackLog.warn(
+        `[reconcile] ${branchName} has ${own} commit(s) the base ${base.branch} does not — ` +
+          `leaving it where it is and recording existing-branch`
+      )
+      // Deliberately no base commit: this branch did not start at the base's
+      // tip, and writing that tip here would be the same confident lie the
+      // provenance column exists to prevent.
+      return { source: 'existing-branch', baseCommit: null, ownCommits: own }
+    }
+
+    // Zero unique commits and not equal: the base moved ahead while the earlier
+    // phases ran. Fast-forwarding is provably lossless.
+    await git.raw(['branch', '-f', branchName, base.branch])
+    trackLog.info(
+      `[reconcile] fast-forwarded ${branchName} to ${base.branch} [${base.source}] ` +
+        `— it carried no commits of its own`
+    )
+    return { source: base.source, baseCommit: base.commit, ownCommits: 0 }
+  } catch (err) {
+    // `git branch -f` refuses a branch that is checked out in a worktree, which
+    // is the normal shape of a re-run: the track already exists and its tree is
+    // sitting on this branch. Not an error worth shouting about, but the base
+    // was genuinely not consulted, so say that.
+    trackLog.info(
+      `[reconcile] left ${branchName} alone (${(err as Error).message}) — recording existing-branch`
+    )
+    return { source: 'existing-branch', baseCommit: null, ownCommits: 0 }
   }
 }
 
@@ -577,7 +740,9 @@ export async function ensureBlueprintTrack(params: {
       blueprintTrackBranch(blueprintId, blueprint?.title)
     let branchName = autoName
     let baseBranch: string | undefined
-    let baseSource: BlueprintBaseSource | undefined
+    let forkRef: string | undefined
+    let baseSource: TrackBaseSource | undefined
+    let baseCommit: string | undefined
 
     if (choice.mode === 'fork' || choice.mode === 'auto') {
       if (choice.mode === 'fork') branchName = choice.name ?? autoName
@@ -590,11 +755,32 @@ export async function ensureBlueprintTrack(params: {
       // from the integration branch lands back into it rather than spawning a
       // nested one. `integrationBranchFor` is idempotent for exactly this.
       const base = await resolveBlueprintBase({ workspaceId, repoPath: workspacePath, choice })
-      baseBranch = base.commit ? base.branch : undefined
-      baseSource = base.source
+      // The two names the resolution deliberately keeps apart: git cuts from
+      // `branch` (the real `origin/main`, the reason the user picked it), while
+      // the row records `integrationBase` (local `main`), because landing reads
+      // that column and every other run's work is accumulating in
+      // `integration/main`. Identical for every local base.
+      baseBranch = base.commit ? base.integrationBase : undefined
+      forkRef = base.commit ? base.branch : undefined
+
+      // The branch almost always exists by now — the reservation created it at
+      // run start — and `worktree add` would therefore ignore `baseBranch`
+      // entirely. Reconciling first is what makes the base above the base the
+      // run is actually built on, and what makes the recorded rule true.
+      const reconciled = await reconcileBranchToBase({
+        repoPath: workspacePath,
+        branchName,
+        base
+      })
+      baseSource = reconciled.source
+      baseCommit = reconciled.baseCommit ?? undefined
     } else if (choice.mode === 'takeover') {
       if (choice.branch) branchName = choice.branch
       else trackLog.warn(`[ensure] blueprint ${blueprintId}: takeover with no branch — using auto`)
+      // A takeover consults no base by definition: it continues a branch from
+      // that branch's own tip. Recorded explicitly rather than left null so the
+      // row says "no base was used" instead of "nobody wrote this down".
+      if (await verifyRef(workspacePath, branchName)) baseSource = 'existing-branch'
     }
     resolvedBranch = branchName
 
@@ -645,7 +831,9 @@ export async function ensureBlueprintTrack(params: {
       repoPath: workspacePath,
       branchName,
       baseBranch,
+      forkRef,
       baseSource,
+      baseCommit,
       landingMode: 'integration'
     })
 

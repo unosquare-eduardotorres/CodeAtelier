@@ -21,7 +21,16 @@ import type {
   ContradictionStatus,
   MemoryDocState,
   MemoryEdge,
-  MemoryEdgeType
+  MemoryEdgeType,
+  MemoryPromotionDiagnostics
+} from '../../../shared/types'
+import {
+  MEMORY_RETRIEVAL_CONFIDENCE_CEILING,
+  MEMORY_RETRIEVAL_CONFIDENCE_RECOVERY,
+  MEMORY_RETRIEVAL_CONFIRMATION_WEIGHT,
+  MEMORY_T0_PROMOTION_MIN_CONFIDENCE,
+  MEMORY_T0_PROMOTION_MIN_CONFIRMS,
+  MEMORY_T0_PROMOTION_MIN_DAYS
 } from '../../../shared/types'
 
 /**
@@ -727,6 +736,78 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
     }
   }
 
+  /**
+   * Promotion diagnostics — the tier histogram plus, for facts stuck at T0
+   * with enough evidence to look promotable, which single gate they fail.
+   *
+   * `auto_dedup` confirmations are excluded here exactly as
+   * `computePromotionTierPure` excludes them: repetition is not evidence.
+   */
+  promotionDiagnostics(workspaceId: string): MemoryPromotionDiagnostics {
+    const tierRows = this.db()
+      .prepare(
+        `SELECT tier, COUNT(*) AS n
+           FROM memory_facts
+          WHERE (workspace_id = ? OR workspace_id IS NULL)
+            AND status = 'active'
+          GROUP BY tier`
+      )
+      .all(workspaceId) as Array<{ tier: number; n: number }>
+
+    const tierCounts: [number, number, number, number] = [0, 0, 0, 0]
+    for (const r of tierRows) {
+      if (r.tier >= 0 && r.tier <= 3) tierCounts[r.tier] = r.n
+    }
+
+    // Bucket order mirrors the gate order in computePromotionTierPure, so each
+    // fact is attributed to the first gate it fails rather than several.
+    const stuck = this.db()
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN distinct_days < ? THEN 1 ELSE 0 END) AS needs_more_days,
+           SUM(CASE WHEN distinct_days >= ? AND confidence < ? THEN 1 ELSE 0 END) AS needs_confidence,
+           SUM(CASE WHEN distinct_days >= ? AND confidence >= ? THEN 1 ELSE 0 END) AS awaiting_sweep
+         FROM (
+           SELECT f.confidence AS confidence,
+                  COUNT(DISTINCT date(c.created_at)) AS distinct_days
+             FROM memory_facts f
+             JOIN memory_confirmations c
+               ON c.fact_id = f.id AND c.source_type != 'auto_dedup'
+            WHERE (f.workspace_id = ? OR f.workspace_id IS NULL)
+              AND f.status = 'active'
+              AND f.tier = 0
+              AND f.volatile = 0
+            GROUP BY f.id
+           HAVING COUNT(c.id) >= ?
+         )`
+      )
+      .get(
+        MEMORY_T0_PROMOTION_MIN_DAYS,
+        MEMORY_T0_PROMOTION_MIN_DAYS,
+        MEMORY_T0_PROMOTION_MIN_CONFIDENCE,
+        MEMORY_T0_PROMOTION_MIN_DAYS,
+        MEMORY_T0_PROMOTION_MIN_CONFIDENCE,
+        workspaceId,
+        MEMORY_T0_PROMOTION_MIN_CONFIRMS
+      ) as {
+      total: number
+      needs_more_days: number | null
+      needs_confidence: number | null
+      awaiting_sweep: number | null
+    }
+
+    return {
+      tierCounts,
+      stuck: {
+        total: stuck.total ?? 0,
+        needsMoreDays: stuck.needs_more_days ?? 0,
+        needsConfidence: stuck.needs_confidence ?? 0,
+        awaitingSweep: stuck.awaiting_sweep ?? 0
+      }
+    }
+  }
+
   // ── Decay sweep ─────────────────────────────────────────────────────────
 
   /** Find facts that haven't been accessed or confirmed in `daysThreshold` days. */
@@ -952,6 +1033,67 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
       )
       .get(factId, sourceType, weight) as ConfirmationRow
     return mapConfirmationRow(row)
+  }
+
+  /**
+   * Record a `retrieval` confirmation for each fact that does not already have
+   * one today, and return how many were written.
+   *
+   * Rate-limited to one per fact per calendar day so that a single chatty
+   * session cannot manufacture evidence: the promotion gates count distinct
+   * days, so "this was relevant on three separate days of work" is the claim
+   * being made.
+   *
+   * On the days a row is written the fact also regains a sliver of confidence,
+   * capped at `MEMORY_RETRIEVAL_CONFIDENCE_CEILING`. Without that, decay and
+   * the T0→T1 confidence floor form a trap — a decayed fact stops decaying as
+   * soon as it is retrieved again but has no way to climb back, so it accrues
+   * evidence forever while remaining permanently unpromotable. The recovery is
+   * bounded by the confidence a fresh observation starts at: usage can undo
+   * decay, never exceed a first-hand sighting.
+   *
+   * Nothing here touches `memory_facts.updated_at`. That column is what
+   * `getLastMutationAt` reads to invalidate the workspace embedding cache, and
+   * bumping it once per retrieved fact per day would rebuild the cache daily —
+   * the same pathology the promotion/decay oscillation fix removed.
+   */
+  recordRetrievalConfirmations(factIds: string[]): number {
+    if (factIds.length === 0) return 0
+    const insertStmt = this.db().prepare(
+      `INSERT INTO memory_confirmations (fact_id, source_type, weight)
+       SELECT ?, 'retrieval', ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM memory_confirmations
+           WHERE fact_id = ?
+             AND source_type = 'retrieval'
+             AND date(created_at) = date('now')
+        )`
+    )
+    // Deliberately no `updated_at` assignment — see the doc comment.
+    const recoverStmt = this.db().prepare(
+      `UPDATE memory_facts
+          SET confidence = MIN(?, confidence + ?)
+        WHERE id = ? AND confidence < ?`
+    )
+    const insertMany = this.db().transaction((ids: string[]) => {
+      let written = 0
+      for (const id of ids) {
+        const changes = insertStmt.run(id, MEMORY_RETRIEVAL_CONFIRMATION_WEIGHT, id).changes
+        if (changes > 0) {
+          // Only on a day that actually earned a confirmation, so the recovery
+          // rate is per-day and cannot be inflated by a chatty session.
+          written += changes
+          recoverStmt.run(
+            MEMORY_RETRIEVAL_CONFIDENCE_CEILING,
+            MEMORY_RETRIEVAL_CONFIDENCE_RECOVERY,
+            id,
+            MEMORY_RETRIEVAL_CONFIDENCE_CEILING
+          )
+        }
+      }
+      return written
+    })
+    return insertMany(factIds) as number
   }
 
   /** Get all confirmation events for a fact (for evidence-based promotion). */

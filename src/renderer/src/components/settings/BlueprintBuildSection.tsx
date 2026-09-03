@@ -3,7 +3,9 @@ import {
   useParallelBuildAgents,
   useLeanBuildMcp,
   useBlueprintAutoMode,
-  useMaxStreamLifetimeMin
+  useMaxStreamLifetimeMin,
+  useVerifyFeatureDiff,
+  useBlueprintFailureMemory
 } from '@renderer/store'
 
 const AGENT_OPTIONS = [1, 2, 3, 4, 5, 6] as const
@@ -14,6 +16,8 @@ export default function BlueprintBuildSection(): React.JSX.Element {
   const leanMcp = useLeanBuildMcp()
   const autoMode = useBlueprintAutoMode()
   const lifetimeMin = useMaxStreamLifetimeMin()
+  const featureDiff = useVerifyFeatureDiff()
+  const failureMemory = useBlueprintFailureMemory()
   const { setPreference } = useAppPreferenceActions()
 
   return (
@@ -98,6 +102,67 @@ export default function BlueprintBuildSection(): React.JSX.Element {
             <span
               className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
                 autoMode ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-text-primary">Feature Diff in Verify</h4>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Give the VERIFY agent the whole-feature diff up front instead of letting it rediscover
+              changes through tools. Fewer tool calls, but a diff only shows what was written —
+              verification is partly about what is missing. Off by default; turn it on to compare.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              void setPreference('verifyFeatureDiff', !featureDiff).catch(console.error)
+            }}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+              featureDiff ? 'bg-primary' : 'bg-border-muted'
+            }`}
+            role="switch"
+            aria-checked={featureDiff}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                featureDiff ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-text-primary">Structured Retry Memory</h4>
+            <p className="text-xs text-text-secondary mt-0.5">
+              When a build task is retried after a crashed or stalled session, replace the raw
+              4,000-character transcript tail with a fixed-schema summary of what the failed attempt
+              tried and why it stopped, extracted by one cheap Haiku call. Retries after a failed
+              quality gate are unaffected — they already carry structured gate feedback. Falls back
+              to the raw transcript whenever extraction fails. Off by default; the thing to watch is
+              how often those retries now resolve, not prompt size.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              void setPreference('blueprintFailureMemory', !failureMemory).catch(console.error)
+            }}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+              failureMemory ? 'bg-primary' : 'bg-border-muted'
+            }`}
+            role="switch"
+            aria-checked={failureMemory}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                failureMemory ? 'translate-x-4' : 'translate-x-0'
               }`}
             />
           </button>

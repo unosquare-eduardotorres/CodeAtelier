@@ -236,6 +236,16 @@ export interface WorkTrack {
   baseBranch: string
   /** Which rule supplied `baseBranch`. Null on tracks created before this was recorded. */
   baseSource: TrackBaseSource | null
+  /**
+   * Commit `baseBranch` pointed at when this track was cut.
+   *
+   * The branch name is a moving target — it advances, gets rebased, gets
+   * deleted — so it cannot answer "what did this fork from?" after the fact.
+   * Null when nobody could vouch for the answer, which includes every track
+   * created before this was recorded and every branch that already carried its
+   * own commits.
+   */
+  baseCommit: string | null
   status: TrackStatus
   /** Per-track override; null means "inherit the workspace default". */
   landingMode: TrackLandingMode | null

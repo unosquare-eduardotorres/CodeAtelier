@@ -45,6 +45,7 @@ import {
   evaluateWriteSet,
   normalizePath,
   parseDiffAddedLines,
+  pathMatches,
   scanAddedLinesForStubs,
   type AddedLine,
   type TestFileState
@@ -60,17 +61,24 @@ const MAX_SCAN_BYTES = 1_000_000
  * APP-BOOKKEEPING EXEMPTION: workspace paths the app itself writes during a
  * build — never the graded task's work. Prefix-matched (normalized, no leading
  * dot-slash) against every changed file in collectChanges.
+ *
+ * Deliberately does NOT include `blueprints/`. That directory is only the app's
+ * when it is THIS blueprint's artifact dir; an unscoped entry would blind G4 to
+ * every write under a workspace's own top-level `blueprints/` tree, including
+ * another blueprint's artifacts. The scoped form arrives per-task as
+ * `GateTaskContext.artifactPrefix`.
  */
-const APP_BOOKKEEPING_PREFIXES: readonly string[] = [
-  '.opencode/',
-  'blueprints/',
-  '.pm-state/',
-  '.atelierignore'
-]
+const APP_BOOKKEEPING_PREFIXES: readonly string[] = ['.opencode/', '.pm-state/', '.atelierignore']
 /** Git plumbing is fast; a hang here means a broken repo, not a slow one. */
 const GIT_TIMEOUT_MS = 20_000
 /** Output tail retained per command before `boundEvidence` trims further. */
 const MAX_OUTPUT_TAIL_LINES = 40
+/**
+ * Ceiling for a `captureFull` read (git plumbing). Far above any real diff; it
+ * exists so a pathological repo cannot exhaust memory. Crossing it reports a
+ * spawn error rather than returning a short answer — see `captureFull`.
+ */
+const MAX_CAPTURE_BYTES = 32 * 1024 * 1024
 
 const BINARY_EXTENSIONS = new Set([
   'png',
@@ -154,7 +162,23 @@ export interface CommandOutcome {
 /** Injectable so gate tests never spawn a real toolchain. */
 export type CommandRunner = (
   command: string,
-  opts: { cwd: string; timeoutMs: number; signal?: AbortSignal }
+  opts: {
+    cwd: string
+    timeoutMs: number
+    signal?: AbortSignal
+    /**
+     * Return the command's COMPLETE output instead of the evidence tail.
+     *
+     * The tail is right for lint/build/test — the end of a compiler log is the
+     * summary. It is catastrophically wrong for git plumbing, whose output IS
+     * the data: a 40-line tail of `git status --porcelain` drops every dirty
+     * file but the last 40, so those files stop being recognised as
+     * pre-existing and G4 attributes the user's own uncommitted edits to the
+     * task. The same tail applied to `git diff` starts the parse mid-hunk.
+     * Only `git()` sets this.
+     */
+    captureFull?: boolean
+  }
 ) => Promise<CommandOutcome>
 
 /**
@@ -166,6 +190,12 @@ export const defaultCommandRunner: CommandRunner = (command, opts) =>
   new Promise<CommandOutcome>((resolvePromise) => {
     const startedAt = Date.now()
     const lines: string[] = []
+    // captureFull path: keep the raw bytes and split ONCE at the end. Splitting
+    // per chunk would cut a line — or a multi-byte character — at every 64KB
+    // stream boundary, which is exactly how an accented path gets mangled.
+    const rawChunks: Buffer[] = []
+    let rawBytes = 0
+    let overflowed = false
     let timedOut = false
 
     let child: ReturnType<typeof spawn>
@@ -187,7 +217,21 @@ export const defaultCommandRunner: CommandRunner = (command, opts) =>
       return
     }
 
-    const push = (chunk: Buffer | string): void => {
+    const push = (chunk: Buffer | string, isStdout: boolean): void => {
+      if (opts.captureFull) {
+        // stdout ONLY. git writes advisory warnings to stderr (`LF will be
+        // replaced by CRLF`, detached-HEAD notes), and interleaving one into a
+        // NUL-separated listing turns it into a bogus path record.
+        if (!isStdout) return
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), 'utf-8')
+        rawBytes += buf.length
+        if (rawBytes > MAX_CAPTURE_BYTES) {
+          overflowed = true
+          return
+        }
+        rawChunks.push(buf)
+        return
+      }
       for (const line of String(chunk).split('\n')) {
         if (line.trim() === '') continue
         lines.push(line)
@@ -198,8 +242,10 @@ export const defaultCommandRunner: CommandRunner = (command, opts) =>
         }
       }
     }
-    child.stdout?.on('data', push)
-    child.stderr?.on('data', push)
+    // Merged for evidence (a compiler writes errors to stderr); split for
+    // `captureFull`, where the two streams are not interchangeable.
+    child.stdout?.on('data', (chunk) => push(chunk, true))
+    child.stderr?.on('data', (chunk) => push(chunk, false))
 
     const timer = setTimeout(() => {
       timedOut = true
@@ -220,9 +266,14 @@ export const defaultCommandRunner: CommandRunner = (command, opts) =>
       opts.signal?.removeEventListener('abort', onAbort)
       resolvePromise({
         exitCode,
-        output: lines.slice(-MAX_OUTPUT_TAIL_LINES),
+        output: opts.captureFull
+          ? Buffer.concat(rawChunks).toString('utf-8').split('\n')
+          : lines.slice(-MAX_OUTPUT_TAIL_LINES),
         timedOut,
-        spawnError,
+        // An overflow is reported as a spawn failure so `git()` returns null and
+        // the diff-derived gates go `unverifiable` — never a short answer that
+        // silently reads as "nothing else changed".
+        spawnError: spawnError ?? (overflowed ? 'output exceeded capture limit' : undefined),
         durationMs: Date.now() - startedAt
       })
     }
@@ -243,7 +294,9 @@ async function git(
   const outcome = await runner(`git ${args.join(' ')}`, {
     cwd,
     timeoutMs: GIT_TIMEOUT_MS,
-    signal
+    signal,
+    // Plumbing output is data, not evidence: it must never be tail-trimmed.
+    captureFull: true
   })
   if (outcome.spawnError || outcome.exitCode !== 0) return null
   return outcome.output.join('\n')
@@ -284,6 +337,16 @@ export interface GateTaskContext {
    * at gate time; absent for serial/legacy callers (empty = no exemption).
    */
   exemptFiles?: readonly string[]
+  /**
+   * This blueprint's artifact directory (`blueprints/<shortName|id>`), exempted
+   * like the other app-bookkeeping prefixes: the pipeline rewrites plan.md /
+   * tasks.md / spec.md there while the task runs, after the baseline snapshot.
+   *
+   * Scoped to the ACTIVE blueprint on purpose — exempting all of `blueprints/`
+   * would also excuse writes to a sibling blueprint's artifacts and to any
+   * `blueprints/` directory the workspace happens to own itself.
+   */
+  artifactPrefix?: string
   signal?: AbortSignal
   /** Test seam. Defaults to the real spawner. */
   runner?: CommandRunner
@@ -315,6 +378,50 @@ function hashFile(absPath: string): TestFileState | null {
   }
 }
 
+/**
+ * Split a NUL-separated git listing (`-z`) into normalized paths.
+ *
+ * `-z` is not a nicety: `core.quotePath` defaults to true, so the line-based
+ * form renders `src/Café.cs` as `"src/Caf\303\251.cs"` — a string that matches
+ * nothing, so the real path is never recognised as already-dirty or as
+ * untracked. `-z` emits the raw bytes with NUL separators and no quoting.
+ */
+function splitNulPaths(raw: string): string[] {
+  return raw
+    .split('\0')
+    .filter((p) => p !== '')
+    .map((p) => normalizePath(p))
+}
+
+/**
+ * Parse `git status --porcelain -uall -z` into post-image paths.
+ *
+ * Each record is `XY <path>` NUL-terminated. In `-z` form the ` -> ` of a
+ * rename/copy is gone and the two paths are swapped into separate fields:
+ * `R  <to>\0<from>\0`. The pre-image field must be consumed, not read as its
+ * own record — otherwise it lands in the list with its status bytes sliced off
+ * the front of the path.
+ */
+function parseStatusZ(raw: string): string[] {
+  const tokens = raw.split('\0')
+  const out: string[] = []
+  let i = 0
+  while (i < tokens.length) {
+    const entry = tokens[i]
+    if (!entry) {
+      i += 1
+      continue
+    }
+    const status = entry.slice(0, 2)
+    const path = entry.slice(3)
+    if (path) out.push(normalizePath(path))
+    // The extra field belongs to the record, so skip it: the pre-image of a
+    // rename is not a path that exists in the tree now.
+    i += status.includes('R') || status.includes('C') ? 2 : 1
+  }
+  return out
+}
+
 /** Resolve a repo-relative packet path against the execution root, refusing escapes. */
 function resolveInside(root: string, candidate: string): string | null {
   const abs = isAbsolute(candidate) ? candidate : resolve(root, candidate)
@@ -336,14 +443,9 @@ export async function captureGateBaseline(ctx: GateTaskContext): Promise<GateBas
   const cwd = ctx.executionPath
 
   const head = await git(['rev-parse', 'HEAD'], cwd, runner, ctx.signal)
-  const status = await git(['status', '--porcelain', '-uall'], cwd, runner, ctx.signal)
+  const status = await git(['status', '--porcelain', '-uall', '-z'], cwd, runner, ctx.signal)
 
-  const preexistingDirty = (status ?? '')
-    .split('\n')
-    .map((l) => l.slice(3).trim())
-    .filter(Boolean)
-    // Rename entries read `old -> new`; the post-image is what matters.
-    .map((p) => normalizePath(p.includes(' -> ') ? p.split(' -> ')[1] : p))
+  const preexistingDirty = parseStatusZ(status ?? '')
 
   const testsBefore: Record<string, TestFileState> = {}
   for (const rel of ctx.packet?.testFiles ?? []) {
@@ -519,11 +621,20 @@ function isCommandMissing(output: readonly string[]): boolean {
 
 // ── Change collection ──
 
+/** Why a changed path was not attributed to the graded task. */
+type ExemptionReason = 'preexisting' | 'peer' | 'bookkeeping'
+
 interface ChangeSet {
   files: string[]
   addedLines: AddedLine[]
   /** Set when git could not answer — every diff-derived gate goes unverifiable. */
   unavailable?: string
+  /**
+   * Paths the attribution filter dropped, by reason. Observability only: an
+   * over-broad exemption swallowing a real violation is otherwise completely
+   * invisible, which is how a dead `blueprints/` entry survived unnoticed.
+   */
+  exempted: Record<ExemptionReason, string[]>
 }
 
 /**
@@ -540,8 +651,18 @@ async function collectChanges(
   runner: CommandRunner
 ): Promise<ChangeSet> {
   const cwd = ctx.executionPath
+  const noExemptions: Record<ExemptionReason, string[]> = {
+    preexisting: [],
+    peer: [],
+    bookkeeping: []
+  }
   if (!baseline.baselineCommit) {
-    return { files: [], addedLines: [], unavailable: 'no git baseline commit' }
+    return {
+      files: [],
+      addedLines: [],
+      unavailable: 'no git baseline commit',
+      exempted: noExemptions
+    }
   }
 
   const diff = await git(
@@ -551,15 +672,12 @@ async function collectChanges(
     ctx.signal
   )
   if (diff === null) {
-    return { files: [], addedLines: [], unavailable: 'git diff failed' }
+    return { files: [], addedLines: [], unavailable: 'git diff failed', exempted: noExemptions }
   }
 
-  const untracked = (
-    (await git(['ls-files', '--others', '--exclude-standard'], cwd, runner, ctx.signal)) ?? ''
+  const untracked = splitNulPaths(
+    (await git(['ls-files', '--others', '--exclude-standard', '-z'], cwd, runner, ctx.signal)) ?? ''
   )
-    .split('\n')
-    .map((l) => normalizePath(l.trim()))
-    .filter(Boolean)
 
   const dirtyBefore = new Set(baseline.preexistingDirty)
   // R1.2 — parallel-wave attribution: peer in-flight tasks' declared files are
@@ -574,11 +692,37 @@ async function collectChanges(
   // this exemption G4 attributes them to whichever task is being gated
   // (live evidence: T004 wrote 13 files, status passed, gate failed on
   // .opencode/agents/davinci.md + blueprints/<id>/plan.md).
-  const exempt = new Set([
-    ...(ctx.exemptFiles ?? []).map(normalizePath),
-    ...APP_BOOKKEEPING_PREFIXES
-  ])
-  const notThisTasks = (f: string): boolean => dirtyBefore.has(f) || exempt.has(f)
+  // Peer `exemptFiles` are exact paths (a peer declaring `src/` must not exempt
+  // this task's `src/other.ts`); the bookkeeping entries are directory
+  // prefixes, so they need `pathMatches`, not set equality — no changed file is
+  // ever literally named `.opencode/`.
+  const exemptExact = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+  const bookkeepingPrefixes = ctx.artifactPrefix
+    ? [...APP_BOOKKEEPING_PREFIXES, normalizePath(ctx.artifactPrefix)]
+    : APP_BOOKKEEPING_PREFIXES
+
+  const exempted: Record<ExemptionReason, string[]> = {
+    preexisting: [],
+    peer: [],
+    bookkeeping: []
+  }
+  const seenExempt = new Set<string>()
+  const notThisTasks = (f: string): boolean => {
+    const reason: ExemptionReason | null = dirtyBefore.has(f)
+      ? 'preexisting'
+      : exemptExact.has(f)
+        ? 'peer'
+        : bookkeepingPrefixes.some((p) => pathMatches(f, p))
+          ? 'bookkeeping'
+          : null
+    if (!reason) return false
+    // Called once per diff line, so record each path once.
+    if (!seenExempt.has(f)) {
+      seenExempt.add(f)
+      exempted[reason].push(f)
+    }
+    return true
+  }
   const addedLines = parseDiffAddedLines(diff).filter((l) => !notThisTasks(l.file))
 
   // An untracked file has no diff hunk — every line of it is an addition.
@@ -599,7 +743,38 @@ async function collectChanges(
     (f) => !notThisTasks(f)
   )
 
-  return { files, addedLines }
+  if (exempted.bookkeeping.length > 0) {
+    gateLog.debug(
+      `[${ctx.taskId}] app-bookkeeping exemption dropped ${exempted.bookkeeping.length} ` +
+        `path(s): ${exempted.bookkeeping.join(', ')}`
+    )
+  }
+
+  return { files, addedLines, exempted }
+}
+
+/**
+ * Did this task change anything on disk, relative to the baseline it started
+ * from? `true` = nothing changed, `false` = something did, `null` = git could
+ * not answer (no baseline commit, or the diff failed).
+ *
+ * The three-valued return is the point. This exists for the no-write-activity
+ * guard, whose per-attempt write-tool counter cannot see work an EARLIER
+ * attempt of the same task did — and a caller that collapses "unknown" into
+ * "nothing changed" would fail exactly the tasks whose evidence is missing.
+ *
+ * Reuses `collectChanges`, so the same attribution rules apply: pre-existing
+ * dirt, peers' declared files and app bookkeeping are not this task's work.
+ * That is what makes an empty result mean "this task wrote nothing" rather than
+ * "the tree happens to be clean".
+ */
+export async function isBaselineDiffEmpty(
+  ctx: GateTaskContext,
+  baseline: GateBaseline
+): Promise<boolean | null> {
+  const changes = await collectChanges(ctx, baseline, ctx.runner ?? defaultCommandRunner)
+  if (changes.unavailable) return null
+  return changes.files.length === 0
 }
 
 // ── The gates ──
@@ -626,10 +801,17 @@ function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
     forbiddenFiles: packet?.forbiddenFiles
   })
 
+  // Exemption counts ride along so an over-broad exemption is visible in the
+  // report instead of only in the absence of a violation. Zero-valued keys are
+  // omitted to keep the common report clean.
+  const exempted = changes.exempted
   const counts = {
     changed: evaluation.changedCount,
     violations: evaluation.violations.length,
-    forbidden: evaluation.forbidden.length
+    forbidden: evaluation.forbidden.length,
+    ...(exempted.preexisting.length > 0 ? { exemptPreexisting: exempted.preexisting.length } : {}),
+    ...(exempted.peer.length > 0 ? { exemptPeer: exempted.peer.length } : {}),
+    ...(exempted.bookkeeping.length > 0 ? { exemptBookkeeping: exempted.bookkeeping.length } : {})
   }
 
   if (evaluation.forbidden.length > 0 || evaluation.violations.length > 0) {

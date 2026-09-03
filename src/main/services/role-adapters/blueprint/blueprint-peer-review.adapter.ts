@@ -17,6 +17,9 @@ import { renderWorkPacket } from '../../../../shared/work-packet-prompt'
 
 export class BlueprintPeerReviewAdapter extends BlueprintBaseAdapter {
   readonly role: AgentRole = 'blueprint-review' // reuses the review role's CLI profile
+  protected get usageFeature(): string {
+    return 'blueprint-peer-review'
+  }
   readonly agentId: string
 
   private readonly phaseContext: PhaseContext

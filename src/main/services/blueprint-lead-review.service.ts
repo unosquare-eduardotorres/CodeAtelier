@@ -28,7 +28,6 @@
  */
 
 import { EventEmitter } from 'node:events'
-import { execFileSync } from 'node:child_process'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -56,13 +55,14 @@ import type {
   BlueprintPhaseArtifactPayload
 } from '../../shared/blueprint-types'
 import type { UnverifiedItem } from '../../shared/gate-types'
+import { assembleFeatureDiff, MAX_FEATURE_DIFF_CHARS } from './blueprint-feature-diff'
 
 const bpLog = log.scope('blueprint-lead-review')
 
 const PASS_TIMEOUT_MS = 30 * 60_000 // 30 min
 
 /** Whole-diff cap. A diff beyond this is truncated, not shipped raw. */
-const MAX_DIFF_CHARS = 120_000
+const MAX_DIFF_CHARS = MAX_FEATURE_DIFF_CHARS
 
 /** Hard bound on fix tasks per pass round — mirrors MAX_FIX_TASKS in M7. */
 const MAX_FIX_TASKS = 10
@@ -346,29 +346,15 @@ export class BlueprintLeadReviewService extends EventEmitter {
     }
   }
 
-  // ── Diff assembly (same baseline contract as code-review) ──
+  // ── Diff assembly ──
+  //
+  // E3: this was a byte-identical copy of code-review's, under a comment saying
+  // "same baseline contract as code-review" — which is a comment doing a
+  // module's job. Both now call the shared implementation, so the contract is
+  // enforced rather than asserted.
 
   private assembleFeatureDiff(blueprintId: string, workspacePath: string): string | null {
-    const blueprint = blueprintRepository.findById(blueprintId)
-    if (!blueprint) return null
-
-    const settings = (blueprint.settingsJson ?? {}) as Record<string, unknown>
-    let baseline: string | null =
-      typeof settings.buildBaselineCommit === 'string' ? settings.buildBaselineCommit : null
-
-    if (!baseline) {
-      const mb = gitSync(['merge-base', 'HEAD', 'main'], workspacePath)
-      baseline = mb?.trim() || null
-    }
-
-    if (!baseline) return null
-
-    const diff = gitSync(['diff', '--no-color', `${baseline}..HEAD`, '--'], workspacePath)
-    if (diff === null) return null
-    if (diff.trim() === '') return ''
-    return diff.length > MAX_DIFF_CHARS
-      ? diff.slice(0, MAX_DIFF_CHARS) + '\n… (diff truncated for review)'
-      : diff
+    return assembleFeatureDiff(blueprintId, workspacePath, MAX_DIFF_CHARS)
   }
 
   /** Condensed verify outcome for the lead's context. */
@@ -648,17 +634,5 @@ export class BlueprintLeadReviewService extends EventEmitter {
   async shutdown(): Promise<void> {}
 }
 
-/** Run a git subcommand in the workspace (sync, best-effort). */
-function gitSync(args: string[], cwd: string): string | null {
-  try {
-    return execFileSync('git', args, {
-      cwd,
-      encoding: 'utf-8',
-      maxBuffer: 16 * 1024 * 1024
-    })
-  } catch {
-    return null
-  }
-}
 
 export const blueprintLeadReviewService = new BlueprintLeadReviewService()

@@ -65,7 +65,7 @@ test('cosineSimilarity: zero vector = 0.0', () => {
 
 // Helper to create confirmation events
 function makeConfirm(
-  sourceType: 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap',
+  sourceType: 'auto_dedup' | 'human' | 'tool' | 'extraction' | 'bootstrap' | 'retrieval',
   dayOffset: number,
   weight?: number
 ) {
@@ -96,6 +96,120 @@ test('promotion: T0 stays T0 with 3 confirms on SAME day (needs 3 distinct days)
 test('promotion: T0 → T1 with 3 confirms on 3 distinct days', () => {
   const confirms = [makeConfirm('extraction', 3), makeConfirm('tool', 1), makeConfirm('human', 0)]
   assert.equal(computePromotionTierPure(0, 0.5, confirms), 1)
+})
+
+test('promotion: T0 stays T0 when confidence is below the 0.35 floor', () => {
+  const confirms = [makeConfirm('extraction', 3), makeConfirm('tool', 1), makeConfirm('human', 0)]
+  assert.equal(computePromotionTierPure(0, 0.34, confirms), 0)
+})
+
+test('promotion: T0 → T1 exactly at the 0.35 confidence floor', () => {
+  const confirms = [makeConfirm('extraction', 3), makeConfirm('tool', 1), makeConfirm('human', 0)]
+  assert.equal(computePromotionTierPure(0, 0.35, confirms), 1)
+})
+
+// Regression: decay → sweep oscillation. A stale T1 fact decays below the 0.3
+// tier-demotion threshold and drops to T0. Its confirmations are never consumed,
+// so the next promotion sweep re-promoted it to T1 — forever, once per day,
+// bumping updated_at and invalidating the workspace embedding cache each time.
+test('promotion: decayed fact is not re-promoted by the next sweep', () => {
+  const confirms = [
+    makeConfirm('extraction', 30),
+    makeConfirm('tool', 29),
+    makeConfirm('human', 28)
+  ]
+
+  // Decay step: confidence 0.40 - 0.15 = 0.25, which is < 0.3, so tier T1 → T0.
+  let confidence = 0.4
+  let tier: 0 | 1 | 2 | 3 = 1
+  confidence = Math.max(0, confidence - 0.15)
+  if (confidence < 0.3 && tier > 0) tier = (tier - 1) as 0 | 1 | 2 | 3
+  assert.equal(tier, 0, 'decay should demote T1 → T0')
+
+  // Sweep step: same evidence, but confidence is now below the floor.
+  assert.equal(computePromotionTierPure(tier, confidence, confirms), 0)
+
+  // And it stays put across further decay cycles rather than flip-flopping.
+  for (let i = 0; i < 5; i++) {
+    confidence = Math.max(0, confidence - 0.15)
+    assert.equal(computePromotionTierPure(0, confidence, confirms), 0)
+  }
+})
+
+// ── Retrieval as weak evidence ──
+//
+// Usage should be able to carry a fact T0 → T1 (the complaint that started
+// this: a convention retrieved and relied on daily accrued no evidence at all),
+// but must never satisfy the T1 → T2 source-type gate. Tier feeds the retrieval
+// ranking multiplier and ranking drives retrieval, so counting usage as
+// corroboration would let a fact promote itself for being popular.
+
+test('promotion: retrieval confirms alone carry T0 → T1', () => {
+  const confirms = [
+    makeConfirm('retrieval', 3),
+    makeConfirm('retrieval', 1),
+    makeConfirm('retrieval', 0)
+  ]
+  assert.equal(computePromotionTierPure(0, 0.5, confirms), 1)
+})
+
+test('promotion: retrieval confirms alone never reach T2 (excluded from distinctSources)', () => {
+  // 6 retrieval confirms spanning 40 days at high confidence — passes every
+  // T1→T2 gate except distinct source types, which retrieval cannot satisfy.
+  const confirms = [
+    makeConfirm('retrieval', 40),
+    makeConfirm('retrieval', 32),
+    makeConfirm('retrieval', 24),
+    makeConfirm('retrieval', 16),
+    makeConfirm('retrieval', 8),
+    makeConfirm('retrieval', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.95, confirms), 1)
+})
+
+test('promotion: retrieval does not top up a single real source type to 2', () => {
+  const confirms = [
+    makeConfirm('extraction', 40),
+    makeConfirm('extraction', 30),
+    makeConfirm('extraction', 20),
+    makeConfirm('retrieval', 10),
+    makeConfirm('retrieval', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.95, confirms), 1)
+})
+
+test('promotion: retrieval cannot satisfy the T2→T3 weighted-sum gate on its own', () => {
+  // 2 human confirms (satisfying humanCount) + 40 days of retrieval. At weight
+  // 0.25 the retrieval rows alone would be 10.0 — past the ≥8 bar — if they
+  // counted. Real weighted evidence here is only 2.0, so this must stay at T2.
+  const confirms = [
+    makeConfirm('human', 40),
+    makeConfirm('human', 39),
+    ...Array.from({ length: 40 }, (_, i) => makeConfirm('retrieval', 39 - i))
+  ]
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 2)
+})
+
+test('promotion: T2 → T3 still reaches once real weighted evidence clears the bar', () => {
+  // Same shape, but the weighted sum is carried by real evidence this time.
+  const confirms = [
+    makeConfirm('human', 40),
+    makeConfirm('human', 39),
+    ...Array.from({ length: 6 }, (_, i) => makeConfirm('extraction', 38 - i)),
+    ...Array.from({ length: 10 }, (_, i) => makeConfirm('retrieval', 20 - i))
+  ]
+  assert.equal(computePromotionTierPure(2, 0.95, confirms), 3)
+})
+
+test('promotion: retrieval alongside two real source types still reaches T2', () => {
+  const confirms = [
+    makeConfirm('extraction', 40),
+    makeConfirm('tool', 30),
+    makeConfirm('extraction', 20),
+    makeConfirm('retrieval', 10),
+    makeConfirm('retrieval', 0)
+  ]
+  assert.equal(computePromotionTierPure(1, 0.95, confirms), 2)
 })
 
 test('promotion: T1 stays T1 with 5 confirms but only 1 source type', () => {
@@ -718,6 +832,39 @@ test('regression: consolidate() sweeps AFTER the merge loop', () => {
     sweepIdx > mergeIdx,
     'the promotion sweep must run after the cluster/merge loop in consolidate()'
   )
+})
+
+// The retrieval-service tests mock the repository, so a refactor that dropped
+// this call would leave every one of them green while retrieval silently
+// stopped being evidence again — the exact bug this shipped to fix. Assert the
+// wiring at the call site, using the same source-inspection approach as the
+// sweep-ordering regressions above.
+test('regression: getContextForTurn records retrieval evidence after touching facts', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const source = fs.readFileSync(path.join(__dirname, '..', 'memory-retrieval.service.ts'), 'utf-8')
+
+  const body = source.slice(
+    source.indexOf('async getContextForTurn('),
+    source.indexOf('async retrieve(')
+  )
+  assert.ok(body.length > 0, 'getContextForTurn() body not found')
+
+  const touchIdx = body.indexOf('touchFacts(')
+  const recordIdx = body.indexOf('recordRetrievalConfirmations(')
+  assert.ok(touchIdx > 0, 'getContextForTurn() should touch accessed facts')
+  assert.ok(
+    recordIdx > 0,
+    'getContextForTurn() must record retrieval confirmations — without this, ' +
+      'usage never becomes evidence and facts stay at T0 forever'
+  )
+  assert.ok(recordIdx > touchIdx, 'evidence is recorded for the same facts that were touched')
+
+  // The write is bookkeeping and must never cost the turn its memory context:
+  // the enclosing catch returns '', so an unguarded throw would silently
+  // disable injection entirely.
+  const guarded = /try\s*\{[^}]*recordRetrievalConfirmations\(/s.test(body)
+  assert.ok(guarded, 'recordRetrievalConfirmations must be wrapped in its own try/catch')
 })
 
 test('regression: idle consolidation sweeps AFTER scanForDuplicates', () => {

@@ -393,6 +393,271 @@ describe('R1.2 — parallel-wave attribution (exemptFiles)', () => {
       assert.equal(report.overall, 'pass', JSON.stringify(report.gates, null, 2))
     }
   })
+
+  test('app-bookkeeping paths are prefix-exempt, not exact-match exempt', async () => {
+    if (!GIT_AVAILABLE) return
+    // The app writes `.opencode/agents/*` at every session start and rewrites
+    // `blueprints/<id>/plan.md` as the pipeline advances — both land AFTER the
+    // baseline snapshot, so an exact-match exemption on `.opencode/` never fires
+    // and G4 attributes the app's own writes to whichever task is being graded.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n",
+      '.opencode/agents/davinci.md': '# davinci\n'
+    })
+    const ctx = ctxFor(dir, gitRunner({ 'run-task-tests': { exitCode: 0 } }), {
+      artifactPrefix: 'blueprints/bp-1'
+    })
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      // The task's own, declared work.
+      'src/feature.ts': 'export const a = 2\n',
+      // The app's work: one tracked rewrite (diff path) and one new file
+      // (untracked path). Neither is in the packet's allowedFiles.
+      '.opencode/agents/davinci.md': '# davinci (rewritten at session start)\n',
+      'blueprints/bp-1/plan.md': '# plan\n'
+    })
+    const report = await runGates(ctx, baseline)
+
+    assert.equal(
+      verdictOf(report.gates, 'write-set'),
+      'pass',
+      `app-bookkeeping writes must not be attributed to the task: ${JSON.stringify(
+        report.gates.find((g) => g.name === 'write-set')?.evidence
+      )}`
+    )
+  })
+
+  test('.pm-state/ is exempt at any depth', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, gitRunner({ 'run-task-tests': { exitCode: 0 } }))
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'src/feature.ts': 'export const a = 2\n',
+      '.pm-state/logs/x.log': 'process manager state\n',
+      '.atelierignore': 'dist\n'
+    })
+    const report = await runGates(ctx, baseline)
+
+    assert.equal(
+      verdictOf(report.gates, 'write-set'),
+      'pass',
+      JSON.stringify(report.gates.find((g) => g.name === 'write-set')?.evidence)
+    )
+  })
+
+  test('NEGATIVE CONTROL — .opencodex/ is not .opencode/ and must still fail', async () => {
+    if (!GIT_AVAILABLE) return
+    // Guards the exemption against being "simplified" into a naive startsWith:
+    // `pathMatches` only matches on a segment boundary, and a sibling directory
+    // whose name merely starts with the same letters is ordinary task work.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, gitRunner({}))
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, { '.opencodex/foo.md': '# not the app\n' })
+    const report = await runGates(ctx, baseline)
+
+    assert.equal(verdictOf(report.gates, 'write-set'), 'fail')
+    assert.ok(
+      report.gates
+        .find((g) => g.name === 'write-set')!
+        .evidence.some((e) => e.includes('.opencodex/foo.md')),
+      'the evidence must name the offending path'
+    )
+  })
+
+  test('the artifact exemption is scoped — ANOTHER blueprint’s artifacts still fail', async () => {
+    if (!GIT_AVAILABLE) return
+    // `blueprints/` as a blanket prefix would blind G4 to every write under a
+    // workspace's own blueprints tree. Only the ACTIVE blueprint's dir is the
+    // app's bookkeeping.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, gitRunner({}), { artifactPrefix: 'blueprints/bp-active' })
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'blueprints/bp-active/plan.md': '# mine\n',
+      'blueprints/bp-other/plan.md': '# not mine\n'
+    })
+    const report = await runGates(ctx, baseline)
+    const writeSet = report.gates.find((g) => g.name === 'write-set')!
+
+    assert.equal(verdictOf(report.gates, 'write-set'), 'fail')
+    assert.ok(
+      writeSet.evidence.some((e) => e.includes('bp-other')),
+      `the sibling blueprint must be reported: ${JSON.stringify(writeSet.evidence)}`
+    )
+    assert.ok(
+      !writeSet.evidence.some((e) => e.includes('bp-active')),
+      'the active blueprint’s own artifacts must stay exempt'
+    )
+  })
+
+  test('peer-review re-grade: the synthetic empty baseline leaves bookkeeping as the only shield', async () => {
+    if (!GIT_AVAILABLE) return
+    // The peer-review re-grade builds a baseline with `preexistingDirty: []`, so
+    // the pre-existing-dirt exemption cannot fire at all and the app-bookkeeping
+    // prefixes are the sole protection against grading the app's own writes.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, gitRunner({ 'run-task-tests': { exitCode: 0 } }), {
+      artifactPrefix: 'blueprints/bp-1'
+    })
+    const captured = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'src/feature.ts': 'export const a = 2\n',
+      '.opencode/agents/davinci.md': '# rewritten\n',
+      'blueprints/bp-1/tasks.md': '# tasks\n'
+    })
+
+    const syntheticBaseline = { ...captured, preexistingDirty: [] }
+    const report = await runGates(ctx, syntheticBaseline)
+
+    assert.equal(
+      verdictOf(report.gates, 'write-set'),
+      'pass',
+      JSON.stringify(report.gates.find((g) => g.name === 'write-set')?.evidence)
+    )
+  })
+
+  test('the exemption is observable — dropped paths are counted on the write-set gate', async () => {
+    if (!GIT_AVAILABLE) return
+    // An over-broad exemption swallowing a real violation is otherwise invisible:
+    // the gate just says "all in set" and never mentions what it discarded.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, gitRunner({ 'run-task-tests': { exitCode: 0 } }), {
+      artifactPrefix: 'blueprints/bp-1'
+    })
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'src/feature.ts': 'export const a = 2\n',
+      '.opencode/agents/davinci.md': '# rewritten\n',
+      'blueprints/bp-1/plan.md': '# plan\n'
+    })
+    const report = await runGates(ctx, baseline)
+    const writeSet = report.gates.find((g) => g.name === 'write-set')!
+
+    assert.equal(writeSet.verdict, 'pass')
+    assert.equal(writeSet.counts?.exemptBookkeeping, 2)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Git plumbing: full capture and NUL-separated listings
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('git plumbing is data, not evidence', () => {
+  test('every pre-existing dirty file is captured — not just the last 40', async () => {
+    if (!GIT_AVAILABLE) return
+    // The command runner keeps an evidence TAIL for lint/build/test. Applied to
+    // `git status`, that tail silently discards every dirty file but the last
+    // 40, so those files stop counting as pre-existing and G4 blames the task
+    // for the user's own uncommitted edits.
+    const files: Record<string, string> = {}
+    for (let i = 0; i < 60; i++) files[`src/f${i}.ts`] = `export const v${i} = 1\n`
+    const dir = makeRepo(files)
+
+    const dirtied: Record<string, string> = {}
+    for (let i = 0; i < 60; i++) dirtied[`src/f${i}.ts`] = `export const v${i} = 2\n`
+    write(dir, dirtied)
+
+    const baseline = await captureGateBaseline(ctxFor(dir, gitRunner({})))
+
+    assert.equal(
+      baseline.preexistingDirty.length,
+      60,
+      'a truncated status makes the user’s own edits look like the task’s'
+    )
+    assert.ok(baseline.preexistingDirty.includes('src/f0.ts'), 'the FIRST entry must survive')
+  })
+
+  test('a violation buried above 40 lines of allowed diff is still caught', async () => {
+    if (!GIT_AVAILABLE) return
+    // git diff emits files alphabetically, so `src/aaa-violation.ts` lands at
+    // the TOP — exactly the part a tail-only capture throws away, turning a real
+    // violation into a silent pass.
+    const dir = makeRepo({
+      'src/aaa-violation.ts': 'export const bad = 1\n',
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, gitRunner({}))
+    const baseline = await captureGateBaseline(ctx)
+
+    const bulk = Array.from({ length: 80 }, (_, i) => `export const x${i} = ${i}`).join('\n')
+    write(dir, {
+      'src/aaa-violation.ts': 'export const bad = 2\n',
+      'src/feature.ts': `export const a = 2\n${bulk}\n`
+    })
+    const report = await runGates(ctx, baseline)
+    const writeSet = report.gates.find((g) => g.name === 'write-set')!
+
+    assert.equal(writeSet.verdict, 'fail')
+    assert.ok(
+      writeSet.evidence.some((e) => e.includes('src/aaa-violation.ts')),
+      `the buried violation must be reported: ${JSON.stringify(writeSet.evidence)}`
+    )
+  })
+
+  test('non-ASCII paths survive core.quotePath instead of arriving escaped', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    // The default, made explicit: this is the setting that mangles the path.
+    execFileSync('git', ['config', 'core.quotePath', 'true'], { cwd: dir })
+
+    const ctx = ctxFor(dir, gitRunner({}))
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, { 'src/Café.cs': 'var x = 1;\n' })
+    const report = await runGates(ctx, baseline)
+    const writeSet = report.gates.find((g) => g.name === 'write-set')!
+
+    assert.equal(writeSet.verdict, 'fail')
+    assert.ok(
+      !writeSet.evidence.some((e) => e.includes('\\303')),
+      `the path must not arrive octal-escaped: ${JSON.stringify(writeSet.evidence)}`
+    )
+    assert.ok(
+      writeSet.evidence.some((e) => e.includes('.cs') && e.includes('src/Caf')),
+      `the real path must be reported: ${JSON.stringify(writeSet.evidence)}`
+    )
+  })
+
+  test('a renamed file’s pre-image is not mistaken for its own status record', async () => {
+    if (!GIT_AVAILABLE) return
+    // `-z` drops the ` -> ` and emits `R  <to>\0<from>\0`. Reading the second
+    // field as a record would slice three characters off the front of a real
+    // path and add that garbage to the dirty list.
+    const dir = makeRepo({ 'src/old-name.ts': 'export const a = 1\n' })
+    execFileSync('git', ['mv', 'src/old-name.ts', 'src/new-name.ts'], { cwd: dir })
+
+    const baseline = await captureGateBaseline(ctxFor(dir, gitRunner({})))
+
+    assert.deepEqual(baseline.preexistingDirty, ['src/new-name.ts'])
+  })
 })
 
 describe('R1.2 — per-worktree command mutex', () => {

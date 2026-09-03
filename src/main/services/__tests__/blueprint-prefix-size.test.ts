@@ -84,11 +84,36 @@ setupElectronStub()
  *                                          creation phase (~1% of pipeline tokens) while BUILD is
  *                                          77–82%.
  *
- * Cumulative: canonical −2.1%, revised −39.1%.
+ *   2026-09-03  E7 Tool Priority merge     canonical 38,811 · revised 76,384 · review 51,400
+ *                                          RAISED, and the raise is an artefact of fixing the
+ *                                          MEASUREMENT, not a prefix regression. Every earlier
+ *                                          row measured the LOADER output only, while BUILD
+ *                                          shipped `loader + TOOL_PRIORITY_DIRECTIVE_BUILDER`
+ *                                          (1,415 chars) via its adapter. The ratchet was blind
+ *                                          to that block, so moving text between template and
+ *                                          adapter scored as pure win or pure regression purely
+ *                                          by which side it landed on. BUILD is now measured
+ *                                          through the adapter with an empty task tail.
+ *                                          Like for like, the SHIPPED prefix fell:
+ *                                            before  37,574 + 1,415 + 18 = 39,007
+ *                                            after   38,811                (−196)
+ *                                          Modest, and smaller than the −1.0 K the plan
+ *                                          projected: of the 1,415 chars removed, ~1,237 came
+ *                                          straight back into build-phase.md, because the merge
+ *                                          was required to carry the inspection-vs-execution
+ *                                          rule (~600), the file_outline / find_references
+ *                                          orderings (~300) and the typecheck rung plus its
+ *                                          "up to 2 rounds" bound (~330). What is genuinely gone
+ *                                          is the DUPLICATE `## Tool Priority` heading and the
+ *                                          re-stated code-graph routing lines — which was the
+ *                                          defect. The +18 is the empty `## Current Task` header
+ *                                          the adapter always appends.
+ *
+ * Cumulative: canonical −2.1%, revised −39.1% (loader-only basis, rows up to A9).
  */
 const BASELINE_CHARS = {
-  canonical: 37_574,
-  revised: 75_147,
+  canonical: 38_811,
+  revised: 76_384,
   review: 51_400
 } as const
 
@@ -257,7 +282,17 @@ if (!env) {
     scaffold: number
   }
 
-  /** Assemble the real context for `phase` and decompose the rendered prompt. */
+  /**
+   * Assemble the real context for `phase` and decompose the rendered prompt.
+   *
+   * BUILD is measured through its ADAPTER, not the loader. Until E7 the two
+   * disagreed by 1,415 chars: `blueprint-build.adapter.ts` concatenated
+   * `TOOL_PRIORITY_DIRECTIVE_BUILDER` onto the loader's output, so the ratchet
+   * built to make prefix size a CI number was blind to a block that shipped in
+   * every BUILD prompt — and moving text between the two was scored as pure
+   * regression or pure win depending only on which side it landed on. The other
+   * phases have no such tail and go through the loader directly.
+   */
   async function measure(
     blueprintId: string,
     wsPath: string,
@@ -269,7 +304,10 @@ if (!env) {
       wsPath,
       200_000 // large tier — the Claude path
     )
-    const prompt = buildPhaseSystemPrompt(phase, ctx)
+    const prompt =
+      phase === 'build'
+        ? assembledBuildPrompt(blueprintId, ctx)
+        : buildPhaseSystemPrompt(phase, ctx)
 
     const artifacts = formatArtifacts(ctx.previousArtifacts, ctx.artifactBudgetChars).length
     const workspaceDocs = ctx.workspaceDocs?.length ?? 0
@@ -283,6 +321,24 @@ if (!env) {
       contextJson,
       scaffold: prompt.length - artifacts - workspaceDocs - constitution - contextJson
     }
+  }
+
+  /**
+   * What the BUILD session actually receives, with an empty task tail — i.e.
+   * the task-INVARIANT prefix, which is the thing re-sent on every one of the
+   * ~31 calls per attempt and the only part prefix work can move.
+   */
+  function assembledBuildPrompt(blueprintId: string, ctx: unknown): string {
+    const {
+      BlueprintBuildAdapter
+    } = require('../role-adapters/blueprint/blueprint-build.adapter')
+    const adapter = new BlueprintBuildAdapter({
+      workspaceId: wsId,
+      blueprintId,
+      phaseContext: ctx,
+      taskContext: ''
+    })
+    return (adapter as any).buildPhaseSystemPrompt()
   }
 
   function report(scenario: string, b: Breakdown, baseline: number): void {

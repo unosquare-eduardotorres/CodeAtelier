@@ -17,6 +17,7 @@ import {
   blueprintPhaseRepository,
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
+import { blueprintTelemetryRepository } from '../db/repositories/blueprint-telemetry.repository'
 import { workspaceRepository, conversationRepository } from '../db/repositories'
 import { ideaRepository } from '../db/repositories'
 import { getDatabase } from '../db/index'
@@ -783,6 +784,15 @@ export class BlueprintService extends EventEmitter {
     bpLog.info(
       `[phase-auto-retry] Scheduling auto-retry for ${ctx.phase} phase of blueprint ${ctx.blueprintId} in 5s`
     )
+    // E11 — recorded when the retry is SCHEDULED. The dispatch 5 s later can be
+    // skipped (another pipeline started), and a retry that was decided on and
+    // then dropped is exactly the case the log line alone loses.
+    blueprintTelemetryRepository.record({
+      blueprintId: ctx.blueprintId,
+      kind: 'auto_retry',
+      phase: ctx.phase,
+      data: { error: ctx.error.slice(0, 300), delayMs: 5000 }
+    })
 
     // Emit system message so the user sees the retry notice
     this.emit('phaseProgress', {

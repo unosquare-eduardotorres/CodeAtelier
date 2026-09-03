@@ -29,7 +29,9 @@ export {
   useLeanBuildMcp,
   useMaxStreamLifetimeMin,
   useUserAvatarVariant,
-  useBlueprintAutoMode
+  useBlueprintAutoMode,
+  useVerifyFeatureDiff,
+  useBlueprintFailureMemory
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'

@@ -22,6 +22,7 @@ import { summariseResolvedBase } from '../../../../../shared/blueprint-base-summ
 import type {
   BlueprintBranchChoice,
   BlueprintBranchMode,
+  BlueprintBranchOption,
   BlueprintBranchOptions,
   ResolvedBlueprintBase
 } from '../../../../../shared/blueprint-types'
@@ -30,6 +31,16 @@ interface BlueprintBranchPickerProps {
   workspaceId: string
   value: BlueprintBranchChoice
   onChange: (choice: BlueprintBranchChoice) => void
+}
+
+/** One entry. Remotes never carry a holder, so the same renderer serves both. */
+function branchOption(b: BlueprintBranchOption): JSX.Element {
+  return (
+    <option key={b.name} value={b.name}>
+      {b.name}
+      {b.heldBy ? ` — held by ${b.heldBy.label ?? b.heldBy.ownerKind}` : ''}
+    </option>
+  )
 }
 
 const MODE_LABELS: { mode: BlueprintBranchMode; label: string; hint: string }[] = [
@@ -90,8 +101,11 @@ export function BlueprintBranchPicker({
   // Only `auto` and `fork` cut a new branch, so only they have a base to
   // resolve. Re-asked when the fork target changes, because the integration
   // upgrade is a property of the chosen base rather than of the workspace.
+  // `fork` with nothing picked yet resolves nothing on purpose: sending
+  // `{ mode: 'auto' }` on its behalf would render the auto base as though it
+  // were the answer to a question the user is still halfway through answering.
   const forkTarget = value.mode === 'fork' ? (value.branch ?? null) : null
-  const resolvesBase = value.mode === 'auto' || value.mode === 'fork'
+  const resolvesBase = value.mode === 'auto' || (value.mode === 'fork' && forkTarget !== null)
 
   useEffect(() => {
     // Not cleared for the modes that have no base: clearing here would be a
@@ -119,17 +133,33 @@ export function BlueprintBranchPicker({
 
   const selectMode = useCallback(
     (mode: BlueprintBranchMode) => {
+      if (mode === 'auto' || mode === 'primary') {
+        onChange({ mode })
+        return
+      }
       // Carry the branch across fork/takeover so switching between them does
-      // not silently discard a choice the user already made.
-      onChange(mode === 'auto' || mode === 'primary' ? { mode } : { mode, branch: value.branch })
+      // not silently discard a choice the user already made — except for a
+      // remote-tracking ref, which takeover has no entry for. Carrying it would
+      // leave the dropdown blank while the state still held a branch takeover
+      // could never check out.
+      const dropped =
+        mode === 'takeover' &&
+        (options?.branches.find((b) => b.name === value.branch)?.isRemote ?? false)
+      onChange({ mode, branch: dropped ? undefined : value.branch })
     },
-    [onChange, value.branch]
+    [onChange, value.branch, options]
   )
 
   const branches = options?.branches ?? []
   const needsBranch = value.mode === 'fork' || value.mode === 'takeover'
   const selected = branches.find((b) => b.name === value.branch)
   const noCommits = options !== null && !options.repoHasCommits
+
+  // Remotes are a fork base and nothing else. A takeover continues a branch by
+  // checking it out, and git cannot check out a remote-tracking ref — offering
+  // one there would be an option that can only fail.
+  const localBranches = branches.filter((b) => !b.isRemote)
+  const remoteBranches = value.mode === 'fork' ? branches.filter((b) => b.isRemote) : []
 
   return (
     <div className="space-y-2">
@@ -190,12 +220,21 @@ export function BlueprintBranchPicker({
           <option value="">
             {value.mode === 'fork' ? 'Choose a base branch…' : 'Choose a branch to take over…'}
           </option>
-          {branches.map((b) => (
-            <option key={b.name} value={b.name}>
-              {b.name}
-              {b.heldBy ? ` — held by ${b.heldBy.label ?? b.heldBy.ownerKind}` : ''}
-            </option>
-          ))}
+          {/*
+            Ungrouped when there are no remotes, so a repo without them looks
+            exactly as it did rather than growing a "Local" header that
+            distinguishes nothing.
+          */}
+          {remoteBranches.length === 0 ? (
+            localBranches.map(branchOption)
+          ) : (
+            <>
+              <optgroup label="Local">{localBranches.map(branchOption)}</optgroup>
+              {/* "not fetched" because nothing here fetches: these refs are as
+                  old as the user's last one, and the base summary says so too. */}
+              <optgroup label="Remote (not fetched)">{remoteBranches.map(branchOption)}</optgroup>
+            </>
+          )}
         </select>
       )}
 
@@ -215,7 +254,7 @@ export function BlueprintBranchPicker({
             value.branch ? (
               <>Continues {value.branch} from its own tip — nothing is forked.</>
             ) : null
-          ) : resolvedBase ? (
+          ) : resolvesBase && resolvedBase ? (
             summariseResolvedBase(resolvedBase)
           ) : null}
         </p>

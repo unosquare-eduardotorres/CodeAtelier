@@ -18,6 +18,7 @@ import {
   parseDiffFiles,
   pathMatches,
   scanAddedLinesForStubs,
+  unquoteGitPath,
   type AddedLine
 } from '../gate-analysis'
 
@@ -124,6 +125,44 @@ describe('parseDiffAddedLines', () => {
   test('empty input yields nothing rather than throwing', () => {
     assert.deepEqual(parseDiffAddedLines(''), [])
     assert.deepEqual(parseDiffFiles(''), [])
+  })
+})
+
+describe('quoted diff headers (core.quotePath)', () => {
+  // git quotes any path with a non-ASCII byte: `+++ "b/src/Caf\303\251.cs"`.
+  // Parsed literally the `b/` strip no-ops and the gate compares a path that
+  // does not exist — a violation no retry can clear.
+  const quotedDiff = [
+    'diff --git "a/src/Caf\\303\\251.cs" "b/src/Caf\\303\\251.cs"',
+    '--- "a/src/Caf\\303\\251.cs"',
+    '+++ "b/src/Caf\\303\\251.cs"',
+    '@@ -1,0 +1,1 @@',
+    '+var x = 1;'
+  ].join('\n')
+
+  test('unquoteGitPath decodes octal UTF-8 escapes back into one character', () => {
+    assert.equal(unquoteGitPath('"src/Caf\\303\\251.cs"'), 'src/Café.cs')
+  })
+
+  test('unquoteGitPath leaves an unquoted path untouched', () => {
+    assert.equal(unquoteGitPath('src/plain.ts'), 'src/plain.ts')
+    assert.equal(unquoteGitPath('src/has "quote" inside.ts'), 'src/has "quote" inside.ts')
+  })
+
+  test('unquoteGitPath handles the simple C escapes', () => {
+    assert.equal(unquoteGitPath('"src/a\\tb.ts"'), 'src/a\tb.ts')
+    assert.equal(unquoteGitPath('"src/say \\"hi\\".ts"'), 'src/say "hi".ts')
+    assert.equal(unquoteGitPath('"src/back\\\\slash.ts"'), 'src/back\\slash.ts')
+  })
+
+  test('parseDiffFiles yields the real accented path, not the escaped literal', () => {
+    assert.deepEqual(parseDiffFiles(quotedDiff), ['src/Café.cs'])
+  })
+
+  test('parseDiffAddedLines attributes added lines to the real accented path', () => {
+    assert.deepEqual(parseDiffAddedLines(quotedDiff), [
+      { file: 'src/Café.cs', line: 1, text: 'var x = 1;' }
+    ])
   })
 })
 

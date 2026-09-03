@@ -183,6 +183,117 @@ if (!env) {
     })
   })
 
+  describe('migration 155 widens memory_confirmations for retrieval', () => {
+    test('rebuild preserves rows and accepts retrieval', () => {
+      const db = new Database(':memory:')
+      try {
+        db.pragma('foreign_keys = ON')
+        db.exec(SCHEMA_SQL)
+        const apply = (m: import('../../index').Migration): void => {
+          try {
+            db.transaction(() => {
+              m.up(db)
+              db.pragma(`user_version = ${m.version}`)
+            })()
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error)
+            if (!/duplicate column|already exists/.test(msg)) throw error
+          }
+        }
+        for (const m of migrations.filter((m) => m.version <= 154)) apply(m)
+
+        db.prepare("INSERT INTO workspaces (id, name, repo_path) VALUES ('w5','w','/tmp/w')").run()
+        db.prepare(
+          `INSERT INTO memory_facts (id, workspace_id, category, title, content, source_type)
+           VALUES ('mf5', 'w5', 'convention', 'Keep me', 'body', 'session')`
+        ).run()
+        db.prepare(
+          `INSERT INTO memory_confirmations (id, fact_id, source_type, weight, created_at)
+           VALUES ('mc5', 'mf5', 'extraction', 1.0, '2026-01-01 00:00:00')`
+        ).run()
+
+        // Before the migration, 'retrieval' must be rejected.
+        assert.throws(
+          () =>
+            db
+              .prepare(
+                `INSERT INTO memory_confirmations (fact_id, source_type, weight)
+                 VALUES ('mf5', 'retrieval', 0.25)`
+              )
+              .run(),
+          /CHECK constraint failed/
+        )
+
+        const m155 = migrations.find((m) => m.version === 155)
+        assert.ok(m155, 'migration 155 should exist')
+        apply(m155!)
+
+        const kept = db
+          .prepare('SELECT fact_id, source_type, weight, created_at FROM memory_confirmations')
+          .all() as Array<Record<string, unknown>>
+        assert.deepEqual(kept, [
+          {
+            fact_id: 'mf5',
+            source_type: 'extraction',
+            weight: 1.0,
+            created_at: '2026-01-01 00:00:00'
+          }
+        ])
+
+        // After the migration, 'retrieval' is accepted.
+        db.prepare(
+          `INSERT INTO memory_confirmations (fact_id, source_type, weight)
+           VALUES ('mf5', 'retrieval', 0.25)`
+        ).run()
+
+        // The FK to memory_facts survives the rebuild.
+        assert.throws(
+          () =>
+            db
+              .prepare(
+                `INSERT INTO memory_confirmations (fact_id, source_type, weight)
+                 VALUES ('no-such-fact', 'retrieval', 0.25)`
+              )
+              .run(),
+          /FOREIGN KEY constraint failed/
+        )
+
+        // Both indexes are recreated.
+        const idx = db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='memory_confirmations' ORDER BY name"
+          )
+          .all() as Array<{ name: string }>
+        const names = idx.map((r) => r.name)
+        assert.ok(names.includes('idx_memory_confirmations_fact'), 'fact index recreated')
+        assert.ok(names.includes('idx_memory_confirmations_date'), 'date index recreated')
+
+        // No leftover scratch table.
+        const leftover = db
+          .prepare(
+            "SELECT count(*) AS c FROM sqlite_master WHERE name = 'memory_confirmations_new'"
+          )
+          .get() as { c: number }
+        assert.equal(leftover.c, 0, 'the temporary rebuild table is renamed away')
+      } finally {
+        db.close()
+      }
+    })
+
+    test('migration 155 is idempotent', () => {
+      const db = createSchemaDb()
+      try {
+        const m155 = migrations.find((m) => m.version === 155)!
+        // Full replay already applied it; running again must be a no-op.
+        m155.up(db)
+        const allowed = readSourceTypeCheck(db, 'memory_confirmations').sort()
+        assert.deepEqual(allowed, [...CONFIRMATION_SOURCE_TYPES].sort())
+      } finally {
+        db.close()
+      }
+    })
+  })
+
   describe('migration 132 preserves existing facts', () => {
     test('rebuild keeps rows, columns and contradictions intact', () => {
       const db = new Database(':memory:')

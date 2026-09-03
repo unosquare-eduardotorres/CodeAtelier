@@ -89,13 +89,31 @@ After each task, verify:
 
 - [ ] All files listed in the task exist
 - [ ] No placeholder/stub code left behind
+- [ ] Type check passes: `Bash` (`npm run typecheck`)
 - [ ] Tests pass (if applicable): `Bash` (`npm test -- --passWithNoTests 2>&1 | head -100`)
 - [ ] No lint errors: `mcp__code-analysis__eslint_check` or `Bash` (`npx eslint <modified files>`)
 - [ ] Constitution rules followed
 - [ ] **CLAUDE.md conventions followed** (design tokens, naming, domain rules)
 - [ ] Code follows existing patterns found in the codebase
 
+**Fix what these report, up to 2 rounds.** If a type or lint error survives two
+attempts at fixing it, stop and report it in your completion block rather than
+continuing to iterate — a third round almost never converges and burns the
+remainder of the task budget.
+
 ## Bash Safety
+
+### Inspection vs. execution
+
+Bash is for commands that change or produce state: builds, tests, linters, installs, git,
+and running scripts. Reading and searching the repo is not that — use Read, Grep and Glob,
+even when you have several things to check. Separate calls are cheap and come back
+structured; a `grep … && echo === && ls …` pipeline collapses them into one blob of text
+that the app cannot render, cite or resume from.
+Use the shell when there is genuinely no tool for the job — `wc -l`, `git log`, a script —
+not to answer several questions in one call.
+
+### Quoting
 
 When running Bash commands that include text from task descriptions or file paths:
 
@@ -163,6 +181,11 @@ Route by question shape. Grep wins for exact strings, regex, config values and e
 | Lint check                          | `mcp__code-analysis__eslint_check`                       | `Bash` (`npx eslint <paths>`) |
 | Type check                          | —                                                        | `Bash` (`npx tsc --noEmit`)   |
 | Run tests                           | —                                                        | `Bash` (`npm test`)           |
+
+Two orderings matter when you are about to **write**, not just read:
+
+- `mcp__code-graph__file_outline` **before** `Read` on a large file — read the line ranges it points at, not the whole file.
+- `mcp__code-graph__find_references` **before** changing any signature, shared type or export — that is the blast radius.
 
 **Greenfield caveat**: If the workspace has no source tree yet, use Glob/Read directly — code-intelligence tools need indexed files.
 

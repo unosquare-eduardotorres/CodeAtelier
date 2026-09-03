@@ -229,8 +229,21 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
    * Use MIN, not AVG, to judge prefix work: the first-call prompt includes the
    * per-task user message, so the average moves with task size while the floor
    * tracks the invariant part.
+   *
+   * `attempts` defaults to `'first'` — attempt 1 and pre-v150 NULL rows only.
+   * The "first round-trip of the turn IS the invariant prefix" equivalence holds
+   * only where a conversation is one turn. A retry that RESUMES its predecessor
+   * makes the build conversation multi-turn, and turn 2's first call carries the
+   * whole prior transcript — so a retry row would raise this floor by tens of
+   * thousands of tokens while measuring something else entirely. Including them
+   * would report durable-session work as a prefix regression: the metric would
+   * say "revert" precisely when the change succeeded. Pass `'all'` only when you
+   * want the mixed population and know why.
    */
-  getBlueprintPrefixStats(blueprintId?: string): {
+  getBlueprintPrefixStats(
+    blueprintId?: string,
+    opts?: { attempts?: 'first' | 'all' }
+  ): {
     turns: number
     measured: number
     minPrefixTokens: number | null
@@ -238,6 +251,7 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
     maxPrefixTokens: number | null
   } {
     const db = this.db()
+    const attemptClause = opts?.attempts === 'all' ? '' : 'AND (attempt IS NULL OR attempt <= 1)'
     const row = db
       .prepare(
         `SELECT COUNT(*)             AS turns,
@@ -248,7 +262,8 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
          FROM turn_usage
          WHERE blueprint_id IS NOT NULL
            AND task_id IS NOT NULL
-           AND (? IS NULL OR blueprint_id = ?)`
+           AND (? IS NULL OR blueprint_id = ?)
+           ${attemptClause}`
       )
       .get(blueprintId ?? null, blueprintId ?? null) as {
       turns: number
@@ -265,6 +280,88 @@ export class TurnUsageRepository extends BaseRepository<TurnUsageRow, TurnUsage>
       avgPrefixTokens: row.avg_prefix != null ? Math.round(row.avg_prefix) : null,
       maxPrefixTokens: row.max_prefix ?? null
     }
+  }
+
+  /**
+   * The number that validates retry-economics work: context spend on BUILD
+   * retries (`attempt > 1`), split by whether the attempt resumed its
+   * predecessor's conversation or started cold.
+   *
+   * `context_tokens` — not `prefix_tokens` — is the right column here. The claim
+   * under test is "a resumed retry does less work", and the work shows up as
+   * end-of-loop occupancy: a resumed attempt skips re-exploration, so it makes
+   * fewer tool calls and accumulates fewer tool results. Its FIRST call is
+   * larger (it re-sends the transcript), so a prefix comparison would score the
+   * win backwards.
+   *
+   * Resumed vs. cold is DERIVED, not stored: a resumed attempt reuses the
+   * conversation id of an earlier attempt of the same task, while a cold one is
+   * issued a fresh synthetic id per attempt. That is a property of how the ids
+   * are minted, so it needs no column and cannot drift out of sync with one.
+   *
+   * Median is computed in JS rather than SQL: SQLite has no percentile function,
+   * and the retry population is small by construction (a few hundred rows at
+   * most) — the emulations via window functions cost more to read than the row
+   * fetch costs to run.
+   */
+  getBlueprintRetryContextStats(blueprintId?: string): {
+    resumed: { turns: number; avgContextTokens: number | null; medianContextTokens: number | null }
+    cold: { turns: number; avgContextTokens: number | null; medianContextTokens: number | null }
+  } {
+    const db = this.db()
+    // `first_conv` is the set of conversation ids that carried a first attempt of
+    // the task. A retry row whose conversation id is in that set continued it.
+    const rows = db
+      .prepare(
+        `SELECT t.context_tokens AS context_tokens,
+                EXISTS (
+                  SELECT 1 FROM turn_usage p
+                  WHERE p.blueprint_id = t.blueprint_id
+                    AND p.task_id      = t.task_id
+                    AND p.conversation_id = t.conversation_id
+                    AND p.attempt IS NOT NULL
+                    AND p.attempt < t.attempt
+                ) AS resumed
+         FROM turn_usage t
+         WHERE t.blueprint_id IS NOT NULL
+           AND t.task_id IS NOT NULL
+           AND t.attempt > 1
+           AND (? IS NULL OR t.blueprint_id = ?)`
+      )
+      .all(blueprintId ?? null, blueprintId ?? null) as {
+      context_tokens: number | null
+      resumed: number
+    }[]
+
+    // A zero/NULL context_tokens is "never measured" (the backend reported no
+    // snapshot), not a turn that used no context. Averaging it in would invent a
+    // saving that did not happen — the same trap `prefix_tokens` avoids by
+    // storing NULL.
+    const bucket = (want: boolean): number[] =>
+      rows
+        .filter((r) => (r.resumed === 1) === want)
+        .map((r) => r.context_tokens ?? 0)
+        .filter((n) => n > 0)
+        .sort((a, b) => a - b)
+
+    const summarize = (
+      values: number[]
+    ): { turns: number; avgContextTokens: number | null; medianContextTokens: number | null } => {
+      if (values.length === 0) {
+        return { turns: 0, avgContextTokens: null, medianContextTokens: null }
+      }
+      const sum = values.reduce((acc, n) => acc + n, 0)
+      const mid = Math.floor(values.length / 2)
+      const median =
+        values.length % 2 === 1 ? values[mid] : Math.round((values[mid - 1] + values[mid]) / 2)
+      return {
+        turns: values.length,
+        avgContextTokens: Math.round(sum / values.length),
+        medianContextTokens: median
+      }
+    }
+
+    return { resumed: summarize(bucket(true)), cold: summarize(bucket(false)) }
   }
 
   /** Prune old turn usage records to prevent unbounded growth */

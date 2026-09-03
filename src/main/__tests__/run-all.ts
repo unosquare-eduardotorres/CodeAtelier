@@ -237,6 +237,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-base-adapter.test',
   '../services/__tests__/blueprint-build-adapter.test',
   '../services/__tests__/blueprint-verify-adapter.test',
+  // E3 — shared whole-feature diff (code-review / lead-review / verify).
+  '../services/__tests__/blueprint-feature-diff.test',
   '../services/__tests__/repo-service-pure.test',
   '../services/__tests__/repo-service-git.test',
   '../services/__tests__/track.service.test',
@@ -460,6 +462,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/task-execution-tracking.test',
   // ─── Windows stability: isExcludedPath path-separator handling ───
   '../services/__tests__/is-excluded-path.test',
+  // Registered early on purpose: this runner truncates before the tail of the
+  // list, so an entry appended at the end contributes no coverage at all.
+  '../services/__tests__/startup-retention.test',
   // ─── Index exclusion preflight (Pods/vendored-tree confirmation) ───
   '../services/__tests__/index-exclusion-preflight.test',
   // ─── Phase 24: IPC Coverage Blitz — 20 new IPC test files ───
@@ -760,6 +765,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-verify-gates.test',
   '../services/__tests__/blueprint-gates-remediation.test',
   '../services/__tests__/blueprint-gate-ladder.test',
+  '../services/__tests__/blueprint-no-write-activity-guard.test',
+  '../services/__tests__/blueprint-task-failure-class.test',
+  '../services/__tests__/blueprint-failure-memory.test',
   '../services/__tests__/blueprint-code-review-skip.test',
   '../services/__tests__/blueprint-code-review.test',
   '../services/__tests__/blueprint-lead-review.test',
@@ -810,6 +818,9 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/memory-edges.test',
   // ─── Phase 16: Track 1 + Track 6 ───
   '../db/repositories/__tests__/migration-replay.test',
+  // E11 — schema.sql vs the migration chain. Builds its own in-memory
+  // databases, so it is order-independent.
+  '../db/repositories/__tests__/migration-schema-parity.test',
   '../db/repositories/__tests__/repo-branch-coverage.test',
   // ─── Phase 17: Coverage Mega-Push III ───
   '../db/repositories/__tests__/repo-deep-branch.test',
@@ -840,7 +851,16 @@ const REPO_TEST_FILES: string[] = [
   '../db/repositories/__tests__/user-profile.repository.test',
   '../db/repositories/__tests__/track.repository.test',
   // ─── Audit finding handoff markers (migration 145) ───
-  '../db/repositories/__tests__/audit-handoff.repository.test'
+  '../db/repositories/__tests__/audit-handoff.repository.test',
+  // Must stay BELOW zero-coverage-repos-phase24, which calls trySetupTestDb()
+  // directly and swaps the global database out from under attachTestDb()'s
+  // cached handle. See the note on attachTestDb in db-test-helper.ts.
+  '../db/repositories/__tests__/memory-promotion-evidence.test',
+  // ─── Blueprint execution telemetry (migration 156) ───
+  // Same ordering constraint as memory-promotion-evidence above: registered
+  // higher up, this becomes the FIRST attachTestDb() caller and audit-handoff's
+  // FK-cascade test starts reading a different database than it wrote to.
+  '../db/repositories/__tests__/blueprint-telemetry.repository.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

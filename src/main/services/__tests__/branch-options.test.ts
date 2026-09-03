@@ -25,6 +25,7 @@ describe('buildBranchOptions — an ordinary repository', () => {
   const base = {
     repoHasCommits: true as const,
     local: ['main', 'chat/parser', 'blueprint/auth-1a2b3c4d'],
+    remote: [],
     current: 'main',
     chatTitle
   }
@@ -126,10 +127,11 @@ describe('buildBranchOptions — an ordinary repository', () => {
 })
 
 describe('buildBranchOptions — degenerate repositories', () => {
-  test('no commits yet: no branches, and says so', () => {
+  test('no commits yet: no branches at all, remotes included, and says so', () => {
     const opts = buildBranchOptions({
       repoHasCommits: false,
       local: ['main'],
+      remote: ['main'],
       current: 'main',
       tracks: [],
       chatTitle
@@ -146,12 +148,88 @@ describe('buildBranchOptions — degenerate repositories', () => {
     const opts = buildBranchOptions({
       repoHasCommits: true,
       local: ['main'],
+      remote: [],
       current: '',
       tracks: [],
       chatTitle
     })
     assert.equal(opts.currentBranch, null)
     assert.equal(opts.branches[0].isPrimaryHead, false)
+  })
+})
+
+describe('buildBranchOptions — remote-tracking refs', () => {
+  const base = {
+    repoHasCommits: true as const,
+    local: ['main', 'chat/parser'],
+    remote: ['main', 'feature-x'],
+    current: 'main',
+    tracks: [],
+    chatTitle
+  }
+
+  test('remotes are offered, prefixed, and flagged', () => {
+    // The prefix is added here rather than by the caller: `listBranches` returns
+    // short names, and an entry reading plain `main` twice would be unpickable.
+    const opts = buildBranchOptions(base)
+    assert.deepEqual(
+      opts.branches.filter((b) => b.isRemote).map((b) => b.name),
+      ['origin/main', 'origin/feature-x']
+    )
+  })
+
+  test('a local branch with a remote of the same name keeps BOTH entries', () => {
+    // The entire reason remotes exist in this list. A local `main` behind
+    // `origin/main` is the case the user opened the dropdown to resolve, so
+    // deduplicating by short name would delete the only choice worth making.
+    const opts = buildBranchOptions(base)
+    assert.deepEqual(
+      opts.branches.map((b) => b.name),
+      ['main', 'chat/parser', 'origin/main', 'origin/feature-x']
+    )
+  })
+
+  test('locals are still flagged as local', () => {
+    const opts = buildBranchOptions(base)
+    assert.deepEqual(
+      opts.branches.filter((b) => !b.isRemote).map((b) => b.name),
+      ['main', 'chat/parser']
+    )
+  })
+
+  test('a remote is never held and is never the checkout head', () => {
+    // Git cannot check out a remote-tracking ref, so no track can hold one and
+    // the primary tree can never be sitting on one. A `heldBy` here would be
+    // bookkeeping describing something that cannot exist.
+    const opts = buildBranchOptions({
+      ...base,
+      // Same short name as the remote, deliberately: the held-branch lookup must
+      // not reach across the prefix and label `origin/main` as held.
+      tracks: [{ branchName: 'main', ownerKind: 'chat', ownerId: 'conv-1' }]
+    })
+    const remote = opts.branches.find((b) => b.name === 'origin/main')
+    assert.ok(remote, 'the remote entry must be listed')
+    assert.equal(remote.heldBy, null)
+    assert.equal(remote.isPrimaryHead, false)
+    // ...while its local namesake still is.
+    assert.equal(opts.branches.find((b) => b.name === 'main')?.heldBy?.ownerId, 'conv-1')
+  })
+
+  test('remotes come after locals, so the ordinary choice is the first one', () => {
+    const opts = buildBranchOptions(base)
+    const firstRemote = opts.branches.findIndex((b) => b.isRemote)
+    assert.equal(
+      opts.branches.slice(0, firstRemote).every((b) => !b.isRemote),
+      true
+    )
+  })
+
+  test('no remotes at all leaves the list exactly as it was', () => {
+    const opts = buildBranchOptions({ ...base, remote: [] })
+    assert.deepEqual(
+      opts.branches.map((b) => b.name),
+      ['main', 'chat/parser']
+    )
   })
 })
 

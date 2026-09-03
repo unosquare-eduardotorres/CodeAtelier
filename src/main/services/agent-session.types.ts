@@ -109,6 +109,17 @@ export interface AgentTelemetryContext {
   taskId?: string
   /** 1-based position in the builder retry ladder. */
   attempt?: number
+  /**
+   * Overrides `featureForAgentRole(role)` on the usage row.
+   *
+   * Five blueprint adapters — lead-review, code-review, plan-revision,
+   * peer-review and review — all declare `role: 'blueprint-review'`, because the
+   * role selects the CLI profile and they genuinely share one. That makes their
+   * usage rows indistinguishable, so "what does peer review cost?" cannot be
+   * asked. The role stays shared (changing it would change model routing); the
+   * feature separates the rows.
+   */
+  feature?: string
 }
 
 export interface AgentRoleAdapter {

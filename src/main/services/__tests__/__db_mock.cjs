@@ -404,7 +404,19 @@ const repos = {
     'setExecutorRun',
     'deleteByBlueprint',
     'deleteRemediationTasks',
-    'setCompletion'
+    'setCompletion',
+    'setOutcome',
+    'recordAttempt'
+  ]),
+  // E11 — blueprint execution telemetry (migration 156). `record` must be a
+  // no-op spy here: it is called from the ladder's hot paths, and a missing
+  // stub would throw inside a `try` that only logs, silently changing control
+  // flow in every mocked build test.
+  blueprintTelemetryRepository: stubRepo([
+    'record',
+    'findByBlueprint',
+    'countByKind',
+    'pruneOlderThan'
   ]),
   blueprintEventRepository: stubRepo([
     'nextSeq',

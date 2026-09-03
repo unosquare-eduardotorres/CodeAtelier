@@ -27,6 +27,58 @@ export function normalizePath(path: string): string {
  * makes the directory intent explicit; without one, a prefix only matches on a
  * path-segment boundary, so `src/apiary.ts` is NOT covered by `src/api`.
  */
+/** C-style escapes git emits inside a quoted path, minus the octal form. */
+const GIT_ESCAPES: Record<string, number> = {
+  a: 7,
+  b: 8,
+  t: 9,
+  n: 10,
+  v: 11,
+  f: 12,
+  r: 13,
+  '"': 34,
+  '\\': 92
+}
+
+/**
+ * Undo git's C-style path quoting.
+ *
+ * `core.quotePath` defaults to true, so any path with a non-ASCII byte reaches
+ * a diff header already mangled: `+++ "b/src/Caf\303\251.cs"`. Left alone, the
+ * `b/` strip below silently no-ops (the string starts with `"`) and every gate
+ * downstream compares a path that does not exist against write-sets that use
+ * the real one — a false violation no retry can clear.
+ *
+ * Unquoting is byte-wise, not char-wise: `\303\251` is a two-byte UTF-8
+ * sequence for one character, so the octal escapes must be collected as bytes
+ * and decoded together.
+ */
+export function unquoteGitPath(path: string): string {
+  if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) return path
+  const body = path.slice(1, -1)
+  const encoder = new TextEncoder()
+  const bytes: number[] = []
+
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] !== '\\') {
+      for (const b of encoder.encode(body[i])) bytes.push(b)
+      continue
+    }
+    const next = body[++i]
+    if (next === undefined) break
+    if (/[0-7]/.test(next) && /^[0-7]{2}$/.test(body.slice(i + 1, i + 3))) {
+      bytes.push(parseInt(body.slice(i, i + 3), 8))
+      i += 2
+      continue
+    }
+    // An unknown escape is passed through as the literal character: git never
+    // emits one, and dropping it would corrupt the path worse than keeping it.
+    bytes.push(GIT_ESCAPES[next] ?? next.charCodeAt(0))
+  }
+
+  return new TextDecoder().decode(new Uint8Array(bytes))
+}
+
 export function pathMatches(file: string, allowed: string): boolean {
   const f = normalizePath(file)
   const a = normalizePath(allowed)
@@ -99,7 +151,7 @@ export function parseDiffAddedLines(diffText: string): AddedLine[] {
 
   for (const raw of diffText.split('\n')) {
     if (raw.startsWith('+++ ')) {
-      const target = raw.slice(4).trim()
+      const target = unquoteGitPath(raw.slice(4).trim())
       file = target === '/dev/null' ? null : normalizePath(target.replace(/^b\//, ''))
       continue
     }
@@ -129,7 +181,7 @@ export function parseDiffFiles(diffText: string): string[] {
   const files = new Set<string>()
   for (const raw of diffText.split('\n')) {
     if (!raw.startsWith('+++ ')) continue
-    const target = raw.slice(4).trim()
+    const target = unquoteGitPath(raw.slice(4).trim())
     if (target === '/dev/null') continue
     files.add(normalizePath(target.replace(/^b\//, '')))
   }

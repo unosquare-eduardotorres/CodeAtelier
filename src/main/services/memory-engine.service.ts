@@ -30,6 +30,12 @@ import type {
   MemorySourceType,
   ConfirmationSourceType
 } from '../../shared/types'
+import {
+  MEMORY_RETRIEVAL_CONFIRMATION_WEIGHT,
+  MEMORY_T0_PROMOTION_MIN_CONFIDENCE,
+  MEMORY_T0_PROMOTION_MIN_CONFIRMS,
+  MEMORY_T0_PROMOTION_MIN_DAYS
+} from '../../shared/types'
 
 const log = dbLogger
 
@@ -648,10 +654,18 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     fact: MemoryFact,
     sourceType: ConfirmationSourceType
   ): MemoryFact {
-    // Record the confirmation event
+    // Record the confirmation event.
     // auto_dedup only records the event for audit — zero weight prevents
-    // repetition from inflating tier promotions (dedup ≠ independent evidence)
-    const weight = sourceType === 'auto_dedup' ? 0.0 : 1.0
+    // repetition from inflating tier promotions (dedup ≠ independent evidence).
+    // retrieval is weak evidence of relevance and carries a fractional weight;
+    // it is normally written straight from the retrieval path, but this keeps
+    // the weight identical if it ever arrives through here.
+    const weight =
+      sourceType === 'auto_dedup'
+        ? 0.0
+        : sourceType === 'retrieval'
+          ? MEMORY_RETRIEVAL_CONFIRMATION_WEIGHT
+          : 1.0
     memoryFactRepository.addConfirmation(fact.id, sourceType, weight)
 
     // Compute new tier based on evidence
@@ -1143,15 +1157,18 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
 
 /**
  * Pure promotion logic — implements evidence-based rules (tightened 2026-07):
- *   T0→T1: ≥3 confirms on ≥3 distinct days
+ *   T0→T1: ≥3 confirms on ≥3 distinct days, confidence ≥ 0.35
  *   T1→T2: ≥5 confirms across ≥2 distinct source types over 14+ days, confidence ≥ 0.75
  *   T2→T3: ≥2 human confirms required + ≥8 weighted confirms over 30+ days, confidence ≥ 0.90
  *
  * Auto-dedup confirms record events but weigh 0.0 (repetition ≠ evidence).
+ * Retrieval confirms count toward T0→T1 but toward neither corroboration gate
+ * (T1→T2 source types, T2→T3 weighted sum) — see `corroboration` below.
  *
  * The T1→T2 source-type gate is 2, not 3: only three evidence types are
  * actually producible (human, tool, extraction — everything else collapses
- * into `extraction`, and `auto_dedup` is filtered out), so requiring 3 meant
+ * into `extraction`, `auto_dedup` is filtered out and `retrieval` does not
+ * count toward this gate at all), so requiring 3 meant
  * "a human must click", duplicating the T2→T3 human gate and making automatic
  * promotion unreachable. Two types still means two independent kinds of
  * evidence, which is the intent.
@@ -1167,6 +1184,16 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
  * means true": a single-day burst of confirmations never ages its way up, no
  * matter how long ago it happened. It needs corroboration on a second day
  * before the clock is allowed to run for it.
+ *
+ * The T0→T1 confidence floor (0.35) sits just above the 0.3 threshold at which
+ * `decayFacts` demotes a tier. Without it, a stale fact oscillated forever:
+ * decay drops confidence below 0.3 and demotes T1→T0, then the next promotion
+ * sweep sees the same 3 confirms on 3 distinct days and re-promotes it to T1.
+ * Confirmations are never consumed, so this repeats daily while confidence
+ * floors at 0.0 — and each re-promotion bumps `updated_at`, invalidating the
+ * workspace embedding cache. The floor makes a decayed fact un-promotable
+ * until fresh evidence lifts its confidence back, and makes the ladder
+ * uniform: every other rung already had a confidence gate.
  */
 function computePromotionTierPure(
   tier: MemoryFactTier,
@@ -1178,8 +1205,23 @@ function computePromotionTierPure(
   const evidence = confirmations.filter((c) => c.sourceType !== 'auto_dedup')
 
   const distinctDays = new Set(evidence.map((c) => c.createdAt.slice(0, 10))).size
-  const distinctSources = new Set(evidence.map((c) => c.sourceType)).size
-  const weightedSum = evidence.reduce((sum, c) => sum + c.weight, 0)
+
+  // Retrieval proves relevance, not corroboration, so it is excluded from BOTH
+  // gates that exist to measure independent corroboration:
+  //
+  //   - distinctSources (T1→T2). Tier feeds the retrieval ranking multiplier,
+  //     ranking drives what gets retrieved, and retrieval would otherwise drive
+  //     tier — a rich-get-richer loop in which a fact promotes itself simply by
+  //     being popular. Excluding it caps usage-only promotion at T1.
+  //   - weightedSum (T2→T3). At 0.25 a fact retrieved on 32 separate days would
+  //     clear the ≥8 bar on usage alone, which would make the weighted gate
+  //     decorative for anything actively used.
+  //
+  // It still counts toward totalCount and distinctDays, which is what lets
+  // steady use carry a fact T0→T1.
+  const corroboration = evidence.filter((c) => c.sourceType !== 'retrieval')
+  const distinctSources = new Set(corroboration.map((c) => c.sourceType)).size
+  const weightedSum = corroboration.reduce((sum, c) => sum + c.weight, 0)
   const totalCount = evidence.length
 
   // Compute day span — see the docblock: "how long this evidence has stood",
@@ -1196,8 +1238,14 @@ function computePromotionTierPure(
   // Count human confirmations specifically for T2→T3
   const humanCount = evidence.filter((c) => c.sourceType === 'human').length
 
-  // T0 → T1: 3+ confirms on 3+ distinct days
-  if (tier === 0 && totalCount >= 3 && distinctDays >= 3) return 1
+  // T0 → T1: 3+ confirms on 3+ distinct days, confidence ≥ 0.35 (above decay's 0.3 floor)
+  if (
+    tier === 0 &&
+    totalCount >= MEMORY_T0_PROMOTION_MIN_CONFIRMS &&
+    distinctDays >= MEMORY_T0_PROMOTION_MIN_DAYS &&
+    confidence >= MEMORY_T0_PROMOTION_MIN_CONFIDENCE
+  )
+    return 1
 
   // T1 → T2: 5+ confirms across 2+ source types over 14+ days, confidence ≥ 0.75
   if (tier === 1 && totalCount >= 5 && distinctSources >= 2 && daySpan >= 14 && confidence >= 0.75)

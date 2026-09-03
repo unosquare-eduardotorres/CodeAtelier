@@ -271,116 +271,33 @@ describe('overload-aware cap halving', () => {
 })
 
 // ═══════════════════════════════════════════════════════════════════════
-// Overload retry backoff computation
+// Overload retry — moved out (A11)
 // ═══════════════════════════════════════════════════════════════════════
 
-// Mirror constants from blueprint-build.service.ts
-const OVERLOAD_MAX_RETRIES = 2
-const OVERLOAD_BACKOFF_BASE_MS = 60_000
-
-describe('overload retry — backoff computation', () => {
-  test('attempt 1 → 60s delay', () => {
-    const attempt = 1 // first retry (0-indexed prior retries = 0)
-    const delay = OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
-    assert.equal(delay, 60_000)
-  })
-
-  test('attempt 2 → 120s delay', () => {
-    const attempt = 2
-    const delay = OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
-    assert.equal(delay, 120_000)
-  })
-})
+// A11 MOVED THESE. Three describes here re-implemented `executeWave`'s overload
+// branch against locally-declared copies of its constants and then asserted on
+// the copies — they exercised no production code. A11 deleted the branch they
+// mirrored: overload retries now happen inside `executeTaskWithGates`, so the
+// retried execution is graded like any other. Two cases had also become wrong
+// rather than merely redundant — the ladder has no `draining` guard (documented
+// on `executeTaskWithGates`) and handles abort by rejecting its backoff sleep.
+//
+// All of it is now covered against real code, for BOTH schedulers, in
+// `blueprint-overload-attempts.test.ts`: backoff schedule, retry budget, grading
+// of a recovered task, exact-'overload' on exhaustion, the wave drain message,
+// and cap halving.
 
 // ═══════════════════════════════════════════════════════════════════════
-// Overload retry — budget enforcement
+// Overload retry — budget enforcement  →  blueprint-overload-attempts.test.ts
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('overload retry — budget enforcement', () => {
-  /**
-   * Mirror of the retry decision logic from executeWave.
-   * Returns 'retry' | 'fail' depending on whether retries remain.
-   */
-  function retryDecision(
-    failureReason: string,
-    priorRetries: number,
-    draining: boolean,
-    aborted: boolean
-  ): 'retry' | 'fail' | 'skip' {
-    if (
-      failureReason === 'overload' &&
-      !draining &&
-      !aborted &&
-      priorRetries < OVERLOAD_MAX_RETRIES
-    ) {
-      return 'retry'
-    }
-    return failureReason === 'overload' ? 'fail' : 'skip'
-  }
 
-  test('first overload (0 prior retries) → retry', () => {
-    assert.equal(retryDecision('overload', 0, false, false), 'retry')
-  })
-
-  test('second overload (1 prior retry) → retry', () => {
-    assert.equal(retryDecision('overload', 1, false, false), 'retry')
-  })
-
-  test('third overload (2 prior retries = max) → fail (budget exhausted)', () => {
-    assert.equal(retryDecision('overload', 2, false, false), 'fail')
-  })
-
-  test('overload during draining → skip (no retry when draining)', () => {
-    assert.equal(retryDecision('overload', 0, true, false), 'fail')
-  })
-
-  test('overload during abort → skip (no retry when aborted)', () => {
-    assert.equal(retryDecision('overload', 0, false, true), 'fail')
-  })
-})
 
 // ═══════════════════════════════════════════════════════════════════════
-// Overload retry — retries-exhausted → failed + drain
+// Overload retry — drain on exhaustion  →  blueprint-overload-attempts.test.ts
 // ═══════════════════════════════════════════════════════════════════════
 
-describe('overload retry — retries-exhausted drain logic', () => {
-  test('overload with retries exhausted triggers draining', () => {
-    // Mirror of the post-handleTaskCompletion drain logic
-    const failureReason = 'overload'
-    const success = false
-    let draining = false
 
-    // This mirrors the block after handleTaskCompletion:
-    // overload with retries exhausted → draining = true
-    if (!success && !draining) {
-      if (failureReason === 'overload') {
-        draining = true
-      }
-    }
-
-    assert.equal(draining, true)
-  })
-
-  test('3 total attempts: 1 original + 2 retries, then fail', () => {
-    const retries = new Map<string, number>()
-    const taskId = 'task-1'
-    const results: ('retry' | 'fail')[] = []
-
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const prior = retries.get(taskId) ?? 0
-      if (prior < OVERLOAD_MAX_RETRIES) {
-        retries.set(taskId, prior + 1)
-        results.push('retry')
-      } else {
-        results.push('fail')
-        break
-      }
-    }
-
-    // 2 retries then fail on 3rd overload
-    assert.deepEqual(results, ['retry', 'retry', 'fail'])
-  })
-})
 
 // ═══════════════════════════════════════════════════════════════════════
 // Non-overload failures never enter retry path

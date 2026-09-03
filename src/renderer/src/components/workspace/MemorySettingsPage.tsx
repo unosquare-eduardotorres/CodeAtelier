@@ -4,7 +4,14 @@ import { Brain } from 'lucide-react'
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
 import { ErrorBoundary } from '@renderer/components/common/ErrorBoundary'
 import { Button, Tabs, type TabItem } from '@renderer/components/common/ui'
-import { GraphView, ClaudeMdPanel, FactsTab, ReviewTab, IngestionTab } from './memory'
+import {
+  GraphView,
+  ClaudeMdPanel,
+  FactsTab,
+  ReviewTab,
+  IngestionTab,
+  PromotionDiagnostics
+} from './memory'
 import { EmbeddingBar, EmbeddingChip } from './memory/EmbeddingStatus'
 
 // ── Constants ──
@@ -39,11 +46,13 @@ export default function MemorySettingsPage(): React.JSX.Element {
     facts,
     contradictionsPendingCount,
     embeddingStatus,
+    promotionDiagnostics,
     backfillProgress,
     backfillError,
     loadFacts,
     loadContradictions,
     loadEmbeddingStatus,
+    loadPromotionDiagnostics,
     loadCaptureSettings,
     triggerBackfill,
     clearBackfillError,
@@ -68,6 +77,7 @@ export default function MemorySettingsPage(): React.JSX.Element {
       loadFacts(workspaceId)
       loadContradictions()
       loadEmbeddingStatus(workspaceId)
+      loadPromotionDiagnostics(workspaceId)
       loadCaptureSettings(workspaceId)
     }
   }, [workspaceId])
@@ -195,7 +205,12 @@ export default function MemorySettingsPage(): React.JSX.Element {
           />
         )}
 
-        {activeTab === 'facts' && <FactsTab workspaceId={workspaceId} />}
+        {activeTab === 'facts' && (
+          <>
+            <PromotionDiagnostics diagnostics={promotionDiagnostics} />
+            <FactsTab workspaceId={workspaceId} />
+          </>
+        )}
 
         {activeTab === 'contradictions' && <ReviewTab workspaceId={workspaceId} />}
 

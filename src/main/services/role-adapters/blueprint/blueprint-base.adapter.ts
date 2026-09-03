@@ -69,8 +69,26 @@ export abstract class BlueprintBaseAdapter extends BaseRoleAdapter {
     this.telemetryContext = {
       blueprintId: params.blueprintId,
       ...(params.taskId ? { taskId: params.taskId } : {}),
-      ...(params.attempt != null ? { attempt: params.attempt } : {})
+      ...(params.attempt != null ? { attempt: params.attempt } : {}),
+      ...(this.usageFeature ? { feature: this.usageFeature } : {})
     }
+  }
+
+  /**
+   * Feature name for this phase's usage rows, when it must differ from the one
+   * derived from `role`. Five adapters share `role: 'blueprint-review'` for the
+   * CLI profile; overriding this separates their spend without touching routing.
+   *
+   * A getter rather than a constructor argument so each adapter declares its own
+   * name next to its role, and no call site has to remember to pass it.
+   *
+   * FOOTGUN: this is read from the BASE constructor, which runs before subclass
+   * field initialisers. An override must therefore return a literal — reading
+   * `this.something` here yields `undefined` even though the field is assigned
+   * two lines later in the subclass constructor.
+   */
+  protected get usageFeature(): string | null {
+    return null
   }
 
   /** Set the /goal completion condition before starting the phase. */

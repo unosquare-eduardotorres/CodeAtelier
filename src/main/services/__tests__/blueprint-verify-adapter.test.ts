@@ -6,6 +6,13 @@
  */
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
+
+// E3's preference read reaches db/index (and its `.sql?raw` import). The adapter
+// requires it lazily so this file still loads without a database, but the stub
+// is installed anyway for the cases that exercise the enabled path. Idempotent.
+setupElectronStub()
+
 import { BlueprintVerifyAdapter } from '../role-adapters/blueprint/blueprint-verify.adapter'
 import type { AdapterMcpContext, AdapterPromptContext } from '../agent-session.types'
 import type { PhaseContext } from '../../../shared/blueprint-types'
@@ -234,6 +241,81 @@ describe('BlueprintVerifyAdapter', () => {
       () => adapter.buildPrompts(makePromptCtx()),
       /buildPrompts\(\) called before onSessionStart\(\)/
     )
+  })
+
+  // ── E3: flag-gated feature-diff injection ──
+
+  describe('E3 — feature diff in the first message', () => {
+    /**
+     * Build an adapter with both seams stubbed. The adapter loads the
+     * preference and diff modules lazily and their ESM namespaces are frozen,
+     * so overriding the protected methods is the only way in — the same seam
+     * pattern `overloadBackoffMs` uses in blueprint-build.service.
+     */
+    function makeAdapter(opts: { enabled: boolean; diff?: string | null }): any {
+      const adapter: any = new BlueprintVerifyAdapter({
+        workspaceId: 'ws-1',
+        blueprintId: 'bp-1',
+        phaseContext: basePhaseContext,
+        workspacePath: '/tmp/does-not-matter'
+      })
+      adapter.verifyDiffEnabled = (): boolean => opts.enabled
+      adapter.loadFeatureDiff = (): string | null =>
+        opts.diff === undefined ? null : opts.diff
+      return adapter
+    }
+
+    test('flag OFF leaves the message byte-for-byte unchanged', () => {
+      const withPath = makeAdapter({
+        enabled: false,
+        diff: 'diff --git a/x b/x'
+      }).getPhaseMessage()
+      // The same adapter with no workspacePath cannot inject at all, so it is
+      // the reference for "what the message was before E3".
+      const noPath = new BlueprintVerifyAdapter({
+        workspaceId: 'ws-1',
+        blueprintId: 'bp-1',
+        phaseContext: basePhaseContext
+      }).getPhaseMessage()
+
+      assert.equal(withPath, noPath, 'default-off must not even change whitespace')
+      assert.ok(!withPath.includes('```diff'))
+    })
+
+    test('flag ON injects the diff with the anti-anchoring framing', () => {
+      const msg = makeAdapter({
+        enabled: true,
+        diff: 'diff --git a/src/a.ts b/src/a.ts\n+export const a = 1'
+      }).getPhaseMessage()
+      assert.ok(msg.includes('```diff'), 'diff is fenced')
+      assert.ok(msg.includes('export const a = 1'), 'diff content present')
+
+      // The framing is the whole safeguard. A diff shows what was WRITTEN while
+      // levels 1-2 of the methodology are about what is MISSING; without this
+      // sentence the phase trades thoroughness for speed and reports the trade
+      // as a higher pass rate.
+      assert.ok(
+        msg.includes('Use it to orient, not to scope'),
+        'anti-anchoring framing must accompany the diff'
+      )
+      assert.ok(
+        msg.includes('a finding, not an absence of evidence'),
+        'the missing-requirement case must be stated explicitly'
+      )
+
+      // The methodology must still lead — the diff orients, it does not replace.
+      assert.ok(msg.includes('4-level artifact verification methodology'))
+      assert.ok(msg.includes('blueprint-phase-complete'), 'completion contract intact')
+    })
+
+    test('flag ON but no diff available injects nothing', () => {
+      // null = no baseline / git failed. '' = clean tree. Neither is a section:
+      // an empty fence would read as "BUILD changed nothing", which is a claim.
+      for (const diff of [null, '']) {
+        const msg = makeAdapter({ enabled: true, diff }).getPhaseMessage()
+        assert.ok(!msg.includes('```diff'), `no section for ${JSON.stringify(diff)}`)
+      }
+    })
   })
 })
 

@@ -687,6 +687,53 @@ describe('AgentStreamProcessor.processMetaChunk — usage attribution', () => {
   )
 
   test(
+    'an adapter-declared feature overrides the role-derived one',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+
+      // Five blueprint adapters share `role: 'blueprint-review'` because the role
+      // selects the CLI profile. Without the override their usage rows are one
+      // indistinguishable bucket and "what does peer review cost?" has no answer.
+      const { host, recorded } = makeMetaHost({
+        adapterRole: 'blueprint-review',
+        telemetryContext: { blueprintId: 'bp-1', feature: 'blueprint-peer-review' }
+      })
+      const proc = new AgentStreamProcessor(host)
+      await proc.processMetaChunk(meta as never, {
+        conversationId: 'conv-1',
+        turnCount: 1,
+        streamState: { ...streamState(), llmProvider: 'claude' } as never
+      })
+
+      assert.equal(recorded[0].feature, 'blueprint-peer-review')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
+    'without an adapter feature the role-derived one still wins',
+    async () => {
+      if (!dbAvailable) return
+      _setDatabaseForTesting(createTestDb())
+
+      const { host, recorded } = makeMetaHost({
+        adapterRole: 'blueprint-review',
+        telemetryContext: { blueprintId: 'bp-1' }
+      })
+      const proc = new AgentStreamProcessor(host)
+      await proc.processMetaChunk(meta as never, {
+        conversationId: 'conv-1',
+        turnCount: 1,
+        streamState: { ...streamState(), llmProvider: 'claude' } as never
+      })
+
+      assert.equal(recorded[0].feature, 'blueprint-review')
+    },
+    dbAvailable ? undefined : { skipReason: 'no DB' }
+  )
+
+  test(
     'provider comes from the stream, and local-llm stays distinct from glm',
     async () => {
       if (!dbAvailable) return

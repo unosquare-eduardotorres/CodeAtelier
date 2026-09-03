@@ -298,6 +298,147 @@ if (!env) {
       assert.equal(scoped.avgPrefixTokens, null)
     })
 
+    // ── M1: the floor must survive multi-turn retries ──
+
+    test('getBlueprintPrefixStats() excludes retry turns from the floor by default', () => {
+      const convId = seedConversation(db, wsId, 'Prefix Attempts')
+      const sessionId = seedSession(convId)
+      const base = {
+        sessionId,
+        conversationId: convId,
+        inputTokens: 1,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        blueprintId: 'bp-attempts',
+        taskId: 'T1'
+      }
+
+      // A resumed retry re-sends the whole prior transcript on its first call, so
+      // its prefix is far ABOVE the cold floor. If it entered the floor the
+      // metric would report durable-session work as a prefix regression — the
+      // failure mode this filter exists to prevent.
+      turnUsageRepository.record({ ...base, turnNumber: 1, attempt: 1, prefixTokens: 30_000 })
+      turnUsageRepository.record({ ...base, turnNumber: 2, attempt: 2, prefixTokens: 96_000 })
+      turnUsageRepository.record({ ...base, turnNumber: 3, attempt: 3, prefixTokens: 140_000 })
+      // Pre-v150 rows carry no attempt at all and must keep counting.
+      turnUsageRepository.record({ ...base, turnNumber: 4, taskId: 'T2', prefixTokens: 26_000 })
+
+      const first = turnUsageRepository.getBlueprintPrefixStats('bp-attempts')
+      assert.equal(first.turns, 2, 'attempt-2/3 rows are out of the cold population')
+      assert.equal(first.maxPrefixTokens, 30_000, 'the retry prefix never reaches the ceiling')
+      assert.equal(first.avgPrefixTokens, 28_000)
+
+      const all = turnUsageRepository.getBlueprintPrefixStats('bp-attempts', { attempts: 'all' })
+      assert.equal(all.turns, 4, "'all' opts back into the mixed population")
+      assert.equal(all.maxPrefixTokens, 140_000)
+    })
+
+    test('getBlueprintRetryContextStats() splits resumed retries from cold ones', () => {
+      const warmConv = seedConversation(db, wsId, 'Retry Warm')
+      const coldConv = seedConversation(db, wsId, 'Retry Cold')
+      const warmSession = seedSession(warmConv)
+      const coldSession = seedSession(coldConv)
+      const base = {
+        inputTokens: 1,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        blueprintId: 'bp-retry'
+      }
+      const withContext = (turn: { id: string }, contextTokens: number): void => {
+        // Targeted by id, not via updateLastTurnContextTokens: that helper resolves
+        // "newest row of the conversation", which is exactly the ambiguity this
+        // fixture creates on purpose.
+        db.prepare('UPDATE turn_usage SET context_tokens = ? WHERE id = ?').run(
+          contextTokens,
+          turn.id
+        )
+      }
+
+      // T1 retries by RESUMING: attempt 2 reuses attempt 1's conversation id.
+      withContext(
+        turnUsageRepository.record({
+          ...base,
+          sessionId: warmSession,
+          conversationId: warmConv,
+          turnNumber: 1,
+          taskId: 'T1',
+          attempt: 1
+        }),
+        70_000
+      )
+      withContext(
+        turnUsageRepository.record({
+          ...base,
+          sessionId: warmSession,
+          conversationId: warmConv,
+          turnNumber: 2,
+          taskId: 'T1',
+          attempt: 2
+        }),
+        40_000
+      )
+      withContext(
+        turnUsageRepository.record({
+          ...base,
+          sessionId: warmSession,
+          conversationId: warmConv,
+          turnNumber: 3,
+          taskId: 'T1',
+          attempt: 3
+        }),
+        60_000
+      )
+
+      // T2 retries COLD: a fresh conversation id, so no earlier attempt shares it.
+      withContext(
+        turnUsageRepository.record({
+          ...base,
+          sessionId: coldSession,
+          conversationId: coldConv,
+          turnNumber: 1,
+          taskId: 'T2',
+          attempt: 2
+        }),
+        100_000
+      )
+      // A retry whose backend reported no snapshot: 0 is "never measured", and
+      // averaging it in would invent a saving that did not happen.
+      turnUsageRepository.record({
+        ...base,
+        sessionId: coldSession,
+        conversationId: coldConv,
+        turnNumber: 2,
+        taskId: 'T2',
+        attempt: 3
+      })
+      // First attempts are not retries and must not appear in either bucket.
+      withContext(
+        turnUsageRepository.record({
+          ...base,
+          sessionId: coldSession,
+          conversationId: coldConv,
+          turnNumber: 3,
+          taskId: 'T3',
+          attempt: 1
+        }),
+        90_000
+      )
+
+      const stats = turnUsageRepository.getBlueprintRetryContextStats('bp-retry')
+      assert.equal(stats.resumed.turns, 2, 'attempts 2 and 3 continued attempt 1')
+      assert.equal(stats.resumed.avgContextTokens, 50_000)
+      assert.equal(stats.resumed.medianContextTokens, 50_000, 'even count averages the middle pair')
+      assert.equal(stats.cold.turns, 1, 'the unmeasured retry is dropped, not counted as zero')
+      assert.equal(stats.cold.avgContextTokens, 100_000)
+      assert.equal(stats.cold.medianContextTokens, 100_000)
+
+      const other = turnUsageRepository.getBlueprintRetryContextStats('bp-none')
+      assert.equal(other.resumed.turns, 0)
+      assert.equal(other.cold.avgContextTokens, null, 'no rows means no average, not zero')
+    })
+
     test('getLastTurn() breaks a turn_number tie towards the newest row', () => {
       const convId = seedConversation(db, wsId, 'Turn Tie')
       const sessionId = seedSession(convId)

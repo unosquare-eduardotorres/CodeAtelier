@@ -39,6 +39,9 @@ import './memory-edges.test'
 
 // ─── Phase 16: Track 1 + Track 6: Migration replay + branch coverage ───
 import './migration-replay.test'
+// E11 — schema.sql vs the migration chain (characterization + allowlist).
+// Builds its own in-memory databases, so it is order-independent.
+import './migration-schema-parity.test'
 import './repo-branch-coverage.test'
 
 // ─── Phase 17: Track 8: Repo deep branch completion ───
@@ -64,6 +67,20 @@ import './track.repository.test'
 
 // ─── Audit finding handoff markers (migration 145) ───
 import './audit-handoff.repository.test'
+
+// ─── Retrieval-as-evidence + promotion diagnostics (migration 155) ───
+// Must stay BELOW zero-coverage-repos-phase24, which calls trySetupTestDb()
+// directly and swaps the global database out from under attachTestDb()'s
+// cached handle. See the note on attachTestDb in db-test-helper.ts.
+import './memory-promotion-evidence.test'
+
+// ─── Blueprint execution telemetry (migration 156) ───
+// Same ordering constraint as memory-promotion-evidence above: must stay BELOW
+// zero-coverage-repos-phase24, which calls trySetupTestDb() directly and swaps
+// the global database out from under attachTestDb()'s cached handle. Registered
+// higher up, this file became the FIRST attachTestDb() caller and audit-handoff's
+// FK-cascade test started reading a different database than it wrote to.
+import './blueprint-telemetry.repository.test'
 
 // ─── Usage attribution (migration 150) ───
 // turn-usage was registered in run-all.ts but not here, so its assertions never

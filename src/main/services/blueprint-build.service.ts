@@ -40,7 +40,7 @@ import type {
   BlueprintWaveCompletePayload,
   BlueprintTaskGatesPayload
 } from '../../shared/blueprint-types'
-import { AgentSessionService } from './agent-session.service'
+import { AgentSessionService, type SendOutcome } from './agent-session.service'
 import { BlueprintBuildAdapter } from './role-adapters/blueprint/blueprint-build.adapter'
 import { buildBuildGoalCondition } from './blueprint-goal-conditions'
 import { blueprintVerifyService } from './blueprint-verify.service'
@@ -52,9 +52,11 @@ import {
 } from './blueprint-artifact-parsers'
 import { verifyBuildTaskFiles } from './blueprint-task-verification'
 import { fingerprintGateFailure } from './blueprint-failure-fingerprint'
+import { extractFailureMemory, renderFailureMemory } from './blueprint-failure-memory'
 import {
   buildGateFixInstructions,
   captureGateBaseline,
+  isBaselineDiffEmpty,
   runGates,
   runWaveCommandGates,
   type GateBaseline,
@@ -90,6 +92,7 @@ import {
   blueprintPhaseRepository,
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
+import { blueprintTelemetryRepository } from '../db/repositories/blueprint-telemetry.repository'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
 import {
@@ -223,6 +226,68 @@ export interface SchedulerStats {
   fallbackReason?: string
 }
 
+/**
+ * P1 — what KIND of failure this was, decided where the failure is constructed.
+ *
+ * `failureReason` is free-form prose aimed at a human ('overload',
+ * 'no-write-activity', `quality gate failed: ${names}`, `executor error: …`) and
+ * the stop-loss appends to it. Any routing that substring-matches it is one
+ * reword away from silently sending gate failures down an infra path — a
+ * behaviour change with no compile error and no alarm. This field is the
+ * machine-readable half, and the prose stays exactly as it is.
+ *
+ *   - `infra`   — the environment or the transport failed: overload, executor
+ *                 error, a stall, a session that died before finishing. The work
+ *                 was never graded, so nothing is known about its quality.
+ *   - `quality` — the work ran to completion and was judged wanting by the gates.
+ *   - `aborted` — the user cancelled. Not a failure of anything; never retry.
+ */
+export type TaskFailureClass = 'infra' | 'quality' | 'aborted'
+
+/**
+ * Classify an abnormal `session.send()` outcome. A total switch over the union,
+ * never a substring match — adding a `SendOutcome` member is then a compile
+ * error here rather than a silent fall-through to 'infra'.
+ */
+export function classifySendOutcome(outcome: Exclude<SendOutcome, 'ok'>): TaskFailureClass {
+  switch (outcome) {
+    case 'aborted':
+      return 'aborted'
+    case 'overload':
+    case 'error':
+    case 'context_overflow':
+    case 'turn_limit_exhausted':
+      return 'infra'
+  }
+}
+
+/**
+ * R5 — may a failed attempt be RESUMED, rather than re-run cold?
+ *
+ * `failureClass: 'infra'` used to carry this implication in a comment, and a
+ * comment does not constrain a caller: `context_overflow` and
+ * `turn_limit_exhausted` are infra in the sense that the work was never graded,
+ * but they are the two outcomes a resumed session must NOT be handed — resuming
+ * re-sends the very transcript that overflowed, so the retry fails the same way
+ * and costs a full context to do it. This function is the permit; the class is
+ * not.
+ *
+ * A total switch again, so a new `SendOutcome` member is a compile error rather
+ * than an accidental resume. Absent `resumeSafe` on a `TaskResult` means NOT
+ * safe: forgetting the field costs a cold retry, which is today's behaviour.
+ */
+export function isResumeSafeOutcome(outcome: Exclude<SendOutcome, 'ok'>): boolean {
+  switch (outcome) {
+    case 'overload':
+    case 'error':
+      return true
+    case 'context_overflow':
+    case 'turn_limit_exhausted':
+    case 'aborted':
+      return false
+  }
+}
+
 /** Return type for executeTask, including timing data. */
 interface TaskResult {
   success: boolean
@@ -231,10 +296,42 @@ interface TaskResult {
   timing?: TaskTiming
   /** When success=false, the reason for failure (session outcome or 'no-write-activity'). */
   failureReason?: string
+  /** P1 — the machine-readable companion to `failureReason`. See `TaskFailureClass`. */
+  failureClass?: TaskFailureClass
+  /**
+   * R5 — whether this failure may be retried by RESUMING the session instead of
+   * starting a cold one. Never inferred from `failureClass`: see
+   * `isResumeSafeOutcome`. Absent means NOT safe (a cold retry, as today).
+   */
+  resumeSafe?: boolean
   /** How the task closed — persisted so a reload still explains the outcome. */
   outcomeKind?: BlueprintTaskOutcomeKind
   /** Verdict of the deterministic gates for the final attempt, when they ran. */
   gateReport?: GateReport
+  /**
+   * A11 — how many overload re-runs the gate ladder spent on this task.
+   * Absent when none. The schedulers read it at settle time to halve their
+   * parallel cap: overload retries now happen inside `executeTaskWithGates`,
+   * so without this signal the schedulers never learn the provider is
+   * saturated and keep dispatching at full width — which causes more overload.
+   */
+  overloadCount?: number
+}
+
+/**
+ * P0 — write activity accumulated across every attempt of ONE task.
+ *
+ * `executeTask`'s own counters are locals, reset on each call, so they describe
+ * an ATTEMPT. That is the right scope for a cold ladder, where each attempt
+ * redoes the work from scratch, and the wrong scope for anything that continues
+ * a previous attempt: a session resumed after a stall already wrote its files
+ * and correctly emits a completion claiming them with zero write-tool calls.
+ * Owned by `executeTaskWithGates` — one box per task, shared by the builder
+ * ladder, the overload re-runs, the peer-review fix and the lead escalation.
+ */
+interface TaskWriteActivity {
+  writeToolCalls: number
+  bashCalls: number
 }
 
 /** In-flight task metadata for the parallel scheduler. */
@@ -296,6 +393,46 @@ export function isWriteTool(name: string): boolean {
 /** BP-WRITE-TOOLS-01: is this tool call Bash? (case-insensitive) */
 export function isBashTool(name: string): boolean {
   return /^bash$/i.test(name)
+}
+
+/**
+ * FIX-2 / P0 — should this task hard-fail as a stale-file claim?
+ *
+ * The rule it enforces: a completion that claims files while the TASK invoked no
+ * write-capable tool and no Bash is describing a prior run's output, not this
+ * one (the R029 hole).
+ *
+ * Two things make it task-scoped rather than attempt-scoped, and both matter:
+ *
+ * - The counters are cumulative across every attempt. A session resumed after a
+ *   stall already wrote its files and legitimately emits a completion claiming
+ *   them with zero write-tool calls of its own; per-attempt counters read that
+ *   as fabrication and fail work that is on disk.
+ * - `baselineDiffEmpty` overrides the counters when it says something changed.
+ *   The gate baseline is captured once, before attempt 1, with pre-existing
+ *   dirt and peers' files subtracted — so a non-empty diff is a direct
+ *   measurement of this task's work, where a tool counter is only a proxy for
+ *   it. `null` (git could not answer) is absence of evidence, not evidence of
+ *   absence: the counters decide, exactly as they did before.
+ */
+export function shouldFailForNoWriteActivity(input: {
+  /** Write-tool calls across every attempt of this task. */
+  cumulativeWriteToolCalls: number
+  /** Bash calls across every attempt of this task. */
+  cumulativeBashCalls: number
+  /** Files the completion says it created or modified. */
+  claimedFiles: number
+  hasCompletion: boolean
+  hasPlannedFiles: boolean
+  /** true = nothing changed, false = something did, null = git could not answer. */
+  baselineDiffEmpty: boolean | null
+}): boolean {
+  const noWriteActivity = input.cumulativeWriteToolCalls === 0 && input.cumulativeBashCalls === 0
+  if (!noWriteActivity) return false
+  const claimsWithoutWork =
+    input.claimedFiles > 0 || (!input.hasCompletion && input.hasPlannedFiles)
+  if (!claimsWithoutWork) return false
+  return input.baselineDiffEmpty !== false
 }
 
 /** Check whether two file sets overlap. */
@@ -679,7 +816,35 @@ export class BlueprintBuildService extends EventEmitter {
         totalWaves: sortedWaves.length
       } satisfies BlueprintPhaseStartPayload)
       // 5. Execute — DAG mode (default) or classic wave barriers
-      const dagEnabled = appPreferenceRepository.getAppPreferences().dagScheduling
+      const prefs = appPreferenceRepository.getAppPreferences()
+      const dagEnabled = prefs.dagScheduling
+
+      // Which settings produced this run. Without it, comparing two runs is manual
+      // bookkeeping — and a comparison across runs with different task counts
+      // *looks* measured while measuring nothing.
+      //
+      // Recorded on ENTRY, not at completion: the `kind: 'scheduler'` row below
+      // only fires when the build finishes, so a crashed or aborted run would
+      // carry no attribution at all — and those are precisely the runs worth
+      // tuning from. `verifyFeatureDiff` is captured here even though it is a
+      // VERIFY flag: this is a run-configuration snapshot, and flipping it
+      // mid-run is pathological. The backend is deliberately NOT duplicated —
+      // it lives on `turn_usage` (A4) and is reached by joining on blueprint_id;
+      // a second copy would only invite the two to disagree.
+      blueprintTelemetryRepository.record({
+        blueprintId,
+        kind: 'config',
+        phase: 'build',
+        data: {
+          dagScheduling: prefs.dagScheduling,
+          parallelBuildAgents: prefs.parallelBuildAgents,
+          leanBuildMcp: prefs.leanBuildMcp,
+          blueprintAutoMode: prefs.blueprintAutoMode,
+          verifyFeatureDiff: prefs.verifyFeatureDiff,
+          totalTasks,
+          totalWaves: sortedWaves.length
+        }
+      })
       const allTasks = [...waveMap.values()].flat()
       const dag = buildTaskDag(allTasks)
       let useDag = dagEnabled
@@ -788,6 +953,31 @@ export class BlueprintBuildService extends EventEmitter {
         })
       }
 
+      // E11 — SchedulerStats was in-memory only, attached to the BuildResult and
+      // to the build artifact above. That makes it readable for ONE run at a time
+      // and only through the artifact blob; a queryable row is what turns
+      // "did parallelism actually help?" into something answerable across runs.
+      if (result.scheduler) {
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'scheduler',
+          phase: 'build',
+          data: {
+            mode: result.scheduler.mode,
+            drainCount: result.scheduler.drainCount,
+            maxParallelism: result.scheduler.maxParallelism,
+            parallelismHistogram: result.scheduler.parallelismHistogram,
+            perTaskWaitMs: result.scheduler.perTaskWaitMs,
+            ...(result.scheduler.fallbackReason
+              ? { fallbackReason: result.scheduler.fallbackReason }
+              : {}),
+            totalTasks,
+            tasksCompleted: result.tasksCompleted,
+            failed: result.failed
+          }
+        })
+      }
+
       if (result.failed) {
         // BP-SKIP-01 + BP-CLEANUP-RUNNING-TASKS-01: Mark all remaining pending/running
         // tasks across subsequent waves as 'skipped'
@@ -801,6 +991,15 @@ export class BlueprintBuildService extends EventEmitter {
           }
         }
         // BP-TASK-FAILURE-REASON: Build per-task failure summary for UI surfacing
+        //
+        // B3 note, deliberate: a task that tripped the stop-loss carries its
+        // whole clause in `reason`, so ~120 chars of "stop-loss after N identical
+        // gate failure(s)" ride into `saveRetryContext.error` and reach the NEXT
+        // build attempt's context. Kept: telling the retry that the previous run
+        // failed the same gate repeatedly is exactly what stops it re-running the
+        // same approach. It also feeds F4's phase-level recurrence fingerprint,
+        // where a stable clause makes consecutive identical failures compare
+        // equal instead of drifting.
         const failureSummary =
           result.taskFailures.length > 0
             ? result.taskFailures.map((f) => `${f.taskId}: ${f.reason}`).join('; ')
@@ -941,6 +1140,39 @@ export class BlueprintBuildService extends EventEmitter {
   // ── DAG Execution (Graph-wide Parallel Scheduler) ──
 
   /**
+   * Backoff before an overload re-dispatch: 60 s, then 120 s.
+   *
+   * A method rather than the inline expression it replaces at both scheduler
+   * sites, so a test can shorten it per-instance. The alternative — swapping
+   * `globalThis.setTimeout` because `abortAwareSleep` is module-level — reaches
+   * every concurrently-awaited suite in the same process, including the 30-min
+   * task timeout armed by the real `executeTask`.
+   */
+  protected overloadBackoffMs(attempt: number): number {
+    return OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
+  }
+
+  /**
+   * A11 — scheduler back-pressure after a task saw an API overload: halve the
+   * parallel cap, floor 1. Applied at most once per task.
+   *
+   * A method rather than two inline expressions for the same reason
+   * `overloadBackoffMs` is one: overload retries moved into the gate ladder, so
+   * back-pressure is the only overload logic the schedulers still own, and it
+   * has to stay identical in both of them (§1.2's "both schedulers or neither").
+   * It is also the only seam a test can observe — `cap` is a loop-local.
+   */
+  protected halveCapOnOverload(cap: number, scheduler: string, taskId: string): number {
+    if (cap <= 1) return cap
+    const newCap = Math.max(1, Math.floor(cap / 2))
+    bpLog.warn(
+      `[${scheduler}] Task ${taskId} hit API overload — ` +
+        `reducing parallel cap from ${cap} to ${newCap}`
+    )
+    return newCap
+  }
+
+  /**
    * Execute the whole task graph with readiness-based dispatch.
    *
    * Same scheduling model as executeWave (greedy scan, file-overlap guard,
@@ -982,7 +1214,8 @@ export class BlueprintBuildService extends EventEmitter {
     const terminal = new Set<string>() // settled this run: complete/failed/user-skipped
     let exclusiveInFlight = false
     let draining = false
-    const overloadRetries = new Map<string, number>()
+    /** A11 — tasks whose cap-halving has already been applied (once per task). */
+    const overloadSeen = new Set<string>()
     const reportedFiles = new Map<string, Set<string>>()
     const failedTaskIds = new Set<string>()
     // Per-task ready timestamp: when the task first entered the ready set.
@@ -1245,87 +1478,16 @@ export class BlueprintBuildService extends EventEmitter {
       inFlight.delete(settled.taskId)
       if (settled.entry.files.size === 0) exclusiveInFlight = false
 
-      // OVERLOAD-RETRY — same semantics as executeWave, build-scoped cap.
-      if (
-        !settled.taskResult.success &&
-        settled.taskResult.failureReason === 'overload' &&
-        !draining &&
-        !abortSignal?.aborted
-      ) {
-        const priorRetries = overloadRetries.get(settled.taskId) ?? 0
-        if (priorRetries < OVERLOAD_MAX_RETRIES) {
-          const attempt = priorRetries + 1
-          overloadRetries.set(settled.taskId, attempt)
-          const delay = OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
-
-          if (priorRetries === 0 && cap > 1) {
-            const newCap = Math.max(1, Math.floor(cap / 2))
-            bpLog.warn(
-              `[executeDag] Task ${settled.taskId} hit API overload — ` +
-                `reducing build parallel cap from ${cap} to ${newCap}`
-            )
-            cap = newCap
-          }
-
-          const totalAttempts = OVERLOAD_MAX_RETRIES + 1
-          bpLog.info(
-            `[executeDag] Task ${settled.taskId} overload retry ${attempt + 1}/${totalAttempts} — backing off ${delay / 1000}s`
-          )
-          this.safeEmit('phaseProgress', {
-            blueprintId,
-            workspaceId,
-            phase: 'build',
-            text:
-              `⚠ Task ${settled.entry.task.taskId} hit API overload — ` +
-              `retrying in ${delay / 1000}s (attempt ${attempt + 1}/${totalAttempts})`,
-            kind: 'system'
-          })
-
-          const retryTask = settled.entry.task
-          const retryFiles = settled.entry.files
-          const discoverySnapshot = [...result.discoveries]
-          const retryPromise = abortAwareSleep(delay, abortSignal ?? undefined)
-            .then(async () => {
-              const retryResult = await this.executeTask({
-                task: retryTask,
-                blueprintId,
-                workspaceId,
-                workspacePath,
-                executionPath,
-                phaseContext,
-                priorDiscoveries: discoverySnapshot,
-                tDispatch: Date.now(),
-                waveNum: retryTask.wave
-              })
-              // An overload re-dispatch is a distinct execution and must count as
-              // one, exactly like the three ladder rungs. Without this the retry
-              // and the attempt it replaced share an attempt number, on precisely
-              // the failure path `turn_usage.attempt` exists to study. Recorded
-              // AFTER the call for the same reason as the ladder sites: executeTask
-              // reads `attempts` to derive its own attempt number.
-              blueprintTaskRepository.recordAttempt(retryTask.id)
-              return retryResult
-            })
-            .catch((_err): TaskResult => ({
-              success: false,
-              completion: null,
-              discoveries: [],
-              failureReason: 'aborted'
-            }))
-
-          if (settled.taskResult.timing) {
-            result.taskTimings.push(settled.taskResult.timing)
-          }
-          blueprintTaskRepository.updateStatus(retryTask.id, 'running')
-          inFlight.set(settled.taskId, {
-            promise: retryPromise,
-            files: retryFiles,
-            task: retryTask
-          })
-          if (retryFiles.size === 0) exclusiveInFlight = true
-          syncRunningTasks()
-          continue
-        }
+      // A11 — overload is retried INSIDE `executeTaskWithGates` now, so by the
+      // time a task settles here its overload retries are already spent and the
+      // result has been graded. What the scheduler still owns is back-pressure:
+      // halve the cap once per task that saw an overload, or the loop keeps
+      // dispatching at full width into a saturated provider and manufactures
+      // more of them. The re-dispatch branch that used to live here bypassed the
+      // gate ladder entirely — see `executeTaskWithGates`.
+      if ((settled.taskResult.overloadCount ?? 0) > 0 && !overloadSeen.has(settled.taskId)) {
+        overloadSeen.add(settled.taskId)
+        cap = this.halveCapOnOverload(cap, 'executeDag', settled.taskId)
       }
 
       this.handleTaskCompletion({
@@ -1577,8 +1739,8 @@ export class BlueprintBuildService extends EventEmitter {
     // H2 FIX: Collect *reported* filesModified per task (from completion result)
     // for post-wave overlap detection. Declared filePathsJson misses undeclared writes.
     const reportedFiles = new Map<string, Set<string>>()
-    // OVERLOAD-RETRY: Per-task retry counter for overload backoff.
-    const overloadRetries = new Map<string, number>()
+    /** A11 — tasks whose cap-halving has already been applied (once per task). */
+    const overloadSeen = new Set<string>()
 
     /** Collect all files currently in-flight. */
     const allInFlightFiles = (): Set<string> => {
@@ -1779,99 +1941,14 @@ export class BlueprintBuildService extends EventEmitter {
         exclusiveInFlight = false
       }
 
-      // ── OVERLOAD-RETRY: Intercept overload failures before handleTaskCompletion ──
-      // If the task failed with 'overload' and retries remain, re-insert it into
-      // inFlight with a delayed re-dispatch instead of marking it failed.
-      if (
-        !settled.taskResult.success &&
-        settled.taskResult.failureReason === 'overload' &&
-        !draining &&
-        !abortSignal?.aborted
-      ) {
-        const priorRetries = overloadRetries.get(settled.taskId) ?? 0
-        if (priorRetries < OVERLOAD_MAX_RETRIES) {
-          const attempt = priorRetries + 1
-          overloadRetries.set(settled.taskId, attempt)
-          const delay = OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
-
-          // FIX-4: Cap-halving still applies on first overload per task
-          if (priorRetries === 0 && cap > 1) {
-            const newCap = Math.max(1, Math.floor(cap / 2))
-            bpLog.warn(
-              `[executeWave] Task ${settled.taskId} hit API overload — ` +
-                `reducing parallel cap from ${cap} to ${newCap}`
-            )
-            cap = newCap
-          }
-
-          const totalAttempts = OVERLOAD_MAX_RETRIES + 1
-          bpLog.info(
-            `[executeWave] Task ${settled.taskId} overload retry ${attempt + 1}/${totalAttempts} ` +
-              `— backing off ${delay / 1000}s`
-          )
-          this.safeEmit('phaseProgress', {
-            blueprintId,
-            workspaceId,
-            phase: 'build',
-            text:
-              `⚠ Task ${settled.entry.task.taskId} hit API overload — ` +
-              `retrying in ${delay / 1000}s (attempt ${attempt + 1}/${totalAttempts})`,
-            kind: 'system'
-          })
-
-          // Build a delayed re-dispatch promise. The sleeping task occupies a slot
-          // during backoff (deliberate — reduces API pressure).
-          const retryTask = settled.entry.task
-          const retryFiles = settled.entry.files
-          const discoverySnapshot = [...result.discoveries]
-          const retryPromise = abortAwareSleep(delay, abortSignal ?? undefined)
-            .then(async () => {
-              const retryResult = await this.executeTask({
-                task: retryTask,
-                blueprintId,
-                workspaceId,
-                workspacePath,
-                executionPath,
-                phaseContext,
-                priorDiscoveries: discoverySnapshot,
-                tDispatch: Date.now(), // Fresh tDispatch for mtime-freshness check
-                waveNum
-              })
-              // Same fix as executeDag: the re-dispatch is its own attempt.
-              // §1.2's standing warning — both schedulers or neither.
-              blueprintTaskRepository.recordAttempt(retryTask.id)
-              return retryResult
-            })
-            .catch((_err): TaskResult => {
-              // Abort during sleep → treat as failed (flows into drain path)
-              return {
-                success: false,
-                completion: null,
-                discoveries: [],
-                failureReason: 'aborted'
-              }
-            })
-
-          // TIMING-FIX: Preserve the failed attempt's timing in the aggregate.
-          // handleTaskCompletion is skipped for retried tasks, so without this
-          // the intermediate attempt vanishes from result.taskTimings.
-          if (settled.taskResult.timing) {
-            result.taskTimings.push(settled.taskResult.timing)
-          }
-
-          // Re-mark task as running in DB (it was never marked failed)
-          blueprintTaskRepository.updateStatus(retryTask.id, 'running')
-          inFlight.set(settled.taskId, {
-            promise: retryPromise,
-            files: retryFiles,
-            task: retryTask
-          })
-          // Restore exclusive flag if this was an exclusive task
-          if (retryFiles.size === 0) exclusiveInFlight = true
-          syncRunningTasks()
-          continue // Skip handleTaskCompletion — task stays in-flight
-        }
-        // Retries exhausted: fall through to handleTaskCompletion + drain
+      // A11 — overload retries live in `executeTaskWithGates` now, so a task that
+      // settles here has already spent them and has been graded. The scheduler
+      // keeps only the back-pressure half: halve the cap once per task that saw
+      // an overload. §1.2's "both schedulers or neither" duplication is closed by
+      // construction — the retry logic exists once, in the ladder both call.
+      if ((settled.taskResult.overloadCount ?? 0) > 0 && !overloadSeen.has(settled.taskId)) {
+        overloadSeen.add(settled.taskId)
+        cap = this.halveCapOnOverload(cap, 'executeWave', settled.taskId)
       }
 
       this.handleTaskCompletion({
@@ -2089,11 +2166,41 @@ export class BlueprintBuildService extends EventEmitter {
    * Run a task, then grade it with the deterministic gates, retrying on `fail`.
    *
    * The ladder is bounded by construction — worst case per task is
-   * MAX_BUILDER_ATTEMPTS builder runs plus one lead-model fix:
+   * MAX_BUILDER_ATTEMPTS builder runs, OVERLOAD_MAX_RETRIES overload re-runs and
+   * one lead-model fix = **6 executions**:
    *
    *   attempt 1 → gates fail → attempt 2 (with evidence) → gates fail
    *     → attempt 3 (with evidence) → gates fail → lead model fixes → gates fail
    *     → task failed, phase hard-holds on the existing failure machinery.
+   *
+   * Six is accepted rather than capped. An overload is infrastructure telling us
+   * to come back later, not the builder failing; capping the total would convert
+   * a recoverable run into a hard failure for a reason that has nothing to do
+   * with the code. The overload re-runs consume no builder attempt.
+   *
+   * A11 — **overload is retried HERE, inside the ladder.** Both schedulers used
+   * to intercept `failureReason === 'overload'` at settle time and re-dispatch
+   * through `executeTask` directly, bypassing this method entirely: a task that
+   * hit one overload and then succeeded was marked complete with no gate
+   * grading, no peer review and no escalation, and `handleTaskCompletion`
+   * stamped it `outcomeKind: 'verified'` — a claim nothing had checked. Retrying
+   * inside the same loop iteration means the retried execution is graded against
+   * the same `baseline` by the same ladder as any other.
+   *
+   * The contract the schedulers still depend on: when overload retries are
+   * exhausted this returns **exactly** `failureReason: 'overload'`, which
+   * `executeWave`'s drain check compares on equality.
+   *
+   * **Known consequence — the ladder cannot see `draining`.** The old scheduler
+   * branch guarded on `!draining`, so once a peer task had failed and the wave
+   * was draining, an overloading task failed immediately. `draining` is a
+   * scheduler local and the ladder takes no new parameter for it, so such a task
+   * now spends its backoff (up to 60 s + 120 s) before settling, and a drain can
+   * take that much longer. Accepted deliberately, on the same reasoning as the
+   * 6-execution bound: the drain was triggered by a DIFFERENT task's failure, and
+   * failing this one for a provider overload it might well recover from is a hard
+   * failure for an unrelated reason. **User abort is not affected** — the backoff
+   * sleeps on `getAbortSignal(workspaceId)` and settles as `'aborted'`.
    *
    * `unverifiable` never enters the ladder: it is recorded in the ledger, warned
    * about, and the task advances. That is the invariant the whole stack rests on.
@@ -2123,6 +2230,10 @@ export class BlueprintBuildService extends EventEmitter {
       commands: this.resolveGateCommandsFor(blueprintId, workspacePath),
       // R3.1: manifest snapshot for per-task test targeting (M2.6 Option 2).
       manifests: this.readManifestsCached(blueprintId, workspacePath),
+      // This blueprint's artifact dir only — the pipeline rewrites plan/tasks/
+      // spec there mid-task, but a sibling blueprint's artifacts are still a
+      // write-set violation.
+      artifactPrefix: params.phaseContext.blueprintDir,
       // R3.3: lint/build run once per WAVE on the settled tree, not per task
       // against peers' mid-flight edits.
       skipCommandGates: true
@@ -2161,10 +2272,32 @@ export class BlueprintBuildService extends EventEmitter {
       })
     }
 
+    // P0 — one box per TASK, deliberately outside the attempt loop. See
+    // `TaskWriteActivity`: the per-attempt counters inside `executeTask` cannot
+    // answer "did this task write anything" once an attempt continues another.
+    const writeActivity: TaskWriteActivity = { writeToolCalls: 0, bashCalls: 0 }
+
+    // Evaluated lazily and only on the guard path (a completion claiming files
+    // with no write activity), which is rare — the happy path never pays for the
+    // git diff. Returns null when git cannot answer, and the guard treats that
+    // as "no evidence" rather than as "nothing changed".
+    const baselineDiffEmpty = baseline
+      ? (): Promise<boolean | null> => isBaselineDiffEmpty(gateCtx, baseline)
+      : undefined
+
+    /** Shared by every rung of the ladder so write activity accumulates across them. */
+    const ladderParams = { ...params, writeActivity, baselineDiffEmpty }
+
     let gateFixInstructions: string | undefined
     let lastResult: TaskResult | null = null
     /** B3 — fingerprint of the previous attempt's gate failure, for the stop-loss. */
     let lastFingerprint = ''
+    /** How many attempts IN A ROW have produced `lastFingerprint` (1 = just this one). */
+    let repeatCount = 0
+    /** B3 — set when the stop-loss trips, carried out on the returned TaskResult. */
+    let stopLossNote = ''
+    /** A11 — overload re-runs spent so far, across the whole ladder. */
+    let overloadRetries = 0
 
     for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
       // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
@@ -2177,13 +2310,96 @@ export class BlueprintBuildService extends EventEmitter {
         gateCtx.commands = this.resolveGateCommandsFor(blueprintId, workspacePath)
       }
 
-      const result = await this.executeTask({ ...params, gateFixInstructions })
+      let result = await this.executeTask({ ...ladderParams, gateFixInstructions })
       blueprintTaskRepository.recordAttempt(task.id)
+
+      // R1 — the attempt failed before it could be graded. Recorded HERE, not at
+      // settle: `handleTaskCompletion` runs once per task, so a task that fails
+      // and then succeeds leaves no trace of the attempt that failed — which is
+      // the entire population M0 asks about. `attempt` is the loop index, the
+      // number the settle-time row cannot give.
+      if (!result.success) {
+        this.recordAttemptFailure({
+          blueprintId,
+          taskId: task.taskId,
+          attempt,
+          waveNum: params.waveNum,
+          failureClass: result.failureClass,
+          reason: result.failureReason ?? 'unknown'
+        })
+      }
+
+      // A11 — overload re-run, INSIDE this iteration. No builder attempt is
+      // consumed: `attempt` does not advance, `gateFixInstructions` is unchanged
+      // (there is no gate feedback to carry — the model never ran), and the
+      // captured `baseline` is reused so the diff still describes the state the
+      // task started from.
+      while (
+        !result.success &&
+        result.failureReason === 'overload' &&
+        overloadRetries < OVERLOAD_MAX_RETRIES
+      ) {
+        overloadRetries++
+        const delay = this.overloadBackoffMs(overloadRetries)
+        const totalAttempts = OVERLOAD_MAX_RETRIES + 1
+        bpLog.info(
+          `[gates] Task ${task.taskId} hit API overload — retry ` +
+            `${overloadRetries + 1}/${totalAttempts} after ${delay / 1000}s`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text:
+            `⚠ Task ${task.taskId} hit API overload — ` +
+            `retrying in ${delay / 1000}s (attempt ${overloadRetries + 1}/${totalAttempts})`,
+          kind: 'system'
+        })
+
+        // E11 — after the decision is taken and the message is out, never
+        // between a dispatch and its settle: better-sqlite3 writes are synchronous.
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'overload',
+          phase: 'build',
+          taskId: task.taskId,
+          attempt,
+          data: { overloadRetry: overloadRetries, delayMs: delay, maxRetries: OVERLOAD_MAX_RETRIES }
+        })
+
+        try {
+          await abortAwareSleep(delay, blueprintService.getAbortSignal(workspaceId) ?? undefined)
+        } catch {
+          // Aborted during backoff. Report it as such rather than as overload —
+          // 'overload' would send the wave scheduler into its drain path with a
+          // message blaming the provider for a user cancellation.
+          // `resumeSafe` is cleared explicitly: `result` is the overload failure
+          // this backoff was waiting out, and it carries a resume permit that
+          // must not survive a user cancellation.
+          return { ...result, failureReason: 'aborted', failureClass: 'aborted', resumeSafe: false }
+        }
+
+        // The backoff is a 60–120 s window — far wider than the dispatch-time gap
+        // the exemption logic was built for — so peers have almost certainly
+        // written during it. Re-read before the retry, or their files land in
+        // this task's diff as write-set violations.
+        this.refreshExemptFiles(gateCtx, params.inFlight)
+
+        result = await this.executeTask({ ...ladderParams, gateFixInstructions })
+        // Recorded AFTER the call, matching the ladder convention: executeTask
+        // reads `attempts` to derive its own attempt number.
+        blueprintTaskRepository.recordAttempt(task.id)
+      }
+
       lastResult = result
 
       // A task that failed its Layer-1 file verification never reaches the gates:
       // there is nothing to grade, and the existing failure path already explains why.
-      if (!result.success || !baseline) return result
+      // Overload exhaustion leaves `failureReason` as exactly 'overload' — the
+      // string `executeWave`'s drain check compares on equality.
+      if (!result.success || !baseline) {
+        return overloadRetries > 0 ? { ...result, overloadCount: overloadRetries } : result
+      }
 
       // R1.2: peers may have dispatched/finished since the last gate run — the
       // exemption set is refreshed at gate time, not captured at dispatch time.
@@ -2195,11 +2411,16 @@ export class BlueprintBuildService extends EventEmitter {
         // never a loop); survivors go to the unverified ledger. A pass failure
         // is ledgered inside the service and never blocks the task.
         const peerReviewed = await this.runPeerReviewIfEnabled({
-          ...params,
+          ...ladderParams,
           baselineCommit: baseline.baselineCommit,
           exemptFiles: gateCtx.exemptFiles
         })
-        return { ...result, gateReport: report, ...(peerReviewed ? { peerReviewed } : {}) }
+        return {
+          ...result,
+          gateReport: report,
+          ...(overloadRetries > 0 ? { overloadCount: overloadRetries } : {}),
+          ...(peerReviewed ? { peerReviewed } : {})
+        }
       }
 
       gateFixInstructions = buildGateFixInstructions(report)
@@ -2217,8 +2438,25 @@ export class BlueprintBuildService extends EventEmitter {
       // there now instead of after the third identical failure. A fingerprint
       // that VARIES keeps today's behaviour exactly — the builder is still moving.
       const fingerprint = fingerprintGateFailure(report)
-      const stalled = fingerprint !== '' && fingerprint === lastFingerprint
+      repeatCount = fingerprint !== '' && fingerprint === lastFingerprint ? repeatCount + 1 : 1
       lastFingerprint = fingerprint
+
+      // The claim is about the RUN LENGTH, not the loop index: attempts 2 and 3
+      // being identical is a run of 2, not 3. And a "stop-loss" on the last
+      // attempt saves nothing — there is no rung left to skip — so it must not
+      // announce one.
+      const attemptsLeft = MAX_BUILDER_ATTEMPTS - attempt
+      const stalled = repeatCount >= 2 && attemptsLeft > 0
+
+      // The fingerprint normaliser handles ids/numbers/paths but not SHAs, ANSI
+      // codes or hostnames, and gate evidence is command-output tails — so
+      // whether this stop-loss is too coarse or too sensitive is an empirical
+      // question. One bounded line per gate failure makes it answerable from a
+      // real run instead of a guess.
+      bpLog.info(
+        `[gates] Task ${task.taskId} attempt ${attempt} gate fingerprint ` +
+          `(repeat ${repeatCount}): ${fingerprint.slice(0, 120)}`
+      )
 
       this.safeEmit('phaseProgress', {
         blueprintId,
@@ -2227,8 +2465,8 @@ export class BlueprintBuildService extends EventEmitter {
         text:
           `⚠ Task ${task.taskId} failed quality gate(s): ${failedNames} — ` +
           (stalled
-            ? `identical failure ${attempt}× in a row, skipping the remaining builder ` +
-              `attempt(s) — escalating to the lead-review model`
+            ? `identical failure ${repeatCount}× in a row, skipping the remaining ` +
+              `${attemptsLeft} builder attempt(s) — escalating to the lead-review model`
             : attempt < MAX_BUILDER_ATTEMPTS
               ? `retrying (attempt ${attempt + 1}/${MAX_BUILDER_ATTEMPTS})`
               : 'escalating to the lead-review model'),
@@ -2239,30 +2477,81 @@ export class BlueprintBuildService extends EventEmitter {
         ...result,
         success: false,
         failureReason: `quality gate failed: ${failedNames}`,
+        failureClass: 'quality',
         gateReport: report
       }
 
+      // R1 — the gate-failed attempt, recorded after the decision is dispatched
+      // (E11 convention: better-sqlite3 writes are synchronous). This is the row
+      // the settle-time one could never produce: an attempt that fails its gates
+      // and is then fixed by a retry disappears from the task table entirely.
+      this.recordAttemptFailure({
+        blueprintId,
+        taskId: task.taskId,
+        attempt,
+        waveNum: params.waveNum,
+        failureClass: 'quality',
+        reason: `quality gate failed: ${failedNames}`,
+        extra: { failedGates: failedNames, fingerprint: fingerprint.slice(0, 200), repeatCount }
+      })
+
       if (stalled) {
-        // Persist the reason the ladder was cut short. handleTaskCompletion only
-        // records an outcome for the FINAL verdict, and escalation may still
-        // pass — without this the skipped rungs leave no trace at all.
-        blueprintTaskRepository.setOutcome(task.id, {
-          failureReason:
-            `stop-loss after ${attempt} identical gate failure(s) ` +
-            `(${failedNames}) — skipped ${MAX_BUILDER_ATTEMPTS - attempt} builder ` +
-            `attempt(s), escalated to blueprint:lead-review`
-        })
+        // Carried on the TaskResult, not written to the row here: every settled
+        // task passes through handleTaskCompletion, which overwrites
+        // `failure_reason` unconditionally (null on a recovered task, the final
+        // reason otherwise) — so a write at this point is dead on arrival. When
+        // escalation SUCCEEDS the note is dropped by design: the run recovered,
+        // `attempts = 2` already encodes the saving, and the operator trail is
+        // the warn below plus the phaseProgress line above.
+        stopLossNote =
+          `stop-loss after ${repeatCount} identical gate failure(s) ` +
+          `(${failedNames}) — skipped ${attemptsLeft} builder ` +
+          `attempt(s), escalated to blueprint:lead-review`
         bpLog.warn(
           `[gates] Task ${task.taskId} stop-loss: gate failure fingerprint unchanged ` +
-            `across ${attempt} attempts — skipping ${MAX_BUILDER_ATTEMPTS - attempt} ` +
+            `across ${repeatCount} attempts — skipping ${attemptsLeft} ` +
             `builder attempt(s) and escalating`
         )
+        // E11 — whether this stop-loss is too coarse or too sensitive is an
+        // empirical question the log line alone cannot answer after the fact.
+        // The fingerprint is capped for the same reason it is capped in the log.
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'stop_loss',
+          phase: 'build',
+          taskId: task.taskId,
+          attempt,
+          data: {
+            repeatCount,
+            attemptsSkipped: attemptsLeft,
+            failedGates: failedNames,
+            fingerprint: fingerprint.slice(0, 200)
+          }
+        })
         break
       }
     }
 
     // Builder retries exhausted — one attempt by the strong model, then hard hold.
-    return this.escalateToLead({ ...params, gateCtx, baseline, gateFixInstructions, lastResult })
+    const escalated = await this.escalateToLead({
+      ...ladderParams,
+      gateCtx,
+      baseline,
+      gateFixInstructions,
+      lastResult
+    })
+    // `escalateToLead` builds its own result and never returns `lastResult`, so
+    // the note has to be appended here or it is lost. Kept after the existing
+    // reason so `humanizeFailureReason`'s /quality gate failed/i branch still
+    // matches instead of falling through to "surface verbatim".
+    const withOverload =
+      overloadRetries > 0 ? { ...escalated, overloadCount: overloadRetries } : escalated
+    return stopLossNote !== '' && !withOverload.success
+      ? {
+          ...withOverload,
+          failureReason: `${withOverload.failureReason ?? 'task failed'} — ${stopLossNote}`
+        }
+      : withOverload
   }
 
   /**
@@ -2289,6 +2578,9 @@ export class BlueprintBuildService extends EventEmitter {
     baselineCommit: string | null
     exemptFiles?: readonly string[]
     inFlight?: Map<string, InFlightEntry>
+    /** P0 — the task's cumulative write activity; the fix attempt adds to it. */
+    writeActivity?: TaskWriteActivity
+    baselineDiffEmpty?: () => Promise<boolean | null>
   }): Promise<boolean> {
     const { task, blueprintId, workspaceId, workspacePath } = params
 
@@ -2343,6 +2635,7 @@ export class BlueprintBuildService extends EventEmitter {
       packet: task.packetJson,
       commands: this.resolveGateCommandsFor(blueprintId, workspacePath),
       manifests: this.readManifestsCached(blueprintId, workspacePath),
+      artifactPrefix: params.phaseContext.blueprintDir,
       skipCommandGates: true
     }
     this.refreshExemptFiles(gateCtx, params.inFlight)
@@ -2466,6 +2759,9 @@ export class BlueprintBuildService extends EventEmitter {
     lastResult: TaskResult | null
     /** R1.2: the wave scheduler's in-flight map, for peer-file exemption. */
     inFlight?: Map<string, InFlightEntry>
+    /** P0 — the task's cumulative write activity; escalation adds to it. */
+    writeActivity?: TaskWriteActivity
+    baselineDiffEmpty?: () => Promise<boolean | null>
   }): Promise<TaskResult> {
     const { task, blueprintId, workspaceId, gateCtx, baseline, lastResult } = params
 
@@ -2473,6 +2769,21 @@ export class BlueprintBuildService extends EventEmitter {
     bpLog.warn(
       `[gates] Task ${task.taskId} exhausted ${MAX_BUILDER_ATTEMPTS} builder attempt(s) — escalating`
     )
+    // E11 — recorded on ENTRY, not on the result. Escalation is the most
+    // expensive rung in the ladder (a lead-tier model on a full cold session),
+    // so "how often do we get here" is the question, and an escalation that
+    // crashes mid-flight is exactly the one worth having a row for.
+    blueprintTelemetryRepository.record({
+      blueprintId,
+      kind: 'escalation',
+      phase: 'build',
+      taskId: task.taskId,
+      data: {
+        to: 'blueprint:lead-review',
+        builderAttempts: MAX_BUILDER_ATTEMPTS,
+        lastFailureReason: lastResult?.failureReason ?? null
+      }
+    })
 
     const result = await this.executeTask({
       ...params,
@@ -2497,6 +2808,7 @@ export class BlueprintBuildService extends EventEmitter {
       ...result,
       success: false,
       failureReason: `quality gate failed after escalation: ${failedNames}`,
+      failureClass: 'quality',
       gateReport: report
     }
   }
@@ -2752,6 +3064,43 @@ export class BlueprintBuildService extends EventEmitter {
   /**
    * Process a completed task: update DB, accumulate results, emit events.
    */
+  /**
+   * R1/M0 — one append-only row per FAILED ATTEMPT of a build task.
+   *
+   * The retry-cause split (infra vs. quality) is what decides whether a
+   * durable-session retry path is worth building, and it is not derivable after
+   * the fact: `failure_reason` is prose, and a task that eventually SUCCEEDS has
+   * its reason cleared — erasing every retry that led there. A settle-time row
+   * cannot fix that either, because settle happens once per task; only a row
+   * written from inside the ladder, carrying the attempt index, can.
+   *
+   * Never throws (the repository swallows its own failures): telemetry observes
+   * the build, it never participates in it.
+   */
+  private recordAttemptFailure(params: {
+    blueprintId: string
+    taskId: string
+    attempt: number
+    waveNum: number
+    failureClass: TaskFailureClass | undefined
+    reason: string
+    extra?: Record<string, unknown>
+  }): void {
+    blueprintTelemetryRepository.record({
+      blueprintId: params.blueprintId,
+      kind: 'task_failure',
+      phase: 'build',
+      taskId: params.taskId,
+      attempt: params.attempt,
+      data: {
+        failureClass: params.failureClass ?? 'unknown',
+        reason: params.reason.slice(0, 200),
+        wave: params.waveNum,
+        ...(params.extra ?? {})
+      }
+    })
+  }
+
   private handleTaskCompletion(params: {
     task: BlueprintTask
     taskResult: TaskResult
@@ -2815,6 +3164,12 @@ export class BlueprintBuildService extends EventEmitter {
       // nothing on disk explaining why the task is red, and the retry that
       // follows has no idea what it is walking back into.
       blueprintTaskRepository.setOutcome(task.id, { failureReason: reason, outcomeKind: null })
+      // R1 — no `task_failure` row here. It used to be written at settle, which
+      // meant one row per TASK and none at all for a task that retried and then
+      // succeeded. The rows now come from inside `executeTaskWithGates`, one per
+      // failed ATTEMPT; writing another here would double-count the last one.
+      // The terminal reason for a task that stays failed is on
+      // `blueprint_tasks.failure_reason`, set immediately above.
     }
 
     this.safeEmit('waveTaskComplete', {
@@ -3043,6 +3398,14 @@ export class BlueprintBuildService extends EventEmitter {
     gateFixInstructions?: string
     /** Routes this session to a different role model (escalation). */
     modelAction?: import('../../shared/types').ModelAction
+    /**
+     * P0 — write activity accumulated across every attempt of this task. Absent
+     * only for callers outside the gate ladder, where a task-scoped view does
+     * not exist and the per-attempt counters are the whole truth.
+     */
+    writeActivity?: TaskWriteActivity
+    /** P0 — "did this task change anything since its baseline"; null = unknown. */
+    baselineDiffEmpty?: () => Promise<boolean | null>
   }): Promise<TaskResult> {
     const {
       task,
@@ -3071,6 +3434,35 @@ export class BlueprintBuildService extends EventEmitter {
       (a) => a.type === 'build-partial' && a.contentMd != null && taskIdPattern.test(a.contentMd)
     )
 
+    // Re-read the row, do not trust `task`. The BlueprintTask handed to this
+    // method is the snapshot taken when the wave dispatched; `gradeTask` writes
+    // the gate report to the DB, not to that object, so `task.gatesJson` is the
+    // state BEFORE attempt 1 on every attempt. The previous attempt's verdict
+    // exists only on the row.
+    const currentRow = blueprintTaskRepository.findById(task.id)
+
+    // Attribution for this session's usage rows. `recordAttempt` bumps the
+    // counter AFTER executeTask returns, so the stored value is the number of
+    // prior attempts and this run is the next one.
+    const attempt = (currentRow?.attempts ?? 0) + 1
+
+    // P2 — the raw partial is a transcript tail sliced at 4000 characters.
+    // When the flag is on, one Haiku call turns it into a fixed schema instead.
+    // `null` back means the extraction did not work, and the raw dump below
+    // stands exactly as it does today — this never removes context, it only
+    // ever replaces it with something structured.
+    const failureMemoryMd = priorPartial?.contentMd
+      ? await this.extractFailureMemoryIfEnabled({
+          text: priorPartial.contentMd,
+          gateReport: currentRow?.gatesJson ?? null,
+          failureReason: currentRow?.failureReason ?? task.failureReason,
+          blueprintId,
+          taskId: task.taskId,
+          workspaceId,
+          attempt
+        })
+      : null
+
     // Build task-specific context string (with accumulated discoveries + prior attempt output)
     const taskContext = this.buildTaskContext(
       task,
@@ -3078,13 +3470,9 @@ export class BlueprintBuildService extends EventEmitter {
       priorPartial?.contentMd,
       task.failureReason,
       params.gateFixInstructions,
-      modelConfigService.isLocalProvider(workspacePath)
+      modelConfigService.isLocalProvider(workspacePath),
+      failureMemoryMd
     )
-
-    // Attribution for this session's usage rows. `recordAttempt` bumps the
-    // counter AFTER executeTask returns, so the stored value is the number of
-    // prior attempts and this run is the next one.
-    const attempt = (blueprintTaskRepository.findById(task.id)?.attempts ?? 0) + 1
 
     // Create adapter + session
     const adapter = new BlueprintBuildAdapter({
@@ -3147,8 +3535,14 @@ export class BlueprintBuildService extends EventEmitter {
       // FIX-2: Count write-capable tool invocations
       if (chunk.type === 'tool_use' && chunk.toolName) {
         observedToolNames.add(chunk.toolName)
-        if (isWriteTool(chunk.toolName)) writeToolCalls++
-        if (isBashTool(chunk.toolName)) bashCalls++
+        if (isWriteTool(chunk.toolName)) {
+          writeToolCalls++
+          if (params.writeActivity) params.writeActivity.writeToolCalls++
+        }
+        if (isBashTool(chunk.toolName)) {
+          bashCalls++
+          if (params.writeActivity) params.writeActivity.bashCalls++
+        }
       }
 
       forwardBlueprintChunk((event, payload) => this.safeEmit(event, payload), chunk, {
@@ -3184,7 +3578,15 @@ export class BlueprintBuildService extends EventEmitter {
     // B4-FIX: Auto-respond to ask_user calls — build is non-interactive
     const cleanupAskUser = wireAskUserAutoResponder(session, 'BUILD')
 
-    let taskResult: TaskResult = { success: false, completion: null, discoveries: [] }
+    // Placeholder: every path below overwrites it. Classed 'infra' rather than
+    // left bare so that if one ever does not, the result still carries a class —
+    // an unclassified failure is the one thing routing cannot handle.
+    let taskResult: TaskResult = {
+      success: false,
+      completion: null,
+      discoveries: [],
+      failureClass: 'infra'
+    }
     // BP-CATCH-SCOPE-01: Declared outside try/catch so the catch block (which saves
     // partial output on failure) can read the same conversation id the try block used.
     const syntheticConvId = `blueprint-build-${blueprintId}-${task.taskId}-${Date.now()}`
@@ -3232,6 +3634,18 @@ export class BlueprintBuildService extends EventEmitter {
         await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
+        // E11 — the watchdog itself stays pure (no DB, no clock it does not own),
+        // so the row is written here, where blueprintId is in scope. `stalled` is
+        // only true when the watchdog fired.
+        if (stallWatchdog.stalled) {
+          blueprintTelemetryRepository.record({
+            blueprintId,
+            kind: 'stall',
+            phase: 'build',
+            taskId: task.taskId,
+            data: { stallTimeoutMs: STALL_TIMEOUT_MS, writeToolCalls, bashCalls }
+          })
+        }
         stallWatchdog.dispose()
         // BP-ABORT-LISTENER-LEAK-01: Clean up abort listener if task completed normally
         if (abortHandler) abortSignal?.removeEventListener('abort', abortHandler)
@@ -3263,7 +3677,9 @@ export class BlueprintBuildService extends EventEmitter {
           success: false,
           completion: null,
           discoveries: [],
-          failureReason: sendOutcome
+          failureReason: sendOutcome,
+          failureClass: classifySendOutcome(sendOutcome),
+          resumeSafe: isResumeSafeOutcome(sendOutcome)
         }
       } else {
         // Parse output
@@ -3329,7 +3745,13 @@ export class BlueprintBuildService extends EventEmitter {
           asStringArray(completion?.filesCreated).length +
           asStringArray(completion?.filesModified).length
         const hasPlannedFiles = task.filePathsJson?.length > 0
-        const noWriteActivity = writeToolCalls === 0 && bashCalls === 0
+        // P0: TASK-scoped, not attempt-scoped. The local counters are reset on
+        // every `executeTask` call, so on any attempt that continues a previous
+        // one they read zero for work that demonstrably happened. Falls back to
+        // the locals for callers outside the gate ladder, where the two are equal.
+        const cumulativeWriteToolCalls = params.writeActivity?.writeToolCalls ?? writeToolCalls
+        const cumulativeBashCalls = params.writeActivity?.bashCalls ?? bashCalls
+        const noWriteActivity = cumulativeWriteToolCalls === 0 && cumulativeBashCalls === 0
 
         // BP-VERIFY-UNPROVEN-01: "exists but not provably fresh" is not "missing".
         // An agent that inspects code, finds it already correct and declines to
@@ -3340,7 +3762,7 @@ export class BlueprintBuildService extends EventEmitter {
           bpLog.warn(
             `[executeTask] Task ${task.taskId} verification UNPROVEN — ` +
               `${verification.staleClaimed.length} claimed file(s) exist but are not fresh; ` +
-              `session made ${writeToolCalls} write call(s) and ${bashCalls} Bash call(s) — passing with warning`
+              `task made ${cumulativeWriteToolCalls} write call(s) and ${cumulativeBashCalls} Bash call(s) — passing with warning`
           )
           // Append a warning artifact (not failure) so it's visible in Deliverables
           const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
@@ -3474,7 +3896,14 @@ export class BlueprintBuildService extends EventEmitter {
             success: false,
             completion,
             discoveries: taskDiscoveries,
-            failureReason
+            failureReason,
+            // Either an executor error or files the session claimed but never
+            // wrote: in both cases the work was never graded, so nothing is
+            // known about its quality.
+            failureClass: 'infra',
+            // The transcript is intact — nothing overflowed and no turn budget
+            // was exhausted — so a resume would pick up where this stopped.
+            resumeSafe: true
           }
         } else {
           // If the completion claims files BUT the session never invoked a
@@ -3482,10 +3911,33 @@ export class BlueprintBuildService extends EventEmitter {
           // Also fail when no completion + zero write calls + task has planned files.
           // This is the guard that keeps the R029 hole shut now that stale-only
           // claims no longer hard-fail on their own.
-          if (noWriteActivity && (claimedFiles > 0 || (!completion && hasPlannedFiles))) {
+          // The diff is only consulted when the counters already point at a
+          // failure — the happy path never pays for a git diff. See
+          // `shouldFailForNoWriteActivity` for why the diff outranks the counters.
+          const baselineDiffEmpty =
+            noWriteActivity && params.baselineDiffEmpty ? await params.baselineDiffEmpty() : null
+          if (baselineDiffEmpty === false) {
+            bpLog.info(
+              `[executeTask] Task ${task.taskId} recorded no write tools, but the gate ` +
+                `baseline diff is non-empty — an earlier attempt's work stands, ` +
+                `not a stale-file claim`
+            )
+          }
+
+          if (
+            shouldFailForNoWriteActivity({
+              cumulativeWriteToolCalls,
+              cumulativeBashCalls,
+              claimedFiles,
+              hasCompletion: Boolean(completion),
+              hasPlannedFiles,
+              baselineDiffEmpty
+            })
+          ) {
             bpLog.error(
               `[executeTask] Task ${task.taskId} FAILED — no-write-activity: ` +
-                `claimed ${claimedFiles} file(s) but session invoked 0 write tools and 0 Bash calls`
+                `claimed ${claimedFiles} file(s) but the task invoked 0 write tools and ` +
+                `0 Bash calls across all attempts, and changed nothing since its baseline`
             )
             this.safeEmit('phaseProgress', {
               blueprintId,
@@ -3503,7 +3955,9 @@ export class BlueprintBuildService extends EventEmitter {
               failureReason:
                 !completion && executorErrorBox.value
                   ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
-                  : 'no-write-activity'
+                  : 'no-write-activity',
+              failureClass: 'infra',
+              resumeSafe: true
             }
           } else {
             taskResult = {
@@ -3539,7 +3993,13 @@ export class BlueprintBuildService extends EventEmitter {
         success: false,
         completion: null,
         discoveries: [],
-        failureReason: err instanceof Error ? err.message : String(err)
+        failureReason: err instanceof Error ? err.message : String(err),
+        // A throw out of the session — stall watchdog, transport, spawn. The
+        // gates never ran, so this is never a quality verdict.
+        failureClass: 'infra',
+        // A stall or a dead transport leaves the session's history usable; the
+        // two outcomes that do not are handled on the send-outcome path above.
+        resumeSafe: true
       }
     } finally {
       // Phase 0: Record slot-freed time + build timing object
@@ -3599,6 +4059,62 @@ export class BlueprintBuildService extends EventEmitter {
     return taskResult
   }
 
+  // ── Failure Memory (P2) ──
+
+  /**
+   * P2 — flag-gated structured failure memory. Returns the rendered markdown
+   * block, or null to leave the existing raw-dump path untouched.
+   *
+   * Every failure returns null rather than throwing: this sits on the critical
+   * path of a retry, and an extractor that can break the retry it was meant to
+   * improve is a worse trade than the raw dump it replaces.
+   */
+  private async extractFailureMemoryIfEnabled(params: {
+    text: string
+    gateReport: GateReport | null
+    failureReason: string | null
+    blueprintId: string
+    taskId: string
+    workspaceId: string
+    /** Which attempt this memory is being built FOR — see R4. */
+    attempt: number
+  }): Promise<string | null> {
+    if (!appPreferenceRepository.getAppPreferences().blueprintFailureMemory) return null
+    try {
+      const started = Date.now()
+      const extracted = await extractFailureMemory(params)
+      if (!extracted) return null
+      const { memory } = extracted
+      const rendered = renderFailureMemory(memory)
+      // E11 — the success criterion is the resolution rate of the retries this
+      // runs on, and the cost ceiling is Haiku staying under ~5% of build
+      // tokens. Neither is answerable after the fact without a row per
+      // extraction carrying both the attempt it fed and what it cost.
+      blueprintTelemetryRepository.record({
+        blueprintId: params.blueprintId,
+        kind: 'failure_memory',
+        phase: 'build',
+        taskId: params.taskId,
+        attempt: params.attempt,
+        data: {
+          rawChars: params.text.length,
+          renderedChars: rendered.length,
+          failingGate: memory.failingGate,
+          filesTouched: memory.filesTouched.length,
+          doNotRepeat: memory.doNotRepeat.length,
+          durationMs: Date.now() - started,
+          inputTokens: extracted.inputTokens,
+          outputTokens: extracted.outputTokens,
+          costCents: extracted.costCents
+        }
+      })
+      return rendered
+    } catch (err) {
+      bpLog.warn(`[executeTask] Task ${params.taskId} failure-memory extraction threw:`, err)
+      return null
+    }
+  }
+
   // ── Task Context Builder ──
 
   /**
@@ -3613,7 +4129,9 @@ export class BlueprintBuildService extends EventEmitter {
     /** Mechanical gate-failure instructions for a retry (M4.1). */
     gateFixInstructions?: string,
     /** Strictest packet wording for small-context local models. */
-    strictPacket?: boolean
+    strictPacket?: boolean,
+    /** P2 — rendered structured failure memory; supersedes the raw dump. */
+    failureMemoryMd?: string | null
   ): string {
     const lines: string[] = [
       `**Task ID**: ${task.taskId}`,
@@ -3642,8 +4160,14 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
-    // BP-RETRY-TASK-CONTEXT: Prior attempt output (on retry)
-    if (priorAttemptOutput) {
+    // P2 — the structured memory REPLACES the raw dump; it never joins it.
+    // Rendering both would spend more than today for the same information, and
+    // the transcript tail is exactly the distractor the schema exists to drop.
+    if (failureMemoryMd) {
+      lines.push('')
+      lines.push(failureMemoryMd)
+    } else if (priorAttemptOutput) {
+      // BP-RETRY-TASK-CONTEXT: Prior attempt output (on retry)
       lines.push('')
       lines.push('**⚠️ Prior Attempt Output (this task failed previously):**')
       // Cap at 4K to avoid bloating the per-task prompt

@@ -42,13 +42,18 @@ export function buildBranchOptions(params: {
   repoHasCommits: boolean
   /** Local branch names, in the order the picker should show them. */
   local: readonly string[]
+  /**
+   * Remote-tracking branch names, WITHOUT the remote prefix — `main`, not
+   * `origin/main`, which is the shape `repoService.listBranches` returns.
+   */
+  remote: readonly string[]
   /** The workspace checkout's branch. */
   current: string | null
   tracks: readonly HeldBranch[]
   /** Resolves a chat owner id to its title. Returns null when unresolvable. */
   chatTitle: (conversationId: string) => string | null
 }): BlueprintBranchOptions {
-  const { repoHasCommits, local, current, tracks, chatTitle } = params
+  const { repoHasCommits, local, remote, current, tracks, chatTitle } = params
   if (!repoHasCommits) return NO_COMMITS_BRANCH_OPTIONS
 
   // Last writer wins, which only matters if the UNIQUE(workspace, branch)
@@ -57,29 +62,43 @@ export function buildBranchOptions(params: {
   // are ordinary.
   const heldByBranch = new Map(tracks.map((t) => [t.branchName, t]))
 
+  // Deliberately NOT deduplicated against the local list. A local `main` sitting
+  // behind `origin/main` is precisely the case remotes were added for, so
+  // dropping either of the pair would remove the only choice worth making.
+  // Nothing can hold or check out a remote-tracking ref, hence the constants.
+  const remoteBranches: BlueprintBranchOptions['branches'] = remote.map((name) => ({
+    name: `origin/${name}`,
+    isPrimaryHead: false,
+    heldBy: null,
+    isRemote: true
+  }))
+
   return {
     repoHasCommits: true,
     currentBranch: current || null,
-    branches: local.map((name) => {
-      const held = heldByBranch.get(name)
-      return {
-        name,
-        isPrimaryHead: name === current,
-        heldBy: held
-          ? {
-              ownerKind: held.ownerKind,
-              ownerId: held.ownerId,
-              // A chat's id means nothing to the user; its title is what they
-              // named it. Non-chat owners have no better handle than their id,
-              // and a retained track has no owner to name at all.
-              label: held.ownerId
-                ? held.ownerKind === 'chat'
-                  ? (chatTitle(held.ownerId) ?? held.ownerId)
-                  : held.ownerId
-                : null
-            }
-          : null
-      }
-    })
+    branches: local
+      .map((name) => {
+        const held = heldByBranch.get(name)
+        return {
+          name,
+          isPrimaryHead: name === current,
+          isRemote: false,
+          heldBy: held
+            ? {
+                ownerKind: held.ownerKind,
+                ownerId: held.ownerId,
+                // A chat's id means nothing to the user; its title is what they
+                // named it. Non-chat owners have no better handle than their id,
+                // and a retained track has no owner to name at all.
+                label: held.ownerId
+                  ? held.ownerKind === 'chat'
+                    ? (chatTitle(held.ownerId) ?? held.ownerId)
+                    : held.ownerId
+                  : null
+              }
+            : null
+        }
+      })
+      .concat(remoteBranches)
   }
 }

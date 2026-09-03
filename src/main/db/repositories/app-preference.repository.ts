@@ -73,7 +73,11 @@ export class AppPreferenceRepository extends BaseRepository<
       })(),
       maxStreamLifetimeMin: this.getInt('max_stream_lifetime_min', 30, 10, 120),
       dagScheduling: this.getBool('dag_scheduling', true),
-      blueprintAutoMode: this.getBool('blueprint_auto_mode', true)
+      blueprintAutoMode: this.getBool('blueprint_auto_mode', true),
+      // E3 — default OFF: see the note on AppPreferences.verifyFeatureDiff.
+      verifyFeatureDiff: this.getBool('verify_feature_diff', false),
+      // P2 — default OFF: see the note on AppPreferences.blueprintFailureMemory.
+      blueprintFailureMemory: this.getBool('blueprint_failure_memory', false)
     }
   }
 }

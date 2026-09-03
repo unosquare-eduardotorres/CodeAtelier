@@ -85,6 +85,7 @@ import type {
   MemoryContradiction,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
+  MemoryPromotionDiagnostics,
   MemoryGraphData,
   ContradictionStatus,
   E2EScenarioSummary,
@@ -692,6 +693,12 @@ const api = {
   // Embedding status
   memoryEmbeddingStatus: (args?: { workspaceId?: string }): Promise<MemoryEmbeddingStatus> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EMBEDDING_STATUS, args),
+
+  // Promotion diagnostics (read-only)
+  memoryPromotionDiagnostics: (args?: {
+    workspaceId?: string
+  }): Promise<MemoryPromotionDiagnostics> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_PROMOTION_DIAGNOSTICS, args),
 
   memoryEmbeddingBackfill: (): Promise<{ backfilled: number; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EMBEDDING_BACKFILL),

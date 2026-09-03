@@ -17,6 +17,7 @@ interface TrackRow {
   path: string
   base_branch: string
   base_source: string | null
+  base_commit: string | null
   status: string
   landing_mode: string | null
   landed_at: string | null
@@ -35,6 +36,7 @@ function toModel(row: TrackRow): WorkTrack {
     path: row.path,
     baseBranch: row.base_branch,
     baseSource: row.base_source as TrackBaseSource | null,
+    baseCommit: row.base_commit,
     status: row.status as TrackStatus,
     landingMode: row.landing_mode as TrackLandingMode | null,
     landedAt: row.landed_at,
@@ -53,6 +55,8 @@ export interface CreateTrackInput {
   baseBranch: string
   /** Which rule supplied `baseBranch`. Omitted by callers that do not resolve one. */
   baseSource?: TrackBaseSource
+  /** Commit `baseBranch` pointed at. Omitted when the caller cannot vouch for it. */
+  baseCommit?: string
   landingMode?: TrackLandingMode
 }
 
@@ -84,8 +88,8 @@ export class TrackRepository extends BaseRepository<TrackRow, WorkTrack> {
       .prepare(
         `INSERT INTO work_tracks
            (workspace_id, owner_kind, owner_id, branch_name, path, base_branch, base_source,
-            status, landing_mode)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)
+            base_commit, status, landing_mode)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
          RETURNING *`
       )
       .get(
@@ -96,6 +100,7 @@ export class TrackRepository extends BaseRepository<TrackRow, WorkTrack> {
         input.path,
         input.baseBranch,
         input.baseSource ?? null,
+        input.baseCommit ?? null,
         input.landingMode ?? null
       ) as TrackRow
     return toModel(row)

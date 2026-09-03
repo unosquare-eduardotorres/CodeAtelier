@@ -301,7 +301,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, ch)
     const workspaceId = requireString(args, 'workspaceId', ch)
 
-    return loadBranchOptions(workspaceId)
+    // Remotes only here. A blueprint fork cuts a new branch FROM the ref, which
+    // is the one thing you can legally do with a remote-tracking one — the chat
+    // handler asks for the same list without them because it checks branches out.
+    return loadBranchOptions(workspaceId, { includeRemote: true })
   })
 
   // ── blueprint:resolveBase — where a run would fork from, and why ──

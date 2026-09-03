@@ -96,6 +96,19 @@ export function humanizeFailureReason(reason: string | null | undefined): string
     return 'The session ran out of context window before completing the task.'
   }
 
+  // B3 stop-loss. MUST precede the generic /quality gate failed/i branch: the
+  // note is APPENDED to the existing gate-failure reason (blueprint-build
+  // .service.ts `stopLossNote`), so the generic branch matches first and
+  // discards the counts — the operator sees a canned sentence under a header
+  // that promises persisted reasons.
+  const stopLoss = /stop-loss after (\d+) identical gate failure\(s\)/.exec(reason)
+  if (stopLoss) {
+    return (
+      `Failed the same quality gate ${stopLoss[1]}× in a row — the remaining builder ` +
+      `attempts were skipped and the lead model was asked to fix it.`
+    )
+  }
+
   if (/quality gate failed/i.test(reason)) {
     return 'The task output failed a deterministic quality gate.'
   }

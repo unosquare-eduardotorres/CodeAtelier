@@ -415,17 +415,43 @@ export interface EnsureTrackOptions {
   repoPath: string
   /** Branch this track owns. Null means "nothing to isolate". */
   branchName: string | null
-  /** Fork point for a branch that does not exist yet. Defaults to primary HEAD. */
+  /**
+   * The base recorded on the row. Defaults to primary HEAD.
+   *
+   * This is the name landing derives `integration/<x>` from — bookkeeping, not
+   * an instruction to git. Pair it with `forkRef` when the two differ.
+   */
   baseBranch?: string
   /**
-   * Which rule supplied `baseBranch`, recorded on the row for provenance.
+   * The ref `git worktree add -b` actually cuts from, when that is not
+   * `baseBranch`. Defaults to `baseBranch`, so every existing caller is
+   * unaffected.
    *
-   * Overridden with `existing-branch` when the branch turns out to already
-   * exist, because `worktree add` then uses its own tip and the base is never
-   * consulted — storing the rule that chose an unused base would be a lie the
-   * next reader has no way to detect.
+   * `baseBranch` used to carry both meanings, and they come apart exactly once:
+   * a blueprint forked from `origin/main` must be CUT from `origin/main` (local
+   * `main` being behind is the entire reason it was picked) but RECORDED against
+   * `main`, or its landing would go to `integration/origin/main` and never meet
+   * the work every other run is accumulating in `integration/main`.
+   */
+  forkRef?: string
+  /**
+   * Which rule supplied `baseBranch`, recorded on the row verbatim.
+   *
+   * Deliberately not second-guessed here. This layer can see that a branch
+   * already exists, but not why — the blueprint caller reconciles the branch
+   * against its resolved base before calling, so by this point it is the only
+   * one that knows whether the base was really used. Chats pass nothing and
+   * get null, which is the honest answer for a track nobody resolved a base for.
    */
   baseSource?: TrackBaseSource
+  /**
+   * Commit `baseBranch` pointed at when this track was cut, for provenance.
+   *
+   * The branch name alone does not answer "what did this fork from?": the base
+   * keeps moving after the run ends. Omitted whenever the caller cannot vouch
+   * for it — a guess here is worse than a null.
+   */
+  baseCommit?: string
   /**
    * Landing mode recorded on the track at creation.
    *
@@ -663,13 +689,16 @@ export class TrackService {
     }
 
     const baseBranch = opts.baseBranch ?? primaryBranch ?? 'main'
+    // What git is told to cut from, which is the recorded base unless the caller
+    // has split the two on purpose.
+    const forkRef = opts.forkRef ?? baseBranch
     const path = this.pathFor(workspaceId, ownerId, branchName)
 
-    // Hoisted out of `gitAddWorktree` so the row can record that the base was
-    // never consulted. Same single git call, asked one level higher.
+    // An existing branch is checked out at its own tip; only a new one is cut
+    // from `forkRef`. `gitAddWorktree` needs to know which.
     const branchAlreadyExists = await this.branchExists(git, branchName)
 
-    await this.gitAddWorktree(git, path, branchName, baseBranch, branchAlreadyExists)
+    await this.gitAddWorktree(git, path, branchName, forkRef, branchAlreadyExists)
     // Best-effort: a worktree without dependencies is degraded, not broken, so
     // a failure here must not abort track creation. It is logged loudly instead.
     const linked = this.linkNodeModules(repoPath, path)
@@ -681,13 +710,15 @@ export class TrackService {
       branchName,
       path,
       baseBranch,
-      baseSource: branchAlreadyExists ? 'existing-branch' : opts.baseSource,
+      baseSource: opts.baseSource,
+      baseCommit: opts.baseCommit,
       landingMode: opts.landingMode
     })
     trackRepository.touch(created.id)
 
     wtLog.info(
       `[ensure] created worktree ${path} for ${branchName} (base=${baseBranch}` +
+        `${forkRef === baseBranch ? '' : `, cut from ${forkRef}`}` +
         `${linked ? '' : ', dependencies NOT linked'})`
     )
     this.emitChanged(workspaceId)
@@ -1088,7 +1119,8 @@ export class TrackService {
     git: ReturnType<typeof simpleGit>,
     path: string,
     branch: string,
-    baseBranch: string,
+    /** The ref a new branch is cut from. Ignored when `branch` already exists. */
+    forkRef: string,
     /** Resolved by the caller, which needs the same answer for provenance. */
     branchAlreadyExists?: boolean
   ): Promise<void> {
@@ -1111,7 +1143,7 @@ export class TrackService {
     const exists = branchAlreadyExists ?? (await this.branchExists(git, branch))
     const args = exists
       ? ['worktree', 'add', path, branch]
-      : ['worktree', 'add', '-b', branch, path, baseBranch]
+      : ['worktree', 'add', '-b', branch, path, forkRef]
 
     await git.raw(args)
   }

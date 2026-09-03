@@ -93,6 +93,7 @@ import type {
   MemoryContradiction,
   MemoryCaptureSettings,
   MemoryEmbeddingStatus,
+  MemoryPromotionDiagnostics,
   MemoryGraphData,
   IngestionProgress,
   BootstrapProgress,
@@ -496,6 +497,9 @@ interface Api {
     settings: Partial<MemoryCaptureSettings>
   }) => Promise<void>
   memoryEmbeddingStatus: (args?: { workspaceId?: string }) => Promise<MemoryEmbeddingStatus>
+  memoryPromotionDiagnostics: (args?: {
+    workspaceId?: string
+  }) => Promise<MemoryPromotionDiagnostics>
   memoryEmbeddingBackfill: () => Promise<{ backfilled: number; error?: string }>
   onMemoryEmbeddingProgress: (
     callback: (data: { processed: number; total: number; done: boolean; error?: string }) => void

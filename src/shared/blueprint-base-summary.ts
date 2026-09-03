@@ -55,6 +55,12 @@ export function summariseResolvedBase(base: ResolvedBlueprintBase): string {
     )
   }
 
+  // No fetch is issued anywhere in this feature — remote-tracking refs are read
+  // exactly as they sit on disk. `origin/main` is therefore precisely as old as
+  // the user's last fetch, and a base line that states the branch without
+  // stating that is the same silent staleness the resolution chain exists to
+  // surface. Placed before the reason so the sentence reads as one clause.
+  const asOf = base.isRemote ? ' as of your last fetch' : ''
   const why = describeBaseSource(base.source)
-  return why ? `Forks from ${base.branch} (${why}).` : `Forks from ${base.branch}.`
+  return why ? `Forks from ${base.branch}${asOf} (${why}).` : `Forks from ${base.branch}${asOf}.`
 }

@@ -291,6 +291,16 @@ export interface BlueprintBranchOption {
     /** Chat title where resolvable; otherwise the owner id. */
     label: string | null
   } | null
+  /**
+   * A remote-tracking ref (`origin/main`) rather than a local branch.
+   *
+   * Offered as a fork base only. Nothing can hold one and nothing can check one
+   * out, so `heldBy` is always null and `isPrimaryHead` always false — the flag
+   * exists so the picker can group them and say where they came from, since
+   * `origin/main` and `main` are routinely different commits and picking the
+   * wrong one is the mistake this whole list is meant to prevent.
+   */
+  isRemote: boolean
 }
 
 /**
@@ -320,6 +330,29 @@ export type BlueprintBaseSource = Exclude<TrackBaseSource, 'existing-branch'>
 export interface ResolvedBlueprintBase {
   /** The branch the new blueprint branch is actually cut from. */
   branch: string
+  /**
+   * The name the track records as its base, and that landing derives
+   * `integration/<x>` from.
+   *
+   * Equal to `branch` for every local base, so nothing pre-existing changes.
+   * They separate only for a remote fork point: `origin/main` has to stay the
+   * ref git cuts from — normalising it away would fork from the stale local tip,
+   * which is the thing picking `origin/main` exists to avoid — while the
+   * recorded base becomes local `main`, because a run recorded against
+   * `origin/main` would land in `integration/origin/main` and never meet the
+   * runs accumulating in `integration/main`. `commit` pins the exact origin tip,
+   * so recording the local *name* loses nothing.
+   */
+  integrationBase: string
+  /**
+   * `branch` is a remote-tracking ref.
+   *
+   * Only used to say so in the summary line: no fetch happens, so a remote base
+   * is exactly as old as the user's last one, and a base line that does not
+   * admit that is the same silent staleness the rest of this resolution chain
+   * was built to surface.
+   */
+  isRemote: boolean
   source: BlueprintBaseSource
   /** True when `branch` is `integration/<resolvedFrom>` rather than the rule's own answer. */
   upgradedToIntegration: boolean

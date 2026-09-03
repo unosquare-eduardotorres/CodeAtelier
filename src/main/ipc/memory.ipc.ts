@@ -413,6 +413,22 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
     }
   })
 
+  // ── Promotion Diagnostics (read-only) ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_PROMOTION_DIAGNOSTICS,
+    (event, args?: { workspaceId?: string }) => {
+      validateSender(event)
+      if (!args?.workspaceId) {
+        return {
+          tierCounts: [0, 0, 0, 0],
+          stuck: { total: 0, needsMoreDays: 0, needsConfidence: 0, awaitingSweep: 0 }
+        }
+      }
+      return memoryFactRepository.promotionDiagnostics(args.workspaceId)
+    }
+  )
+
   ipcMain.handle(IPC_CHANNELS.MEMORY_EMBEDDING_BACKFILL, async (event) => {
     validateSender(event)
 
