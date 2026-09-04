@@ -217,6 +217,54 @@ if [ $BUILD_EXIT -eq 0 ]; then
   fi
 fi
 
+# ── Step 3c: The app must actually be SIGNED ─────────────────────────────────
+# electron-builder does not fail when it cannot find a signing identity: it
+# prints "0 valid identities found" mid-build and packages an UNSIGNED app. On
+# Apple Silicon that app is not merely "unverified" — it is unlaunchable. The
+# kernel kills it at the first native addon dlopen with
+# `CODESIGNING, Code 2, Invalid Page`, because a linker-signed bundle has no
+# sealed resources covering the .node files.
+#
+# That shipped as 1.0.101: signing silently degraded (the login keychain had
+# been rotated to login_renamed_N.keychain-db, so the Developer ID identity was
+# no longer in the search list), every gate passed, both channels advertised it,
+# and macOS users got a crash on launch. Windows was unaffected, which is
+# exactly what makes it easy to miss.
+#
+# A warning in a 20-minute build log is not a control. This is.
+if [ $BUILD_EXIT -eq 0 ]; then
+  echo ""
+  echo "▸ Step 3c: Verify the app is signed"
+  APP_BUNDLE=$(find dist -maxdepth 2 -name "*.app" -type d | head -1)
+  if [ -z "$APP_BUNDLE" ]; then
+    echo "  ❌ Could not locate the .app bundle in dist/ — cannot verify signing"
+    BUILD_EXIT=1
+  elif ! codesign --verify --deep --strict "$APP_BUNDLE" 2>/dev/null; then
+    echo "  ❌ $APP_BUNDLE fails codesign verification — refusing to ship it."
+    echo ""
+    codesign -dv --verbose=2 "$APP_BUNDLE" 2>&1 | sed 's/^/     /' | head -8
+    echo ""
+    echo "     An unsigned/ad-hoc bundle is KILLED on launch on Apple Silicon"
+    echo "     (CODESIGNING Code 2, Invalid Page) at the first native addon load."
+    echo ""
+    echo "     Check that a Developer ID identity is visible to the build:"
+    echo "       security find-identity -v -p codesigning"
+    echo "     If it reports 0 identities, the login keychain may have been"
+    echo "     rotated — look for ~/Library/Keychains/login_renamed_*.keychain-db,"
+    echo "     add it to the search list and unlock it."
+    BUILD_EXIT=1
+  else
+    SIGN_TEAM=$(codesign -dv --verbose=2 "$APP_BUNDLE" 2>&1 | sed -n 's/^TeamIdentifier=//p')
+    if [ -z "$SIGN_TEAM" ] || [ "$SIGN_TEAM" = "not set" ]; then
+      echo "  ❌ $APP_BUNDLE verifies but carries NO team identifier (ad-hoc)."
+      echo "     Distribution builds must be signed with the Developer ID."
+      BUILD_EXIT=1
+    else
+      echo "  ✅ Signed and verified (team $SIGN_TEAM)"
+    fi
+  fi
+fi
+
 if [ $BUILD_EXIT -eq 0 ]; then
   echo ""
   echo "✅ Build complete — check dist/"
