@@ -781,7 +781,9 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/e2e-runners-idea-specialist.test',
   '../services/__tests__/e2e-runner-preflight.test',
   // ─── Shared prism language map + lazy grammar loader ───
-  '../services/__tests__/prism-languages.test'
+  '../services/__tests__/prism-languages.test',
+  // ─── Tool-output line prefix parser (chat tool-activity highlighting) ───
+  '../services/__tests__/tool-output-lines.test'
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────

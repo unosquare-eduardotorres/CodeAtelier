@@ -18,6 +18,8 @@ import type { ToolActivity, ToolOperationType } from '../../../../shared/types'
 import { copyTextToClipboard } from '../../utils/clipboard'
 import { shortenInput, getToolDisplayName } from './tool-activity-utils'
 import InlineEditDiff from './InlineEditDiff'
+import ToolOutputPre from './ToolOutputPre'
+import { languageForPath } from '@renderer/utils/prism-languages'
 import FileLanguageIcon from '../common/FileLanguageIcon'
 import DiffStatBadge from '../common/DiffStatBadge'
 import { useFileViewerStore } from '@renderer/store/file-viewer.store'
@@ -130,6 +132,28 @@ const STATUS_STYLES: Record<
   }
 }
 
+/**
+ * Highlight language for the output pane. Error rows stay plain — the danger
+ * tint is the signal; grep rows highlight with the searched file's language
+ * (locators themselves render muted via the line parser); glob rows are path
+ * lists with nothing worth tokenizing.
+ */
+function resolveOutputLanguage(activity: ToolActivity): string {
+  if (activity.status === 'error') return ''
+  if (
+    (activity.operationType === 'read' ||
+      activity.operationType === 'write' ||
+      activity.operationType === 'edit') &&
+    activity.filePath
+  ) {
+    return languageForPath(activity.filePath)
+  }
+  if (activity.operationType === 'search' && activity.filePath) {
+    return languageForPath(activity.filePath)
+  }
+  return ''
+}
+
 // ── ToolRow sub-components ──
 
 function ToolRowSummary({ activity }: { activity: ToolActivity }): React.JSX.Element {
@@ -213,9 +237,11 @@ function ToolRowExpandedPanel({
             {activity.operationType === 'shell' ? 'Command' : 'Input'}
             <CopyButton text={activity.input} />
           </span>
-          <pre className="mt-0.5 text-[11px] text-text-muted font-mono whitespace-pre-wrap break-all leading-relaxed">
-            {activity.input}
-          </pre>
+          <ToolOutputPre
+            text={activity.input}
+            language={activity.operationType === 'shell' ? 'bash' : ''}
+            className="mt-0.5 text-text-muted"
+          />
         </div>
       )}
       {(activity.resultDetail || activity.result) && (
@@ -224,11 +250,11 @@ function ToolRowExpandedPanel({
             {statusStyle.outputLabel}
             <CopyButton text={activity.resultDetail || activity.result || ''} />
           </span>
-          <pre
-            className={`mt-0.5 text-[11px] font-mono whitespace-pre-wrap break-all leading-relaxed ${statusStyle.outputColor}`}
-          >
-            {activity.resultDetail || activity.result}
-          </pre>
+          <ToolOutputPre
+            text={activity.resultDetail || activity.result || ''}
+            language={resolveOutputLanguage(activity)}
+            className={`mt-0.5 ${statusStyle.outputColor}`}
+          />
         </div>
       )}
     </div>

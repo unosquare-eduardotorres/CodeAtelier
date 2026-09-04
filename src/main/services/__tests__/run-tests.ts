@@ -757,7 +757,9 @@ const TEST_FILES: string[] = [
   './e2e-runners-idea-specialist.test',
   './e2e-runner-preflight.test',
   // ─── Shared prism language map + lazy grammar loader (diff/chat/file viewer highlighting) ───
-  './prism-languages.test'
+  './prism-languages.test',
+  // ─── Tool-output line prefix parser (chat tool-activity highlighting) ───
+  './tool-output-lines.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

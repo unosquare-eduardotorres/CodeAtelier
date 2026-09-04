@@ -1,17 +1,12 @@
-import { useMemo, useEffect, useState, useSyncExternalStore } from 'react'
+import { useMemo, useState } from 'react'
 import { Highlight, themes, type PrismTheme } from 'prism-react-renderer'
 import { Copy, Check, X, AlertCircle, Loader2 } from 'lucide-react'
 import { useAppTheme } from '@renderer/store'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
 import { useFileViewerStore } from '@renderer/store/file-viewer.store'
 import FileLanguageIcon from '../common/FileLanguageIcon'
-import {
-  languageForPath,
-  ensurePrismLanguage,
-  isLanguageReady,
-  subscribePrismLanguages,
-  getLoadedLanguageCount
-} from '@renderer/utils/prism-languages'
+import { usePrismGrammar } from '@renderer/hooks/use-prism-grammar'
+import { languageForPath } from '@renderer/utils/prism-languages'
 
 /** Map app theme → Prism highlight theme (mirrors CodeBlock). */
 const PRISM_THEME_MAP: Record<string, PrismTheme> = {
@@ -46,15 +41,9 @@ export default function FileViewerPanel({ className }: FileViewerPanelProps): Re
   )
 
   // Non-vendored grammars (ruby, dart, scala, …) load lazily from prismjs
-  // chunks. The store subscription re-renders the viewer the moment the
-  // grammar registers; until then it renders plain.
-  useSyncExternalStore(subscribePrismLanguages, getLoadedLanguageCount)
-  useEffect(() => {
-    if (language !== 'text' && !isLanguageReady(language)) {
-      void ensurePrismLanguage(language)
-    }
-  }, [language])
-  const grammarReady = language === 'text' || isLanguageReady(language)
+  // chunks; the hook re-renders the viewer the moment the grammar registers.
+  // Until then it renders plain.
+  const grammarReady = usePrismGrammar(language)
 
   // Cap highlighted lines — a 50K-line generated file tokenized by Prism
   // freezes the renderer for seconds; plain text renders fine.
