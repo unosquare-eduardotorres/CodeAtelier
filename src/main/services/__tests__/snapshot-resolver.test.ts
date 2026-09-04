@@ -63,15 +63,54 @@ describe('buildConversationModelSnapshot (via resolveAssignment)', () => {
 // ── Blueprint synthetic ID regex ────────────────────────────────────────
 
 describe('Blueprint synthetic conversation ID regex', () => {
-  test('matches_all_7_phases', () => {
-    const phases = ['specify', 'clarify', 'plan', 'tasks', 'review', 'build', 'verify'] as const
+  // Blueprint ids are `lower(hex(randomblob(16)))` per schema — 32 lowercase hex,
+  // never dashed. The old fixtures used dashed ids, which is what let the greedy
+  // `(.+)` swallow a build task's `-T004` segment.
+  const BP_ID = '984eac4de6985c27c0f91f8b499b2831'
+
+  test('matches_all_8_phases', () => {
+    const phases = [
+      'specify',
+      'clarify',
+      'plan',
+      'tasks',
+      'review',
+      'code-review',
+      'build',
+      'verify'
+    ] as const
     for (const phase of phases) {
-      const id = `blueprint-${phase}-bp-abc123-1720000000000`
+      const id = `blueprint-${phase}-${BP_ID}-1720000000000`
       const match = BLUEPRINT_CONV_RE.exec(id)
       assert.ok(match, `Should match phase: ${phase}`)
       assert.equal(match[1], phase)
-      assert.equal(match[2], 'bp-abc123')
+      assert.equal(match[2], BP_ID)
     }
+  })
+
+  // BP-MODEL-BLEED regression. Only BUILD mints a per-task conversation id, so
+  // only build hit this: the greedy capture returned `<bpId>-T004`, findById()
+  // missed, the frozen snapshot was never read, and the GLM binding was lost.
+  test('build task ids keep the blueprint id separate from the task segment', () => {
+    const match = BLUEPRINT_CONV_RE.exec(`blueprint-build-${BP_ID}-T004-1788490138012`)
+    assert.ok(match, 'per-task build id must match')
+    assert.equal(match[1], 'build')
+    assert.equal(match[2], BP_ID, 'blueprint id must NOT absorb the task segment')
+    assert.equal(match[3], 'T004')
+  })
+
+  test('remediation task ids parse the same way', () => {
+    const match = BLUEPRINT_CONV_RE.exec(`blueprint-build-${BP_ID}-R001-1788484547802`)
+    assert.ok(match)
+    assert.equal(match[2], BP_ID)
+    assert.equal(match[3], 'R001')
+  })
+
+  test('phase ids without a task segment leave group 3 undefined', () => {
+    const match = BLUEPRINT_CONV_RE.exec(`blueprint-tasks-${BP_ID}-1788457040173`)
+    assert.ok(match)
+    assert.equal(match[2], BP_ID)
+    assert.equal(match[3], undefined)
   })
 
   test('rejects_normal_uuids', () => {
@@ -88,12 +127,16 @@ describe('Blueprint synthetic conversation ID regex', () => {
     assert.equal(BLUEPRINT_CONV_RE.test('blueprint-plan--12345'), false)
   })
 
-  test('extracts_blueprintId_with_dashes', () => {
-    const id = 'blueprint-build-my-long-blueprint-id-1720000000000'
-    const match = BLUEPRINT_CONV_RE.exec(id)
-    assert.ok(match)
-    assert.equal(match[1], 'build')
-    assert.equal(match[2], 'my-long-blueprint-id')
+  test('rejects ids that are not 32 lowercase hex', () => {
+    // The old regex accepted anything, which is what made the task segment ambiguous.
+    assert.equal(
+      BLUEPRINT_CONV_RE.test('blueprint-build-my-long-blueprint-id-1720000000000'),
+      false
+    )
+    assert.equal(
+      BLUEPRINT_CONV_RE.test('blueprint-build-ABCDEF0123456789ABCDEF0123456789-1720000000000'),
+      false
+    )
   })
 })
 

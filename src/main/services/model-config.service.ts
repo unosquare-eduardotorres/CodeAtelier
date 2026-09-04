@@ -103,6 +103,20 @@ class ModelConfigService {
       return roleAssignment.modelId
     }
 
+    // BP-MODEL-BLEED: a non-Claude binding reaching here is silently downgraded
+    // to the Claude default below - that is how a `blueprint:build` role bound
+    // to glm-5.3 spent an entire build phase on Opus. Callers that can honour
+    // the real provider resolve through the snapshot path; anything landing
+    // here has already lost it, so say so rather than substituting in silence.
+    if (roleAssignment?.modelId && roleAssignment.provider !== 'claude') {
+      log.warn(
+        `[model-config] '${action}' is bound to ` +
+          `${roleAssignment.provider}/${roleAssignment.modelId}, but this resolver can only ` +
+          `return a Claude model id - the caller is not provider-aware and will run on the ` +
+          `Claude default instead.`
+      )
+    }
+
     // Legacy modelOverrides
     const overrides = (settings?.modelOverrides ?? {}) as ModelOverrides
     return overrides[action] ?? DEFAULT_MODEL_CONFIG[action] ?? this.fallbackAction(action)
@@ -127,6 +141,20 @@ class ModelConfigService {
     const roleAssignment = roles[action]
     if (roleAssignment?.modelId && roleAssignment.provider === 'claude') {
       return roleAssignment.modelId
+    }
+
+    // BP-MODEL-BLEED: a non-Claude binding reaching here is silently downgraded
+    // to the Claude default below - that is how a `blueprint:build` role bound
+    // to glm-5.3 spent an entire build phase on Opus. Callers that can honour
+    // the real provider resolve through the snapshot path; anything landing
+    // here has already lost it, so say so rather than substituting in silence.
+    if (roleAssignment?.modelId && roleAssignment.provider !== 'claude') {
+      log.warn(
+        `[model-config] '${action}' is bound to ` +
+          `${roleAssignment.provider}/${roleAssignment.modelId}, but this resolver can only ` +
+          `return a Claude model id - the caller is not provider-aware and will run on the ` +
+          `Claude default instead.`
+      )
     }
 
     // Legacy modelOverrides

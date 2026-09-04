@@ -40,7 +40,36 @@ import log from 'electron-log'
  * Groups: [1] = phase, [2] = blueprintId
  */
 export const BLUEPRINT_CONV_RE =
-  /^blueprint-(specify|clarify|plan|tasks|review|build|verify)-(.+)-\d+$/
+  /^blueprint-(specify|clarify|plan|tasks|code-review|review|build|verify)-([0-9a-f]{32})(?:-([A-Za-z]+\d+))?-\d+$/
+
+/**
+ * Conversation-ID phase segment → key in the blueprint's frozen modelSnapshot.
+ * The snapshot is camelCase (`codeReview`); the conversation ID is kebab.
+ */
+const SNAPSHOT_PHASE_KEY: Record<string, string> = { 'code-review': 'codeReview' }
+
+/**
+ * The frozen assignment for a blueprint synthetic conversation ID, or null when
+ * the ID is not a blueprint ID or the blueprint carries no snapshot.
+ *
+ * BP-MODEL-BLEED: this used to be inlined in resolveModelFromSnapshot only, so
+ * the OpenCode PROVIDER resolver never consulted the snapshot at all — a GLM
+ * build binding resolved its model id from the snapshot but its provider from
+ * the workspace default, and every build task silently ran on Anthropic.
+ */
+function blueprintAssignment(conversationId: string): ResolvedAssignment | null {
+  const match = BLUEPRINT_CONV_RE.exec(conversationId)
+  if (!match) return null
+  const [, phase, blueprintId] = match
+  try {
+    const bp = blueprintRepository.findById(blueprintId)
+    const snap = bp?.settingsJson?.modelSnapshot as Record<string, ResolvedAssignment> | undefined
+    return snap?.[SNAPSHOT_PHASE_KEY[phase] ?? phase] ?? null
+  } catch {
+    // Non-fatal — caller falls through to live resolution for legacy blueprints
+    return null
+  }
+}
 
 export function resolveModelFromSnapshot(
   conversationId: string | null,
@@ -53,16 +82,9 @@ export function resolveModelFromSnapshot(
   }
 
   // G6: Blueprint synthetic IDs — read frozen snapshot from blueprint.settings_json
-  const bpMatch = BLUEPRINT_CONV_RE.exec(conversationId)
-  if (bpMatch) {
-    const [, phase, blueprintId] = bpMatch
-    try {
-      const bp = blueprintRepository.findById(blueprintId)
-      const snap = bp?.settingsJson?.modelSnapshot as Record<string, ResolvedAssignment> | undefined
-      if (snap?.[phase]?.modelId) return snap[phase].modelId
-    } catch {
-      // Non-fatal — fall through to live resolution for legacy blueprints
-    }
+  if (BLUEPRINT_CONV_RE.test(conversationId)) {
+    const assignment = blueprintAssignment(conversationId)
+    if (assignment?.modelId) return assignment.modelId
     return modelConfigService.getModel(workspacePath, modelAction)
   }
 
@@ -157,8 +179,13 @@ export function resolveOpenCodeProviderFromSnapshot(
     return fallback()
   }
 
-  // Blueprint synthetic IDs never have conversation rows — fall back quietly
+  // Blueprint synthetic IDs never have conversation rows, but the blueprint
+  // itself carries the frozen snapshot — read provider identity from there
+  // rather than from the workspace default. Falling back unconditionally is
+  // what made a `blueprint:build` GLM binding execute on Anthropic.
   if (BLUEPRINT_CONV_RE.test(conversationId)) {
+    const assignment = blueprintAssignment(conversationId)
+    if (assignment) return mapAssignmentToOpenCodeConfig(assignment, workspacePath)
     return fallback()
   }
 

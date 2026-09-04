@@ -721,22 +721,30 @@ try {
 if (snapshotLoaded) {
   describe('BLUEPRINT_CONV_RE — regex pattern', () => {
     test('matches blueprint specify conversation IDs', () => {
-      const match = 'blueprint-specify-abc123-1234567890'.match(BLUEPRINT_CONV_RE)
+      const match = 'blueprint-specify-984eac4de6985c27c0f91f8b499b2831-1234567890'.match(
+        BLUEPRINT_CONV_RE
+      )
       assert.ok(match, 'Should match blueprint specify ID')
     })
 
     test('matches blueprint clarify conversation IDs', () => {
-      const match = 'blueprint-clarify-def456-9876543210'.match(BLUEPRINT_CONV_RE)
+      const match = 'blueprint-clarify-984eac4de6985c27c0f91f8b499b2831-9876543210'.match(
+        BLUEPRINT_CONV_RE
+      )
       assert.ok(match, 'Should match blueprint clarify ID')
     })
 
     test('matches blueprint plan conversation IDs', () => {
-      const match = 'blueprint-plan-ghi789-1111111111'.match(BLUEPRINT_CONV_RE)
+      const match = 'blueprint-plan-984eac4de6985c27c0f91f8b499b2831-1111111111'.match(
+        BLUEPRINT_CONV_RE
+      )
       assert.ok(match, 'Should match blueprint plan ID')
     })
 
     test('matches blueprint build conversation IDs', () => {
-      const match = 'blueprint-build-T001-jkl012-2222222222'.match(BLUEPRINT_CONV_RE)
+      const match = 'blueprint-build-984eac4de6985c27c0f91f8b499b2831-T001-2222222222'.match(
+        BLUEPRINT_CONV_RE
+      )
       assert.ok(match, 'Should match blueprint build ID')
     })
 
