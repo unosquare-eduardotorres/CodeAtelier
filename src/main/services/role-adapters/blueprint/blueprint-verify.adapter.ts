@@ -11,6 +11,8 @@
 
 import { BlueprintBaseAdapter } from './blueprint-base.adapter'
 import { buildPhaseSystemPrompt } from '../../blueprint-prompt-loader'
+import { appPreferenceRepository } from '../../../db/repositories/app-preference.repository'
+import { assembleFeatureDiff } from '../../blueprint-feature-diff'
 import type { AgentRole, ModelAction } from '../../../../shared/types'
 import type { AdapterMcpContext, AdapterMcpResult } from '../../agent-session.types'
 import type { PhaseContext } from '../../../../shared/blueprint-types'
@@ -61,14 +63,14 @@ export class BlueprintVerifyAdapter extends BlueprintBaseAdapter {
    * `AppPreferences.verifyFeatureDiff`.
    */
   /**
-   * Is the injection switched on? Overridable seam — the module is loaded
-   * lazily and its ESM namespace is frozen, so a test cannot patch the export.
+   * Is the injection switched on? Overridable seam — a test subclasses the
+   * adapter and overrides THIS METHOD. The dependency is a static import on
+   * purpose: a relative `require()` here does not survive electron-vite
+   * bundling and throws MODULE_NOT_FOUND in a packaged build (caught by
+   * scripts/verify-build-assets.mjs, and by the no-restricted-syntax rule).
    */
   protected verifyDiffEnabled(): boolean {
     try {
-      const {
-        appPreferenceRepository
-      } = require('../../../db/repositories/app-preference.repository')
       return appPreferenceRepository.getAppPreferences().verifyFeatureDiff === true
     } catch {
       return false // preferences unavailable — behave as if off
@@ -79,11 +81,7 @@ export class BlueprintVerifyAdapter extends BlueprintBaseAdapter {
   protected loadFeatureDiff(): string | null {
     if (!this.workspacePath) return null
     try {
-      return require('../../blueprint-feature-diff').assembleFeatureDiff(
-        this.blueprintId,
-        this.workspacePath,
-        VERIFY_DIFF_MAX_CHARS
-      )
+      return assembleFeatureDiff(this.blueprintId, this.workspacePath, VERIFY_DIFF_MAX_CHARS)
     } catch {
       return null // git unavailable — behave as if there is no diff
     }
