@@ -26,6 +26,7 @@ let blueprintRepository: any
 let blueprintPhaseRepository: any
 let blueprintTaskRepository: any
 let appPreferenceRepository: any
+let blueprintTelemetryRepository: any
 let BlueprintBuildService: any
 
 try {
@@ -37,6 +38,8 @@ try {
   blueprintTaskRepository = repos.blueprintTaskRepository
   const prefs = require('../../db/repositories/app-preference.repository')
   appPreferenceRepository = prefs.appPreferenceRepository
+  blueprintTelemetryRepository =
+    require('../../db/repositories/blueprint-telemetry.repository').blueprintTelemetryRepository
   BlueprintBuildService = require('../blueprint-build.service').BlueprintBuildService
 } catch (err) {
   console.log(`⚠ DAG scheduler setup failed — tests will be skipped.`)
@@ -478,6 +481,314 @@ if (!env) {
         .findByBlueprint(blueprintId)
         .find((t: any) => t.taskId === 'T002')
       assert.equal(t2.status, 'skipped', 'blocked dependent marked skipped by stall detection')
+    })
+  })
+
+  describe('P1a — peer-file exemption covers COMPLETED peers, not just in-flight ones', () => {
+    /**
+     * The T001/T002 shape from run 984eac4d. T002 finished and committed
+     * `.env.example` at 14:16; T001 retried at 14:18 against a baseline from
+     * before that commit. Sourcing the exemption set from the in-flight map
+     * left T002 in neither the baseline nor the exemption set, so T001's gate
+     * report named T002's finished deliverable as T001's violation — and T001
+     * reverted it.
+     */
+    test('a peer that already completed still owns its declared files', () => {
+      const wsId = freshWs()
+      const { blueprintId, tasks } = seedTasks(
+        [
+          { taskId: 'T001', wave: 1, files: ['src/a.ts'] },
+          { taskId: 'T002', wave: 1, files: ['.env.example'] }
+        ],
+        wsId
+      )
+      // T002 is DONE — not pending, not running, not in any in-flight map.
+      const t2 = tasks.find((t: any) => t.taskId === 'T002')
+      blueprintTaskRepository.updateStatus(t2.id, 'complete')
+
+      const svc = new BlueprintBuildService()
+      const gateCtx: any = { taskId: 'T001', exemptFiles: [] }
+      const peers = blueprintTaskRepository.findByBlueprint(blueprintId)
+      svc.refreshExemptFiles(gateCtx, peers)
+
+      assert.ok(
+        gateCtx.exemptFiles.includes('.env.example'),
+        `completed peer's file must stay exempt, got ${JSON.stringify(gateCtx.exemptFiles)}`
+      )
+      assert.ok(
+        !gateCtx.exemptFiles.includes('src/a.ts'),
+        'the graded task never exempts its own write-set'
+      )
+    })
+
+    test('packet allowedFiles of a completed peer are exempt too', () => {
+      const wsId = freshWs()
+      const { blueprintId, tasks } = seedTasks(
+        [
+          { taskId: 'T001', wave: 1, files: ['src/a.ts'] },
+          { taskId: 'T008', wave: 1, files: [] }
+        ],
+        wsId
+      )
+      const t8 = tasks.find((t: any) => t.taskId === 'T008')
+      blueprintTaskRepository.setPacket(t8.id, {
+        allowedFiles: ['src/notification-templates.ts']
+      })
+      blueprintTaskRepository.updateStatus(t8.id, 'complete')
+
+      const svc = new BlueprintBuildService()
+      const gateCtx: any = { taskId: 'T001', exemptFiles: [] }
+      svc.refreshExemptFiles(gateCtx, blueprintTaskRepository.findByBlueprint(blueprintId))
+
+      assert.ok(gateCtx.exemptFiles.includes('src/notification-templates.ts'))
+    })
+  })
+
+  describe('P3a — reconciliation resets the victims so a retry can repair the tree', () => {
+    /**
+     * The dead end this exists to prevent, observed on the real run: every task
+     * is `complete`, so the resume pre-pass settles all 15, nothing dispatches,
+     * reconciliation fails in about a second, and every retry repeats it
+     * forever. A task whose claimed output is missing has not completed.
+     */
+    test('a completed task whose claimed file is gone goes back to pending', async () => {
+      const wsId = freshWs()
+      const { blueprintId, tasks } = seedTasks(
+        [
+          { taskId: 'T001', wave: 1, files: ['src/a.ts'] },
+          { taskId: 'T002', wave: 1, files: ['.env.example'] }
+        ],
+        wsId
+      )
+      const t1 = tasks.find((t: any) => t.taskId === 'T001')
+      const t2 = tasks.find((t: any) => t.taskId === 'T002')
+
+      // Both complete. T002 claims a file that does not exist on disk; T001
+      // claims nothing, so it must be left alone.
+      for (const t of [t1, t2]) blueprintTaskRepository.updateStatus(t.id, 'complete')
+      blueprintTaskRepository.setCompletion(t2.id, {
+        filesCreated: ['.env.example'],
+        filesModified: []
+      })
+      blueprintTaskRepository.setGateReport(t2.id, { overall: 'pass', gates: [] })
+
+      const svc = new BlueprintBuildService()
+      const result = { failed: false, taskFailures: [] as any[] }
+      await svc.reconcileBuildOutput({
+        blueprintId,
+        workspaceId: wsId,
+        // A directory with no .env.example and no git history.
+        executionPath: '/tmp/nonexistent-reconcile-fixture',
+        allTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        result
+      })
+
+      assert.ok(result.failed, 'the phase must fail on a missing claimed file')
+
+      const after = blueprintTaskRepository.findByBlueprint(blueprintId)
+      const t2After = after.find((t: any) => t.taskId === 'T002')
+      const t1After = after.find((t: any) => t.taskId === 'T001')
+      assert.equal(t2After.status, 'pending', 'the victim is reset so a retry rebuilds it')
+      assert.equal(t2After.gatesJson, null, 'the stale gate report is cleared with it')
+      assert.equal(t1After.status, 'complete', 'an unaffected task is left alone')
+    })
+
+    test('a user-skipped task is never resurrected by reconciliation', async () => {
+      const wsId = freshWs()
+      const { blueprintId, tasks } = seedTasks(
+        [{ taskId: 'T001', wave: 1, files: ['src/a.ts'] }],
+        wsId
+      )
+      const t1 = tasks.find((t: any) => t.taskId === 'T001')
+      blueprintTaskRepository.updateStatus(t1.id, 'complete')
+      blueprintTaskRepository.setCompletion(t1.id, {
+        filesCreated: ['src/gone.ts'],
+        filesModified: []
+      })
+      blueprintTaskRepository.setUserSkipped(t1.id, true)
+
+      const svc = new BlueprintBuildService()
+      const result = { failed: false, taskFailures: [] as any[] }
+      await svc.reconcileBuildOutput({
+        blueprintId,
+        workspaceId: wsId,
+        executionPath: '/tmp/nonexistent-reconcile-fixture',
+        allTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        result
+      })
+
+      const after = blueprintTaskRepository
+        .findByBlueprint(blueprintId)
+        .find((t: any) => t.taskId === 'T001')
+      assert.notEqual(after.status, 'pending', 'a human decision is never overruled')
+    })
+  })
+
+  describe('P3a — BUILD-end reconciliation: the record vs the tree', () => {
+    const { execFileSync } = require('node:child_process')
+    const { mkdtempSync, writeFileSync, rmSync } = require('node:fs')
+    const { tmpdir } = require('node:os')
+    const { join } = require('node:path')
+    const repos: string[] = []
+
+    /** A repo with a baseline commit, then one task commit per entry. */
+    function seedRepo(): { dir: string; baseline: string } {
+      const dir = mkdtempSync(join(tmpdir(), 'recon-'))
+      repos.push(dir)
+      const git = (...args: string[]): void => {
+        execFileSync('git', args, { cwd: dir, stdio: 'ignore' })
+      }
+      writeFileSync(join(dir, 'owned.ts'), 'export const baseline = 1\n')
+      writeFileSync(join(dir, 'twin.ts'), 'export const other = 1\n')
+      git('init', '-q')
+      git('config', 'user.email', 'r@test.local')
+      git('config', 'user.name', 'Recon Test')
+      git('config', 'commit.gpgsign', 'false')
+      git('add', '-A')
+      git('commit', '-q', '-m', 'baseline')
+      const baseline = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf-8' })
+        .trim()
+      return { dir, baseline }
+    }
+
+    async function runReconcile(
+      dir: string,
+      baseline: string,
+      claims: { taskId: string; created?: string[]; modified?: string[] }[]
+    ): Promise<{
+      failed: boolean
+      taskFailures: { taskId: string; reason: string }[]
+      blueprintId: string
+    }> {
+      const wsId = freshWs()
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'recon' })
+      blueprintRepository.update(bp.id, { settingsJson: { buildBaselineCommit: baseline } })
+      const tasks: any[] = []
+      for (const c of claims) {
+        const t = blueprintTaskRepository.create({
+          blueprintId: bp.id,
+          taskId: c.taskId,
+          wave: 1,
+          description: c.taskId,
+          filePathsJson: [],
+          isParallel: true,
+          dependsOnJson: []
+        })
+        blueprintTaskRepository.setCompletion(t.id, {
+          filesCreated: c.created ?? [],
+          filesModified: c.modified ?? []
+        })
+        blueprintTaskRepository.updateStatus(t.id, 'complete')
+        tasks.push(t)
+      }
+      const result: any = { failed: false, taskFailures: [] }
+      await new BlueprintBuildService().reconcileBuildOutput({
+        blueprintId: bp.id,
+        workspaceId: wsId,
+        executionPath: dir,
+        allTasks: blueprintTaskRepository.findByBlueprint(bp.id),
+        result
+      })
+      return { ...result, blueprintId: bp.id }
+    }
+
+    test('a destructive revert of a MODIFIED claim is reported but does NOT block', async () => {
+      // The T008 shape: T008 committed an export into a file it claimed as
+      // MODIFIED, T005 later gutted it, and the DB still read complete+verified.
+      //
+      // Line survival is a heuristic — “revised” and “reverted” are not reliably
+      // separable from a diff — so it warns and records instead of failing the
+      // phase. Three false positives on two real runs bought that decision.
+      const { dir, baseline } = seedRepo()
+      const git = (...a: string[]): void => execFileSync('git', a, { cwd: dir, stdio: 'ignore' })
+      writeFileSync(
+        join(dir, 'owned.ts'),
+        'export const baseline = 1\nexport function sendInternalSignoffNotice() {}\nexport const alsoMine = 2\nexport const andThis = 3\n'
+      )
+      git('add', '-A')
+      git('commit', '-q', '-m', 'T008: add the internal signoff notice')
+      // A net-NEGATIVE commit by another task: deletes 3, adds 1.
+      writeFileSync(join(dir, 'owned.ts'), 'export const baseline = 1\nexport const restored = 1\n')
+      git('add', '-A')
+      git('commit', '-q', '-m', 'T005: restore the seam to its baseline')
+
+      const result = await runReconcile(dir, baseline, [{ taskId: 'T008', modified: ['owned.ts'] }])
+
+      assert.equal(result.failed, false, 'a heuristic finding must not block a green build')
+      assert.equal(result.taskFailures.length, 0, 'and must not be reported as a task failure')
+      // It is still DETECTED — the telemetry row is the durable record.
+      const rows = blueprintTelemetryRepository
+        .findByBlueprint(result.blueprintId)
+        .filter((r: any) => r.kind === 'reconciliation')
+      const victims = rows.flatMap((r: any) => r.data.victimTasks ?? [])
+      assert.ok(victims.includes('T008'), `T008 must still be recorded as a victim — got ${victims}`)
+    })
+
+    test('a later task REVISING an earlier task’s file is not a victim at all', async () => {
+      // The R003/T011 shape that blocked a real run: a remediation task refining
+      // an earlier task's feature. Net-ADDITIVE, so it is normal work, not
+      // destruction — and `R###` must be recognised as a task id at all.
+      const { dir, baseline } = seedRepo()
+      const git = (...a: string[]): void => execFileSync('git', a, { cwd: dir, stdio: 'ignore' })
+      writeFileSync(
+        join(dir, 'owned.ts'),
+        'export const baseline = 1\nexport const notifyTheInbox = true\nexport const waitForIt = 1\n'
+      )
+      git('add', '-A')
+      git('commit', '-q', '-m', 'T011: notify the shared inbox after a committed signature')
+      // R003 refines it: removes one line, adds several. Net POSITIVE.
+      writeFileSync(
+        join(dir, 'owned.ts'),
+        'export const baseline = 1\nexport const notifyTheInbox = true\nexport const boundedWait = 5000\nexport const retries = 3\nexport const timeoutMs = 250\n'
+      )
+      git('add', '-A')
+      git('commit', '-q', '-m', 'R003: bound the wait on the CHR-44 sign-off notification')
+
+      const result = await runReconcile(dir, baseline, [{ taskId: 'T011', modified: ['owned.ts'] }])
+
+      assert.equal(result.failed, false)
+      const rows = blueprintTelemetryRepository
+        .findByBlueprint(result.blueprintId)
+        .filter((r: any) => r.kind === 'reconciliation')
+      const victims = rows.flatMap((r: any) => r.data.victimTasks ?? [])
+      assert.deepEqual(victims, [], `a refinement must not be reported as loss — got ${victims}`)
+    })
+
+    test('a CREATED claim is judged on existence, not on line survival', async () => {
+      // The T009 shape: it CREATED a byte-identical twin. Repairing the original
+      // legitimately rewrote a few stale lines in that copy — billing it as
+      // “T009's work was destroyed” would block the build on a correct fix.
+      const { dir, baseline } = seedRepo()
+      const git = (...a: string[]): void => execFileSync('git', a, { cwd: dir, stdio: 'ignore' })
+      writeFileSync(join(dir, 'twin.ts'), 'export const other = 1\nexport const staleDoc = "copied"\n')
+      git('add', '-A')
+      git('commit', '-q', '-m', 'T009: byte-identical twin')
+      writeFileSync(join(dir, 'twin.ts'), 'export const other = 1\nexport const freshDoc = "repaired"\n')
+      git('add', '-A')
+      git('commit', '-q', '-m', 'T008: repair the twin')
+
+      const result = await runReconcile(dir, baseline, [{ taskId: 'T009', created: ['twin.ts'] }])
+
+      assert.equal(result.failed, false, 'the created file still exists — nothing was lost')
+    })
+
+    test('a claimed path that no longer exists fails whichever kind it was', async () => {
+      const { dir, baseline } = seedRepo()
+      const result = await runReconcile(dir, baseline, [
+        { taskId: 'T004', created: ['never-written.ts'] }
+      ])
+      assert.equal(result.failed, true)
+      assert.ok(result.taskFailures.map((f) => f.reason).join(' ').includes('never-written.ts'))
+    })
+
+    process.on('exit', () => {
+      for (const d of repos.splice(0)) {
+        try {
+          rmSync(d, { recursive: true, force: true })
+        } catch {
+          /* best effort */
+        }
+      }
     })
   })
 

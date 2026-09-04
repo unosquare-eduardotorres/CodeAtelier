@@ -1085,7 +1085,7 @@ describe('R3.3 — wave-level command gates', () => {
     assert.equal(report.gates.find((g) => g.name === 'lint')!.verdict, 'fail')
   })
 
-  test('skipCommandGates omits per-task lint/build — they belong to the wave', async () => {
+  test('commandGates: [] omits per-task lint/build — they belong to the wave', async () => {
     if (!GIT_AVAILABLE) return
     const dir = makeRepo({
       'src/feature.ts': 'export const a = 1\n',
@@ -1097,7 +1097,7 @@ describe('R3.3 — wave-level command gates', () => {
       calls.push(command)
       return { exitCode: 0, output: [], timedOut: false, durationMs: 1 }
     }
-    const ctx = ctxFor(dir, runner, { skipCommandGates: true })
+    const ctx = ctxFor(dir, runner, { commandGates: [] })
     const baseline = await captureGateBaseline(ctx)
     calls.length = 0 // discard the baseline red-proof call
     write(dir, { 'src/feature.ts': 'export const a = 2\n' })
@@ -1108,7 +1108,31 @@ describe('R3.3 — wave-level command gates', () => {
     assert.deepEqual(calls, ['run-task-tests'], 'only the task test command runs')
   })
 
-  test('without skipCommandGates the per-task lint/build still run (back-compat)', async () => {
+  test('P2a — commandGates: [‘build’] runs the typecheck per task and never lint', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const calls: string[] = []
+    const runner: CommandRunner = async (command, opts) => {
+      if (command.startsWith('git ')) return defaultCommandRunner(command, opts)
+      calls.push(command)
+      return { exitCode: 0, output: [], timedOut: false, durationMs: 1 }
+    }
+    const ctx = ctxFor(dir, runner, { commandGates: ['build'] })
+    const baseline = await captureGateBaseline(ctx)
+    calls.length = 0 // discard the baseline red-proof call
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+
+    const report = await runGates(ctx, baseline)
+
+    assert.ok(!report.gates.some((g) => g.name === 'lint'), 'lint belongs to the drain point')
+    assert.ok(report.gates.some((g) => g.name === 'build'), 'build runs per task')
+    assert.deepEqual(calls, ['run-build', 'run-task-tests'])
+  })
+
+  test('without commandGates the per-task lint/build still run (back-compat)', async () => {
     if (!GIT_AVAILABLE) return
     const dir = makeRepo({
       'src/feature.ts': 'export const a = 1\n',

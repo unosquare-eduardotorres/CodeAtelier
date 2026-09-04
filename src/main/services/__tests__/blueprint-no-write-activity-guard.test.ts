@@ -87,7 +87,7 @@ function ctxFor(dir: string): GateTaskContext {
     executionPath: dir,
     plannedFiles: ['a.ts'],
     commands: {},
-    skipCommandGates: true
+    commandGates: []
   }
 }
 

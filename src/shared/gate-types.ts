@@ -21,6 +21,13 @@ export type GateVerdict = 'pass' | 'fail' | 'unverifiable'
 export type GateName =
   /** G4 — changed files must stay inside the packet's allowed write-set. */
   | 'write-set'
+  /**
+   * G4b — this attempt must not delete work another task already committed.
+   * The safety net write-set attribution cannot be: a task that reverts a peer's
+   * finished deliverable is destroying it whether or not the file was ever
+   * attributed to the right owner.
+   */
+  | 'destructive-revert'
   /** G3 — no TODO/FIXME/not-implemented/empty-body residue in changed files. */
   | 'stub-scan'
   /** G5 — packet test files unmodified, no added skips, test count not reduced. */
@@ -69,6 +76,15 @@ export type UnverifiableReason =
   | 'no_tests'
   /** The task's tests were green BEFORE the build session — they prove nothing. */
   | 'vacuous_test'
+  /**
+   * The command was ALREADY failing before this task ran, with the same errors.
+   * A workspace-wide `build`/typecheck sees the whole tree, so damage another
+   * task did — or a tree that was broken on arrival — would otherwise fail every
+   * task that follows it. Nothing this task did can be judged from that run, so
+   * it warns and ledgers instead of blaming the wrong task. New errors are still
+   * a hard `fail`.
+   */
+  | 'preexisting_failure'
   /** A code-graph / structural probe could not complete. */
   | 'analysis_unavailable'
   /** A code-review finding survived the fix round unresolved (M7). */

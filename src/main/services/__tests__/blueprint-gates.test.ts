@@ -433,6 +433,325 @@ describe('runGates — unverifiable routing', () => {
   })
 })
 
+describe('destructive-revert (P1b) — replay of run 984eac4d', () => {
+  /**
+   * The shape that destroyed three deliverables: task A commits its work AFTER
+   * task B captured its baseline, so A's committed lines are invisible to B's
+   * diff base. B then “cleans up” a file it does not own and the record still
+   * says A is complete and verified.
+   */
+  function commitAs(dir: string, taskId: string, files: Record<string, string>): void {
+    write(dir, files)
+    execFileSync('git', ['add', '-A'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', `${taskId}: peer work`], { cwd: dir })
+  }
+
+  test('deleting a line a peer task committed fails the gate and names the victim', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n",
+      '.env.example': 'EXISTING_KEY=1\n'
+    })
+    // T001's baseline is captured BEFORE T002 commits — exactly the stale-base
+    // window a retry sits in.
+    const ctx = ctxFor(dir, scriptedRunner({ 'run-task-tests': { exitCode: 1 } }))
+    const baseline = await captureGateBaseline(ctx)
+
+    commitAs(dir, 'T002', {
+      '.env.example': 'EXISTING_KEY=1\nENROLLMENT_INTERNAL_NOTIFY_TO=ops@example.com\n'
+    })
+
+    // T001 does its own work AND reverts the peer's file.
+    write(dir, {
+      'src/feature.ts': 'export const a = 2\n',
+      '.env.example': 'EXISTING_KEY=1\n'
+    })
+
+    const report = await runGates(ctx, baseline)
+    const gate = report.gates.find((g) => g.name === 'destructive-revert')!
+    assert.equal(gate.verdict, 'fail', JSON.stringify(report.gates, null, 2))
+    assert.ok(gate.evidence.some((e) => e.includes('T002')), 'names the victim task')
+    assert.ok(gate.evidence.some((e) => e.includes('.env.example')), 'names the file')
+    assert.equal(report.overall, 'fail')
+  })
+
+  test('a file the graded task OWNS is its own business to rewrite', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, redThenGreenRunner('run-task-tests'))
+    const baseline = await captureGateBaseline(ctx)
+
+    // A peer touched THIS task's declared file and committed. Rewriting it is
+    // not a destructive revert — it is the write-set owner doing its job.
+    commitAs(dir, 'T002', { 'src/feature.ts': 'export const a = 1\nexport const peerLine = 99\n' })
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+
+    const report = await runGates(ctx, baseline)
+    assert.equal(report.gates.find((g) => g.name === 'destructive-revert')!.verdict, 'pass')
+  })
+
+  test('the graded task may revert its OWN earlier commit', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, redThenGreenRunner('run-task-tests'))
+    const baseline = await captureGateBaseline(ctx)
+
+    commitAs(dir, 'T001', { 'src/scratch.ts': 'export const experiment = true\n' })
+    rmSync(join(dir, 'src/scratch.ts'))
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+
+    const report = await runGates(ctx, baseline)
+    assert.equal(report.gates.find((g) => g.name === 'destructive-revert')!.verdict, 'pass')
+  })
+
+  test('a task that walks back its OWN work with a deletion-only commit is not a victim', async () => {
+    if (!GIT_AVAILABLE) return
+    // Live shape from run 984eac4d: `dee825b7 "T005 keep the mailer belt inside
+    // its write-set"` is 271 deletions and ZERO additions — T005 removing its
+    // own earlier lines to satisfy its own write-set gate. A deletion-only
+    // commit contributes nothing to the "newest adder" map, so the older T005
+    // commit's additions read as destroyed and T005 was reported as the victim
+    // of a later task — itself.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    // `src/belt.ts` is T005's declared file, so P1a exempts it from T001's
+    // write-set — without that the write-set gate short-circuits first and this
+    // scenario never reaches `destructive-revert` at all.
+    const ctx = ctxFor(dir, redThenGreenRunner('run-task-tests'), {
+      exemptFiles: ['src/belt.ts']
+    })
+    const baseline = await captureGateBaseline(ctx)
+
+    // T005 adds a belt, then removes it again in a pure-deletion commit.
+    commitAs(dir, 'T005', {
+      'src/belt.ts': 'export const mailerParityBelt = true\nexport const portalCoverage = 1\n'
+    })
+    write(dir, { 'src/belt.ts': 'export const portalCoverage = 1\n' })
+    execFileSync('git', ['add', '-A'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'T005: keep the belt inside its write-set'], {
+      cwd: dir
+    })
+
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+
+    const gate = report.gates.find((g) => g.name === 'destructive-revert')
+    assert.ok(gate, `gate never ran: ${JSON.stringify(report.gates, null, 2)}`)
+    assert.equal(gate.verdict, 'pass', JSON.stringify(gate.evidence, null, 2))
+  })
+
+  test('a revert that adds a few lines back still cannot mask what it deleted', async () => {
+    if (!GIT_AVAILABLE) return
+    // The loss that actually killed run 984eac4d, and the one an earlier draft
+    // of this gate MISSED: `5ef69312 "T005 restore apps/web mail seam to its
+    // baseline"` deleted 82 lines from mailer.ts and added 7 back. Suppressing
+    // an older commit's additions whenever a NEWER commit added to the same
+    // file let those 7 lines hide T008's 77 — the `sendInternalSignoffNotice`
+    // export whose absence failed the typecheck 31 minutes later (TS2305).
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n",
+      'src/mailer.ts': 'export const baseline = true\n'
+    })
+    const ctx = ctxFor(dir, redThenGreenRunner('run-task-tests'), {
+      exemptFiles: ['src/mailer.ts']
+    })
+    const baseline = await captureGateBaseline(ctx)
+
+    // T008 adds the template block.
+    commitAs(dir, 'T008', {
+      'src/mailer.ts':
+        'export const baseline = true\n' +
+        'export function sendInternalSignoffNotice(): void {}\n' +
+        'export const internalSignoffSubject = "Sign-off received"\n' +
+        'export const internalSignoffBody = "A client signed their elections"\n' +
+        'export const internalSignoffTokens = ["client_name", "signer_name"]\n' +
+        'export const internalSignoffTemplate = "internal-signoff.md"\n'
+    })
+    // T005 “restores the baseline”: the real 5ef69312 was +7/-82 on this file.
+    // Net-NEGATIVE is what makes it destruction rather than a refinement — it
+    // deletes five of T008's lines and adds one of its own.
+    write(dir, { 'src/mailer.ts': 'export const baseline = true\nexport const restoredSeam = 1\n' })
+    execFileSync('git', ['add', '-A'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'T005: restore the mail seam to its baseline'], {
+      cwd: dir
+    })
+
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+
+    const gate = report.gates.find((g) => g.name === 'destructive-revert')!
+    assert.equal(gate.verdict, 'fail', JSON.stringify(gate.evidence, null, 2))
+    assert.ok(gate.evidence.some((e) => e.includes('T008')), 'names T008 as the victim')
+    assert.ok(
+      gate.evidence.some((e) => e.includes('sendInternalSignoffNotice')),
+      'names the destroyed export'
+    )
+  })
+
+  test('nothing committed since the baseline is a PASS, not an unprovable claim', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, redThenGreenRunner('run-task-tests'))
+    const baseline = await captureGateBaseline(ctx)
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+
+    const report = await runGates(ctx, baseline)
+    const gate = report.gates.find((g) => g.name === 'destructive-revert')!
+    assert.equal(gate.verdict, 'pass')
+    assert.equal(report.overall, 'pass', 'a serial build must not be tainted by this gate')
+  })
+
+  test('commits that do not name a task id are unverifiable, never a false fail', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n",
+      'docs/notes.md': 'original\n'
+    })
+    const ctx = ctxFor(dir, redThenGreenRunner('run-task-tests'))
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, { 'docs/notes.md': 'original\nsomebody else was here entirely\n' })
+    execFileSync('git', ['add', '-A'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'chore: unrelated'], { cwd: dir })
+    write(dir, { 'docs/notes.md': 'original\n', 'src/feature.ts': 'export const a = 2\n' })
+
+    const report = await runGates(ctx, baseline)
+    const gate = report.gates.find((g) => g.name === 'destructive-revert')!
+    assert.equal(gate.verdict, 'unverifiable')
+    assert.equal(gate.reason, 'analysis_unavailable')
+  })
+})
+
+describe('build gate baseline (P2a) — a task is not blamed for a tree it inherited', () => {
+  /** A runner whose build command emits a fixed diagnostic set. */
+  function buildRunner(before: string[], after: string[]): CommandRunner {
+    let builds = 0
+    let tests = 0
+    return async (command, opts) => {
+      if (command.startsWith('git ')) return defaultCommandRunner(command, opts)
+      if (command === 'run-build') {
+        const output = builds++ === 0 ? before : after
+        return {
+          exitCode: output.length > 0 ? 1 : 0,
+          output,
+          timedOut: false,
+          durationMs: 1
+        }
+      }
+      // Red before, green after — so `task-tests` passes and the overall verdict
+      // is decided by the build gate alone, which is what these tests are about.
+      if (command === 'run-task-tests') {
+        return tests++ === 0
+          ? { exitCode: 1, output: ['1 failing'], timedOut: false, durationMs: 1 }
+          : { exitCode: 0, output: ['all pass'], timedOut: false, durationMs: 1 }
+      }
+      return { exitCode: 0, output: [], timedOut: false, durationMs: 1 }
+    }
+  }
+
+  const INHERITED = [
+    "src/signoff-notification.ts(12,7): error TS2305: Module './mailer' has no exported member 'sendInternalSignoffNotice'."
+  ]
+
+  test('the live T002 shape: an inherited typecheck error is unverifiable, not a fail', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    // Same error before and after, only shifted down a line by this task's edit.
+    const shifted = [INHERITED[0].replace('(12,7)', '(19,7)')]
+    const ctx = ctxFor(dir, buildRunner(INHERITED, shifted), { commandGates: ['build'] })
+
+    const baseline = await captureGateBaseline(ctx)
+    assert.equal(baseline.buildBefore?.failed, true, 'the tree was broken on arrival')
+
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+    const build = report.gates.find((g) => g.name === 'build')!
+
+    assert.equal(build.verdict, 'unverifiable', JSON.stringify(build.evidence, null, 2))
+    assert.equal(build.reason, 'preexisting_failure')
+    assert.notEqual(report.overall, 'fail', 'an inherited break must not burn the retry ladder')
+  })
+
+  test('a NEW error still fails, and the evidence names only the new one', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const introduced = "src/feature.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'."
+    const ctx = ctxFor(dir, buildRunner(INHERITED, [...INHERITED, introduced]), {
+      commandGates: ['build']
+    })
+
+    const baseline = await captureGateBaseline(ctx)
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+    const build = report.gates.find((g) => g.name === 'build')!
+
+    assert.equal(build.verdict, 'fail')
+    assert.ok(
+      build.evidence.some((e) => e.includes('TS2322')),
+      'the error this task introduced must be named'
+    )
+    assert.ok(
+      !build.evidence.some((e) => e.includes('TS2305')),
+      'the inherited error must not be quoted back at the builder'
+    )
+    assert.equal(build.counts?.newErrors, 1)
+    assert.equal(build.counts?.preexistingErrors, 1)
+  })
+
+  test('a tree that was GREEN before means any failure is this task’s', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, buildRunner([], INHERITED), { commandGates: ['build'] })
+
+    const baseline = await captureGateBaseline(ctx)
+    assert.equal(baseline.buildBefore?.failed, false)
+
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+    assert.equal(report.gates.find((g) => g.name === 'build')!.verdict, 'fail')
+  })
+
+  test('output with no parseable diagnostics is never discounted', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    // A toolchain whose failures carry no file:line — we cannot attribute, so we
+    // must not fail open.
+    const opaque = ['build failed: something went wrong']
+    const ctx = ctxFor(dir, buildRunner(opaque, opaque), { commandGates: ['build'] })
+
+    const baseline = await captureGateBaseline(ctx)
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+    assert.equal(report.gates.find((g) => g.name === 'build')!.verdict, 'fail')
+  })
+})
+
 describe('selectAffectedTestFiles', () => {
   test('packet test files are always included', () => {
     assert.deepEqual(selectAffectedTestFiles([], ['src/a.test.ts']), ['src/a.test.ts'])
@@ -467,7 +786,23 @@ describe('buildGateFixInstructions', () => {
     })
     assert.ok(text.includes('write-set'))
     assert.ok(text.includes('src/other.ts'))
-    assert.ok(text.includes('Revert'))
+    assert.ok(text.includes('Undo'))
+  })
+
+  test('P1c — every fix prompt carries the do-not-revert-what-you-do-not-own rule', () => {
+    const text = buildGateFixInstructions({
+      overall: 'fail',
+      gates: [
+        {
+          name: 'write-set',
+          verdict: 'fail',
+          evidence: ['outside write-set: .env.example'],
+          durationMs: 1
+        }
+      ]
+    })
+    assert.ok(text.includes('git checkout'), 'names the exact action that destroyed the work')
+    assert.ok(/re-?apply/i.test(text), 'kills the “somebody else will re-apply it” assumption')
   })
 
   test('passing gates produce no fix prompt', () => {

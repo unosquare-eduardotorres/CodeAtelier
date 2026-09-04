@@ -18,7 +18,8 @@
 
 import { EventEmitter } from 'node:events'
 import { execFileSync } from 'node:child_process'
-import { basename, normalize } from 'node:path'
+import { existsSync } from 'node:fs'
+import { basename, isAbsolute, normalize, relative, resolve } from 'node:path'
 import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
@@ -56,9 +57,11 @@ import { extractFailureMemory, renderFailureMemory } from './blueprint-failure-m
 import {
   buildGateFixInstructions,
   captureGateBaseline,
+  defaultCommandRunner,
   isBaselineDiffEmpty,
   runGates,
   runWaveCommandGates,
+  scanTaskCommitSurvival,
   type GateBaseline,
   type GateTaskContext
 } from './blueprint-gates.service'
@@ -883,6 +886,7 @@ export class BlueprintBuildService extends EventEmitter {
       if (useDag) {
         await this.executeDag({
           dag,
+          allTasks,
           blueprintId,
           workspaceId,
           workspacePath,
@@ -896,6 +900,7 @@ export class BlueprintBuildService extends EventEmitter {
           await this.executeWave({
             waveNum,
             waveTasks,
+            allTasks,
             blueprintId,
             workspaceId,
             workspacePath,
@@ -904,6 +909,25 @@ export class BlueprintBuildService extends EventEmitter {
             result
           })
           if (result.failed) break
+        }
+      }
+
+      // P3a — reconcile the record against the tree before anything downstream
+      // trusts "N/N complete". Skipped when the build already failed: that
+      // failure is already reported, and a half-built tree has nothing to say.
+      if (!result.failed) {
+        try {
+          await this.reconcileBuildOutput({
+            blueprintId,
+            workspaceId,
+            executionPath,
+            allTasks,
+            result
+          })
+        } catch (reconcileErr) {
+          // Best effort by design: reconciliation is a check ON the build, and a
+          // crash in the checker must not fail a build that was otherwise fine.
+          bpLog.warn('[reconcile] Reconciliation pass threw (non-fatal):', reconcileErr)
         }
       }
 
@@ -1193,6 +1217,8 @@ export class BlueprintBuildService extends EventEmitter {
    */
   private async executeDag(params: {
     dag: TaskDag
+    /** P1a — every task in the blueprint, for gate-time peer-file exemption. */
+    allTasks: BlueprintTask[]
     blueprintId: string
     workspaceId: string
     /** Workspace identity — the primary tree. Never a cwd. */
@@ -1202,8 +1228,16 @@ export class BlueprintBuildService extends EventEmitter {
     phaseContext: import('../../shared/blueprint-types').PhaseContext
     result: BuildResult
   }): Promise<void> {
-    const { dag, blueprintId, workspaceId, workspacePath, executionPath, phaseContext, result } =
-      params
+    const {
+      dag,
+      allTasks,
+      blueprintId,
+      workspaceId,
+      workspacePath,
+      executionPath,
+      phaseContext,
+      result
+    } = params
     const stats = result.scheduler!
 
     // Build-scoped cap (clamped 1–6, default 3). Mutable — halved on overload.
@@ -1362,6 +1396,7 @@ export class BlueprintBuildService extends EventEmitter {
         result,
         waveNum,
         inFlight,
+        peers: allTasks,
         taskFiles
       })
       dispatched.add(taskId)
@@ -1625,6 +1660,11 @@ export class BlueprintBuildService extends EventEmitter {
   private async executeWave(params: {
     waveNum: number
     waveTasks: BlueprintTask[]
+    /**
+     * P1a — every task in the BLUEPRINT, not just this wave: a task in an
+     * earlier wave has finished and its files are still not this task's to write.
+     */
+    allTasks: BlueprintTask[]
     blueprintId: string
     workspaceId: string
     /** Workspace identity — the primary tree. Never a cwd. */
@@ -1644,6 +1684,7 @@ export class BlueprintBuildService extends EventEmitter {
     const {
       waveNum,
       waveTasks,
+      allTasks,
       blueprintId,
       workspaceId,
       workspacePath,
@@ -1844,6 +1885,7 @@ export class BlueprintBuildService extends EventEmitter {
                 result,
                 waveNum,
                 inFlight,
+                peers: allTasks,
                 taskFiles
               })
               dispatched.add(task.taskId)
@@ -1878,6 +1920,7 @@ export class BlueprintBuildService extends EventEmitter {
             result,
             waveNum,
             inFlight,
+            peers: allTasks,
             taskFiles
           })
           dispatched.add(task.taskId)
@@ -1915,6 +1958,7 @@ export class BlueprintBuildService extends EventEmitter {
             result,
             waveNum,
             inFlight,
+            peers: allTasks,
             taskFiles
           })
           dispatched.add(nextTask.taskId)
@@ -2110,6 +2154,8 @@ export class BlueprintBuildService extends EventEmitter {
     result: BuildResult
     waveNum: number
     inFlight: Map<string, InFlightEntry>
+    /** P1a — every task in the blueprint, for gate-time peer-file exemption. */
+    peers: readonly BlueprintTask[]
     taskFiles: Set<string>
   }): void {
     const {
@@ -2122,6 +2168,7 @@ export class BlueprintBuildService extends EventEmitter {
       result,
       waveNum,
       inFlight,
+      peers,
       taskFiles
     } = params
 
@@ -2152,9 +2199,10 @@ export class BlueprintBuildService extends EventEmitter {
       priorDiscoveries: discoverySnapshot,
       tDispatch,
       waveNum,
-      // R1.2: the wave's in-flight map, so gate-time attribution can exempt
-      // peer tasks' declared files from this task's diff.
-      inFlight
+      // P1a: every task in the blueprint, so gate-time attribution can exempt
+      // peer tasks' declared files from this task's diff — whether those peers
+      // are pending, running or already finished.
+      peers
     })
 
     inFlight.set(task.taskId, { promise, files: taskFiles, task })
@@ -2215,8 +2263,8 @@ export class BlueprintBuildService extends EventEmitter {
     priorDiscoveries: string[]
     tDispatch: number
     waveNum: number
-    /** R1.2: the wave scheduler's in-flight map, for peer-file exemption. */
-    inFlight?: Map<string, InFlightEntry>
+    /** P1a: every task in the blueprint, for peer-file exemption. */
+    peers?: readonly BlueprintTask[]
   }): Promise<TaskResult> {
     const { task, blueprintId, workspaceId, workspacePath, executionPath } = params
 
@@ -2234,11 +2282,13 @@ export class BlueprintBuildService extends EventEmitter {
       // spec there mid-task, but a sibling blueprint's artifacts are still a
       // write-set violation.
       artifactPrefix: params.phaseContext.blueprintDir,
-      // R3.3: lint/build run once per WAVE on the settled tree, not per task
-      // against peers' mid-flight edits.
-      skipCommandGates: true
+      // P2a: `lint` still runs once per WAVE on the settled tree (13,991 ms,
+      // and it measures peers' mid-flight edits when run per task). `build` is
+      // per-task: 3,751 ms against a mean task time of 285 s, and it is the
+      // only thing standing between a broken import and four tasks built on it.
+      commandGates: ['build']
     }
-    this.refreshExemptFiles(gateCtx, params.inFlight)
+    this.refreshExemptFiles(gateCtx, params.peers)
 
     // Captured ONCE, before the first attempt: the diff base and the red proof
     // must describe the state the task started from, not the state a failed
@@ -2383,7 +2433,7 @@ export class BlueprintBuildService extends EventEmitter {
         // the exemption logic was built for — so peers have almost certainly
         // written during it. Re-read before the retry, or their files land in
         // this task's diff as write-set violations.
-        this.refreshExemptFiles(gateCtx, params.inFlight)
+        this.refreshExemptFiles(gateCtx, params.peers)
 
         result = await this.executeTask({ ...ladderParams, gateFixInstructions })
         // Recorded AFTER the call, matching the ladder convention: executeTask
@@ -2403,7 +2453,7 @@ export class BlueprintBuildService extends EventEmitter {
 
       // R1.2: peers may have dispatched/finished since the last gate run — the
       // exemption set is refreshed at gate time, not captured at dispatch time.
-      this.refreshExemptFiles(gateCtx, params.inFlight)
+      this.refreshExemptFiles(gateCtx, params.peers)
       const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
       if (report.overall !== 'fail') {
         // M5 — advisory peer-review pass over the just-passed task. Findings
@@ -2415,6 +2465,14 @@ export class BlueprintBuildService extends EventEmitter {
           baselineCommit: baseline.baselineCommit,
           exemptFiles: gateCtx.exemptFiles
         })
+        // P3b — `gradeTask` persists on EVERY grading, latest-wins, and the
+        // peer-review re-grade is a grading too — against a synthetic baseline
+        // that makes most gates unverifiable. Left alone, a task whose real
+        // attempt PASSED ends the run with a failing report on its row, which
+        // is why four tasks in one run read `write-set:fail` while their status
+        // was `complete`. Re-assert the winning report. No ledger items are
+        // passed: each grading already appended its own, and they accumulate.
+        if (peerReviewed) blueprintTaskRepository.setGateReport(task.id, report)
         return {
           ...result,
           gateReport: report,
@@ -2577,7 +2635,7 @@ export class BlueprintBuildService extends EventEmitter {
     waveNum: number
     baselineCommit: string | null
     exemptFiles?: readonly string[]
-    inFlight?: Map<string, InFlightEntry>
+    peers?: readonly BlueprintTask[]
     /** P0 — the task's cumulative write activity; the fix attempt adds to it. */
     writeActivity?: TaskWriteActivity
     baselineDiffEmpty?: () => Promise<boolean | null>
@@ -2636,9 +2694,9 @@ export class BlueprintBuildService extends EventEmitter {
       commands: this.resolveGateCommandsFor(blueprintId, workspacePath),
       manifests: this.readManifestsCached(blueprintId, workspacePath),
       artifactPrefix: params.phaseContext.blueprintDir,
-      skipCommandGates: true
+      commandGates: ['build']
     }
-    this.refreshExemptFiles(gateCtx, params.inFlight)
+    this.refreshExemptFiles(gateCtx, params.peers)
     const baseline: GateBaseline = {
       baselineCommit: params.baselineCommit,
       preexistingDirty: [],
@@ -2757,8 +2815,8 @@ export class BlueprintBuildService extends EventEmitter {
     baseline: GateBaseline | null
     gateFixInstructions?: string
     lastResult: TaskResult | null
-    /** R1.2: the wave scheduler's in-flight map, for peer-file exemption. */
-    inFlight?: Map<string, InFlightEntry>
+    /** P1a: every task in the blueprint, for peer-file exemption. */
+    peers?: readonly BlueprintTask[]
     /** P0 — the task's cumulative write activity; escalation adds to it. */
     writeActivity?: TaskWriteActivity
     baselineDiffEmpty?: () => Promise<boolean | null>
@@ -2796,7 +2854,7 @@ export class BlueprintBuildService extends EventEmitter {
       return result.success ? result : (result ?? lastResult ?? result)
     }
 
-    this.refreshExemptFiles(gateCtx, params.inFlight)
+    this.refreshExemptFiles(gateCtx, params.peers)
     const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
     if (report.overall !== 'fail') return { ...result, gateReport: report }
 
@@ -2814,21 +2872,35 @@ export class BlueprintBuildService extends EventEmitter {
   }
 
   /**
-   * R1.2 — recompute `gateCtx.exemptFiles` from the wave's current in-flight
-   * set: every OTHER task's declared files (scheduler write-set ∪ packet
-   * allowedFiles). Called at gate time because the in-flight set changes as
-   * peers dispatch and settle; a dispatch-time snapshot would go stale.
+   * Recompute `gateCtx.exemptFiles`: every OTHER task's declared files
+   * (scheduler write-set ∪ packet allowedFiles), regardless of lifecycle state.
+   *
+   * P1a — this used to source from the IN-FLIGHT set only, which is wrong in
+   * exactly the case that costs work. The baseline is captured once before
+   * attempt 1 and reused for every retry, so a task retrying at 14:32 diffs
+   * against a tree from 14:22. A peer that FINISHED in between is in neither
+   * the baseline nor the in-flight map, so its committed deliverable lands
+   * inside this task's diff and the write-set gate reports it as this task's
+   * violation — which is how `.env.example` (T002, complete and verified) was
+   * named in T001's gate report and then reverted by T001.
+   *
+   * A file another task declares is never this task's to write. That is true
+   * before it starts, while it runs, and after it finishes.
+   *
+   * Exact-path semantics are preserved downstream (`collectChanges`): a peer
+   * declaring `src/` must not exempt this task's `src/other.ts`. `forbiddenFiles`
+   * still fails hard, so the gate does not go blind.
    */
   private refreshExemptFiles(
     gateCtx: GateTaskContext,
-    inFlight: Map<string, InFlightEntry> | undefined
+    peers: readonly BlueprintTask[] | undefined
   ): void {
-    if (!inFlight) return
+    if (!peers) return
     const exempt = new Set<string>()
-    for (const [taskId, entry] of inFlight) {
-      if (taskId === gateCtx.taskId) continue
-      for (const f of entry.files) exempt.add(f)
-      for (const f of entry.task.packetJson?.allowedFiles ?? []) exempt.add(f)
+    for (const peer of peers) {
+      if (peer.taskId === gateCtx.taskId) continue
+      for (const f of normalizePaths(peer.filePathsJson)) exempt.add(f)
+      for (const f of peer.packetJson?.allowedFiles ?? []) exempt.add(f)
     }
     gateCtx.exemptFiles = [...exempt]
   }
@@ -2983,6 +3055,28 @@ export class BlueprintBuildService extends EventEmitter {
       taskId: waveTaskId,
       report
     } satisfies BlueprintTaskGatesPayload)
+
+    // P3b — wave/drain gate results wrote NO telemetry. On the run this came
+    // from, the W4 failure that killed the build existed only inside the phase
+    // artifact: `drainCount: 1` recorded that gates ran once and nothing
+    // recorded what they found. The reporter prints any kind, so the row is the
+    // whole fix.
+    blueprintTelemetryRepository.record({
+      blueprintId,
+      kind: 'gate',
+      phase: 'build',
+      taskId: waveTaskId,
+      data: {
+        wave: waveNum,
+        overall: report.overall,
+        gates: report.gates.map((g) => ({
+          name: g.name,
+          verdict: g.verdict,
+          ...(g.reason ? { reason: g.reason } : {}),
+          durationMs: g.durationMs
+        }))
+      }
+    })
 
     return report
   }
@@ -3179,6 +3273,220 @@ export class BlueprintBuildService extends EventEmitter {
       taskId: task.taskId,
       status: taskResult.success ? 'complete' : 'failed'
     } satisfies BlueprintWaveTaskCompletePayload)
+  }
+
+  /**
+   * P3a — at BUILD end, does the tree still contain what the completed tasks
+   * claimed?
+   *
+   * On the run this was written for, the DB recorded 15/15 complete and
+   * verified while THREE finished deliverables had been reverted out of the
+   * tree by later tasks — an `.env.example` block, nodemailer version pins, and
+   * an 89-line notification template whose missing export failed the W4
+   * typecheck 31 minutes later. Every one of them was CLAIMED in a
+   * `completion_json` belonging to a task marked verified.
+   *
+   * Two questions, one pass:
+   *   1. does every claimed path still exist?
+   *   2. do the commits that claimed them still contribute to HEAD?
+   *
+   * (2) is what catches a file that survives with its contents removed, which
+   * is what actually happened all three times. A finding fails the phase with a
+   * reason that names the victim, rather than letting the run be graded by a
+   * generic gate failure thirty minutes downstream — and resets those victims to
+   * `pending`, so the retry rebuilds them instead of re-reporting the same
+   * failure forever (see the reset block below for why that is not optional).
+   */
+  private async reconcileBuildOutput(params: {
+    blueprintId: string
+    workspaceId: string
+    executionPath: string
+    allTasks: readonly BlueprintTask[]
+    result: BuildResult
+  }): Promise<void> {
+    const { blueprintId, workspaceId, executionPath, allTasks, result } = params
+    const started = Date.now()
+
+    // 1. Claimed paths that are gone.
+    const missing: { taskId: string; file: string }[] = []
+    /**
+     * taskId → the paths it claimed to have MODIFIED. Only these are subject to
+     * the line-survival check below.
+     *
+     * The two claim kinds assert different things, and conflating them produces
+     * false failures. `filesCreated` claims "this file exists" — the existence
+     * check above is the whole of it. `filesModified` claims "my changes are in
+     * it", which only a line-level check can confirm. Live example: T009 created
+     * a byte-identical mailer twin; repairing the ORIGINAL that T005 had gutted
+     * legitimately rewrote a few stale lines in T009's copy, and billing that as
+     * "T009's work was destroyed" would block the build on a correct fix. T008,
+     * by contrast, claimed the gutted file as MODIFIED — 52 of its lines really
+     * were gone, and that is the failure worth stopping for.
+     */
+    const modifiedByTask = new Map<string, Set<string>>()
+    let tasksChecked = 0
+    let claimedFiles = 0
+    for (const task of allTasks) {
+      const row = blueprintTaskRepository.findById(task.id)
+      if (!row || row.status !== 'complete' || row.skippedByUserAt) continue
+      tasksChecked++
+      const createdPaths = asStringArray(row.completionJson?.filesCreated)
+      const modifiedPaths = asStringArray(row.completionJson?.filesModified)
+      const claimed = new Set([...createdPaths, ...modifiedPaths])
+      modifiedByTask.set(row.taskId, new Set(modifiedPaths.map((f) => normalizePath(f))))
+      for (const rel of claimed) {
+        claimedFiles++
+        // A path that escapes the execution root is not a claim we can check.
+        const abs = isAbsolute(rel) ? rel : resolve(executionPath, rel)
+        const inside = relative(executionPath, abs)
+        if (inside.startsWith('..') || isAbsolute(inside)) continue
+        if (!existsSync(abs)) missing.push({ taskId: row.taskId, file: normalizePath(rel) })
+      }
+    }
+
+    // 2. Committed work that no longer survives in the tree. Same scan the
+    //    per-attempt `destructive-revert` gate uses, with no task excluded:
+    //    here the question is about the whole build, not one attempt.
+    const settings = (blueprintRepository.findById(blueprintId)?.settingsJson ?? {}) as Record<
+      string,
+      unknown
+    >
+    const baselineCommit =
+      typeof settings.buildBaselineCommit === 'string' ? settings.buildBaselineCommit : null
+    const scan = await scanTaskCommitSurvival({
+      cwd: executionPath,
+      baselineCommit,
+      runner: defaultCommandRunner
+    })
+
+    // Narrowed to files the victim task claimed to have MODIFIED. A commit also
+    // touches lockfiles and incidental paths, and a later task rewriting one of
+    // those is ordinary work, not lost output. The claim is what makes a finding
+    // meaningful — every deliverable destroyed on the run this was built for was
+    // claimed by a task marked complete and verified.
+    const victims = new Map<string, Set<string>>()
+    for (const d of scan.dropped ?? []) {
+      if (!modifiedByTask.get(d.taskId)?.has(d.file)) continue
+      const files = victims.get(d.taskId) ?? new Set<string>()
+      files.add(d.file)
+      victims.set(d.taskId, files)
+    }
+
+    blueprintTelemetryRepository.record({
+      blueprintId,
+      kind: 'reconciliation',
+      phase: 'build',
+      data: {
+        tasksChecked,
+        claimedFiles,
+        missingFiles: missing.length,
+        missingExamples: missing.slice(0, 10).map((m) => `${m.taskId}:${m.file}`),
+        droppedLines: scan.dropped?.length ?? 0,
+        victimTasks: [...victims.keys()],
+        commitsScanned: scan.commitsScanned,
+        ...(scan.dropped === null ? { scanUnavailable: scan.reason ?? 'unknown' } : {}),
+        durationMs: Date.now() - started
+      }
+    })
+
+    if (missing.length === 0 && victims.size === 0) {
+      bpLog.info(
+        `[reconcile] ${tasksChecked} completed task(s), ${claimedFiles} claimed file(s) — ` +
+          `tree matches the record` +
+          (scan.dropped === null ? ` (commit survival unverifiable: ${scan.reason})` : '')
+      )
+      return
+    }
+
+    // The two findings carry different certainty, so they get different powers.
+    //
+    // A claimed path that does not exist is a FACT: the task said it wrote the
+    // file, the file is not there. That blocks.
+    //
+    // Line survival is a HEURISTIC, and three false positives on two runs
+    // showed it is not precise enough to gate a pipeline on: R003 refining
+    // T011's sign-off notification, and a hand-repair of T008's mailer, both
+    // read as “work destroyed” because a later task legitimately changed lines
+    // an earlier one wrote. The net-negative and task-attribution rules in
+    // `scanTaskCommitSurvival` narrow it a lot, but “revised” and “reverted” are
+    // not reliably separable from a diff alone. It still found every genuine
+    // loss, so it keeps reporting — loudly, and in queryable telemetry — without
+    // the power to stop a build that is otherwise green.
+    const missingParts = missing
+      .slice(0, 10)
+      .map((m) => `${m.taskId} claimed ${m.file}, which no longer exists`)
+    const victimParts = [...victims].map(
+      ([taskId, files]) =>
+        `${taskId}'s committed work in ${[...files].slice(0, 5).join(', ')} was removed by a later task`
+    )
+
+    if (victimParts.length > 0) {
+      bpLog.warn(`[reconcile] Possible lost work (not blocking) — ${victimParts.join('; ')}`)
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `⚠ Reconciliation: ${victimParts.slice(0, 3).join('; ')} — recorded, not blocking. ` +
+          `Check the diff if this feature looks incomplete.`,
+        kind: 'system'
+      })
+    }
+
+    if (missingParts.length === 0) return
+
+    const reason = `build record does not match the tree — ${missingParts.join('; ')}`
+    bpLog.error(`[reconcile] ${reason}`)
+
+    // Reset the victims so a RETRY repairs this instead of re-reporting it.
+    //
+    // Without it the failure is a dead end: every task is `complete`, so the
+    // resume pre-pass settles all of them, nothing dispatches, reconciliation
+    // fails again in about a second, and no amount of retrying can restore the
+    // work. A task whose claimed output is not in the tree has not, in any
+    // useful sense, completed — so put it back to `pending` and let the next
+    // retry rebuild exactly the deliverables that went missing.
+    //
+    // `resetForRetry` clears the stale gate report and escalation flag with it,
+    // matching `retryPhase`'s reset (`blueprint.service.ts:1502`). `attempts`
+    // stays monotonic on purpose. Complementary to that path rather than a
+    // duplicate of it: `retryPhase` deliberately leaves `complete` tasks alone,
+    // and `complete` is exactly the state this failure is about.
+    const toReset = new Set<string>(missing.map((m) => m.taskId))
+    const resetIds: string[] = []
+    for (const task of allTasks) {
+      if (!toReset.has(task.taskId)) continue
+      // BP-TASK-USER-SKIP-01: a human decided this task's fate. Read fresh —
+      // the decision may post-date `allTasks`.
+      const fresh = blueprintTaskRepository.findById(task.id)
+      if (!fresh || fresh.skippedByUserAt) continue
+      blueprintTaskRepository.updateStatus(task.id, 'pending')
+      blueprintTaskRepository.resetForRetry(task.id)
+      resetIds.push(task.taskId)
+    }
+    if (resetIds.length > 0) {
+      bpLog.warn(`[reconcile] Reset ${resetIds.join(', ')} to pending — a retry will rebuild them`)
+      blueprintTelemetryRepository.record({
+        blueprintId,
+        kind: 'reconciliation',
+        phase: 'build',
+        data: { action: 'reset_victims', tasks: resetIds }
+      })
+    }
+
+    result.failed = true
+    result.taskFailures.push({ taskId: 'reconciliation', reason })
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text:
+        `⚠ Reconciliation failed — ${missingParts.slice(0, 3).join('; ')}` +
+        (resetIds.length > 0
+          ? ` — reset ${resetIds.join(', ')} to pending; retry to rebuild them`
+          : ''),
+      kind: 'system'
+    })
   }
 
   // ── Safe Event Emission ──

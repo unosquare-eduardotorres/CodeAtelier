@@ -20,7 +20,12 @@
  * landed. Prefix-reduction work lowers the constant; anything that grows the
  * prefix fails the build and has to justify itself by raising it explicitly.
  *
- * Three scenarios, because they move for different reasons:
+ * Four scenarios, because they move for different reasons:
+ *   - `realistic` — sized from a REAL run (984eac4d, 15 tasks, 49 min). This is
+ *     the one to judge prefix work on. The other three were built from
+ *     plausible-looking sizes and the `canonical` fixture turned out to be 2.5×
+ *     SMALLER than the prompt we actually ship, which is why the two biggest
+ *     blocks were never visible to the ratchet.
  *   - `canonical` — one artifact per type, modest workspace docs. The everyday
  *     BUILD prefix. Moves with T2 (workspace-doc budget) and T3 (dedupe injections).
  *   - `revised`   — a re-run PLAN and TASKS left duplicate artifacts, and the
@@ -109,12 +114,28 @@ setupElectronStub()
  *                                          defect. The +18 is the empty `## Current Task` header
  *                                          the adapter always appends.
  *
+ *   2026-09-03  P4b realistic scenario     realistic 100,642 — NEW baseline, existing rows
+ *                                          untouched. Sized from run 984eac4d, whose real
+ *                                          assembled BUILD prompt was 96,105 chars: workspace
+ *                                          docs ~38 K chars, a ~51 K-char plan artifact, three
+ *                                          discovery blocks. The fixture reproduces the BLOCK
+ *                                          SIZES (docs 36,716 · artifacts 50,997) and lands 4.7 %
+ *                                          above the run's total, which is the scaffold
+ *                                          difference; it is sized from the run, not a replica
+ *                                          of it. The ratchet had been guarding `canonical` at
+ *                                          38,811 — a prompt 2.5× smaller than the one we ship —
+ *                                          so `workspaceDocs` (9.6 K tokens) and
+ *                                          `<blueprint_context>` (6.8 K tokens), the two largest
+ *                                          movable blocks, were never visible to it.
+ *
  * Cumulative: canonical −2.1%, revised −39.1% (loader-only basis, rows up to A9).
  */
 const BASELINE_CHARS = {
   canonical: 38_811,
   revised: 76_384,
-  review: 51_400
+  review: 51_400,
+  /** Recorded on first run of the scenario below — see the P4b row above. */
+  realistic: 100_642
 } as const
 
 /** Slack for prompt-file wording edits, which are not prefix regressions. */
@@ -382,6 +403,65 @@ if (!env) {
     })
   })
 
+  describe('BUILD prefix size — realistic blueprint (sized from run 984eac4d)', () => {
+    test('total stays at or below the recorded baseline', async () => {
+      // The shape of a real 15-task run, not a plausible-looking one. Its
+      // assembled BUILD prompt measured 96,105 chars while the `canonical`
+      // fixture the ratchet guarded was 38,811 — 2.5× smaller. A ratchet that
+      // protects a prompt we do not ship cannot see the blocks that dominate
+      // the one we do.
+      const id = seedBlueprint('Prefix realistic')
+      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'plan')
+      const tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(id, 'tasks')
+
+      // One plan (this run did not re-run PLAN), sized so the PROJECTED JSON
+      // — which is what BUILD actually renders — lands near the run's ~51 K
+      // chars. `contentMd` is dropped for plan artifacts that carry JSON, which
+      // is exactly why the `canonical` fixture's 20 K of markdown never showed
+      // up in the prefix it was supposed to be guarding.
+      const plan = planArtifact('v1', 20_000) as any
+      plan.contentJson.existingPatterns = [filler(44_800, 'pattern')]
+      blueprintPhaseRepository.appendArtifact(planPhase.id, plan)
+
+      // TASKS exists on disk but BUILD does not receive it (A9) — seeded anyway
+      // so the fixture is a faithful blueprint rather than a minimal one.
+      blueprintPhaseRepository.appendArtifact(tasksPhase.id, tasksArtifact('v1', 20_000))
+
+      // Three discovery blocks. They hang off a PRIOR phase deliberately:
+      // `assemblePhaseContextInner` only collects artifacts from phases before
+      // the current one, so discoveries appended to the build phase itself
+      // never enter BUILD's own prefix (they reach the task tail instead).
+      for (let i = 1; i <= 3; i++) {
+        blueprintPhaseRepository.appendArtifact(tasksPhase.id, {
+          type: 'discoveries',
+          contentJson: {
+            phase: 'tasks',
+            taskId: `T00${i}`,
+            entries: Array.from({ length: 6 }, (_, e) => filler(180, `disc-${i}-${e}`))
+          }
+        })
+      }
+
+      // ~38 K chars of workspace docs after the per-file budget — the block
+      // measured at 9.6 K tokens on the real run.
+      const wsPath = seedWorkspace('bp-prefix-realistic-', {
+        'CLAUDE.md': 20_000,
+        'README.md': 12_000,
+        'package.json': 7_000
+      })
+
+      const b = await measure(id, wsPath)
+      report('realistic', b, BASELINE_CHARS.realistic)
+
+      const ceiling = Math.round(BASELINE_CHARS.realistic * (1 + TOLERANCE))
+      assert.ok(
+        b.total <= ceiling,
+        `BUILD prefix grew: ${b.total} chars > ceiling ${ceiling} ` +
+          `(baseline ${BASELINE_CHARS.realistic}). Lower the prefix or justify raising the baseline.`
+      )
+    })
+  })
+
   describe('REVIEW prefix size — the phase that consumes the tasks artifact', () => {
     test('total stays at or below the recorded baseline', async () => {
       const id = seedBlueprint('Prefix review')
@@ -512,43 +592,91 @@ if (!env) {
 // DB-free on purpose: it runs even where the fixtures cannot.
 // ════════════════════════════════════════════════════════════════════════
 
-describe('Gate T prediction — the assembled prompt still implies the documented band', () => {
-  test('BASELINE_CHARS + MCP schemas land in the 22-35 K token band §0.1 claims', () => {
-    // docs/blueprint-execution-improvements.md §0.1 retracts "the next lever is
-    // the BUILD prompt scaffold" on the strength of this arithmetic: the whole
-    // invariant prefix is ~22-35 K tokens, so it cannot explain a 103 K "floor".
-    // If the assembled prompt moves far enough that the band no longer holds,
-    // the retraction's premise moved with it and the table needs re-deriving.
-    const CHARS_PER_TOKEN = 4
-    const MCP_SCHEMA_TOKENS = { min: 12_000, max: 16_000 } // 5 servers, §0.1
-    const DOCUMENTED_BAND = { min: 22_000, max: 35_000 }
-    const SLACK = 1_500 // the doc states the band to 1 significant figure
+describe('Gate T — the retired <65 K target and the reachable one that replaced it', () => {
+  const CHARS_PER_TOKEN = 4
 
-    const predictedMin = Math.round(BASELINE_CHARS.canonical / CHARS_PER_TOKEN) + MCP_SCHEMA_TOKENS.min
-    const predictedMax = Math.round(BASELINE_CHARS.revised / CHARS_PER_TOKEN) + MCP_SCHEMA_TOKENS.max
+  /**
+   * What a BUILD call costs before ANY of our content.
+   *
+   * Measured, not assumed: a peer-review session ships `assembleLitePhaseContext`
+   * plus a 2,618-char prompt — essentially nothing — and still records
+   * `prefix_tokens = 52,562`. That is the CLI's own system prompt, its built-in
+   * tools and its reminders. We do not control it and cannot remove it.
+   */
+  const CLI_FLOOR_TOKENS = 50_000
 
+  /**
+   * BUILD's MCP schema surface, probed per server (chars):
+   *   code-graph 8,995 · memory 2,906 · git-context 2,380 · semantic-search 1,691
+   *   · code-analysis ~4,000 (did NOT respond to the probe — estimated; measure
+   *     it before quoting the number anywhere it matters)
+   * §0.1 used to bill this block at 12–16 K TOKENS. It is ~5 K.
+   */
+  const MCP_SERVER_CHARS = {
+    codeGraph: 8_995,
+    memory: 2_906,
+    gitContext: 2_380,
+    semanticSearch: 1_691,
+    codeAnalysis: 4_000
+  } as const
+  const LEAN_DROPPED_CHARS = MCP_SERVER_CHARS.semanticSearch + MCP_SERVER_CHARS.codeAnalysis
+
+  /** The replacement target: −18 % off the ~90 K measured today. */
+  const TARGET_TOKENS = 74_000
+  const RETIRED_TARGET_TOKENS = 65_000
+
+  const mcpTokens = Math.round(
+    Object.values(MCP_SERVER_CHARS).reduce((a, b) => a + b, 0) / CHARS_PER_TOKEN
+  )
+  const promptTokens = Math.round(BASELINE_CHARS.realistic / CHARS_PER_TOKEN)
+  const scaffoldTokens = Math.round(12_747 / CHARS_PER_TOKEN) // realistic scenario's scaffold
+  const predictedPrefix = CLI_FLOOR_TOKENS + promptTokens + mcpTokens
+
+  test('the MCP block is ~5 K tokens and the lean flag saves ~1.5 K, not 12–16 K', () => {
     console.log(
-      `\n  [prefix:predicted] invariant prefix ≈ ${predictedMin}-${predictedMax} tokens ` +
-        `(documented ${DOCUMENTED_BAND.min}-${DOCUMENTED_BAND.max})`
+      `\n  [prefix:mcp-tokens] BUILD MCP surface ≈ ${mcpTokens} tokens ` +
+        `| leanBuildMcp saves ≈ ${Math.round(LEAN_DROPPED_CHARS / CHARS_PER_TOKEN)} tokens`
     )
+    assert.ok(
+      mcpTokens >= 4_000 && mcpTokens <= 6_000,
+      `MCP surface is ${mcpTokens} tokens — §0.1 says ~5 K; re-derive the row before quoting it`
+    )
+    const leanSaving = Math.round(LEAN_DROPPED_CHARS / CHARS_PER_TOKEN)
+    assert.ok(
+      leanSaving < 2_500,
+      `leanBuildMcp saves ${leanSaving} tokens — it is not the lever §0.1 once billed it as`
+    )
+  })
 
-    assert.ok(
-      Math.abs(predictedMin - DOCUMENTED_BAND.min) <= SLACK,
-      `predicted prefix floor ${predictedMin} tokens no longer matches the documented ` +
-        `${DOCUMENTED_BAND.min} — re-derive the §0.1 composition table before quoting it`
+  test('<65 K was unreachable: the assembled prompt ALONE overruns what it leaves us', () => {
+    // The whole budget the retired target left for everything we control.
+    const addressableBudget = RETIRED_TARGET_TOKENS - CLI_FLOOR_TOKENS // 15 K
+    console.log(
+      `\n  [prefix:gateT] predicted BUILD prefix ≈ ${predictedPrefix.toLocaleString()} tokens ` +
+        `(CLI floor ${CLI_FLOOR_TOKENS.toLocaleString()} + prompt ${promptTokens.toLocaleString()} ` +
+        `+ MCP ${mcpTokens.toLocaleString()}) | retired target ${RETIRED_TARGET_TOKENS.toLocaleString()} ` +
+        `| new target ${TARGET_TOKENS.toLocaleString()}`
     )
     assert.ok(
-      Math.abs(predictedMax - DOCUMENTED_BAND.max) <= SLACK,
-      `predicted prefix ceiling ${predictedMax} tokens no longer matches the documented ` +
-        `${DOCUMENTED_BAND.max} — re-derive the §0.1 composition table before quoting it`
+      promptTokens > addressableBudget,
+      `the realistic BUILD prompt is ${promptTokens} tokens against a ${addressableBudget}-token ` +
+        'budget — if this ever inverts, <65 K became reachable and the target can be revisited'
     )
+  })
 
-    // The falsifier itself: once a run populates turn_usage.prefix_tokens,
-    // MIN() should land in this band. If it comes back near 100 K the fixtures
-    // understate the real prefix and §0.1 is wrong, not the measurement.
+  test('≤74 K is reachable: it needs a real reduction, but not shipping nothing', () => {
     assert.ok(
-      predictedMax < 65_000,
-      'the predicted prefix exceeds the Gate T target on its own — the target, not the prefix, is the thing to revisit'
+      TARGET_TOKENS < predictedPrefix,
+      `the target ${TARGET_TOKENS} is already met at ${predictedPrefix} — lower it`
+    )
+    // The irreducible part: CLI floor + MCP + the phase prompt scaffold. If the
+    // target ever drops below this, it is asking for a prompt with no plan, no
+    // artifacts and no workspace docs — which is what <65 K was asking for.
+    const irreducible = CLI_FLOOR_TOKENS + mcpTokens + scaffoldTokens
+    assert.ok(
+      TARGET_TOKENS > irreducible,
+      `the target ${TARGET_TOKENS} is below the irreducible ${irreducible} — it is unreachable ` +
+        'for the same reason <65 K was'
     )
   })
 })

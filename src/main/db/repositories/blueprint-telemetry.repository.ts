@@ -49,6 +49,19 @@ export type BlueprintTelemetryKind =
    * "what caused the retries" — only this can.
    */
   | 'task_failure'
+  /**
+   * P3b — one row per WAVE / DRAIN-POINT gate run. These verdicts existed only
+   * inside the phase artifact, so the W4 gate failure that killed a 49-minute
+   * run was unqueryable: `drainCount: 1` said gates ran once, and nothing said
+   * what they found.
+   */
+  | 'gate'
+  /**
+   * P3a — one row per BUILD-end reconciliation: does the tree still contain
+   * what the completed tasks claimed? Written on every build, pass or fail, so
+   * "15/15 verified" can be checked against the tree rather than trusted.
+   */
+  | 'reconciliation'
 
 export interface BlueprintTelemetryRow {
   id: string

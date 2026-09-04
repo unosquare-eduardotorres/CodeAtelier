@@ -5,7 +5,8 @@
  * Execution order is cheapest-first with a short-circuit on `fail`, so a task
  * that wrote outside its write-set never pays for a 30-minute build:
  *
- *   G4 write-set → G3 stub scan → G5 test integrity → G2 lint → G1 build → G6 task tests
+ *   G4 write-set → G3 stub scan → G5 test integrity → G4b destructive-revert
+ *     → G2 lint → G1 build → G6 task tests
  *
  * Two invariants hold everywhere in this file:
  *   1. A gate that could not RUN returns `unverifiable`, never `fail`.
@@ -323,12 +324,26 @@ export interface GateTaskContext {
    */
   manifests?: WorkspaceManifests
   /**
-   * R3.3 — when true, this task's lint/build gates are omitted: they run ONCE
-   * at wave level (see `runWaveCommandGates`) after every task in the wave has
-   * settled. A per-task lint/build in a shared worktree measures peers'
-   * mid-flight edits, so wave-level is both cheaper and correctly attributed.
+   * Which command gates this task's ladder runs. `undefined` = lint + build
+   * (the standalone/legacy default).
+   *
+   * R3.3 moved BOTH to wave level, on the reasoning that a per-task lint/build
+   * in a shared worktree measures peers' mid-flight edits. P2a keeps that for
+   * `lint` and reverses it for `build`: in DAG mode gates fire only at drain
+   * points, and a well-connected graph has exactly ONE — so a broken import
+   * landed at 14:42 and surfaced at 15:03, after four more tasks had built on
+   * it. Measured on the same run, typecheck is 3,751 ms against a mean task
+   * time of 285 s (~1 %), while lint is 13,991 ms and the full suite 77,127 ms.
+   * The build service therefore passes `['build']`; `[]` skips both.
+   *
+   * **Accepted risk:** R3.3's objection still applies to `build` — a per-task
+   * typecheck in a shared worktree can see a peer's half-applied edit and fail
+   * this task for it, costing a retry. Taken deliberately: on the run that
+   * motivated this, a broken import survived 21 minutes and four dependent
+   * tasks because nothing compiled anything until the single drain point. A
+   * false fail costs one retry; a poisoned tree cost the whole build.
    */
-  skipCommandGates?: boolean
+  commandGates?: readonly Extract<GateName, 'lint' | 'build'>[]
   /**
    * R1.2 — parallel-wave attribution: files declared by OTHER tasks currently
    * in flight in the same worktree. Their changes are visible in this task's
@@ -362,6 +377,21 @@ export interface GateBaseline {
   /** Whether the packet's tests were red before the session (the red proof). */
   redProof: 'red' | 'green' | 'unavailable'
   redEvidence: string[]
+  /**
+   * P2a — the `build` command's diagnostics BEFORE the task ran.
+   *
+   * `task-tests` has had a red proof since M2: a suite that was already green
+   * proves nothing. The `build` gate had no equivalent, and it runs a
+   * WORKSPACE-WIDE command — so on a tree that is broken on arrival (a recovery
+   * run, or damage another task did) every task fails a typecheck for errors it
+   * did not introduce, burns its whole ladder and escalates. Live: T002 and T003
+   * failed 4 attempts each on a missing export belonging to T008.
+   *
+   * Absent when no build command resolved, when the ladder is not running the
+   * build gate, or when the command could not be spawned — in all three the gate
+   * keeps its previous behaviour rather than discounting anything.
+   */
+  buildBefore?: { failed: boolean; signatures: string[] }
 }
 
 function hashFile(absPath: string): TestFileState | null {
@@ -456,13 +486,79 @@ export async function captureGateBaseline(ctx: GateTaskContext): Promise<GateBas
   }
 
   const { redProof, redEvidence } = await captureRedProof(ctx, runner)
+  const buildBefore = await captureBuildBaseline(ctx, runner)
 
   return {
     baselineCommit: head?.trim().split('\n')[0] ?? null,
     preexistingDirty,
     testsBefore,
     redProof,
-    redEvidence
+    redEvidence,
+    ...(buildBefore ? { buildBefore } : {})
+  }
+}
+
+/**
+ * Lines that carry a source position — `file.ts(12,7)` (tsc) or `file.ts:12:7`
+ * (eslint, gcc, most others). Summary lines ("Found 3 errors in 2 files") carry
+ * none, which is what keeps a changing error COUNT from reading as a new error.
+ */
+const DIAGNOSTIC_LINE = /\(\d+,\d+\)|:\d+:\d+/
+
+/**
+ * Position-independent signatures of the diagnostics in a command's output.
+ *
+ * Line and column numbers are normalised away: editing a file shifts every
+ * diagnostic below the edit, and a shifted error is the SAME error. The file
+ * path and the message are kept, because those are what make two diagnostics
+ * different.
+ */
+function diagnosticSignatures(output: readonly string[]): Set<string> {
+  const out = new Set<string>()
+  for (const line of output) {
+    if (!DIAGNOSTIC_LINE.test(line)) continue
+    out.add(
+      line
+        .replace(/\(\d+,\d+\)/g, '(#,#)')
+        .replace(/:\d+:\d+/g, ':#:#')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+  }
+  return out
+}
+
+/**
+ * P2a — run the `build` command BEFORE the task, so its gate can tell errors
+ * this task introduced from errors it inherited.
+ *
+ * Paid once per task (at baseline capture), not once per attempt. Measured at
+ * 3,751 ms against a mean task time of 285 s, so the second run costs ~1 % on
+ * top of the gate's own.
+ */
+async function captureBuildBaseline(
+  ctx: GateTaskContext,
+  runner: CommandRunner
+): Promise<GateBaseline['buildBefore']> {
+  const gates = ctx.commandGates ?? (['lint', 'build'] as const)
+  if (!gates.includes('build')) return undefined
+  const command = ctx.commands.build
+  if (!command) return undefined
+
+  const outcome = await withWorktreeLock(ctx.executionPath, () =>
+    runner(command.command, {
+      cwd: commandCwd(ctx, command),
+      timeoutMs: GATE_TIMEOUTS_MS.build,
+      signal: ctx.signal
+    })
+  )
+  // A spawn failure or timeout says nothing about the tree's health. Returning
+  // `undefined` leaves the gate exactly as it behaved before this existed.
+  if (outcome.spawnError || outcome.timedOut) return undefined
+
+  return {
+    failed: outcome.exitCode !== 0,
+    signatures: [...diagnosticSignatures(outcome.output)]
   }
 }
 
@@ -526,6 +622,40 @@ async function captureRedProof(
  * or were assembled by another path. An unsafe command must never reach the
  * shell — reporting `no_command` is the honest, safe degradation.
  */
+/**
+ * Paths that look like tests, across the ecosystems the gate stack supports.
+ *
+ * Deliberately conservative: it decides whether a path THIS task already
+ * declared may be handed to the detected runner, so a false positive costs a
+ * spawn error and a false negative costs only the honest `no_command`.
+ */
+function looksLikeTestFile(path: string): boolean {
+  const p = normalizePath(path)
+  return (
+    /(^|\/)(__tests__|tests?)\//.test(p) ||
+    /\.(test|spec)\.[cm]?[jt]sx?$/.test(p) ||
+    /(^|\/)test_[^/]+\.py$/.test(p) ||
+    /_test\.(go|py|rb)$/.test(p) ||
+    /[Tt]ests?\.cs$/.test(p)
+  )
+}
+
+/**
+ * The test files this task can be graded on, best source first.
+ *
+ * P2b — the packet's `testFiles` is the declared contract and always wins. The
+ * fallback is the task's OWN declared write-set filtered to test-looking paths:
+ * on a real 15-task run `task-tests` was `unverifiable`/`no_command` on 100 %
+ * of tasks because no packet carried `testFiles`, so the per-task test gate had
+ * never once executed. Nothing is invented here — every candidate is a path the
+ * task itself declared it would touch.
+ */
+function taskTestFiles(ctx: GateTaskContext): string[] {
+  const declared = (ctx.packet?.testFiles ?? []).filter((f) => typeof f === 'string' && f.trim())
+  if (declared.length > 0) return declared
+  return ctx.plannedFiles.filter((f) => typeof f === 'string' && looksLikeTestFile(f))
+}
+
 function taskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined {
   const packetCommand = ctx.packet?.testCommand?.trim()
   if (packetCommand) {
@@ -541,8 +671,8 @@ function taskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined 
   // R3.1 — ecosystem template (M2.6 Option 2): when the packet declares test
   // FILES but no command, build a narrow per-task command from the detected
   // toolchain. The full suite is never used here — that is VERIFY's job (M8).
-  const testFiles = ctx.packet?.testFiles
-  if (testFiles?.length) {
+  const testFiles = taskTestFiles(ctx)
+  if (testFiles.length) {
     const toolchain = ctx.manifests ? detectTestToolchain(ctx.manifests) : null
     // Same environment-aware runner chain as the full-suite gate: a bare
     // `pytest` template is unverifiable-by-construction inside a worktree
@@ -777,7 +907,303 @@ export async function isBaselineDiffEmpty(
   return changes.files.length === 0
 }
 
+// ── Cross-task revert detection (P1b) ──
+
+/** A line one task's commit introduced that is no longer present in the tree. */
+export interface DroppedAddition {
+  /** Task id parsed from the commit subject. */
+  taskId: string
+  sha: string
+  file: string
+  text: string
+}
+
+export interface CommitSurvivalScan {
+  /** null when the scan could NOT run — the caller reports `unverifiable`. */
+  dropped: DroppedAddition[] | null
+  /** Why it could not run. Set only when `dropped` is null. */
+  reason?: string
+  commitsScanned: number
+  durationMs: number
+}
+
+/**
+ * Build commits carry their task id in the subject ("T007: add the notifier").
+ *
+ * `R###` matters as much as `T###`: VERIFY remediation rounds create real tasks
+ * with R-prefixed ids (R001–R003 sit in wave 5 of run 984eac4d), and they are
+ * *expected* to revise what the T-tasks built. A `T`-only pattern made every
+ * remediation commit invisible to attribution — it could never be recognised as
+ * a file's newest writer — so R003 refining T011's sign-off notification read as
+ * T011's work being destroyed.
+ */
+const TASK_ID_IN_SUBJECT = /\b[TR]\d{2,}\b/
+
+/** Commits inspected per scan — a bound, not a tuning knob. */
+const MAX_SURVIVAL_COMMITS = 60
+
+/**
+ * Lines specific enough to attribute. A commit that added `}` proves nothing
+ * about a later task deleting one somewhere else, and matching on it would
+ * manufacture failures out of ordinary formatting.
+ */
+function isAttributableLine(text: string): boolean {
+  const t = text.trim()
+  return t.length >= 8 && /[A-Za-z0-9]/.test(t)
+}
+
+/**
+ * P1b — did this task destroy work another task already committed?
+ *
+ * The safety net that does not depend on write-set attribution being right.
+ * On the run this was written for, two tasks reverted THREE finished
+ * deliverables — `.env.example` + nodemailer pins (T002/T003, complete and
+ * verified) and an 89-line notification template (T008, complete and verified)
+ * — because a stale baseline put a peer's committed work inside the reverting
+ * task's own diff. The write-set gate reported it as that task's violation and
+ * the task dutifully reverted it. Nothing re-applies anything.
+ *
+ * The check: for every commit in `<baseline>..HEAD` whose subject names a
+ * DIFFERENT task, are the lines it added still in the tree? Two deliberate
+ * narrowings keep it precise:
+ *
+ *   - files inside the grading task's own write-set are skipped entirely (a
+ *     task may rewrite what it owns);
+ *   - only the NEWEST peer commit per file is checked, so a line legitimately
+ *     superseded by a later peer is not counted against this task.
+ *
+ * When no commit in range carries a task id the convention does not hold in
+ * this workspace, and the scan returns `dropped: null` — `unverifiable`, never
+ * a false `fail`.
+ */
+export async function scanTaskCommitSurvival(opts: {
+  cwd: string
+  baselineCommit: string | null
+  /** The grading task. Its own commits are never checked against it. */
+  excludeTaskId?: string
+  /** Files the grading task owns; changes there are its business. */
+  ownedFiles?: readonly string[]
+  runner: CommandRunner
+  signal?: AbortSignal
+}): Promise<CommitSurvivalScan> {
+  const started = Date.now()
+  const { cwd, baselineCommit, runner, signal } = opts
+  const fail = (reason: string): CommitSurvivalScan => ({
+    dropped: null,
+    reason,
+    commitsScanned: 0,
+    durationMs: Date.now() - started
+  })
+
+  if (!baselineCommit) return fail('no git baseline commit')
+
+  // %x1f (unit separator) cannot appear in a sha and is vanishingly unlikely in
+  // a subject; a newline in the subject would break a space-delimited format.
+  const logOut = await git(
+    ['log', '--format=%H%x1f%s', `${baselineCommit}..HEAD`],
+    cwd,
+    runner,
+    signal
+  )
+  if (logOut === null) return fail('git log failed')
+
+  const lines = logOut.split('\n').filter((l) => l.trim() !== '')
+  // Nothing was committed since the baseline, so no peer's committed work can
+  // have been destroyed. That is a PROVEN pass, not an unprovable one — the
+  // distinction matters, because `unverifiable` here would ledger an item on
+  // every task of every serial build.
+  if (lines.length === 0) {
+    return { dropped: [], commitsScanned: 0, durationMs: Date.now() - started }
+  }
+
+  const commits: { sha: string; taskId: string }[] = []
+  for (const line of lines) {
+    const [sha, subject = ''] = line.split('\x1f')
+    if (!sha.trim()) continue
+    const match = TASK_ID_IN_SUBJECT.exec(subject)
+    if (!match) continue
+    commits.push({ sha: sha.trim(), taskId: match[0] })
+  }
+  // Commits exist but none names a task id: something WAS committed and we
+  // cannot tell whose it is. Honest answer is `unverifiable`, never a false fail.
+  if (commits.length === 0) {
+    return fail(
+      `${lines.length} commit(s) since the baseline, none naming a task id in its ` +
+        'subject — cross-task attribution is not possible in this workspace'
+    )
+  }
+
+  const owned = new Set((opts.ownedFiles ?? []).map(normalizePath))
+  const peers = commits
+    .filter((c) => c.taskId !== opts.excludeTaskId)
+    .slice(0, MAX_SURVIVAL_COMMITS)
+
+  /** Current content per file: `null` lines = present but not readable as text. */
+  const contentCache = new Map<string, { exists: boolean; lines: Set<string> | null }>()
+  const contentOf = (rel: string): { exists: boolean; lines: Set<string> | null } => {
+    const cached = contentCache.get(rel)
+    if (cached) return cached
+    const abs = resolveInside(cwd, rel)
+    let entry: { exists: boolean; lines: Set<string> | null } = { exists: false, lines: null }
+    if (abs && existsSync(abs)) {
+      entry = { exists: true, lines: null }
+      try {
+        if (statSync(abs).size <= MAX_SCAN_BYTES) {
+          entry = {
+            exists: true,
+            lines: new Set(
+              readFileSync(abs, 'utf-8')
+                .split('\n')
+                .map((l) => l.trim())
+            )
+          }
+        }
+      } catch {
+        /* present but unreadable — treated as "cannot say", never as dropped */
+      }
+    }
+    contentCache.set(rel, entry)
+    return entry
+  }
+
+  const dropped: DroppedAddition[] = []
+  /**
+   * Newest commit that TOUCHED each file, with whether it was net-NEGATIVE there.
+   *
+   * Two rules decide supersession, and both were learned the hard way on run
+   * 984eac4d:
+   *
+   * 1. **By task, never by recency.** An early draft suppressed an older
+   *    commit's additions whenever any newer commit added a line to the same
+   *    file. That masked the exact harm this gate exists for: `5ef69312 "T005
+   *    restore apps/web mail seam to its baseline"` deleted 82 lines from
+   *    `mailer.ts` and added 7 back, so it "claimed" the file and hid the 77
+   *    lines T008 had committed — the `sendInternalSignoffNotice` export whose
+   *    absence (TS2305) killed the run 31 minutes later.
+   *
+   * 2. **Only a net-negative commit destroys.** Without this the mirror-image
+   *    error appears and it is the more common one: a later task REVISING an
+   *    earlier task's file is normal work, and during a remediation round it is
+   *    the whole job. Every false positive observed has been net-additive
+   *    (`R003 +64/-6`, `R002 +5/-1`); both genuine incidents were reverts that
+   *    removed far more than they added. Deleting more than you add on someone
+   *    else's file is what "destructive" means.
+   *
+   * Deletion-only commits must still count as touches, or a third error
+   * appears: `dee825b7 "T005 keep the mailer belt inside its write-set"` is 271
+   * deletions and ZERO additions — T005 walking back its own work — and without
+   * it T005 was reported as the victim of a "later task": itself.
+   */
+  const newestToucher = new Map<string, { taskId: string; sha: string; netNegative: boolean }>()
+  let commitsScanned = 0
+
+  for (const commit of peers) {
+    const show = await git(
+      ['show', '--format=', '-U0', '--no-color', commit.sha],
+      cwd,
+      runner,
+      signal
+    )
+    if (show === null) continue
+    commitsScanned++
+
+    // Per-file add/delete counts for this commit. `+++ b/<path>` is emitted for
+    // deletions and additions alike; `/dev/null` marks a removed file. Counted
+    // from the diff we already have rather than a second `git show --numstat`.
+    const perFile = new Map<string, { added: number; deleted: number }>()
+    let current: { added: number; deleted: number } | null = null
+    for (const raw of show.split('\n')) {
+      if (raw.startsWith('+++ ')) {
+        const target = raw.slice(4).trim()
+        if (target === '/dev/null') {
+          current = null
+          continue
+        }
+        const file = normalizePath(target.replace(/^b\//, ''))
+        current = perFile.get(file) ?? { added: 0, deleted: 0 }
+        perFile.set(file, current)
+        continue
+      }
+      if (!current) continue
+      // Skip the `---` / `+++` headers themselves; only hunk lines count.
+      if (raw.startsWith('+') && !raw.startsWith('+++')) current.added++
+      else if (raw.startsWith('-') && !raw.startsWith('---')) current.deleted++
+    }
+    for (const [file, counts] of perFile) {
+      if (newestToucher.has(file)) continue
+      newestToucher.set(file, {
+        taskId: commit.taskId,
+        sha: commit.sha,
+        netNegative: counts.deleted > counts.added
+      })
+    }
+
+    for (const added of parseDiffAddedLines(show)) {
+      if (owned.has(added.file) || isProbablyBinary(added.file)) continue
+      const toucher = newestToucher.get(added.file)
+      if (toucher && toucher.sha !== commit.sha) {
+        // The same task superseded its own earlier work — its own business.
+        if (toucher.taskId === commit.taskId) continue
+        // Another task REVISED the file rather than gutting it. Normal work,
+        // and the entire point of a remediation round.
+        if (!toucher.netNegative) continue
+      }
+      if (!isAttributableLine(added.text)) continue
+
+      const content = contentOf(added.file)
+      if (!content.exists) {
+        dropped.push({ taskId: commit.taskId, sha: commit.sha, file: added.file, text: added.text })
+        continue
+      }
+      if (content.lines && !content.lines.has(added.text.trim())) {
+        dropped.push({ taskId: commit.taskId, sha: commit.sha, file: added.file, text: added.text })
+      }
+    }
+  }
+
+  return { dropped, commitsScanned, durationMs: Date.now() - started }
+}
+
 // ── The gates ──
+
+function gateDestructiveRevert(scan: CommitSurvivalScan): GateResult {
+  if (scan.dropped === null) {
+    return unverifiable(
+      'destructive-revert',
+      'analysis_unavailable',
+      [scan.reason ?? 'the cross-task commit scan could not run'],
+      scan.durationMs
+    )
+  }
+  if (scan.dropped.length === 0) {
+    return result(
+      'destructive-revert',
+      'pass',
+      [`${scan.commitsScanned} peer commit(s) scanned — their committed work is intact`],
+      { counts: { commitsScanned: scan.commitsScanned }, durationMs: scan.durationMs }
+    )
+  }
+
+  const byTask = new Map<string, Set<string>>()
+  for (const d of scan.dropped) {
+    const files = byTask.get(d.taskId) ?? new Set<string>()
+    files.add(d.file)
+    byTask.set(d.taskId, files)
+  }
+
+  const evidence = [
+    ...[...byTask].map(
+      ([taskId, files]) =>
+        `destroyed ${taskId}'s committed work in ${[...files].join(', ')}`
+    ),
+    ...scan.dropped.slice(0, 10).map((d) => `${d.taskId} @${d.sha.slice(0, 8)} ${d.file}: ${d.text.trim().slice(0, 120)}`)
+  ]
+
+  return result('destructive-revert', 'fail', evidence, {
+    counts: { droppedLines: scan.dropped.length, victimTasks: byTask.size },
+    durationMs: scan.durationMs
+  })
+}
 
 function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
   const started = Date.now()
@@ -947,7 +1373,9 @@ async function gateCommand(
   name: GateName,
   kind: GateCommandKind,
   ctx: GateTaskContext,
-  runner: CommandRunner
+  runner: CommandRunner,
+  /** P2a — supplied only by the per-task ladder; enables pre-existing discounting. */
+  baseline?: GateBaseline
 ): Promise<GateResult> {
   const started = Date.now()
   const command = ctx.commands[kind]
@@ -1002,6 +1430,51 @@ async function gateCommand(
         outcome.durationMs
       )
     }
+    // P2a — discount diagnostics that were ALREADY there. Done here rather than
+    // on the finished GateResult because `result()` bounds evidence to 2 K chars:
+    // comparing a truncated error list against a full baseline would silently
+    // decide the wrong way on exactly the large failures that matter most.
+    const before = baseline?.buildBefore
+    if (before?.failed) {
+      const current = diagnosticSignatures(outcome.output)
+      // Nothing parseable means we cannot attribute anything; keep the fail
+      // rather than fail open on a toolchain whose output we do not understand.
+      if (current.size > 0) {
+        const known = new Set(before.signatures)
+        const novel = [...current].filter((sig) => !known.has(sig))
+        if (novel.length === 0) {
+          return unverifiable(
+            name,
+            'preexisting_failure',
+            [
+              `${command.command} is failing, but every error predates this task ` +
+                `(${current.size} diagnostic(s), 0 new)`,
+              'this task is not the cause and cannot be graded on it — the drain-point gate still fails the build',
+              ...[...current].slice(0, 5)
+            ],
+            outcome.durationMs
+          )
+        }
+        return result(
+          name,
+          'fail',
+          [
+            `${command.command} exited ${outcome.exitCode} with ${novel.length} NEW error(s) ` +
+              `(${current.size - novel.length} pre-existing, ignored)`,
+            ...novel
+          ],
+          {
+            counts: {
+              exitCode: outcome.exitCode ?? -1,
+              newErrors: novel.length,
+              preexistingErrors: current.size - novel.length
+            },
+            durationMs: outcome.durationMs
+          }
+        )
+      }
+    }
+
     return result(
       name,
       'fail',
@@ -1032,10 +1505,20 @@ async function gateTaskTests(
   const started = Date.now()
   const command = taskTestCommand(ctx)
   if (!command) {
+    // P2b — say WHICH source came up empty. "no test command resolved" ledgered
+    // 15 times on one run told nobody whether the packets carried no test files
+    // or the toolchain could not target them, so nothing could be fixed.
+    const candidates = taskTestFiles(ctx)
     return unverifiable(
       'task-tests',
       'no_command',
-      ['no test command resolved for this task'],
+      [
+        candidates.length === 0
+          ? 'no test command resolved: the packet declares no testFiles and no ' +
+            'test-looking path appears in this task’s write-set'
+          : `no test command resolved: the detected toolchain cannot target ` +
+            `${candidates.length} test file(s) by path`
+      ],
       Date.now() - started
     )
   }
@@ -1129,10 +1612,7 @@ export function selectAffectedTestFiles(
   if (callersOf) {
     for (const file of changedFiles) {
       for (const caller of callersOf(file)) {
-        const norm = normalizePath(caller)
-        if (/(^|\/)(__tests__|tests?)\//.test(norm) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(norm)) {
-          out.add(norm)
-        }
+        if (looksLikeTestFile(caller)) out.add(normalizePath(caller))
       }
     }
   }
@@ -1424,12 +1904,26 @@ export async function runGates(ctx: GateTaskContext, baseline: GateBaseline): Pr
     }
   }
 
-  if (!shortCircuited && !ctx.skipCommandGates) {
-    for (const [name, kind] of [
-      ['lint', 'lint'],
-      ['build', 'build']
-    ] as const) {
-      const gate = await gateCommand(name, kind, ctx, runner)
+  // P1b — after the free checks (it costs a `git log` plus one `git show` per
+  // peer commit) and before anything that compiles or runs: destroying a peer's
+  // finished deliverable is not worth a 30-minute build to confirm.
+  if (!shortCircuited) {
+    const scan = await scanTaskCommitSurvival({
+      cwd: ctx.executionPath,
+      baselineCommit: baseline.baselineCommit,
+      excludeTaskId: ctx.taskId,
+      ownedFiles: [...(ctx.packet?.allowedFiles ?? []), ...ctx.plannedFiles],
+      runner,
+      signal: ctx.signal
+    })
+    const gate = gateDestructiveRevert(scan)
+    gates.push(gate)
+    if (gate.verdict === 'fail') shortCircuited = true
+  }
+
+  if (!shortCircuited) {
+    for (const name of ctx.commandGates ?? (['lint', 'build'] as const)) {
+      const gate = await gateCommand(name, name === 'lint' ? 'lint' : 'build', ctx, runner, baseline)
       gates.push(gate)
       if (gate.verdict === 'fail') {
         shortCircuited = true
@@ -1474,13 +1968,38 @@ export function buildGateFixInstructions(report: GateReport): string {
   return (
     'The previous attempt failed deterministic quality gates. ' +
     'These are machine-checked facts, not opinions — fix exactly what is listed.\n\n' +
-    sections.join('\n\n')
+    sections.join('\n\n') +
+    '\n\n' +
+    REVERT_SCOPE_RULE
   )
 }
 
+/**
+ * P1c — the rule that closes the gap a correct gate report cannot.
+ *
+ * A task handed "outside write-set: .env.example" reasoned its way to `git
+ * checkout .env.example` and destroyed a peer's completed, verified deliverable
+ * — its own commit message says "T008 re-applies the template and T003
+ * re-applies the nodemailer pins". Both had already finished. Nothing
+ * re-applies anything. The instruction has to be explicit that a foreign change
+ * in your diff is somebody else's finished work, not your mess to clean up.
+ */
+const REVERT_SCOPE_RULE = [
+  '### Scope rule — read before you revert anything',
+  '',
+  '- Revert ONLY files inside your own write-set.',
+  '- NEVER `git checkout`, `git restore`, `git revert` or otherwise roll back a file you do not own.',
+  '- Other tasks run in this same tree. A change you did not make that appears in your diff belongs',
+  '  to a peer and is very likely already COMPLETE and VERIFIED — leave it exactly as it is.',
+  '- Never assume another task will “re-apply” something you removed. It will not.',
+  '- If a foreign change genuinely blocks you, say so in your completion block instead of editing it.'
+].join('\n')
+
 const GATE_FIX_HINTS: Partial<Record<GateName, string>> = {
   'write-set':
-    'Revert every change to the files listed above. They are outside this task’s write-set. If the task genuinely cannot be done without them, say so instead of editing them.',
+    'Undo YOUR OWN changes to the files listed above — they are outside this task’s write-set. Undo means removing the edits you made; it does not mean restoring the file to an older revision, which would also delete work other tasks committed. If a listed file contains changes you did not make, leave them and say so instead of editing them.',
+  'destructive-revert':
+    'You deleted lines another task had already committed. Restore them exactly as they were (`git show <sha>:<file>` shows the version that had them) and then redo your own work on top. Do not reason about whether the other task will re-apply them — it is finished and it will not.',
   'stub-scan':
     'Replace each marker above with a real implementation. Do not delete the line — implement it.',
   'test-integrity':
