@@ -1193,10 +1193,11 @@ function gateDestructiveRevert(scan: CommitSurvivalScan): GateResult {
 
   const evidence = [
     ...[...byTask].map(
-      ([taskId, files]) =>
-        `destroyed ${taskId}'s committed work in ${[...files].join(', ')}`
+      ([taskId, files]) => `destroyed ${taskId}'s committed work in ${[...files].join(', ')}`
     ),
-    ...scan.dropped.slice(0, 10).map((d) => `${d.taskId} @${d.sha.slice(0, 8)} ${d.file}: ${d.text.trim().slice(0, 120)}`)
+    ...scan.dropped
+      .slice(0, 10)
+      .map((d) => `${d.taskId} @${d.sha.slice(0, 8)} ${d.file}: ${d.text.trim().slice(0, 120)}`)
   ]
 
   return result('destructive-revert', 'fail', evidence, {
@@ -1240,22 +1241,42 @@ function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
     ...(exempted.bookkeeping.length > 0 ? { exemptBookkeeping: exempted.bookkeeping.length } : {})
   }
 
+  // BP-UNATTRIBUTED-PASS: the exemption LIST, not just its size. `exemptPeer: 8`
+  // was the only trace that eight foreign files sat in the tree while this
+  // task's gates ran, and a bare count is unactionable — the reader cannot tell
+  // whether the compile that just passed depended on any of them. Live: blueprint
+  // 769e6da7 T018 passed `npm run typecheck` against a tree carrying eight
+  // peer-exempt files, committed two of its own, and left an import of a symbol
+  // that no commit ever added.
+  const exemptEvidence =
+    exempted.peer.length > 0
+      ? [
+          `${exempted.peer.length} peer-owned file(s) also changed in the shared ` +
+            `worktree — this task neither owns nor commits them:`,
+          ...exempted.peer.slice(0, 10).map((f) => `  peer-exempt: ${f}`),
+          ...(exempted.peer.length > 10 ? [`  …and ${exempted.peer.length - 10} more`] : [])
+        ]
+      : []
+
   if (evaluation.forbidden.length > 0 || evaluation.violations.length > 0) {
     return result(
       'write-set',
       'fail',
       [
         ...evaluation.forbidden.map((f) => `forbidden: ${f}`),
-        ...evaluation.violations.map((f) => `outside write-set: ${f}`)
+        ...evaluation.violations.map((f) => `outside write-set: ${f}`),
+        ...exemptEvidence
       ],
       { counts, durationMs: Date.now() - started }
     )
   }
 
-  return result('write-set', 'pass', [`${evaluation.changedCount} file(s) changed, all in set`], {
-    counts,
-    durationMs: Date.now() - started
-  })
+  return result(
+    'write-set',
+    'pass',
+    [`${evaluation.changedCount} file(s) changed, all in set`, ...exemptEvidence],
+    { counts, durationMs: Date.now() - started }
+  )
 }
 
 function gateStubScan(ctx: GateTaskContext, changes: ChangeSet): GateResult {
@@ -1358,10 +1379,7 @@ function gateTestIntegrity(
   return result(
     'test-integrity',
     'pass',
-    [
-      `${declared.length} test file(s) intact`,
-      ...extensionLines
-    ],
+    [`${declared.length} test file(s) intact`, ...extensionLines],
     {
       durationMs: Date.now() - started
     }
@@ -1375,7 +1393,13 @@ async function gateCommand(
   ctx: GateTaskContext,
   runner: CommandRunner,
   /** P2a — supplied only by the per-task ladder; enables pre-existing discounting. */
-  baseline?: GateBaseline
+  baseline?: GateBaseline,
+  /**
+   * BP-UNATTRIBUTED-PASS — peer-owned files also changed in the shared worktree.
+   * Supplied only by the per-task ladder; wave/drain-point runs grade the whole
+   * tree on purpose and have nothing to attribute.
+   */
+  unattributed?: readonly string[]
 ): Promise<GateResult> {
   const started = Date.now()
   const command = ctx.commands[kind]
@@ -1423,10 +1447,7 @@ async function gateCommand(
       return unverifiable(
         name,
         'command_missing',
-        [
-          `${command.command} — the runner is not installed on this machine`,
-          ...outcome.output
-        ],
+        [`${command.command} — the runner is not installed on this machine`, ...outcome.output],
         outcome.durationMs
       )
     }
@@ -1485,9 +1506,34 @@ async function gateCommand(
       }
     )
   }
-  return result(name, 'pass', [`${command.command} (${command.provenance})`], {
-    durationMs: outcome.durationMs
-  })
+  // BP-UNATTRIBUTED-PASS: lint/build run against the SHARED worktree, so a pass
+  // grades this task's commit plus whatever peers have in flight. When foreign
+  // files are present the pass is real but not attributable — T018 typechecked
+  // green over eight of them, then committed only its own two, and the tree it
+  // was graded on never existed again. The verdict stays `pass` (a downgrade
+  // would fire on nearly every concurrent wave and drown the signal), but the
+  // contamination now rides along so a green gate followed by a red drain-point
+  // gate is diagnosable from the report alone.
+  const contaminated = unattributed ?? []
+  return result(
+    name,
+    'pass',
+    [
+      `${command.command} (${command.provenance})`,
+      ...(contaminated.length > 0
+        ? [
+            `NOT ATTRIBUTABLE to this task alone: ${contaminated.length} peer-owned ` +
+              `file(s) were present in the shared worktree during this run`,
+            ...contaminated.slice(0, 5).map((f) => `  also-changed: ${f}`),
+            ...(contaminated.length > 5 ? [`  …and ${contaminated.length - 5} more`] : [])
+          ]
+        : [])
+    ],
+    {
+      ...(contaminated.length > 0 ? { counts: { unattributedFiles: contaminated.length } } : {}),
+      durationMs: outcome.durationMs
+    }
+  )
 }
 
 /**
@@ -1548,10 +1594,7 @@ async function gateTaskTests(
       return unverifiable(
         'task-tests',
         'command_missing',
-        [
-          `${command.command} — the runner is not installed on this machine`,
-          ...outcome.output
-        ],
+        [`${command.command} — the runner is not installed on this machine`, ...outcome.output],
         outcome.durationMs
       )
     }
@@ -1923,7 +1966,14 @@ export async function runGates(ctx: GateTaskContext, baseline: GateBaseline): Pr
 
   if (!shortCircuited) {
     for (const name of ctx.commandGates ?? (['lint', 'build'] as const)) {
-      const gate = await gateCommand(name, name === 'lint' ? 'lint' : 'build', ctx, runner, baseline)
+      const gate = await gateCommand(
+        name,
+        name === 'lint' ? 'lint' : 'build',
+        ctx,
+        runner,
+        baseline,
+        changes.exempted.peer
+      )
       gates.push(gate)
       if (gate.verdict === 'fail') {
         shortCircuited = true
