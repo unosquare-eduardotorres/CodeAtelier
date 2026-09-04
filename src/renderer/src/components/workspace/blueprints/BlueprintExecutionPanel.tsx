@@ -24,42 +24,20 @@ import {
   SkipForward,
   Clock,
   GripVertical,
-  Copy
+  Copy,
+  Zap
 } from 'lucide-react'
 import type {
   BlueprintTask,
   BlueprintTaskStatus,
   BlueprintPhaseType
 } from '../../../../../shared/blueprint-types'
-import type { GateReport } from '../../../../../shared/gate-types'
+import type { GateReport, GateVerdict } from '../../../../../shared/gate-types'
 import { BlueprintPlanCard } from './BlueprintPlanCard'
+import { deriveGateChip, stripTaskMarkers } from './task-chips'
 import { copyTextToClipboard } from '@renderer/utils/clipboard'
 
-// ── Marker Parsing ─────────────────────────────────────────────────────────
-
-interface ParsedMarkers {
-  clean: string
-  userStory: string | null
-  parallel: boolean
-}
-
-/** Strip leading [US1]/[P]/[S] markers from a task description. */
-function parseTaskMarkers(description: string): ParsedMarkers {
-  let userStory: string | null = null
-  let parallel = false
-  const clean = description
-    .replace(/\[(US\d+)\]/gi, (_, us) => {
-      userStory = us.toUpperCase()
-      return ''
-    })
-    .replace(/\[P\]/gi, () => {
-      parallel = true
-      return ''
-    })
-    .replace(/\[S\]/gi, '')
-    .trim()
-  return { clean, userStory, parallel }
-}
+// ── Formatting ─────────────────────────────────────────────────────────────
 
 /** Format a duration between two timestamps as "took Xs" or "took Xm Ys". */
 function formatDuration(startedAt: string, completedAt: string): string {
@@ -100,39 +78,23 @@ interface TaskRowProps {
   gateReport?: GateReport
 }
 
-/** M9.2 — gate-verdict chip: pass/fail/unverifiable with reason tooltip.
- * Mirrors aggregateVerdict: an empty report is `unverifiable`, never a
- * silent pass — nothing was checked. */
-function GateVerdictChip({ report }: { report: GateReport }): JSX.Element {
-  const failed = report.gates.filter((g) => g.verdict === 'fail')
-  const unverifiable = report.gates.filter((g) => g.verdict === 'unverifiable')
-  const verdict =
-    failed.length > 0
-      ? 'fail'
-      : unverifiable.length > 0 || report.gates.length === 0
-        ? 'unverifiable'
-        : 'pass'
+const GATE_CHIP_CLS: Record<GateVerdict, string> = {
+  pass: 'text-success bg-success/10',
+  fail: 'text-danger bg-danger/10',
+  unverifiable: 'text-warning bg-warning/10'
+}
 
-  const config = {
-    pass: { label: 'gates ✓', cls: 'text-success bg-success/10', tip: 'All deterministic gates passed' },
-    fail: {
-      label: `gates ✗ ${failed.length}`,
-      cls: 'text-danger bg-danger/10',
-      tip: `Failed: ${failed.map((g) => g.name).join(', ')}`
-    },
-    unverifiable: {
-      label: `gates ? ${unverifiable.length}`,
-      cls: 'text-warning bg-warning/10',
-      tip: `Unverifiable: ${unverifiable.map((g) => `${g.name} (${g.reason ?? 'unknown'})`).join(', ')}`
-    }
-  }[verdict]
+/** M9.2 — gate-verdict chip: pass/fail/unverifiable, reason in the tooltip.
+ * Label text is derived in `task-chips.ts`; this only paints it. */
+function GateVerdictChip({ report }: { report: GateReport }): JSX.Element {
+  const chip = deriveGateChip(report)
 
   return (
     <span
-      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 ${config.cls}`}
-      title={config.tip}
+      className={`text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0 ${GATE_CHIP_CLS[chip.verdict]}`}
+      title={chip.tip}
     >
-      {config.label}
+      {chip.label}
     </span>
   )
 }
@@ -140,7 +102,7 @@ function GateVerdictChip({ report }: { report: GateReport }): JSX.Element {
 function TaskRow({ task, liveStatus, goal, gateReport }: TaskRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const status = liveStatus ?? task.status
-  const { clean, userStory, parallel } = parseTaskMarkers(task.description)
+  const clean = stripTaskMarkers(task.description)
 
   return (
     <div
@@ -155,15 +117,15 @@ function TaskRow({ task, liveStatus, goal, gateReport }: TaskRowProps): JSX.Elem
         <span className="mt-0.5">{TASK_STATUS_ICON[status]}</span>
         <span className="text-xs font-mono text-text-muted flex-shrink-0 mt-px">{task.taskId}</span>
         <span className="text-sm text-text-primary line-clamp-3 flex-1 min-w-0">{clean}</span>
-        {/* Marker badges */}
-        {userStory && (
-          <span className="text-[10px] font-semibold text-accent bg-accent/10 px-1.5 py-0.5 rounded flex-shrink-0">
-            {userStory}
-          </span>
-        )}
-        {parallel && (
-          <span className="text-[10px] font-semibold text-info bg-info/10 px-1.5 py-0.5 rounded flex-shrink-0">
-            P
+        {/* Parallel hint — scheduling information, so only while the task is
+            still waiting to dispatch. Sourced from the DB column, not the
+            description marker (which only some planners emit). */}
+        {status === 'pending' && task.isParallel && (
+          <span
+            className="inline-flex items-center text-accent bg-accent/10 px-1.5 py-0.5 rounded flex-shrink-0"
+            title="Can run in parallel — no file overlap with peers"
+          >
+            <Zap size={12} />
           </span>
         )}
         {/* M9.2 — gate verdict chip (pass/fail/unverifiable, reason in tooltip) */}
