@@ -248,6 +248,32 @@ if (loaded) {
         true
       )
     })
+
+    // F3 (blueprint 6c4a6a85): the app's OWN wording for a turn that ended in a
+    // transport error reached scheduleAutoRetry intact and matched NO pattern,
+    // so BUILD hard-failed with zero `auto_retry` telemetry rows and 11 tasks
+    // cascade-skipped. Note the string also contains the word "failed", which is
+    // why the NON_RETRYABLE side is asserted right below it.
+    test('the verification/transport failure string is retryable', () => {
+      assert.equal(
+        blueprintService.isRetryableError(
+          'verification failed — no completion block in CLI output (turn likely ended in an API/transport error)'
+        ),
+        true
+      )
+    })
+
+    test('deterministic failures stay non-retryable', () => {
+      for (const err of [
+        'Phase cancelled by user',
+        'session ended: max turns reached',
+        'blueprint budget exhausted',
+        'Cannot retry: pipeline already running',
+        'tasks.md not found'
+      ]) {
+        assert.equal(blueprintService.isRetryableError(err), false, err)
+      }
+    })
   })
 
   // ── Event emission ────────────────────────────────────────────────────

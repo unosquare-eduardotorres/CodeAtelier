@@ -54,6 +54,7 @@ interface BlueprintPhaseRow {
   context_snapshot: string | null
   started_at: string | null
   completed_at: string | null
+  error_message: string | null
 }
 
 interface BlueprintTaskRow {
@@ -117,7 +118,8 @@ function mapPhaseRow(row: BlueprintPhaseRow): BlueprintPhase {
     artifactsJson: safeParseJSON<BlueprintArtifact[]>(row.artifacts_json, []),
     contextSnapshot: row.context_snapshot,
     startedAt: row.started_at,
-    completedAt: row.completed_at
+    completedAt: row.completed_at,
+    errorMessage: row.error_message ?? null
   }
 }
 
@@ -451,7 +453,20 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
 
   // ── Update ──
 
-  updateStatus(id: string, status: BlueprintPhaseStatus): BlueprintPhase | undefined {
+  /**
+   * F6 — `errorMessage` persists WHY a phase failed.
+   *
+   * The table had no error column at all, so a failed phase's reason lived only
+   * in the terminal IPC event and the retry context: reconstructing why build
+   * 6c4a6a85 died meant joining commit timestamps against telemetry by hand.
+   * Passed only on the failure paths; a phase entering `active` clears it, so a
+   * retried phase never displays the previous run's error.
+   */
+  updateStatus(
+    id: string,
+    status: BlueprintPhaseStatus,
+    errorMessage?: string | null
+  ): BlueprintPhase | undefined {
     const timestampCol =
       status === 'active'
         ? 'started_at'
@@ -459,11 +474,21 @@ export class BlueprintPhaseRepository extends BaseRepository<BlueprintPhaseRow, 
           ? 'completed_at'
           : null
 
+    const params: unknown[] = [status]
     let sql = `UPDATE blueprint_phases SET status = ?`
     if (timestampCol) sql += `, ${timestampCol} = datetime('now')`
+    if (errorMessage !== undefined) {
+      sql += `, error_message = ?`
+      params.push(errorMessage)
+    } else if (status === 'active') {
+      sql += `, error_message = NULL`
+    }
     sql += ` WHERE id = ? RETURNING *`
+    params.push(id)
 
-    const row = this.db().prepare(sql).get(status, id) as BlueprintPhaseRow | undefined
+    const row = this.db()
+      .prepare(sql)
+      .get(...params) as BlueprintPhaseRow | undefined
     return row ? mapPhaseRow(row) : undefined
   }
 

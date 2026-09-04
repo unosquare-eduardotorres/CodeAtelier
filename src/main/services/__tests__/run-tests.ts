@@ -646,6 +646,7 @@ const TEST_FILES: string[] = [
   './gate-command-missing.test',
   './blueprint-verify-gates.test',
   './blueprint-gates-remediation.test',
+  './blueprint-gate-attribution.test',
   './blueprint-gate-ladder.test',
   './blueprint-no-write-activity-guard.test',
   './blueprint-task-failure-class.test',

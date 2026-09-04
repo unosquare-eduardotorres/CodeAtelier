@@ -86,6 +86,22 @@ export type BlueprintTelemetryKind =
    * particular the checklist false-positive path that suppresses every skip.
    */
   | 'clarify_skip'
+  /**
+   * F2 — one row per peer-review RE-GRADE, the verdict the task row cannot
+   * carry. P3b deliberately re-asserts the original passing report after peer
+   * review (the re-grade runs against a synthetic baseline), so a peer-review
+   * fix attempt that broke the tree previously left no record anywhere — the
+   * one ungated writer in the pipeline. This is that record.
+   */
+  | 'peer_review_regrade'
+  /**
+   * F4 — one row per in-ladder re-run of a task that failed on infrastructure
+   * (a transport error, a session that never started). Separate from
+   * `auto_retry`, which is PHASE-level: mixing them would make "did the task
+   * ladder retry" unanswerable, and that question is exactly what the 6c4a6a85
+   * post-mortem could not answer.
+   */
+  | 'infra_retry'
 
 export interface BlueprintTelemetryRow {
   id: string

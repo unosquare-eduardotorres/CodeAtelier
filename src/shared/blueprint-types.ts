@@ -163,6 +163,13 @@ export interface BlueprintPhase {
   contextSnapshot: string | null
   startedAt: string | null
   completedAt: string | null
+  /**
+   * F6 — why this phase failed, when it did. Null on every other status.
+   * Persisted because the reason previously existed only in the terminal IPC
+   * event: after a reload, a failed phase could say THAT it failed and never
+   * why, and a post-mortem had to join telemetry against commit timestamps.
+   */
+  errorMessage: string | null
 }
 
 export interface BlueprintArtifact {

@@ -151,6 +151,24 @@ const OVERLOAD_MAX_RETRIES = 2 // 3 total attempts per task
 const OVERLOAD_BACKOFF_BASE_MS = 60_000 // 60s, then 120s (exponential)
 
 /**
+ * F4 — in-ladder re-runs for an INFRA failure that is safe to re-send. ONE.
+ *
+ * `runGateLadder` returns the moment a dispatch fails, and only `overload` had a
+ * re-run, so a single transport blip burned the task outright: on blueprint
+ * 6c4a6a85 T005 died on one transport error at 12:19 and cascade-skipped 11
+ * downstream tasks. `isResumeSafeOutcome` already describes exactly this case
+ * — the work was never graded and the send may simply be repeated — and it
+ * excludes the two outcomes (`context_overflow`, `turn_limit_exhausted`) where
+ * repeating the send repeats the failure.
+ *
+ * One, not two: a second re-run buys little against a provider that is actually
+ * down, and every re-run is a full cold session against the task budget.
+ */
+const INFRA_MAX_RETRIES = 1
+/** Short, unlike the overload backoff: a transport blip is not back-pressure. */
+const INFRA_RETRY_DELAY_MS = 5_000
+
+/**
  * Abort-aware sleep: resolves after `ms` OR rejects immediately if the signal
  * fires — so Cancel works during the backoff wait. Clears its timer on abort
  * to avoid leaked timeouts.
@@ -339,6 +357,12 @@ interface TaskResult {
 interface TaskWriteActivity {
   writeToolCalls: number
   bashCalls: number
+  /**
+   * F1 (step 2) — every path a write-capable tool call named, across all
+   * attempts. Handed to the gates as `GateTaskContext.writtenPaths`, where it
+   * defeats the peer exemption for paths this task actually wrote.
+   */
+  writtenPaths: Set<string>
 }
 
 /**
@@ -425,6 +449,40 @@ export function isWriteTool(name: string): boolean {
 /** BP-WRITE-TOOLS-01: is this tool call Bash? (case-insensitive) */
 export function isBashTool(name: string): boolean {
   return /^bash$/i.test(name)
+}
+
+/**
+ * F1 (step 2) — the file a write-capable tool call targeted, or null.
+ *
+ * The counters beside this answer "did the task write ANYTHING"; the gates need
+ * "did the task write THIS path", because that is the one thing that separates a
+ * peer writing its own file from this task writing into a peer's file. Without
+ * it the write-set gate can only report `unverifiable` for any changed path a
+ * peer declares.
+ *
+ * `toolInputRaw` is preferred over `toolInput`: on the CLI backend the latter is
+ * a display summary ("src/a.ts (1 lines)"), not JSON (see
+ * StreamChunk.toolInputRaw). Key spellings match extractStructuredMeta's, plus
+ * `notebook_path` for NotebookEdit. Anything unparseable yields null — the
+ * absence of a path only costs the weaker verdict, never a wrong one.
+ */
+export function writeToolTargetPath(chunk: {
+  toolName?: string
+  toolInput?: string
+  toolInputRaw?: string
+}): string | null {
+  if (!chunk.toolName || !isWriteTool(chunk.toolName)) return null
+  const raw = chunk.toolInputRaw ?? chunk.toolInput
+  if (!raw) return null
+  let input: Record<string, unknown>
+  try {
+    input = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const candidate =
+    input.file_path ?? input.filePath ?? input.notebook_path ?? input.path ?? input.filename
+  return typeof candidate === 'string' && candidate.trim() !== '' ? candidate.trim() : null
 }
 
 /**
@@ -1227,6 +1285,16 @@ export class BlueprintBuildService extends EventEmitter {
    */
   protected overloadBackoffMs(attempt: number): number {
     return OVERLOAD_BACKOFF_BASE_MS * Math.pow(2, attempt - 1)
+  }
+
+  /**
+   * F4 — pause before the infra re-run. A method for the same reason
+   * `overloadBackoffMs` is one: it is the only seam a test can shorten without
+   * swapping module-level `setTimeout`, which would reach every concurrently
+   * awaited suite in the process.
+   */
+  protected infraRetryDelayMs(): number {
+    return INFRA_RETRY_DELAY_MS
   }
 
   /**
@@ -2413,7 +2481,11 @@ export class BlueprintBuildService extends EventEmitter {
     // P0 — one box per TASK, deliberately outside the attempt loop. See
     // `TaskWriteActivity`: the per-attempt counters inside `executeTask` cannot
     // answer "did this task write anything" once an attempt continues another.
-    const writeActivity: TaskWriteActivity = { writeToolCalls: 0, bashCalls: 0 }
+    const writeActivity: TaskWriteActivity = {
+      writeToolCalls: 0,
+      bashCalls: 0,
+      writtenPaths: new Set<string>()
+    }
 
     // Evaluated lazily and only on the guard path (a completion claiming files
     // with no write activity), which is rare — the happy path never pays for the
@@ -2436,6 +2508,8 @@ export class BlueprintBuildService extends EventEmitter {
     let stopLossNote = ''
     /** A11 — overload re-runs spent so far, across the whole ladder. */
     let overloadRetries = 0
+    /** F4 — infra re-runs spent so far, across the whole ladder. */
+    let infraRetries = 0
 
     for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
       // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
@@ -2529,6 +2603,65 @@ export class BlueprintBuildService extends EventEmitter {
         blueprintTaskRepository.recordAttempt(task.id)
       }
 
+      // F4 — ONE in-ladder re-run for an infra failure the session outcome says
+      // is safe to re-send. Modelled on the A11 overload loop above and, like
+      // it, consumes no builder attempt: `attempt` does not advance, there is no
+      // gate feedback to carry (the model produced no gradeable work), and the
+      // baseline still describes the state the task started from.
+      //
+      // `overload` is excluded because it has its own loop; reaching here with
+      // `failureReason === 'overload'` means that loop is EXHAUSTED, and the
+      // wave scheduler compares that string by equality to enter its drain path.
+      if (
+        !result.success &&
+        infraRetries < INFRA_MAX_RETRIES &&
+        result.failureClass === 'infra' &&
+        result.resumeSafe === true &&
+        result.failureReason !== 'overload'
+      ) {
+        infraRetries++
+        const reason = result.failureReason ?? 'unknown'
+        const infraDelay = this.infraRetryDelayMs()
+        bpLog.warn(
+          `[gates] Task ${task.taskId} failed on infrastructure (${reason}) — ` +
+            `one re-run in ${infraDelay / 1000}s (no builder attempt consumed)`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text:
+            `⚠ Task ${task.taskId} hit an infrastructure failure (${reason}) — ` +
+            `re-running once in ${infraDelay / 1000}s`,
+          kind: 'system'
+        })
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'infra_retry',
+          phase: 'build',
+          taskId: task.taskId,
+          attempt,
+          data: { reason, failureClass: result.failureClass, delayMs: infraDelay }
+        })
+
+        try {
+          await abortAwareSleep(
+            infraDelay,
+            blueprintService.getAbortSignal(workspaceId) ?? undefined
+          )
+          // The wait is short, but a peer can still land inside it — and an
+          // exemption set read before the wait would attribute its writes here.
+          this.refreshExemptFiles(gateCtx, params.peers)
+          result = await this.executeTask({ ...ladderParams, gateFixInstructions })
+          blueprintTaskRepository.recordAttempt(task.id)
+        } catch {
+          // Cancelled during the wait. Reported as the cancellation it is, and
+          // the resume permit is cleared: it belonged to the infra failure this
+          // wait was backing off, and must not survive a user cancellation.
+          return { ...result, failureReason: 'aborted', failureClass: 'aborted', resumeSafe: false }
+        }
+      }
+
       lastResult = result
 
       // A task that failed its Layer-1 file verification never reaches the gates:
@@ -2542,6 +2675,7 @@ export class BlueprintBuildService extends EventEmitter {
       // R1.2: peers may have dispatched/finished since the last gate run — the
       // exemption set is refreshed at gate time, not captured at dispatch time.
       this.refreshExemptFiles(gateCtx, params.peers)
+      this.applyWriteAttribution(gateCtx, writeActivity)
       const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
       if (report.overall !== 'fail') {
         // M5 — advisory peer-review pass over the just-passed task. Findings
@@ -2899,6 +3033,7 @@ export class BlueprintBuildService extends EventEmitter {
       commandGates: ['build']
     }
     this.refreshExemptFiles(gateCtx, params.peers)
+    this.applyWriteAttribution(gateCtx, params.writeActivity)
     const baseline: GateBaseline = {
       baselineCommit: params.baselineCommit,
       preexistingDirty: [],
@@ -2907,7 +3042,50 @@ export class BlueprintBuildService extends EventEmitter {
       redEvidence: []
     }
     const fixReport = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
+
+    // F2 — the re-grade's verdict is discarded by design: P3b re-asserts the
+    // ORIGINAL passing report on the task row, because this grading runs against
+    // a synthetic baseline that makes most gates unverifiable and would
+    // otherwise mark a passing task failed. The cost was that the peer-review
+    // fix — a model with write access — became the one writer in the pipeline
+    // whose verdict landed nowhere: on blueprint 6c4a6a85 T012's stored report
+    // is its PRE-peer-review one, and the 69-line deletion its fix attempt made
+    // six minutes after the passing grade was invisible by construction.
+    //
+    // Telemetry is the right home for it: queryable after the run, and it cannot
+    // overwrite the verdict the task legitimately earned.
+    const regradeFailedGates = fixReport.gates
+      .filter((g) => g.verdict === 'fail')
+      .map((g) => g.name)
+    blueprintTelemetryRepository.record({
+      blueprintId,
+      kind: 'peer_review_regrade',
+      phase: 'build',
+      taskId: task.taskId,
+      data: {
+        overall: fixReport.overall,
+        failedGates: regradeFailedGates,
+        findings: outcome.review.findings.length
+      }
+    })
+
     if (fixReport.overall === 'fail') {
+      // Same reasoning as the telemetry row, in the operator-facing ledger: a
+      // peer-review pass that breaks the tree must leave a visible mark, since
+      // the task row will keep showing the report from the attempt that passed.
+      blueprintRepository.appendUnverified(blueprintId, [
+        {
+          taskId: task.taskId,
+          gate: 'peer-review',
+          reason: 'pass_error',
+          detail:
+            `peer-review fix attempt left the tree failing ` +
+            `${regradeFailedGates.join(', ')} — the task's stored gate report is ` +
+            'from the attempt BEFORE peer review',
+          at: new Date().toISOString()
+        }
+      ])
+
       // Same guarantee as every other rung: a fix attempt that weakened the
       // packet spec does not get to leave it weakened. This one never blocks
       // the task, so without the restore the damage would ship with a passing
@@ -3068,6 +3246,7 @@ export class BlueprintBuildService extends EventEmitter {
     }
 
     this.refreshExemptFiles(gateCtx, params.peers)
+    this.applyWriteAttribution(gateCtx, params.writeActivity)
     const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
     if (report.overall !== 'fail') return { ...result, gateReport: report }
 
@@ -3117,6 +3296,14 @@ export class BlueprintBuildService extends EventEmitter {
    * Exact-path semantics are preserved downstream (`collectChanges`): a peer
    * declaring `src/` must not exempt this task's `src/other.ts`. `forbiddenFiles`
    * still fails hard, so the gate does not go blind.
+   *
+   * F5 — `packet.testFiles` is unioned too. A peer's spec is as much its
+   * property as its implementation, and the two declaration lists are not
+   * interchangeable: a packet that names a spec ONLY in `testFiles` used to
+   * leave it unexempted, so a peer's own edit to its own spec landed in this
+   * task's diff and `test-integrity` failed this task for it. On blueprint
+   * 6c4a6a85 the file happened to appear in `filePathsJson` as well, which is
+   * the only reason the peer-exemption path engaged at all.
    */
   private refreshExemptFiles(
     gateCtx: GateTaskContext,
@@ -3128,8 +3315,26 @@ export class BlueprintBuildService extends EventEmitter {
       if (peer.taskId === gateCtx.taskId) continue
       for (const f of normalizePaths(peer.filePathsJson)) exempt.add(f)
       for (const f of peer.packetJson?.allowedFiles ?? []) exempt.add(f)
+      for (const f of peer.packetJson?.testFiles ?? []) exempt.add(f)
     }
     gateCtx.exemptFiles = [...exempt]
+  }
+
+  /**
+   * F1 (step 2) — hand the gates the paths this task's own write tools targeted.
+   *
+   * Called beside `refreshExemptFiles` at every grading point, because the two
+   * are opposite halves of one question: `exemptFiles` says which paths belong
+   * to somebody else, and this says which of those this task nevertheless wrote.
+   * Without it the gate cannot tell the two directions apart and must report
+   * `unverifiable`.
+   */
+  private applyWriteAttribution(
+    gateCtx: GateTaskContext,
+    writeActivity: TaskWriteActivity | undefined
+  ): void {
+    if (!writeActivity) return
+    gateCtx.writtenPaths = [...writeActivity.writtenPaths]
   }
 
   /**
@@ -3878,9 +4083,6 @@ export class BlueprintBuildService extends EventEmitter {
       return
     }
     this.settledBlueprints.add(blueprintId)
-    if (buildPhaseId) {
-      blueprintPhaseRepository.updateStatus(buildPhaseId, 'failed')
-    }
 
     // Guard: don't overwrite 'cancelled' status
     const currentStatus = blueprintRepository.findById(blueprintId)?.status
@@ -3888,8 +4090,21 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintRepository.updateStatus(blueprintId, 'failed')
     }
 
-    // M5: Use failPipeline to properly transition machine to 'failed' state
-    const errorMsg = error ?? 'Build phase failed'
+    // M5: Use failPipeline to properly transition machine to 'failed' state.
+    // F3 — a FALSY check, not `??`: an empty-string error slipped past the
+    // nullish fallback and was then matched against the retry patterns, where it
+    // matches nothing at all. The failure then reads as a bare "" everywhere it
+    // is surfaced.
+    const errorMsg = error || 'Build phase failed'
+
+    // F6 — the reason, on the row. Written with the status (after `errorMsg` is
+    // resolved, so the row never carries the bare empty string the falsy check
+    // above exists to catch) because a failed phase whose reason is only in a
+    // fired-and-forgotten IPC event cannot be diagnosed after a reload.
+    if (buildPhaseId) {
+      blueprintPhaseRepository.updateStatus(buildPhaseId, 'failed', errorMsg)
+    }
+
     blueprintService.failPipeline(workspaceId, errorMsg)
 
     const autoRetrying = workspacePath
@@ -4200,6 +4415,9 @@ export class BlueprintBuildService extends EventEmitter {
         if (isWriteTool(chunk.toolName)) {
           writeToolCalls++
           if (params.writeActivity) params.writeActivity.writeToolCalls++
+          // F1 (step 2) — the same call, recorded by TARGET as well as by count.
+          const written = writeToolTargetPath(chunk)
+          if (written && params.writeActivity) params.writeActivity.writtenPaths.add(written)
         }
         if (isBashTool(chunk.toolName)) {
           bashCalls++

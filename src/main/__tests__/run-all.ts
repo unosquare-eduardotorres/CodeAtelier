@@ -766,6 +766,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/gate-command-missing.test',
   '../services/__tests__/blueprint-verify-gates.test',
   '../services/__tests__/blueprint-gates-remediation.test',
+  '../services/__tests__/blueprint-gate-attribution.test',
   '../services/__tests__/blueprint-gate-ladder.test',
   '../services/__tests__/blueprint-no-write-activity-guard.test',
   '../services/__tests__/blueprint-task-failure-class.test',

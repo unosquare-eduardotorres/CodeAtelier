@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 157
+export const CURRENT_SCHEMA_VERSION = 158
 
 export interface Migration {
   version: number
@@ -4856,6 +4856,33 @@ export const migrations: Migration[] = [
       )
 
       dbLogger.info('[migration-157] ✓ Indexes on migration-added columns moved out of schema.sql')
+    }
+  },
+  {
+    version: 158,
+    name: 'blueprint-phase-error-message',
+    up: (db) => {
+      // F6 — `blueprint_phases` had no error column at all. A failed phase's
+      // reason lived only in the terminal IPC event and, partially, in the retry
+      // context, so after a reload the UI could say a phase failed and never
+      // why: diagnosing build 6c4a6a85 meant joining commit timestamps against
+      // telemetry by hand.
+      //
+      // Nullable, no default, no backfill — rows that failed before this
+      // migration genuinely have no reason on record, and inventing one
+      // ('unknown') would be indistinguishable from a real message.
+      //
+      // Guarded by table_info rather than a bare ALTER: on a FRESH database
+      // schema.sql has already created the column, and 'duplicate column name'
+      // would roll this migration's transaction back.
+      const columns = db.prepare(`PRAGMA table_info(blueprint_phases)`).all() as {
+        name: string
+      }[]
+      if (!columns.some((c) => c.name === 'error_message')) {
+        db.exec(`ALTER TABLE blueprint_phases ADD COLUMN error_message TEXT`)
+      }
+
+      dbLogger.info('[migration-158] ✓ blueprint_phases.error_message')
     }
   }
 ]

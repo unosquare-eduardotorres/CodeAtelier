@@ -356,6 +356,23 @@ export interface GateTaskContext {
    */
   exemptFiles?: readonly string[]
   /**
+   * F1 (step 2) — paths THIS task's own write tools targeted, accumulated across
+   * every attempt from the `file_path` argument of each write-capable tool_use.
+   *
+   * This is the only signal that can tell "a peer wrote its own file" from "I
+   * wrote into a peer's file": the diff shows both as the same bytes, so
+   * `exemptFiles` alone forces the honest-but-weak `unverifiable` verdict. A
+   * path listed here is attributable to this task no matter who DECLARES it, so
+   * the peer exemption does not apply to it and a write outside the write-set
+   * fails, as it would for any other path.
+   *
+   * Absolute (the CLI backends emit absolute `file_path`) or repo-relative;
+   * both forms are re-rooted onto `executionPath` before use. Absent for
+   * callers with no executor instrumentation — the gate then degrades to the
+   * `unverifiable` verdict rather than to a false pass.
+   */
+  writtenPaths?: readonly string[]
+  /**
    * This blueprint's artifact directory (`blueprints/<shortName|id>`), exempted
    * like the other app-bookkeeping prefixes: the pipeline rewrites plan.md /
    * tasks.md / spec.md there while the task runs, after the baseline snapshot.
@@ -927,6 +944,20 @@ function isCommandMissing(output: readonly string[]): boolean {
 /** Why a changed path was not attributed to the graded task. */
 type ExemptionReason = 'preexisting' | 'peer' | 'bookkeeping'
 
+/**
+ * Buckets on `ChangeSet.exempted`. `peerChanged` is NOT a filter reason — no
+ * path is dropped because of it. It records which peer-exempt paths actually
+ * differ from the baseline, which the three reasons above cannot express.
+ */
+type ChangeBucket = ExemptionReason | 'peerChanged'
+
+const emptyBuckets = (): Record<ChangeBucket, string[]> => ({
+  preexisting: [],
+  peer: [],
+  bookkeeping: [],
+  peerChanged: []
+})
+
 interface ChangeSet {
   files: string[]
   addedLines: AddedLine[]
@@ -937,7 +968,14 @@ interface ChangeSet {
    * over-broad exemption swallowing a real violation is otherwise completely
    * invisible, which is how a dead `blueprints/` entry survived unnoticed.
    */
-  exempted: Record<ExemptionReason, string[]>
+  exempted: Record<ChangeBucket, string[]>
+  /**
+   * F1 — peer-exempt paths that CHANGED since the baseline and that no commit
+   * in `baseline..HEAD` explains. Nobody we can name produced them, so no
+   * verdict about this task's write-set can be supported while they are in the
+   * tree: `gateWriteSet` reports `unverifiable`, never a pass and never a fail.
+   */
+  peerUnattributed: string[]
 }
 
 /**
@@ -954,17 +992,13 @@ async function collectChanges(
   runner: CommandRunner
 ): Promise<ChangeSet> {
   const cwd = ctx.executionPath
-  const noExemptions: Record<ExemptionReason, string[]> = {
-    preexisting: [],
-    peer: [],
-    bookkeeping: []
-  }
   if (!baseline.baselineCommit) {
     return {
       files: [],
       addedLines: [],
       unavailable: 'no git baseline commit',
-      exempted: noExemptions
+      exempted: emptyBuckets(),
+      peerUnattributed: []
     }
   }
 
@@ -975,7 +1009,13 @@ async function collectChanges(
     ctx.signal
   )
   if (diff === null) {
-    return { files: [], addedLines: [], unavailable: 'git diff failed', exempted: noExemptions }
+    return {
+      files: [],
+      addedLines: [],
+      unavailable: 'git diff failed',
+      exempted: emptyBuckets(),
+      peerUnattributed: []
+    }
   }
 
   const untracked = splitNulPaths(
@@ -999,16 +1039,18 @@ async function collectChanges(
   // this task's `src/other.ts`); the bookkeeping entries are directory
   // prefixes, so they need `pathMatches`, not set equality — no changed file is
   // ever literally named `.opencode/`.
-  const exemptExact = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+  // F1 (step 2) — a path this task's own write tools targeted is THIS task's
+  // change, whoever declares it. Subtracting it from the exempt set before any
+  // other rule means the write-set gate reports it as the violation it is,
+  // instead of dropping it and reporting `pass`.
+  const writtenByThisTask = writtenPathSet(ctx)
+  const peerDeclared = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+  const exemptExact = new Set([...peerDeclared].filter((f) => !writtenByThisTask.has(f)))
   const bookkeepingPrefixes = ctx.artifactPrefix
     ? [...APP_BOOKKEEPING_PREFIXES, normalizePath(ctx.artifactPrefix)]
     : APP_BOOKKEEPING_PREFIXES
 
-  const exempted: Record<ExemptionReason, string[]> = {
-    preexisting: [],
-    peer: [],
-    bookkeeping: []
-  }
+  const exempted = emptyBuckets()
   const seenExempt = new Set<string>()
   const notThisTasks = (f: string): boolean => {
     const reason: ExemptionReason | null = dirtyBefore.has(f)
@@ -1053,7 +1095,168 @@ async function collectChanges(
     )
   }
 
-  return { files, addedLines, exempted }
+  // F1 — the set of paths that DIFFER from the baseline, by name. `files` above
+  // cannot answer that question: it is built from added lines and untracked
+  // files, so a pure DELETION appears nowhere in it — and a 69-line deletion out
+  // of a peer's spec is exactly the change that started this.
+  const changedNames =
+    peerDeclared.size > 0
+      ? await changedNameSet(ctx, cwd, runner, baseline.baselineCommit, untracked)
+      : new Set<string>()
+
+  if (changedNames) {
+    // A peer's file that THIS task's write tools targeted, and that really did
+    // change, belongs in this task's diff however it changed. Without this a
+    // deletion-only write into a peer's file would leave `files` untouched and
+    // the gate would pass it — the very hole step 2 exists to close.
+    for (const name of changedNames) {
+      if (!writtenByThisTask.has(name) || !peerDeclared.has(name)) continue
+      if (notThisTasks(name) || files.includes(name)) continue
+      files.push(name)
+    }
+  }
+
+  const peerUnattributed = await findPeerUnattributed({
+    ctx,
+    cwd,
+    runner,
+    baselineCommit: baseline.baselineCommit,
+    exemptExact,
+    dirtyBefore,
+    changedNames,
+    peerChanged: exempted.peerChanged
+  })
+
+  return { files, addedLines, exempted, peerUnattributed }
+}
+
+/**
+ * Paths that differ from the baseline commit, by NAME — deletions included.
+ *
+ * `null` when git could not answer. Callers treat that as "cannot attribute",
+ * never as "nothing changed": the whole diff already succeeded by this point, so
+ * a failure here is a genuine unknown rather than a clean tree.
+ */
+async function changedNameSet(
+  ctx: GateTaskContext,
+  cwd: string,
+  runner: CommandRunner,
+  baselineCommit: string,
+  untracked: readonly string[]
+): Promise<Set<string> | null> {
+  const named = await git(
+    ['diff', '--name-only', '-z', baselineCommit, '--'],
+    cwd,
+    runner,
+    ctx.signal
+  )
+  if (named === null) return null
+  return new Set([...splitNulPaths(named), ...untracked])
+}
+
+/**
+ * `ctx.writtenPaths` as repo-relative, normalized paths.
+ *
+ * The write tools report `file_path` absolutely on the CLI backends. A path is
+ * re-rooted onto the execution root first and onto the primary checkout second
+ * (planned paths are recorded against the primary checkout even when the task
+ * runs in a worktree — the same re-rooting `verifyBuildTaskFiles` does). One
+ * that escapes both roots is dropped: it cannot be compared with a diff path,
+ * and a mis-rooted entry would remove a legitimate peer exemption.
+ */
+function writtenPathSet(ctx: GateTaskContext): Set<string> {
+  const out = new Set<string>()
+  for (const raw of ctx.writtenPaths ?? []) {
+    if (!raw) continue
+    if (!isAbsolute(raw)) {
+      out.add(normalizePath(raw))
+      continue
+    }
+    for (const root of [ctx.executionPath, ctx.workspacePath]) {
+      if (!root) continue
+      const rel = relative(root, raw)
+      if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+        out.add(normalizePath(rel))
+        break
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * F1 — which peer-exempt paths changed, and can anyone be named for them?
+ *
+ * The peer exemption is direction-blind: `collectChanges` drops a peer-declared
+ * path from `files` and `addedLines` without ever asking WHO changed it. "A peer
+ * wrote its own file" and "this task wrote into a peer's file" are the same
+ * bytes in a diff, and only the first is what the exemption was built for.
+ * Live: blueprint 6c4a6a85, T012 changed three files, deleted 69 lines from a
+ * spec T004 declares, and the write-set gate reported
+ * `pass — 2 file(s) changed, all in set`.
+ *
+ * Two deliberate choices:
+ *
+ * • The changed set comes from `--name-only`, not from the added-line scan. A
+ *   pure DELETION produces no added line, so the path that started that
+ *   incident never even reached `exempted.peer`.
+ *
+ * • Attribution is ONE `git log --name-only` over `baseline..HEAD` rather than
+ *   one `git log -- <path>` per path. Membership in "paths some commit since the
+ *   baseline touched" is exactly what the per-path form answers, and this runs
+ *   on the task's critical path.
+ *
+ * A path a peer commit explains stays a clean exemption — the R1.2 behaviour is
+ * unchanged. What is left is a change on disk that no commit in the range
+ * accounts for: uncommitted, and unattributable from git alone.
+ *
+ * Mutates `peerChanged` in place (the caller's bucket) and returns the
+ * unattributable subset.
+ */
+async function findPeerUnattributed(opts: {
+  ctx: GateTaskContext
+  cwd: string
+  runner: CommandRunner
+  baselineCommit: string
+  exemptExact: ReadonlySet<string>
+  dirtyBefore: ReadonlySet<string>
+  /** `null` when `git diff --name-only` failed — nothing can be attributed. */
+  changedNames: ReadonlySet<string> | null
+  peerChanged: string[]
+}): Promise<string[]> {
+  const { ctx, cwd, runner, baselineCommit, exemptExact, dirtyBefore, changedNames, peerChanged } =
+    opts
+  if (exemptExact.size === 0) return []
+
+  // The diff itself already succeeded, so a failure here is a genuine unknown.
+  // Reporting nothing would silently restore the blind pass this exists to stop.
+  if (changedNames === null) return [...exemptExact].filter((p) => !dirtyBefore.has(p))
+
+  for (const p of exemptExact) {
+    // Pre-existing dirt outranks the peer bucket in `notThisTasks`; keep the
+    // same precedence here or a file the user left dirty reads as peer traffic.
+    if (changedNames.has(p) && !dirtyBefore.has(p)) peerChanged.push(p)
+  }
+  if (peerChanged.length === 0) return []
+
+  const committed = await git(
+    ['log', '--format=', '--name-only', '-z', `${baselineCommit}..HEAD`],
+    cwd,
+    runner,
+    ctx.signal
+  )
+  if (committed === null) return [...peerChanged]
+
+  const explained = new Set(splitNulPaths(committed))
+  const unattributed = peerChanged.filter((p) => !explained.has(p))
+  if (unattributed.length > 0) {
+    gateLog.warn(
+      `[${ctx.taskId}] ${unattributed.length} peer-exempt path(s) changed with no ` +
+        `commit in ${baselineCommit.slice(0, 8)}..HEAD to explain them: ` +
+        `${unattributed.slice(0, MAX_LISTED_PATHS).join(', ')}`
+    )
+  }
+  return unattributed
 }
 
 /**
@@ -1414,7 +1617,11 @@ function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
     forbidden: evaluation.forbidden.length,
     ...(exempted.preexisting.length > 0 ? { exemptPreexisting: exempted.preexisting.length } : {}),
     ...(exempted.peer.length > 0 ? { exemptPeer: exempted.peer.length } : {}),
-    ...(exempted.bookkeeping.length > 0 ? { exemptBookkeeping: exempted.bookkeeping.length } : {})
+    ...(exempted.bookkeeping.length > 0 ? { exemptBookkeeping: exempted.bookkeeping.length } : {}),
+    ...(exempted.peerChanged.length > 0 ? { exemptPeerChanged: exempted.peerChanged.length } : {}),
+    ...(changes.peerUnattributed.length > 0
+      ? { peerUnattributed: changes.peerUnattributed.length }
+      : {})
   }
 
   // BP-UNATTRIBUTED-PASS: the exemption LIST, not just its size. `exemptPeer: 8`
@@ -1444,6 +1651,36 @@ function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
         ...exemptEvidence
       ],
       { counts, durationMs: Date.now() - started }
+    )
+  }
+
+  // F1 — an exempt path changed and nothing in `baseline..HEAD` explains it.
+  // The honest verdict is that this task's write-set cannot be judged: the
+  // exemption may be doing its job (a peer's uncommitted work) or hiding this
+  // task writing into a peer's file, and the diff cannot tell those apart.
+  // Deliberately AFTER the violation branch — a proven violation still fails —
+  // and deliberately not a `fail` itself: this gate never blames a task for a
+  // change it cannot attribute (see the file's invariant 1).
+  if (changes.peerUnattributed.length > 0) {
+    const listed = changes.peerUnattributed.slice(0, MAX_LISTED_PATHS)
+    return result(
+      'write-set',
+      'unverifiable',
+      [
+        `${evaluation.changedCount} file(s) changed and in set, but ` +
+          `${changes.peerUnattributed.length} peer-owned path(s) also changed with no ` +
+          'commit since the baseline to explain them — authorship cannot be established:',
+        ...listed.map((f) => `  unattributed: ${f}`),
+        ...(changes.peerUnattributed.length > listed.length
+          ? [`  …and ${changes.peerUnattributed.length - listed.length} more`]
+          : [])
+      ],
+      {
+        reason: 'analysis_unavailable',
+        counts,
+        files: changes.peerUnattributed,
+        durationMs: Date.now() - started
+      }
     )
   }
 

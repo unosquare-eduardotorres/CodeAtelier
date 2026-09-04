@@ -290,7 +290,7 @@ describe('R1.4 — G6 honesty without per-task targeting', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('R1.2 — parallel-wave attribution (exemptFiles)', () => {
-  test('a peer task’s concurrent edits are exempted from this task’s write-set', async () => {
+  test('a peer task’s COMMITTED edits are exempted from this task’s write-set', async () => {
     if (!GIT_AVAILABLE) return
     const dir = makeRepo({
       'src/feature.ts': 'export const a = 1\n',
@@ -302,17 +302,53 @@ describe('R1.2 — parallel-wave attribution (exemptFiles)', () => {
     })
     const baseline = await captureGateBaseline(ctx)
 
-    // BOTH tasks edit their own files in the shared worktree.
+    // BOTH tasks edit their own files in the shared worktree, and the peer
+    // COMMITS its own — which is what makes the change attributable to it (F1).
     write(dir, {
       'src/feature.ts': 'export const a = 2\n',
       'src/peer.ts': 'export const peer = 2\n'
     })
+    execFileSync('git', ['add', 'src/peer.ts'], { cwd: dir })
+    execFileSync('git', ['commit', '-q', '-m', 'T002 peer work'], { cwd: dir })
+
     const report = await runGates(ctx, baseline)
 
     assert.equal(
       verdictOf(report.gates, 'write-set'),
       'pass',
       `peer file must be exempt: ${JSON.stringify(report.gates[0].evidence)}`
+    )
+  })
+
+  test('an UNCOMMITTED peer-owned change is unverifiable, never a pass and never a fail', async () => {
+    if (!GIT_AVAILABLE) return
+    // F1 — the exemption is direction-blind: "the peer wrote its own file" and
+    // "this task wrote into the peer's file" are the same bytes in a diff, and
+    // with nothing committed there is no third party to attribute the change to.
+    // The verdict has to say so rather than report `pass — all in set`, which is
+    // what let a task delete 69 lines from a peer's spec and be graded green.
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n",
+      'src/peer.ts': 'export const peer = 1\n'
+    })
+    const ctx = ctxFor(dir, gitRunner({ 'run-task-tests': { exitCode: 0 } }), {
+      exemptFiles: ['src/peer.ts']
+    })
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'src/feature.ts': 'export const a = 2\n',
+      'src/peer.ts': 'export const peer = 2\n'
+    })
+    const report = await runGates(ctx, baseline)
+    const writeSet = report.gates.find((g) => g.name === 'write-set')
+
+    assert.equal(writeSet?.verdict, 'unverifiable', JSON.stringify(writeSet))
+    assert.equal(writeSet?.reason, 'analysis_unavailable')
+    assert.ok(
+      writeSet?.files?.includes('src/peer.ts'),
+      `the unattributable path must be named: ${JSON.stringify(writeSet?.files)}`
     )
   })
 

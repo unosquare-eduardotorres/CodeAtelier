@@ -699,7 +699,8 @@ describe('blueprintAdapter.toEnvelope', () => {
           artifactsJson: [{ type: 'spec', filePath: 'spec.md' }],
           contextSnapshot: null,
           startedAt: '2024-01-01',
-          completedAt: '2024-01-01'
+          completedAt: '2024-01-01',
+          errorMessage: null
         },
         {
           id: 'p2',
@@ -709,6 +710,7 @@ describe('blueprintAdapter.toEnvelope', () => {
           conversationId: null,
           artifactsJson: [],
           contextSnapshot: null,
+          errorMessage: null,
           startedAt: '2024-01-02',
           completedAt: null
         }

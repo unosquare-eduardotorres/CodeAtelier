@@ -29,6 +29,7 @@ function makePhase(overrides?: Partial<BlueprintPhase>): BlueprintPhase {
     contextSnapshot: null,
     startedAt: null,
     completedAt: null,
+    errorMessage: null,
     ...overrides
   }
 }

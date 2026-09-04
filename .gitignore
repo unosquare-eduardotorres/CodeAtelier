@@ -41,3 +41,6 @@ coverage/
 
 # Emergency DB recovery backups taken during live incident triage
 .blueprint-*-recovery-backup-*.sql
+
+# Chat attachment scratch (images pasted into an assistant session)
+.tmp-attach/

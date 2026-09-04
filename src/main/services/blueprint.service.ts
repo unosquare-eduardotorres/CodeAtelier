@@ -829,7 +829,10 @@ export class BlueprintService extends EventEmitter {
     /stalled/i,
     /no activity for/i,
     /CLI failed to start/i,
-    /ERR_STREAM_PREMATURE_CLOSE/i,
+    // F3 — widened from ERR_STREAM_PREMATURE_CLOSE: the premature-close variant
+    // is one of several ERR_STREAM_* codes a dropped connection surfaces as, and
+    // the narrow form matched none of the others.
+    /ERR_STREAM/i,
     /ECONNRESET/i,
     /ECONNREFUSED/i,
     /EPIPE/i,
@@ -847,7 +850,17 @@ export class BlueprintService extends EventEmitter {
     // never produced a token — GLM/Z.ai intermittently accepts then stalls
     // (live: blueprint 0520 wave 1, all 3 tasks, zero message events
     // server-side). Transient: the identical re-send generates.
-    /no prompt activity within/i
+    /no prompt activity within/i,
+    // F3 — the app's OWN wording for a turn that ended without a completion
+    // block: "verification failed — no completion block in CLI output (turn
+    // likely ended in an API/transport error)". It reached scheduleAutoRetry
+    // intact and matched nothing here, so the phase failed with no retry and no
+    // `auto_retry` telemetry row (blueprint 6c4a6a85 — 11 tasks cascade-skipped
+    // off one transport error). Neither pattern collides with a NON_RETRYABLE
+    // entry: the string carries no 'cancelled', 'max turns', 'budget',
+    // 'parse…fail', 'Cannot retry' or 'not found'.
+    /no completion block/i,
+    /API\/transport error/i
   ]
 
   /** Error patterns that should NOT be retried (deterministic failures). */

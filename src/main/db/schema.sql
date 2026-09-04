@@ -598,7 +598,9 @@ CREATE TABLE IF NOT EXISTS blueprint_phases (
   artifacts_json TEXT DEFAULT '[]',
   context_snapshot TEXT,
   started_at TEXT,
-  completed_at TEXT
+  completed_at TEXT,
+  -- Why the phase failed (migration 158). Null unless status = 'failed'.
+  error_message TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bp_phases_blueprint ON blueprint_phases(blueprint_id);
 
