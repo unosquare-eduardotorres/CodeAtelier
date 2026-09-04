@@ -17,7 +17,8 @@ import type {
   AdapterIntentContext,
   AgentTelemetryContext
 } from '../../agent-session.types'
-import type { AgentRole, ModelAction } from '../../../../shared/types'
+import type { AgentRole, LLMProvider, ModelAction } from '../../../../shared/types'
+import { blueprintSnapshotAssignment } from '../../snapshot-model-resolver'
 import { workspaceRepository } from '../../../db/repositories'
 import { detectTechStack } from '../../tech-stack-detector.service'
 import { MCP_TOOLS } from '../../../../shared/constants'
@@ -134,6 +135,26 @@ export abstract class BlueprintBaseAdapter extends BaseRoleAdapter {
 
   /** Return the ModelAction to use for model resolution. */
   protected abstract getModelAction(): ModelAction
+
+  /**
+   * Provider for this phase, taken from the blueprint's frozen model snapshot.
+   *
+   * BP-MODEL-BLEED: AgentSessionService derives `executorBackend` from the
+   * provider — `claude` → the Claude CLI, anything else → OpenCode — and it
+   * previously read only the WORKSPACE provider. A workspace on `claude` with
+   * `blueprint:build` bound to glm-5.3 therefore ran every build task through
+   * the Claude CLI. Resolving the model from the snapshot without this made it
+   * worse, not better: the CLI was handed `--model glm-5.3` and rejected it
+   * ("issue with the selected model"), failing the phase outright.
+   *
+   * Keyed on getModelAction() so provider and model always come from the same
+   * snapshot entry. An explicit per-run choice still wins, and phases with no
+   * snapshot entry return undefined and keep the workspace provider.
+   */
+  override getLlmProvider(): LLMProvider | undefined {
+    if (this.explicitLlmProvider) return this.explicitLlmProvider
+    return blueprintSnapshotAssignment(this.blueprintId, this.getModelAction())?.provider
+  }
 
   /** Subclasses implement to build phase-specific prompts. */
   protected abstract buildPhaseSystemPrompt(): string

@@ -43,10 +43,46 @@ export const BLUEPRINT_CONV_RE =
   /^blueprint-(specify|clarify|plan|tasks|code-review|review|build|verify)-([0-9a-f]{32})(?:-([A-Za-z]+\d+))?-\d+$/
 
 /**
- * Conversation-ID phase segment → key in the blueprint's frozen modelSnapshot.
- * The snapshot is camelCase (`codeReview`); the conversation ID is kebab.
+ * ModelAction → key in the blueprint's frozen modelSnapshot.
+ *
+ * Keying on the action rather than the conversation-id phase keeps the model and
+ * the PROVIDER agreeing. The escalation ladder re-runs a build task under
+ * `blueprint:lead-review` while keeping a `blueprint-build-...` conversation id:
+ * keying on the id would hand it the build assignment's model (e.g. glm-5.3)
+ * while the adapter resolved lead-review's provider (claude), and the CLI would
+ * reject the model. Actions absent here have no snapshot entry and fall through
+ * to live resolution, which is correct for them.
  */
-const SNAPSHOT_PHASE_KEY: Record<string, string> = { 'code-review': 'codeReview' }
+const ACTION_SNAPSHOT_KEY: Record<string, string> = {
+  'blueprint:specify': 'specify',
+  'blueprint:clarify': 'clarify',
+  'blueprint:plan': 'plan',
+  'blueprint:tasks': 'tasks',
+  'blueprint:review': 'review',
+  'blueprint:build': 'build',
+  'blueprint:code-review': 'codeReview',
+  'blueprint:verify': 'verify'
+}
+
+/**
+ * The frozen assignment for a blueprint phase, by blueprint id and model action.
+ * Exported so role adapters can resolve their PROVIDER from the same snapshot
+ * entry the model comes from — see BlueprintBaseAdapter.getLlmProvider().
+ */
+export function blueprintSnapshotAssignment(
+  blueprintId: string,
+  modelAction: ModelAction
+): ResolvedAssignment | null {
+  const key = ACTION_SNAPSHOT_KEY[modelAction]
+  if (!key) return null
+  try {
+    const bp = blueprintRepository.findById(blueprintId)
+    const snap = bp?.settingsJson?.modelSnapshot as Record<string, ResolvedAssignment> | undefined
+    return snap?.[key] ?? null
+  } catch {
+    return null
+  }
+}
 
 /**
  * The frozen assignment for a blueprint synthetic conversation ID, or null when
@@ -57,18 +93,14 @@ const SNAPSHOT_PHASE_KEY: Record<string, string> = { 'code-review': 'codeReview'
  * build binding resolved its model id from the snapshot but its provider from
  * the workspace default, and every build task silently ran on Anthropic.
  */
-function blueprintAssignment(conversationId: string): ResolvedAssignment | null {
+function blueprintAssignment(
+  conversationId: string,
+  modelAction: ModelAction
+): ResolvedAssignment | null {
   const match = BLUEPRINT_CONV_RE.exec(conversationId)
   if (!match) return null
-  const [, phase, blueprintId] = match
-  try {
-    const bp = blueprintRepository.findById(blueprintId)
-    const snap = bp?.settingsJson?.modelSnapshot as Record<string, ResolvedAssignment> | undefined
-    return snap?.[SNAPSHOT_PHASE_KEY[phase] ?? phase] ?? null
-  } catch {
-    // Non-fatal — caller falls through to live resolution for legacy blueprints
-    return null
-  }
+  const [, , blueprintId] = match
+  return blueprintSnapshotAssignment(blueprintId, modelAction)
 }
 
 export function resolveModelFromSnapshot(
@@ -83,7 +115,7 @@ export function resolveModelFromSnapshot(
 
   // G6: Blueprint synthetic IDs — read frozen snapshot from blueprint.settings_json
   if (BLUEPRINT_CONV_RE.test(conversationId)) {
-    const assignment = blueprintAssignment(conversationId)
+    const assignment = blueprintAssignment(conversationId, modelAction)
     if (assignment?.modelId) return assignment.modelId
     return modelConfigService.getModel(workspacePath, modelAction)
   }
@@ -179,13 +211,11 @@ export function resolveOpenCodeProviderFromSnapshot(
     return fallback()
   }
 
-  // Blueprint synthetic IDs never have conversation rows, but the blueprint
-  // itself carries the frozen snapshot — read provider identity from there
-  // rather than from the workspace default. Falling back unconditionally is
-  // what made a `blueprint:build` GLM binding execute on Anthropic.
+  // Blueprint synthetic IDs never have conversation rows. Provider identity
+  // reaches this path as `providerOverride`, which BlueprintBaseAdapter derives
+  // from the same frozen snapshot entry the model comes from — so the fallback
+  // is already snapshot-driven for blueprints.
   if (BLUEPRINT_CONV_RE.test(conversationId)) {
-    const assignment = blueprintAssignment(conversationId)
-    if (assignment) return mapAssignmentToOpenCodeConfig(assignment, workspacePath)
     return fallback()
   }
 
