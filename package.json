@@ -14,7 +14,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
-    "dev:restart": "pkill -f 'electron-vite' 2>/dev/null; pkill -f 'Electron' 2>/dev/null; sleep 1 && electron-vite dev",
+    "dev:restart": "pkill -f \"$PWD/node_modules/.bin/electron-vite\" 2>/dev/null; pkill -f \"$PWD/node_modules/electron/dist/Electron\" 2>/dev/null; sleep 1 && electron-vite dev",
     "build": "npm run typecheck && electron-vite build && node scripts/verify-build-assets.mjs",
     "postinstall": "echo 'N-API: no native rebuild needed'",
     "build:unpack": "npm run build && electron-builder --dir",
