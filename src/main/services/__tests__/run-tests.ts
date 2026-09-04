@@ -655,6 +655,8 @@ const TEST_FILES: string[] = [
   './blueprint-lead-review.test',
   './blueprint-peer-review.test',
   './blueprint-wave-gates-persist.test',
+  // ─── Phase 1 improvements: E12 retry classes / E1 clarify auto-skip / A6 task commit ───
+  './blueprint-phase1-improvements.test',
   // ─── Registry drift repair ───
   // These existed on disk and were registered in run-all.ts (so they counted
   // toward coverage) but had never been added here, so `npm run test:unit`
@@ -741,6 +743,8 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/utils/__tests__/stream-segment-seq.test',
   // ─── Phase D: StreamingTranscript component tests (jsdom harness) ───
   '../../../renderer/src/components/streaming/__tests__/streaming-transcript.dom.test',
+  // ─── File-list unification: FileRow + FileListSection component tests (jsdom) ───
+  '../../../renderer/src/components/common/__tests__/file-row.dom.test',
   // ─── F10: grill transform strips orphaned block closers ───
   '../../../renderer/src/utils/__tests__/strip-grill-json.test',
   // ─── VERIFY fallback: modified files aggregated from tool activity ───

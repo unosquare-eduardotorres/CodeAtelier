@@ -535,6 +535,15 @@ export interface AppPreferences {
    * extraction fails.
    */
   blueprintFailureMemory: boolean
+  /**
+   * E1-fix — skip the CLARIFY phase automatically when the SPECIFY output has
+   * zero `[NEEDS CLARIFICATION]` markers and the LLM completion does not veto.
+   * Previously read off `blueprint.settingsJson.autoSkipClarify`, which no UI,
+   * IPC, or type ever wrote — undefined forever, so the feature was
+   * hardcoded-on with a comment claiming it was gated. This moves it onto the
+   * app-preference path (kill switch) every other blueprint toggle uses.
+   */
+  autoSkipClarify: boolean
 }
 
 // ── Workspace Deploy Models ──

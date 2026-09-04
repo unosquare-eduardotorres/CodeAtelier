@@ -28,7 +28,11 @@ import {
 import { memoryExtractionService } from './memory-extraction.service'
 import { BlueprintClarifyAdapter } from './role-adapters/blueprint/blueprint-clarify.adapter'
 import { buildSpecifyGoalCondition, buildClarifyGoalCondition } from './blueprint-goal-conditions'
-import { parsePhaseCompletionBlock, parseDiscoveriesBlock } from './blueprint-artifact-parsers'
+import {
+  parsePhaseCompletionBlock,
+  parseDiscoveriesBlock,
+  decideClarifySkip
+} from './blueprint-artifact-parsers'
 import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { modelConfigService } from './model-config.service'
 import { blueprintPlanService } from './blueprint-plan.service'
@@ -38,6 +42,8 @@ import {
   blueprintPhaseRepository
 } from '../db/repositories/blueprint.repository'
 import { workspaceRepository, conversationRepository } from '../db/repositories'
+import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
+import { blueprintTelemetryRepository } from '../db/repositories/blueprint-telemetry.repository'
 import {
   parseClarifyFindings,
   parseClarifyQuestions,
@@ -263,6 +269,8 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintId: string
       workspaceId: string
       workspacePath: string
+      /** E1: when true, the pending dispatch skips CLARIFY instead of starting it. */
+      skipClarify?: boolean
     } | null = null
     let cleanupAskUser: (() => void) | undefined
     // BP-CATCH-SCOPE-01: Hoisted outside try so the catch block (partial-output save) can read it.
@@ -500,6 +508,19 @@ export class BlueprintSpecService extends EventEmitter {
         }
       }
 
+      // E1-fix — decide the CLARIFY auto-skip BEFORE the state flip below. The
+      // original ordering persisted status='clarifying', currentPhase='clarify',
+      // and flipped the clarify phase record to 'active' unconditionally, so a
+      // crash between that write and the skip (issued later, in the finally)
+      // left a blueprint persisted as actively clarifying with no session —
+      // the resume path then waits for a turn that never comes.
+      const clarifyDecision = decideClarifySkip({
+        specText: text,
+        completion,
+        enabled: appPreferenceRepository.getAppPreferences().autoSkipClarify
+      })
+      const skipClarify = clarifyDecision.skip
+
       // 13. Advance to CLARIFY phase (both needs_clarification and complete go here)
       if (specifyPhase) {
         blueprintPhaseRepository.updateStatus(specifyPhase.id, 'complete')
@@ -512,14 +533,56 @@ export class BlueprintSpecService extends EventEmitter {
       blueprintRepository.update(blueprintId, { currentPhase: 'clarify' })
 
       const clarifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
-      if (clarifyPhase) {
+      if (clarifyPhase && !skipClarify) {
+        // E1-fix: only a REAL clarify turn activates the record. On the skip
+        // path the record stays 'pending' — skipPhase (called from the finally)
+        // marks it 'skipped' from any prior status, and a crash in between no
+        // longer strands an 'active' clarify record with no session behind it.
         blueprintPhaseRepository.updateStatus(clarifyPhase.id, 'active')
       }
 
-      const needsClarification = completion?.status === 'needs_clarification'
+      const needsClarification = clarifyDecision.reason === 'llm-veto'
       bpLog.info(
         `[startSpecifyPhase] Blueprint ${blueprintId} — spec ${needsClarification ? 'needs clarification' : 'complete'}, advancing to CLARIFY`
       )
+
+      // E1-fix — the decision is now made by decideClarifySkip (pure, tested).
+      // The marker count stays the AUTHORITY (prompt-defined literal, countable
+      // without trusting the LLM); `status === 'needs_clarification'` OR the
+      // `needsClarification` boolean the prompt actually emits are VETOes; the
+      // app preference `autoSkipClarify` is the kill switch (previously the
+      // feature read a settingsJson field nothing ever wrote — undefined forever,
+      // hardcoded-on). `clarificationCount` stays telemetry-only.
+      const markerCount = clarifyDecision.markerCount
+      const reportedCount = completion?.clarificationCount
+      if (typeof reportedCount === 'number' && reportedCount !== markerCount) {
+        bpLog.info(
+          `[startSpecifyPhase] clarification cross-check: LLM reported ${reportedCount} marker(s), ` +
+            `deterministic count is ${markerCount} — building trust data before this field is ever trusted`
+        )
+      }
+      // E1-fix — telemetry on EVERY SPECIFY completion, skip or not: without
+      // these rows there is no way to distinguish "the skip works" from "it
+      // never fires" (the checklist false-positive path suppresses skips
+      // silently; this is how it gets measured before any section-scoping).
+      blueprintTelemetryRepository.record({
+        blueprintId,
+        kind: 'clarify_skip',
+        phase: 'specify',
+        data: {
+          skipped: skipClarify,
+          markerCount,
+          reportedCount,
+          needsClarification,
+          reason: clarifyDecision.reason
+        }
+      })
+      if (skipClarify) {
+        bpLog.info(
+          `[startSpecifyPhase] E1 auto-skip: 0 clarification markers and no LLM veto ` +
+            `— skipping CLARIFY for blueprint ${blueprintId}`
+        )
+      }
 
       // 14. Emit phaseComplete
       this.safeEmit('phaseComplete', {
@@ -543,10 +606,13 @@ export class BlueprintSpecService extends EventEmitter {
       // BP-CHAIN-SPECIFY-CLARIFY: Auto-dispatch CLARIFY after SPECIFY completes.
       // Release pipeline lock first (in finally), then dispatch non-blocking.
       // Guard: skip dispatch if blueprint was cancelled during the phase.
+      // E1: when the spec is provably clear (0 markers + LLM veto clear), queue
+      // the skip path instead — the user gets PLAN without a vacuous CLARIFY turn.
       pendingClarifyDispatch = {
         blueprintId,
         workspaceId,
-        workspacePath
+        workspacePath,
+        ...(skipClarify ? { skipClarify: true } : {})
       }
     } catch (err) {
       bpLog.error(`[startSpecifyPhase] SPECIFY phase failed:`, err)
@@ -620,9 +686,20 @@ export class BlueprintSpecService extends EventEmitter {
         const currentStatus = blueprintRepository.findById(pendingClarify.blueprintId)?.status
         if (currentStatus !== 'cancelled') {
           try {
-            this.startClarifyPhase(pendingClarify).catch((err) => {
-              bpLog.error('[specify→clarify] Clarify phase failed:', err)
-            })
+            if (pendingClarify.skipClarify) {
+              // E1: provably-clear spec — skip CLARIFY and chain straight to PLAN.
+              // skipClarifyPhase must ALSO run after the lock release (it calls
+              // skipPhase + dispatchPlanPhase, which re-acquires it).
+              this.skipClarifyPhase(pendingClarify.blueprintId, pendingClarify.workspaceId).catch(
+                (err) => {
+                  bpLog.error('[specify→clarify] Auto-skip of clarify failed:', err)
+                }
+              )
+            } else {
+              this.startClarifyPhase(pendingClarify).catch((err) => {
+                bpLog.error('[specify→clarify] Clarify phase failed:', err)
+              })
+            }
           } catch (syncErr) {
             bpLog.error('[specify→clarify] Clarify startup failed (sync):', syncErr)
           }
@@ -986,8 +1063,13 @@ export class BlueprintSpecService extends EventEmitter {
   /**
    * Skip the CLARIFY phase (spec is clear enough).
    * Delegates to blueprintService.skipPhase().
+   *
+   * E1: `workspaceId` is optional. When the UI invokes the manual skip a clarify
+   * session exists and its workspaceId is used; when the auto-skip fires from the
+   * specify chain no session was ever created, so the caller must pass the id —
+   * otherwise the `phaseComplete{status:'skipped'}` emit would carry ''.
    */
-  async skipClarifyPhase(blueprintId: string): Promise<void> {
+  async skipClarifyPhase(blueprintId: string, workspaceId?: string): Promise<void> {
     bpLog.info(`[skipClarifyPhase] Blueprint ${blueprintId} — skipping CLARIFY`)
 
     // Clean up any active session
@@ -999,7 +1081,7 @@ export class BlueprintSpecService extends EventEmitter {
     }
     blueprintService.skipPhase(blueprintId, 'clarify')
 
-    const skipWorkspaceId = sessionState?.workspaceId ?? ''
+    const skipWorkspaceId = sessionState?.workspaceId ?? workspaceId ?? ''
     this.safeEmit('phaseComplete', {
       blueprintId,
       workspaceId: skipWorkspaceId,

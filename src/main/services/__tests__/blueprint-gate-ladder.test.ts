@@ -23,7 +23,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
@@ -35,6 +35,7 @@ setupElectronStub()
 let env: { db: import('better-sqlite3').Database; wsId: string } | null = null
 let blueprintRepository: any
 let blueprintTaskRepository: any
+let blueprintTelemetryRepository: any
 
 try {
   const helper = require('../../db/repositories/__tests__/db-test-helper')
@@ -42,6 +43,8 @@ try {
   const repos = require('../../db/repositories/blueprint.repository')
   blueprintRepository = repos.blueprintRepository
   blueprintTaskRepository = repos.blueprintTaskRepository
+  blueprintTelemetryRepository =
+    require('../../db/repositories/blueprint-telemetry.repository').blueprintTelemetryRepository
 } catch (err) {
   console.log(`⚠ gate-ladder setup failed — tests will be skipped.`)
   console.log(`  (${(err as Error).message?.split('\n')[0]})`)
@@ -305,13 +308,14 @@ if (!env) {
   })()
 
   /** A one-commit repo — `captureGateBaseline` needs a real HEAD to resolve. */
-  function makeRepo(): string {
+  function makeRepo(extra: Record<string, string> = {}): string {
     const dir = mkdtempSync(join(tmpdir(), 'stop-loss-'))
     execFileSync('git', ['init', '-q'], { cwd: dir })
     execFileSync('git', ['config', 'user.email', 'ladder@test.local'], { cwd: dir })
     execFileSync('git', ['config', 'user.name', 'Ladder Test'], { cwd: dir })
     execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir })
     writeFileSync(join(dir, 'a.ts'), 'export const a = 1\n')
+    for (const [rel, content] of Object.entries(extra)) writeFileSync(join(dir, rel), content)
     execFileSync('git', ['add', '-A'], { cwd: dir })
     execFileSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: dir })
     return dir
@@ -401,6 +405,330 @@ if (!env) {
       failureReason: result?.failureReason ?? null
     }
   }
+
+  // ── Packet test files damaged by a failed attempt ──
+
+  describe('a failed attempt’s damage to a packet test file must not poison the next rung', () => {
+    const SPEC = "test('spec', () => { expect(run()).toBe(42) })\n"
+    const WEAKENED = "test('spec', () => {})\n"
+
+    interface IntegrityRun {
+      builderRuns: number
+      escalated: boolean
+      /** True at each grading = the tree was damaged when that grading ran. */
+      gradedDamaged: boolean[]
+      /** The packet test file as the ladder left it. */
+      finalSpec: string
+      failureReason: string | null
+      /** The fix instructions handed to the LAST builder attempt. */
+      lastInstructions: string
+    }
+
+    /**
+     * The real ladder, with a miniature `test-integrity` in place of `gradeTask`:
+     * it grades what is ON DISK, exactly as the real gate does. That is the
+     * property under test — nothing else in the ladder reverts the tree, so an
+     * attempt's leftover edit is what the next attempt is graded on.
+     */
+    async function runIntegrityLadder(reweakenEveryAttempt: boolean): Promise<IntegrityRun> {
+      const dir = makeRepo({ 't.test.ts': SPEC })
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'test-integrity ladder' })
+      const created = blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'T001',
+        wave: 1,
+        description: 'Make the pre-authored test pass',
+        filePathsJson: ['a.ts']
+      })
+      // No testCommand: the red proof must not spawn anything on this path.
+      const task = blueprintTaskRepository.setPacket(created.id, {
+        allowedFiles: ['a.ts'],
+        testFiles: ['t.test.ts']
+      })
+
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const svc = new BlueprintBuildService()
+
+      let builderRuns = 0
+      let escalated = false
+      let lastInstructions = ''
+      const gradedDamaged: boolean[] = []
+
+      svc.executeTask = async (p: { gateFixInstructions?: string }): Promise<unknown> => {
+        builderRuns++
+        lastInstructions = p?.gateFixInstructions ?? ''
+        // Attempt 1 edits the spec instead of the implementation.
+        if (reweakenEveryAttempt || builderRuns === 1) {
+          writeFileSync(join(dir, 't.test.ts'), WEAKENED)
+        }
+        return { success: true, completion: null, discoveries: [] }
+      }
+      svc.gradeTask = async (): Promise<unknown> => {
+        const damaged = readFileSync(join(dir, 't.test.ts'), 'utf-8') !== SPEC
+        gradedDamaged.push(damaged)
+        return damaged
+          ? {
+              overall: 'fail',
+              gates: [
+                {
+                  name: 'test-integrity',
+                  verdict: 'fail',
+                  evidence: [
+                    'test file modified (content differs from the pre-session spec): t.test.ts'
+                  ],
+                  files: ['t.test.ts'],
+                  durationMs: 1
+                }
+              ]
+            }
+          : { overall: 'pass', gates: [] }
+      }
+      svc.escalateToLead = async (): Promise<unknown> => {
+        escalated = true
+        return {
+          success: false,
+          completion: null,
+          discoveries: [],
+          failureReason: 'quality gate failed after escalation: test-integrity'
+        }
+      }
+      svc.resolveGateCommandsFor = (): unknown => ({})
+      svc.readManifestsCached = (): unknown => ({})
+
+      const result = (await svc.executeTaskWithGates({
+        task,
+        blueprintId: bp.id,
+        workspaceId: wsId,
+        workspacePath: dir,
+        executionPath: dir,
+        phaseContext: {} as never,
+        priorDiscoveries: [],
+        tDispatch: Date.now(),
+        waveNum: 1
+      })) as { failureReason?: string | null }
+
+      const finalSpec = readFileSync(join(dir, 't.test.ts'), 'utf-8')
+      try {
+        rmSync(dir, { recursive: true, force: true })
+      } catch {
+        /* best effort */
+      }
+      return {
+        builderRuns,
+        escalated,
+        gradedDamaged,
+        finalSpec,
+        failureReason: result?.failureReason ?? null,
+        lastInstructions
+      }
+    }
+
+    test(
+      'attempt 2 is graded on a repaired tree, not on attempt 1’s leftover',
+      async () => {
+        const run = await runIntegrityLadder(false)
+        assert.deepEqual(
+          run.gradedDamaged,
+          [true, false],
+          'attempt 1 damaged the spec; attempt 2 touched nothing and must grade clean — ' +
+            'before the restore this graded [true, true] forever'
+        )
+        assert.equal(run.builderRuns, 2)
+        assert.equal(run.escalated, false, 'a recoverable failure must not reach the lead model')
+        assert.equal(run.finalSpec, SPEC, 'the specification is back, byte for byte')
+        assert.match(
+          run.lastInstructions,
+          /ALREADY restored[\s\S]*t\.test\.ts/,
+          'the retry must be told the restore happened, or it reads the instruction as ' +
+            '“edit this test file” — the one thing it must not do'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a builder that re-weakens the file every attempt still trips the stop-loss',
+      async () => {
+        const run = await runIntegrityLadder(true)
+        assert.deepEqual(run.gradedDamaged, [true, true], 'the damage is genuinely re-done')
+        assert.equal(
+          run.builderRuns,
+          2,
+          'B3 still cuts the third rung — this builder is not moving'
+        )
+        assert.equal(run.escalated, true)
+        assert.match(run.failureReason ?? '', /stop-loss after 2 identical gate failure\(s\)/)
+        assert.equal(
+          run.finalSpec,
+          SPEC,
+          'and the lead model inherits a repaired tree rather than the corpse'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+  })
+
+  // ── Exits that never produce a test-integrity verdict ──
+
+  describe('a task that does not SUCCEED must never end with a weakened packet spec', () => {
+    const SPEC = "test('spec', () => { expect(run()).toBe(42) })\n"
+    const WEAKENED = "test('spec', () => {})\n"
+
+    interface NetRun {
+      builderRuns: number
+      /** `test_restore` telemetry stages, in the order they were written. */
+      restoreStages: string[]
+      /** The packet test file as the ladder left it. */
+      finalSpec: string
+    }
+
+    /**
+     * The real ladder against a real temp repo, with only the session and the
+     * grader stubbed. `damagedGate` decides WHICH gate the stub fails on while
+     * the spec is damaged — `write-set` is the case `runGates` short-circuits
+     * on, so no `test-integrity` verdict exists and the report-driven restore
+     * has nothing to act on.
+     */
+    async function runNetLadder(opts: {
+      damagedGate: 'test-integrity' | 'write-set'
+      /** false — every session reports failure, so the ladder never grades. */
+      sessionSucceeds?: boolean
+      /** true — the REAL escalateToLead runs, and its own attempt damages the spec. */
+      realEscalation?: boolean
+    }): Promise<NetRun> {
+      const dir = makeRepo({ 't.test.ts': SPEC })
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'restore net' })
+      const created = blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'T001',
+        wave: 1,
+        description: 'Make the pre-authored test pass',
+        filePathsJson: ['a.ts']
+      })
+      const task = blueprintTaskRepository.setPacket(created.id, {
+        allowedFiles: ['a.ts'],
+        testFiles: ['t.test.ts']
+      })
+
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const svc = new BlueprintBuildService()
+
+      let builderRuns = 0
+      // EVERY session weakens the spec — including the lead model's.
+      svc.executeTask = async (): Promise<unknown> => {
+        builderRuns++
+        writeFileSync(join(dir, 't.test.ts'), WEAKENED)
+        return opts.sessionSucceeds === false
+          ? {
+              success: false,
+              completion: null,
+              discoveries: [],
+              failureReason: 'session died mid-flight',
+              failureClass: 'session'
+            }
+          : { success: true, completion: null, discoveries: [] }
+      }
+      svc.gradeTask = async (): Promise<unknown> => {
+        const damaged = readFileSync(join(dir, 't.test.ts'), 'utf-8') !== SPEC
+        if (!damaged) return { overall: 'pass', gates: [] }
+        return {
+          overall: 'fail',
+          gates: [
+            {
+              name: opts.damagedGate,
+              verdict: 'fail',
+              evidence: ['the spec no longer matches the pre-session capture'],
+              // Only test-integrity carries the machine-readable path list; a
+              // short-circuited run never even computes that verdict.
+              ...(opts.damagedGate === 'test-integrity' ? { files: ['t.test.ts'] } : {}),
+              durationMs: 1
+            }
+          ]
+        }
+      }
+      if (!opts.realEscalation) {
+        svc.escalateToLead = async (): Promise<unknown> => ({
+          success: false,
+          completion: null,
+          discoveries: [],
+          failureReason: `quality gate failed after escalation: ${opts.damagedGate}`
+        })
+      }
+      svc.resolveGateCommandsFor = (): unknown => ({})
+      svc.readManifestsCached = (): unknown => ({})
+
+      await svc.executeTaskWithGates({
+        task,
+        blueprintId: bp.id,
+        workspaceId: wsId,
+        workspacePath: dir,
+        executionPath: dir,
+        phaseContext: {} as never,
+        priorDiscoveries: [],
+        tDispatch: Date.now(),
+        waveNum: 1
+      })
+
+      const finalSpec = readFileSync(join(dir, 't.test.ts'), 'utf-8')
+      const restoreStages = blueprintTelemetryRepository
+        .findByBlueprint(bp.id)
+        .filter((r: { kind: string }) => r.kind === 'test_restore')
+        .map((r: { data: Record<string, unknown> }) => String(r.data.stage))
+      try {
+        rmSync(dir, { recursive: true, force: true })
+      } catch {
+        /* best effort */
+      }
+      return { builderRuns, restoreStages, finalSpec }
+    }
+
+    test(
+      'the lead model’s OWN damage is restored on the way out of the escalation',
+      async () => {
+        const run = await runNetLadder({ damagedGate: 'test-integrity', realEscalation: true })
+        assert.deepEqual(
+          run.restoreStages,
+          ['ladder', 'ladder', 'escalation'],
+          'the escalation rung grades and returns — without its own restore the most ' +
+            'common terminal path ends with the weakened spec on disk, and the ' +
+            'operator’s next Retry captures it as the new baseline (a FALSE GREEN)'
+        )
+        assert.equal(run.finalSpec, SPEC, 'the specification is back, byte for byte')
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a write-set failure short-circuits past test-integrity, and the sweep still repairs the tree',
+      async () => {
+        const run = await runNetLadder({ damagedGate: 'write-set' })
+        assert.deepEqual(
+          run.restoreStages,
+          ['sweep'],
+          'no test-integrity verdict exists on this path, so the report-driven ' +
+            'restore has nothing to act on — only the tree-driven net can see the damage'
+        )
+        assert.equal(run.finalSpec, SPEC)
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a session that dies after damaging the spec is never graded — and is still swept',
+      async () => {
+        const run = await runNetLadder({ damagedGate: 'test-integrity', sessionSucceeds: false })
+        assert.equal(run.builderRuns, 1, 'a session failure exits the ladder immediately')
+        assert.deepEqual(run.restoreStages, ['sweep'])
+        assert.equal(
+          run.finalSpec,
+          SPEC,
+          'the ladder returns before any grading, so only the finally net stands ' +
+            'between this damage and the next Retry’s baseline'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+  })
 
   describe('B3 — stop-loss on a repeated gate-failure fingerprint', () => {
     test(

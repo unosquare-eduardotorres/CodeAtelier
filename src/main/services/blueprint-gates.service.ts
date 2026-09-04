@@ -18,8 +18,8 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve, relative, isAbsolute } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve, relative, isAbsolute } from 'node:path'
 import log from 'electron-log'
 
 import {
@@ -57,6 +57,9 @@ const gateLog = log.scope('blueprint-gates')
 
 /** Per-file read cap for hashing and stub scanning. Beyond this, skip. */
 const MAX_SCAN_BYTES = 1_000_000
+
+/** How many paths any human- or model-facing list names before it says “+N more”. */
+export const MAX_LISTED_PATHS = 25
 
 /**
  * APP-BOOKKEEPING EXEMPTION: workspace paths the app itself writes during a
@@ -367,13 +370,27 @@ export interface GateTaskContext {
   runner?: CommandRunner
 }
 
+/**
+ * A packet test file as the baseline captured it — the hash/count the gate
+ * judges against, plus the BYTES needed to put it back.
+ *
+ * The content is kept because the gate is the only thing that knows what the
+ * spec looked like before the session, and a failed attempt leaves its edit on
+ * disk: without the bytes, every later attempt is graded on the first one's
+ * damage and the failure can never clear (see `restorePacketTestFiles`).
+ * Bounded by `MAX_SCAN_BYTES` per file and by the packet's own test list.
+ */
+interface CapturedTestFile extends TestFileState {
+  content: string
+}
+
 export interface GateBaseline {
   /** Commit the task started from — the diff base. */
   baselineCommit: string | null
   /** Files already dirty before the task began; their changes are not this task's. */
   preexistingDirty: string[]
-  /** Packet test files as they were before the session. */
-  testsBefore: Record<string, TestFileState>
+  /** Packet test files as they were before the session, with their content. */
+  testsBefore: Record<string, CapturedTestFile>
   /** Whether the packet's tests were red before the session (the red proof). */
   redProof: 'red' | 'green' | 'unavailable'
   redEvidence: string[]
@@ -394,14 +411,15 @@ export interface GateBaseline {
   buildBefore?: { failed: boolean; signatures: string[] }
 }
 
-function hashFile(absPath: string): TestFileState | null {
+function hashFile(absPath: string): CapturedTestFile | null {
   try {
     const stat = statSync(absPath)
     if (!stat.isFile() || stat.size > MAX_SCAN_BYTES) return null
     const content = readFileSync(absPath, 'utf-8')
     return {
       hash: createHash('sha256').update(content).digest('hex'),
-      testCount: countTests(content)
+      testCount: countTests(content),
+      content
     }
   } catch {
     return null
@@ -461,6 +479,33 @@ function resolveInside(root: string, candidate: string): string | null {
 }
 
 /**
+ * `resolveInside`, hardened for the WRITE path.
+ *
+ * The lexical bound is enough to READ safely, but a packet test file that is a
+ * SYMLINK out of the tree resolves lexically inside and a write through it
+ * lands outside the workspace. Only the restore writes, so only the restore
+ * pays for the extra `realpath`. When nothing on the path exists yet (the
+ * attempt deleted the file along with its directory) there is no link to
+ * follow and the lexical bound is the whole answer.
+ */
+function resolveInsideForWrite(root: string, candidate: string): string | null {
+  const abs = resolveInside(root, candidate)
+  if (!abs) return null
+  try {
+    const realRoot = realpathSync(root)
+    // A missing file would be created inside its parent, so that is what has to
+    // be inside the tree.
+    const realTarget = existsSync(abs) ? realpathSync(abs) : realpathSync(dirname(abs))
+    const rel = relative(realRoot, realTarget)
+    if (rel.startsWith('..') || isAbsolute(rel)) return null
+  } catch {
+    // Neither the file nor its parent resolves — nothing to follow, and the
+    // lexical bound above already held.
+  }
+  return abs
+}
+
+/**
  * Capture everything the post-session gates need to compare against.
  * Must be called BEFORE the build session starts.
  *
@@ -477,7 +522,7 @@ export async function captureGateBaseline(ctx: GateTaskContext): Promise<GateBas
 
   const preexistingDirty = parseStatusZ(status ?? '')
 
-  const testsBefore: Record<string, TestFileState> = {}
+  const testsBefore: Record<string, CapturedTestFile> = {}
   for (const rel of ctx.packet?.testFiles ?? []) {
     const abs = resolveInside(cwd, rel)
     if (!abs) continue
@@ -496,6 +541,128 @@ export async function captureGateBaseline(ctx: GateTaskContext): Promise<GateBas
     redEvidence,
     ...(buildBefore ? { buildBefore } : {})
   }
+}
+
+/**
+ * Put packet test files back exactly as the baseline captured them.
+ *
+ * The gate grades the working tree against a baseline captured ONCE, before
+ * attempt 1, and nothing in the ladder reverts the tree between attempts. So
+ * the moment one attempt edits a pre-authored test file, that edit is permanent
+ * for the rest of the ladder: attempt 2 can be flawless and still be told `test
+ * file modified`, which fingerprints identically to attempt 1, trips the B3
+ * stop-loss, and escalates to a lead model that inherits the same unfixable
+ * failure. Observed as three attempts producing byte-identical evidence.
+ *
+ * Asking the builder to revert it does not work: `REVERT_SCOPE_RULE` forbids
+ * rolling back a file it does not own, and a pre-authored test is precisely the
+ * kind of file it reads as somebody else's. So the kernel does it — free,
+ * deterministic, and it writes the captured BYTES rather than the model's
+ * reconstruction of them.
+ *
+ * Bounded three times: only files the baseline captured (i.e. declared in the
+ * packet's `testFiles`), only paths that resolve inside `executionPath`, and
+ * never a path a PEER task declares (`ctx.exemptFiles`). The peer bound is the
+ * one that matters most: this is the kernel doing, unprompted, exactly what
+ * `REVERT_SCOPE_RULE` forbids the builder from doing — writing over a file it
+ * does not own — and in a parallel wave the divergence it is "repairing" may be
+ * a peer's uncommitted, in-flight work.
+ *
+ * A file already matching the baseline is left alone and not reported, and a
+ * write that does not read back as the captured hash is reported as NOT
+ * restored — a short write, a full disk or a concurrent writer would otherwise
+ * be announced to the builder as "back to the specification" while differing
+ * from it, and the next gate failure would be unexplainable.
+ *
+ * **Accepted risk:** a human editing a packet test file while the task runs is
+ * indistinguishable from the builder doing it, and is overwritten. Nothing in
+ * the tree records authorship of an uncommitted edit, so this cannot be bounded
+ * away — it is the price of the guarantee that a failed attempt never leaves a
+ * weakened spec behind.
+ */
+export function restorePacketTestFiles(
+  ctx: GateTaskContext,
+  baseline: GateBaseline,
+  files: readonly string[]
+): string[] {
+  const peerOwned = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+  const restored: string[] = []
+  for (const rel of Array.from(new Set(files.map((f) => normalizePath(f))))) {
+    const before = baseline.testsBefore[rel]
+    // Not a packet test file the baseline captured — never ours to write.
+    if (!before) continue
+    // Declared by another in-flight task too. Its edit is its work, and
+    // pre-session bytes would destroy it mid-session.
+    if (peerOwned.has(rel)) {
+      gateLog.warn(
+        `[gates] ${ctx.taskId}: NOT restoring ${rel} — a peer task declares it, so the ` +
+          `divergence may be that peer's in-flight work`
+      )
+      continue
+    }
+    const abs = resolveInsideForWrite(ctx.executionPath, rel)
+    if (!abs) continue
+    try {
+      if (existsSync(abs) && hashFile(abs)?.hash === before.hash) continue
+      // The parent may be gone when the attempt deleted the file with its dir.
+      mkdirSync(dirname(abs), { recursive: true })
+      writeFileSync(abs, before.content, 'utf-8')
+      // Read back. `writeFileSync` reports no error on a short write, and
+      // nothing stops another writer touching the file in between. Claiming a
+      // restore that did not happen is worse than reporting none — the next
+      // gate would then fail against a file the log says is back to spec.
+      if (hashFile(abs)?.hash !== before.hash) {
+        gateLog.warn(
+          `[gates] ${ctx.taskId}: restore of ${rel} did not round-trip to the captured ` +
+            `bytes — reporting it as NOT restored`
+        )
+        continue
+      }
+      restored.push(rel)
+    } catch (err) {
+      gateLog.warn(`[gates] Could not restore packet test file ${rel}:`, err)
+    }
+  }
+  return restored
+}
+
+/**
+ * Packet test files that are WEAKER on disk than the baseline captured them.
+ *
+ * The report-driven restore is precise but only fires where a `test-integrity`
+ * verdict exists — and the ladder has exits that produce none: a gate that
+ * short-circuits on `write-set` or `stub-scan` discards the computed
+ * `test-integrity` result, and a session that fails outright (or is aborted) is
+ * never graded at all. Those exits used to end with the weakened spec on disk,
+ * where the operator's next Retry captures it as the NEW baseline and every
+ * gate goes green over a neutered test.
+ *
+ * So this is the net: hash and test-count only, no diff, no git, no commands.
+ * It reports a file only when the content differs AND the test count did not
+ * increase — a strict increase is the EXTENSION ALLOWANCE the gate itself
+ * grants, and authoring must never be swept away. Peer-declared and
+ * unreadable files are skipped for the same reasons the restore skips them.
+ */
+export function divergedPacketTestFiles(ctx: GateTaskContext, baseline: GateBaseline): string[] {
+  const peerOwned = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+  const diverged: string[] = []
+  for (const [rel, before] of Object.entries(baseline.testsBefore)) {
+    if (peerOwned.has(rel)) continue
+    const abs = resolveInside(ctx.executionPath, rel)
+    if (!abs) continue
+    if (!existsSync(abs)) {
+      diverged.push(rel)
+      continue
+    }
+    const now = hashFile(abs)
+    // Unreadable or grown past the scan cap: not something to judge, and
+    // certainly not something to overwrite on a guess.
+    if (!now) continue
+    if (now.hash === before.hash) continue
+    if (now.testCount > before.testCount) continue
+    diverged.push(rel)
+  }
+  return diverged
 }
 
 /**
@@ -702,7 +869,12 @@ function result(
   name: GateName,
   verdict: GateVerdict,
   evidence: string[],
-  extra?: { reason?: UnverifiableReason; counts?: Record<string, number>; durationMs?: number }
+  extra?: {
+    reason?: UnverifiableReason
+    counts?: Record<string, number>
+    files?: string[]
+    durationMs?: number
+  }
 ): GateResult {
   return {
     name,
@@ -710,6 +882,7 @@ function result(
     evidence: boundEvidence(evidence),
     ...(extra?.reason ? { reason: extra.reason } : {}),
     ...(extra?.counts ? { counts: extra.counts } : {}),
+    ...(extra?.files?.length ? { files: extra.files } : {}),
     durationMs: extra?.durationMs ?? 0
   }
 }
@@ -938,6 +1111,9 @@ export interface CommitSurvivalScan {
  * T011's work being destroyed.
  */
 const TASK_ID_IN_SUBJECT = /\b[TR]\d{2,}\b/
+// A6 exports the pattern so the build service's commit-subject contract and the
+// survival scan's attribution pattern can never drift apart.
+export { TASK_ID_IN_SUBJECT }
 
 /** Commits inspected per scan — a bound, not a tuning knob. */
 const MAX_SURVIVAL_COMMITS = 60
@@ -1331,26 +1507,82 @@ function gateTestIntegrity(
     )
   }
 
+  // R1.2 attribution, applied to the one gate that never had it. Every other
+  // gate reads the DIFF, which `collectChanges` has already filtered through
+  // `notThisTasks`; this one compares DISK against the baseline, so a peer's
+  // edit to a file this task happens to declare was reported as this task's
+  // violation. That was a false fail on its own; now that the kernel RESTORES
+  // what this gate reports, it would also silently overwrite the peer's
+  // uncommitted work with pre-session bytes. `exempted.peer` is exactly the
+  // changed paths another task declares.
+  //
+  // Narrower than "skip everything in `exemptFiles`" on purpose: a declared
+  // file the peer never touched is not in the diff, so this task's damage to it
+  // is still judged.
+  const peerOwned = new Set(changes.exempted.peer)
+  const comparable = Object.keys(baseline.testsBefore).filter((f) => !peerOwned.has(f))
+  const peerSkipped = Object.keys(baseline.testsBefore).length - comparable.length
+  if (comparable.length === 0) {
+    return unverifiable(
+      'test-integrity',
+      'no_tests',
+      [
+        `all ${peerSkipped} captured test file(s) were also changed by a peer task ` +
+          `that declares them — not this task's to judge`
+      ],
+      Date.now() - started
+    )
+  }
+  const peerNote =
+    peerSkipped > 0
+      ? [`${peerSkipped} declared test file(s) skipped — changed by a peer task that declares them`]
+      : []
+
+  const before: Record<string, CapturedTestFile> = {}
   const after: Record<string, TestFileState | null> = {}
-  for (const rel of Object.keys(baseline.testsBefore)) {
+  for (const rel of comparable) {
+    before[rel] = baseline.testsBefore[rel]
     const abs = resolveInside(ctx.executionPath, rel)
     after[rel] = abs && existsSync(abs) ? hashFile(abs) : null
   }
 
-  const testFileSet = new Set(Object.keys(baseline.testsBefore))
+  const testFileSet = new Set(comparable)
   const evaluation = evaluateTestIntegrity({
-    before: baseline.testsBefore,
+    before,
     after,
     addedTestLines: changes.addedLines.filter((l) => testFileSet.has(l.file))
   })
 
   if (!evaluation.ok) {
+    // Every offending path, for the caller that has to put them back. Kept
+    // separate from the evidence prose on purpose — nothing should have to
+    // parse a sentence to learn which file to restore.
+    const offending = Array.from(
+      new Set([
+        ...evaluation.deleted,
+        ...evaluation.modified,
+        ...evaluation.countDrops.map((d) => d.file),
+        ...evaluation.skipsAdded.map((s) => s.file)
+      ])
+    )
     return result(
       'test-integrity',
       'fail',
       [
         ...evaluation.deleted.map((f) => `test file deleted: ${f}`),
-        ...evaluation.modified.map((f) => `test file modified: ${f}`),
+        // WHICH check tripped, not just that one did: a bare "modified" is
+        // undiagnosable after the fact, and it is the line that repeats
+        // verbatim when a leftover edit keeps failing the same way.
+        ...peerNote,
+        ...evaluation.modified.map((f) => {
+          const beforeCount = before[f]?.testCount
+          const afterCount = after[f]?.testCount
+          const counts =
+            beforeCount === undefined || afterCount === undefined
+              ? ''
+              : `, ${beforeCount}→${afterCount} tests`
+          return `test file modified (content differs from the pre-session spec${counts}): ${f}`
+        }),
         ...evaluation.countDrops.map(
           (d) => `test count dropped in ${d.file}: ${d.before} → ${d.after}`
         ),
@@ -1362,6 +1594,7 @@ function gateTestIntegrity(
           deleted: evaluation.deleted.length,
           skipsAdded: evaluation.skipsAdded.length
         },
+        files: offending,
         durationMs: Date.now() - started
       }
     )
@@ -1371,7 +1604,7 @@ function gateTestIntegrity(
   // authoring new tests inside a packet-declared file is a legitimate
   // deliverable (T001 shape), and the builder needs to see it was recognized.
   const extensionLines = evaluation.extended.map((f) => {
-    const beforeState = baseline.testsBefore[f]
+    const beforeState = before[f]
     const afterState = after[f]
     return `test file extended ${beforeState?.testCount}→${afterState?.testCount} tests — authoring allowed: ${f}`
   })
@@ -1379,7 +1612,7 @@ function gateTestIntegrity(
   return result(
     'test-integrity',
     'pass',
-    [`${declared.length} test file(s) intact`, ...extensionLines],
+    [`${comparable.length} test file(s) intact`, ...peerNote, ...extensionLines],
     {
       durationMs: Date.now() - started
     }
@@ -2004,15 +2237,46 @@ export async function runGates(ctx: GateTaskContext, baseline: GateBaseline): Pr
  * error tail, and nothing else. A weak builder handed an interpretation of a
  * failure will act on the interpretation; handed the failure, it fixes it.
  */
-export function buildGateFixInstructions(report: GateReport): string {
+export function buildGateFixInstructions(
+  report: GateReport,
+  opts?: {
+    /**
+     * Packet test files the kernel already put back (`restorePacketTestFiles`).
+     * Told to the builder because an instruction to restore a file that is
+     * ALREADY restored reads as "edit this test file" — the one thing it must
+     * not do — and because the next attempt's diff will otherwise look
+     * inexplicable to it.
+     */
+    restoredTestFiles?: readonly string[]
+  }
+): string {
   const failed = report.gates.filter((g) => g.verdict === 'fail')
   if (failed.length === 0) return ''
 
+  const restored = opts?.restoredTestFiles ?? []
+  // The fix prompt competes with the failing assertion for the model's
+  // attention: a 40-file packet turns the restore note into 40 lines of paths
+  // and the actual failure is what gets dropped. `boundEvidence` caps the
+  // evidence for the same reason; this caps the list beside it.
+  const restoredLines = [
+    ...restored.slice(0, MAX_LISTED_PATHS).map((f) => `- ${f}`),
+    ...(restored.length > MAX_LISTED_PATHS
+      ? [`- …and ${restored.length - MAX_LISTED_PATHS} more`]
+      : [])
+  ]
   const sections = failed.map((gate) => {
     const header = `### Gate: ${gate.name} — FAILED`
     const body = gate.evidence.map((line) => `- ${line}`).join('\n')
     const instruction = GATE_FIX_HINTS[gate.name] ?? 'Fix the cause reported above.'
-    return `${header}\n\n${body}\n\n**Required:** ${instruction}`
+    const restoreNote =
+      gate.name === 'test-integrity' && restored.length > 0
+        ? '\n\n' +
+          'The kernel has ALREADY restored these files to their pre-session content:\n' +
+          restoredLines.join('\n') +
+          '\nDo not edit them again and do not try to revert them yourself — ' +
+          'they are back to the specification. Change the implementation instead.'
+        : ''
+    return `${header}\n\n${body}\n\n**Required:** ${instruction}${restoreNote}`
   })
 
   return (
@@ -2042,7 +2306,10 @@ const REVERT_SCOPE_RULE = [
   '- Other tasks run in this same tree. A change you did not make that appears in your diff belongs',
   '  to a peer and is very likely already COMPLETE and VERIFIED — leave it exactly as it is.',
   '- Never assume another task will “re-apply” something you removed. It will not.',
-  '- If a foreign change genuinely blocks you, say so in your completion block instead of editing it.'
+  '- If a foreign change genuinely blocks you, say so in your completion block instead of editing it.',
+  '- Exception — the test files listed in YOUR OWN task packet: those are this task’s specification,',
+  '  not a peer’s work. You still must never weaken them, and the kernel restores them for you if you',
+  '  do, so there is never a reason to edit or revert one yourself.'
 ].join('\n')
 
 const GATE_FIX_HINTS: Partial<Record<GateName, string>> = {
@@ -2053,7 +2320,7 @@ const GATE_FIX_HINTS: Partial<Record<GateName, string>> = {
   'stub-scan':
     'Replace each marker above with a real implementation. Do not delete the line — implement it.',
   'test-integrity':
-    'Restore the listed test files to their original content and re-enable every disabled test. The tests are the specification; make the code satisfy them.',
+    'The listed test files are the specification. Do not edit them, and do not revert them yourself — the kernel restores any packet test file an attempt changed. Make the IMPLEMENTATION satisfy the tests instead. If a test genuinely looks wrong, say so in your completion block rather than changing it.',
   lint: 'Fix the reported lint errors. Do not disable the rules.',
   build: 'Fix the reported compile/type errors.',
   'task-tests':

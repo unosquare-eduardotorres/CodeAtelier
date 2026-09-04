@@ -725,6 +725,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/utils/__tests__/stream-segment-seq.test',
   // ─── Phase D: StreamingTranscript component tests (jsdom harness) ───
   '../../renderer/src/components/streaming/__tests__/streaming-transcript.dom.test',
+  // ─── File-list unification: FileRow + FileListSection component tests (jsdom) ───
+  '../../renderer/src/components/common/__tests__/file-row.dom.test',
   '../../renderer/src/utils/__tests__/strip-grill-json.test',
   // ─── VERIFY fallback: modified files aggregated from tool activity ───
   '../../renderer/src/utils/__tests__/modified-files-fallback.test',
@@ -773,6 +775,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-lead-review.test',
   '../services/__tests__/blueprint-peer-review.test',
   '../services/__tests__/blueprint-wave-gates-persist.test',
+  // ─── Phase 1 improvements: E12 retry classes / E1 clarify auto-skip / A6 task commit ───
+  '../services/__tests__/blueprint-phase1-improvements.test',
   // ─── Round 3: e2e-testing behavioral coverage ───
   '../services/__tests__/e2e-assertions-behavior.test',
   '../services/__tests__/e2e-service-runners-behavior.test',

@@ -506,6 +506,15 @@ export interface GrillDecisionForBlueprint {
 export interface BlueprintPhaseCompletion {
   phase: BlueprintPhaseType
   status: 'complete' | 'needs_clarification'
+  /**
+   * E1-fix — the field specify-phase.md actually instructs the LLM to emit
+   * (`"status"` is hardcoded to `"complete"` in the prompt's completion
+   * block; the signal rides here instead). Explicit so the veto is no longer
+   * vacuous. The index signature already admitted it — this is additive typing.
+   */
+  needsClarification?: boolean
+  /** LLM-supplied marker count — telemetry cross-check only, never a decision input. */
+  clarificationCount?: number
   artifacts?: Array<{ type: string; path: string }>
   [key: string]: unknown
 }

@@ -2,7 +2,8 @@
  * BuildDeliverable — renders implementation results.
  *
  * Shows task completion metrics, progress bar, task execution table,
- * and file lists (created / modified).
+ * and file lists (created / modified) — clickable, opening the shared
+ * file-viewer drawer via FileListSection.
  */
 
 import { useState, useMemo, type JSX } from 'react'
@@ -13,7 +14,6 @@ import {
   Loader2,
   Circle,
   AlertTriangle,
-  ChevronDown,
   SkipForward,
   Undo2
 } from 'lucide-react'
@@ -22,7 +22,7 @@ import type { GateReport } from '../../../../../../shared/gate-types'
 import { useBlueprintStore } from '../../../../store/blueprint.store'
 import { rendererLog } from '../../../../utils/logger'
 import { PHASE_ICONS } from '../phase-icons'
-import { FileChips } from '../BlueprintPlanCard'
+import { FileListSection } from '@renderer/components/common/FileListSection'
 import { DeliverableHeader, MetricTile, DiscoveriesSection, CappedMarkdownBlock } from './shared'
 import { findArtifact, extractDiscoveries } from './artifact-helpers'
 import { formatDurationMs } from '../detail/phase-summaries'
@@ -33,11 +33,13 @@ import { taskReadiness, waveCompletion } from '../../../../../../shared/task-rea
 export function BuildDeliverable({
   phase,
   duration,
-  tasks: dbTasks
+  tasks: dbTasks,
+  blueprintId
 }: {
   phase: BlueprintPhase
   duration: number | null
   tasks: BlueprintTask[]
+  blueprintId?: string
 }): JSX.Element {
   const config = PHASE_ICONS.build
   const build = findArtifact(phase.artifactsJson, 'build', 'build-metrics')
@@ -80,10 +82,6 @@ export function BuildDeliverable({
   // event exists in DAG mode — waves are advisory grouping).
   const readiness = useMemo(() => taskReadiness(dbTasks), [dbTasks])
   const waveDone = useMemo(() => waveCompletion(dbTasks), [dbTasks])
-
-  // Collapsible file list state
-  const [showCreated, setShowCreated] = useState(false)
-  const [showModified, setShowModified] = useState(false)
 
   // BP-TASK-USER-SKIP-01: optimistic overlay so the row updates before the
   // blueprint reload lands. taskId -> resolved skip state (null skippedAt = un-skipped).
@@ -351,23 +349,26 @@ export function BuildDeliverable({
         </div>
       )}
 
-      {/* Files created */}
+      {/* Files created / modified — clickable, open in the shared viewer.
+          blueprintId ctx → the viewer reads from the blueprint's execution
+          track, not the primary checkout. */}
       {filesCreated.length > 0 && (
-        <CollapsibleFileSection
-          label={`Files Created (${filesCreated.length})`}
+        <FileListSection
+          label="Files Created"
           files={filesCreated}
-          isOpen={showCreated}
-          onToggle={() => setShowCreated(!showCreated)}
+          ctx={blueprintId ? { blueprintId } : undefined}
+          collapsible
+          className="mb-4"
         />
       )}
 
-      {/* Files modified */}
       {filesModified.length > 0 && (
-        <CollapsibleFileSection
-          label={`Files Modified (${filesModified.length})`}
+        <FileListSection
+          label="Files Modified"
           files={filesModified}
-          isOpen={showModified}
-          onToggle={() => setShowModified(!showModified)}
+          ctx={blueprintId ? { blueprintId } : undefined}
+          collapsible
+          className="mb-4"
         />
       )}
 
@@ -664,32 +665,4 @@ function TaskStatusBadge({ task, skip }: { task: BlueprintTask; skip: SkipState 
         </span>
       )
   }
-}
-
-// ── Collapsible File Section ──
-
-function CollapsibleFileSection({
-  label,
-  files,
-  isOpen,
-  onToggle
-}: {
-  label: string
-  files: string[]
-  isOpen: boolean
-  onToggle: () => void
-}): JSX.Element {
-  return (
-    <div className="mb-4">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="flex items-center gap-2 text-xs font-semibold text-text-muted uppercase tracking-wider mb-2 hover:text-text-secondary transition-colors"
-      >
-        <ChevronDown size={12} className={`transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-        {label}
-      </button>
-      {isOpen && <FileChips files={files} />}
-    </div>
-  )
 }

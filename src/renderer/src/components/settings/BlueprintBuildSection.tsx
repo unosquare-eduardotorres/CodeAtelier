@@ -5,7 +5,8 @@ import {
   useBlueprintAutoMode,
   useMaxStreamLifetimeMin,
   useVerifyFeatureDiff,
-  useBlueprintFailureMemory
+  useBlueprintFailureMemory,
+  useAutoSkipClarify
 } from '@renderer/store'
 
 const AGENT_OPTIONS = [1, 2, 3, 4, 5, 6] as const
@@ -18,6 +19,7 @@ export default function BlueprintBuildSection(): React.JSX.Element {
   const lifetimeMin = useMaxStreamLifetimeMin()
   const featureDiff = useVerifyFeatureDiff()
   const failureMemory = useBlueprintFailureMemory()
+  const autoSkipClarify = useAutoSkipClarify()
   const { setPreference } = useAppPreferenceActions()
 
   return (
@@ -163,6 +165,36 @@ export default function BlueprintBuildSection(): React.JSX.Element {
             <span
               className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
                 failureMemory ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-surface-overlay border border-border-subtle rounded p-4 shadow-sm">
+        <div className="flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-text-primary">Auto-Skip Clarify</h4>
+            <p className="text-xs text-text-secondary mt-0.5">
+              Skip the CLARIFY phase when the SPECIFY output contains zero
+              clarification markers and the completion block does not flag any.
+              On by default — this is the pre-existing behaviour, now with a real
+              kill switch.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              void setPreference('autoSkipClarify', !autoSkipClarify).catch(console.error)
+            }}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors ${
+              autoSkipClarify ? 'bg-primary' : 'bg-border-muted'
+            }`}
+            role="switch"
+            aria-checked={autoSkipClarify}
+          >
+            <span
+              className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform ${
+                autoSkipClarify ? 'translate-x-4' : 'translate-x-0'
               }`}
             />
           </button>

@@ -15,15 +15,18 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, dirname } from 'node:path'
+import { join, basename, dirname } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 
 import {
   buildGateFixInstructions,
   captureGateBaseline,
   defaultCommandRunner,
+  divergedPacketTestFiles,
+  restorePacketTestFiles,
   runGates,
   selectAffectedTestFiles,
   type CommandOutcome,
@@ -771,6 +774,267 @@ describe('selectAffectedTestFiles', () => {
   })
 })
 
+describe('restorePacketTestFiles — a failed attempt must not poison the next one', () => {
+  const SPEC = "test('feature', () => { expect(feature()).toBe(42) })\n"
+  const WEAKENED = "test('feature', () => {})\n"
+
+  /** Red before the session and red after — the gate under test is not task-tests. */
+  const redRunner = (): CommandRunner =>
+    scriptedRunner({ 'run-task-tests': { exitCode: 1, output: ['1 failing'] } })
+
+  test('a weakened test file is restored byte-for-byte, and the next grading clears', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    // Attempt 1 edits the spec instead of the implementation.
+    write(dir, { 'src/feature.test.ts': WEAKENED })
+    const failed = await runGates(ctx, baseline)
+    const gate = failed.gates.find((g) => g.name === 'test-integrity')
+    assert.equal(gate?.verdict, 'fail')
+    assert.deepEqual(
+      gate?.files,
+      ['src/feature.test.ts'],
+      'the offending path must ride on the result — nothing should have to parse the prose'
+    )
+    assert.ok(
+      gate?.evidence.some((l) => l.includes('content differs')),
+      'the evidence must name the check that tripped, not just that one did'
+    )
+
+    const restored = restorePacketTestFiles(ctx, baseline, gate?.files ?? [])
+    assert.deepEqual(restored, ['src/feature.test.ts'])
+    assert.equal(
+      readFileSync(join(dir, 'src/feature.test.ts'), 'utf-8'),
+      SPEC,
+      'the captured BYTES, not a reconstruction of them'
+    )
+
+    // Attempt 2 touches nothing. Before the restore this graded FAIL on attempt
+    // 1's leftover, fingerprinted identically and tripped the stop-loss.
+    const after = await runGates(ctx, baseline)
+    assert.equal(verdictOf(after.gates, 'test-integrity'), 'pass')
+  })
+
+  test('a deleted test file is written back', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    rmSync(join(dir, 'src/feature.test.ts'))
+    assert.deepEqual(restorePacketTestFiles(ctx, baseline, ['src/feature.test.ts']), [
+      'src/feature.test.ts'
+    ])
+    assert.equal(readFileSync(join(dir, 'src/feature.test.ts'), 'utf-8'), SPEC)
+  })
+
+  test('a file the packet never declared is not ours to write', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC,
+      'src/other.test.ts': "test('other', () => {})\n"
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, { 'src/other.test.ts': 'wrecked\n' })
+    assert.deepEqual(restorePacketTestFiles(ctx, baseline, ['src/other.test.ts']), [])
+    assert.equal(
+      readFileSync(join(dir, 'src/other.test.ts'), 'utf-8'),
+      'wrecked\n',
+      'only files the baseline captured — i.e. declared in this packet — may be rewritten'
+    )
+  })
+
+  test('a captured path that escapes the execution root is refused', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const outsideDir = mkdtempSync(join(tmpdir(), 'gate-outside-'))
+    tempDirs.push(outsideDir)
+    const outside = join(outsideDir, 'victim.test.ts')
+    writeFileSync(outside, 'untouched\n')
+
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+    // Fabricated: `captureGateBaseline` cannot produce an escaping key, so the
+    // second bound is only reachable by forcing it.
+    const escaping = `../${basename(outsideDir)}/victim.test.ts`
+    baseline.testsBefore[escaping] = { hash: 'x', testCount: 1, content: 'PWNED\n' }
+
+    assert.deepEqual(restorePacketTestFiles(ctx, baseline, [escaping]), [])
+    assert.equal(readFileSync(outside, 'utf-8'), 'untouched\n')
+  })
+
+  test('a file the builder legitimately EXTENDED passes the gate, so restore never fires on it', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, { 'src/feature.test.ts': `${SPEC}test('feature edge case', () => {})\n` })
+    const report = await runGates(ctx, baseline)
+    const gate = report.gates.find((g) => g.name === 'test-integrity')
+    assert.equal(gate?.verdict, 'pass', 'authoring new tests in a packet file is a deliverable')
+    assert.equal(gate?.files, undefined, 'nothing to restore — the extension must survive')
+  })
+
+  test('a file that already matches the baseline is left alone and not reported', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    assert.deepEqual(
+      restorePacketTestFiles(ctx, baseline, ['src/feature.test.ts']),
+      [],
+      'a no-op must not be announced — the retry prompt would tell the builder a ' +
+        'restore happened that never did'
+    )
+    assert.equal(readFileSync(join(dir, 'src/feature.test.ts'), 'utf-8'), SPEC)
+  })
+
+  test('a packet test file a PEER also declares is skipped by the gate AND by the restore', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    // R1.2: the peer scheduler declares this file for another in-flight task.
+    const ctx = ctxFor(dir, redRunner(), { exemptFiles: ['src/feature.test.ts'] })
+    const baseline = await captureGateBaseline(ctx)
+
+    // The change is the PEER's, mid-session and uncommitted.
+    write(dir, { 'src/feature.test.ts': WEAKENED })
+    const report = await runGates(ctx, baseline)
+    const gate = report.gates.find((g) => g.name === 'test-integrity')
+    assert.equal(
+      gate?.verdict,
+      'unverifiable',
+      'this gate reads DISK, not the diff, so it needs the peer attribution every ' +
+        'other gate already gets — a peer edit is not this task’s violation'
+    )
+
+    assert.deepEqual(restorePacketTestFiles(ctx, baseline, ['src/feature.test.ts']), [])
+    assert.equal(
+      readFileSync(join(dir, 'src/feature.test.ts'), 'utf-8'),
+      WEAKENED,
+      'the kernel must never do what REVERT_SCOPE_RULE forbids the builder from ' +
+        'doing: overwrite a peer’s in-flight work with pre-session bytes'
+    )
+  })
+
+  test('a write that does not read back as the captured hash is reported as NOT restored', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    // The real causes — a short write, a full disk, a concurrent writer between
+    // the write and the read-back — cannot be produced deterministically, so the
+    // branch is driven by a capture whose hash does not describe its content.
+    // What is under test is the guard: the restore reports only what it can
+    // PROVE landed as the pre-session spec.
+    baseline.testsBefore['src/feature.test.ts'] = {
+      hash: createHash('sha256').update('something else entirely').digest('hex'),
+      testCount: 1,
+      content: SPEC
+    }
+    write(dir, { 'src/feature.test.ts': WEAKENED })
+
+    assert.deepEqual(
+      restorePacketTestFiles(ctx, baseline, ['src/feature.test.ts']),
+      [],
+      'announcing a restore that cannot be verified would make the next gate ' +
+        'failure unexplainable — the prompt says the file is back to spec'
+    )
+  })
+
+  test('the restore is not a wildcard: an unrelated source edit is left alone', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const feature = () => null\n',
+      'src/feature.test.ts': SPEC
+    })
+    const ctx = ctxFor(dir, redRunner())
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'src/feature.ts': 'export const feature = () => 42\n',
+      'src/feature.test.ts': WEAKENED
+    })
+    restorePacketTestFiles(ctx, baseline, ['src/feature.test.ts', 'src/feature.ts'])
+    assert.equal(
+      readFileSync(join(dir, 'src/feature.ts'), 'utf-8'),
+      'export const feature = () => 42\n',
+      'the implementation work of the failed attempt is never touched'
+    )
+    assert.ok(existsSync(join(dir, 'src/feature.test.ts')))
+  })
+})
+
+describe('divergedPacketTestFiles — the net for exits that never produce a verdict', () => {
+  const SPEC = "test('feature', () => { expect(feature()).toBe(42) })\n"
+  const WEAKENED = "test('feature', () => {})\n"
+  const TESTS = ['src/a.test.ts', 'src/b.test.ts', 'src/c.test.ts', 'src/d.test.ts']
+
+  test('reports weakened and deleted files, never an extension or a peer’s', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo(Object.fromEntries(TESTS.map((f) => [f, SPEC])))
+    const ctx = ctxFor(dir, scriptedRunner({}), {
+      packet: { allowedFiles: [], testFiles: TESTS },
+      // c is declared by another in-flight task.
+      exemptFiles: ['src/c.test.ts']
+    })
+    const baseline = await captureGateBaseline(ctx)
+
+    write(dir, {
+      'src/a.test.ts': WEAKENED,
+      // Authoring: strictly MORE tests than the spec started with.
+      'src/b.test.ts': `${SPEC}test('edge case', () => { expect(feature()).toBe(0) })\n`,
+      'src/c.test.ts': WEAKENED
+    })
+    rmSync(join(dir, 'src/d.test.ts'))
+
+    assert.deepEqual(
+      divergedPacketTestFiles(ctx, baseline),
+      ['src/a.test.ts', 'src/d.test.ts'],
+      'the sweep is hash-and-count only: it must catch a weakening and a deletion ' +
+        'while leaving an extension and a peer-declared file alone'
+    )
+  })
+
+  test('an intact tree sweeps nothing', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({ 'src/a.test.ts': SPEC })
+    const ctx = ctxFor(dir, scriptedRunner({}), {
+      packet: { allowedFiles: [], testFiles: ['src/a.test.ts'] }
+    })
+    const baseline = await captureGateBaseline(ctx)
+    assert.deepEqual(divergedPacketTestFiles(ctx, baseline), [])
+  })
+})
+
 describe('buildGateFixInstructions', () => {
   test('names the gate, the evidence and a mechanical instruction', () => {
     const text = buildGateFixInstructions({
@@ -803,6 +1067,48 @@ describe('buildGateFixInstructions', () => {
     })
     assert.ok(text.includes('git checkout'), 'names the exact action that destroyed the work')
     assert.ok(/re-?apply/i.test(text), 'kills the “somebody else will re-apply it” assumption')
+  })
+
+  test('a restored test file is named, so the builder does not try to restore it again', () => {
+    const report = {
+      overall: 'fail' as const,
+      gates: [
+        {
+          name: 'test-integrity' as const,
+          verdict: 'fail' as const,
+          evidence: [
+            'test file modified (content differs from the pre-session spec): src/a.test.ts'
+          ],
+          files: ['src/a.test.ts'],
+          durationMs: 1
+        }
+      ]
+    }
+    const text = buildGateFixInstructions(report, { restoredTestFiles: ['src/a.test.ts'] })
+    assert.ok(/ALREADY restored/.test(text))
+    assert.ok(text.includes('src/a.test.ts'))
+    assert.ok(/Do not edit them again/.test(text))
+
+    // And without a restore there is no claim that one happened.
+    assert.ok(!/ALREADY restored/.test(buildGateFixInstructions(report)))
+  })
+
+  test('the scope rule carves out the task’s OWN packet test files', () => {
+    const text = buildGateFixInstructions({
+      overall: 'fail',
+      gates: [
+        {
+          name: 'test-integrity',
+          verdict: 'fail',
+          evidence: ['test file deleted: t.ts'],
+          durationMs: 1
+        }
+      ]
+    })
+    assert.ok(
+      /Exception — the test files listed in YOUR OWN task packet/.test(text),
+      'the rule that forbids reverting foreign files must not read as forbidding the packet spec'
+    )
   })
 
   test('passing gates produce no fix prompt', () => {

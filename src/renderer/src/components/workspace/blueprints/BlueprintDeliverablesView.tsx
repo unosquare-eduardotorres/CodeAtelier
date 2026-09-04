@@ -167,7 +167,14 @@ function PhaseDeliverableContent({
     case 'review':
       return <ReviewDeliverable phase={phase} duration={duration} />
     case 'build':
-      return <BuildDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
+      return (
+        <BuildDeliverable
+          phase={phase}
+          duration={duration}
+          tasks={blueprint.tasks}
+          blueprintId={blueprint.id}
+        />
+      )
     case 'code-review':
       return <CodeReviewDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
     case 'verify':

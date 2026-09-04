@@ -80,7 +80,14 @@ export function PhaseJourneyItemContent({
     case 'review':
       return <ReviewDeliverable phase={phase} duration={duration} />
     case 'build':
-      return <BuildDeliverable phase={phase} duration={duration} tasks={tasks} />
+      return (
+        <BuildDeliverable
+          phase={phase}
+          duration={duration}
+          tasks={tasks}
+          blueprintId={blueprintId}
+        />
+      )
     case 'verify':
       return <VerifyDeliverable phase={phase} duration={duration} blueprintId={blueprintId} />
     default: {

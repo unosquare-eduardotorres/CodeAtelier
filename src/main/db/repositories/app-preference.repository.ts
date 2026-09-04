@@ -77,7 +77,10 @@ export class AppPreferenceRepository extends BaseRepository<
       // E3 — default OFF: see the note on AppPreferences.verifyFeatureDiff.
       verifyFeatureDiff: this.getBool('verify_feature_diff', false),
       // P2 — default OFF: see the note on AppPreferences.blueprintFailureMemory.
-      blueprintFailureMemory: this.getBool('blueprint_failure_memory', false)
+      blueprintFailureMemory: this.getBool('blueprint_failure_memory', false),
+      // E1-fix — default ON (preserves the effective pre-fix behaviour, where
+      // the unwritten settingsJson read made `!== false` always true).
+      autoSkipClarify: this.getBool('auto_skip_clarify', true)
     }
   }
 }

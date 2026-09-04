@@ -57,10 +57,101 @@ import { resolveContextTier } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { contextWindowResolver } from './context-window-resolver'
 import { syncBlueprintDone } from './jira-issue-sync.service'
+import { isSlowTransientError } from './opencode-transient-patterns'
 
 export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 
 const bpLog = log.scope('blueprint')
+
+// ── E12: per-class auto-retry backoff ──
+
+/** Max automatic retries per blueprint+phase before the failure surfaces to the user. */
+const MAX_PHASE_AUTO_RETRIES = 2
+
+/** A delay class for a transient phase failure. Order matters — first match wins. */
+interface RetryDelayClass {
+  name: string
+  test: RegExp | ((message: string) => boolean)
+  /** Base delay for the first attempt; later attempts multiply by the attempt number. */
+  baseMs: number
+  /** Full-jitter range added on top of the scaled base (0 = deterministic). */
+  jitterMs: number
+}
+
+/**
+ * Delay classes for transient phase failures. `isSlowTransientError` alone cannot
+ * serve as the classifier — it matches neither `Failed to create OpenCode session`
+ * (cold-bootstrap 500s) nor the rate-limit/overload class, the two that actually
+ * need longer backoff. First match wins, so the most specific class is first.
+ */
+const RETRY_DELAY_CLASSES: readonly RetryDelayClass[] = [
+  // Provider is throttling/overloaded — back off hard and de-synchronize retries.
+  // Patterns stay aligned with TRANSIENT_ERROR_PATTERNS (opencode-transient-patterns.ts)
+  // so the executor's in-stream classification and this phase-level backoff agree
+  // on what "overload" means.
+  {
+    name: 'overload',
+    test: /rate.?limit|overloaded|server_is_overloaded|too many requests|\b429\b|\b503\b/i,
+    baseMs: 30_000,
+    jitterMs: 30_000
+  },
+  // OpenCode cold-bootstrap: session.create 500s while MCP servers handshake.
+  {
+    name: 'cold-start',
+    test: /Failed to create OpenCode session/i,
+    baseMs: 15_000,
+    jitterMs: 15_000
+  },
+  // Timeout / connection-stall class — reuses the executor's shared classifier.
+  { name: 'slow', test: (m: string) => isSlowTransientError(m), baseMs: 15_000, jitterMs: 5_000 }
+]
+
+/** Default class when nothing matches — preserves today's flat 5s behaviour. */
+const DEFAULT_RETRY_DELAY = { name: 'default', baseMs: 5_000, jitterMs: 0 } as const
+
+export interface PhaseRetryDelay {
+  delayClass: string
+  delayMs: number
+}
+
+/**
+ * E12 — compute the auto-retry delay for a transient phase failure.
+ * Pure (besides the jitter draw), exported for tests. `attempt` is 1-based; later
+ * attempts fold the attempt number into the base: `baseMs * attempt + jitter`.
+ */
+export function classifyPhaseRetryDelay(error: string, attempt: number): PhaseRetryDelay {
+  const cls = RETRY_DELAY_CLASSES.find((c) =>
+    typeof c.test === 'function' ? c.test(error) : c.test.test(error)
+  )
+  const { name, baseMs, jitterMs } = cls ?? DEFAULT_RETRY_DELAY
+  const delayMs = Math.round(baseMs * attempt + (jitterMs > 0 ? Math.random() * jitterMs : 0))
+  return { delayClass: name, delayMs }
+}
+
+/**
+ * E12-fix — decide whether a scheduled auto-retry should actually dispatch.
+ * Pure and exported so the truth table is testable.
+ *
+ * Explicit NON-check: `status === 'failed'` must NOT block dispatch — every
+ * caller persists 'failed' BEFORE scheduling, so treating it as a bail
+ * condition suppresses 100% of retries (the premise corrected during the
+ * original E12 implementation). Only deleted, user-cancelled, a busy
+ * pipeline, or a superseded run (generation moved on) drop the retry.
+ */
+export function shouldDispatchScheduledRetry(input: {
+  blueprint: { status: string } | null | undefined
+  isRunning: boolean
+  scheduledGeneration: number
+  currentGeneration: number
+}): { dispatch: boolean; reason: string } {
+  if (input.isRunning) return { dispatch: false, reason: 'pipeline-busy' }
+  if (!input.blueprint) return { dispatch: false, reason: 'deleted' }
+  if (input.blueprint.status === 'cancelled') return { dispatch: false, reason: 'cancelled' }
+  if (input.currentGeneration !== input.scheduledGeneration) {
+    return { dispatch: false, reason: 'superseded' }
+  }
+  return { dispatch: true, reason: 'ok' }
+}
 
 /** Per-request cap. Long enough for a real paragraph, short enough to stay quotable. */
 const MAX_REVISION_FEEDBACK_CHARS = 2000
@@ -271,6 +362,15 @@ export type PendingApproval = NonNullable<BlueprintPipelineSnapshot['pendingAppr
 interface BlueprintPipelineState {
   running: boolean
   blueprintId: string | null
+  /**
+   * E12-fix — monotonic per-workspace run counter. Unlike `blueprintId`,
+   * markPipelineStopped does NOT reset it, which is exactly why the auto-retry
+   * guard uses it: the original guard compared `getActiveBlueprintId(...)` to
+   * the blueprint id, but every caller's `finally` runs markPipelineStopped
+   * (clearing blueprintId to null) before the retry timer fires, so the
+   * comparison was always `null !== id` and 100% of retries were dropped.
+   */
+  generation: number
   currentPhase: BlueprintPhaseType | null
   abortController: AbortController | null
   // M2: Additional fields for snapshot sync
@@ -374,7 +474,14 @@ export class BlueprintService extends EventEmitter {
    * Tracks auto-retry attempts per blueprint+phase to prevent retry loops.
    * Key: `${blueprintId}:${phase}`. Cleared on success or cancellation.
    */
-  private autoRetryAttempts = new Set<string>()
+  private autoRetryAttempts = new Map<string, number>()
+  /**
+   * E12-fix — pending auto-retry timers, keyed by `${blueprintId}:${phase}`.
+   * Delays run up to ~90s (class base × attempt + jitter), so a blueprint
+   * cancelled or deleted during the window MUST clear its pending timer —
+   * the abandonment window is 18× wider than the original flat 5s.
+   */
+  private autoRetryTimers = new Map<string, NodeJS.Timeout>()
 
   // ── Pipeline State ──
 
@@ -384,6 +491,7 @@ export class BlueprintService extends EventEmitter {
       state = {
         running: false,
         blueprintId: null,
+        generation: 0,
         currentPhase: null,
         abortController: null,
         phaseStartedAt: null,
@@ -570,6 +678,15 @@ export class BlueprintService extends EventEmitter {
     return this.pipelines.get(workspaceId)?.blueprintId ?? null
   }
 
+  /**
+   * E12-fix — monotonic per-workspace run counter. Unlike `blueprintId`,
+   * markPipelineStopped does NOT reset it — which is exactly why the
+   * auto-retry guard uses it.
+   */
+  getPipelineGeneration(workspaceId: string): number {
+    return this.pipelines.get(workspaceId)?.generation ?? 0
+  }
+
   /** Get the abort signal for a workspace pipeline — used by phase services to race against cancel. */
   getAbortSignal(workspaceId: string): AbortSignal | null {
     return this.pipelines.get(workspaceId)?.abortController?.signal ?? null
@@ -604,6 +721,7 @@ export class BlueprintService extends EventEmitter {
     const state = this.getOrCreatePipeline(workspaceId)
     state.running = true
     state.blueprintId = blueprintId
+    state.generation += 1 // E12-fix: new run → supersede any pending auto-retry
     state.currentPhase = phase
     state.abortController = new AbortController()
     state.phaseStartedAt = Date.now()
@@ -750,13 +868,17 @@ export class BlueprintService extends EventEmitter {
   }
 
   /**
-   * Schedule a single automatic retry for a transient phase failure.
+   * Schedule an automatic retry for a transient phase failure (E12: up to
+   * MAX_PHASE_AUTO_RETRIES, delay scaled per error class with jitter).
    *
    * Returns `true` if a retry was scheduled (caller should include `autoRetry: true`
    * in the phaseComplete payload so the UI shows "retrying" instead of a hard failure).
    *
-   * • Only one auto-retry per blueprint+phase — second failure surfaces to user.
-   * • 5-second delay before retry to let cleanup complete.
+   * • Up to MAX_PHASE_AUTO_RETRIES (2) per blueprint+phase — further failures surface to user.
+   * • Class-based delay with jitter — overload/cold-start back off harder than the default.
+   * • Generation-guarded dispatch (E12-fix): the pipeline generation captured at
+   *   schedule time is compared at fire time — markPipelineStopped clearing
+   *   `blueprintId` between schedule and fire no longer suppresses the retry.
    * • Emits `autoRetry` event for the IPC layer to dispatch the phase start.
    * • Emits `phaseProgress` with a system message for the UI.
    */
@@ -773,25 +895,42 @@ export class BlueprintService extends EventEmitter {
     }
 
     const key = `${ctx.blueprintId}:${ctx.phase}`
-    if (this.autoRetryAttempts.has(key)) {
+    const attempt = (this.autoRetryAttempts.get(key) ?? 0) + 1
+    if (attempt > MAX_PHASE_AUTO_RETRIES) {
       bpLog.info(
-        `[phase-auto-retry] Already retried ${ctx.phase} for blueprint ${ctx.blueprintId} — surfacing to user`
+        `[phase-auto-retry] Already retried ${ctx.phase} ${MAX_PHASE_AUTO_RETRIES}× for blueprint ` +
+          `${ctx.blueprintId} — surfacing to user`
       )
       return false
     }
 
-    this.autoRetryAttempts.add(key)
+    // E12-fix: attempts increment on DISPATCH, not on schedule — a retry that
+    // the guard later drops (cancelled / superseded / pipeline-busy) must not
+    // burn one of the MAX_PHASE_AUTO_RETRIES budget.
+    const { delayClass, delayMs } = classifyPhaseRetryDelay(ctx.error, attempt)
+    // E12-fix: capture the pipeline generation NOW. markPipelineStopped (in the
+    // caller's finally) nulls blueprintId but does NOT touch generation; a NEW
+    // run (markPipelineRunning) bumps it, which is the "workspace moved on"
+    // signal the old blueprintId comparison tried and failed to express.
+    const scheduledGeneration = this.getPipelineGeneration(ctx.workspaceId)
     bpLog.info(
-      `[phase-auto-retry] Scheduling auto-retry for ${ctx.phase} phase of blueprint ${ctx.blueprintId} in 5s`
+      `[phase-auto-retry] Scheduling auto-retry ${attempt}/${MAX_PHASE_AUTO_RETRIES} for ` +
+        `${ctx.phase} phase of blueprint ${ctx.blueprintId} in ${delayMs}ms (class: ${delayClass}, ` +
+        `generation: ${scheduledGeneration})`
     )
-    // E11 — recorded when the retry is SCHEDULED. The dispatch 5 s later can be
+    // E11 — recorded when the retry is SCHEDULED. The dispatch later can be
     // skipped (another pipeline started), and a retry that was decided on and
     // then dropped is exactly the case the log line alone loses.
     blueprintTelemetryRepository.record({
       blueprintId: ctx.blueprintId,
       kind: 'auto_retry',
       phase: ctx.phase,
-      data: { error: ctx.error.slice(0, 300), delayMs: 5000 }
+      data: {
+        error: ctx.error.slice(0, 300),
+        delayMs,
+        delayClass,
+        attempt
+      }
     })
 
     // Emit system message so the user sees the retry notice
@@ -799,22 +938,43 @@ export class BlueprintService extends EventEmitter {
       blueprintId: ctx.blueprintId,
       workspaceId: ctx.workspaceId,
       phase: ctx.phase,
-      text: `Phase failed (${ctx.error.slice(0, 80)}) — retrying automatically…`,
+      text: `Phase failed (${ctx.error.slice(0, 80)}) — retrying automatically in ${Math.round(delayMs / 1000)}s…`,
       kind: 'system'
     })
 
     // Delay to let finally blocks (session.stop, markPipelineStopped) complete
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      this.autoRetryTimers.delete(key)
       try {
-        // Guard: if the pipeline is now running (user started another blueprint),
-        // skip the auto-retry — don't interrupt the active pipeline.
-        if (this.isRunning(ctx.workspaceId)) {
+        const decision = shouldDispatchScheduledRetry({
+          blueprint: blueprintRepository.findById(ctx.blueprintId),
+          isRunning: this.isRunning(ctx.workspaceId),
+          scheduledGeneration,
+          currentGeneration: this.getPipelineGeneration(ctx.workspaceId)
+        })
+        if (!decision.dispatch) {
+          // E12-fix: telemetry honesty — the schedule-time row above cannot
+          // distinguish "retried" from "scheduled then dropped"; this is what
+          // made the original guard bug invisible in analysis.
+          blueprintTelemetryRepository.record({
+            blueprintId: ctx.blueprintId,
+            kind: 'auto_retry',
+            phase: ctx.phase,
+            data: { outcome: 'dropped', reason: decision.reason, attempt }
+          })
           bpLog.info(
-            `[phase-auto-retry] Pipeline now running for workspace ${ctx.workspaceId} ` +
-              `— skipping scheduled retry for blueprint ${ctx.blueprintId}`
+            `[phase-auto-retry] Dropping scheduled retry for blueprint ${ctx.blueprintId} ` +
+              `(${ctx.phase}) — reason: ${decision.reason}`
           )
           return
         }
+        this.autoRetryAttempts.set(key, attempt) // increments on dispatch, not schedule
+        blueprintTelemetryRepository.record({
+          blueprintId: ctx.blueprintId,
+          kind: 'auto_retry',
+          phase: ctx.phase,
+          data: { outcome: 'dispatched', reason: 'ok', attempt }
+        })
         this.retryPhase(ctx.blueprintId, { resetRemediation: false })
         this.emit('autoRetry', {
           blueprintId: ctx.blueprintId,
@@ -825,18 +985,29 @@ export class BlueprintService extends EventEmitter {
       } catch (err) {
         bpLog.error(`[phase-auto-retry] Failed to dispatch retry:`, err)
       }
-    }, 5000)
+    }, delayMs)
+    this.autoRetryTimers.set(key, timer)
 
     return true
   }
 
   /**
    * Clear auto-retry tracking for a blueprint (call on success or cancellation).
+   * E12-fix: also clears any PENDING retry timer — without this, cancelling a
+   * blueprint mid-backoff lets the timer fire into a cancelled run up to ~90s
+   * later (the guard would drop it, but the timer and its attempt bookkeeping
+   * should not outlive the blueprint's interest in retrying).
    */
   clearAutoRetryState(blueprintId: string): void {
-    for (const key of this.autoRetryAttempts) {
+    for (const key of this.autoRetryAttempts.keys()) {
       if (key.startsWith(`${blueprintId}:`)) {
         this.autoRetryAttempts.delete(key)
+      }
+    }
+    for (const key of this.autoRetryTimers.keys()) {
+      if (key.startsWith(`${blueprintId}:`)) {
+        clearTimeout(this.autoRetryTimers.get(key))
+        this.autoRetryTimers.delete(key)
       }
     }
   }

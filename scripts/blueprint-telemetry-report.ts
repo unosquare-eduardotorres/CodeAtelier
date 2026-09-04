@@ -112,6 +112,38 @@ function main(): void {
   console.log('incidents by kind (all runs):')
   for (const [kind, n] of kinds) console.log(`  ${kind.padEnd(22)} ${String(n).padStart(6)}`)
 
+  // E12-fix — auto_retry honesty: schedule-time rows say a retry was decided
+  // on; only fire-time rows say it dispatched. The original guard bug (100% of
+  // retries silently dropped) was invisible precisely because the table mixed
+  // the two. Split the counts so a regression cannot hide again.
+  const autoRetryRows = db
+    .prepare(
+      `SELECT data FROM blueprint_telemetry WHERE kind = 'auto_retry'`
+    )
+    .all() as { data: string | null }[]
+  if (autoRetryRows.length > 0) {
+    let scheduledOnly = 0
+    let dispatched = 0
+    let dropped = 0
+    for (const row of autoRetryRows) {
+      let data: Record<string, unknown> = {}
+      try {
+        data = row.data ? (JSON.parse(row.data) as Record<string, unknown>) : {}
+      } catch {
+        data = {}
+      }
+      if (data.outcome === 'dispatched') dispatched++
+      else if (data.outcome === 'dropped') dropped++
+      else scheduledOnly++ // schedule-time row (pre-fire or fire-time rows absent)
+    }
+    console.log(`\nauto_retry honesty: scheduled=${autoRetryRows.length} dispatched=${dispatched} dropped=${dropped}`)
+    if (scheduledOnly === autoRetryRows.length && autoRetryRows.length > 0) {
+      console.log(
+        `  ⚠ every auto_retry row is schedule-time only — fire-time rows are missing (old build?)`
+      )
+    }
+  }
+
   // ── 2. One run's narrative ──
   // Picking WHICH run is not a repository concern, so it is asked of the handle
   // directly; everything that reads telemetry itself goes through the repository.

@@ -7,7 +7,7 @@
  *  - Scope icons with semantic color chips (backend, frontend, db, shared, tests)
  *  - Proper typography: readable sizes, zebra striping, hover states
  *  - Extra columns: user story, depends-on, tests included, parallel badge
- *  - Files: wrapped mono chips, 3 visible + expandable "+N more" toggle
+ *  - Files: wrapped mono chips with language icons (FileRow compact)
  *  - Tech stack: labeled chips instead of tiny inline text
  *  - Header: item count + total files count
  */
@@ -24,11 +24,9 @@ import {
   CheckCircle2,
   Zap,
   ChevronDown,
-  ChevronRight,
-  FileCode2,
-  FileType,
-  Palette
+  ChevronRight
 } from 'lucide-react'
+import FileRow from '../../common/FileRow'
 
 // ── Scope config ────────────────────────────────────────────────────────────
 
@@ -44,55 +42,6 @@ const PRIORITY_CONFIG: Record<string, { label: string; colorClass: string }> = {
   P1: { label: 'P1', colorClass: 'text-danger bg-danger/15 border-danger/30' },
   P2: { label: 'P2', colorClass: 'text-warning bg-warning/15 border-warning/30' },
   P3: { label: 'P3', colorClass: 'text-info bg-info/15 border-info/30' }
-}
-
-// ── File type icon helper ───────────────────────────────────────────────────
-
-export function getFileIcon(filePath: string): React.JSX.Element {
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
-  if (['tsx', 'jsx'].includes(ext)) return <FileCode2 size={12} className="text-info" />
-  if (['ts', 'js', 'mjs', 'cjs'].includes(ext))
-    return <FileCode2 size={12} className="text-accent" />
-  if (['css', 'scss', 'less'].includes(ext)) return <Palette size={12} className="text-success" />
-  return <FileType size={12} className="text-text-muted" />
-}
-
-// ── File chips with expand toggle ───────────────────────────────────────────
-
-export function FileChips({ files }: { files: string[] }): React.JSX.Element {
-  const [expanded, setExpanded] = useState(false)
-  const visible = expanded ? files : files.slice(0, 3)
-  const hiddenCount = files.length - 3
-
-  return (
-    <div className="flex flex-wrap gap-1">
-      {visible.map((f) => (
-        <span
-          key={f}
-          className="inline-flex items-center gap-1 font-mono text-xs bg-surface-inset px-1.5 py-0.5 rounded text-text-muted leading-tight"
-        >
-          {getFileIcon(f)}
-          {f}
-        </span>
-      ))}
-      {hiddenCount > 0 && !expanded && (
-        <button
-          onClick={() => setExpanded(true)}
-          className="inline-flex items-center text-xs text-accent hover:text-accent/80 font-medium cursor-pointer border border-accent/30 rounded px-1.5 py-0.5"
-        >
-          +{hiddenCount} more
-        </button>
-      )}
-      {expanded && hiddenCount > 0 && (
-        <button
-          onClick={() => setExpanded(false)}
-          className="text-xs text-text-muted hover:text-text-secondary font-medium cursor-pointer"
-        >
-          show less
-        </button>
-      )}
-    </div>
-  )
 }
 
 // ── Scope chip ──────────────────────────────────────────────────────────────
@@ -286,10 +235,13 @@ export function BlueprintPlanCard({
                       </div>
                     )}
 
-                    {/* Files */}
+                    {/* Files — static compact chips: planned files have no
+                        disk presence, so nothing to open in a viewer. */}
                     {files.length > 0 && (
-                      <div className="mt-2">
-                        <FileChips files={files} />
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {files.map((f) => (
+                          <FileRow key={f} path={f} compact />
+                        ))}
                       </div>
                     )}
                   </div>
@@ -449,8 +401,10 @@ function TaskRow({
           )}
 
           {files.length > 0 && (
-            <div className="mt-1.5">
-              <FileChips files={files} />
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {files.map((f) => (
+                <FileRow key={f} path={f} compact />
+              ))}
             </div>
           )}
         </div>

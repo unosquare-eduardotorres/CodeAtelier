@@ -62,6 +62,30 @@ export type BlueprintTelemetryKind =
    * "15/15 verified" can be checked against the tree rather than trusted.
    */
   | 'reconciliation'
+  /**
+   * A6 — one row per enforced per-task commit (mode: enforced/failed). Tracks
+   * how often the backstop had to fire vs. the agent committing on its own.
+   * A6-fix adds mode: 'unattributable' — dirty files claimed by neither
+   * filePathsJson nor completion.filesModified, left uncommitted on purpose.
+   */
+  | 'task_commit'
+  /**
+   * One row per kernel restore of a packet test file to its pre-session bytes,
+   * carrying the stage that triggered it (ladder / escalation / sweep /
+   * peer-review), the attempt and the file count. The restore is a decision
+   * point the logs alone cannot settle: "does it rescue runs, or is it masking
+   * a builder that keeps editing the spec" is a frequency question, and a
+   * sweep firing on every task means the ladder's own restore is not reaching
+   * the damage.
+   */
+  | 'test_restore'
+  /**
+   * E1-fix — one row per SPECIFY completion recording the CLARIFY auto-skip
+   * decision (skipped or not, markerCount, veto state, reason). Without it
+   * there is no way to tell "the skip works" from "it never fires" — in
+   * particular the checklist false-positive path that suppresses every skip.
+   */
+  | 'clarify_skip'
 
 export interface BlueprintTelemetryRow {
   id: string

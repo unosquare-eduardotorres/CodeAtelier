@@ -31,7 +31,8 @@ export {
   useUserAvatarVariant,
   useBlueprintAutoMode,
   useVerifyFeatureDiff,
-  useBlueprintFailureMemory
+  useBlueprintFailureMemory,
+  useAutoSkipClarify
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'

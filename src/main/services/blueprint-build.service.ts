@@ -58,10 +58,14 @@ import {
   buildGateFixInstructions,
   captureGateBaseline,
   defaultCommandRunner,
+  divergedPacketTestFiles,
   isBaselineDiffEmpty,
+  MAX_LISTED_PATHS,
+  restorePacketTestFiles,
   runGates,
   runWaveCommandGates,
   scanTaskCommitSurvival,
+  TASK_ID_IN_SUBJECT,
   type GateBaseline,
   type GateTaskContext
 } from './blueprint-gates.service'
@@ -110,7 +114,7 @@ import {
   branchHeldElsewhereError
 } from './blueprint-track'
 import { recordBaselineCommit } from './blueprint-modified-files'
-
+import simpleGit from 'simple-git'
 const bpLog = log.scope('blueprint-build')
 
 /** Format peer-review findings as builder fix instructions (M5). Exported for tests. */
@@ -337,6 +341,31 @@ interface TaskWriteActivity {
   bashCalls: number
 }
 
+/**
+ * The paths a FAILING `test-integrity` verdict named, in the machine-readable
+ * form (`GateResult.files`) rather than the prose. A passing gate, or a failure
+ * of any other gate, names nothing — in particular a file the builder
+ * legitimately EXTENDED passes and is never in this list.
+ */
+function failedTestIntegrityFiles(report: GateReport): readonly string[] {
+  return report.gates.find((g) => g.name === 'test-integrity' && g.verdict === 'fail')?.files ?? []
+}
+
+/** What one task's whole gate ladder needs, from dispatch through escalation. */
+interface TaskLadderParams {
+  task: BlueprintTask
+  blueprintId: string
+  workspaceId: string
+  workspacePath: string
+  executionPath: string
+  phaseContext: import('../../shared/blueprint-types').PhaseContext
+  priorDiscoveries: string[]
+  tDispatch: number
+  waveNum: number
+  /** P1a: every task in the blueprint, for peer-file exemption. */
+  peers?: readonly BlueprintTask[]
+}
+
 /** In-flight task metadata for the parallel scheduler. */
 interface InFlightEntry {
   promise: Promise<TaskResult>
@@ -444,6 +473,30 @@ function filesOverlap(a: Set<string>, b: Set<string>): boolean {
     if (b.has(f)) return true
   }
   return false
+}
+
+/**
+ * A6 — build the enforced per-task commit subject: `feat: <description> (<taskId>)`.
+ *
+ * The shape is a CONTRACT, not a preference: `scanTaskCommitSurvival` attributes
+ * commits to tasks by matching `TASK_ID_IN_SUBJECT` (imported, never duplicated)
+ * against the subject, and the per-attempt destructive-revert gate + L3
+ * reconciliation both lean on that attribution. Exported so the unit test can
+ * assert the two can never drift apart.
+ */
+export function buildTaskCommitSubject(input: { taskId: string; description: string }): string {
+  const type = 'feat' // BlueprintTask carries no type field — fixed prefix, no dead knob
+  const desc = input.description.replace(/\s+/g, ' ').trim().slice(0, 72)
+  const subject = `${type}: ${desc} (${input.taskId})`
+  if (!TASK_ID_IN_SUBJECT.test(subject)) {
+    // Defensive: a task id that cannot match the scan's pattern would make the
+    // commit invisible to attribution — better an explicit error than a silent
+    // unverifiable gate.
+    throw new Error(
+      `buildTaskCommitSubject: taskId "${input.taskId}" does not match TASK_ID_IN_SUBJECT — cannot build an attributable commit subject`
+    )
+  }
+  return subject
 }
 
 export class BlueprintBuildService extends EventEmitter {
@@ -1525,22 +1578,29 @@ export class BlueprintBuildService extends EventEmitter {
         cap = this.halveCapOnOverload(cap, 'executeDag', settled.taskId)
       }
 
-      this.handleTaskCompletion({
+      // A6-fix — hoisted ABOVE handleTaskCompletion: the enforced per-task
+      // commit intersects dirty paths with the task's own claims, and the
+      // agent's reported filesModified IS one of those claim sources.
+      const reportedModified = asStringArray(settled.taskResult.completion?.filesModified)
+
+      await this.handleTaskCompletion({
         task: settled.entry.task,
         taskResult: settled.taskResult,
         blueprintId,
         workspaceId,
         waveNum: settled.entry.task.wave,
-        result
+        result,
+        executionPath,
+        workspacePath,
+        reportedFiles: reportedModified
       })
       terminal.add(settled.taskId)
       completionsSinceGate++
       markComplete(dag, settled.taskId)
 
       if (settled.taskResult.success) {
-        const modified = asStringArray(settled.taskResult.completion?.filesModified)
-        if (modified.length > 0) {
-          reportedFiles.set(settled.taskId, normalizePaths(modified))
+        if (reportedModified.length > 0) {
+          reportedFiles.set(settled.taskId, normalizePaths(reportedModified))
         }
       } else {
         failedTaskIds.add(settled.taskId)
@@ -1995,21 +2055,27 @@ export class BlueprintBuildService extends EventEmitter {
         cap = this.halveCapOnOverload(cap, 'executeWave', settled.taskId)
       }
 
-      this.handleTaskCompletion({
+      // A6-fix — hoisted above handleTaskCompletion for the same reason as
+      // executeDag: the commit needs the settled task's own claims at settle time.
+      const reportedModified = asStringArray(settled.taskResult.completion?.filesModified)
+
+      await this.handleTaskCompletion({
         task: settled.entry.task,
         taskResult: settled.taskResult,
         blueprintId,
         workspaceId,
         waveNum,
-        result
+        result,
+        executionPath,
+        workspacePath,
+        reportedFiles: reportedModified
       })
 
       // H2 FIX: Collect reported filesModified for post-wave overlap detection.
       // R2 FIX: Guard via asStringArray — LLM may emit a string, object, or mixed array.
       if (settled.taskResult.success) {
-        const modified = asStringArray(settled.taskResult.completion?.filesModified)
-        if (modified.length > 0) {
-          reportedFiles.set(settled.taskId, normalizePaths(modified))
+        if (reportedModified.length > 0) {
+          reportedFiles.set(settled.taskId, normalizePaths(reportedModified))
         }
       }
       syncRunningTasks()
@@ -2253,19 +2319,7 @@ export class BlueprintBuildService extends EventEmitter {
    * `unverifiable` never enters the ladder: it is recorded in the ledger, warned
    * about, and the task advances. That is the invariant the whole stack rests on.
    */
-  private async executeTaskWithGates(params: {
-    task: BlueprintTask
-    blueprintId: string
-    workspaceId: string
-    workspacePath: string
-    executionPath: string
-    phaseContext: import('../../shared/blueprint-types').PhaseContext
-    priorDiscoveries: string[]
-    tDispatch: number
-    waveNum: number
-    /** P1a: every task in the blueprint, for peer-file exemption. */
-    peers?: readonly BlueprintTask[]
-  }): Promise<TaskResult> {
+  private async executeTaskWithGates(params: TaskLadderParams): Promise<TaskResult> {
     const { task, blueprintId, workspaceId, workspacePath, executionPath } = params
 
     const gateCtx: GateTaskContext = {
@@ -2321,6 +2375,40 @@ export class BlueprintBuildService extends EventEmitter {
         kind: 'system'
       })
     }
+
+    // P1 — the tree-driven net around the whole ladder. In `finally` so a THROW
+    // is swept too: a session that damaged a packet test file and then died is
+    // exactly the exit that used to leave the damage on disk, where the
+    // operator's next Retry absorbs it as the new baseline.
+    let outcome: TaskResult | null = null
+    try {
+      outcome = await this.runGateLadder(params, gateCtx, baseline)
+      return outcome
+    } finally {
+      if (baseline && !outcome?.success) {
+        this.sweepPacketTestDamage(gateCtx, baseline, {
+          blueprintId,
+          workspaceId,
+          taskId: task.taskId
+        })
+      }
+    }
+  }
+
+  /**
+   * The retry ladder itself: builder attempts, the B3 stop-loss and the
+   * escalation rung.
+   *
+   * Split out of `executeTaskWithGates` so the baseline capture and the
+   * post-ladder sweep can bracket it. The sweep needs ONE exit point, and the
+   * ladder has five returns plus a throw path.
+   */
+  private async runGateLadder(
+    params: TaskLadderParams,
+    gateCtx: GateTaskContext,
+    baseline: GateBaseline | null
+  ): Promise<TaskResult> {
+    const { task, blueprintId, workspaceId, workspacePath } = params
 
     // P0 — one box per TASK, deliberately outside the attempt loop. See
     // `TaskWriteActivity`: the per-attempt counters inside `executeTask` cannot
@@ -2463,6 +2551,11 @@ export class BlueprintBuildService extends EventEmitter {
         const peerReviewed = await this.runPeerReviewIfEnabled({
           ...ladderParams,
           baselineCommit: baseline.baselineCommit,
+          // The peer-review fix attempt is a model with write access. Without
+          // the real capture its re-grade sees `testsBefore: {}` and
+          // `test-integrity` goes `unverifiable` — leaving it the only ungated
+          // writer in the pipeline.
+          testsBefore: baseline.testsBefore,
           exemptFiles: gateCtx.exemptFiles
         })
         // P3b — `gradeTask` persists on EVERY grading, latest-wins, and the
@@ -2481,7 +2574,24 @@ export class BlueprintBuildService extends EventEmitter {
         }
       }
 
-      gateFixInstructions = buildGateFixInstructions(report)
+      // The gates grade the WORKING TREE against a baseline captured once,
+      // before attempt 1, and nothing else in this ladder reverts the tree — a
+      // failed attempt's edits stay on disk (`commitTaskWork` runs on success
+      // only). So an attempt that weakened a packet test file poisons every
+      // attempt after it: the next one is graded on damage it did not do,
+      // fails identically, trips the B3 stop-loss below, and hands the lead
+      // model the same unfixable state. Restoring here — before the
+      // fingerprint, and before the `break` into escalation — is what makes an
+      // identical fingerprint mean what B3 assumes it means.
+      const restoredTestFiles = this.restorePacketTests(
+        gateCtx,
+        baseline,
+        failedTestIntegrityFiles(report),
+        { blueprintId, workspaceId, taskId: task.taskId },
+        { stage: 'ladder', attempt }
+      )
+
+      gateFixInstructions = buildGateFixInstructions(report, { restoredTestFiles })
       const failedNames = report.gates
         .filter((g) => g.verdict === 'fail')
         .map((g) => g.name)
@@ -2613,6 +2723,96 @@ export class BlueprintBuildService extends EventEmitter {
   }
 
   /**
+   * Undo an attempt's edits to the packet's pre-authored test files.
+   *
+   * Bounded by the list the caller passes, which `restorePacketTestFiles`
+   * bounds again to files the baseline actually captured (so, declared in the
+   * packet), resolving inside the execution path, and NOT declared by a peer
+   * task. A file the builder legitimately EXTENDED passes the gate and is never
+   * in a report-driven list; the sweep skips it explicitly.
+   *
+   * Never fatal: a tree we could not repair is exactly the tree we had.
+   */
+  private restorePacketTests(
+    gateCtx: GateTaskContext,
+    baseline: GateBaseline,
+    offending: readonly string[],
+    ids: { blueprintId: string; workspaceId: string; taskId: string },
+    origin: { stage: 'ladder' | 'escalation' | 'sweep' | 'peer-review'; attempt?: number }
+  ): string[] {
+    if (offending.length === 0) return []
+
+    let restored: string[] = []
+    try {
+      restored = restorePacketTestFiles(gateCtx, baseline, offending)
+    } catch (err) {
+      bpLog.warn(`[gates] Packet test-file restore failed for ${ids.taskId}:`, err)
+      return []
+    }
+    if (restored.length === 0) return []
+
+    const listed = restored.slice(0, MAX_LISTED_PATHS).join(', ')
+    const more =
+      restored.length > MAX_LISTED_PATHS ? ` …and ${restored.length - MAX_LISTED_PATHS} more` : ''
+
+    bpLog.info(
+      `[gates] Task ${ids.taskId} — restored ${restored.length} packet test file(s) to the ` +
+        `pre-session spec (${origin.stage}): ${listed}${more}`
+    )
+    this.safeEmit('phaseProgress', {
+      blueprintId: ids.blueprintId,
+      workspaceId: ids.workspaceId,
+      phase: 'build',
+      text:
+        `↺ Task ${ids.taskId}: restored ${restored.length} packet test file(s) ` +
+        `weakened by the failed attempt — ${listed}${more}`,
+      kind: 'system'
+    })
+    // E11 — after the decision is taken and the message is out.
+    blueprintTelemetryRepository.record({
+      blueprintId: ids.blueprintId,
+      kind: 'test_restore',
+      phase: 'build',
+      taskId: ids.taskId,
+      ...(origin.attempt !== undefined ? { attempt: origin.attempt } : {}),
+      data: {
+        stage: origin.stage,
+        fileCount: restored.length,
+        offeredCount: offending.length,
+        files: restored.slice(0, MAX_LISTED_PATHS)
+      }
+    })
+    return restored
+  }
+
+  /**
+   * The tree-driven net: whatever the ladder did or failed to do, a task that
+   * did not succeed must not END with a weakened packet spec on disk.
+   *
+   * The report-driven restore above only fires where a `test-integrity` verdict
+   * exists, and the ladder has exits that produce none — `runGates`
+   * short-circuits before test-integrity when `write-set` or `stub-scan` fails,
+   * and a session that fails outright or is aborted is never graded. Left
+   * behind, that damage is laundered by the operator's next Retry: the fresh
+   * baseline captures the weakened file as the spec and every gate goes green.
+   * A false green is worse than the sticky red this feature replaced.
+   */
+  private sweepPacketTestDamage(
+    gateCtx: GateTaskContext,
+    baseline: GateBaseline,
+    ids: { blueprintId: string; workspaceId: string; taskId: string }
+  ): void {
+    try {
+      const diverged = divergedPacketTestFiles(gateCtx, baseline)
+      this.restorePacketTests(gateCtx, baseline, diverged, ids, { stage: 'sweep' })
+    } catch (err) {
+      // Best effort by construction: this runs on the way out of a task that
+      // already failed, and must never replace its failure with its own.
+      bpLog.warn(`[gates] Packet test-file sweep failed for ${ids.taskId}:`, err)
+    }
+  }
+
+  /**
    * M5 — advisory per-task peer review, dispatched after the gates pass.
    *
    * Off unless the `blueprint:peer-review` role is bound (an optional role —
@@ -2634,6 +2834,8 @@ export class BlueprintBuildService extends EventEmitter {
     tDispatch: number
     waveNum: number
     baselineCommit: string | null
+    /** The real pre-session packet test files, so the re-grade judges them too. */
+    testsBefore?: GateBaseline['testsBefore']
     exemptFiles?: readonly string[]
     peers?: readonly BlueprintTask[]
     /** P0 — the task's cumulative write activity; the fix attempt adds to it. */
@@ -2700,12 +2902,23 @@ export class BlueprintBuildService extends EventEmitter {
     const baseline: GateBaseline = {
       baselineCommit: params.baselineCommit,
       preexistingDirty: [],
-      testsBefore: {},
+      testsBefore: params.testsBefore ?? {},
       redProof: 'unavailable',
       redEvidence: []
     }
     const fixReport = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
     if (fixReport.overall === 'fail') {
+      // Same guarantee as every other rung: a fix attempt that weakened the
+      // packet spec does not get to leave it weakened. This one never blocks
+      // the task, so without the restore the damage would ship with a passing
+      // report from the ORIGINAL attempt on the row.
+      this.restorePacketTests(
+        gateCtx,
+        baseline,
+        failedTestIntegrityFiles(fixReport),
+        { blueprintId, workspaceId, taskId: task.taskId },
+        { stage: 'peer-review' }
+      )
       blueprintPeerReviewService.recordSurvivingFindings(
         blueprintId,
         task.taskId,
@@ -2857,6 +3070,20 @@ export class BlueprintBuildService extends EventEmitter {
     this.refreshExemptFiles(gateCtx, params.peers)
     const report = await this.gradeTask(gateCtx, baseline, task, blueprintId, workspaceId)
     if (report.overall !== 'fail') return { ...result, gateReport: report }
+
+    // The lead model just failed its own grading, and this is where the most
+    // common terminal path ENDS — so without this the run finishes with the
+    // weakened spec on disk. The operator clicks Retry, `captureGateBaseline`
+    // re-reads the weakened file, the violation becomes the new baseline and
+    // every gate goes green: a false green, which is strictly worse than the
+    // sticky red the ladder restore replaced.
+    this.restorePacketTests(
+      gateCtx,
+      baseline,
+      failedTestIntegrityFiles(report),
+      { blueprintId, workspaceId, taskId: task.taskId },
+      { stage: 'escalation' }
+    )
 
     const failedNames = report.gates
       .filter((g) => g.verdict === 'fail')
@@ -3156,6 +3383,111 @@ export class BlueprintBuildService extends EventEmitter {
   // ── Task Completion Handler ──
 
   /**
+   * A6 — enforce the per-task commit in the run's execution tree.
+   *
+   * Contract, not convenience: `scanTaskCommitSurvival` attributes commits to
+   * tasks via `TASK_ID_IN_SUBJECT`, and both the per-attempt destructive-revert
+   * gate and L3's `reconcileBuildOutput` lean on that attribution. Today the
+   * commit is prompt-requested only (build-phase.md "Reference the task ID in
+   * the commit message"), so the headline defence degrades to `dropped: null`
+   * (unverifiable) on any run where the agent doesn't commit or omits the id.
+   *
+   * Rules:
+   * • Isolation gate — only when the run has its own tree
+   *   (`executionPath !== workspacePath`, the same fact `track.isolated`
+   *   encodes). Never commit into the primary tree.
+   * • Backstop, not replacement — if the agent already committed
+   *   (`git status --porcelain` empty), skip.
+   * • `git add -A` scoped to the execution root, matching the containment
+   *   discipline used everywhere else in this file.
+   * • Non-fatal — a failed commit logs + records telemetry and returns. A6
+   *   must not be able to turn a green task red.
+   */
+  private async commitTaskWork(params: {
+    task: BlueprintTask
+    blueprintId: string
+    executionPath: string
+    workspacePath: string
+    /** A6-fix: `completion.filesModified` from the settled result — the agent's own claim. */
+    reportedFiles: string[]
+  }): Promise<void> {
+    const { task, blueprintId, executionPath, workspacePath } = params
+    if (executionPath === workspacePath) {
+      // No isolated run tree — the primary tree is shared with the user's own
+      // uncommitted work; committing here is exactly what the isolation gate
+      // exists to prevent.
+      return
+    }
+
+    try {
+      const git = simpleGit(executionPath)
+      const status = await git.status()
+      if (status.isClean()) {
+        // Agent already committed (it is still asked to) — nothing to enforce.
+        return
+      }
+
+      // A6-fix — NEVER `git add -A`. Under the concurrent scheduler up to `cap`
+      // tasks are mid-flight in this one executionPath; add -A sweeps siblings'
+      // in-flight writes into a commit bearing whichever task settled first,
+      // and scanTaskCommitSurvival then attributes that code to the wrong task.
+      // Commit exactly: (paths git reports dirty) ∩ (task's own claims).
+      const claimed = new Set([
+        ...normalizePaths(task.filePathsJson),
+        ...normalizePaths(params.reportedFiles)
+      ])
+      const toAdd = status.files.map((f) => f.path).filter((p) => claimed.has(normalize(p)))
+
+      if (toAdd.length === 0) {
+        // Honest degradation to the pre-A6 state: leave the dirty tree alone
+        // rather than mis-attribute a sibling's (or unknown) work to this task.
+        bpLog.info(
+          `[a6-task-commit] ${task.taskId} — ${status.files.length} dirty file(s) claimable ` +
+            `by neither filePathsJson nor completion.filesModified — leaving uncommitted`
+        )
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'task_commit',
+          taskId: task.taskId,
+          data: { mode: 'unattributable', dirtyCount: status.files.length }
+        })
+        return
+      }
+
+      const subject = buildTaskCommitSubject({
+        taskId: task.taskId,
+        description: task.description
+      })
+
+      await git.add(toAdd)
+      // Pathspec on commit itself: even if another sibling dirtied the shared
+      // index between add and commit, only this task's paths land in the commit.
+      await git.commit(subject, toAdd)
+      bpLog.info(
+        `[a6-task-commit] ${task.taskId} — committed ${toAdd.length} claimed file(s) in ` +
+          `${executionPath}: "${subject}"`
+      )
+      blueprintTelemetryRepository.record({
+        blueprintId,
+        kind: 'task_commit',
+        taskId: task.taskId,
+        data: { subject, mode: 'enforced', fileCount: toAdd.length }
+      })
+    } catch (err) {
+      // Deliberately non-fatal: log + telemetry, never rethrow. A green task
+      // stays green even when git cannot be reached.
+      const message = err instanceof Error ? err.message : String(err)
+      bpLog.warn(`[a6-task-commit] ${task.taskId} — commit failed (non-fatal): ${message}`)
+      blueprintTelemetryRepository.record({
+        blueprintId,
+        kind: 'task_commit',
+        taskId: task.taskId,
+        data: { mode: 'failed', error: message.slice(0, 300) }
+      })
+    }
+  }
+
+  /**
    * Process a completed task: update DB, accumulate results, emit events.
    */
   /**
@@ -3195,14 +3527,20 @@ export class BlueprintBuildService extends EventEmitter {
     })
   }
 
-  private handleTaskCompletion(params: {
+  private async handleTaskCompletion(params: {
     task: BlueprintTask
     taskResult: TaskResult
     blueprintId: string
     workspaceId: string
     waveNum: number
     result: BuildResult
-  }): void {
+    /** A6: where the agents wrote (run worktree or primary tree). */
+    executionPath: string
+    /** A6: the primary tree — commits are enforced only in an isolated run tree. */
+    workspacePath: string
+    /** A6-fix: `completion.filesModified` — the settled task's own file claims. */
+    reportedFiles: string[]
+  }): Promise<void> {
     const { task, taskResult, blueprintId, workspaceId, waveNum, result } = params
 
     // Phase 0: Collect timing
@@ -3233,6 +3571,22 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintTaskRepository.setOutcome(task.id, {
         outcomeKind: taskResult.outcomeKind ?? 'verified',
         failureReason: null
+      })
+
+      // A6 — enforce the per-task commit. The prompt still ASKS the agent to
+      // commit (build-phase.md) and this is the backstop, not the replacement:
+      // when the agent already committed, the dirty check below no-ops. With the
+      // commit guaranteed, scanTaskCommitSurvival's "none naming a task id"
+      // branch fires only on genuinely broken workspaces instead of every
+      // non-committing run, and L3's reconcileBuildOutput gets real signal
+      // instead of `scanUnavailable`. Failure here is deliberately non-fatal —
+      // a commit problem must never turn a green task red.
+      await this.commitTaskWork({
+        task,
+        blueprintId,
+        executionPath: params.executionPath,
+        workspacePath: params.workspacePath,
+        reportedFiles: params.reportedFiles
       })
 
       // BP-DISC-01: Accumulate per-task discoveries (merge on completion)

@@ -107,6 +107,15 @@ export interface GateResult {
   reason?: UnverifiableReason
   /** Optional numeric facts (filesChanged, testsBefore, testsAfter, exitCode, …). */
   counts?: Record<string, number>
+  /**
+   * The offending paths, in a form the KERNEL can act on without parsing prose.
+   *
+   * `evidence` is written for the model and its wording is free to change;
+   * anything the main process has to do mechanically with a gate's verdict —
+   * today, restoring the packet test files `test-integrity` just failed on —
+   * reads this instead. Set only by gates whose fix is mechanical.
+   */
+  files?: string[]
   durationMs: number
 }
 

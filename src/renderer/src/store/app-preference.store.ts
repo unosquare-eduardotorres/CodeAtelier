@@ -29,7 +29,8 @@ const defaultPreferences: AppPreferences = {
   dagScheduling: true,
   blueprintAutoMode: true,
   verifyFeatureDiff: false,
-  blueprintFailureMemory: false
+  blueprintFailureMemory: false,
+  autoSkipClarify: true
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -51,7 +52,8 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   dagScheduling: 'dag_scheduling',
   blueprintAutoMode: 'blueprint_auto_mode',
   verifyFeatureDiff: 'verify_feature_diff',
-  blueprintFailureMemory: 'blueprint_failure_memory'
+  blueprintFailureMemory: 'blueprint_failure_memory',
+  autoSkipClarify: 'auto_skip_clarify'
 }
 
 interface AppPreferenceState {
@@ -181,6 +183,9 @@ export const useVerifyFeatureDiff = (): boolean =>
 
 export const useBlueprintFailureMemory = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.blueprintFailureMemory)
+
+export const useAutoSkipClarify = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.autoSkipClarify)
 
 export const useUserAvatarVariant = (): UserAvatarVariant =>
   useAppPreferenceStore((state) => state.preferences.userAvatarVariant)

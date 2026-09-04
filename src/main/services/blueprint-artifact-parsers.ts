@@ -24,6 +24,61 @@ export function asStringArray(v: unknown): string[] {
 const bpLog = log.scope('blueprint-parsers')
 
 /**
+ * E1 — count `[NEEDS CLARIFICATION]` markers in a spec deterministically.
+ *
+ * The marker is a literal the prompt defines (specify-phase.md Step 6) and the
+ * spec template emits it with a reason suffix — `[NEEDS CLARIFICATION: reason]`
+ * (spec.md:82) — so the pattern must accept a bracketed reason, not just the
+ * bare tag. Pure helper, exported for tests; the auto-skip decision in
+ * blueprint-spec.service.ts uses this count as the authority.
+ */
+export function countNeedsClarificationMarkers(text: string): number {
+  return (text.match(/\[NEEDS CLARIFICATION[^\]]*\]/gi) ?? []).length
+}
+
+/**
+ * E1-fix — the CLARIFY auto-skip decision, extracted as a pure function so the
+ * truth table (including the veto and the kill switch) is testable.
+ *
+ * Inputs and their authority:
+ * • `markerCount` (from `countNeedsClarificationMarkers`) — the AUTHORITY: a
+ *   prompt-defined literal, countable without trusting the LLM. Any marker ≥ 1
+ *   vetoes the skip.
+ * • `completion.needsClarification` / `status === 'needs_clarification'` — VETO
+ *   only. The prompt hardcodes `"status": "complete"` and carries the signal in
+ *   `needsClarification`; checking `status` alone was vacuous.
+ * • `enabled` — the app preference kill switch (`autoSkipClarify`).
+ *
+ * Known, accepted false-positive path: the marker literal also appears in the
+ * spec template's own checklist line ("…marked with [NEEDS CLARIFICATION]"), so
+ * an agent echoing the checklist scores markerCount ≥ 1 and suppresses the
+ * skip. The failure direction is safe (extra clarify turn, never a skipped
+ * needed one); `clarify_skip` telemetry rows exist to measure how often it fires.
+ */
+export function decideClarifySkip(input: {
+  specText: string
+  completion?: BlueprintPhaseCompletion
+  enabled: boolean
+}): { skip: boolean; markerCount: number; reportedCount?: number; reason: string } {
+  if (!input.enabled) return { skip: false, markerCount: 0, reason: 'disabled' }
+  const markerCount = countNeedsClarificationMarkers(input.specText)
+  if (markerCount > 0) return { skip: false, markerCount, reason: 'markers-present' }
+  if (
+    input.completion?.status === 'needs_clarification' ||
+    input.completion?.needsClarification === true
+  ) {
+    const reportedCount = input.completion?.clarificationCount
+    return {
+      skip: false,
+      markerCount,
+      ...(typeof reportedCount === 'number' ? { reportedCount } : {}),
+      reason: 'llm-veto'
+    }
+  }
+  return { skip: true, markerCount, reason: 'skip' }
+}
+
+/**
  * Parse a blueprint-phase-complete block from streamed text.
  * Primary: ```blueprint-phase-complete ... ```
  * Fallback: any JSON with "phase" and "status" keys.
