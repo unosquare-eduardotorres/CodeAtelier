@@ -22,7 +22,14 @@ import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
 import type { ImageAttachment } from '../../shared/types'
 import { normalizeOpenCodeEvent, type NormalizerState } from './opencode-event-normalizer'
 import { TRANSIENT_ERROR_PATTERNS, isSlowTransientError } from './opencode-transient-patterns'
-import { ensureOpencodePathInEnv, getOpencodePath } from '../../shared/opencode-cli-path'
+import {
+  augmentOpenCodeCliPath,
+  describeOpencodeLookupFailure,
+  ensureOpencodePathInEnv,
+  getOpencodePath,
+  probeOpencodeVersion,
+  resolveOpencodePath
+} from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
 
 const openCodeLog = log.scope('OpenCodeExecutor')
@@ -475,40 +482,41 @@ export class OpenCodeExecutor {
    */
   async checkCliAvailable(): Promise<string | null> {
     try {
-      const { execSync } = await import('node:child_process')
-
-      // Use the cached resolved path (set at startup via resolveOpencodePath)
-      const opencodePath = getOpencodePath()
+      // Read the startup cache first, but never treat a miss as final: reading
+      // the cache alone made a failed startup resolution permanent for the
+      // lifetime of the process, so every task failed instantly thereafter.
+      let opencodePath = getOpencodePath()
 
       if (!opencodePath) {
-        return (
-          'OpenCode CLI not found. Install it by running:\n' +
-          '  npm install -g @opencode-ai/cli\n' +
-          'Or download from: https://opencode.ai/getting-started'
-        )
+        // Re-augment PATH, then force a fresh probe — startup may have run
+        // before the environment was usable.
+        augmentOpenCodeCliPath()
+        opencodePath = resolveOpencodePath({ force: true })
       }
 
-      // Try to get version
-      const versionOutput = execSync('opencode --version', {
-        encoding: 'utf-8',
-        timeout: 5000,
-        windowsHide: true
-      }).trim()
+      if (!opencodePath) {
+        return describeOpencodeLookupFailure()
+      }
+
+      // Probe the resolved absolute path (shell-aware for Windows .cmd shims)
+      // rather than the bare name, which depends on the inherited PATH.
+      const probe = probeOpencodeVersion(opencodePath)
 
       openCodeLog.info(
-        `[opencode] checkCliAvailable: path=${opencodePath}, version=${versionOutput}`
+        `[opencode] checkCliAvailable: path=${opencodePath}, version=${probe.version ?? 'unknown'}`
       )
 
       // Non-empty version output confirms the binary is installed and executable.
       // (The output format varies across versions — e.g. "1.17.9" vs "opencode v1.x")
-      if (versionOutput) {
-        openCodeLog.info(`[opencode] CLI available at: ${opencodePath}, version: ${versionOutput}`)
+      if (probe.ok) {
+        openCodeLog.info(`[opencode] CLI available at: ${opencodePath}, version: ${probe.version}`)
         ensureOpencodePathInEnv()
         return null
       }
 
       return (
-        'OpenCode CLI found but returned empty version output.\n' +
+        `OpenCode CLI found at ${opencodePath} but could not be executed.\n` +
+        `Reason: ${probe.error ?? 'empty version output'}\n` +
         'Try reinstalling: npm install -g @opencode-ai/cli'
       )
     } catch (err) {

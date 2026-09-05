@@ -252,6 +252,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/opencode-config-schema.test',
   '../services/__tests__/opencode-cli-check.test',
   '../services/__tests__/opencode-path-augmentation.test',
+  '../services/__tests__/opencode-cli-path-platform.test',
   '../services/__tests__/description-cache-pure.test',
   '../services/__tests__/workspace-mcp-config-logic.test',
   // ─── Run 35b: Phase 13 coverage mega-push — adapters, pure functions, repositories ───

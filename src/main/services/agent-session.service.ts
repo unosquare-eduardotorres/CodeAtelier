@@ -73,6 +73,7 @@ import { CliMcpConfigWriter } from './cli-mcp-config-writer'
 import { elicitationService } from './elicitation.service'
 import { primingContextGatherer } from './priming-context-gatherer'
 import {
+  describeOpencodeLookupFailure,
   ensureOpencodePathInEnv,
   getOpencodePath,
   resolveOpencodePath
@@ -2673,16 +2674,17 @@ export class AgentSessionService extends AgentBaseService {
           err.message.includes('spawn opencode') ||
           err.message.includes('Failed to create OpenCode session')
         ) {
-          const opencodePath = getOpencodePath() || 'not resolved'
+          const opencodePath = getOpencodePath()
 
-          userFriendlyError =
-            `OpenCode CLI is not installed or not in PATH.\n\n` +
-            `Resolved path: ${opencodePath}\n` +
-            `Current PATH: ${process.env.PATH?.slice(0, 600) || 'not set'}\n` +
-            `Spawn path injected: ${pathResolved ? 'yes' : 'no'}\n\n` +
-            'Install it globally:\n' +
-            '  npm install -g @opencode-ai/cli\n\n' +
-            'Or download from: https://opencode.ai/getting-started'
+          userFriendlyError = opencodePath
+            ? `OpenCode CLI was found but could not be started.\n\n` +
+              `Resolved path: ${opencodePath}\n` +
+              `Current PATH: ${process.env.PATH?.slice(0, 600) || 'not set'}\n` +
+              `Spawn path injected: ${pathResolved ? 'yes' : 'no'}\n\n` +
+              `Underlying error: ${err.message}`
+            : `${describeOpencodeLookupFailure()}\n\n` +
+              `Spawn path injected: ${pathResolved ? 'yes' : 'no'}\n` +
+              `Underlying error: ${err.message}`
         }
 
         yield {
