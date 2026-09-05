@@ -1,140 +1,92 @@
 /**
- * Unit tests for CLI executor pure functions — buildCLIArgs, buildProcessEnv,
- * system-prompt-file ownership (replicated from private methods).
+ * Unit tests for CLI executor pure functions — buildClaudeCliArgs (the REAL
+ * exported builder), buildProcessEnv, system-prompt-file ownership.
  *
- * Phase 14, Track 2 — cli-executor.ts (~868 lines at 31.56%)
+ * A1 (Phase 5): the resume/tool cases below used to drive a LOCAL REPLICA of
+ * buildCLIArgs, which had no poisoned-session branch at all — a regression in
+ * the real builder could not fail them. They now drive the shipped
+ * `buildClaudeCliArgs` export with the poisoned-id set injected, so the argv
+ * the CLI actually receives is what is asserted.
  */
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 import { test, describe, summaryAsync } from './test-harness'
+import { setupElectronStub } from './electron-stub'
 
-// ── Replicated pure logic from CLIExecutor.buildCLIArgs ──
+// Importing the real cli-executor pulls the DB stack (better-sqlite3 native
+// module + schema.sql?raw) with it — stub Electron first, then lazy-require
+// inside try/catch exactly like cli-executor-deep-phase25.test.ts.
+setupElectronStub()
 
-interface CLIExecuteOptions {
-  model?: string
-  permissionMode?: string
-  systemPrompt?: string
-  resume?: string
-  resumeSessionAt?: string
-  maxTurns?: number
-  mcpConfigPath?: string
-  allowedTools?: string[]
-  disallowedTools?: string[]
-  additionalDirectories?: string[]
-  effort?: string
-  betas?: string[]
-  fallbackModel?: string
-  goal?: string
-  thinkingBudget?: number
-  envOverrides?: Record<string, string>
+/** The subset of CLIExecuteOptions buildClaudeCliArgs reads — keeps call sites terse. */
+type ArgsOptions = Partial<import('../cli-executor').CLIExecuteOptions>
+
+type BuildClaudeCliArgsFn = (
+  options: ArgsOptions,
+  deps: {
+    poisonedSessionIds: ReadonlySet<string>
+    writeSystemPromptFile: (prompt: string) => string
+  }
+) => { args: string[]; resumeDropped?: 'poisoned' | 'malformed' }
+
+let buildClaudeCliArgs: BuildClaudeCliArgsFn | null = null
+let CLAUDE_SESSION_ID_PATTERN: RegExp | null = null
+
+try {
+  const mod = require('../cli-executor')
+  buildClaudeCliArgs = mod.buildClaudeCliArgs
+  CLAUDE_SESSION_ID_PATTERN = mod.CLAUDE_SESSION_ID_PATTERN
+} catch (err) {
+  console.log(`⚠ cli-executor.ts load failed — tests will be skipped.`)
+  console.log(`  (${(err as Error).message?.split('\n')[0]})`)
 }
 
-/**
- * Replicated goal-injection logic from buildCLIArgs.
- * When systemPrompt and goal are both set, the goal is appended as a
- * ## Completion Goal section in the system prompt content (not as a CLI flag).
- */
-function buildSystemPromptWithGoal(systemPrompt: string, goal?: string): string {
-  let fullPrompt = systemPrompt
-  if (goal) {
-    fullPrompt += `\n\n## Completion Goal\n\nWork autonomously until the following condition is met, then emit the completion block:\n\n${goal}`
-  }
-  return fullPrompt
+/** buildClaudeCliArgs with no poisoned ids — the common case. */
+function buildCLIArgs(options: ArgsOptions): string[] {
+  if (!buildClaudeCliArgs) return []
+  return buildClaudeCliArgs(options, {
+    poisonedSessionIds: new Set<string>(),
+    writeSystemPromptFile: (p) => p
+  }).args
 }
 
-/**
- * Replicated from CLIExecutor.buildCLIArgs (cli-executor.ts:658-774).
- * Pure function: maps SDK-style options to `claude` CLI flags.
- */
-function buildCLIArgs(options: CLIExecuteOptions): string[] {
-  const args: string[] = [
-    '--output-format',
-    'stream-json',
-    '--input-format',
-    'stream-json',
-    '--verbose',
-    '--include-partial-messages',
-    '--allow-dangerously-skip-permissions'
-  ]
-
-  if (options.model) {
-    args.push('--model', options.model)
-  }
-
-  if (options.permissionMode) {
-    const modeMap: Record<string, string> = {
-      default: 'default',
-      plan: 'plan',
-      bypassPermissions: 'bypassPermissions',
-      acceptEdits: 'acceptEdits',
-      auto: 'auto',
-      dontAsk: 'dontAsk'
-    }
-    const cliMode = modeMap[options.permissionMode] ?? 'default'
-    args.push('--permission-mode', cliMode)
-  }
-
-  // System prompt handling is skipped here (requires file I/O)
-
-  if (options.resume) {
-    if (/^[a-zA-Z0-9_-]{8,}$/.test(options.resume)) {
-      args.push('--resume', options.resume)
-    }
-    // Malformed session IDs are silently skipped (logged in prod)
-  }
-
-  if (options.resumeSessionAt) {
-    args.push('--resume-session-at', options.resumeSessionAt)
-  }
-
-  if (options.maxTurns) {
-    args.push('--max-turns', String(options.maxTurns))
-  }
-
-  if (options.mcpConfigPath) {
-    args.push('--mcp-config', options.mcpConfigPath)
-  }
-
-  if (options.allowedTools?.length) {
-    args.push('--allowedTools', options.allowedTools.join(','))
-  }
-
-  if (options.disallowedTools?.length) {
-    args.push('--disallowedTools', options.disallowedTools.join(','))
-  }
-
-  if (options.additionalDirectories?.length) {
-    for (const dir of options.additionalDirectories) {
-      args.push('--add-dir', dir)
-    }
-  }
-
-  if (options.effort) {
-    args.push('--effort', options.effort)
-  }
-
-  if (options.betas?.length) {
-    for (const beta of options.betas) {
-      args.push('--betas', beta)
-    }
-  }
-
-  if (options.fallbackModel) {
-    args.push('--fallback-model', options.fallbackModel)
-  }
-
-  // Goal is delivered via system prompt, not as a CLI flag.
-  // thinkingBudget is dropped silently (no CLI equivalent).
-
-  return args
+/** The full result, for the drop-reason assertions. */
+function buildWithPoison(
+  options: ArgsOptions,
+  poisoned: string[]
+): { args: string[]; resumeDropped?: 'poisoned' | 'malformed' } {
+  if (!buildClaudeCliArgs) return { args: [] }
+  return buildClaudeCliArgs(options, {
+    poisonedSessionIds: new Set(poisoned),
+    writeSystemPromptFile: (p) => p
+  })
 }
+
+/** The REAL pattern, non-null once loaded. */
+function sessionIdPattern(): RegExp {
+  return CLAUDE_SESSION_ID_PATTERN ?? /^[a-zA-Z0-9_-]{8,}$/
+}
+
+// ── Session-id format (shared with AgentSessionService.SESSION_ID_FORMAT) ──
+
+describe('CLAUDE_SESSION_ID_PATTERN', () => {
+  test('accepts_alphanumeric_dash_underscore_8plus', () => {
+    assert.ok(sessionIdPattern().test('abc12345-session'))
+    assert.ok(sessionIdPattern().test('deadbeef1234'))
+  })
+
+  test('rejects_short_or_special_char_ids', () => {
+    assert.ok(!sessionIdPattern().test('ab'))
+    assert.ok(!sessionIdPattern().test('abc def !@#'))
+  })
+})
 
 /**
  * Replicated from CLIExecutor.buildProcessEnv (cli-executor.ts:826-832).
  * Pure function: merges base env with overrides and app identification.
  */
 function buildProcessEnv(
-  options: CLIExecuteOptions,
+  options: ArgsOptions,
   baseEnv: Record<string, string | undefined>,
   appVersion: string
 ): Record<string, string | undefined> {
@@ -247,7 +199,7 @@ describe('buildCLIArgs — permission mode', () => {
   })
 
   test('unknown_mode_falls_back_to_default', () => {
-    const args = buildCLIArgs({ permissionMode: 'unknown-mode' })
+    const args = buildCLIArgs({ permissionMode: 'not-a-real-mode' as never })
     const idx = args.indexOf('--permission-mode')
     assert.equal(args[idx + 1], 'default')
   })
@@ -262,8 +214,9 @@ describe('buildCLIArgs — session resume', () => {
   })
 
   test('malformed_session_id_skips_resume', () => {
-    const args = buildCLIArgs({ resume: 'ab' }) // Too short
+    const { args, resumeDropped } = buildWithPoison({ resume: 'ab' }, [])
     assert.ok(!args.includes('--resume'))
+    assert.equal(resumeDropped, 'malformed', 'the drop reason is surfaced for telemetry')
   })
 
   test('session_id_with_special_chars_skips_resume', () => {
@@ -276,6 +229,49 @@ describe('buildCLIArgs — session resume', () => {
     const idx = args.indexOf('--resume-session-at')
     assert.ok(idx >= 0)
     assert.equal(args[idx + 1], 'msg-12345')
+  })
+
+  // A1 (Phase 3/5) — the poisoned-refusal path, on the REAL builder. The old
+  // replica had no such branch, so a regression here was invisible.
+  test('REGRESSION_poisoned_session_id_is_refused_and_reported', () => {
+    const { args, resumeDropped } = buildWithPoison({ resume: 'abc12345-session' }, [
+      'abc12345-session'
+    ])
+    assert.ok(!args.includes('--resume'), 'a poisoned session must never be named in argv')
+    assert.equal(resumeDropped, 'poisoned')
+  })
+
+  test('poisoned_resume_also_suppresses_resume_session_at', () => {
+    // resume-session-at points INSIDE the abandoned session — passing it to a
+    // fresh spawn would be actively wrong.
+    const { args } = buildWithPoison({ resume: 'abc12345-session', resumeSessionAt: 'msg-1' }, [
+      'abc12345-session'
+    ])
+    assert.ok(!args.includes('--resume'))
+    assert.ok(!args.includes('--resume-session-at'))
+  })
+
+  // A1 (Phase 5) — the coexistence cases: a resume must not displace the
+  // tool/MCP policy flags on the same spawn.
+  test('resume_coexists_with_mcp_config_allowed_tools_permission_mode_and_add_dir', () => {
+    const args = buildCLIArgs({
+      resume: 'abc12345-session',
+      mcpConfigPath: '/tmp/mcp-config.json',
+      allowedTools: ['Read', 'Write', 'Bash'],
+      permissionMode: 'bypassPermissions',
+      additionalDirectories: ['/repo/worktree-bp42']
+    })
+    const resumeIdx = args.indexOf('--resume')
+    assert.ok(resumeIdx >= 0, '--resume present')
+    assert.equal(args[resumeIdx + 1], 'abc12345-session')
+    assert.ok(args.includes('--mcp-config'), 'MCP config preserved on resume')
+    assert.equal(args[args.indexOf('--mcp-config') + 1], '/tmp/mcp-config.json')
+    assert.ok(args.includes('--allowedTools'), 'allowed tools preserved on resume')
+    assert.equal(args[args.indexOf('--allowedTools') + 1], 'Read,Write,Bash')
+    assert.ok(args.includes('--permission-mode'), 'permission mode preserved on resume')
+    assert.equal(args[args.indexOf('--permission-mode') + 1], 'bypassPermissions')
+    assert.ok(args.includes('--add-dir'), 'add-dir preserved on resume')
+    assert.equal(args[args.indexOf('--add-dir') + 1], '/repo/worktree-bp42')
   })
 })
 
@@ -380,23 +376,26 @@ describe('buildCLIArgs — thinkingBudget is dropped', () => {
   })
 })
 
-describe('buildSystemPromptWithGoal', () => {
+describe('buildSystemPromptWithGoal — via the real builder', () => {
   test('appends_goal_section_to_system_prompt', () => {
-    const prompt = buildSystemPromptWithGoal('You are a helpful assistant.', 'All tests pass')
-    assert.ok(prompt.includes('## Completion Goal'))
-    assert.ok(prompt.includes('All tests pass'))
-    assert.ok(prompt.startsWith('You are a helpful assistant.'))
+    let captured = ''
+    buildClaudeCliArgs?.(
+      { systemPrompt: 'You are a helpful assistant.', goal: 'All tests pass' },
+      { poisonedSessionIds: new Set(), writeSystemPromptFile: (p) => (captured = p) }
+    )
+    assert.ok(captured.includes('## Completion Goal'), captured.slice(0, 200))
+    assert.ok(captured.includes('All tests pass'))
+    assert.ok(captured.startsWith('You are a helpful assistant.'))
   })
 
   test('no_goal_returns_prompt_unchanged', () => {
-    const prompt = buildSystemPromptWithGoal('You are a helpful assistant.')
-    assert.equal(prompt, 'You are a helpful assistant.')
-    assert.ok(!prompt.includes('## Completion Goal'))
-  })
-
-  test('empty_goal_returns_prompt_unchanged', () => {
-    const prompt = buildSystemPromptWithGoal('Base prompt.', '')
-    assert.equal(prompt, 'Base prompt.')
+    let captured = ''
+    buildClaudeCliArgs?.(
+      { systemPrompt: 'You are a helpful assistant.' },
+      { poisonedSessionIds: new Set(), writeSystemPromptFile: (p) => (captured = p) }
+    )
+    assert.equal(captured, 'You are a helpful assistant.')
+    assert.ok(!captured.includes('## Completion Goal'))
   })
 })
 

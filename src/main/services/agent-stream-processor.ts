@@ -56,11 +56,21 @@ export class AgentStreamProcessor {
     if (meta.sessionId && conversationId) {
       // Detect silent resume failure: if we passed --resume with a
       // specific session ID and the CLI returned a DIFFERENT one,
-      // the server created a new session instead of resuming.
+      // either the server refused the re-attach (`mismatched`) or the
+      // executor dropped the flag at argv-build (`blocked`) — both are
+      // silent cold runs and both are telemetered as such (A1 Phase 3).
       const expectedSessionId = this.s.sessionMap.get(conversationId)
       if (expectedSessionId && meta.sessionId !== expectedSessionId) {
+        // argv-drop detection is CLI-only (OpenCode has no argv and no drop
+        // path); getOrCreateCliExecutor would mint a stray executor there.
+        const dropped =
+          this.s.executorBackend === 'cli'
+            ? this.s.getOrCreateCliExecutor(conversationId).getLastResumeDropped?.()
+            : undefined
+        this.s.lastResumeOutcome = dropped ? 'blocked' : 'mismatched'
         this.s.log.warn(
-          `[PIPELINE:resume-mismatch] Expected session ${expectedSessionId}, got ${meta.sessionId} — resume failed silently`
+          `[PIPELINE:resume-mismatch${dropped ? `:${dropped}` : ''}] Expected session ` +
+            `${expectedSessionId}, got ${meta.sessionId} — resume failed silently`
         )
       }
 

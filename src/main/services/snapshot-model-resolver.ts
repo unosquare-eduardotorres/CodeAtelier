@@ -36,11 +36,15 @@ import log from 'electron-log'
  */
 /**
  * Regex matching blueprint synthetic conversation IDs.
- * Format: `blueprint-{phase}-{blueprintId}-{timestamp}`
+ * Format (A1): `blueprint-{phase}-{blueprintId}-{task}[-gN]` — the trailing
+ * timestamp was dropped when identity became retry-stable, and `-gN` is the
+ * resume-permit generation. Both new shapes AND the legacy
+ * `-<timestamp>` shape must match: usage rows and conversation ids written by
+ * older builds are still read by Phase 0 queries and crash recovery.
  * Groups: [1] = phase, [2] = blueprintId
  */
 export const BLUEPRINT_CONV_RE =
-  /^blueprint-(specify|clarify|plan|tasks|code-review|review|build|verify)-([0-9a-f]{32})(?:-([A-Za-z]+\d+))?-\d+$/
+  /^blueprint-(specify|clarify|plan|tasks|code-review|review|build|verify)-([0-9a-f]{32})(?:-([A-Za-z]+\d+))?(?:-g\d+)?(?:-\d+)?$/
 
 /**
  * ModelAction → key in the blueprint's frozen modelSnapshot.

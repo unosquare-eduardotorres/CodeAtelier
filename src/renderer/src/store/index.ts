@@ -32,7 +32,8 @@ export {
   useBlueprintAutoMode,
   useVerifyFeatureDiff,
   useBlueprintFailureMemory,
-  useAutoSkipClarify
+  useAutoSkipClarify,
+  useBlueprintSessionResume
 } from './app-preference.store'
 export { useCodeChangesStore } from './code-changes.store'
 export type { FileChangeDetail } from './code-changes.store'

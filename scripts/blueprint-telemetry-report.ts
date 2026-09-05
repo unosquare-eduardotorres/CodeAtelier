@@ -117,9 +117,7 @@ function main(): void {
   // retries silently dropped) was invisible precisely because the table mixed
   // the two. Split the counts so a regression cannot hide again.
   const autoRetryRows = db
-    .prepare(
-      `SELECT data FROM blueprint_telemetry WHERE kind = 'auto_retry'`
-    )
+    .prepare(`SELECT data_json AS data FROM blueprint_telemetry WHERE kind = 'auto_retry'`)
     .all() as { data: string | null }[]
   if (autoRetryRows.length > 0) {
     let scheduledOnly = 0
@@ -136,10 +134,93 @@ function main(): void {
       else if (data.outcome === 'dropped') dropped++
       else scheduledOnly++ // schedule-time row (pre-fire or fire-time rows absent)
     }
-    console.log(`\nauto_retry honesty: scheduled=${autoRetryRows.length} dispatched=${dispatched} dropped=${dropped}`)
+    console.log(
+      `\nauto_retry honesty: scheduled=${autoRetryRows.length} dispatched=${dispatched} dropped=${dropped}`
+    )
     if (scheduledOnly === autoRetryRows.length && autoRetryRows.length > 0) {
       console.log(
         `  ⚠ every auto_retry row is schedule-time only — fire-time rows are missing (old build?)`
+      )
+    }
+  }
+
+  // A1 — session_resume honesty: the attempted/succeeded/declined split plus
+  // the failed-silently bucket (Phase 3) and the mean cache-read (Gate 1).
+  // "Resume attempted" and "resume actually happened" must never collapse
+  // into one number — that conflation is exactly what hid the E12 dropped-retry
+  // bug for weeks. A `failed-silently` row is a granted permit the executor
+  // did not honour (poisoned/malformed id dropped, or server re-issued the
+  // session): the rung still ran, still COLD, and pre-Phase-3 it was booked as
+  // `succeeded`.
+  const resumeRows = db
+    .prepare(`SELECT data_json AS data FROM blueprint_telemetry WHERE kind = 'session_resume'`)
+    .all() as { data: string | null }[]
+  if (resumeRows.length > 0) {
+    let attempted = 0
+    let succeeded = 0
+    let failedSilently = 0
+    const silentByReason = new Map<string, number>()
+    const declinedByReason = new Map<string, number>()
+    const cacheReads: number[] = []
+    for (const row of resumeRows) {
+      let data: Record<string, unknown> = {}
+      try {
+        data = row.data ? (JSON.parse(row.data) as Record<string, unknown>) : {}
+      } catch {
+        data = {}
+      }
+      if (data.status === 'attempted') attempted++
+      else if (data.status === 'succeeded') {
+        succeeded++
+        if (typeof data.cacheReadInputTokens === 'number' && data.cacheReadInputTokens > 0) {
+          cacheReads.push(data.cacheReadInputTokens)
+        }
+      } else if (data.status === 'failed-silently') {
+        failedSilently++
+        const reason = typeof data.silentReason === 'string' ? data.silentReason : 'unknown'
+        silentByReason.set(reason, (silentByReason.get(reason) ?? 0) + 1)
+        if (typeof data.cacheReadInputTokens === 'number' && data.cacheReadInputTokens > 0) {
+          cacheReads.push(data.cacheReadInputTokens)
+        }
+      } else if (data.status === 'declined') {
+        const reason = typeof data.reason === 'string' ? data.reason : 'unknown'
+        declinedByReason.set(reason, (declinedByReason.get(reason) ?? 0) + 1)
+      }
+    }
+    console.log(
+      `\nsession_resume honesty: attempted=${attempted} succeeded=${succeeded} ` +
+        `failed-silently=${failedSilently} ` +
+        `declined=${[...declinedByReason.values()].reduce((a, b) => a + b, 0)}`
+    )
+    for (const [reason, n] of [...declinedByReason].sort((a, b) => b[1] - a[1])) {
+      console.log(`  declined/${reason.padEnd(18)} ${String(n).padStart(6)}`)
+    }
+    for (const [reason, n] of [...silentByReason].sort((a, b) => b[1] - a[1])) {
+      console.log(`  failed-silently/${reason.padEnd(13)} ${String(n).padStart(6)}`)
+    }
+    // Gate 1 — the cache-read mean over resumed rows, the number that answers
+    // "did resume actually pay" without any cross-table join.
+    if (cacheReads.length > 0) {
+      const mean = Math.round(cacheReads.reduce((a, b) => a + b, 0) / cacheReads.length)
+      console.log(
+        `  cache-read on resumed rungs: mean=${mean.toLocaleString()} tokens ` +
+          `over ${cacheReads.length} rung(s) (Gate 1: mean ≫ 0 proves the prefix was reused)`
+      )
+    } else if (succeeded > 0) {
+      console.log(
+        `  ⚠ ${succeeded} resumed rung(s) with NO cache-read recorded — rows predate Phase 3, ` +
+          `or the executor never reported usage`
+      )
+    }
+    if (failedSilently > 0) {
+      console.log(
+        `  ⚠ ${failedSilently} granted resume(s) ran COLD silently — executor dropped the id ` +
+          `(see failed-silently/* above; fix forward, the rows carry the sub-reason)`
+      )
+    }
+    if (attempted > 0 && succeeded + failedSilently === 0) {
+      console.log(
+        `  ⚠ resumes attempted but none resolved — rungs never returned; check for crashes mid-rung`
       )
     }
   }

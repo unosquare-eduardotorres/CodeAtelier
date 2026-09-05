@@ -102,6 +102,16 @@ export type BlueprintTelemetryKind =
    * post-mortem could not answer.
    */
   | 'infra_retry'
+  /**
+   * A1 — one row per resume DECISION on a BUILD retry: `attempted` when the
+   * retry dispatches with a resumed session id, `succeeded` when that rung
+   * completes, `declined` (with reason: not-safe / no-persisted-id /
+   * provider-changed / stale / flag-off) when the ladder goes cold instead.
+   * Three statuses rather than one, because "resume attempted" and "resume
+   * actually happened" collapsing into one number is exactly what hid the E12
+   * dropped-retry bug for weeks.
+   */
+  | 'session_resume'
 
 export interface BlueprintTelemetryRow {
   id: string
@@ -207,7 +217,9 @@ export class BlueprintTelemetryRepository extends BaseRepository<
                WHERE blueprint_id = ? GROUP BY kind`
             )
             .all(blueprintId)
-        : this.db().prepare(`SELECT kind, COUNT(*) AS n FROM blueprint_telemetry GROUP BY kind`).all()
+        : this.db()
+            .prepare(`SELECT kind, COUNT(*) AS n FROM blueprint_telemetry GROUP BY kind`)
+            .all()
     ) as { kind: string; n: number }[]
 
     const out: Record<string, number> = {}

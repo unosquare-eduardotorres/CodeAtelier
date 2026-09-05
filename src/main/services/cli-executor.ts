@@ -392,6 +392,9 @@ export class CLIExecutor {
   /** Cap on `poisonedSessionIds` — only the most recent ids can still be resumed. */
   private static readonly MAX_POISONED_SESSIONS = 32
 
+  /** A1 (Phase 3) — drop reason of the most recent buildCLIArgs call. See getLastResumeDropped(). */
+  private lastResumeDropped: 'poisoned' | 'malformed' | undefined
+
   /**
    * Rejects as soon as the current child process exits or errors.
    *
@@ -1626,140 +1629,31 @@ export class CLIExecutor {
   /**
    * Build CLI arguments from execute options.
    * Maps SDK-style options to their `claude` CLI flag equivalents.
+   *
+   * A1 (Phase 3/5) — delegates to the exported pure `buildClaudeCliArgs` so the
+   * arg assembly is unit-testable against the REAL implementation (the old
+   * test-local replica had no poisoned-session branch at all and could not
+   * catch a regression). Records any dropped `--resume` for the resume-outcome
+   * telemetry seam.
    */
   private buildCLIArgs(options: CLIExecuteOptions): string[] {
-    const args: string[] = [
-      // Core interactive mode flags — stream-json enables NDJSON on stdout/stdin
-      '--output-format',
-      'stream-json',
-      '--input-format',
-      'stream-json',
-      '--verbose',
-      // Include partial messages for real-time streaming (same as SDK's includePartialMessages)
-      '--include-partial-messages',
-      // Allow runtime switch to bypassPermissions via set_permission_mode control request.
-      // Without this flag, the CLI rejects mid-session elevation to bypassPermissions.
-      '--allow-dangerously-skip-permissions'
-    ]
-
-    // Model
-    if (options.model) {
-      args.push('--model', options.model)
-    }
-
-    // Permission mode
-    if (options.permissionMode) {
-      // Map SDK permission modes to CLI equivalents.
-      // The CLI's --permission-mode flag accepts the literal mode name.
-      // Note: 'bypassPermissions' is the correct value (not 'dangerously-skip-permissions',
-      // which is a standalone flag, not a --permission-mode value).
-      const modeMap: Record<string, string> = {
-        default: 'default',
-        plan: 'plan',
-        bypassPermissions: 'bypassPermissions',
-        acceptEdits: 'acceptEdits',
-        auto: 'auto',
-        dontAsk: 'dontAsk'
-      }
-      const cliMode = modeMap[options.permissionMode] ?? 'default'
-      args.push('--permission-mode', cliMode)
-    }
-
-    // System prompt — written to a temp file to avoid shell escaping issues
-    // and OS arg-length limits (system prompts can be 15K-25K chars).
-    if (options.systemPrompt) {
-      let fullPrompt = options.systemPrompt
-
-      // Goal — delivered via system prompt since the CLI has no --goal flag.
-      // (/goal is a session-only slash command, not a CLI argument.)
-      // Shared with the OpenCode path so the wording and limits match exactly.
-      if (options.goal) {
-        fullPrompt += buildGoalPromptSection(options.goal) ?? ''
-      }
-
-      const promptFilePath = this.writeSystemPromptFile(fullPrompt)
-      args.push('--system-prompt-file', promptFilePath)
-    }
-
-    // Session resume — refuse poisoned sessions, then validate format
-    const resumeBlocked = !!options.resume && this.poisonedSessionIds.has(options.resume)
-    if (resumeBlocked) {
-      executorLog.warn(
-        `[CLI:poisoned-resume] Refusing --resume ${options.resume} — that session was left with ` +
-          `an unanswered user turn; this spawn starts a fresh session instead`
-      )
-    } else if (options.resume) {
-      if (/^[a-zA-Z0-9_-]{8,}$/.test(options.resume)) {
-        args.push('--resume', options.resume)
-      } else {
-        executorLog.warn(
-          `[CLI:invalid-resume] Malformed session ID (skipping --resume): ${options.resume.slice(0, 30)}`
-        )
-      }
-    }
-
-    // Resume at specific message (undo support). Meaningless without --resume,
-    // and actively wrong when the resume was refused: it would point a fresh
-    // session at a message inside the abandoned one.
-    if (options.resumeSessionAt && !resumeBlocked) {
-      args.push('--resume-session-at', options.resumeSessionAt)
-    }
-
-    // Max turns
-    if (options.maxTurns) {
-      args.push('--max-turns', String(options.maxTurns))
-    }
-
-    // MCP config path (external servers)
-    if (options.mcpConfigPath) {
-      args.push('--mcp-config', options.mcpConfigPath)
-    }
-
-    // Allowed tools
-    if (options.allowedTools?.length) {
-      args.push('--allowedTools', options.allowedTools.join(','))
-    }
-
-    // Disallowed tools
-    if (options.disallowedTools?.length) {
-      args.push('--disallowedTools', options.disallowedTools.join(','))
-    }
-
-    // Permission prompt tool — routes CLI permission requests to our MCP tool
-    // instead of auto-denying. The control-actions server surfaces these in the UI.
-    if (options.permissionPromptTool) {
-      args.push('--permission-prompt-tool', options.permissionPromptTool)
-    }
-
-    // Additional directories
-    if (options.additionalDirectories?.length) {
-      for (const dir of options.additionalDirectories) {
-        args.push('--add-dir', dir)
-      }
-    }
-
-    // Effort level — Claude Code 2.1+ supports all 5 levels natively
-    if (options.effort) {
-      args.push('--effort', options.effort)
-    }
-
-    // Betas (1M context)
-    if (options.betas?.length) {
-      for (const beta of options.betas) {
-        args.push('--betas', beta)
-      }
-    }
-
-    // Fallback model
-    if (options.fallbackModel) {
-      args.push('--fallback-model', options.fallbackModel)
-    }
-
-    // Goal is delivered via system prompt (see above) for persistent visibility.
-    // The /goal slash command is queued separately via stdin in spawnCLIProcess().
-    // thinkingBudget is dropped silently (no CLI equivalent).
-
+    const { args, resumeDropped } = buildClaudeCliArgs(options, {
+      poisonedSessionIds: this.poisonedSessionIds,
+      writeSystemPromptFile: (prompt: string): string => this.writeSystemPromptFile(prompt)
+    })
+    this.lastResumeDropped = resumeDropped
     return args
+  }
+
+  /**
+   * A1 (Phase 3) — why `--resume` was dropped on the most recent buildCLIArgs
+   * call: 'poisoned' (unanswered user turn), 'malformed' (format check) or
+   * undefined (honoured / not requested). The session service reads this after
+   * the turn so a granted-but-dropped resume is telemetered as a silent cold
+   * run instead of `succeeded`.
+   */
+  getLastResumeDropped(): 'poisoned' | 'malformed' | undefined {
+    return this.lastResumeDropped
   }
 
   /**
@@ -1847,6 +1741,172 @@ export class CLIExecutor {
       CLAUDE_CODE_SUPPRESS_SESSION_ATTRIBUTION: '1'
     }
   }
+}
+
+// ── Pure CLI arg assembly (A1 Phase 5 — test the REAL builder) ──
+
+/** Session ids the CLI must never `--resume` — see CLIExecutor.poisonedSessionIds. */
+export type ResumeDropReason = 'poisoned' | 'malformed'
+
+/** The `claude` session-id format CLIExecutor validates before `--resume`. */
+export const CLAUDE_SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{8,}$/
+
+/**
+ * A1 (Phase 3/5) — the REAL CLI arg builder, extracted as a pure function.
+ *
+ * Byte-identical to the old private method for every input; the only new
+ * surface is `resumeDropped`, which names WHY a requested `--resume` was
+ * omitted from argv ('poisoned' | 'malformed') so a granted-but-dropped
+ * resume can be telemetered as a silent cold run instead of `succeeded`.
+ *
+ * `writeSystemPromptFile` is the one impure dependency (temp-file ownership is
+ * per-executor-instance); tests pass an identity callback and assert the
+ * prompt content is appended, not the path.
+ */
+export function buildClaudeCliArgs(
+  options: CLIExecuteOptions,
+  deps: {
+    poisonedSessionIds: ReadonlySet<string>
+    writeSystemPromptFile: (prompt: string) => string
+  }
+): { args: string[]; resumeDropped?: ResumeDropReason } {
+  const args: string[] = [
+    // Core interactive mode flags — stream-json enables NDJSON on stdout/stdin
+    '--output-format',
+    'stream-json',
+    '--input-format',
+    'stream-json',
+    '--verbose',
+    // Include partial messages for real-time streaming (same as SDK's includePartialMessages)
+    '--include-partial-messages',
+    // Allow runtime switch to bypassPermissions via set_permission_mode control request.
+    // Without this flag, the CLI rejects mid-session elevation to bypassPermissions.
+    '--allow-dangerously-skip-permissions'
+  ]
+
+  // Model
+  if (options.model) {
+    args.push('--model', options.model)
+  }
+
+  // Permission mode
+  if (options.permissionMode) {
+    // Map SDK permission modes to CLI equivalents.
+    // The CLI's --permission-mode flag accepts the literal mode name.
+    // Note: 'bypassPermissions' is the correct value (not 'dangerously-skip-permissions',
+    // which is a standalone flag, not a --permission-mode value).
+    const modeMap: Record<string, string> = {
+      default: 'default',
+      plan: 'plan',
+      bypassPermissions: 'bypassPermissions',
+      acceptEdits: 'acceptEdits',
+      auto: 'auto',
+      dontAsk: 'dontAsk'
+    }
+    const cliMode = modeMap[options.permissionMode] ?? 'default'
+    args.push('--permission-mode', cliMode)
+  }
+
+  // System prompt — written to a temp file to avoid shell escaping issues
+  // and OS arg-length limits (system prompts can be 15K-25K chars).
+  if (options.systemPrompt) {
+    let fullPrompt = options.systemPrompt
+
+    // Goal — delivered via system prompt since the CLI has no --goal flag.
+    // (/goal is a session-only slash command, not a CLI argument.)
+    // Shared with the OpenCode path so the wording and limits match exactly.
+    if (options.goal) {
+      fullPrompt += buildGoalPromptSection(options.goal) ?? ''
+    }
+
+    const promptFilePath = deps.writeSystemPromptFile(fullPrompt)
+    args.push('--system-prompt-file', promptFilePath)
+  }
+
+  // Session resume — refuse poisoned sessions, then validate format.
+  // A1 (Phase 3): the drop reason travels out so `resumeOutcome: 'blocked'`
+  // can be telemetered instead of a warn-only log.
+  let resumeDropped: ResumeDropReason | undefined
+  const resumeBlocked = !!options.resume && deps.poisonedSessionIds.has(options.resume)
+  if (resumeBlocked) {
+    resumeDropped = 'poisoned'
+    executorLog.warn(
+      `[CLI:poisoned-resume] Refusing --resume ${options.resume} — that session was left with ` +
+        `an unanswered user turn; this spawn starts a fresh session instead`
+    )
+  } else if (options.resume) {
+    if (CLAUDE_SESSION_ID_PATTERN.test(options.resume)) {
+      args.push('--resume', options.resume)
+    } else {
+      resumeDropped = 'malformed'
+      executorLog.warn(
+        `[CLI:invalid-resume] Malformed session ID (skipping --resume): ${options.resume.slice(0, 30)}`
+      )
+    }
+  }
+
+  // Resume at specific message (undo support). Meaningless without --resume,
+  // and actively wrong when the resume was refused: it would point a fresh
+  // session at a message inside the abandoned one.
+  if (options.resumeSessionAt && !resumeBlocked) {
+    args.push('--resume-session-at', options.resumeSessionAt)
+  }
+
+  // Max turns
+  if (options.maxTurns) {
+    args.push('--max-turns', String(options.maxTurns))
+  }
+
+  // MCP config path (external servers)
+  if (options.mcpConfigPath) {
+    args.push('--mcp-config', options.mcpConfigPath)
+  }
+
+  // Allowed tools
+  if (options.allowedTools?.length) {
+    args.push('--allowedTools', options.allowedTools.join(','))
+  }
+
+  // Disallowed tools
+  if (options.disallowedTools?.length) {
+    args.push('--disallowedTools', options.disallowedTools.join(','))
+  }
+
+  // Permission prompt tool — routes CLI permission requests to our MCP tool
+  // instead of auto-denying. The control-actions server surfaces these in the UI.
+  if (options.permissionPromptTool) {
+    args.push('--permission-prompt-tool', options.permissionPromptTool)
+  }
+
+  // Additional directories
+  if (options.additionalDirectories?.length) {
+    for (const dir of options.additionalDirectories) {
+      args.push('--add-dir', dir)
+    }
+  }
+
+  // Effort level — Claude Code 2.1+ supports all 5 levels natively
+  if (options.effort) {
+    args.push('--effort', options.effort)
+  }
+
+  // Betas (1M context)
+  if (options.betas?.length) {
+    for (const beta of options.betas) {
+      args.push('--betas', beta)
+    }
+  }
+
+  // Fallback model
+  if (options.fallbackModel) {
+    args.push('--fallback-model', options.fallbackModel)
+  }
+
+  // Goal is delivered via system prompt (see above) for persistent visibility.
+  // The /goal slash command is queued separately via stdin in spawnCLIProcess().
+  // thinkingBudget is dropped silently (no CLI equivalent).
+
+  return resumeDropped ? { args, resumeDropped } : { args }
 }
 
 // ── Empty-turn classification ──

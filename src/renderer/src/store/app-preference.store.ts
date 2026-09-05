@@ -30,7 +30,10 @@ const defaultPreferences: AppPreferences = {
   blueprintAutoMode: true,
   verifyFeatureDiff: false,
   blueprintFailureMemory: false,
-  autoSkipClarify: true
+  autoSkipClarify: true,
+  blueprintSessionResume: true,
+  // A1 Phase 4 — default OFF (cross-restart resume needs its measured window)
+  blueprintCrossRunResume: false
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -53,7 +56,9 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   blueprintAutoMode: 'blueprint_auto_mode',
   verifyFeatureDiff: 'verify_feature_diff',
   blueprintFailureMemory: 'blueprint_failure_memory',
-  autoSkipClarify: 'auto_skip_clarify'
+  autoSkipClarify: 'auto_skip_clarify',
+  blueprintSessionResume: 'blueprint_session_resume',
+  blueprintCrossRunResume: 'blueprint_cross_run_resume'
 }
 
 interface AppPreferenceState {
@@ -186,6 +191,9 @@ export const useBlueprintFailureMemory = (): boolean =>
 
 export const useAutoSkipClarify = (): boolean =>
   useAppPreferenceStore((state) => state.preferences.autoSkipClarify)
+
+export const useBlueprintSessionResume = (): boolean =>
+  useAppPreferenceStore((state) => state.preferences.blueprintSessionResume)
 
 export const useUserAvatarVariant = (): UserAvatarVariant =>
   useAppPreferenceStore((state) => state.preferences.userAvatarVariant)

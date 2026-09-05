@@ -100,6 +100,7 @@ import {
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
 import { blueprintTelemetryRepository } from '../db/repositories/blueprint-telemetry.repository'
+import { conversationRepository } from '../db/repositories'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
 import {
@@ -313,6 +314,140 @@ export function isResumeSafeOutcome(outcome: Exclude<SendOutcome, 'ok'>): boolea
   }
 }
 
+/**
+ * A1 — the resume-permit decision, as one value.
+ *
+ * Everything Step 3's call sites need: the persisted session id to resume
+ * (absent when the answer is "cold"), and the decline reason for telemetry
+ * when it is not. Pure: flag, provider and repository reads are the caller's.
+ */
+interface ResumeDecision {
+  /** True → pass `sessionId` to `session.start()`; false → cold, as today. */
+  resume: boolean
+  sessionId?: string
+  /** One of: not-safe | no-persisted-id | provider-changed | stale | flag-off | poisoned. */
+  reason?: ResumeDeclineReason
+  /** A1 (Phase 4) — true when this grant came from the cross-restart branch. */
+  crossRun?: boolean
+}
+
+type ResumeDeclineReason =
+  'not-safe' | 'no-persisted-id' | 'provider-changed' | 'stale' | 'flag-off' | 'poisoned'
+
+/**
+ * A1 — evaluate the resume permit for one retry.
+ *
+ * The order of checks is the telemetry taxonomy: every decline reason is
+ * distinguishable in the report. The permit (`isResumeSafeOutcome`) is
+ * re-derived from the failure's `SendOutcome`-shaped reason when available and
+ * trusted from `resumeSafe` otherwise — the two agree on every construction
+ * site, and the function stays honest even if a caller forgets the field
+ * (absent means NOT safe, i.e. cold, which is pre-A1 behaviour).
+ */
+function evaluateResumePermit(params: {
+  outcome: Exclude<SendOutcome, 'ok'> | undefined
+  resumeSafe: boolean | undefined
+  flagOn: boolean
+  persistedSessionId: string | undefined
+  /** Spec-service guard: a session resumed after a provider change is invalid. */
+  providerUnchanged: boolean
+  /** A1-P1 — the failed rung's session ended poisoned (unanswered user turn). */
+  sessionPoisoned?: boolean
+}): ResumeDecision {
+  // Order matters twice over. First, telemetry: a decline's reason must name
+  // the FIRST thing that failed, so `not-safe` is only ever reported when a
+  // session id exists to be declined — attempt 1 has nothing to resume and
+  // declines `no-persisted-id`, which is the truth. Second, rotation:
+  // `shouldRotateIdentity` treats `not-safe` as "a transcript must be
+  // abandoned", and attempt 1 has no transcript.
+  if (!params.flagOn) return { resume: false, reason: 'flag-off' }
+  if (!params.persistedSessionId) return { resume: false, reason: 'no-persisted-id' }
+  // A1-P1 — poison outranks the safety re-derivation: a poisoned session has
+  // an unanswered user turn in its transcript, and resuming it makes the model
+  // answer that stale turn instead of the retry. Normally the id is already
+  // gone (recordTurnBoundary clears it eagerly), so this is the backstop for
+  // the DB-write-failed case and for paths that never ran a turn boundary.
+  if (params.sessionPoisoned) return { resume: false, reason: 'poisoned' }
+  const safe =
+    params.outcome !== undefined ? isResumeSafeOutcome(params.outcome) : params.resumeSafe === true
+  if (!safe) return { resume: false, reason: 'not-safe' }
+  if (!params.providerUnchanged) return { resume: false, reason: 'provider-changed' }
+  return { resume: true, sessionId: params.persistedSessionId }
+}
+
+/**
+ * A1 — the resume-side decline when a resumed turn fails to re-attach and the
+ * ladder falls back to cold inside the same attempt. Surfaced in telemetry as
+ * `stale` — the persisted id existed but the CLI/server would not take it.
+ */
+function resumeFallbackDecision(): ResumeDecision {
+  return { resume: false, reason: 'stale' }
+}
+
+/**
+ * A1 — does THIS denial warrant rotating the conversation identity?
+ *
+ * Rotation exists for one reason: a transcript exists that the retry must NOT
+ * inherit (it overflowed, it belonged to another provider, or the backend
+ * refused to re-attach to it). `no-persisted-id` and `flag-off` denote the
+ * ABSENCE of anything to abandon — rotating there would churn identity (and
+ * the conversation row) for nothing, so identity stays stable and the retry
+ * runs cold on the same row, exactly as pre-A1.
+ */
+function shouldRotateIdentity(decision: ResumeDecision): boolean {
+  return (
+    !decision.resume &&
+    (decision.reason === 'not-safe' ||
+      decision.reason === 'provider-changed' ||
+      decision.reason === 'stale' ||
+      decision.reason === 'poisoned')
+  )
+}
+
+/**
+ * A1 (Phase 2, G7) — the short continuation message sent into a RESUMED session
+ * instead of the full cold task context. Pure so it is unit-testable without
+ * a session.
+ *
+ * The resumed session already contains the task statement, the spec/plan
+ * artifacts, the agent's own prior work and (if the flag is on) the failure
+ * memory — re-sending any of it is a duplicate of the transcript tail. What
+ * the session does NOT contain is the verdict of the failure that triggered
+ * this retry, so that — and only that — is what this message carries.
+ */
+export function buildResumeContinuationMessage(params: {
+  taskId: string
+  /** 1-based attempt this continuation is sent on. */
+  attempt: number
+  /** Why the previous rung failed (session outcome, throw message, or gate reason). */
+  failureReason?: string | null
+  /** Mechanical gate-failure instructions for the retry (M4.1), when present. */
+  gateFixInstructions?: string
+}): string {
+  const lines: string[] = [
+    `**Task ${params.taskId} — retry (attempt ${params.attempt})**`,
+    '',
+    'You are continuing this task in the SAME session — the full task statement,',
+    'the spec and plan artifacts, and your prior work are already in this',
+    'conversation. Do NOT restart the task and do NOT restate it.',
+    '',
+    'The previous attempt ended with:'
+  ]
+  if (params.failureReason) {
+    lines.push(`- Failure: ${params.failureReason}`)
+  }
+  if (params.gateFixInstructions) {
+    lines.push('', params.gateFixInstructions)
+  }
+  lines.push(
+    '',
+    'Continue from where the transcript stops. Re-read the files you already',
+    'touched to re-establish state, then finish the remaining work.',
+    'When done, emit a `blueprint-phase-complete` block with phase: "build".'
+  )
+  return lines.join('\n')
+}
+
 /** Return type for executeTask, including timing data. */
 interface TaskResult {
   success: boolean
@@ -341,6 +476,47 @@ interface TaskResult {
    * saturated and keep dispatching at full width — which causes more overload.
    */
   overloadCount?: number
+  /**
+   * A1 (Phase 0) — the LIVE session id at turn end, read synchronously from
+   * the session map in `executeTask`'s finally BEFORE the fire-and-forget
+   * `stop()` can tear down and clear it. This — not a DB read racing the
+   * teardown — is what the next rung's permit is evaluated against.
+   * `undefined` when the map already dropped the id (poisoned turn).
+   */
+  resumableSessionId?: string
+  /**
+   * A1 (Phase 0) — the DB-derived attempt number this rung ran under (the
+   * same number `turn_usage.attempt` records). The ladder's loop counter
+   * never advances on overload/infra re-runs, so this is the only attempt
+   * number that joins against per-attempt telemetry.
+   */
+  executeAttempt?: number
+  /** A1 (Phase 1) — the session ended POISONED (aborted or zero-chunk turn). */
+  sessionPoisoned?: boolean
+  /**
+   * A1 (Phase 3) — what the executor ACTUALLY did with the requested resume:
+   * `resumed` (--resume honoured, same id back), `mismatched` (server handed
+   * back a different id), `blocked` (poisoned/malformed id, flag dropped) or
+   * `none`. A granted permit that ends up anything but `resumed` is a silent
+   * cold run and is telemetered as such.
+   */
+  resumeOutcome?: 'resumed' | 'mismatched' | 'blocked' | 'none'
+  /** A1 (Phase 3) — cache-read tokens for this rung, from the meta chunk. */
+  cacheReadInputTokens?: number
+  /**
+   * A1 (Phase 1) — resolves when this rung's session teardown (stop/kill)
+   * completes. Fire-and-forget for the rung itself; the ladder AWAITS it
+   * only before dispatching a RESUMED rung, so the new `--resume` spawn
+   * never races the old child's kill ("never two processes on one id").
+   */
+  teardown?: Promise<void>
+  /**
+   * A1 — the raw `SendOutcome` of a failed attempt, when the session reported
+   * one. `resumeSafe` is the permit; this is the EVIDENCE the ladder re-derives
+   * the permit from on the next rung, so a resume decision never depends on a
+   * stale boolean alone.
+   */
+  sendOutcome?: Exclude<SendOutcome, 'ok'>
 }
 
 /**
@@ -2496,7 +2672,13 @@ export class BlueprintBuildService extends EventEmitter {
       : undefined
 
     /** Shared by every rung of the ladder so write activity accumulates across them. */
-    const ladderParams = { ...params, writeActivity, baselineDiffEmpty }
+    const ladderParams = {
+      ...params,
+      writeActivity,
+      baselineDiffEmpty,
+      /** A1 — current identity generation; kept in sync by rotateGeneration(). */
+      taskGeneration: 0
+    }
 
     let gateFixInstructions: string | undefined
     let lastResult: TaskResult | null = null
@@ -2510,6 +2692,111 @@ export class BlueprintBuildService extends EventEmitter {
     let overloadRetries = 0
     /** F4 — infra re-runs spent so far, across the whole ladder. */
     let infraRetries = 0
+    /**
+     * A1 — the task's conversation identity, stable across attempts. Attempts
+     * that resume keep this id (and with it the persisted session id); attempts
+     * that must not resume (permit denied: `context_overflow`,
+     * `turn_limit_exhausted`, provider change) rotate the generation suffix and
+     * get a genuinely fresh conversation. `Date.now()` in the old id meant every
+     * attempt was a new conversation by construction, so nothing could ever be
+     * resumed — this is what turns the F4 permit into a mechanism.
+     */
+    let taskGeneration = 0
+    /**
+     * A1 — set when the rung that just failed may be resumed. Read by the next
+     * `executeTask` call to decide resume vs cold before the retry dispatches.
+     */
+    let resumeOutcome: Exclude<SendOutcome, 'ok'> | undefined
+    let resumePermitted = false
+    /**
+     * A1 — true when the rung that just ran was itself a resume. If that rung
+     * STILL failed at the session level, the persisted id is stale (dead
+     * CLI transcript / restarted OpenCode server) and the next rung must fall
+     * back to cold — recorded as decline reason `stale`. This is the "resume
+     * failure falls back to cold, no budget burned" guarantee: the fallback
+     * rides the SAME retry the ladder was already going to spend.
+     */
+    let lastRungResumed = false
+    /**
+     * A1 (Phase 0) — the previous rung's resume substrate, captured in ITS
+     * finally before teardown. This — not a DB read racing stop() — is what
+     * the next permit is evaluated against. `undefined` also carries meaning:
+     * the session map already dropped the id (poisoned turn).
+     */
+    let prevResumableSessionId: string | undefined
+    /** A1 (Phase 1) — the previous rung's session ended poisoned. */
+    let prevSessionPoisoned: boolean | undefined
+    /** A1 (Phase 4) — attempt-1 cross-restart resume is allowed by the caller. */
+    const allowCrossRun = true
+    /** A1 (Phase 0) — the previous rung's DB-derived attempt number. */
+    let prevExecuteAttempt: number | undefined
+    /** A1 (Phase 1) — the previous rung's teardown promise, awaited before a resumed dispatch. */
+    let resultTeardown: Promise<void> | undefined
+    /**
+     * A1 (Phases 0+3) — fold a rung's TaskResult into the ladder's decision
+     * state + honest telemetry. One place, so the three executeTask call
+     * sites (ladder, overload loop, F4 loop) cannot drift apart again.
+     */
+    const recordRungEvidence = (
+      result: TaskResult,
+      decision: ResumeDecision,
+      attempt: number
+    ): void => {
+      resumeOutcome = result.sendOutcome
+      resumePermitted = result.resumeSafe === true
+      lastRungResumed = decision.resume
+      prevResumableSessionId = result.resumableSessionId
+      prevSessionPoisoned = result.sessionPoisoned
+      prevExecuteAttempt = result.executeAttempt
+      resultTeardown = result.teardown
+      if (decision.resume && result.success) {
+        // A1 (Phase 3) — the rung succeeded, but did the executor actually
+        // RESUME? A granted permit that the executor dropped (poisoned id,
+        // malformed id) or that the server re-issued (mismatch) was a silent
+        // COLD run — recorded as `failed-silently`, never as `succeeded`.
+        const actual = result.resumeOutcome ?? 'none'
+        if (actual === 'resumed') {
+          this.recordResumeTelemetry(
+            { blueprintId, taskId: task.taskId, attempt, executeAttempt: result.executeAttempt },
+            'succeeded',
+            {
+              sessionId: decision.sessionId,
+              generation: taskGeneration,
+              ...(result.cacheReadInputTokens !== undefined
+                ? { cacheReadInputTokens: result.cacheReadInputTokens }
+                : {})
+            }
+          )
+        } else {
+          this.recordResumeTelemetry(
+            { blueprintId, taskId: task.taskId, attempt, executeAttempt: result.executeAttempt },
+            'failed-silently',
+            {
+              sessionId: decision.sessionId,
+              generation: taskGeneration,
+              silentReason: actual,
+              ...(result.cacheReadInputTokens !== undefined
+                ? { cacheReadInputTokens: result.cacheReadInputTokens }
+                : {})
+            }
+          )
+        }
+      }
+    }
+    /** A1 — provider snapshot taken before attempt 1; a change invalidates resume. */
+    const ladderProvider = modelConfigService.getProvider(workspacePath)
+    /**
+     * A1 — rotate the identity generation and keep `ladderParams` in sync, so
+     * the cold rungs that spread it (peer-review fix, lead escalation) run
+     * under the CURRENT generation's conversation id — cold by design (fresh
+     * reasoning, different model), never resuming, but never writing their
+     * turns onto a stale generation's row either.
+     */
+    const rotateGeneration = (): number => {
+      taskGeneration++
+      ladderParams.taskGeneration = taskGeneration
+      return taskGeneration
+    }
 
     for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
       // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
@@ -2522,8 +2809,63 @@ export class BlueprintBuildService extends EventEmitter {
         gateCtx.commands = this.resolveGateCommandsFor(blueprintId, workspacePath)
       }
 
-      let result = await this.executeTask({ ...ladderParams, gateFixInstructions })
+      // A1 — decide resume vs cold for THIS rung before it dispatches. On
+      // attempt 1 there is nothing to resume (resumeOutcome unset) and the
+      // decision is always cold, exactly as before. On a retry, the permit is
+      // evaluated against the previous rung's outcome: resume when safe +
+      // persisted id + provider unchanged + flag on; rotate the generation and
+      // go cold otherwise. One decision per rung, telemetry either way.
+      const resumeDecision: ResumeDecision = await this.decideResume({
+        blueprintId,
+        taskId: task.taskId,
+        attempt,
+        convId: `blueprint-build-${blueprintId}-${task.taskId}`,
+        generation: taskGeneration,
+        outcome: resumeOutcome,
+        resumeSafe: resumePermitted,
+        providerAtStart: ladderProvider,
+        workspacePath,
+        previousRungWasResume: lastRungResumed,
+        previousResumableSessionId: prevResumableSessionId,
+        previousSessionPoisoned: prevSessionPoisoned,
+        executeAttempt: prevExecuteAttempt,
+        ...(attempt === 1 ? { allowCrossRun } : {})
+      })
+      if (resumeOutcome !== undefined && shouldRotateIdentity(resumeDecision)) {
+        // The denial carries a transcript that must be abandoned — rotate the
+        // identity so the cold retry gets a fresh conversation and never
+        // re-injects the transcript that produced the denial. Denials that
+        // denote ABSENCE (no id, flag off) keep identity stable — see
+        // `shouldRotateIdentity`.
+        rotateGeneration()
+      }
+      // A1-P3 — never let a resumed spawn race the previous rung's teardown
+      // ("never two processes on one session id"). stop() is bounded by its
+      // own 10s deadlock guard, and cold rungs skip the wait entirely, so the
+      // dispatch-slot optimisation is preserved where it costs nothing.
+      if (resumeDecision.resume && resultTeardown) {
+        await resultTeardown
+      }
+      const rungParams = {
+        ...ladderParams,
+        gateFixInstructions,
+        taskGeneration,
+        ...(resumeDecision.resume && resumeDecision.sessionId
+          ? {
+              resumeSessionId: resumeDecision.sessionId,
+              resumeConversationId:
+                `blueprint-build-${blueprintId}-${task.taskId}` +
+                (taskGeneration > 0 ? `-g${taskGeneration}` : '')
+            }
+          : {})
+      }
+
+      let result = await this.executeTask(rungParams)
       blueprintTaskRepository.recordAttempt(task.id)
+
+      // A1 (Phases 0+3) — carry this rung's evidence forward for the next
+      // rung's decision, with honest resume-outcome telemetry.
+      recordRungEvidence(result, resumeDecision, attempt)
 
       // R1 — the attempt failed before it could be graded. Recorded HERE, not at
       // settle: `handleTaskCompletion` runs once per task, so a task that fails
@@ -2597,10 +2939,46 @@ export class BlueprintBuildService extends EventEmitter {
         // this task's diff as write-set violations.
         this.refreshExemptFiles(gateCtx, params.peers)
 
-        result = await this.executeTask({ ...ladderParams, gateFixInstructions })
+        // A1 — the overload loop's own permit evaluation: overload is
+        // resume-safe, so this resumes whenever the flag is on and the session
+        // id survived the failed turn (processMetaChunk persists it from the
+        // CLI's init message before overload hits). A denied permit rotates
+        // the generation and retries cold, exactly as pre-A1.
+        const overloadResume = await this.decideResume({
+          blueprintId,
+          taskId: task.taskId,
+          attempt,
+          convId: `blueprint-build-${blueprintId}-${task.taskId}`,
+          generation: taskGeneration,
+          outcome: 'overload',
+          resumeSafe: true,
+          providerAtStart: ladderProvider,
+          workspacePath,
+          previousRungWasResume: lastRungResumed,
+          previousResumableSessionId: prevResumableSessionId,
+          previousSessionPoisoned: prevSessionPoisoned,
+          executeAttempt: prevExecuteAttempt
+        })
+        if (shouldRotateIdentity(overloadResume)) rotateGeneration()
+        // A1-P3 — await the previous rung's teardown before a RESUMED re-run.
+        if (overloadResume.resume && resultTeardown) await resultTeardown
+        result = await this.executeTask({
+          ...ladderParams,
+          gateFixInstructions,
+          taskGeneration,
+          ...(overloadResume.resume && overloadResume.sessionId
+            ? {
+                resumeSessionId: overloadResume.sessionId,
+                resumeConversationId:
+                  `blueprint-build-${blueprintId}-${task.taskId}` +
+                  (taskGeneration > 0 ? `-g${taskGeneration}` : '')
+              }
+            : {})
+        })
         // Recorded AFTER the call, matching the ladder convention: executeTask
         // reads `attempts` to derive its own attempt number.
         blueprintTaskRepository.recordAttempt(task.id)
+        recordRungEvidence(result, overloadResume, attempt)
       }
 
       // F4 — ONE in-ladder re-run for an infra failure the session outcome says
@@ -2652,8 +3030,44 @@ export class BlueprintBuildService extends EventEmitter {
           // The wait is short, but a peer can still land inside it — and an
           // exemption set read before the wait would attribute its writes here.
           this.refreshExemptFiles(gateCtx, params.peers)
-          result = await this.executeTask({ ...ladderParams, gateFixInstructions })
+
+          // A1 — F4's re-run becomes a resume when the permit holds. The
+          // `error`/verification-exception classes that reach here carry
+          // `resumeSafe: true` and a persisted id; a denied permit rotates the
+          // generation and re-runs cold, exactly as pre-A1.
+          const infraResume = await this.decideResume({
+            blueprintId,
+            taskId: task.taskId,
+            attempt,
+            convId: `blueprint-build-${blueprintId}-${task.taskId}`,
+            generation: taskGeneration,
+            outcome: result.sendOutcome,
+            resumeSafe: result.resumeSafe,
+            providerAtStart: ladderProvider,
+            workspacePath,
+            previousRungWasResume: lastRungResumed,
+            previousResumableSessionId: prevResumableSessionId,
+            previousSessionPoisoned: prevSessionPoisoned,
+            executeAttempt: prevExecuteAttempt
+          })
+          if (shouldRotateIdentity(infraResume)) rotateGeneration()
+          // A1-P3 — await the previous rung's teardown before a RESUMED re-run.
+          if (infraResume.resume && resultTeardown) await resultTeardown
+          result = await this.executeTask({
+            ...ladderParams,
+            gateFixInstructions,
+            taskGeneration,
+            ...(infraResume.resume && infraResume.sessionId
+              ? {
+                  resumeSessionId: infraResume.sessionId,
+                  resumeConversationId:
+                    `blueprint-build-${blueprintId}-${task.taskId}` +
+                    (taskGeneration > 0 ? `-g${taskGeneration}` : '')
+                }
+              : {})
+          })
           blueprintTaskRepository.recordAttempt(task.id)
+          recordRungEvidence(result, infraResume, attempt)
         } catch {
           // Cancelled during the wait. Reported as the cancellation it is, and
           // the resume permit is cleared: it belonged to the infra failure this
@@ -2854,6 +3268,218 @@ export class BlueprintBuildService extends EventEmitter {
           failureReason: `${withOverload.failureReason ?? 'task failed'} — ${stopLossNote}`
         }
       : withOverload
+  }
+
+  /**
+   * A1 (Steps 2+3+5) — evaluate the resume permit for one rung and record the
+   * `session_resume` telemetry row either way.
+   *
+   * Called before every builder rung (attempt 1 declines with
+   * `no-persisted-id`, which is correct — there is nothing to resume yet) and
+   * before each in-ladder re-run. Returns the decision; the CALLER owns the
+   * generation rotation, because only it knows whether the denial was on the
+   * evidence of a failed outcome (rotate → fresh conversation) or a
+   * precondition failure (keep → the id is still valid for a later rung).
+   *
+   * E12's lesson, applied directly: `attempted` / `succeeded` / `declined` are
+   * three DISTINCT rows, so "resume attempted" and "resume actually happened"
+   * can never be conflated in analysis.
+   */
+  private async decideResume(params: {
+    blueprintId: string
+    taskId: string
+    attempt: number
+    /** Conversation id of the CURRENT generation — where the persisted id lives. */
+    convId: string
+    generation: number
+    outcome: Exclude<SendOutcome, 'ok'> | undefined
+    resumeSafe: boolean | undefined
+    providerAtStart: import('../../shared/types').LLMProvider
+    workspacePath: string
+    /** True when the rung whose failure produced `outcome` was itself a resume. */
+    previousRungWasResume?: boolean
+    /** A1 (Phase 0/P4) — DB-derived attempt of the rung this decision is about. */
+    executeAttempt?: number
+    /**
+     * A1 (Phase 0) — the resume substrate from the PREVIOUS rung's TaskResult:
+     * the live session id captured in that rung's finally, before teardown.
+     * When present it is authoritative; a DB read would race the fire-and-forget
+     * stop() that clears the id (poison rule) — the nondeterminism this phase
+     * removes. Falls back to the DB read ONLY on the cross-restart branch
+     * (Phase 4), where no in-ladder evidence exists by construction.
+     */
+    previousResumableSessionId?: string
+    /** A1 (Phase 1) — the previous rung's session ended poisoned. */
+    previousSessionPoisoned?: boolean
+    /**
+     * A1 (Phase 4) — permit attempt-1 cross-restart resume when no in-ladder
+     * evidence exists. Requires the `blueprintCrossRunResume` sub-flag (default
+     * OFF) AND the provider snapshot matching; the persisted id surviving at all
+     * is itself evidence the last turn ended cleanly (poison clears the id).
+     */
+    allowCrossRun?: boolean
+  }): Promise<ResumeDecision> {
+    // The live conversation id of THIS generation — after a rotation the
+    // persisted id lives on the `-gN` row, not the base one.
+    const convId = params.generation > 0 ? `${params.convId}-g${params.generation}` : params.convId
+    const flagOn = appPreferenceRepository.getAppPreferences().blueprintSessionResume
+    const readPersistedId = (): string | undefined => {
+      try {
+        return conversationRepository.getSessionId(convId)
+      } catch {
+        /* cold, as today */
+        return undefined
+      }
+    }
+    let persistedSessionId: string | undefined
+    // A1 (Phase 4) — attempt-1 / post-restart: no in-ladder evidence exists, so
+    // the DB is the only source. Gated on its own default-OFF flag: this is the
+    // one path that re-opens the orphaned-background-shell hazard the
+    // `resolveSession` cross-restart guard exists for, and it needs its own
+    // measured window before it becomes default.
+    if (params.allowCrossRun && params.outcome === undefined) {
+      const crossFlagOn =
+        appPreferenceRepository.getAppPreferences().blueprintCrossRunResume === true
+      const providerUnchanged =
+        modelConfigService.getProvider(params.workspacePath) === params.providerAtStart
+      if (crossFlagOn && providerUnchanged) {
+        persistedSessionId = readPersistedId()
+        if (persistedSessionId) {
+          const decision: ResumeDecision = {
+            resume: true,
+            sessionId: persistedSessionId,
+            crossRun: true
+          }
+          // E12 fire-time honesty — same as the in-ladder grant below.
+          this.recordResumeTelemetry(params, 'attempted', {
+            sessionId: persistedSessionId,
+            generation: params.generation,
+            crossRun: true
+          })
+          return decision
+        }
+      }
+      // No persisted id, or the sub-flag is off: cold, as today.
+      return { resume: false, reason: 'no-persisted-id' }
+    }
+    // A1 (Phase 0) — with in-ladder evidence, the previous rung's stamp is the
+    // ONLY source. A DB read here would race the fire-and-forget teardown
+    // (stop() → poison rule → id cleared) — the exact nondeterminism between
+    // "never resumes" and "resumes a poisoned session" this phase removes.
+    // `undefined` is meaningful: the session map already dropped the id.
+    persistedSessionId = params.previousResumableSessionId
+    const providerUnchanged =
+      modelConfigService.getProvider(params.workspacePath) === params.providerAtStart
+
+    // Stale-resume detection: the previous rung RESUMED and still failed — the
+    // persisted id points at a session the backend will not re-attach to (dead
+    // CLI transcript, restarted OpenCode server). Do not try it a second time;
+    // fall back to cold on the same retry the ladder was already spending.
+    //
+    // A1-P2 — the OLD guard required `outcome !== undefined`, which only the
+    // send-outcome path sets. Every throw-path failure (stall watchdog,
+    // TASK_TIMEOUT_MS, transport) built its result in executeTask's catch with
+    // `resumeSafe: true` and NO sendOutcome, so a resumed rung that failed that
+    // way skipped stale detection entirely and was granted a second resume of
+    // the same dead session. The evidence of a failed rung is now carried on
+    // the TaskResult itself (Phase 0): outcome OR poisoned OR a dropped id all
+    // count as "the rung failed at the session level".
+    //
+    // `overload` is exempt: a resumed turn rejected by rate limiting leaves the
+    // session transcript intact — resuming again after the backoff is precisely
+    // what the backoff exists for, and the cache read makes it cheap.
+    const rungFailedAtSessionLevel =
+      params.outcome !== undefined ||
+      params.previousSessionPoisoned === true ||
+      params.previousResumableSessionId === undefined
+    if (
+      params.previousRungWasResume === true &&
+      params.outcome !== 'overload' &&
+      rungFailedAtSessionLevel
+    ) {
+      const decision = resumeFallbackDecision()
+      this.recordResumeTelemetry(params, 'declined', {
+        reason: decision.reason,
+        failureClass: 'infra',
+        sessionId: persistedSessionId
+      })
+      return decision
+    }
+
+    const decision = evaluateResumePermit({
+      outcome: params.outcome,
+      resumeSafe: params.resumeSafe,
+      flagOn,
+      persistedSessionId,
+      providerUnchanged,
+      sessionPoisoned: params.previousSessionPoisoned
+    })
+
+    if (decision.resume) {
+      // E12 fire-time honesty: `attempted` fires when the retry dispatches with
+      // the resume; `succeeded` fires when that rung's executeTask returns. The
+      // gap between the two is where silent resume failures live.
+      this.recordResumeTelemetry(params, 'attempted', {
+        failureClass: 'infra',
+        sessionId: decision.sessionId,
+        generation: params.generation
+      })
+    } else if (params.outcome !== undefined || params.previousRungWasResume === true) {
+      // A decline is only news when a real failure prompted the decision:
+      // attempt 1 always declines (nothing to resume yet) and would otherwise
+      // flood the table with one no-op row per task per run.
+      this.recordResumeTelemetry(params, 'declined', {
+        reason: decision.reason,
+        failureClass: params.outcome !== undefined ? 'infra' : undefined,
+        sessionId: persistedSessionId
+      })
+    }
+    return decision
+  }
+
+  /** A1 (Step 5) — one `session_resume` telemetry row. No CHECK on `kind` by design. */
+  private recordResumeTelemetry(
+    params: {
+      blueprintId: string
+      taskId: string
+      attempt: number
+      /** A1 (Phase 0) — the DB-derived attempt of the rung being decided about. */
+      executeAttempt?: number
+    },
+    status: 'attempted' | 'succeeded' | 'declined' | 'failed-silently',
+    data: {
+      reason?: ResumeDeclineReason
+      failureClass?: TaskFailureClass
+      sessionId?: string
+      generation?: number
+      /** A1 (Phase 4) — the grant came from the cross-restart branch. */
+      crossRun?: boolean
+      /** A1 (Phase 3) — sub-reason of a failed-silently downgrade. */
+      silentReason?: string
+      /** A1 (Phase 3) — cache-read tokens of the rung, for Gate 1. */
+      cacheReadInputTokens?: number
+    }
+  ): void {
+    try {
+      blueprintTelemetryRepository.record({
+        blueprintId: params.blueprintId,
+        kind: 'session_resume',
+        phase: 'build',
+        taskId: params.taskId,
+        attempt: params.attempt,
+        data: {
+          status,
+          ...data,
+          // A1-P4 — the DB-derived attempt of the rung the decision is about,
+          // when known. The ladder's loop counter never advances on
+          // overload/infra re-runs, so this is what joins against
+          // turn_usage.attempt.
+          ...(params.executeAttempt !== undefined ? { executeAttempt: params.executeAttempt } : {})
+        }
+      })
+    } catch (err) {
+      bpLog.warn('[A1:resume-telemetry] failed to record session_resume row:', err)
+    }
   }
 
   /**
@@ -3211,6 +3837,14 @@ export class BlueprintBuildService extends EventEmitter {
     /** P0 — the task's cumulative write activity; escalation adds to it. */
     writeActivity?: TaskWriteActivity
     baselineDiffEmpty?: () => Promise<boolean | null>
+    /**
+     * A1 (P7) — generation of this task's conversation identity. Carried here
+     * at runtime by the `...ladderParams` spread but previously OMITTED from
+     * this declared type, so nothing type-checked the path: a refactor to
+     * explicit destructuring would silently drop it and escalation would write
+     * its session id onto the abandoned generation-0 row.
+     */
+    taskGeneration?: number
   }): Promise<TaskResult> {
     const { task, blueprintId, workspaceId, gateCtx, baseline, lastResult } = params
 
@@ -3344,11 +3978,7 @@ export class BlueprintBuildService extends EventEmitter {
    * evidence lines — the shell's "'pytest' is not recognized" line used to be
    * captured and never shown (incident 2026-08, ~20 blind retries).
    */
-  private pushWaveGateFailure(
-    result: BuildResult,
-    waveLabel: string,
-    report: GateReport
-  ): void {
+  private pushWaveGateFailure(result: BuildResult, waveLabel: string, report: GateReport): void {
     const failed = report.gates.filter((g) => g.verdict === 'fail')
     for (const gate of failed) {
       const evidence = gate.evidence.slice(0, 3).join(' | ')
@@ -4283,6 +4913,27 @@ export class BlueprintBuildService extends EventEmitter {
     writeActivity?: TaskWriteActivity
     /** P0 — "did this task change anything since its baseline"; null = unknown. */
     baselineDiffEmpty?: () => Promise<boolean | null>
+    /**
+     * A1 — generation of this task's conversation identity. 0 on the first
+     * attempt; incremented by the ladder only when the resume permit is DENIED
+     * (context overflow, turn-limit exhaustion, provider change). A stable id
+     * plus a generation is what makes "resume vs cold" a decision instead of an
+     * accident of `Date.now()` naming.
+     */
+    taskGeneration?: number
+    /**
+     * A1 — resume this persisted CLI/OpenCode session id instead of starting
+     * cold. Only set when `evaluateResumePermit` said yes (flag on + resume-safe
+     * outcome + id present + provider unchanged).
+     */
+    resumeSessionId?: string
+    /**
+     * A1 — the conversation id whose row holds the session id being resumed.
+     * Seeding `AgentSessionService`'s session map needs the explicit key — its
+     * `_lastActiveConversationId` is null until the first send(), and build
+     * supplies the conversation id at send time, after start().
+     */
+    resumeConversationId?: string
   }): Promise<TaskResult> {
     const {
       task,
@@ -4323,33 +4974,58 @@ export class BlueprintBuildService extends EventEmitter {
     // prior attempts and this run is the next one.
     const attempt = (currentRow?.attempts ?? 0) + 1
 
-    // P2 — the raw partial is a transcript tail sliced at 4000 characters.
-    // When the flag is on, one Haiku call turns it into a fixed schema instead.
-    // `null` back means the extraction did not work, and the raw dump below
-    // stands exactly as it does today — this never removes context, it only
-    // ever replaces it with something structured.
-    const failureMemoryMd = priorPartial?.contentMd
-      ? await this.extractFailureMemoryIfEnabled({
-          text: priorPartial.contentMd,
-          gateReport: currentRow?.gatesJson ?? null,
-          failureReason: currentRow?.failureReason ?? task.failureReason,
-          blueprintId,
-          taskId: task.taskId,
-          workspaceId,
-          attempt
-        })
-      : null
+    // A1 (Steps 2–3) — opt-in resume. `resumeSessionId` is set only by the
+    // ladder, only after `evaluateResumePermit` approved it, which is the
+    // structural difference from the accidental DB-load path the cross-restart
+    // guard in `resolveSession` exists to reject. The guard stays untouched for
+    // every other caller: here the session map is pre-seeded explicitly, so the
+    // id resolves `fromMemory === true` and never reaches the guard at all.
+    const resuming = Boolean(params.resumeSessionId && params.resumeConversationId)
 
-    // Build task-specific context string (with accumulated discoveries + prior attempt output)
-    const taskContext = this.buildTaskContext(
-      task,
-      params.priorDiscoveries,
-      priorPartial?.contentMd,
-      task.failureReason,
-      params.gateFixInstructions,
-      modelConfigService.isLocalProvider(workspacePath),
-      failureMemoryMd
-    )
+    // A1 (Phase 2, G7) — a RESUMED retry sends a short continuation message, not
+    // the full cold context. The session's transcript already holds the task
+    // statement, spec/plan artifacts, the agent's prior work, the failure
+    // memory and the 4K partial — re-sending any of those duplicates the
+    // transcript tail and makes the −50% context target unreachable. The only
+    // thing the session does NOT have is the verdict of the failure that
+    // triggered this retry, so that is all this message carries.
+    //
+    // Note: failure memory (P2) is deliberately suppressed here — it belongs on
+    // COLD gate-failure retries, where the fresh session has never seen the
+    // failed attempt's output. On a resumed retry the same content is already
+    // in the transcript.
+    let taskContext: string
+    let failureMemoryExtraction: string | null = null
+    if (resuming) {
+      taskContext = buildResumeContinuationMessage({
+        taskId: task.taskId,
+        attempt,
+        failureReason: currentRow?.failureReason ?? task.failureReason,
+        gateFixInstructions: params.gateFixInstructions
+      })
+    } else {
+      // Cold rung — byte-identical to pre-Phase-2 behaviour.
+      failureMemoryExtraction = priorPartial?.contentMd
+        ? await this.extractFailureMemoryIfEnabled({
+            text: priorPartial.contentMd,
+            gateReport: currentRow?.gatesJson ?? null,
+            failureReason: currentRow?.failureReason ?? task.failureReason,
+            blueprintId,
+            taskId: task.taskId,
+            workspaceId,
+            attempt
+          })
+        : null
+      taskContext = this.buildTaskContext(
+        task,
+        params.priorDiscoveries,
+        priorPartial?.contentMd,
+        task.failureReason,
+        params.gateFixInstructions,
+        modelConfigService.isLocalProvider(workspacePath),
+        failureMemoryExtraction
+      )
+    }
 
     // Create adapter + session
     const adapter = new BlueprintBuildAdapter({
@@ -4469,7 +5145,31 @@ export class BlueprintBuildService extends EventEmitter {
     }
     // BP-CATCH-SCOPE-01: Declared outside try/catch so the catch block (which saves
     // partial output on failure) can read the same conversation id the try block used.
-    const syntheticConvId = `blueprint-build-${blueprintId}-${task.taskId}-${Date.now()}`
+    // A1: stable across attempts within one generation — no `Date.now()`. The
+    // generation suffix rotates ONLY when the ladder denies the resume permit,
+    // so `context_overflow` / `turn_limit_exhausted` still get a fresh
+    // conversation (never re-injecting the transcript that overflowed) while
+    // overload/error retries keep the id, the persisted session id, and with
+    // them the cache-read resume.
+    const syntheticConvId =
+      `blueprint-build-${blueprintId}-${task.taskId}` +
+      (params.taskGeneration && params.taskGeneration > 0 ? `-g${params.taskGeneration}` : '')
+
+    // A1 (Step 1) — BUILD never ensured a conversation row, so
+    // `conversationRepository.updateSessionId` had nothing to write to and no
+    // session id could ever survive an attempt boundary. The row is the
+    // persistence substrate for resume; it is also what crash recovery
+    // correlates the task transcript through — spec has done this since
+    // BP-CONV-ENSURE. Idempotent, best-effort: a failed ensure logs and the
+    // attempt proceeds cold (pre-A1 behaviour).
+    blueprintService.ensurePhaseConversation(workspaceId, blueprintId, 'build', syntheticConvId)
+
+    if (resuming) {
+      bpLog.info(
+        `[executeTask] Task ${task.taskId} attempt ${attempt} — RESUMING session ` +
+          `${params.resumeSessionId} (conversation ${params.resumeConversationId})`
+      )
+    }
 
     try {
       // Start session in BUILD mode (write access).
@@ -4482,7 +5182,18 @@ export class BlueprintBuildService extends EventEmitter {
       // from the track owner instead. Passing the worktree here would move the
       // cwd and silently drop all of that.
       await session.start(workspacePath, autoMode ? 'danger' : 'build', {
-        trackOwner: blueprintTrackOwner(blueprintId)
+        trackOwner: blueprintTrackOwner(blueprintId),
+        // A1 — the opt-in resume seam. `resumeConversationId` keys the session
+        // map explicitly (the old code keyed on `_lastActiveConversationId`,
+        // which start() had just nulled); the seeded id then resolves as
+        // `fromMemory` in `resolveSession` and skips the cross-restart guard
+        // that rejects accidental DB loads.
+        ...(params.resumeSessionId && params.resumeConversationId
+          ? {
+              resumeSessionId: params.resumeSessionId,
+              resumeConversationId: params.resumeConversationId
+            }
+          : {})
       })
       tSessionReady = Date.now()
 
@@ -4559,7 +5270,8 @@ export class BlueprintBuildService extends EventEmitter {
           discoveries: [],
           failureReason: sendOutcome,
           failureClass: classifySendOutcome(sendOutcome),
-          resumeSafe: isResumeSafeOutcome(sendOutcome)
+          resumeSafe: isResumeSafeOutcome(sendOutcome),
+          sendOutcome
         }
       } else {
         // Parse output
@@ -4869,17 +5581,34 @@ export class BlueprintBuildService extends EventEmitter {
       }
 
       // GAP-3 FIX: Include error message as failureReason for UI surfacing
+      // A1-P6 — abort during SEND is a cancellation, not an infra failure. The
+      // abort promise rejects with Error('Phase cancelled') into this catch; left
+      // unclassed it lands `infra` + `resumeSafe: true`, so a user-cancelled phase
+      // would later be re-driven as a resume. Only the workspace abort signal
+      // counts — the stall watchdog and TASK_TIMEOUT_MS throw the same shape but
+      // ARE infra (and resume-safe).
+      const abortedDuringSend = blueprintService.getAbortSignal(workspaceId)?.aborted === true
       taskResult = {
         success: false,
         completion: null,
         discoveries: [],
         failureReason: err instanceof Error ? err.message : String(err),
-        // A throw out of the session — stall watchdog, transport, spawn. The
-        // gates never ran, so this is never a quality verdict.
-        failureClass: 'infra',
-        // A stall or a dead transport leaves the session's history usable; the
-        // two outcomes that do not are handled on the send-outcome path above.
-        resumeSafe: true
+        failureClass: abortedDuringSend ? 'aborted' : 'infra',
+        // resumeSafe: false when aborted — a cancelled turn leaves an unanswered
+        // user turn in the transcript (the poison rule), so it must never be
+        // resumed. Otherwise: a stall or dead transport leaves the session's
+        // history usable; the two outcomes that do not are handled on the
+        // send-outcome path above.
+        resumeSafe: !abortedDuringSend,
+        // A1 (Phase 1) — a DISPATCHED turn that ends in a throw (stall watchdog,
+        // TASK_TIMEOUT_MS, abort) is still live here; the fire-and-forget
+        // stop() below will abort it and the turn boundary will poison the
+        // session — AFTER this catch could ever read the set. Stamp it now,
+        // optimistically-but-correctly: the id may still be in the map, but it
+        // is about to point at a transcript with a dangling user turn. A
+        // start() failure (no turn dispatched, tSessionReady === 0) leaves the
+        // seeded id genuinely valid — no poison there.
+        sessionPoisoned: tSessionReady !== 0
       }
     } finally {
       // Phase 0: Record slot-freed time + build timing object
@@ -4917,12 +5646,40 @@ export class BlueprintBuildService extends EventEmitter {
       session.removeListener('statusUpdate', onStatus)
       this.perTaskStatus.delete(statusKey)
 
+      // A1 (Phase 0) — capture the resume substrate SYNCHRONOUSLY, before the
+      // fire-and-forget stop() below can tear the session down. stop() aborts
+      // the active stream → recordTurnBoundary({aborted:true}) → poison rule →
+      // sessionMap.delete + updateSessionId(convId, ''). Reading the DB here
+      // would race exactly that; reading the live session map does not.
+      taskResult.resumableSessionId = session.getSessionId(syntheticConvId)
+      taskResult.executeAttempt = attempt
+      // A1 (Phase 1) — consult the session's OWN poison set: an aborted or
+      // zero-chunk turn leaves an unanswered user turn, and the id (if any
+      // survived) must not be resumed. NOTE the asymmetry with the id above:
+      // the catch block stamps `sessionPoisoned: true` directly when a turn was
+      // dispatched — because THIS read happens before the fire-and-forget stop()
+      // aborts the still-live stream, which would poison it only afterwards
+      // (recordTurnBoundary runs inside the teardown, after the stamp). A
+      // false positive here costs one cold retry (pre-A1 behaviour); a false
+      // negative resumes a session with a dangling user turn — the replay
+      // hazard. On the resolved paths (success / sendOutcome) the boundary has
+      // already been recorded, so the set read IS the truth.
+      taskResult.sessionPoisoned =
+        taskResult.sessionPoisoned === true || session.isSessionPoisoned(syntheticConvId)
+      // A1 (Phase 3) — what the executor actually did with a requested resume.
+      taskResult.resumeOutcome = resuming ? session.getLastResumeOutcome() : 'none'
+      // A1 (Phase 3) — cache-read tokens for this rung, straight off the token
+      // tracker; this is what makes Gate 1 answerable without a join.
+      taskResult.cacheReadInputTokens = session.getCacheReadTokens(syntheticConvId)
+
       // Phase 1.1: Take teardown OFF the critical path.
       // Resolve the task promise NOW (freeing the dispatch slot), then stop the
       // session fire-and-forget. The session remains in activeSessions until stop
       // settles so cancelBlueprint() can still find and kill it.
       // BP-SESSION-LEAK-01 preserved: stop() failure still triggers cleanup.
-      session
+      // A1 (Phase 1) — the promise itself is stamped on the result: the ladder
+      // awaits it ONLY before dispatching a resumed rung (P3 teardown race).
+      taskResult.teardown = session
         .stop()
         .catch((stopErr) => {
           bpLog.error(`[executeTask] session.stop() failed for task ${task.taskId}:`, stopErr)

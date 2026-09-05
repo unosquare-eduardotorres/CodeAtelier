@@ -80,7 +80,16 @@ export class AppPreferenceRepository extends BaseRepository<
       blueprintFailureMemory: this.getBool('blueprint_failure_memory', false),
       // E1-fix — default ON (preserves the effective pre-fix behaviour, where
       // the unwritten settingsJson read made `!== false` always true).
-      autoSkipClarify: this.getBool('auto_skip_clarify', true)
+      autoSkipClarify: this.getBool('auto_skip_clarify', true),
+      // A1 — default ON: see the note on AppPreferences.blueprintSessionResume.
+      // A default-OFF flag never gets measured, which would leave Gate 1
+      // unjudgeable; telemetry + this toggle is the revert path.
+      blueprintSessionResume: this.getBool('blueprint_session_resume', true),
+      // A1 (Phase 4) — default OFF, deliberately unlike blueprintSessionResume:
+      // the cross-run branch has no in-ladder evidence and needs its own
+      // measured window before it could ever default on. See the note on
+      // AppPreferences.blueprintCrossRunResume.
+      blueprintCrossRunResume: this.getBool('blueprint_cross_run_resume', false)
     }
   }
 }

@@ -101,6 +101,17 @@ export interface AgentSessionStartOptions {
   /** Resume a prior CLI session id rather than starting fresh. */
   resumeSessionId?: string
   /**
+   * A1 — the conversation id the `resumeSessionId` belongs to.
+   *
+   * Seeding `sessionMap` needs a key, and the previous code used
+   * `_lastActiveConversationId` — which `start()` had just reset to null 98
+   * lines above, so the seed could never fire. Blueprint callers mint their
+   * conversation id AFTER `start()` (the id is the retry-stable task identity),
+   * so they pass it here explicitly. Omitting it preserves the legacy
+   * last-active behaviour for chat (`chat-agent.service.ts`).
+   */
+  resumeConversationId?: string
+  /**
    * Run this session in a non-chat owner's track.
    *
    * Blueprint and campaign runs own a branch but are not conversations, so the
@@ -334,6 +345,14 @@ export class AgentSessionService extends AgentBaseService {
   maxTurnsContinuations = 0
   /** Outcome of the last send() — set by handleStreamError, reset in resetForNewMessage. */
   lastSendOutcome: SendOutcome = 'ok'
+  /**
+   * A1 (Phase 3) — outcome of the last send()'s RESUME request. See
+   * getLastResumeOutcome(). Reset to 'none' at the top of each send (same
+   * place lastSendOutcome resets), then set to `resumed` when the executor
+   * actually attaches, `mismatched` when the server returns a different id,
+   * `blocked` when the executor refused a poisoned/malformed id.
+   */
+  lastResumeOutcome: 'resumed' | 'mismatched' | 'blocked' | 'none' = 'none'
   /** Stashed executeStream options for replay on max_turns auto-continue. */
   lastStreamOpts: ExecuteStreamOptions | null = null
 
@@ -376,7 +395,8 @@ export class AgentSessionService extends AgentBaseService {
   /** Stable per-session server-owner key (constructor instanceId or generated). */
   private opencodeOwnerKey(): string {
     if (!this._opencodeOwnerKey) {
-      this._opencodeOwnerKey = this.instanceId ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      this._opencodeOwnerKey =
+        this.instanceId ?? `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     }
     return this._opencodeOwnerKey
   }
@@ -561,6 +581,36 @@ export class AgentSessionService extends AgentBaseService {
 
   getSessionId(conversationId: string): string | undefined {
     return this.sessionMap.get(conversationId)
+  }
+
+  /**
+   * A1 (Phase 1) — did this conversation's last turn end POISONED (aborted or
+   * zero-chunk — an unanswered user turn in the CLI transcript)? Read by the
+   * build service in its finally, where the id may or may not have been
+   * cleared yet, so the FLAG (not the id) is the durable answer.
+   */
+  isSessionPoisoned(conversationId: string): boolean {
+    return this.poisonedSessions.has(conversationId)
+  }
+
+  /**
+   * A1 (Phase 3) — what the executor actually did with the resume request of
+   * the last send(): `resumed`, `mismatched` (server returned a different
+   * session id), `blocked` (poisoned/malformed id — flag dropped) or `none`.
+   * Set by the stream processor / resolveSession; reset per send(). One
+   * value, three silent-failure paths made visible.
+   */
+  getLastResumeOutcome(): 'resumed' | 'mismatched' | 'blocked' | 'none' {
+    return this.lastResumeOutcome
+  }
+
+  /**
+   * A1 (Phase 3) — cumulative cache-read tokens for one conversation's turns
+   * (in-memory while the session lives, DB-backed after a restart). This is
+   * the number Gate 1 needs on the telemetry row — no join required.
+   */
+  getCacheReadTokens(conversationId: string): number {
+    return this.tokenTracker.getCacheEfficiency(conversationId).savedTokens
   }
 
   getCacheEfficiency(): CacheEfficiencyReport {
@@ -885,9 +935,19 @@ export class AgentSessionService extends AgentBaseService {
       conversationId: null
     })
 
-    // Pre-populate session map for resume
-    if (resumeSessionId && this._lastActiveConversationId) {
-      this.sessionMap.set(this._lastActiveConversationId, resumeSessionId)
+    // Pre-populate session map for resume.
+    //
+    // A1: keyed by the caller's explicit conversation id when supplied — the
+    // fallback on `_lastActiveConversationId` is dead code on this path (start()
+    // reset it to null at the top, and no send() has run since), but it is
+    // exactly what the chat path relies on, where the conversation existed
+    // before start(). Keep both.
+    const resumeKey = opts?.resumeConversationId ?? this._lastActiveConversationId
+    if (resumeSessionId && resumeKey) {
+      this.sessionMap.set(resumeKey, resumeSessionId)
+      this.log.info(
+        `[start] Seeded session map for resume — conversation=${resumeKey} session=${resumeSessionId}`
+      )
     }
 
     // Load declarative hooks
@@ -945,6 +1005,17 @@ export class AgentSessionService extends AgentBaseService {
 
     const sessionId = this.resolveSession(conversationId)
 
+    // A1 (Phase 3) — honest resume outcome. resolveSession returning an id the
+    // conversation did not have before means a resume will be attempted; the
+    // executor decides whether it is honoured. Post-send, the stream processor
+    // downgrades this to `mismatched` (server returned a different id) or
+    // `blocked` (executor dropped a poisoned/malformed id at argv build).
+    // OpenCode resumes natively (seedSession) and has no drop path, so
+    // id-survival there IS a resume that held.
+    if (sessionId) {
+      this.lastResumeOutcome = 'resumed'
+    }
+
     // Adapter may adjust internal turn counters on resume
     this.adapter.refreshFeatureFlags({
       workspacePath: this.workspacePath!,
@@ -969,6 +1040,13 @@ export class AgentSessionService extends AgentBaseService {
       // default here misrouted every blueprint turn to the Claude CLI on
       // GLM-configured workspaces (v1.0.91 regression) — and retry-reused
       // conversation rows kept the poison across fixes.
+      //
+      // A1 LOAD-BEARING: `conv.type !== 'blueprint'` is what keeps the
+      // workspace-resolved provider authoritative for A1's per-task build
+      // conversation rows (`blueprint-build-<bp>-<task>[-gN]`). Relaxing it
+      // would let the row's seeded `llm_provider` override snapshot routing
+      // and re-open the bug fixed in 5d14d8a0 — silently, on exactly the
+      // retry path resume depends on for provider-unchanged gating.
       if (conv?.llmProvider && conv.type !== 'blueprint') {
         conversationProvider = conv.llmProvider as LLMProvider
       }
@@ -1691,6 +1769,10 @@ export class AgentSessionService extends AgentBaseService {
     this.toolActivityAccumulator.reset()
     this.maxTurnsContinuations = 0
     this.lastSendOutcome = 'ok'
+    // A1 (Phase 3) — per-send reset: the value describes THIS turn's resume
+    // request only. 'none' is the honest default (cold send / OpenCode native
+    // resume, where the executor reports no explicit refusal).
+    this.lastResumeOutcome = 'none'
     // SES-04: Don't null-out lastStreamOpts here — executeStream sets it at the
     // start of each stream, and the recovery manager reads it on error. The send
     // lock ensures no concurrent access within the same conversation.
@@ -2667,6 +2749,20 @@ export class AgentSessionService extends AgentBaseService {
         this.log.warn('[opencode] Failed to mirror agents into worktree:', agentErr)
       }
     }
+    // A1 — OpenCode parity. `getOrCreateSession` resolves only from the
+    // in-memory map; after an app/server restart that map is empty and a new
+    // server-side session would be created + re-primed (full system prompt
+    // re-send). Seed the persisted id first — the priming skip then falls out
+    // of `getOrCreateSession`'s existing reuse path. Same opt-in shape as the
+    // CLI: only when `sessionMap` was explicitly seeded by start()'s resume path.
+    if (this.currentConversationId && this.sessionMap.has(this.currentConversationId)) {
+      const mapped = this.sessionMap.get(this.currentConversationId)
+      // No DB fallback here by design — this branch is only entered when the
+      // conversation already has a resume-seeded mapping; the cross-restart DB
+      // path is the accidental one resolveSession exists to reject for CLI.
+      if (mapped) openCodeExecutor.seedSession(this.currentConversationId, mapped)
+    }
+
     for await (const chunk of openCodeExecutor.execute({
       prompt,
       images,

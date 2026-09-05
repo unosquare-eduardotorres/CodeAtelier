@@ -106,6 +106,33 @@ describe('Blueprint synthetic conversation ID regex', () => {
     assert.equal(match[3], 'R001')
   })
 
+  // A1 regression pins: BUILD conversation ids are now retry-stable, so the
+  // timestamp suffix is GONE. If these shapes stop matching,
+  // resolveModelFromSnapshot falls through to live resolution and the frozen
+  // modelSnapshot (the BP-MODEL-BLEED fix) is silently lost for every build
+  // turn — model and provider can diverge mid-run.
+  test('A1: timestamp-less stable build ids match', () => {
+    const match = BLUEPRINT_CONV_RE.exec(`blueprint-build-${BP_ID}-T004`)
+    assert.ok(match, 'stable build id must match')
+    assert.equal(match[1], 'build')
+    assert.equal(match[2], BP_ID)
+    assert.equal(match[3], 'T004')
+  })
+
+  test('A1: generation-suffixed build ids match', () => {
+    const match = BLUEPRINT_CONV_RE.exec(`blueprint-build-${BP_ID}-T004-g2`)
+    assert.ok(match, 'generation id must match')
+    assert.equal(match[2], BP_ID)
+    assert.equal(match[3], 'T004')
+  })
+
+  test('A1: phase ids without task or timestamp still match', () => {
+    const match = BLUEPRINT_CONV_RE.exec(`blueprint-verify-${BP_ID}`)
+    assert.ok(match)
+    assert.equal(match[2], BP_ID)
+    assert.equal(match[3], undefined)
+  })
+
   test('phase ids without a task segment leave group 3 undefined', () => {
     const match = BLUEPRINT_CONV_RE.exec(`blueprint-tasks-${BP_ID}-1788457040173`)
     assert.ok(match)

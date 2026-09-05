@@ -544,6 +544,29 @@ export interface AppPreferences {
    * app-preference path (kill switch) every other blueprint toggle uses.
    */
   autoSkipClarify: boolean
+  /**
+   * A1 — resume a BUILD task's prior CLI/OpenCode session on a resume-safe
+   * retry (overload / executor error) instead of starting cold (default: true).
+   *
+   * Only `isResumeSafeOutcome` outcomes may resume; `context_overflow` and
+   * `turn_limit_exhausted` rotate to a fresh conversation (a new generation)
+   * exactly as before, and quality-gate failures keep starting cold with gate
+   * fix instructions. Kill switch: OFF forces every retry cold, i.e. the
+   * pre-A1 behaviour.
+   */
+  blueprintSessionResume: boolean
+  /**
+   * A1 (Phase 4) — allow an attempt-1 / post-restart rung to resume the
+   * persisted session id from the conversations row (default: FALSE).
+   *
+   * Unlike `blueprintSessionResume`, this path has no in-ladder evidence: it
+   * trusts a surviving persisted id, which is itself evidence the last turn
+   * ended cleanly (a poisoned turn clears the id eagerly). It is default-OFF
+   * because it re-opens the orphaned-background-shell hazard the
+   * `resolveSession` cross-restart guard exists for — flip on only for the
+   * measured window, then decide.
+   */
+  blueprintCrossRunResume: boolean
 }
 
 // ── Workspace Deploy Models ──

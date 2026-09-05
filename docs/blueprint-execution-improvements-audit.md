@@ -15,7 +15,7 @@
 | A2 | Relevance-ranked discoveries | **Keep** | Claim verified. Cheap, pure, testable. |
 | A3 | Git commit per task | **Keep, reframe** | The prompt already *asks* the agent to commit per task (`build-phase.md:78–84`); nothing enforces it. Build it as a deterministic safety net that skips when the agent already committed. Landing stays manual. |
 | A4 | Repo-map injection | **Keep, change source** | `repomap-mcp` is not imported anywhere in `src/`; the graph lives in `code-graph.service.ts` / `code-graph-edge.repository.ts` and is already indexed before wave 1 (`blueprint-build.service.ts:607–637`). Build the map from that, scoped to the shadow workspace. The package is single-maintainer, zero-adoption; do not take a runtime dependency on it. |
-| B1 | Session resume on retry | **Keep, biggest win, different design** | Six of seven blueprint phases already resume on retry via `conversationRepository.getSessionId(priorConvId)`. Build is the odd one out because `executeTask` mints `blueprint-build-<bp>-<task>-<Date.now()>` per attempt (`:3104`). Fix the conversation id, not the output format. Same fix covers OpenCode (`getOrCreateSession` is keyed by the same id). |
+| B1 | Session resume on retry | **☑ LANDED (A1, 2026-09)** | See §1.5 — the audit's "six of seven phases already resume" was wrong: the `resolveSession` cross-restart guard blocked every one. A1 replaced it end-to-end: stable per-task conversation id + generation, opt-in resume seam, permit wiring, OpenCode parity, `session_resume` telemetry, `blueprintSessionResume` flag (default ON). |
 | B2 | Task coalescing | **Keep, medium priority** | Prior art (Anthropic, Cognition, MAST) supports one context for state-sharing tasks. Must also handle the legacy `executeWave` scheduler, which the plan does not mention. |
 | B3 | Handoff packets | **Keep, later** | Sound, but no measured evidence yet that caps are the binding constraint. Gate it on Phase 0 numbers. |
 | C1 | AIMD parallelism | **Keep, needs a signal** | `recordParallelism` only fills a histogram. The clean input is the CLI's `system/api_retry` stream event (`error: rate_limit | overloaded`, `retry_delay_ms`). |
@@ -37,8 +37,8 @@ blueprint-build.service.ts executeTask (:2952)
   → buildTaskContext (:3522)
   → new BlueprintBuildAdapter (:3006)  + new AgentSessionService (:3017)
   → session.send(adapter.getPhaseMessage(), syntheticConvId)   // :3143
-      syntheticConvId = `blueprint-build-${blueprintId}-${task.taskId}-${Date.now()}`  // :3104
-  → agent-session.service.ts:1728  sessionId = this.sessionMap.get(conversationId)  // always empty for a fresh id
+      syntheticConvId = `blueprint-build-${blueprintId}-${task.taskId}[-gN]`  // A1: stable + generation (was `${Date.now()}`)
+  → agent-session.service.ts:1728  sessionId = this.sessionMap.get(conversationId)  // A1: pre-seeded by start({resumeSessionId, resumeConversationId}) on a resume-permitted retry
   → cli-executor.ts buildCLIArgs (:1628–1703)
       claude --output-format stream-json --input-format stream-json --verbose
              --include-partial-messages --model … --permission-mode …
@@ -70,6 +70,17 @@ Consequences:
 - `buildTaskContext` is exercised in five test files; none assert ordering (plan is right about that).
 - Dual registration in `src/main/services/__tests__/run-tests.ts` and `src/main/__tests__/run-all.ts` is confirmed.
 
+### 1.5 The `resolveSession` cross-restart guard — why "already resumes" was wrong everywhere (A1 finding)
+
+Two statements this audit originally propagated were false, and both matter for anyone touching session identity:
+
+1. **"Six of seven phases already resume on retry" — they did not.** Every blueprint phase constructs a *new* `AgentSessionService` per attempt (spec `:392`, plan `:108`, tasks `:218`, review `:109`, verify `:248`, code-review `:246`, lead-review `:166`; build `:4368`). A fresh instance has an empty `sessionMap`, so `resolveSession` (`agent-session.service.ts`) resolves the persisted id from the DB, hits the cross-restart guard (`if (sessionId && !fromMemory)`), **clears the persisted id and returns undefined**. Net effect: the guard fired on every phase retry, deleting the very id a resume would need. Spec's `:433` conv-id reuse bought message-history continuity (S12 reconstruction), not CLI session resume — its "Resuming conversation … from failed attempt" log line is misleading.
+2. **"Build's problem is only the conversation id" — it was the id *plus* two more things.** (a) The per-attempt `AgentSessionService` above applies to build too. (b) Build *never ensured a conversation row* (zero `conversationRepository` calls), so even a stable id had nowhere to persist a session id — `updateSessionId` writes to a row that did not exist.
+
+The guard itself is **correct and must stay**: it protects against orphaned background shells from a dead CLI process. A1's design routes around it structurally — the ladder pre-seeds `sessionMap` with the persisted id at `session.start({ resumeSessionId, resumeConversationId })`, so the id resolves `fromMemory === true` and never reaches the guard. The guard's accidental-DB-load rejection remains in force for every other caller. Do not "fix" resume by weakening the guard; the next reader of this section is the one who would.
+
+Generation semantics (A1): the conversation id is `blueprint-build-<bp>-<task>` with a `-gN` suffix that increments **only when the resume permit is denied for a reason that carries a transcript to abandon** (`not-safe`, `provider-changed`, `stale`). `no-persisted-id` and `flag-off` keep the identity stable — there is nothing to abandon.
+
 ---
 
 ## 2. Per-item audit with external evidence
@@ -94,13 +105,13 @@ Consequences:
 - External: aider's repo map (tree-sitter defs/refs graph, PageRank, binary-search to a token budget) is the pattern, but aider publishes no benchmark uplift for it. Anthropic's Claude Code fan-out staggers same-prefix launches by up to 5 s so siblings hit the first agent's cache; worth copying in `executeDag` when launching a wave.
 - Verdict: keep, but generate the map from `code-graph-edge.repository.ts` (already indexed, already scoped to the right tree). Use `repomap-mcp` only as reference code for the ranking + budgeting algorithm.
 
-### B1 — session resume on retry (highest-value item)
-- Code: `cli-executor.ts` already captures the id (`:816`) and passes `--resume` when `AgentSessionService` finds one in `sessionMap` by conversation id (`agent-session.service.ts:1728`). Spec, plan, tasks, review, verify and code-review phases all do `if (priorConvId && conversationRepository.getSessionId(priorConvId))` on retry. Build does not, because of the per-attempt `Date.now()` in the conversation id. The current "resume" is a regex lookup of a `build-partial` artifact stuffed into the prompt (`:2986–2993`, 4,000-char cap).
-- Redesign: reuse one conversation id per (blueprint, task) across gate retries and overload retries; persist the CLI/OpenCode session id on the task row (migration); on retry send a short incremental message (verdict + gate-fix instructions) instead of the full task context. Keep the cold path when no id exists or the session is poisoned. Escalation to lead (`escalateToLead`) should stay cold or use `--fork-session`, since the lead model differs and a model switch invalidates the cache anyway.
+### B1 — session resume on retry (highest-value item) — ☑ LANDED as A1 (2026-09)
+- **Landed.** `blueprint-build.service.ts`: stable conversation id `blueprint-build-<bp>-<task>[-gN]` (generation rotates only on permit denial), conversation row ensured via `ensurePhaseConversation`, `decideResume()` permit (flag + `isResumeSafeOutcome` + persisted id + provider unchanged + stale detection), `resumeSessionId`/`resumeConversationId` through `session.start()`. OpenCode parity via `opencode-executor.seedSession()`. Telemetry `session_resume` (attempted/succeeded/declined + reason) with the report split in `scripts/blueprint-telemetry-report.ts`. Flag `blueprintSessionResume` (default ON). Tests: `blueprint-session-resume.test.ts`.
+- **Measured deltas (live probes, 2026-09):** `--resume` preserves the session id on CLI 2.1.260 (b9c47dd4… → b9c47dd4…) and the prior transcript returns as `cache_read_input_tokens` (17,701 on a one-turn resume) — the retry re-pays nothing. Run-level Gate 1 numbers (retry context −50%, nudge rate, pass rate) require a real blueprint run to populate.
+- **The audit's original code claims were wrong in two ways** (see §1.5): the six "already resuming" phases never resumed — the `resolveSession` cross-restart guard cleared the persisted id on every fresh service instance — and build's problem was the id *plus* the per-attempt `AgentSessionService` *plus* the missing conversation row.
+- Historical redesign notes (kept for context): persist the CLI/OpenCode session id on the task row was considered; A1 instead persists it on the ensured conversation row, reusing the existing `processMetaChunk` writer. Escalation to lead stays cold, as recommended.
 - Constraints from the docs you must respect on every resume: re-pass `--mcp-config`, `--allowedTools`, `--permission-mode` (bypass is never restored; a resumed `-p` run starts in Manual), `--settings`, `--add-dir`. MCP servers restart per process; assert expected servers in `system/init.mcp_servers` (known issue: failed MCP on resume is silent, tools in history vanish). Never run two processes on one session id. Resuming after a CLI upgrade reprocesses history uncached. Anthropic's own SDK guidance is "don't rely on session resume across hosts; carry state as application state" — fine here because both attempts run on the same machine and worktree, but it argues for keeping the cold path healthy.
-- OpenCode: `getOrCreateSession` (`:2500`) keys on the same conversation id, so the same fix removes the per-attempt `primeSession` cost too. Do not pass an OpenCode `ses_…` id to `claude --resume` (already bitten: commit `06f491f9`).
-- Also available: `--fork-session` for lead escalation; `--json-schema` for structured output (see §4).
-- Verdict: keep, make it Phase 1. Expected effect matches the plan's 50–80% retry-token claim only if retries are common; Phase 0 must measure retry rate first.
+- OpenCode: `getOrCreateSession` (`:2500`) keys on the same conversation id, so the same fix removes the per-attempt `primeSession` cost too. Do not pass an OpenCode `ses_…` id to `claude --resume` (already bitten: commit `06f491f9`). `--fork-session` stays out of A1 (lead-escalation idea).
 
 ### B2 — task coalescing
 - Code: `filesOverlap` (`:297`), `allInFlightFiles` (`:1047`), empty-file tasks are exclusive (`:1168–1173`). Verified. Legacy `executeWave` has its own copy (`:1544`).
@@ -162,7 +173,7 @@ None of these is a token-economics problem. Four of six are "we lost track of a 
 
 **Phase 0 — Baseline, zero code.** Query `usage_log` where `feature='blueprint-build'` grouped by `conversation_id` prefix: tokens per task, cache-hit ratio `cache_read/(input+cache_read)`, attempts per task from `blueprint_tasks.attempts`, first-attempt vs retry gate pass from `gates_json`. Add stall / recovery incident counts from event logs. Record in the plan's appendix.
 
-**Phase 1 — Durable task session (B1 for both paths) + A3 commit safety net.** One conversation id per (blueprint, task); persist session id on the task row; incremental retry message; poisoned-session and UUID guards kept; flags re-passed on resume; `mcp_servers` asserted. A3 rides along because it makes each attempt's diff inspectable. Gate: retry tokens down, retry pass rate flat, no increase in silent-completion recoveries.
+**Phase 1 — Durable task session (B1 for both paths) + A3 commit safety net.** — **☑ B1/A1 LANDED (2026-09)**; A3 status unchanged. One conversation id per (blueprint, task) with generation rotation; session id persisted via the ensured conversation row (`processMetaChunk` writer unchanged); poisoned-session and UUID guards kept and untouched; flags re-passed on resume (CLI spawn args unchanged); `session_resume` telemetry added (the `mcp_servers` assertion remains open). Gate: retry tokens down, retry pass rate flat, no increase in silent-completion recoveries — needs a real blueprint run to populate (`scripts/blueprint-telemetry-report.ts` now prints the attempted/succeeded/declined split).
 
 **Phase 2 — Context economics (A2, A4 from code-graph, A1 tidy-up, launch stagger, 1h TTL).** Gate: tokens per task down, cache-hit ratio up.
 
@@ -174,10 +185,10 @@ None of these is a token-economics problem. Four of six are "we lost track of a 
 
 ## 6. Open questions, revised
 
-1. Does the installed CLI (2.1.257) honour `--json-schema` in interactive `stream-json` mode, or only with `-p`? Test before designing the coalesced completion format.
-2. Does `--resume` preserve the session id on this CLI version (older issues #12235 / #10806 reported a new id after resume)? Verify empirically once.
-3. Session transcript location depends on cwd; build runs in a worktree. Confirm resume works with the worktree path across attempts (docs say v2.1.223+ searches worktrees too).
-4. For OpenCode, confirm `getOrCreateSession` reuse across attempts does not collide with the refcounted server lifecycle fix in `2d12310b`.
+1. Does the installed CLI (2.1.257) honour `--json-schema` in interactive `stream-json` mode, or only with `-p`? Test before designing the coalesced completion format. — **STILL OPEN** (A2's question; A1 did not touch it).
+2. Does `--resume` preserve the session id on this CLI version (older issues #12235 / #10806 reported a new id after resume)? — **☑ ANSWERED (2026-09, CLI 2.1.260):** yes. A live probe resumed `b9c47dd4-…` and the JSON result carried the same `session_id`, with `cache_read_input_tokens: 17701` — the prior transcript returns as a cache read. `processMetaChunk`'s mismatch warning remains the detector if a future CLI regresses this.
+3. Session transcript location depends on cwd; build runs in a worktree. Confirm resume works with the worktree path across attempts. — **☑ ANSWERED:** `~/.claude/projects/` keys transcripts by the cwd slug and holds 9 worktree-scoped slugs on this machine; the build cwd derives from `trackOwner` (stable across attempts of one run), so `--resume` resolves the same transcript directory on a new CLI invocation.
+4. For OpenCode, confirm `getOrCreateSession` reuse across attempts does not collide with the refcounted server lifecycle fix in `2d12310b`. — **☑ ANSWERED (by design):** sessions are server-side keyed by the `directory` query param; reuse needs no new lifecycle coupling. `seedSession` only fills a missing in-memory mapping and never overrides a live one; a restarted server yields a session-not-found that A1's stale detection turns into a cold fallback — no collision path.
 
 ---
 

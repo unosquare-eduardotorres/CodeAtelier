@@ -140,6 +140,13 @@ export interface AgentSessionHost {
   controlToolState: ControlToolState
   maxTurnsContinuations: number
   lastSendOutcome: SendOutcome
+  /**
+   * A1 (Phase 3) — what the executor actually did with the last send()'s resume
+   * request: `resumed` / `mismatched` (server returned a different id) /
+   * `blocked` (executor dropped a poisoned/malformed id) / `none`. Reset per
+   * send; read by blueprint build for honest resume telemetry.
+   */
+  lastResumeOutcome: 'resumed' | 'mismatched' | 'blocked' | 'none'
   lastStreamOpts: ExecuteStreamOptions | null
   pendingResumeAt: Map<string, string>
   sdkAbortController: AbortController | null

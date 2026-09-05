@@ -206,6 +206,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-review.service.test',
   '../services/__tests__/blueprint-build.service.test',
   '../services/__tests__/blueprint-send-outcome.test',
+  '../services/__tests__/blueprint-session-resume.test',
+  '../services/__tests__/opencode-seed-session.test',
   '../services/__tests__/blueprint-verify-conditions.test',
   // ─── Run 31: Plan Hub — unified plan registry ───
   '../services/__tests__/audit-plan-mapper.test',

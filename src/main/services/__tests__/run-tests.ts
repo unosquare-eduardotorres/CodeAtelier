@@ -433,6 +433,10 @@ const TEST_FILES: string[] = [
   './blueprint-prompt-dedupe.test',
   // ─── Blueprint Send Outcome (session outcome surfacing + scheduling logic) ───
   './blueprint-send-outcome.test',
+  // ─── A1 — durable session per build task (resume on resume-safe retries) ───
+  './blueprint-session-resume.test',
+  // ─── A1 Phase 5 — OpenCode executor seedSession (resume substrate after restart) ───
+  './opencode-seed-session.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
   './phase-summaries-verify.test',
   // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───

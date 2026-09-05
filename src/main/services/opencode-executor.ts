@@ -21,10 +21,7 @@ import type { ExecutorResult, ExecutorTokenUsage } from './executor-types'
 import type { OpencodeClient, SessionPromptData } from '@opencode-ai/sdk'
 import type { ImageAttachment } from '../../shared/types'
 import { normalizeOpenCodeEvent, type NormalizerState } from './opencode-event-normalizer'
-import {
-  TRANSIENT_ERROR_PATTERNS,
-  isSlowTransientError
-} from './opencode-transient-patterns'
+import { TRANSIENT_ERROR_PATTERNS, isSlowTransientError } from './opencode-transient-patterns'
 import { ensureOpencodePathInEnv, getOpencodePath } from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
 
@@ -390,8 +387,8 @@ export class OpenCodeExecutor {
   /** WAVE-RACE FIX: in-flight startup — concurrent ensureStarted() callers await one start. */
   private startInFlight: Promise<void> | null = null
   /** @internal test-only — substituted startOnce body (null = real one). */
-  private startOnceImplForTest: ((cwd: string, config?: OpenCodeStartConfig) => Promise<void>) | null =
-    null
+  private startOnceImplForTest:
+    ((cwd: string, config?: OpenCodeStartConfig) => Promise<void>) | null = null
   /** @internal test-only — substituted killStaleServer body (null = real one). */
   private killStaleImplForTest: (() => Promise<void>) | null = null
   /** Map of conversationId → OpenCode session ID for multi-turn reuse */
@@ -612,10 +609,7 @@ export class OpenCodeExecutor {
    * conflict. A sibling session's just-failed server can take a moment to
    * release port 4096 — an immediate retry hits the same ServeError.
    */
-  private async startWithServeErrorRetry(
-    cwd: string,
-    config?: OpenCodeStartConfig
-  ): Promise<void> {
+  private async startWithServeErrorRetry(cwd: string, config?: OpenCodeStartConfig): Promise<void> {
     try {
       await this.startOnce(cwd, config)
     } catch (err) {
@@ -633,10 +627,7 @@ export class OpenCodeExecutor {
     }
   }
 
-  private async startOnce(
-    cwd: string,
-    config?: OpenCodeStartConfig
-  ): Promise<void> {
+  private async startOnce(cwd: string, config?: OpenCodeStartConfig): Promise<void> {
     // @internal test-only seam — see __setStartOnceImplForTest
     if (this.startOnceImplForTest) {
       await this.startOnceImplForTest(cwd, config)
@@ -902,7 +893,9 @@ export class OpenCodeExecutor {
     try {
       // retryDelayScale is a test hook (production: 1) — shrinks the real sleep
       // without touching the retryInfo delays reported to the UI.
-      await new Promise((r) => setTimeout(r, Math.max(1, Math.round(retry.delayMs * this.retryDelayScale))))
+      await new Promise((r) =>
+        setTimeout(r, Math.max(1, Math.round(retry.delayMs * this.retryDelayScale)))
+      )
     } finally {
       this.retriesInFlight--
     }
@@ -1951,6 +1944,26 @@ Troubleshooting:
   }
 
   /**
+   * A1 — seed a persisted session id for a conversation, when none is mapped.
+   *
+   * The executor is process-wide but its map is memory: after an app or server
+   * restart the map is empty while the session id lives in the conversations
+   * table. `getOrCreateSession` would create a NEW server-side session and
+   * re-prime it — the exact cold start A1 exists to avoid. The DB read belongs
+   * to the caller (agent-session.service owns persistence); this executor
+   * stays repository-free by design. No-op when a mapping already exists — a
+   * live mapping always outranks a persisted one.
+   */
+  seedSession(conversationId: string, sessionId: string): void {
+    if (!conversationId || !sessionId) return
+    if (this.sessionMap.has(conversationId)) return
+    this.sessionMap.set(conversationId, sessionId)
+    openCodeLog.info(
+      `[opencode] Seeded persisted session ${sessionId} for conversation=${conversationId} (A1 resume)`
+    )
+  }
+
+  /**
    * Check if the server is running.
    */
   isRunning(): boolean {
@@ -2451,20 +2464,26 @@ Troubleshooting:
    * Re-send a prompt to the OpenCode session (fire-and-forget for retries).
    * BP-WORKTREE-CWD: carries the same per-session directory as the original send.
    */
-  private resendPrompt(sessionId: string, promptBody: SessionPromptData['body'], directory?: string): void {
+  private resendPrompt(
+    sessionId: string,
+    promptBody: SessionPromptData['body'],
+    directory?: string
+  ): void {
     // Defensive: the executor may have been stopped while a retry backoff was
     // sleeping (unit tests also run the retry path without a live client).
     if (!this.client) {
       openCodeLog.warn('[opencode] Retry skipped — client no longer available')
       return
     }
-    this.client.session.promptAsync({
-      path: { id: sessionId },
-      body: promptBody,
-      ...(directory ? { query: { directory } } : {})
-    }).catch((err) => {
-      openCodeLog.error('[opencode] Retry prompt error:', err)
-    })
+    this.client.session
+      .promptAsync({
+        path: { id: sessionId },
+        body: promptBody,
+        ...(directory ? { query: { directory } } : {})
+      })
+      .catch((err) => {
+        openCodeLog.error('[opencode] Retry prompt error:', err)
+      })
   }
 
   /**
@@ -2638,9 +2657,7 @@ Troubleshooting:
    */
   private async killStaleServer(): Promise<void> {
     if (this.isStarted) {
-      openCodeLog.info(
-        '[opencode] killStaleServer skipped — our own server is live on the port'
-      )
+      openCodeLog.info('[opencode] killStaleServer skipped — our own server is live on the port')
       return
     }
     // @internal test-only seam — see __setKillStaleImplForTest
@@ -2654,14 +2671,11 @@ Troubleshooting:
       // the port. Without it, `lsof :PORT` also matches sockets whose REMOTE port
       // is 4096 — i.e. our own SDK client / lingering SSE subscriptions — and the
       // loop below SIGTERMs the Electron app itself at the tasks→review transition.
-      const output = execSync(
-        `lsof -ti :${OPENCODE_SERVER_PORT} -sTCP:LISTEN 2>/dev/null`,
-        {
-          encoding: 'utf-8',
-          timeout: 3000,
-          windowsHide: true
-        }
-      ).trim()
+      const output = execSync(`lsof -ti :${OPENCODE_SERVER_PORT} -sTCP:LISTEN 2>/dev/null`, {
+        encoding: 'utf-8',
+        timeout: 3000,
+        windowsHide: true
+      }).trim()
       // Belt-and-braces: never kill our own PID even if the LISTEN filter regresses.
       if (output.includes(String(process.pid))) {
         openCodeLog.warn(
@@ -2749,9 +2763,7 @@ Troubleshooting:
     // Only the resent run's activity clears the flag; a later idle is genuine.
     if (type === 'session.idle') {
       if (resendPending) {
-        openCodeLog.info(
-          '[opencode] session.idle from aborted run while resend pending — ignoring'
-        )
+        openCodeLog.info('[opencode] session.idle from aborted run while resend pending — ignoring')
         return false
       }
       if (!sawTurnActivity) {
@@ -2832,7 +2844,9 @@ Troubleshooting:
   // shelling out to lsof. They are no-ops in production code paths.
 
   /** @internal test-only — replace the real startOnce body. */
-  __setStartOnceImplForTest(impl: (cwd: string, config?: OpenCodeStartConfig) => Promise<void>): void {
+  __setStartOnceImplForTest(
+    impl: (cwd: string, config?: OpenCodeStartConfig) => Promise<void>
+  ): void {
     this.startOnceImplForTest = impl
   }
 
