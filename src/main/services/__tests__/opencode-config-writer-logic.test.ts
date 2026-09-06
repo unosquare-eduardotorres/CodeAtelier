@@ -233,11 +233,14 @@ describe('OpenCodeConfigWriter private methods', () => {
       assert.equal(entry.options.chunkTimeout, 30_000)
     })
 
-    test('local_false_timeout_300000', () => {
+    test('cloud_timeout_600000', () => {
       const provider = { providerId: 'anthropic', modelId: 'claude-3', apiKey: 'sk-test' }
       const config = w.buildProviderConfig(provider, false)
       const entry = config[provider.providerId]
-      assert.equal(entry.options.timeout, 300_000)
+      // GLM-PROTOCOL-MISS-02: remote SDK read timeout is 600s (was 300s —
+      // killed healthy 7–8 min Z.ai turns mid-generation). Both tiers share
+      // the value via getTimeoutTier (provider-timeout-tiers.ts).
+      assert.equal(entry.options.timeout, 600_000)
       assert.equal(entry.options.chunkTimeout, 120_000)
     })
 

@@ -31,6 +31,7 @@ import {
   resolveOpencodePath
 } from '../../shared/opencode-cli-path'
 import log from 'electron-log/main'
+import { getTimeoutTier } from './provider-timeout-tiers'
 
 const openCodeLog = log.scope('OpenCodeExecutor')
 
@@ -410,6 +411,8 @@ export class OpenCodeExecutor {
    * Backstop for a prompt that never produces activity events: the SSE stream
    * may emit nothing at all (dead session / dropped subscription), which would
    * hang the event loop forever now that pre-activity idles are ignored.
+   * Local-provider value; remote providers get the tier-scaled window from
+   * getTimeoutTier() at the execute() call site (GLM-PROTOCOL-MISS-02).
    */
   private static readonly NO_ACTIVITY_TIMEOUT_MS = 120_000
   /**
@@ -422,6 +425,8 @@ export class OpenCodeExecutor {
    * session_recovery chunks reset the watchdog via onChunk) fires first.
    * False-positive risk (a legitimately long silent tool call) is bounded by
    * the 240s window + abort-before-resend + the shared 3-retry budget.
+   * Local-provider value; remote providers get the tier-scaled window from
+   * getTimeoutTier() at the execute() call site (GLM-PROTOCOL-MISS-02).
    */
   private static readonly MID_TURN_STALL_MS = 240_000
   /**
@@ -951,7 +956,7 @@ export class OpenCodeExecutor {
     maxTurns: number
     abortController?: AbortController
     noActivityTimeoutMs?: number
-    /** Test hook: override the mid-turn stall window (production: 240s). */
+    /** Override for the mid-turn stall window (default: 240s local / 480s remote). */
     midTurnStallMs?: number
     /** BP-WORKTREE-CWD: per-session directory, forwarded on transient retries. */
     directory?: string
@@ -1594,6 +1599,18 @@ export class OpenCodeExecutor {
       let endedWithTerminalError = false
 
       if (events.stream) {
+        // GLM-PROTOCOL-MISS-02 / GAP-A: remote providers (Z.ai/GLM, anything
+        // not ollama/omlx) legitimately run silent for minutes mid-turn — the
+        // SDK read timeout is 600s for them, so the pre-activity backstop and
+        // the mid-turn stall window scale with it (50% / 80%, from
+        // provider-timeout-tiers.ts — the single source of truth whose
+        // ordering keeps the watchdog above these windows). A slow-but-alive
+        // stream must not be aborted as a zombie; genuinely dead ones are
+        // still caught, just later, and the blueprint phase watchdog remains
+        // the outer bound.
+        const remoteSlowProvider =
+          options.provider.providerId !== 'ollama' && options.provider.providerId !== 'omlx'
+        const remoteTier = remoteSlowProvider ? getTimeoutTier(true) : null
         const streamGen = this.processEventStream({
           events: events as { stream: AsyncIterable<unknown> },
           openCodeSessionId,
@@ -1602,6 +1619,12 @@ export class OpenCodeExecutor {
           maxTurns: options.maxTurns ?? 0,
           abortController,
           directory: options.cwd,
+          ...(remoteTier
+            ? {
+                noActivityTimeoutMs: remoteTier.noActivityMs,
+                midTurnStallMs: remoteTier.midTurnStallMs
+              }
+            : {}),
           // NO-WRITE NUDGE: only for build sessions routed through the davinci
           // agent (its permission block guarantees write tools are available).
           enableNoWriteNudge: !!options.agent

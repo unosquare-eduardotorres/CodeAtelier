@@ -852,15 +852,20 @@ export class BlueprintService extends EventEmitter {
     // server-side). Transient: the identical re-send generates.
     /no prompt activity within/i,
     // F3 — the app's OWN wording for a turn that ended without a completion
-    // block: "verification failed — no completion block in CLI output (turn
-    // likely ended in an API/transport error)". It reached scheduleAutoRetry
-    // intact and matched nothing here, so the phase failed with no retry and no
-    // `auto_retry` telemetry row (blueprint 6c4a6a85 — 11 tasks cascade-skipped
-    // off one transport error). Neither pattern collides with a NON_RETRYABLE
-    // entry: the string carries no 'cancelled', 'max turns', 'budget',
-    // 'parse…fail', 'Cannot retry' or 'not found'.
+    // block: "verification failed — no completion block in CLI output (…)". It
+    // reached scheduleAutoRetry intact and matched nothing here, so the phase
+    // failed with no retry and no `auto_retry` telemetry row (blueprint 6c4a6a85
+    // — 11 tasks cascade-skipped off one transport error). Neither pattern
+    // collides with a NON_RETRYABLE entry: the string carries no 'cancelled',
+    // 'max turns', 'budget', 'parse…fail', 'Cannot retry' or 'not found'.
     /no completion block/i,
-    /API\/transport error/i
+    /API\/transport error/i,
+    // Protocol miss (GLM): the model ended its turn without emitting the
+    // required ```blueprint-phase-complete fence. Retryable — stochastic models
+    // sometimes comply on a later attempt (the failureReason carries both this
+    // and the 'no completion block' wording; the belt-and-braces pattern keeps
+    // retry classification stable if either phrase changes).
+    /protocol miss/i
   ]
 
   /** Error patterns that should NOT be retried (deterministic failures). */
@@ -876,6 +881,14 @@ export class BlueprintService extends EventEmitter {
 
   /** Classify an error message as retryable (transient) or not. */
   isRetryableError(error: string): boolean {
+    return BlueprintService.isRetryableErrorStatic(error)
+  }
+
+  /**
+   * GLM-PROTOCOL-MISS-01 — static twin of isRetryableError for unit tests and
+   * module-level call sites. Identical logic; the instance method delegates.
+   */
+  static isRetryableErrorStatic(error: string): boolean {
     if (BlueprintService.NON_RETRYABLE_PATTERNS.some((p) => p.test(error))) return false
     return BlueprintService.RETRYABLE_PATTERNS.some((p) => p.test(error))
   }

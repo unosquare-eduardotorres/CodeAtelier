@@ -36,6 +36,7 @@ import {
 } from './opencode-config-writer/opencode-config-data'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { resolveActiveIntegrationEnvs } from './integration-credentials'
+import { getTimeoutTier } from './provider-timeout-tiers'
 
 const configLog = log.scope('OpenCodeConfigWriter')
 
@@ -661,9 +662,18 @@ export class OpenCodeConfigWriter {
         // timed out" (live evidence: T001 died exactly as the model said
         // "Writing the migration now"). 120s covers buffered generation of large
         // files; genuinely dead streams are still caught by the executor's
-        // 240s mid-turn stall watcher.
-        timeout: isLocal ? 600_000 : 300_000,
-        chunkTimeout: isLocal ? 30_000 : 120_000,
+        // mid-turn stall watcher.
+        // GLM-PROTOCOL-MISS-02: remote parity with local — observed GLM build turns
+        // run 7–8 min (461s p95) on Z.ai; a 300s SDK read timeout killed healthy
+        // turns mid-generation. 600s matches the local tier. Dead streams remain
+        // the executor stall watcher's job, not the SDK's.
+        // #15: Tier-aware timeouts — single source of truth is
+        // provider-timeout-tiers.ts (GAP-A): sdkRead 600s both tiers,
+        // chunkTimeout 30s local / 120s remote (cloud custom providers buffer
+        // the ENTIRE tool-call input before streaming; genuinely dead streams
+        // are still caught by the executor's mid-turn stall watcher).
+        timeout: getTimeoutTier(!isLocal).sdkReadMs,
+        chunkTimeout: getTimeoutTier(!isLocal).chunkTimeoutMs,
         // C-1: Enable prompt caching for Anthropic
         ...(provider.providerId === 'anthropic' ? { setCacheKey: true } : {})
       }

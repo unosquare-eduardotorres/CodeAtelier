@@ -24,11 +24,8 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import {
-  PhaseActivityWatchdog,
-  STALL_TIMEOUT_MS,
-  wireAskUserAutoResponder
-} from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import { getTimeoutTier } from './provider-timeout-tiers'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintCodeReviewAdapter } from './role-adapters/blueprint/blueprint-code-review.adapter'
 import { buildCodeReviewGoalCondition } from './blueprint-goal-conditions'
@@ -254,7 +251,10 @@ export class BlueprintCodeReviewService extends EventEmitter {
       } satisfies BlueprintPhaseStartPayload)
 
       // 6. Streaming + watchdog (same wiring as REVIEW)
-      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CODE-REVIEW')
+      const stallWatchdog = new PhaseActivityWatchdog(
+        getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+        'CODE-REVIEW'
+      )
 
       onChunk = (chunk: StreamChunk): void => {
         stallWatchdog.touch()

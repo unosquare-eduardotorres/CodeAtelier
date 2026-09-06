@@ -79,7 +79,19 @@ export class BlueprintBuildAdapter extends BlueprintBaseAdapter {
     // because build-phase.md's own '## Tool Priority' heading satisfies its check.
     const taskSection = ['', '## Current Task', '', this.taskContext].join('\n')
 
-    return basePrompt + taskSection
+    // A2 — the completion contract, as the LAST line of the system prompt.
+    // 25 % of attempts once ended without the required block (125/491 in the
+    // §0 measurement), each costing a recovery nudge at an 18.6 % cache-hit
+    // rate. The full contract lives in build-phase.md; this one line is the
+    // "if you are done, emit X" reminder at the position a model reads last,
+    // immediately before its first output token. ~1 line of prefix; the
+    // ratchet's 2 % tolerance absorbs it without a baseline bump.
+    const completionReminder = [
+      '',
+      'When the task is complete you MUST emit the ```blueprint-phase-complete fenced block — no other signal ends the task.'
+    ].join('\n')
+
+    return basePrompt + taskSection + completionReminder
   }
 
   getPhaseMessage(): string {

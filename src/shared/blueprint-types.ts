@@ -61,6 +61,12 @@ export type BlueprintTaskOutcomeKind =
   | 'preexisting'
   /** A human closed the task out — the work is done, just not provable here. */
   | 'accepted_by_user'
+  /**
+   * A2 — the turn ended without a completion block and the recovery nudge
+   * rescued text into the stream. The work stands, but the nudge rate is the
+   * metric A2 exists to move, so the rescue is visible per task.
+   */
+  | 'nudged'
 
 // ── Work Packets ──
 

@@ -112,6 +112,13 @@ export type BlueprintTelemetryKind =
    * dropped-retry bug for weeks.
    */
   | 'session_resume'
+  /**
+   * PREMORTEM-#5 — one row per BUILD completion with ≥1 task closed `unproven`
+   * (completion block missing or freshness not provable). Those tasks still
+   * count as completed, so the unproven rate was invisible everywhere; this
+   * row is the watch metric (data: { count, total }).
+   */
+  | 'unproven_outcomes'
 
 export interface BlueprintTelemetryRow {
   id: string

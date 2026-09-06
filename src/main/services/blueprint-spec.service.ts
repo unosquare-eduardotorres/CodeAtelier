@@ -13,11 +13,8 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import {
-  PhaseActivityWatchdog,
-  STALL_TIMEOUT_MS,
-  wireAskUserAutoResponder
-} from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import { getTimeoutTier } from './provider-timeout-tiers'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintSpecifyAdapter } from './role-adapters/blueprint/blueprint-specify.adapter'
 import {
@@ -400,7 +397,10 @@ export class BlueprintSpecService extends EventEmitter {
       } satisfies BlueprintPhaseStartPayload)
 
       // 8. Wire streaming events + stall watchdog
-      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'SPECIFY')
+      const stallWatchdog = new PhaseActivityWatchdog(
+        getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+        'SPECIFY'
+      )
 
       session.on('chunk', (chunk: StreamChunk) => {
         stallWatchdog.touch()
@@ -900,7 +900,10 @@ export class BlueprintSpecService extends EventEmitter {
       // 9. Start session and send first message (triggers gap analysis)
       await session.start(workspacePath, 'plan')
 
-      const clarifyWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CLARIFY')
+      const clarifyWatchdog = new PhaseActivityWatchdog(
+        getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+        'CLARIFY'
+      )
       const clarifyState = this.clarifySessions.get(blueprintId)
       if (clarifyState) clarifyState.activeWatchdog = clarifyWatchdog
 
@@ -1019,7 +1022,14 @@ export class BlueprintSpecService extends EventEmitter {
       return
     }
 
-    const answerWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'CLARIFY')
+    const answerWatchdog = new PhaseActivityWatchdog(
+      getTimeoutTier(
+        !modelConfigService.isLocalProvider(
+          workspaceRepository.findById(workspaceId)?.repoPath ?? ''
+        )
+      ).taskWatchdogMs,
+      'CLARIFY'
+    )
     sessionState.activeWatchdog = answerWatchdog
     // API-ERROR-FAIL: fresh turn — clear any stale terminal reason
     sessionState.lastTerminalReason = null

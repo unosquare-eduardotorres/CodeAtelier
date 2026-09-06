@@ -347,6 +347,12 @@ export class AgentSessionService extends AgentBaseService {
   /** Outcome of the last send() — set by handleStreamError, reset in resetForNewMessage. */
   lastSendOutcome: SendOutcome = 'ok'
   /**
+   * A2 — whether the last turn's silent completion was rescued by a recovery
+   * nudge. Reset per send; set by the recovery manager when recovered text
+   * lands. Read via wasNudged() by the BUILD service for outcome tracking.
+   */
+  private _lastTurnNudged = false
+  /**
    * A1 (Phase 3) — outcome of the last send()'s RESUME request. See
    * getLastResumeOutcome(). Reset to 'none' at the top of each send (same
    * place lastSendOutcome resets), then set to `resumed` when the executor
@@ -592,6 +598,15 @@ export class AgentSessionService extends AgentBaseService {
    */
   isSessionPoisoned(conversationId: string): boolean {
     return this.poisonedSessions.has(conversationId)
+  }
+
+  /**
+   * A2 — did the last send() end in a silent completion that the recovery
+   * nudge rescued? BUILD stamps `outcome_kind='nudged'` on the task so the
+   * nudge rate per run is queryable without log scraping.
+   */
+  wasNudged(): boolean {
+    return this._lastTurnNudged
   }
 
   /**
@@ -1770,6 +1785,8 @@ export class AgentSessionService extends AgentBaseService {
     this.toolActivityAccumulator.reset()
     this.maxTurnsContinuations = 0
     this.lastSendOutcome = 'ok'
+    // A2 — per-send reset: the flag describes THIS turn's nudge outcome only.
+    this._lastTurnNudged = false
     // A1 (Phase 3) — per-send reset: the value describes THIS turn's resume
     // request only. 'none' is the honest default (cold send / OpenCode native
     // resume, where the executor reports no explicit refusal).

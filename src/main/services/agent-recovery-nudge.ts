@@ -73,6 +73,39 @@ export function isUuidSessionId(sessionId: string | undefined): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(sessionId)
 }
 
+/**
+ * OPENCODE-RECOVERY-STRICT (GAP-C): pure builder for the OpenCode recovery
+ * prompt. The phase is not hardcoded — `needsCompletionBlock` is dictated by
+ * the system prompt the model is already running under, so this stays correct
+ * for every phase. When a completion block is required, the recovery turn
+ * gets exactly one job — re-emit it — and the field list matches what the
+ * phase's parser actually reads:
+ *   - build (`parsePhaseCompletionBlock` via `verifyBuildTaskFiles`):
+ *     status, filesCreated, filesModified, filesVerifiedUnchanged,
+ *     acceptanceDeviation
+ *   - verify/other phases: overallStatus, findings, recommendation
+ * Asking for the wrong field names made the recovery turn produce blocks the
+ * pipeline could not grade. Exported for unit tests.
+ */
+export function buildRecoveryPrompt(opts: {
+  needsCompletionBlock: boolean
+  isBuildMode: boolean
+}): string {
+  if (opts.needsCompletionBlock) {
+    const fields = opts.isBuildMode
+      ? 'status, filesCreated, filesModified, filesVerifiedUnchanged, and acceptanceDeviation'
+      : 'overallStatus, findings, and recommendation'
+    return (
+      '[System: Your previous response ended without the required structured output block. ' +
+      'Respond with ONLY the required ```blueprint-phase-complete fence block containing ' +
+      `${fields} — no prose before or after. Do NOT use tools.]`
+    )
+  }
+  return opts.isBuildMode
+    ? '[System: Your previous response ended after tool calls without a final summary. Summarize what you found and executed in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
+    : '[System: Your previous response ended after tool calls without providing a summary. Summarize what you found in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
+}
+
 export interface PlanToolRecoveryOptions {
   /** CLI executor to perform the recovery call */
   cliExecutor: CLIExecutor
@@ -201,14 +234,12 @@ export class RecoveryNudgeService {
       // completion block, the recovery turn gets exactly one job — re-emit it.
       // Asking for a prose summary *and* the block reliably produced only prose
       // (verify 8bb7c4de: recovery text recovered, block still absent). The
-      // phase name is not hardcoded — it is dictated by the system prompt the
-      // model is already running under, so this stays correct for every phase.
+      // prompt (and its phase-aware field list) comes from buildRecoveryPrompt.
       const needsCompletionBlock = opts.systemPrompt.includes('blueprint-phase-complete')
-      const recoveryPrompt = needsCompletionBlock
-        ? '[System: Your previous response ended without the required structured output block. Respond with ONLY the required ```blueprint-phase-complete fence block containing overallStatus, findings, and recommendation — no prose before or after. Do NOT use tools.]'
-        : opts.isBuildMode
-          ? '[System: Your previous response ended after tool calls without a final summary. Summarize what you found and executed in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
-          : '[System: Your previous response ended after tool calls without providing a summary. Summarize what you found in 2-5 sentences, and re-emit any required structured output block. Do NOT use tools.]'
+      const recoveryPrompt = buildRecoveryPrompt({
+        needsCompletionBlock,
+        isBuildMode: opts.isBuildMode
+      })
       try {
         const text = await opts.opencodeRecovery({
           prompt: recoveryPrompt,

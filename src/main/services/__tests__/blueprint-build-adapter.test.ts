@@ -280,10 +280,7 @@ describe('BlueprintBuildAdapter', () => {
       prompt.includes('Inspection vs. execution'),
       'the inspection-vs-execution rule must survive the merge'
     )
-    assert.ok(
-      prompt.includes('npm run typecheck'),
-      'the typecheck rung must survive the merge'
-    )
+    assert.ok(prompt.includes('npm run typecheck'), 'the typecheck rung must survive the merge')
     assert.ok(
       prompt.includes('up to 2 rounds'),
       'Self-Check has no iteration limit of its own — dropping the checklist ' +
@@ -330,6 +327,32 @@ describe('BlueprintBuildAdapter', () => {
     )
     // Task context appears in the prompt
     assert.ok(prompt.includes(taskCtx), 'task context must be in prompt')
+  })
+
+  // ── A2: completion reminder as the LAST system-prompt line ──
+
+  test('A2: completion reminder renders after the task section, as the final line', () => {
+    const taskCtx = 'UNIQUE_TASK_MARKER_XYZ'
+    const adapter = new BlueprintBuildAdapter({
+      workspaceId: 'ws-1',
+      blueprintId: 'bp-1',
+      phaseContext: basePhaseContext,
+      taskContext: taskCtx
+    })
+    const prompt = (adapter as any).buildPhaseSystemPrompt() as string
+    const taskSectionIdx = prompt.indexOf('## Current Task')
+    const reminderIdx = prompt.indexOf('blueprint-phase-complete fenced block')
+    assert.ok(reminderIdx > -1, 'the reminder line must render')
+    assert.ok(
+      reminderIdx > taskSectionIdx,
+      'the reminder comes after the task section — the model reads it last, right before its first output token'
+    )
+    // Nothing after the reminder except its own line-ending: it IS the last line.
+    const tail = prompt.slice(reminderIdx)
+    assert.ok(
+      tail.indexOf('\n') === tail.lastIndexOf('\n'),
+      'the reminder is the final line of the system prompt'
+    )
   })
 
   // ── Phase 1.3: Lean MCP config ──

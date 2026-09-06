@@ -141,6 +141,12 @@ export interface AgentSessionHost {
   maxTurnsContinuations: number
   lastSendOutcome: SendOutcome
   /**
+   * A2 — set when the last turn ended without a completion summary and the
+   * recovery nudge recovered text into the stream. Read by BUILD to stamp
+   * `outcome_kind='nudged'` so the nudge rate is queryable per task.
+   */
+  lastTurnNudged: boolean
+  /**
    * A1 (Phase 3) — what the executor actually did with the last send()'s resume
    * request: `resumed` / `mismatched` (server returned a different id) /
    * `blocked` (executor dropped a poisoned/malformed id) / `none`. Reset per

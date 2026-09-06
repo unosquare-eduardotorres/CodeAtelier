@@ -112,12 +112,14 @@ describe('OpenCodeConfigWriter.buildCompactionConfig', () => {
 describe('OpenCodeConfigWriter.buildProviderConfig', () => {
   const baseProvider = { providerId: 'anthropic', modelId: 'claude-sonnet-4-6' }
 
-  test('anthropic cloud → options.setCacheKey true + options.timeout 300K', () => {
+  test('anthropic cloud → options.setCacheKey true + options.timeout 600K', () => {
     const providers = (writer as any).buildProviderConfig(baseProvider, false, undefined)
     const entry = providers.anthropic
     assert.ok(entry, 'should have anthropic entry')
     assert.equal(entry.options.setCacheKey, true)
-    assert.equal(entry.options.timeout, 300_000)
+    // GLM-PROTOCOL-MISS-02: remote SDK read timeout raised 300s → 600s
+    // (healthy Z.ai turns run 7–8 min; 300s killed them mid-generation).
+    assert.equal(entry.options.timeout, 600_000)
     assert.equal(entry.options.chunkTimeout, 120_000)
     // Built-in provider should NOT have npm
     assert.equal(entry.npm, undefined)

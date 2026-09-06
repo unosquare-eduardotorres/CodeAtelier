@@ -271,6 +271,71 @@ if (buildLoaded) {
       )
       assert.ok(!result.includes('Discoveries'))
     })
+
+    // C3 — cache-friendly task-tail ordering. The packet is STABLE across the
+    // rungs of one task (pure over task.packetJson), the retry tail is VOLATILE
+    // (new failure reason + new partial every rung). Pinning packet-before-tail
+    // keeps the divergence point as late as possible so a provider KV-cache can
+    // reuse the bytes up to and including the packet on every cold retry. This
+    // was A1-blocked until 2026-09-04: with infra retries now RESUMING with the
+    // continuation message, the cold path no longer owes the "what went wrong
+    // first" ordering that M3.3 chose.
+    test('C3: the work packet renders BEFORE the volatile retry tail', () => {
+      const result = buildCtx(
+        {
+          taskId: 'T010',
+          wave: 2,
+          description: 'Test',
+          filePathsJson: [],
+          dependsOnJson: [],
+          packetJson: {
+            allowedFiles: ['src/notify.ts'],
+            testFiles: ['src/notify.test.ts']
+          }
+        },
+        ['peer discovery A'],
+        'prior attempt partial output',
+        'quality gate failed: task-tests'
+      )
+      // '## Work Packet' is the renderer's stable heading; assert against its
+      // position plus a body marker.
+      const packetIdx = result.indexOf('## Work Packet')
+      const discoveriesIdx = result.indexOf('Discoveries from earlier tasks')
+      const partialIdx = result.indexOf('Prior Attempt Output')
+      const failureIdx = result.indexOf('Previous attempt failed')
+      assert.ok(packetIdx >= 0, 'packet renders')
+      assert.ok(result.includes('src/notify.ts'), 'packet body renders')
+      assert.ok(discoveriesIdx > packetIdx, 'discoveries (volatile) come after the packet')
+      assert.ok(partialIdx > packetIdx, 'prior partial (volatile) comes after the packet')
+      assert.ok(failureIdx > packetIdx, 'failure reason (volatile) comes after the packet')
+    })
+
+    test('C3: cache-prefix stability — the bytes through the packet are identical between rung 1 and a cold retry', () => {
+      const task = {
+        taskId: 'T011',
+        wave: 1,
+        description: 'Test',
+        filePathsJson: ['src/a.ts'],
+        dependsOnJson: [],
+        packetJson: { allowedFiles: ['src/a.ts'], testFiles: ['src/a.test.ts'] }
+      }
+      const rung1 = buildCtx(task)
+      const coldRetry = buildCtx(
+        task,
+        ['a discovery that did not exist on rung 1'],
+        'partial transcript tail',
+        'quality gate failed: task-tests'
+      )
+      // The prefix runs through the END of the rendered packet block.
+      const packetEnd = rung1.indexOf('src/a.test.ts')
+      assert.ok(packetEnd > 0, 'packet renders on rung 1')
+      const prefixLen = packetEnd + 'src/a.test.ts'.length
+      assert.ok(
+        rung1.slice(0, prefixLen) === coldRetry.slice(0, prefixLen),
+        'the stable prefix through the packet must be byte-identical across rungs — ' +
+          'a differing byte moves the cache divergence point earlier and re-bills the prefix'
+      )
+    })
   })
 
   describe('BlueprintBuildService — buildArtifactSummary via prototype', () => {

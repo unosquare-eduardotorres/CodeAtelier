@@ -18,11 +18,8 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import {
-  PhaseActivityWatchdog,
-  STALL_TIMEOUT_MS,
-  wireAskUserAutoResponder
-} from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import { getTimeoutTier } from './provider-timeout-tiers'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintVerifyAdapter } from './role-adapters/blueprint/blueprint-verify.adapter'
 import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
@@ -256,7 +253,10 @@ export class BlueprintVerifyService extends EventEmitter {
       } satisfies BlueprintPhaseStartPayload)
 
       // 5. Wire streaming — named handlers for cleanup + stall watchdog
-      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'VERIFY')
+      const stallWatchdog = new PhaseActivityWatchdog(
+        getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+        'VERIFY'
+      )
 
       onChunk = (chunk: StreamChunk): void => {
         stallWatchdog.touch()

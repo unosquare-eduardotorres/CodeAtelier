@@ -34,11 +34,8 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import {
-  PhaseActivityWatchdog,
-  STALL_TIMEOUT_MS,
-  wireAskUserAutoResponder
-} from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import { getTimeoutTier } from './provider-timeout-tiers'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintPlanRevisionAdapter } from './role-adapters/blueprint/blueprint-plan-revision.adapter'
 import { parsePlanRevisionBlock } from './blueprint-artifact-parsers'
@@ -222,7 +219,10 @@ export class BlueprintPlanRevisionService extends EventEmitter {
     let onChunk: ((chunk: StreamChunk) => void) | null = null
     let onStatus: ((status: AgentStatus) => void) | null = null
     let cleanupAskUser: (() => void) | undefined
-    const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'PLAN-REVISION')
+    const stallWatchdog = new PhaseActivityWatchdog(
+      getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+      'PLAN-REVISION'
+    )
 
     try {
       this.safeEmit('revisionStart', { blueprintId, workspaceId, round: entry.round, feedback })

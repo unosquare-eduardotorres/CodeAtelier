@@ -18,6 +18,8 @@ import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import type { DiscoveredContext } from './local-plan-state.service'
 import { isTransientProviderError } from './opencode-transient-patterns'
+import { parsePhaseCompletionBlock } from './blueprint-artifact-parsers'
+import type { RecoveryNudgeOptions } from './agent-recovery-nudge'
 
 // N8: Single source of truth for the turn-limit-exhausted message (text fallback)
 const TURN_LIMIT_EXHAUSTED_MSG =
@@ -236,7 +238,9 @@ export class AgentRecoveryManager {
 
     // Skip if the underlying cause was API overload
     if (streamState.overloadDetected && streamState.lastTerminalReason === 'max_turns') {
-      this.s.log.warn(`[PIPELINE:overload-skip-continue] Skipping auto-continue — API overload detected for conversationId=${conversationId}`)
+      this.s.log.warn(
+        `[PIPELINE:overload-skip-continue] Skipping auto-continue — API overload detected for conversationId=${conversationId}`
+      )
       this.s.emit('chunk', {
         type: 'text',
         content:
@@ -409,7 +413,14 @@ export class AgentRecoveryManager {
           `toolCalls=${this.s.circuitBreaker.count} accumulatedTextLen=${(this.s.activeStreams?.get(conversationId)?.accumulatedText ?? this.s.accumulatedText ?? '').length}`
       )
       const isOpencodeBackend = this.s.executorBackend === 'opencode'
-      const recoveryResult = await this.s.recoveryNudge.attemptRecovery({
+      // GLM-PROTOCOL-MISS-03: build turns whose system prompt requires the
+      // ```blueprint-phase-complete block get up to 2 nudge attempts — GLM-5.3
+      // often answers the first nudge with prose (or a malformed fence) and
+      // only emits the block on a second ask. Non-build / non-block turns keep
+      // the historical single nudge.
+      const needsCompletionBlock = systemPrompt.includes('blueprint-phase-complete')
+      const maxNudges = isBuildMode && needsCompletionBlock ? 2 : 1
+      const buildNudgeParams = (): RecoveryNudgeOptions => ({
         cliExecutor: nudgeExecutor!,
         systemPrompt,
         workspacePath: this.s.workspacePath!,
@@ -473,9 +484,32 @@ export class AgentRecoveryManager {
           this.s.tokenUsage += tokens
         }
       })
+      let recoveryResult = await this.s.recoveryNudge.attemptRecovery(buildNudgeParams())
+      // GAP-C: the second-nudge gate is PARSE-based now — a substring check
+      // for 'blueprint-phase-complete' passed on malformed fences (the fence
+      // tag present but JSON/YAML payload unparseable), skipping the second
+      // ask that would have fixed it. parsePhaseCompletionBlock(null phase)
+      // accepts any phase's block — the nudge only asks the model to re-emit
+      // the one its own system prompt requires.
+      if (
+        maxNudges > 1 &&
+        recoveryResult.recovered &&
+        !parsePhaseCompletionBlock(recoveryResult.text, undefined)
+      ) {
+        this.s.log.warn(
+          `[PIPELINE:recovery-nudge-retry] conversationId=${conversationId} — first nudge ` +
+            `recovered ${recoveryResult.text.length} chars but no parseable ` +
+            `blueprint-phase-complete block; sending one more build nudge`
+        )
+        recoveryResult = await this.s.recoveryNudge.attemptRecovery(buildNudgeParams())
+      }
       this.s.log.info(
         `[PIPELINE:recovery-nudge-result] recovered=${recoveryResult.recovered} textLen=${recoveryResult.text.length}`
       )
+      // A2 — the flag BUILD reads to stamp outcome_kind='nudged'. Set only on
+      // actual recovery: a nudge that produced nothing is a failure to recover,
+      // not a nudge outcome worth tracking as a rescue.
+      if (recoveryResult.recovered) this.s.lastTurnNudged = true
       const recovCtx = this.s.activeStreams?.get(conversationId)
       if (recovCtx) {
         recovCtx.accumulatedText += recoveryResult.text

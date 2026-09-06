@@ -10,11 +10,8 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import {
-  PhaseActivityWatchdog,
-  STALL_TIMEOUT_MS,
-  wireAskUserAutoResponder
-} from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import { getTimeoutTier } from './provider-timeout-tiers'
 import { AgentSessionService } from './agent-session.service'
 import { BlueprintTasksAdapter } from './role-adapters/blueprint/blueprint-tasks.adapter'
 import { buildTasksGoalCondition } from './blueprint-goal-conditions'
@@ -226,7 +223,10 @@ export class BlueprintTasksService extends EventEmitter {
       } satisfies BlueprintPhaseStartPayload)
 
       // 5. Wire streaming + stall watchdog
-      const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, 'TASKS')
+      const stallWatchdog = new PhaseActivityWatchdog(
+        getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+        'TASKS'
+      )
 
       session.on('chunk', (chunk: StreamChunk) => {
         stallWatchdog.touch()

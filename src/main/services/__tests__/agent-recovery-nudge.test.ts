@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync, createSpy } from './test-harness'
 import {
   RecoveryNudgeService,
+  buildRecoveryPrompt,
   isUuidSessionId,
   type RecoveryNudgeOptions,
   type PlanToolRecoveryOptions
@@ -447,6 +448,40 @@ describe('agent-recovery-nudge › attemptPlanToolRecovery', () => {
     const opts = basePlanOpts({ cliExecutor: fakeExecutor(new Error('boom')) })
     const result = await service.attemptPlanToolRecovery(opts)
     assert.equal(result.attempted, false)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// buildRecoveryPrompt — phase-aware field lists (GAP-C)
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('buildRecoveryPrompt — phase-aware completion-block fields', () => {
+  test('build + needsCompletionBlock → asks for the fields verifyBuildTaskFiles parses', () => {
+    const prompt = buildRecoveryPrompt({ needsCompletionBlock: true, isBuildMode: true })
+    assert.match(prompt, /blueprint-phase-complete/)
+    assert.match(prompt, /status, filesCreated, filesModified, filesVerifiedUnchanged, and acceptanceDeviation/)
+    // Wrong-phase fields must NOT be requested — a build block graded by
+    // verifyBuildTaskFiles never reads these.
+    assert.doesNotMatch(prompt, /overallStatus/)
+    assert.match(prompt, /no prose before or after/i)
+    assert.match(prompt, /Do NOT use tools/i)
+  })
+
+  test('verify/other phase + needsCompletionBlock → keeps overallStatus, findings, recommendation', () => {
+    const prompt = buildRecoveryPrompt({ needsCompletionBlock: true, isBuildMode: false })
+    assert.match(prompt, /blueprint-phase-complete/)
+    assert.match(prompt, /overallStatus, findings, and recommendation/)
+    assert.doesNotMatch(prompt, /filesCreated/)
+  })
+
+  test('no completion block required → plain summary ask (build vs non-build wording)', () => {
+    const build = buildRecoveryPrompt({ needsCompletionBlock: false, isBuildMode: true })
+    assert.match(build, /found and executed/)
+    assert.doesNotMatch(build, /blueprint-phase-complete fence block containing/)
+
+    const nonBuild = buildRecoveryPrompt({ needsCompletionBlock: false, isBuildMode: false })
+    assert.match(nonBuild, /Summarize what you found in 2-5 sentences/)
+    assert.doesNotMatch(nonBuild, /found and executed/)
   })
 })
 

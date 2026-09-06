@@ -26,7 +26,6 @@ import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
 import {
   PhaseActivityWatchdog,
-  STALL_TIMEOUT_MS,
   wireAskUserAutoResponder
 } from './blueprint-phase-watchdog'
 import type {
@@ -78,6 +77,7 @@ import {
 } from '../../shared/gate-types'
 import { normalizePath } from '../../shared/gate-analysis'
 import { resolveGateCommands } from '../../shared/gate-command-resolver'
+import { getTimeoutTier } from './provider-timeout-tiers'
 import type { GateCommandSet, ResolvedGateCommands } from '../../shared/gate-command-types'
 import type { WorkspaceManifests } from '../../shared/gate-command-detect'
 import { readWorkspaceManifests } from './blueprint-preflight.service'
@@ -325,14 +325,20 @@ interface ResumeDecision {
   /** True → pass `sessionId` to `session.start()`; false → cold, as today. */
   resume: boolean
   sessionId?: string
-  /** One of: not-safe | no-persisted-id | provider-changed | stale | flag-off | poisoned. */
+  /** One of: not-safe | no-persisted-id | provider-changed | stale | flag-off | poisoned | poisoned-transcript. */
   reason?: ResumeDeclineReason
   /** A1 (Phase 4) — true when this grant came from the cross-restart branch. */
   crossRun?: boolean
 }
 
 type ResumeDeclineReason =
-  'not-safe' | 'no-persisted-id' | 'provider-changed' | 'stale' | 'flag-off' | 'poisoned'
+  | 'not-safe'
+  | 'no-persisted-id'
+  | 'provider-changed'
+  | 'stale'
+  | 'flag-off'
+  | 'poisoned'
+  | 'poisoned-transcript'
 
 /**
  * A1 — evaluate the resume permit for one retry.
@@ -400,7 +406,8 @@ function shouldRotateIdentity(decision: ResumeDecision): boolean {
     (decision.reason === 'not-safe' ||
       decision.reason === 'provider-changed' ||
       decision.reason === 'stale' ||
-      decision.reason === 'poisoned')
+      decision.reason === 'poisoned' ||
+      decision.reason === 'poisoned-transcript')
   )
 }
 
@@ -699,6 +706,58 @@ export function shouldFailForNoWriteActivity(input: {
     input.claimedFiles > 0 || (!input.hasCompletion && input.hasPlannedFiles)
   if (!claimsWithoutWork) return false
   return input.baselineDiffEmpty !== false
+}
+
+/**
+ * GLM-PROTOCOL-MISS-01 — "wrote but didn't sign" predicate.
+ *
+ * A task whose verification came back all-zero (no completion block, no
+ * missing/stale claims, every checkable planned file present) still has a
+ * story to tell: the model may have DONE the work (write tools fired, files
+ * landed) and simply skipped the ```blueprint-phase-complete handshake.
+ * Direct write activity + planned files present is the same evidence the
+ * BP-VERIFY-UNPROVEN-01 branch trusts, so this shape passes as `unproven`
+ * instead of burning MAX_BUILDER_ATTEMPTS identical retries on a stochastic
+ * protocol miss. Zero-write tasks return false here and hard-fail in
+ * `shouldFailForNoWriteActivity`, exactly as before.
+ */
+export function shouldPassProtocolMissAsUnproven(input: {
+  /** Verification found no discrepancy it could name (no completion block path). */
+  allZero: boolean
+  /** Write-tool calls across every attempt of this task. */
+  cumulativeWriteToolCalls: number
+  /** Bash calls across every attempt of this task. */
+  cumulativeBashCalls: number
+  /** The task has planned filePathsJson entries to point at. */
+  hasPlannedFiles: boolean
+}): boolean {
+  if (!input.allZero) return false
+  if (input.cumulativeWriteToolCalls === 0 && input.cumulativeBashCalls === 0) return false
+  return input.hasPlannedFiles
+}
+
+/**
+ * GLM-PROTOCOL-MISS-04 — poisoned-transcript signature for ONE rung.
+ *
+ * The rung failed with a protocol-miss failureReason (model never emitted the
+ * required ```blueprint-phase-complete fence), the failure was not an
+ * executor/transport error in disguise, and the rung added zero write
+ * activity (writesAfter === writesBefore). Pure predicate, exported for the
+ * truth-table tests; the ladder folds it into the consecutive-miss streak.
+ */
+export function isProtocolMissRung(input: {
+  success: boolean
+  failureReason?: string
+  /** Cumulative write activity (writeToolCalls + bashCalls) at rung start. */
+  writesBefore: number
+  /** Cumulative write activity after the rung settled. */
+  writesAfter: number
+}): boolean {
+  if (input.success) return false
+  const reason = input.failureReason ?? ''
+  if (!reason.includes('protocol miss')) return false
+  if (reason.startsWith('executor error:')) return false
+  return input.writesAfter === input.writesBefore
 }
 
 /** Check whether two file sets overlap. */
@@ -2693,6 +2752,16 @@ export class BlueprintBuildService extends EventEmitter {
     /** F4 — infra re-runs spent so far, across the whole ladder. */
     let infraRetries = 0
     /**
+     * GLM-PROTOCOL-MISS-04 — poisoned-transcript escape state. A rung whose
+     * failure reason carries the protocol-miss signature increments this WHEN
+     * it also added zero write activity to the shared box; any other outcome
+     * (success, different failure, new writes) resets it. ≥1 at decideResume
+     * time forces a fresh session instead of resuming the transcript that
+     * produced the identical failure.
+     */
+    let consecutiveProtocolMisses = 0
+    let writesAtLastRungStart = 0
+    /**
      * A1 — the task's conversation identity, stable across attempts. Attempts
      * that resume keep this id (and with it the persisted session id); attempts
      * that must not resume (permit denied: `context_overflow`,
@@ -2736,6 +2805,9 @@ export class BlueprintBuildService extends EventEmitter {
      * A1 (Phases 0+3) — fold a rung's TaskResult into the ladder's decision
      * state + honest telemetry. One place, so the three executeTask call
      * sites (ladder, overload loop, F4 loop) cannot drift apart again.
+     * GAP-B: the GLM-PROTOCOL-MISS-04 streak update lives HERE — it is the
+     * single fold-point every rung result already passes through, so the
+     * overload and F4 re-run results update it too (they never did before).
      */
     const recordRungEvidence = (
       result: TaskResult,
@@ -2749,6 +2821,31 @@ export class BlueprintBuildService extends EventEmitter {
       prevSessionPoisoned = result.sessionPoisoned
       prevExecuteAttempt = result.executeAttempt
       resultTeardown = result.teardown
+      // GLM-PROTOCOL-MISS-04 — update the poisoned-transcript escape state.
+      // Signature match: the rung's failureReason names the protocol miss AND
+      // the rung added no write activity since the last rung started. Both
+      // required — a protocol miss WITH new writes is the recoverable kind
+      // (and usually passes via the "wrote but didn't sign" branch), and a
+      // different failure resets the streak.
+      const rungWrites = writeActivity.writeToolCalls + writeActivity.bashCalls
+      if (
+        isProtocolMissRung({
+          success: result.success,
+          failureReason: result.failureReason,
+          writesBefore: writesAtLastRungStart,
+          writesAfter: rungWrites
+        })
+      ) {
+        consecutiveProtocolMisses++
+        bpLog.warn(
+          `[executeTaskWithGates] ${task.taskId} — consecutive protocol-miss failure with ` +
+            `zero new write activity (streak: ${consecutiveProtocolMisses}); next retry will ` +
+            `start a fresh session (poisoned-transcript escape)`
+        )
+      } else {
+        consecutiveProtocolMisses = 0
+      }
+      writesAtLastRungStart = rungWrites
       if (decision.resume && result.success) {
         // A1 (Phase 3) — the rung succeeded, but did the executor actually
         // RESUME? A granted permit that the executor dropped (poisoned id,
@@ -2829,6 +2926,7 @@ export class BlueprintBuildService extends EventEmitter {
         previousResumableSessionId: prevResumableSessionId,
         previousSessionPoisoned: prevSessionPoisoned,
         executeAttempt: prevExecuteAttempt,
+        consecutiveProtocolMisses,
         ...(attempt === 1 ? { allowCrossRun } : {})
       })
       if (resumeOutcome !== undefined && shouldRotateIdentity(resumeDecision)) {
@@ -2864,7 +2962,9 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintTaskRepository.recordAttempt(task.id)
 
       // A1 (Phases 0+3) — carry this rung's evidence forward for the next
-      // rung's decision, with honest resume-outcome telemetry.
+      // rung's decision, with honest resume-outcome telemetry. The
+      // GLM-PROTOCOL-MISS-04 streak update happens inside (single fold-point,
+      // so re-run results are counted too).
       recordRungEvidence(result, resumeDecision, attempt)
 
       // R1 — the attempt failed before it could be graded. Recorded HERE, not at
@@ -2957,7 +3057,10 @@ export class BlueprintBuildService extends EventEmitter {
           previousRungWasResume: lastRungResumed,
           previousResumableSessionId: prevResumableSessionId,
           previousSessionPoisoned: prevSessionPoisoned,
-          executeAttempt: prevExecuteAttempt
+          executeAttempt: prevExecuteAttempt,
+          // GAP-B — same escape as the main rung site: a poisoned transcript
+          // must not be resumed by the overload re-run either.
+          consecutiveProtocolMisses
         })
         if (shouldRotateIdentity(overloadResume)) rotateGeneration()
         // A1-P3 — await the previous rung's teardown before a RESUMED re-run.
@@ -3048,7 +3151,10 @@ export class BlueprintBuildService extends EventEmitter {
             previousRungWasResume: lastRungResumed,
             previousResumableSessionId: prevResumableSessionId,
             previousSessionPoisoned: prevSessionPoisoned,
-            executeAttempt: prevExecuteAttempt
+            executeAttempt: prevExecuteAttempt,
+            // GAP-B — same escape as the main rung site: a poisoned transcript
+            // must not be resumed by the F4 infra re-run either.
+            consecutiveProtocolMisses
           })
           if (shouldRotateIdentity(infraResume)) rotateGeneration()
           // A1-P3 — await the previous rung's teardown before a RESUMED re-run.
@@ -3318,6 +3424,14 @@ export class BlueprintBuildService extends EventEmitter {
      * is itself evidence the last turn ended cleanly (poison clears the id).
      */
     allowCrossRun?: boolean
+    /**
+     * GLM-PROTOCOL-MISS-04: consecutive prior rungs that failed with the same
+     * protocol-miss signature AND added zero write activity. ≥1 means the
+     * transcript is poisoned for this task — every resume re-reads the same
+     * drift-inducing history and fails identically. The next rung must start a
+     * fresh session (identity rotation), not resume.
+     */
+    consecutiveProtocolMisses?: number
   }): Promise<ResumeDecision> {
     // The live conversation id of THIS generation — after a rotation the
     // persisted id lives on the `-gN` row, not the base one.
@@ -3406,6 +3520,23 @@ export class BlueprintBuildService extends EventEmitter {
       return decision
     }
 
+    // GLM-PROTOCOL-MISS-04 — poisoned-transcript escape. Repeated identical
+    // protocol-miss failures with ZERO new write activity mean the resumed
+    // transcript itself is the problem: the model re-reads its own prior
+    // fence-less turn and repeats the mistake. Deny the resume (and rotate
+    // identity via shouldRotateIdentity) so the retry starts a genuinely fresh
+    // session with the fence reminder at maximum recency.
+    if ((params.consecutiveProtocolMisses ?? 0) > 0) {
+      const decision: ResumeDecision = { resume: false, reason: 'poisoned-transcript' }
+      this.recordResumeTelemetry(params, 'declined', {
+        reason: decision.reason,
+        failureClass: 'infra',
+        sessionId: persistedSessionId,
+        consecutiveProtocolMisses: params.consecutiveProtocolMisses
+      })
+      return decision
+    }
+
     const decision = evaluateResumePermit({
       outcome: params.outcome,
       resumeSafe: params.resumeSafe,
@@ -3458,6 +3589,8 @@ export class BlueprintBuildService extends EventEmitter {
       silentReason?: string
       /** A1 (Phase 3) — cache-read tokens of the rung, for Gate 1. */
       cacheReadInputTokens?: number
+      /** GLM-PROTOCOL-MISS-04 — consecutive zero-write protocol-miss rungs. */
+      consecutiveProtocolMisses?: number
     }
   ): void {
     try {
@@ -4784,6 +4917,30 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
+    // PREMORTEM-#5 — unproven-rate visibility. Tasks that closed `unproven`
+    // (freshness not provable / completion block missing but work present)
+    // still count as completed, so the rate was invisible everywhere. One log
+    // line + one telemetry row per BUILD completion with ≥1 unproven task —
+    // the watch metric, no new UI.
+    try {
+      const settledTasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+      const unprovenCount = settledTasks.filter((t) => t.outcomeKind === 'unproven').length
+      if (unprovenCount > 0) {
+        bpLog.warn(
+          `[finalizeSuccess] Blueprint ${blueprintId} — ${unprovenCount}/${settledTasks.length} ` +
+            `task(s) closed unproven (completion block missing or freshness not provable)`
+        )
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'unproven_outcomes',
+          phase: 'build',
+          data: { count: unprovenCount, total: settledTasks.length }
+        })
+      }
+    } catch (err) {
+      bpLog.warn('[finalizeSuccess] unproven-outcome count failed (non-fatal):', err)
+    }
+
     // NOTE: DB state transitions (status='verifying', currentPhase='verify', verifyPhase='active')
     // are owned by blueprintVerifyService.startVerifyPhase() — not duplicated here.
 
@@ -5054,7 +5211,15 @@ export class BlueprintBuildService extends EventEmitter {
     // Wire streaming — forward progress events + stall watchdog
     // BP-BUILD-TASK-RAW-EMIT-01: safeEmit prevents listener throws from
     // crashing the streaming loop during task execution.
-    const stallWatchdog = new PhaseActivityWatchdog(STALL_TIMEOUT_MS, `BUILD-${task.taskId}`)
+    // GAP-A: the watchdog window comes from the provider timeout tier so it
+    // always sits ABOVE the executor's stall windows for the same provider
+    // (remote: 540s > 480s stall > 300s pre-activity) — on remote providers a
+    // slow-but-alive turn gets the executor's in-stream retry first, and only
+    // a task that stays silent past the tier window is failed here.
+    const stallWatchdog = new PhaseActivityWatchdog(
+      getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath)).taskWatchdogMs,
+      `BUILD-${task.taskId}`
+    )
 
     // FIX-2: Track write-capable tool calls to detect no-op sessions whose
     // stale files on disk would otherwise pass the disk-existence check.
@@ -5234,7 +5399,12 @@ export class BlueprintBuildService extends EventEmitter {
             kind: 'stall',
             phase: 'build',
             taskId: task.taskId,
-            data: { stallTimeoutMs: STALL_TIMEOUT_MS, writeToolCalls, bashCalls }
+            data: {
+              stallTimeoutMs: getTimeoutTier(!modelConfigService.isLocalProvider(workspacePath))
+                .taskWatchdogMs,
+              writeToolCalls,
+              bashCalls
+            }
           })
         }
         stallWatchdog.dispose()
@@ -5344,6 +5514,15 @@ export class BlueprintBuildService extends EventEmitter {
         const cumulativeWriteToolCalls = params.writeActivity?.writeToolCalls ?? writeToolCalls
         const cumulativeBashCalls = params.writeActivity?.bashCalls ?? bashCalls
         const noWriteActivity = cumulativeWriteToolCalls === 0 && cumulativeBashCalls === 0
+        // GLM-PROTOCOL-MISS-01: hoisted — the "wrote but didn't sign" recovery
+        // below branches on it alongside the write counters. All-zero means the
+        // verifier found no discrepancy it could name: no completion block, every
+        // checkable planned file present, none fresh vs THIS attempt's dispatch
+        // (files written by an earlier attempt of the same task read as stale).
+        const allZero =
+          verification.missingClaimed.length === 0 &&
+          verification.staleClaimed.length === 0 &&
+          verification.missingPlanned.length === 0
 
         // BP-VERIFY-UNPROVEN-01: "exists but not provably fresh" is not "missing".
         // An agent that inspects code, finds it already correct and declines to
@@ -5381,16 +5560,64 @@ export class BlueprintBuildService extends EventEmitter {
             discoveries: taskDiscoveries,
             outcomeKind: 'unproven'
           }
+        } else if (
+          shouldPassProtocolMissAsUnproven({
+            allZero,
+            cumulativeWriteToolCalls,
+            cumulativeBashCalls,
+            hasPlannedFiles
+          })
+        ) {
+          // GLM-PROTOCOL-MISS-01: "wrote but didn't sign". GLM-5.3 frequently
+          // completes the work (write tools fire, planned files land on disk)
+          // but ends the turn without the ```blueprint-phase-complete fence.
+          // Before this branch that shape failed as `infra` + `resumeSafe` and
+          // burned MAX_BUILDER_ATTEMPTS identical retries on a stochastic
+          // protocol miss. Direct evidence of work — cumulative write/Bash
+          // calls — plus every planned file present is the same evidence the
+          // BP-VERIFY-UNPROVEN-01 branch above trusts; mtime freshness is only
+          // a proxy for it (and attempt-scoped, so multi-attempt tasks read
+          // stale). Zero-write tasks never reach here (`noWriteActivity` guard)
+          // and still hard-fail in `shouldFailForNoWriteActivity`. VERIFY
+          // re-checks the same files either way.
+          bpLog.warn(
+            `[executeTask] Task ${task.taskId} protocol miss — no completion block, ` +
+              `but session performed ${cumulativeWriteToolCalls} write call(s) and ` +
+              `${cumulativeBashCalls} Bash call(s) with all planned files present — ` +
+              `passing as unproven instead of retrying`
+          )
+          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+          if (buildPhase) {
+            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+              type: 'verification-warning',
+              contentMd:
+                `## Task ${task.taskId} — completed, completion block missing (unproven)\n\n` +
+                `The session performed ${cumulativeWriteToolCalls} write tool call(s) and ` +
+                `${cumulativeBashCalls} Bash call(s), and every planned file is present on ` +
+                `disk, but the model never emitted the required ` +
+                `\`\`\`blueprint-phase-complete block (protocol miss). The task is ` +
+                `treated as complete — VERIFY still checks the same files.\n\n` +
+                `**Planned files (${(task.filePathsJson ?? []).length}):**\n` +
+                (task.filePathsJson ?? []).map((f) => `- \`${f}\``).join('\n') +
+                '\n'
+            })
+          }
+          taskDiscoveries.push(
+            `Task ${task.taskId}: model skipped the blueprint-phase-complete block ` +
+              `(protocol miss) — work accepted on write activity + file presence only.`
+          )
+          taskResult = {
+            success: true,
+            completion,
+            discoveries: taskDiscoveries,
+            outcomeKind: 'unproven'
+          }
         } else if (!verification.ok) {
           // F5 — all-zero discrepancy: `!ok` with zero missing/stale/planned means
           // there was no completion block to verify against (the turn likely
           // died in an API/transport error before emitting one). The generic
           // counts message would render "0 claimed missing, 0 stale, 0 planned
           // missing" — three empty sections that explain nothing.
-          const allZero =
-            verification.missingClaimed.length === 0 &&
-            verification.staleClaimed.length === 0 &&
-            verification.missingPlanned.length === 0
           const missingList =
             verification.missingClaimed.length > 0
               ? verification.missingClaimed
@@ -5398,7 +5625,9 @@ export class BlueprintBuildService extends EventEmitter {
           if (allZero) {
             bpLog.error(
               `[executeTask] Task ${task.taskId} FAILED verification — no completion block ` +
-                `in CLI output (the turn likely ended in an API/transport error); ` +
+                `in CLI output (protocol miss — model ended the turn without emitting ` +
+                `the \`blueprint-phase-complete\` block; an API/transport error is only ` +
+                `suspected when an executor error was recorded); ` +
                 `no file discrepancies found`
             )
           } else {
@@ -5419,8 +5648,10 @@ export class BlueprintBuildService extends EventEmitter {
               contentMd: allZero
                 ? `## Task ${task.taskId} — status could not be determined\n\n` +
                   `The CLI output contained no completion block, so there were no claims ` +
-                  `to verify. This usually means the turn ended in an API or transport ` +
-                  `error before the agent could report. No file discrepancies were found.\n`
+                  `to verify. The model most likely ended its turn without emitting the ` +
+                  `required \`\`\`blueprint-phase-complete\`\`\` block (a protocol miss); ` +
+                  `an API/transport error is only suspected when the executor recorded ` +
+                  `one. No file discrepancies were found.\n`
                 : `## Task ${task.taskId} — claimed files missing on disk\n\n` +
                   (verification.missingClaimed.length > 0
                     ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
@@ -5448,7 +5679,8 @@ export class BlueprintBuildService extends EventEmitter {
             phase: 'build',
             text: allZero
               ? `⚠ Task ${task.taskId} marked FAILED — no completion block in CLI output ` +
-                `(the turn likely ended in an API/transport error); no file discrepancies found`
+                `(protocol miss — model did not emit the blueprint-phase-complete block); ` +
+                `no file discrepancies found`
               : `⚠ Task ${task.taskId} marked FAILED — ` +
                 (verification.missingClaimed.length > 0
                   ? `claimed ${claimedFiles} file(s), ${verification.missingClaimed.length} missing on disk`
@@ -5472,13 +5704,15 @@ export class BlueprintBuildService extends EventEmitter {
           if (verification.missingPlanned.length > 0)
             verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
           const verifyFailReason = allZero
-            ? 'verification failed — no completion block in CLI output (turn likely ended in an API/transport error)'
+            ? 'verification failed — no completion block in CLI output (protocol miss — model did not emit the required blueprint-phase-complete block)'
             : `verification failed — ${verifyFailParts.join(', ')}`
 
           // WAVE-RACE FIX: when the session never produced a completion block
           // AND the executor emitted an error, the error is the actionable
           // cause — the missing files are only the symptom of a session that
-          // died before writing anything.
+          // died before writing anything. GLM protocol miss (no executor error)
+          // keeps the protocol-miss reason so telemetry/telemetry rows name the
+          // real cause instead of blaming transport.
           const failureReason =
             !completion && executorErrorBox.value
               ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
@@ -5559,7 +5793,14 @@ export class BlueprintBuildService extends EventEmitter {
               outcomeKind:
                 verification.preexistingClaimed.length > 0 && claimedFiles === 0
                   ? 'preexisting'
-                  : 'verified'
+                  : // A2 — when the turn was rescued by a recovery nudge, say so
+                    // on the row: the nudge rate per run is the metric this item
+                    // exists to move, and `verified` alone would hide it.
+                    // `preexisting`/`unproven` stay more specific than `nudged`
+                    // and win when both apply.
+                    session.wasNudged()
+                    ? 'nudged'
+                    : 'verified'
             }
           }
         }
@@ -5788,6 +6029,24 @@ export class BlueprintBuildService extends EventEmitter {
       lines.push(`**Depends On**: ${task.dependsOnJson.join(', ')}`)
     }
 
+    // C3: the work packet, when the TASKS phase authored one. Rendered HERE —
+    // after the task header, BEFORE the volatile retry context — so the bytes
+    // up to and including the packet are identical between attempt 1 and every
+    // later cold rung of this task. That is the prefix a provider KV-cache can
+    // reuse; with the packet below the retry tail (its pre-C3 position, chosen
+    // in M3.3 so a retry would read "what went wrong" first) the divergence
+    // point moved EARLIER and every cold retry re-processed the packet too.
+    // A1 is what un-blocks the flip: infra retries — the common case — now
+    // RESUME with `buildResumeContinuationMessage`, which leads with the
+    // failure verdict, so the cold path no longer has to carry that ordering
+    // duty. `renderWorkPacket` is pure over `task.packetJson`, stable across
+    // rungs by construction.
+    const packet = renderWorkPacket(task.packetJson, { strict: strictPacket })
+    if (packet) {
+      lines.push('')
+      lines.push(packet)
+    }
+
     // BP-DISC-02: Thread accumulated discoveries into task context
     if (priorDiscoveries?.length) {
       lines.push('')
@@ -5835,21 +6094,32 @@ export class BlueprintBuildService extends EventEmitter {
       )
     }
 
-    // M3.3: the work packet, when the TASKS phase authored one. Placed AFTER the
-    // retry context so a retry reads "what went wrong" first and "what you may
-    // touch" second — the order in which it has to act on them.
-    const packet = renderWorkPacket(task.packetJson, { strict: strictPacket })
-    if (packet) {
-      lines.push('')
-      lines.push(packet)
-    }
-
-    // M4.1: gate evidence from the immediately preceding attempt. Last, because
-    // on a retry it is the single most important thing in the prompt.
+    // M4.1: gate evidence from the immediately preceding attempt. Late in the
+    // prompt — on a retry it is the single most important thing in the prompt —
+    // and the most volatile block (new evidence every rung), so the
+    // cache-prefix argument of C3 wants it after the stable header. It is no
+    // longer the FINAL block: the GLM-PROTOCOL-MISS-03 fence REMINDER line
+    // below now closes the prompt (instruction recency), and that line is
+    // static across rungs of a task — so keeping it last preserves the
+    // cache-prefix argument (the volatile gate block stays above the shared
+    // static tail).
     if (gateFixInstructions) {
       lines.push('')
       lines.push(gateFixInstructions)
     }
+
+    // GLM-PROTOCOL-MISS-03: instruction recency. The fence requirement appears
+    // exactly once, early, in the phase prompt — long-context models (GLM-5.3
+    // on a 7–8 min build turn) drift off instructions stated 100K tokens ago
+    // and end the turn without the block. Restating it as the FINAL line of the
+    // task context puts the handshake at maximum recency for every cold rung.
+    // The resumed path gets the same line via buildResumeContinuationMessage.
+    lines.push('')
+    lines.push(
+      'REMINDER: when this task is done you MUST end your final message with a ' +
+        '```blueprint-phase-complete fenced block (phase: "build") — the pipeline ' +
+        'cannot grade the task without it.'
+    )
 
     return lines.join('\n')
   }
