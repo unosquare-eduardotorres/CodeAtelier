@@ -87,6 +87,10 @@ import type {
   MemoryEmbeddingStatus,
   MemoryPromotionDiagnostics,
   MemoryGraphData,
+  MemoryCleanupPreview,
+  MemoryCleanupProgress,
+  MemoryCleanupRun,
+  MemoryCleanupThresholds,
   ContradictionStatus,
   E2EScenarioSummary,
   E2EPreflightResult,
@@ -744,6 +748,38 @@ const api = {
     workspacePath: string
   }): Promise<{ content: string | null; path: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.MEMORY_READ_CLAUDE_MD, args),
+
+  // Memory cleanup sweep
+  memoryCleanupPreview: (args: {
+    workspaceId: string
+    thresholds?: Partial<MemoryCleanupThresholds>
+  }): Promise<MemoryCleanupPreview> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CLEANUP_PREVIEW, args),
+
+  memoryCleanupApply: (args: {
+    workspaceId: string
+    thresholds?: Partial<MemoryCleanupThresholds>
+  }): Promise<MemoryCleanupRun | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CLEANUP_APPLY, args),
+
+  memoryCleanupUndo: (args: {
+    workspaceId: string
+  }): Promise<{ runId: string; restored: number } | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CLEANUP_UNDO, args),
+
+  memoryCleanupRuns: (args: {
+    workspaceId: string
+  }): Promise<{ runs: MemoryCleanupRun[]; undoable: MemoryCleanupRun | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CLEANUP_RUNS, args),
+
+  onMemoryCleanupProgress: (callback: (data: MemoryCleanupProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: MemoryCleanupProgress): void =>
+      callback(data)
+    ipcRenderer.on(IPC_CHANNELS.MEMORY_CLEANUP_PROGRESS, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_CLEANUP_PROGRESS, handler)
+    }
+  },
 
   // Memory graph
   memoryGraphGet: (args: { workspaceId: string }): Promise<MemoryGraphData> =>

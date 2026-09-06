@@ -654,6 +654,24 @@ CREATE TABLE IF NOT EXISTS blueprint_telemetry (
 CREATE INDEX IF NOT EXISTS idx_bp_telemetry_blueprint ON blueprint_telemetry(blueprint_id);
 CREATE INDEX IF NOT EXISTS idx_bp_telemetry_kind ON blueprint_telemetry(kind, created_at);
 
+-- Memory cleanup runs (migration 159): the undo log for the memory GC sweep.
+-- `undo_json` holds [{id, prevStatus, prevTier}] captured BEFORE the sweep runs,
+-- so a whole run can be reversed in one click. Hard deletes are NOT recorded --
+-- they are unrecoverable and are reported separately in the preview.
+-- Column is `trigger_source`, not `trigger`: TRIGGER is a SQLite keyword.
+CREATE TABLE IF NOT EXISTS memory_cleanup_runs (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  mode TEXT NOT NULL CHECK (mode IN ('preview','apply')),
+  trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual','idle')),
+  stats_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(stats_json)),
+  undo_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(undo_json)),
+  undone_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_memory_cleanup_runs_workspace
+  ON memory_cleanup_runs(workspace_id, created_at DESC);
+
 -- E2E test runs: track each test execution batch
 CREATE TABLE IF NOT EXISTS e2e_test_runs (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),

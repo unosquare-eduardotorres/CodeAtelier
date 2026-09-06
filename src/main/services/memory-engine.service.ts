@@ -47,6 +47,14 @@ const AMBIGUOUS_THRESHOLD = 0.82 // raised from 0.70 — reduces false-positive 
 const AUTO_MERGE_THRESHOLD = 0.95
 const TOP_K_MATCHES = 5
 
+/**
+ * Facts processed between yields in the dedup scan.
+ *
+ * Small enough that the main thread never blocks long enough to drop frames,
+ * large enough that the `setImmediate` round-trips are not themselves the cost.
+ */
+const DEDUP_YIELD_EVERY = 100
+
 // ── Decay settings ──────────────────────────────────────────────────────────
 const DECAY_DAYS_THRESHOLD = 30
 const DECAY_CONFIDENCE_DELTA = 0.15
@@ -960,8 +968,24 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
   /**
    * Cluster-based dedup scan: build connected components at ≥0.90 cosine,
    * emit one review item per cluster (not per pair). Auto-merge ≥0.95.
+   *
+   * Two things keep this off the critical path, because it runs every six hours
+   * and behind the "Consolidate now" button:
+   *
+   *   1. **Pairs are compared within a category only.** The loop is O(n²): at
+   *      2000 facts that is ~2M pairs × 384-dim cosine — hundreds of millions of
+   *      float ops, synchronously, on the Electron main thread. Bucketing by
+   *      category splits n into several smaller n, and since Σnᵢ² ≪ n² that is a
+   *      several-fold cut for free. The trade is that a duplicate filed under
+   *      two different categories is no longer found — in practice near-zero,
+   *      and worth it to stop the UI freezing.
+   *   2. **The outer loop yields.** Without this the whole scan is one
+   *      uninterruptible task and every frame, IPC reply and timer waits on it.
    */
-  scanForDuplicates(workspaceId: string): { clustersFound: number; autoMerged: number } {
+  async scanForDuplicates(
+    workspaceId: string,
+    onProgress?: (processed: number, total: number) => void
+  ): Promise<{ clustersFound: number; autoMerged: number }> {
     const embedded = memoryFactRepository.findWithEmbeddings(workspaceId)
     if (embedded.length < 2) return { clustersFound: 0, autoMerged: 0 }
 
@@ -970,18 +994,41 @@ Respond with EXACTLY one word: "ADD", "UPDATE", "NOOP", or "SUPERSEDE".
     const adjacency = new Map<number, Set<number>>()
     const pairSimilarities = new Map<string, number>()
 
+    // Indices grouped by category. Comparisons never cross a bucket.
+    const buckets = new Map<string, number[]>()
     for (let i = 0; i < embedded.length; i++) {
-      for (let j = i + 1; j < embedded.length; j++) {
-        const sim = cosineSimilarity(embedded[i].embedding, embedded[j].embedding)
-        if (sim >= THRESHOLD) {
-          if (!adjacency.has(i)) adjacency.set(i, new Set())
-          if (!adjacency.has(j)) adjacency.set(j, new Set())
-          adjacency.get(i)!.add(j)
-          adjacency.get(j)!.add(i)
-          pairSimilarities.set(`${i}-${j}`, sim)
+      const key = embedded[i].fact.category
+      const bucket = buckets.get(key)
+      if (bucket) bucket.push(i)
+      else buckets.set(key, [i])
+    }
+
+    let processed = 0
+    for (const bucket of buckets.values()) {
+      for (let bi = 0; bi < bucket.length; bi++) {
+        const i = bucket[bi]
+        for (let bj = bi + 1; bj < bucket.length; bj++) {
+          const j = bucket[bj]
+          const sim = cosineSimilarity(embedded[i].embedding, embedded[j].embedding)
+          if (sim >= THRESHOLD) {
+            if (!adjacency.has(i)) adjacency.set(i, new Set())
+            if (!adjacency.has(j)) adjacency.set(j, new Set())
+            adjacency.get(i)!.add(j)
+            adjacency.get(j)!.add(i)
+            // Bucket order does not guarantee i < j, so the key is normalised
+            // here the same way every reader below normalises it.
+            pairSimilarities.set(`${Math.min(i, j)}-${Math.max(i, j)}`, sim)
+          }
+        }
+
+        processed++
+        if (processed % DEDUP_YIELD_EVERY === 0) {
+          onProgress?.(processed, embedded.length)
+          await new Promise<void>((resolve) => setImmediate(resolve))
         }
       }
     }
+    onProgress?.(embedded.length, embedded.length)
 
     // Find connected components (clusters)
     const visited = new Set<number>()

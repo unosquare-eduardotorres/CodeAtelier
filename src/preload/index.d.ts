@@ -95,6 +95,10 @@ import type {
   MemoryEmbeddingStatus,
   MemoryPromotionDiagnostics,
   MemoryGraphData,
+  MemoryCleanupPreview,
+  MemoryCleanupProgress,
+  MemoryCleanupRun,
+  MemoryCleanupThresholds,
   IngestionProgress,
   BootstrapProgress,
   BootstrapMode,
@@ -523,6 +527,21 @@ interface Api {
   memoryReadClaudeMd: (args: {
     workspacePath: string
   }) => Promise<{ content: string | null; path: string }>
+  memoryCleanupPreview: (args: {
+    workspaceId: string
+    thresholds?: Partial<MemoryCleanupThresholds>
+  }) => Promise<MemoryCleanupPreview>
+  memoryCleanupApply: (args: {
+    workspaceId: string
+    thresholds?: Partial<MemoryCleanupThresholds>
+  }) => Promise<MemoryCleanupRun | null>
+  memoryCleanupUndo: (args: {
+    workspaceId: string
+  }) => Promise<{ runId: string; restored: number } | null>
+  memoryCleanupRuns: (args: {
+    workspaceId: string
+  }) => Promise<{ runs: MemoryCleanupRun[]; undoable: MemoryCleanupRun | null }>
+  onMemoryCleanupProgress: (callback: (data: MemoryCleanupProgress) => void) => () => void
   memoryGraphGet: (args: { workspaceId: string }) => Promise<MemoryGraphData>
   memorySaveMessage: (args: {
     workspaceId: string

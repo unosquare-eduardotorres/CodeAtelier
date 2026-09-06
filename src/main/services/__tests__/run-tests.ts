@@ -323,6 +323,8 @@ const TEST_FILES: string[] = [
   // ─── Memory Consolidation (cluster merge, idle job) ───
   './memory-consolidation.test',
   './memory-consolidation-archival.test',
+  // ─── Memory Cleanup (idle-archival rule, queue fairness, curator safety) ───
+  './memory-cleanup.test',
   // ─── E2E Testing Infrastructure ───
   './e2e-contracts.test',
   // ─── Blueprint document loader (splitBinaryDocs, buildReferenceDocsBlock) ───
@@ -424,6 +426,10 @@ const TEST_FILES: string[] = [
   './blueprint-tasks-mapreduce.test',
   // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
   './blueprint-task-verification.test',
+  // ─── GLM protocol-miss recovery (wrote-but-didnt-sign pass, retry classification, poisoned-transcript escape) ───
+  './blueprint-protocol-miss.test',
+  // ─── Provider timeout tiers (GAP-A ordering + consumer wiring) ───
+  './provider-timeout-tiers.test',
   './blueprint-task-user-skip.test',
   './blueprint-dependson-scheduling.test',
   './blueprint-plan-revision.test',
@@ -751,6 +757,8 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/components/streaming/__tests__/streaming-transcript.dom.test',
   // ─── File-list unification: FileRow + FileListSection component tests (jsdom) ───
   '../../../renderer/src/components/common/__tests__/file-row.dom.test',
+  // ─── Tool output rendering: ToolOutputPre preserves line separators (jsdom) ───
+  '../../../renderer/src/components/chat/__tests__/tool-output-pre.dom.test',
   // ─── F10: grill transform strips orphaned block closers ───
   '../../../renderer/src/utils/__tests__/strip-grill-json.test',
   // ─── VERIFY fallback: modified files aggregated from tool activity ───

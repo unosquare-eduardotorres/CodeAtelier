@@ -441,7 +441,7 @@ test('backfillAllPendingEmbeddings: returns 0 when provider not ready', async ()
 test('scanForDuplicates: returns clustersFound=0 when no embedded facts', async () => {
   const { memoryEngineService } = await import('../memory-engine.service')
   try {
-    const result = memoryEngineService.scanForDuplicates('nonexistent-workspace-id')
+    const result = await memoryEngineService.scanForDuplicates('nonexistent-workspace-id')
     assert.equal(result.clustersFound, 0)
     assert.equal(result.autoMerged, 0)
   } catch {
@@ -566,10 +566,14 @@ test('regression A4: scanForDuplicates reparents confirmations before mergeFact'
   const path = require('node:path')
   const source = fs.readFileSync(path.join(__dirname, '..', 'memory-engine.service.ts'), 'utf-8')
 
-  const scanBlock = source.slice(
-    source.indexOf('scanForDuplicates(workspaceId'),
-    source.indexOf('// ── Haiku classifier')
-  )
+  // Anchored on the bare call signature, not `scanForDuplicates(workspaceId`:
+  // the method gained an `async` keyword and a second parameter, and an anchor
+  // that tracks the parameter list silently slices from -1 and asserts against
+  // the wrong half of the file.
+  const scanStart = source.indexOf('scanForDuplicates(')
+  assert.ok(scanStart > 0, 'scanForDuplicates should still exist in memory-engine.service.ts')
+
+  const scanBlock = source.slice(scanStart, source.indexOf('// ── Haiku classifier'))
 
   // reparentConfirmations should appear before mergeFact
   const reparentIdx = scanBlock.indexOf('reparentConfirmations')

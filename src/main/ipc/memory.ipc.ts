@@ -15,7 +15,8 @@ import type {
   MemoryFactStatus,
   MemoryFactTier,
   ContradictionStatus,
-  MemoryCaptureSettings
+  MemoryCaptureSettings,
+  MemoryCleanupThresholds
 } from '../../shared/types'
 import { memoryFactRepository } from '../db/repositories/memory-fact.repository'
 import { memoryRetrievalService } from '../services/memory-retrieval.service'
@@ -44,17 +45,47 @@ type MemorySettingsFields = Partial<{
   memoryReflectionEnabled: boolean
   memoryProjectionEnabled: boolean
   memoryBootstrapConcurrency: number
+  memoryAutoCleanup: boolean
+  memoryCuratorEnabled: boolean
 }>
 import { memoryDocWatcherService } from '../services/memory-doc-watcher.service'
 import { buildMemoryGraph } from '../services/memory-graph'
 import { memoryIngestionService } from '../services/memory-ingestion.service'
 import { memoryBootstrapService } from '../services/memory-bootstrap.service'
 import { memoryConsolidationService } from '../services/memory-consolidation.service'
+import {
+  memoryCleanupService,
+  DEFAULT_CLEANUP_THRESHOLDS
+} from '../services/memory-cleanup.service'
 import { memoryProjectionService } from '../services/memory-projection.service'
 import { memoryReflectionService } from '../services/memory-reflection.service'
 import { notificationService } from '../services/notification.service'
 import { validateSender } from './validate-sender'
 import { safeWindowSend } from './safe-send'
+
+/**
+ * Coerce renderer-supplied cleanup thresholds into a safe range.
+ *
+ * Every field controls how old something must be before it is archived or
+ * permanently deleted, so a `0`, a `NaN` or a negative — whether from a typo in
+ * a number input or from a hostile DevTools call — would mean "delete
+ * everything". Anything not a finite number falls back to the default, and the
+ * floor of 1 day is the hard stop: a threshold can be impatient, never instant.
+ */
+function sanitizeCleanupThresholds(
+  input: Partial<MemoryCleanupThresholds> | undefined
+): MemoryCleanupThresholds {
+  const clamp = (value: unknown, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value)
+      ? Math.min(3650, Math.max(1, Math.floor(value)))
+      : fallback
+
+  return {
+    idleArchiveDays: clamp(input?.idleArchiveDays, DEFAULT_CLEANUP_THRESHOLDS.idleArchiveDays),
+    tombstoneTtlDays: clamp(input?.tombstoneTtlDays, DEFAULT_CLEANUP_THRESHOLDS.tombstoneTtlDays),
+    retrievalTtlDays: clamp(input?.retrievalTtlDays, DEFAULT_CLEANUP_THRESHOLDS.retrievalTtlDays)
+  }
+}
 
 export function registerMemoryIpc(mainWindow: BrowserWindow): void {
   // ── Facts CRUD ──
@@ -315,7 +346,12 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
         reflectionEnabled: settings.memoryReflectionEnabled === true,
         // Opt-in: this one writes files into the user's working tree.
         projectionEnabled: settings.memoryProjectionEnabled === true,
-        bootstrapConcurrency: Number(settings.memoryBootstrapConcurrency) || 3
+        bootstrapConcurrency: Number(settings.memoryBootstrapConcurrency) || 3,
+        // Opt-in: the cleanup sweep hard-deletes tombstones, which is a choice
+        // to make after seeing a preview rather than one to inherit silently.
+        autoCleanup: settings.memoryAutoCleanup === true,
+        // Opt-in: the curator is the only cleanup step that spends money.
+        curatorEnabled: settings.memoryCuratorEnabled === true
       }
       return memSettings
     }
@@ -369,6 +405,12 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
             6,
             Math.max(1, Math.floor(args.settings.bootstrapConcurrency))
           )
+        }),
+        ...(args.settings.autoCleanup !== undefined && {
+          memoryAutoCleanup: args.settings.autoCleanup
+        }),
+        ...(args.settings.curatorEnabled !== undefined && {
+          memoryCuratorEnabled: args.settings.curatorEnabled
         })
       }
       workspaceRepository.updateSettings(args.workspaceId, updated)
@@ -561,6 +603,61 @@ export function registerMemoryIpc(mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.MEMORY_CONSOLIDATE, async (event, args: { workspaceId: string }) => {
     validateSender(event)
     return memoryConsolidationService.runFullConsolidation(args.workspaceId)
+  })
+
+  // ── Cleanup sweep ──
+
+  // Dry run. Changes nothing — the point is to see the numbers on a real corpus
+  // before choosing thresholds, and before anything is deleted.
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_CLEANUP_PREVIEW,
+    async (event, args: { workspaceId: string; thresholds?: Partial<MemoryCleanupThresholds> }) => {
+      validateSender(event)
+      const obj = requireObject(args, IPC_CHANNELS.MEMORY_CLEANUP_PREVIEW)
+      return memoryCleanupService.preview(
+        requireString(obj, 'workspaceId', IPC_CHANNELS.MEMORY_CLEANUP_PREVIEW),
+        sanitizeCleanupThresholds(args.thresholds)
+      )
+    }
+  )
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_CLEANUP_APPLY,
+    async (event, args: { workspaceId: string; thresholds?: Partial<MemoryCleanupThresholds> }) => {
+      validateSender(event)
+      const obj = requireObject(args, IPC_CHANNELS.MEMORY_CLEANUP_APPLY)
+      return memoryCleanupService.apply(
+        requireString(obj, 'workspaceId', IPC_CHANNELS.MEMORY_CLEANUP_APPLY),
+        {
+          trigger: 'manual',
+          thresholds: sanitizeCleanupThresholds(args.thresholds),
+          onProgress: (progress) =>
+            safeWindowSend(mainWindow, IPC_CHANNELS.MEMORY_CLEANUP_PROGRESS, progress)
+        }
+      )
+    }
+  )
+
+  // Restores the most recent reversible run. Hard-deleted rows do not return —
+  // they were never in the undo log, and the preview said so.
+  ipcMain.handle(IPC_CHANNELS.MEMORY_CLEANUP_UNDO, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    const obj = requireObject(args, IPC_CHANNELS.MEMORY_CLEANUP_UNDO)
+    return memoryCleanupService.undo(
+      requireString(obj, 'workspaceId', IPC_CHANNELS.MEMORY_CLEANUP_UNDO)
+    )
+  })
+
+  // Run history plus whichever run the Undo button would reverse, so the UI
+  // does not have to re-derive the TTL rule.
+  ipcMain.handle(IPC_CHANNELS.MEMORY_CLEANUP_RUNS, (event, args: { workspaceId: string }) => {
+    validateSender(event)
+    const obj = requireObject(args, IPC_CHANNELS.MEMORY_CLEANUP_RUNS)
+    const id = requireString(obj, 'workspaceId', IPC_CHANNELS.MEMORY_CLEANUP_RUNS)
+    return {
+      runs: memoryCleanupService.listRuns(id),
+      undoable: memoryCleanupService.findUndoableRun(id)
+    }
   })
 
   // ── Knowledge Graph ──

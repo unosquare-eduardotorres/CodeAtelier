@@ -19,7 +19,10 @@ import type {
   BootstrapItemStatus,
   BootstrapItemView,
   BootstrapRunSummary,
-  ContradictionStatus
+  ContradictionStatus,
+  MemoryCleanupPreview,
+  MemoryCleanupProgress,
+  MemoryCleanupRun
 } from '../../../shared/types'
 
 type FeedSource = MemorySourceType | 'claude-md' | 'codebase' | 'document'
@@ -51,6 +54,14 @@ interface MemoryState {
   captureSettings: MemoryCaptureSettings | null
   backfillProgress: BackfillProgress | null
   backfillError: string | null
+
+  // Cleanup sweep state
+  cleanupPreview: MemoryCleanupPreview | null
+  cleanupPreviewing: boolean
+  cleanupApplying: boolean
+  cleanupProgress: MemoryCleanupProgress | null
+  cleanupUndoable: MemoryCleanupRun | null
+  cleanupError: string | null
 
   // CLAUDE.md state
   claudeMdContent: string | null
@@ -112,6 +123,13 @@ interface MemoryState {
   loadPromotionDiagnostics: (workspaceId: string) => Promise<void>
   triggerBackfill: (workspaceId: string) => Promise<void>
   clearBackfillError: () => void
+
+  // Cleanup sweep actions
+  previewCleanup: (workspaceId: string) => Promise<void>
+  applyCleanup: (workspaceId: string) => Promise<void>
+  undoCleanup: (workspaceId: string) => Promise<void>
+  loadCleanupRuns: (workspaceId: string) => Promise<void>
+  onCleanupProgress: (progress: MemoryCleanupProgress) => void
 
   // Dedup & Consolidation
   scanForDuplicates: (workspaceId: string) => Promise<{ clustersFound: number; autoMerged: number }>
@@ -182,6 +200,12 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   captureSettings: null,
   backfillProgress: null,
   backfillError: null,
+  cleanupPreview: null,
+  cleanupPreviewing: false,
+  cleanupApplying: false,
+  cleanupProgress: null,
+  cleanupUndoable: null,
+  cleanupError: null,
   claudeMdContent: null,
   claudeMdPath: null,
   claudeMdLoading: false,
@@ -436,6 +460,75 @@ export const useMemoryStore = create<MemoryState>((set) => ({
   },
 
   clearBackfillError: () => set({ backfillError: null }),
+
+  // ── Cleanup sweep ──
+
+  previewCleanup: async (workspaceId) => {
+    set({ cleanupPreviewing: true, cleanupError: null })
+    try {
+      const cleanupPreview = await window.api.memoryCleanupPreview({ workspaceId })
+      set({ cleanupPreview })
+    } catch (error) {
+      rendererLog.error('Cleanup preview failed:', error)
+      set({ cleanupError: 'Could not scan the memory corpus. Nothing was changed.' })
+    } finally {
+      set({ cleanupPreviewing: false })
+    }
+  },
+
+  applyCleanup: async (workspaceId) => {
+    set({ cleanupApplying: true, cleanupError: null, cleanupProgress: null })
+    try {
+      const run = await window.api.memoryCleanupApply({ workspaceId })
+      if (!run) {
+        set({ cleanupError: 'A cleanup sweep is already running.' })
+        return
+      }
+      // The preview describes a corpus that no longer exists. Clearing it stops
+      // the panel offering an Apply button for work that has already happened.
+      set({ cleanupPreview: null })
+      await useMemoryStore.getState().loadCleanupRuns(workspaceId)
+      await useMemoryStore.getState().loadFacts(workspaceId)
+      await useMemoryStore.getState().loadContradictions()
+      await useMemoryStore.getState().loadPromotionDiagnostics(workspaceId)
+    } catch (error) {
+      rendererLog.error('Cleanup apply failed:', error)
+      set({ cleanupError: 'Cleanup failed. See the logs for details.' })
+    } finally {
+      set({ cleanupApplying: false })
+    }
+  },
+
+  undoCleanup: async (workspaceId) => {
+    set({ cleanupError: null })
+    try {
+      const result = await window.api.memoryCleanupUndo({ workspaceId })
+      if (!result) {
+        set({ cleanupError: 'Nothing left to undo.' })
+        return
+      }
+      await useMemoryStore.getState().loadCleanupRuns(workspaceId)
+      await useMemoryStore.getState().loadFacts(workspaceId)
+      await useMemoryStore.getState().loadPromotionDiagnostics(workspaceId)
+    } catch (error) {
+      rendererLog.error('Cleanup undo failed:', error)
+      set({ cleanupError: 'Undo failed. See the logs for details.' })
+    }
+  },
+
+  loadCleanupRuns: async (workspaceId) => {
+    try {
+      const { undoable } = await window.api.memoryCleanupRuns({ workspaceId })
+      set({ cleanupUndoable: undoable })
+    } catch (error) {
+      rendererLog.error('Failed to load cleanup runs:', error)
+    }
+  },
+
+  onCleanupProgress: (progress) => {
+    set({ cleanupProgress: progress.done ? null : progress })
+    if (progress.error) set({ cleanupError: progress.error })
+  },
 
   // ── Dedup ──
 
@@ -715,5 +808,17 @@ export const useMemoryStore = create<MemoryState>((set) => ({
 if (typeof window !== 'undefined' && window.api?.onMemoryBootstrapProgress) {
   window.api.onMemoryBootstrapProgress((progress: BootstrapProgress) => {
     useMemoryStore.getState().onBootstrapProgress(progress)
+  })
+}
+
+/**
+ * Cleanup progress, subscribed for the app's lifetime for the same reason as
+ * bootstrap above: the sweep also runs from the 6h idle job, so ticks arrive
+ * when nobody is looking at the Cleanup panel — and a subscription created on
+ * mount would miss exactly those.
+ */
+if (typeof window !== 'undefined' && window.api?.onMemoryCleanupProgress) {
+  window.api.onMemoryCleanupProgress((progress: MemoryCleanupProgress) => {
+    useMemoryStore.getState().onCleanupProgress(progress)
   })
 }

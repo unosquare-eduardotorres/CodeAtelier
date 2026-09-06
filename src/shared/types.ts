@@ -1326,6 +1326,20 @@ export interface MemoryCaptureSettings {
    * hit an API rate limit. Range 1–6, default 3.
    */
   bootstrapConcurrency: number
+  /**
+   * Run the deterministic cleanup sweep from the 6h idle job instead of only
+   * from the button. Defaults to OFF: the sweep archives facts and hard-deletes
+   * tombstones, so it is a deliberate choice made after seeing a preview's
+   * numbers on a real corpus — not something to inherit silently.
+   */
+  autoCleanup: boolean
+  /**
+   * Let the cleanup sweep ask a cheap model to judge the near-duplicate band
+   * that sits below auto-merge and above clustering (0.85–0.95), which rules
+   * alone cannot decide. Opt-in, capped per run, and the model's worst
+   * available action is a soft archive — it can never hard-delete.
+   */
+  curatorEnabled: boolean
 }
 
 /** Bootstrap mode for project knowledge generation. */
@@ -1556,6 +1570,95 @@ export interface MemoryPromotionDiagnostics {
     /** Passes every gate — the next promotion sweep should lift these. */
     awaitingSweep: number
   }
+}
+
+// ── Memory cleanup (GC sweep) ──
+
+/**
+ * What a cleanup run is allowed to do, and after how long.
+ *
+ * These are thresholds rather than constants at the call site because the
+ * preview reports them back to the UI: a number the user cannot see is a
+ * number the user cannot dial.
+ */
+export interface MemoryCleanupThresholds {
+  /** Archive T0/T1 facts untouched for this many days. */
+  idleArchiveDays: number
+  /** Hard-delete archived/superseded rows whose validity closed this long ago. */
+  tombstoneTtlDays: number
+  /** Compact `retrieval` confirmation rows older than this. */
+  retrievalTtlDays: number
+}
+
+/** One affected fact, shown as a sample so a preview is inspectable. */
+export interface MemoryCleanupSample {
+  id: string
+  title: string
+  tier: MemoryFactTier
+  category: MemoryFactCategory
+  /** Why this fact is in this bucket — free text, for the UI only. */
+  reason: string
+}
+
+/** A single bucket of the sweep: how many, and a handful of examples. */
+export interface MemoryCleanupBucket {
+  count: number
+  samples: MemoryCleanupSample[]
+}
+
+/**
+ * Dry-run readout. Nothing here has been applied.
+ *
+ * `tombstoneDelete` is separated from everything else because it is the only
+ * bucket that is NOT undoable — the rows and their embedding BLOBs are gone.
+ */
+export interface MemoryCleanupPreview {
+  workspaceId: string
+  thresholds: MemoryCleanupThresholds
+  /** Idle facts that would be soft-archived (undoable). */
+  idleArchive: MemoryCleanupBucket
+  /** Near-duplicate facts an LLM curator would archive or merge (undoable). */
+  curatorCandidates: MemoryCleanupBucket
+  /** Tombstones that would be hard-deleted. NOT undoable. */
+  tombstoneDelete: MemoryCleanupBucket
+  /** Retrieval confirmation rows that would be compacted away. */
+  confirmationsPruned: number
+  generatedAt: string
+}
+
+/** What an applied run actually did. */
+export interface MemoryCleanupStats {
+  idleArchived: number
+  curatorArchived: number
+  curatorMerged: number
+  curatorCalls: number
+  tombstonesDeleted: number
+  edgesDeleted: number
+  contradictionsDeleted: number
+  confirmationsPruned: number
+}
+
+export type MemoryCleanupTrigger = 'manual' | 'idle'
+
+/** A recorded sweep. `undoableCount` is the size of the stored undo log. */
+export interface MemoryCleanupRun {
+  id: string
+  workspaceId: string
+  mode: 'preview' | 'apply'
+  trigger: MemoryCleanupTrigger
+  stats: MemoryCleanupStats
+  undoableCount: number
+  undoneAt: string | null
+  createdAt: string
+}
+
+/** Progress ticks emitted while a sweep runs. */
+export interface MemoryCleanupProgress {
+  workspaceId: string
+  step: 'scanning' | 'archiving' | 'curating' | 'deleting' | 'compacting' | 'done'
+  message: string
+  done: boolean
+  error?: string
 }
 
 /** Embedding status summary for the UI banner. */

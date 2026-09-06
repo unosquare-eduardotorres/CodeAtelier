@@ -53,6 +53,30 @@ function toFtsQuery(query: string): string {
     .join(' OR ')
 }
 
+/**
+ * WHERE clause selecting retrieval confirmations that are safe to compact.
+ *
+ * Shared by the count and the delete so a preview can never disagree with what
+ * Apply actually removes — the two drifting apart is the failure mode that
+ * makes a dry run worthless. Takes exactly one bind parameter: the TTL in days.
+ *
+ * The window function keeps the earliest surviving row per fact per month.
+ */
+const PRUNABLE_RETRIEVAL_SQL = `
+  source_type = 'retrieval'
+  AND julianday('now') - julianday(created_at) > ?
+  AND id NOT IN (
+    SELECT id FROM (
+      SELECT id, ROW_NUMBER() OVER (
+        PARTITION BY fact_id, strftime('%Y-%m', created_at)
+        ORDER BY created_at ASC, id ASC
+      ) AS rn
+      FROM memory_confirmations
+      WHERE source_type = 'retrieval'
+    ) WHERE rn = 1
+  )
+`
+
 // ── Row shapes ──────────────────────────────────────────────────────────────
 
 interface MemoryFactRow {
@@ -1289,6 +1313,226 @@ export class MemoryFactRepository extends BaseRepository<MemoryFactRow, MemoryFa
   }
 
   // ── Cleanup helpers ─────────────────────────────────────────────────────
+
+  /**
+   * The subset of `ids` carrying at least one `human` confirmation.
+   *
+   * The batched form exists because the cleanup sweep asks this of every active
+   * fact in a workspace, and `hasHumanConfirmation` is one prepare+execute each
+   * — synchronously on the main thread, 2000 times.
+   */
+  getHumanConfirmedIds(ids: string[]): Set<string> {
+    const confirmed = new Set<string>()
+    if (ids.length === 0) return confirmed
+
+    const CHUNK = 500
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK)
+      const placeholders = chunk.map(() => '?').join(',')
+      const rows = this.db()
+        .prepare(
+          `SELECT DISTINCT fact_id FROM memory_confirmations
+           WHERE fact_id IN (${placeholders}) AND source_type = 'human'`
+        )
+        .all(...chunk) as Array<{ fact_id: string }>
+      for (const r of rows) confirmed.add(r.fact_id)
+    }
+    return confirmed
+  }
+
+  /** Archive many facts in one transaction. Returns the number archived. */
+  archiveFacts(ids: string[]): number {
+    if (ids.length === 0) return 0
+    const stmt = this.db().prepare(
+      `UPDATE memory_facts SET
+         status = 'archived',
+         valid_to = COALESCE(valid_to, datetime('now')),
+         updated_at = datetime('now')
+       WHERE id = ? AND status = 'active'`
+    )
+    return this.runTransaction(() => {
+      let changed = 0
+      for (const id of ids) changed += stmt.run(id).changes
+      return changed
+    })
+  }
+
+  /**
+   * Put facts back exactly as they were before a cleanup run.
+   *
+   * `valid_to` is restored alongside `status` because archiving closes the
+   * validity window: flipping the status back without reopening it would leave
+   * an `active` fact that retrieval — which filters on `valid_to IS NULL` —
+   * never returns again. That is a silent, invisible failure, which is worse
+   * than no undo at all.
+   */
+  restoreFacts(
+    entries: Array<{
+      id: string
+      prevStatus: MemoryFactStatus
+      prevTier: MemoryFactTier
+      prevValidTo: string | null
+    }>
+  ): number {
+    if (entries.length === 0) return 0
+    const stmt = this.db().prepare(
+      `UPDATE memory_facts SET
+         status = ?,
+         tier = ?,
+         valid_to = ?,
+         updated_at = datetime('now')
+       WHERE id = ?`
+    )
+    return this.runTransaction(() => {
+      let changed = 0
+      for (const e of entries) {
+        changed += stmt.run(e.prevStatus, e.prevTier, e.prevValidTo, e.id).changes
+      }
+      return changed
+    })
+  }
+
+  // ── Tombstone GC ────────────────────────────────────────────────────────
+
+  /**
+   * Archived/superseded rows whose validity closed more than `ttlDays` ago.
+   *
+   * Scoped to `workspace_id = ?` and NOT to the usual `OR workspace_id IS NULL`
+   * that the read queries use: a global fact belongs to every workspace, and a
+   * sweep run in one of them must not delete it out from under the others.
+   *
+   * `valid_to IS NOT NULL` rather than a bare status check — a row archived by
+   * an older binary that never closed its window has no age to measure, and
+   * treating a NULL as "infinitely old" would delete it immediately.
+   */
+  findTombstones(workspaceId: string, ttlDays: number, limit?: number): MemoryFact[] {
+    const rows = this.db()
+      .prepare(
+        `SELECT * FROM memory_facts
+         WHERE workspace_id = ?
+           AND status IN ('archived','superseded')
+           AND valid_to IS NOT NULL
+           AND julianday('now') - julianday(valid_to) > ?
+         ORDER BY valid_to ASC
+         ${limit !== undefined ? 'LIMIT ?' : ''}`
+      )
+      .all(workspaceId, ttlDays, ...(limit !== undefined ? [limit] : [])) as MemoryFactRow[]
+    return rows.map(mapFactRow)
+  }
+
+  /** How many rows `hardDeleteTombstones` would remove. */
+  countTombstones(workspaceId: string, ttlDays: number): number {
+    const row = this.db()
+      .prepare(
+        `SELECT COUNT(*) AS cnt FROM memory_facts
+         WHERE workspace_id = ?
+           AND status IN ('archived','superseded')
+           AND valid_to IS NOT NULL
+           AND julianday('now') - julianday(valid_to) > ?`
+      )
+      .get(workspaceId, ttlDays) as { cnt: number }
+    return row.cnt
+  }
+
+  /**
+   * Permanently remove expired tombstones. This is what reclaims the embedding
+   * BLOBs — an archived fact keeps its ~1.5KB vector forever otherwise.
+   *
+   * Three tables need explicit attention:
+   *   - `memory_contradictions` references `memory_facts(id)` with NO cascade,
+   *     so an undeleted row here aborts the whole statement on an FK violation.
+   *     It must go first.
+   *   - `memory_edges` DOES cascade, but is deleted explicitly anyway: it is the
+   *     only way to report a real count, and it keeps the sweep correct in any
+   *     context where `PRAGMA foreign_keys` is off.
+   *   - `superseded_by` / `merged_into` carry no FK at all, so surviving rows
+   *     would keep pointing at ids that no longer exist. Nulled at the end.
+   *
+   * `memory_confirmations` and `memory_facts_fts` need nothing — the first
+   * cascades, the second has an AFTER DELETE trigger.
+   */
+  hardDeleteTombstones(
+    workspaceId: string,
+    ttlDays: number
+  ): { facts: number; edges: number; contradictions: number } {
+    const ids = this.db()
+      .prepare(
+        `SELECT id FROM memory_facts
+         WHERE workspace_id = ?
+           AND status IN ('archived','superseded')
+           AND valid_to IS NOT NULL
+           AND julianday('now') - julianday(valid_to) > ?`
+      )
+      .all(workspaceId, ttlDays)
+      .map((r) => (r as { id: string }).id)
+
+    if (ids.length === 0) return { facts: 0, edges: 0, contradictions: 0 }
+
+    const CHUNK = 400 // ids are bound up to 4x per statement below
+    return this.runTransaction(() => {
+      let facts = 0
+      let edges = 0
+      let contradictions = 0
+
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK)
+        const ph = chunk.map(() => '?').join(',')
+
+        contradictions += this.db()
+          .prepare(
+            `DELETE FROM memory_contradictions
+             WHERE old_fact_id IN (${ph}) OR new_fact_id IN (${ph})`
+          )
+          .run(...chunk, ...chunk).changes
+
+        edges += this.db()
+          .prepare(`DELETE FROM memory_edges WHERE from_id IN (${ph}) OR to_id IN (${ph})`)
+          .run(...chunk, ...chunk).changes
+
+        facts += this.db()
+          .prepare(`DELETE FROM memory_facts WHERE id IN (${ph})`)
+          .run(...chunk).changes
+
+        this.db()
+          .prepare(`UPDATE memory_facts SET superseded_by = NULL WHERE superseded_by IN (${ph})`)
+          .run(...chunk)
+        this.db()
+          .prepare(`UPDATE memory_facts SET merged_into = NULL WHERE merged_into IN (${ph})`)
+          .run(...chunk)
+      }
+
+      return { facts, edges, contradictions }
+    })
+  }
+
+  // ── Confirmation log compaction ─────────────────────────────────────────
+
+  /** How many rows `pruneRetrievalConfirmations` would remove. */
+  countPrunableRetrievalConfirmations(ttlDays: number): number {
+    const row = this.db()
+      .prepare(`SELECT COUNT(*) AS cnt FROM memory_confirmations WHERE ${PRUNABLE_RETRIEVAL_SQL}`)
+      .get(ttlDays) as { cnt: number }
+    return row.cnt
+  }
+
+  /**
+   * Compact the retrieval confirmation log.
+   *
+   * Retrieval-as-evidence writes one row per fact per day, so an actively-used
+   * corpus grows this table without bound and nothing ever pruned it. Only
+   * `retrieval` rows are touched — extraction, tool, bootstrap and human events
+   * are irreplaceable evidence and are never pruned at any age.
+   *
+   * One row per fact per month survives, and it is the EARLIEST of that month.
+   * A blanket delete would rewrite history: `countConfirmationDays` gates
+   * promotion on distinct days, so erasing a fact's older retrievals outright
+   * would make a long-used fact look newly-discovered.
+   */
+  pruneRetrievalConfirmations(ttlDays: number): number {
+    return this.db()
+      .prepare(`DELETE FROM memory_confirmations WHERE ${PRUNABLE_RETRIEVAL_SQL}`)
+      .run(ttlDays).changes
+  }
 
   /** Delete resolved/expired contradiction records older than N days. */
   pruneOldContradictions(daysThreshold: number): number {

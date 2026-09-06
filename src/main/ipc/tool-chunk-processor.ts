@@ -130,7 +130,9 @@ export function isExpectedPlanModeBlock(
 
 // ── Composable tools: input is composed into result so file/pattern is visible without expanding ──
 
-const COMPOSABLE_TOOLS = new Set(['Read', 'Grep', 'Glob'])
+/** Lowercase — membership is tested against a lowercased tool name so backends
+ *  that emit `read`/`grep`/`glob` compose the path suffix too. */
+const COMPOSABLE_TOOLS = new Set(['read', 'grep', 'glob'])
 
 // ── Edit diff extraction ──
 
@@ -366,7 +368,11 @@ export function processToolChunk(
     const resultDetail = resultObj?.resultDetail
 
     // Compose file path / pattern into result so it's always visible without expanding
-    if (toolInputSummary && resultSummary && COMPOSABLE_TOOLS.has(chunk.toolName ?? '')) {
+    if (
+      toolInputSummary &&
+      resultSummary &&
+      COMPOSABLE_TOOLS.has((chunk.toolName ?? '').toLowerCase())
+    ) {
       resultSummary = `${resultSummary} — ${toolInputSummary}`
     }
 

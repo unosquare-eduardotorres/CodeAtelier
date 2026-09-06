@@ -52,6 +52,20 @@ export function humanizeFailureReason(reason: string | null | undefined): string
     return reason.replace(/^executor error:\s*/i, 'Executor error: ')
   }
 
+  // GLM-PROTOCOL-MISS-05: the model ended its turn without the required
+  // ```blueprint-phase-complete fence — distinct from transport death. The
+  // task may well have been DONE (files on disk) and the pipeline may have
+  // accepted it as unproven; retrying can help (stochastic compliance), but
+  // the user should not read this as a network failure.
+  if (/protocol miss/i.test(reason)) {
+    return (
+      'The model finished its turn without emitting the required ' +
+      'blueprint-phase-complete block (a protocol miss — not a network error). ' +
+      'The work itself may be complete on disk; check the task\u2019s files or ' +
+      'retry — models sometimes emit the block on a later attempt.'
+    )
+  }
+
   if (/planned missing/i.test(reason)) {
     // Two very different causes share this persisted reason. A task whose
     // session produced NOTHING (no writes, no bash) plausibly died early —

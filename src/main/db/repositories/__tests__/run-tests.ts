@@ -82,6 +82,12 @@ import './memory-promotion-evidence.test'
 // FK-cascade test started reading a different database than it wrote to.
 import './blueprint-telemetry.repository.test'
 
+// ─── Memory cleanup GC + undo log (migration 159) ───
+// Same ordering constraint as the two files above: must stay BELOW
+// zero-coverage-repos-phase24, which calls trySetupTestDb() directly and swaps
+// the global database out from under attachTestDb()'s cached handle.
+import './memory-cleanup.repository.test'
+
 // ─── Usage attribution (migration 150) ───
 // turn-usage was registered in run-all.ts but not here, so its assertions never
 // ran under the repository runner.

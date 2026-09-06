@@ -16,6 +16,11 @@ export { IdeaRepository, ideaRepository } from './idea.repository'
 export { MemoryFactRepository, memoryFactRepository } from './memory-fact.repository'
 export { MemoryBootstrapRepository, memoryBootstrapRepository } from './memory-bootstrap.repository'
 export type { PlannedItem, CreateRunInput } from './memory-bootstrap.repository'
+export {
+  MemoryCleanupRunRepository,
+  memoryCleanupRunRepository
+} from './memory-cleanup-run.repository'
+export type { CleanupUndoEntry } from './memory-cleanup-run.repository'
 export { UserProfileRepository, userProfileRepository } from './user-profile.repository'
 export { CoreAgentAliasRepository, coreAgentAliasRepository } from './core-agent-alias.repository'
 export {

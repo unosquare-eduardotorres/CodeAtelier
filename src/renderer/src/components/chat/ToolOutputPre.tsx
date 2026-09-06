@@ -60,8 +60,16 @@ export default function ToolOutputPre({
         // Re-attach each format's own separator: Read gutters use →, grep
         // locators use : — so the rendered line matches the raw output.
         const decorated = gutter ? `${gutter}→` : path ? `${path}:` : ''
+        // <pre> only preserves newlines present in its text content — this span
+        // list has none, so every line must re-emit its own separator.
+        const nl = i < lines.length - 1 ? '\n' : ''
         if (!decorated) {
-          return <span key={i}>{rawLine === '' ? '\n' : rawLine}</span>
+          return (
+            <span key={i}>
+              {rawLine}
+              {nl}
+            </span>
+          )
         }
         return (
           <span key={i}>
@@ -75,6 +83,7 @@ export default function ToolOutputPre({
                 </span>
               )}
             </Highlight>
+            {nl}
           </span>
         )
       })}

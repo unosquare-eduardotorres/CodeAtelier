@@ -113,6 +113,19 @@ export default function CapturePanel({
             checked={captureSettings.reflectionEnabled}
             onChange={(v) => set({ reflectionEnabled: v })}
           />
+          <Switch
+            label="Automatic cleanup"
+            description="Run the cleanup sweep every 6 hours instead of only from the Cleanup tab. Turn this on once a preview has shown you numbers you agree with — it permanently deletes long-expired memories"
+            checked={captureSettings.autoCleanup}
+            onChange={(v) => set({ autoCleanup: v })}
+          />
+          <Switch
+            label="Duplicate curator"
+            badge={<CostBadge />}
+            description="Let a cheap model judge the near-duplicates that rules cannot decide. It can only archive — never delete — and every decision is undoable"
+            checked={captureSettings.curatorEnabled}
+            onChange={(v) => set({ curatorEnabled: v })}
+          />
         </div>
       </SettingsCard>
 

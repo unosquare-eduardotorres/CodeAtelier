@@ -124,13 +124,35 @@ const summarizeGlob: Summarizer = (content) => {
 
 // ── Exact-name handler registry ──
 
+/** Keys are lowercase — lookup lowercases the tool name so backends that emit
+ *  `read`/`write`/`edit` (OpenCode-style) hit the same handlers as the SDK's
+ *  `Read`/`Write`/`Edit`. */
 const EXACT_HANDLERS: Record<string, Summarizer> = {
-  Write: summarizeWrite,
-  Edit: summarizeWrite,
-  Bash: summarizeBash,
-  Read: summarizeRead,
-  Grep: summarizeGrep,
-  Glob: summarizeGlob
+  write: summarizeWrite,
+  edit: summarizeWrite,
+  bash: summarizeBash,
+  read: summarizeRead,
+  grep: summarizeGrep,
+  glob: summarizeGlob
+}
+
+// ── Backend file-read envelope ──
+
+/** `<path>…</path><type>file</type><content>…</content>` — backend read-tool envelope. */
+const FILE_ENVELOPE_RE =
+  /^\s*<path>[\s\S]*?<\/path>\s*<type>[^<]*<\/type>\s*<content>([\s\S]*?)(?:<\/content>)?\s*$/
+
+/**
+ * Strip the envelope and normalise its `12: ` gutters to the `12→` form the
+ * renderer's line parser already renders muted. Tolerates a missing closing tag
+ * so truncated output still unwraps. Non-envelope content passes through
+ * untouched — scoping the gutter rewrite to recognised envelopes keeps it from
+ * greying out legitimate code such as `1: 'value',` in an object literal.
+ */
+function unwrapFileEnvelope(content: string): string {
+  const m = FILE_ENVELOPE_RE.exec(content)
+  if (!m) return content
+  return m[1].replace(/^(\s*)(\d+): /gm, '$1$2→')
 }
 
 // ── MCP prefix-based handlers ──
@@ -287,20 +309,24 @@ export function extractResultSummary(
     const toolError = checkToolUseError(content)
     if (toolError) return toolError
 
-    // Exact name match (SDK built-in tools)
-    const exactHandler = EXACT_HANDLERS[toolName]
-    if (exactHandler) return exactHandler(content)
+    // The pre-checks above run on the raw content (their markers sit outside
+    // the envelope); everything below summarizes the unwrapped body.
+    const body = unwrapFileEnvelope(content)
 
-    // Prefix match (MCP tools)
+    // Exact name match (SDK built-in tools), case-insensitive
+    const exactHandler = EXACT_HANDLERS[toolName.toLowerCase()]
+    if (exactHandler) return exactHandler(body)
+
+    // Prefix match (MCP tools) — case-sensitive, prefixes are exact
     for (const { prefix, handler } of PREFIX_HANDLERS) {
       if (toolName.startsWith(prefix)) {
-        const result = handler(content)
+        const result = handler(body)
         if (result) return result
       }
     }
 
     // Default fallback
-    return defaultSummary(content)
+    return defaultSummary(body)
   } catch {
     return undefined
   }

@@ -24,7 +24,15 @@ const CLUSTER_THRESHOLD = 0.85
 const AUTO_MERGE_THRESHOLD = 0.95
 const STALE_T0_DAYS = 30
 const CONTRADICTION_PRUNE_DAYS = 30
-const MAX_REVIEW_QUEUE = 100
+
+/**
+ * Review queue ceiling.
+ *
+ * Was 100. At two thousand facts the 0.85–0.95 band alone produces more
+ * clusters than that, so the cap was silently auto-resolving real work every
+ * six hours — the queue was not a backlog, it was a shredder.
+ */
+const MAX_REVIEW_QUEUE = 300
 
 // ── Idle job settings ───────────────────────────────────────────────────────
 const IDLE_JOB_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6 hours
@@ -45,8 +53,22 @@ function hasRealEvidence(factId: string): boolean {
   return hasRealEvidencePure(memoryFactRepository.getConfirmations(factId))
 }
 
-/** Facts eligible for stale-T0 archival: tier 0, never accessed,
- *  workspace-owned, older than STALE_T0_DAYS, and no real evidence. */
+/**
+ * Facts eligible for stale-T0 archival: tier 0, workspace-owned, no real
+ * evidence, and untouched for longer than STALE_T0_DAYS.
+ *
+ * The idleness test used to be `!f.lastAccessedAt` — "never accessed" — which
+ * is why this rule archived almost nothing: retrieving a fact even once exempted
+ * it permanently, so the facts the system actually used were the ones it could
+ * never retire. "Not accessed *recently*" is the whole difference between a
+ * rule that runs and a rule that is decoration.
+ *
+ * The other guards are unchanged and deliberately narrow, because this path
+ * runs unattended from the idle job: still tier 0 only, still nothing carrying
+ * real (non-auto_dedup) evidence. The broader idle sweep — T0/T1, 90 days,
+ * human-confirmation protection — lives in memory-cleanup.service, where every
+ * archival is recorded in an undo log.
+ */
 function selectStaleT0Facts(
   facts: MemoryFact[],
   workspaceId: string,
@@ -55,11 +77,48 @@ function selectStaleT0Facts(
   return facts.filter(
     (f) =>
       f.tier === 0 &&
-      !f.lastAccessedAt &&
       f.workspaceId === workspaceId &&
+      daysSince(f.lastAccessedAt ?? f.lastConfirmedAt ?? f.createdAt) > STALE_T0_DAYS &&
       daysSince(f.createdAt) > STALE_T0_DAYS &&
       !hasEvidence(f.id)
   )
+}
+
+/**
+ * Which pending review items to discard when the queue is over its cap.
+ *
+ * The old rule dropped the OLDEST, which at scale means the queue throws away
+ * the work it has had longest and keeps whatever arrived last — a shredder with
+ * a recency bias. Similarity is the better ordering: the least-similar pair is
+ * the least likely to be a genuine duplicate, so it is the cheapest thing to
+ * lose.
+ *
+ * Items whose resolution carries no cosine (anything not queued by cluster
+ * review) score `Infinity` and sort last — they are never discarded while a
+ * scored item is available, because we cannot tell how valuable they are.
+ */
+function selectReviewQueueVictims<T extends { resolution: string | null; createdAt: string }>(
+  pending: T[],
+  excess: number
+): T[] {
+  if (excess <= 0) return []
+  return [...pending]
+    .sort((a, b) => {
+      const sa = parseReviewSimilarity(a.resolution)
+      const sb = parseReviewSimilarity(b.resolution)
+      if (sa !== sb) return sa - sb
+      // Same score: oldest first, preserving the previous tie-break.
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+    })
+    .slice(0, excess)
+}
+
+/** Pull the cosine out of a `review cluster (… best cosine: 0.912)` resolution. */
+function parseReviewSimilarity(resolution: string | null): number {
+  const match = /cosine:\s*([0-9]*\.?[0-9]+)/.exec(resolution ?? '')
+  if (!match) return Number.POSITIVE_INFINITY
+  const value = Number.parseFloat(match[1])
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY
 }
 
 interface ConsolidationResult {
@@ -335,16 +394,18 @@ class MemoryConsolidationService {
       const pendingCount = memoryFactRepository.countPendingContradictions()
       if (pendingCount <= MAX_REVIEW_QUEUE) return 0
 
-      // Resolve the oldest excess as 'auto_resolved'
+      // Discard the least-similar excess as 'auto_resolved'
       const excess = pendingCount - MAX_REVIEW_QUEUE
       const pending = memoryFactRepository.findContradictions('pending')
-      const toResolve = pending.slice(-excess) // oldest are at the end (DESC order)
+      const toResolve = selectReviewQueueVictims(pending, excess)
 
       for (const c of toResolve) {
         memoryFactRepository.resolveContradiction(c.id, 'auto-expired (queue cap)', 'auto_resolved')
       }
 
-      log.info(`[Consolidation] Capped review queue: resolved ${toResolve.length} oldest items`)
+      log.info(
+        `[Consolidation] Capped review queue: resolved ${toResolve.length} least-similar items`
+      )
       return toResolve.length
     } catch (err) {
       log.warn('[Consolidation] Cap review queue failed:', err)
@@ -402,7 +463,7 @@ class MemoryConsolidationService {
       log.info('[Consolidation] Running idle consolidation')
 
       // 1. Cluster & auto-merge ≥0.95 duplicates
-      memoryEngineService.scanForDuplicates(workspaceId)
+      await memoryEngineService.scanForDuplicates(workspaceId)
 
       // 2. Archive stale T0 facts
       this.archiveStaleT0Facts(workspaceId)
@@ -431,6 +492,11 @@ class MemoryConsolidationService {
       //    workspace and capped per run; it is the only step that calls an LLM.
       await this.runReflectionIfEnabled(workspaceId)
 
+      // 8. Cleanup sweep — idle archival, tombstone GC, log compaction.
+      //    Opt-in and default-off: it hard-deletes rows, and that is a decision
+      //    to make after looking at a preview, not one to inherit silently.
+      await this.runCleanupIfEnabled(workspaceId)
+
       log.info('[Consolidation] Idle consolidation complete')
     } catch (err) {
       log.warn('[Consolidation] Idle consolidation failed:', err)
@@ -445,6 +511,29 @@ class MemoryConsolidationService {
    * Imported lazily so the consolidation service does not drag the Claude CLI
    * runner into every process that touches memory.
    */
+  /**
+   * Run the deterministic cleanup sweep when the workspace has opted in.
+   *
+   * Failures are logged and swallowed for the same reason reflection's are: a
+   * background housekeeping pass must never take the idle job down with it.
+   */
+  private async runCleanupIfEnabled(workspaceId: string): Promise<void> {
+    try {
+      const { memoryCleanupService } = await import('./memory-cleanup.service')
+      if (!memoryCleanupService.isAutoCleanupEnabled(workspaceId)) return
+
+      const run = await memoryCleanupService.apply(workspaceId, { trigger: 'idle' })
+      if (run) {
+        log.info(
+          `[Consolidation] Cleanup sweep archived ${run.stats.idleArchived} idle fact(s), ` +
+            `deleted ${run.stats.tombstonesDeleted} tombstone(s)`
+        )
+      }
+    } catch (err) {
+      log.warn('[Consolidation] Cleanup sweep failed:', err)
+    }
+  }
+
   private async runReflectionIfEnabled(workspaceId: string): Promise<void> {
     try {
       const { memoryReflectionService } = await import('./memory-reflection.service')
@@ -483,5 +572,11 @@ function emptyResult(): ConsolidationResult {
   }
 }
 
-export { hasRealEvidencePure, hasRealEvidence, selectStaleT0Facts }
+export {
+  hasRealEvidencePure,
+  hasRealEvidence,
+  selectStaleT0Facts,
+  selectReviewQueueVictims,
+  parseReviewSimilarity
+}
 export const memoryConsolidationService = new MemoryConsolidationService()

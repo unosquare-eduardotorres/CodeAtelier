@@ -8,6 +8,8 @@
  *  - Global pre-checks: <persisted-output>, <tool_use_error> classification.
  *  - SDK builtins: Write/Edit, Bash (exit code + first-line), Read, Grep, Glob.
  *  - MCP prefix handlers: code-graph, code-analysis, git-context, semantic-search.
+ *  - Case-insensitive exact-name lookup (backends emitting `read`/`write`/…).
+ *  - Backend `<path>/<type>/<content>` envelope unwrapping + gutter normalisation.
  *  - Detail truncation at DETAIL_CAP (8192).
  *  - Malformed JSON / empty content → fallback or undefined.
  */
@@ -127,6 +129,68 @@ describe('extractResultSummary — SDK builtins', () => {
   test('Glob — file count', () => {
     const out = extractResultSummary('Glob', 'a.ts\nb.ts\nc.ts')
     assert.equal(out?.result, '3 files found')
+  })
+})
+
+describe('extractResultSummary — lowercase tool names (non-SDK backends)', () => {
+  test('read — same line count as Read', () => {
+    assert.equal(extractResultSummary('read', 'a\nb\nc')?.result, '3 lines read')
+  })
+
+  test('write / edit — same Done result', () => {
+    assert.equal(extractResultSummary('write', 'ok')?.result, 'Done')
+    assert.equal(extractResultSummary('edit', 'short')?.result, 'Done')
+  })
+
+  test('bash — same exit-code parsing', () => {
+    assert.equal(
+      extractResultSummary('bash', 'running...\nexit code: 0')?.result,
+      'Success (exit 0)'
+    )
+  })
+
+  test('grep / glob — same counts', () => {
+    assert.equal(extractResultSummary('grep', 'file1:1: a\nfile2:2: b')?.result, '2 matches')
+    assert.equal(extractResultSummary('glob', 'a.ts\nb.ts\nc.ts')?.result, '3 files found')
+  })
+
+  test('mixed casing also resolves', () => {
+    assert.equal(extractResultSummary('ReAd', 'a\nb')?.result, '2 lines read')
+  })
+})
+
+describe('extractResultSummary — file envelope unwrapping', () => {
+  const envelope = '<path>/a/b.ts</path>\n<type>file</type>\n<content>1: x\n2: y</content>'
+
+  test('envelope is summarized by line count, not by its first tag line', () => {
+    const out = extractResultSummary('read', envelope)
+    assert.equal(out?.result, '2 lines read')
+    assert.ok(!out!.result.includes('<path>'))
+  })
+
+  test('detail carries normalized gutters and no envelope tags', () => {
+    const out = extractResultSummary('read', envelope + '\n'.padEnd(60, 'z'))
+    assert.ok(out?.resultDetail?.includes('1→x'), 'gutter normalized to the → form')
+    assert.ok(!out!.resultDetail!.includes('<content>'))
+    assert.ok(!out!.resultDetail!.includes('<path>'))
+  })
+
+  test('envelope missing its closing tag still unwraps', () => {
+    const truncated = '<path>/a/b.ts</path>\n<type>file</type>\n<content>1: x\n2: y'
+    const out = extractResultSummary('read', truncated)
+    assert.equal(out?.result, '2 lines read')
+  })
+
+  test('non-envelope content passes through untouched', () => {
+    const out = extractResultSummary('read', 'plain\n1: not an envelope')
+    assert.equal(out?.result, '2 lines read')
+    const detail = extractResultSummary('write', 'plain body\n1: not an envelope')?.resultDetail
+    assert.ok(detail?.includes('1: not an envelope'), 'gutter rewrite is envelope-scoped')
+  })
+
+  test('tool_use_error still wins over envelope unwrapping', () => {
+    const out = extractResultSummary('read', '<tool_use_error>boom</tool_use_error>')
+    assert.equal(out?.result, 'Error: boom')
   })
 })
 

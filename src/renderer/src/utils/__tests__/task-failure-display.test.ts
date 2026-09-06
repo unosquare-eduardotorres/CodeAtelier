@@ -103,6 +103,23 @@ describe('humanizeFailureReason — pattern mapping', () => {
   test('unknown reason surfaces verbatim (never hidden)', () => {
     assert.equal(humanizeFailureReason('some novel failure xyz'), 'some novel failure xyz')
   })
+
+  test('protocol-miss reason is explained distinctly, not as a network error', () => {
+    // Moved from main-process blueprint-protocol-miss.test.ts (test boundary
+    // cleanup) — this is the function's own file.
+    const hint = humanizeFailureReason(
+      'verification failed — no completion block in CLI output (protocol miss — model did not emit the required blueprint-phase-complete block)'
+    )
+    assert.match(hint, /protocol miss/i)
+    assert.match(hint, /blueprint-phase-complete/)
+    assert.match(hint, /not a network error/i)
+  })
+
+  test('planned-missing reasons keep their existing (non-protocol-miss) wording', () => {
+    // Companion to the protocol-miss test above (also moved).
+    const hint = humanizeFailureReason('verification failed — 2 planned missing')
+    assert.match(hint, /planned file\(s\) are missing/i)
+  })
 })
 
 describe('extractMissingFiles — verification-failure artifact parsing', () => {
@@ -196,7 +213,10 @@ describe('capTaskList — list truncation', () => {
   test('> max → first max shown, rest counted', () => {
     const r = capTaskList(tasks, 5)
     assert.equal(r.shown.length, 5)
-    assert.deepEqual(r.shown.map((t) => t.i), [1, 2, 3, 4, 5])
+    assert.deepEqual(
+      r.shown.map((t) => t.i),
+      [1, 2, 3, 4, 5]
+    )
     assert.equal(r.hiddenCount, 2)
   })
 

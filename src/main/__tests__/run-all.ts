@@ -348,6 +348,8 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Memory Consolidation (cluster merge, idle job) ───
   '../services/__tests__/memory-consolidation.test',
   '../services/__tests__/memory-consolidation-archival.test',
+  // ─── Memory Cleanup (idle-archival rule, queue fairness, curator safety) ───
+  '../services/__tests__/memory-cleanup.test',
   // ─── Memory Graph (knowledge graph edge derivation) ───
   '../services/__tests__/memory-graph.test',
   // ─── E2E Testing Infrastructure ───
@@ -645,6 +647,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/base-adapter.test',
   '../services/__tests__/blueprint-prompt-loader.test',
   '../services/__tests__/blueprint-task-verification.test',
+  '../services/__tests__/blueprint-protocol-miss.test',
+  '../services/__tests__/provider-timeout-tiers.test',
   '../services/__tests__/blueprint-task-user-skip.test',
   '../services/__tests__/blueprint-dependson-scheduling.test',
   '../services/__tests__/blueprint-plan-revision.test',
@@ -730,6 +734,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/components/streaming/__tests__/streaming-transcript.dom.test',
   // ─── File-list unification: FileRow + FileListSection component tests (jsdom) ───
   '../../renderer/src/components/common/__tests__/file-row.dom.test',
+  // ─── Tool output rendering: ToolOutputPre preserves line separators (jsdom) ───
+  '../../renderer/src/components/chat/__tests__/tool-output-pre.dom.test',
   '../../renderer/src/utils/__tests__/strip-grill-json.test',
   // ─── VERIFY fallback: modified files aggregated from tool activity ───
   '../../renderer/src/utils/__tests__/modified-files-fallback.test',
@@ -870,7 +876,10 @@ const REPO_TEST_FILES: string[] = [
   // Same ordering constraint as memory-promotion-evidence above: registered
   // higher up, this becomes the FIRST attachTestDb() caller and audit-handoff's
   // FK-cascade test starts reading a different database than it wrote to.
-  '../db/repositories/__tests__/blueprint-telemetry.repository.test'
+  '../db/repositories/__tests__/blueprint-telemetry.repository.test',
+  // ─── Memory cleanup GC + undo log (migration 159) ───
+  // Same ordering constraint as the two files above.
+  '../db/repositories/__tests__/memory-cleanup.repository.test'
 ]
 
 // ─── Dynamic import loop with per-file error isolation ───

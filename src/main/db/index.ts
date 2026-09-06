@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 158
+export const CURRENT_SCHEMA_VERSION = 159
 
 export interface Migration {
   version: number
@@ -4883,6 +4883,44 @@ export const migrations: Migration[] = [
       }
 
       dbLogger.info('[migration-158] ✓ blueprint_phases.error_message')
+    }
+  },
+  {
+    version: 159,
+    name: 'memory-cleanup-runs',
+    up: (db) => {
+      // The memory system had no automatic path that removed anything: the one
+      // archival rule required a fact to have never been accessed, which exempts
+      // exactly the facts that are in use, and nothing ever hard-deleted a
+      // `memory_facts` row. The cleanup sweep changes that, and a sweep that can
+      // archive hundreds of facts in one press is only safe if it is reversible.
+      //
+      // `undo_json` is the whole point of the table: `[{id, prevStatus, prevTier}]`
+      // captured BEFORE the sweep mutates anything, so one click restores the
+      // exact prior state. Hard deletes are deliberately NOT recorded here —
+      // they are unrecoverable by construction and are reported separately in
+      // the preview so the user knows which part of the number is permanent.
+      //
+      // The column is `trigger_source`, not `trigger`: TRIGGER is a SQLite
+      // keyword and every query touching it would need quoting.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS memory_cleanup_runs (
+          id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL CHECK (mode IN ('preview','apply')),
+          trigger_source TEXT NOT NULL CHECK (trigger_source IN ('manual','idle')),
+          stats_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(stats_json)),
+          undo_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(undo_json)),
+          undone_at TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `)
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_memory_cleanup_runs_workspace
+           ON memory_cleanup_runs(workspace_id, created_at DESC)`
+      )
+
+      dbLogger.info('[migration-159] ✓ Added memory_cleanup_runs (undo log for the memory sweep)')
     }
   }
 ]

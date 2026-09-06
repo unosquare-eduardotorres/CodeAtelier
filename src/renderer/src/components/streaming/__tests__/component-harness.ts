@@ -85,12 +85,20 @@ installGlobals()
 
 const RENDERER_SRC = path.resolve(__dirname, '../../../')
 const origResolve = (Module as any)._resolveFilename
-;(Module as any)._resolveFilename = function (request: string, ...rest: any[]): any {
+const patchedResolve = function (this: unknown, request: string, ...rest: any[]): any {
   const mapped = request.startsWith('@renderer/')
     ? path.join(RENDERER_SRC, request.slice('@renderer/'.length))
     : request
   return origResolve.call(this, mapped, ...rest)
 }
+// SELF-RE-ARMING: the harness module is cached after its first load, so a
+// second harness user (another *.dom.test in the same unified run) never
+// re-executes this file — but an earlier user's restoreResolver() may have
+// stripped the patches in between. armResolverPatches() (defined below the
+// load patch; called at module load AND from stubModule) re-installs them.
+// Without it every harness consumer after the first fails to load with
+// `Cannot find module '@renderer/store'` (live: file-row.dom.test and
+// tool-output-pre.dom.test under run-tests.ts).
 
 // ── Module stubbing ─────────────────────────────────────────────────────────
 
@@ -103,12 +111,27 @@ const origResolve = (Module as any)._resolveFilename
  */
 const moduleStubs = new Map<string, any>()
 const origLoad = (Module as any)._load
-;(Module as any)._load = function (request: string, parent: any, isMain: boolean): any {
+const patchedLoad = function (this: unknown, request: string, parent: any, isMain: boolean): any {
   for (const [match, stub] of moduleStubs) {
     if (request === match || request.endsWith(match)) return stub
   }
   return origLoad.call(this, request, parent, isMain)
 }
+function armResolverPatches(): void {
+  if ((Module as any)._resolveFilename !== patchedResolve) {
+    ;(Module as any)._resolveFilename = patchedResolve
+  }
+  if ((Module as any)._load !== patchedLoad) {
+    ;(Module as any)._load = patchedLoad
+  }
+  // Globals too: installGlobals() runs once at module load, but the previous
+  // harness user's teardownGlobals() removed them — and this module is cached,
+  // so a later user would otherwise render with no document. Only dom test
+  // files reach stubModule()/render(), so the teardown-after-last-file
+  // guarantee (no leaked window for later non-dom files) is preserved.
+  installGlobals()
+}
+armResolverPatches()
 
 export function stubModule(match: string, exports: any): void {
   // __esModule marker: esbuild's __toESM interop treats a CJS module without
@@ -117,6 +140,10 @@ export function stubModule(match: string, exports: any): void {
   if (exports && typeof exports === 'object' && !exports.__esModule) {
     exports.__esModule = true
   }
+  // Re-arm before registering the stub: this is the entry point a LATER
+  // harness user reaches on a cached module, so the patches an earlier
+  // user's restoreResolver() stripped come back here.
+  armResolverPatches()
   moduleStubs.set(match, exports)
 }
 

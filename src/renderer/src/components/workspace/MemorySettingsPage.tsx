@@ -10,13 +10,14 @@ import {
   FactsTab,
   ReviewTab,
   IngestionTab,
-  PromotionDiagnostics
+  PromotionDiagnostics,
+  CleanupPanel
 } from './memory'
 import { EmbeddingBar, EmbeddingChip } from './memory/EmbeddingStatus'
 
 // ── Constants ──
 
-const TABS = ['graph', 'settings', 'facts', 'contradictions', 'claudemd'] as const
+const TABS = ['graph', 'settings', 'facts', 'contradictions', 'cleanup', 'claudemd'] as const
 type TabKey = (typeof TABS)[number]
 
 const TAB_LABELS: Record<TabKey, string> = {
@@ -24,6 +25,7 @@ const TAB_LABELS: Record<TabKey, string> = {
   settings: 'Ingestion',
   facts: 'Memories',
   contradictions: 'Review',
+  cleanup: 'Cleanup',
   claudemd: 'CLAUDE.md'
 }
 
@@ -213,6 +215,12 @@ export default function MemorySettingsPage(): React.JSX.Element {
         )}
 
         {activeTab === 'contradictions' && <ReviewTab workspaceId={workspaceId} />}
+
+        {activeTab === 'cleanup' && (
+          <div className="flex-1 min-h-0 overflow-auto">
+            <CleanupPanel workspaceId={workspaceId} />
+          </div>
+        )}
 
         {activeTab === 'claudemd' && <ClaudeMdPanel />}
       </div>

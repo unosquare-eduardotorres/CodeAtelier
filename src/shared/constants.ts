@@ -244,6 +244,13 @@ export const IPC_CHANNELS = {
   MEMORY_CONSOLIDATE: 'memory:consolidate',
   MEMORY_READ_CLAUDE_MD: 'memory:readClaudeMd',
 
+  // Memory cleanup sweep (deterministic GC — preview, apply, undo)
+  MEMORY_CLEANUP_PREVIEW: 'memory:cleanup:preview',
+  MEMORY_CLEANUP_APPLY: 'memory:cleanup:apply',
+  MEMORY_CLEANUP_UNDO: 'memory:cleanup:undo',
+  MEMORY_CLEANUP_RUNS: 'memory:cleanup:runs',
+  MEMORY_CLEANUP_PROGRESS: 'memory:cleanup:progress',
+
   // Memory feed (retained: doc feed + CLAUDE.md regeneration)
   MEMORY_FEED_DOCUMENT: 'memory:feedDocument',
   MEMORY_FEED_PROGRESS: 'memory:feedProgress',
