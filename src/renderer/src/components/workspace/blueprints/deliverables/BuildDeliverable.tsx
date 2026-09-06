@@ -622,14 +622,31 @@ function TaskStatusBadge({ task, skip }: { task: BlueprintTask; skip: SkipState 
 
   switch (task.status) {
     case 'complete':
-      return task.outcomeKind === 'unproven' ? (
-        <span
-          className="inline-flex items-center gap-1 text-xs text-warning"
-          title="Complete — every claimed file exists, but none could be proven written during this run."
-        >
-          <AlertTriangle size={12} /> Complete (unproven)
-        </span>
-      ) : (
+      // A2 — a nudged task is complete work with a visible asterisk: the
+      // recovery nudge rescued a silent completion, and the per-task nudge
+      // rate is the metric A2 exists to move. `unproven` keeps its stronger
+      // freshness warning.
+      if (task.outcomeKind === 'unproven') {
+        return (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-warning"
+            title="Complete — every claimed file exists, but none could be proven written during this run."
+          >
+            <AlertTriangle size={12} /> Complete (unproven)
+          </span>
+        )
+      }
+      if (task.outcomeKind === 'nudged') {
+        return (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-success"
+            title="Complete — the session ended without a completion block and a recovery nudge recovered it. Tracked as nudge-rate."
+          >
+            <CheckCircle2 size={12} /> Complete (nudged)
+          </span>
+        )
+      }
+      return (
         <span className="inline-flex items-center gap-1 text-xs text-success">
           <CheckCircle2 size={12} /> Complete
         </span>
