@@ -192,6 +192,13 @@ const BASE_RETRY_DELAY_MS = 2000
  */
 const SLOW_RETRY_BASE_DELAY_MS = 30_000
 
+/**
+ * A3 ZOMBIE-RECOVERY (D3): rejection messages that mean the retry never
+ * REACHED the server (connection class). Only these justify a forceStop() —
+ * a server-alive 4xx/5xx dispatch rejection may be transient server-side.
+ */
+const CONNECTION_CLASS_ERROR = /fetch failed|ECONNREFUSED|socket hang up|ECONNRESET/i
+
 // TRANSIENT_ERROR_PATTERNS / SLOW_TRANSIENT_PATTERNS / isSlowTransientError
 // live in ./opencode-transient-patterns.ts (shared with the event normalizer).
 // Re-exported here for existing importers/tests.
@@ -459,8 +466,16 @@ export class OpenCodeExecutor {
   private retryDelayScale = 1
   /** Health check polling interval (ms) */
   private static readonly HEALTH_CHECK_INTERVAL = 30_000
+  /** A2 ZOMBIE-RECOVERY: how long a healthy liveness probe is trusted (ms). */
+  private static readonly LIVENESS_CACHE_TTL_MS = 5_000
+  /** A2 ZOMBIE-RECOVERY: bound on a single liveness probe (ms) — hung-but-listening servers must not block startup. */
+  private static readonly LIVENESS_PROBE_TIMEOUT_MS = 5_000
   /** Health check timer */
   private healthCheckTimer: ReturnType<typeof setInterval> | null = null
+  /** A2 ZOMBIE-RECOVERY: timestamp (ms) of the last HEALTHY liveness probe (never caches unhealthy). */
+  private livenessProbeAt = 0
+  /** A2 ZOMBIE-RECOVERY: shared in-flight probe — concurrent ensureStarted() callers issue one round-trip. */
+  private livenessProbeInFlight: Promise<{ healthy: boolean }> | null = null
   /** Callback for health status changes */
   private onHealthChange?: (healthy: boolean, version?: string) => void
   /** MISS-2: Track child/subagent sessions — parent session ID → Set<child session IDs> */
@@ -584,7 +599,27 @@ export class OpenCodeExecutor {
         await this.startInFlight
         return
       }
-      if (this.isStarted) return
+      if (this.isStarted) {
+        // A2 ZOMBIE-RECOVERY (D2): `isStarted` only means we spawned a server
+        // at some point — the incident shape was a half-open socket with
+        // `isStarted` still true forever (ocSessions=3 never decremented).
+        // Verify liveness before trusting the flag; a dead server is
+        // force-stopped and restarted instead of poisoning every later turn.
+        const { healthy } = await this.probeLiveness()
+        if (healthy) return
+        openCodeLog.warn('[opencode] isStarted was true but server unreachable — forcing restart')
+        await this.forceStop()
+        // A5 voids every owner claim on teardown — including THIS caller's,
+        // acquired moments ago against the now-dead server. Re-claim it so
+        // the refcount describes the fresh server this call is about to start.
+        if (ownerKey) {
+          this.serverOwners.acquire(ownerKey)
+          openCodeLog.info(
+            `[opencode] ensureStarted: owner ${ownerKey} re-acquired after zombie restart `
+          )
+        }
+        // fall through to start()
+      }
       await this.start(cwd, startConfig)
     } catch (err) {
       // Startup failed — this owner's claim is void. Drop it so the refcount
@@ -637,7 +672,63 @@ export class OpenCodeExecutor {
       } else {
         throw err
       }
+      // A1 ZOMBIE-RECOVERY (D1): arm the monitor after the ServeError-retry
+      // success path too.
+      this.startHealthCheck()
+      return
     }
+    // A1 ZOMBIE-RECOVERY (D1): arm the health monitor on startup success.
+    // Wired here (not inside startOnce) so the __setStartOnceImplForTest seam
+    // and the ServeError-retry path both exercise it. Skipped on throw.
+    this.startHealthCheck()
+  }
+
+  /**
+   * A2 ZOMBIE-RECOVERY (D2): bounded liveness probe for ensureStarted().
+   *
+   * checkHealth() itself never times out — a hung-but-listening server (the
+   * incident shape: half-open socket, the fetch never settles) would block
+   * startup forever, so race it. Healthy results are cached for 5s (a burst
+   * of concurrent ensureStarted() callers issues at most one session.list()
+   * round-trip); unhealthy results are NEVER cached — the caller restarts,
+   * and the next probe must re-check the fresh server. No client (the state
+   * the test seam produces) short-circuits healthy: nothing has been observed
+   * dead, and probing would immediately "fail" a server the tests never
+   * actually spawned.
+   */
+  private async probeLiveness(): Promise<{ healthy: boolean }> {
+    if (!this.client) return { healthy: true }
+    const now = Date.now()
+    if (now - this.livenessProbeAt < OpenCodeExecutor.LIVENESS_CACHE_TTL_MS) {
+      return { healthy: true }
+    }
+    // Concurrent probers share one in-flight round-trip — a TTL alone would
+    // let a burst of ensureStarted() callers each miss the empty cache and
+    // each issue a session.list().
+    if (this.livenessProbeInFlight) return this.livenessProbeInFlight
+    const probe = (async (): Promise<{ healthy: boolean }> => {
+      let resolveUnhealthy = (): void => {}
+      const timeoutTimer = setTimeout(
+        () => resolveUnhealthy(),
+        OpenCodeExecutor.LIVENESS_PROBE_TIMEOUT_MS
+      )
+      // Never hold a test/event loop open for a probe that already settled.
+      timeoutTimer.unref?.()
+      const bounded = Promise.race([
+        this.checkHealth(),
+        new Promise<{ healthy: boolean }>((resolve) => {
+          resolveUnhealthy = () => resolve({ healthy: false })
+        })
+      ])
+      const { healthy } = await bounded
+      clearTimeout(timeoutTimer)
+      if (healthy) this.livenessProbeAt = Date.now()
+      return { healthy }
+    })().finally(() => {
+      this.livenessProbeInFlight = null
+    })
+    this.livenessProbeInFlight = probe
+    return probe
   }
 
   private async startOnce(cwd: string, config?: OpenCodeStartConfig): Promise<void> {
@@ -831,6 +922,14 @@ export class OpenCodeExecutor {
       this.server = result.server ?? null
       this.isStarted = true
 
+      // B1 CRASH-FORENSICS: nothing observed the server child process dying —
+      // both recorded crashes show `this.server` silently going dead while
+      // `isStarted` stays true. Attach close/error listeners that log a
+      // prominent breadcrumb with the error payload so the next repro names
+      // the cause. The declared SDK type is narrow ({url, close}), so probe
+      // for the EventEmitter surface defensively.
+      this.attachServerDeathListeners()
+
       // C-4: Set up serverReady promise — resolved when server.connected event fires.
       // This gates the first prompt to ensure MCP handshakes are complete.
       // EXEC-05: Cancel any prior timeout before creating a new promise
@@ -866,6 +965,38 @@ export class OpenCodeExecutor {
     }
   }
 
+  /**
+   * B1 CRASH-FORENSICS: log a prominent breadcrumb when the server child
+   * process dies. Detached by forceStop() (alongside server.close()) so our
+   * own teardown does not fire it. If the runtime handle exposes no `.on`, a
+   // single informational line records that gap (still evidence).
+   */
+  private attachServerDeathListeners(): void {
+    const server = this.server as unknown as {
+      on?: (event: string, cb: (err?: unknown) => void) => unknown
+      url?: string
+    } | null
+    if (!server || typeof server.on !== 'function') {
+      openCodeLog.info(
+        '[opencode] server handle exposes no .on — close/error breadcrumbs unavailable'
+      )
+      return
+    }
+    const breadcrumb = (reason: string, err?: unknown): void => {
+      openCodeLog.error(
+        `[opencode] SERVER-DIED (${reason}) at ${new Date().toISOString()} — ` +
+          `url=${server.url ?? 'unknown'} isStarted=${this.isStarted} ` +
+          `err=${err instanceof Error ? `${err.name}: ${err.message}` : String(err ?? 'n/a')}`
+      )
+    }
+    try {
+      server.on('close', () => breadcrumb('close event'))
+      server.on('error', (err) => breadcrumb('error event', err))
+    } catch (err) {
+      openCodeLog.warn('[opencode] Failed to attach SERVER-DIED listeners:', err)
+    }
+  }
+
   // ── Event stream processing ────────────────────────────────────────────────
 
   /**
@@ -876,6 +1007,10 @@ export class OpenCodeExecutor {
    * `precomputed` lets the caller share its computeTransientRetry() result so
    * the retry plan is computed (and logged) exactly once per event.
    * Returns the updated retry count, or -1 if max retries are exhausted.
+   *
+   * A3 ZOMBIE-RECOVERY (D3): returns -2 when the retry itself could not be
+   * dispatched — the server is unreachable and further retries are pointless.
+   * (-1 stays "budget exhausted".)
    */
   private async *handleTransientRetry(
     chunk: StreamChunk,
@@ -912,7 +1047,34 @@ export class OpenCodeExecutor {
     } finally {
       this.retriesInFlight--
     }
-    this.resendPrompt(sessionId, promptBody, directory)
+    // A3 ZOMBIE-RECOVERY (D3): await the dispatch and surface its failure.
+    // A skipped resend (null client) keeps the old semantics — the retry is
+    // counted and the stall re-armed. A REJECTED dispatch (client present,
+    // server unreachable) is the real zombie shape: fail the turn terminally
+    // instead of counting a retry that never reached the server.
+    const dispatch = await this.resendPrompt(sessionId, promptBody, directory)
+    if (!dispatch.dispatched && !dispatch.skipped && dispatch.error) {
+      const dispatchErr = dispatch.error
+      openCodeLog.error(
+        `[opencode] Retry dispatch rejected — server unreachable: ${dispatchErr.message}`
+      )
+      yield {
+        type: 'error',
+        error: 'OpenCode server unreachable — retry could not be dispatched'
+      } as StreamChunk
+      yield {
+        type: 'session_recovery',
+        recoveryPhase: 'failed',
+        content: `retry dispatch failed: ${dispatchErr.message.slice(0, 200)}`
+      } as StreamChunk
+      // Unpoison isStarted so the next attempt actually restarts — but only
+      // for connection-class rejections. A server-alive 4xx/5xx rejection may
+      // be transient server-side; tearing the server down would be wrong.
+      if (CONNECTION_CLASS_ERROR.test(dispatchErr.message)) {
+        await this.forceStop()
+      }
+      return -2
+    }
 
     yield {
       type: 'session_recovery',
@@ -1091,6 +1253,31 @@ export class OpenCodeExecutor {
             `[opencode] Mid-turn stall — no stream activity for ${stallMs}ms — ` +
               `aborting zombie prompt and retrying (attempt ${transientRetryCount + 1}/${MAX_TRANSIENT_RETRIES})`
           )
+          // A4 ZOMBIE-RECOVERY (D4): fail fast when the stall fired against a
+          // DEAD server. The incident burned the full 3×(stall+backoff) cycle
+          // (~26 min) against a server that had already died — every resend
+          // was rejected and every retry pointless. Probe once here; if
+          // unhealthy: tear down, emit a terminal error, and stop. No retry
+          // budget consumed, no backoff slept — time-to-failure drops to
+          // first-stall + ~1s. (Only meaningful for a server we consider
+          // started: checkHealth() is unconditionally unhealthy otherwise,
+          // and a torn-down executor has no client to probe with anyway.)
+          if (this.client && this.isStarted) {
+            const { healthy } = await Promise.race([
+              this.checkHealth(),
+              new Promise<{ healthy: boolean }>((resolve) =>
+                setTimeout(() => resolve({ healthy: false }), 3_000)
+              )
+            ])
+            if (!healthy) {
+              openCodeLog.error('[opencode] Server died mid-turn — cannot retry')
+              await this.forceStop()
+              abandonedPendingNext = true
+              endedWithTerminalError = true
+              yield { type: 'error', error: 'OpenCode server died mid-turn — cannot retry' }
+              break
+            }
+          }
           if (this.client) {
             this.client.session
               .abort({ path: { id: openCodeSessionId } })
@@ -1128,7 +1315,14 @@ export class OpenCodeExecutor {
           // the iterator must be abandoned (see abandonedPendingNext above).
           abandonedPendingNext = true
           endedWithTerminalError = true // PARITY FIX (I)
-          yield { type: 'error', error: stallMessage }
+          // A3 ZOMBIE-RECOVERY (D3): -2 = the retry dispatch itself was
+          // rejected (server unreachable). handleTransientRetry already
+          // yielded the server-unreachable error + failed recovery chunk and
+          // tore the executor down — do not overwrite that message with the
+          // generic stall text.
+          if (stallRetryResult.value !== -2) {
+            yield { type: 'error', error: stallMessage }
+          }
           break
         }
 
@@ -1177,6 +1371,28 @@ export class OpenCodeExecutor {
         pendingNext = null // the awaited next() has resolved — safe to re-issue
         const event = iterResult.value
         if (abortController?.signal.aborted) break
+
+        // B2 CRASH-FORENSICS: one info line per tool-shaped raw event, BEFORE
+        // normalization — the recorded crashes died mid-tool-loop with 9 MCP
+        // servers mounted and left no timeline. Event type + tool name (+
+        // callID when present) is enough to reconstruct which dispatch the
+        // next death followed, without flooding the log.
+        if (
+          event &&
+          typeof event === 'object' &&
+          /tool/i.test(String((event as { type?: unknown }).type ?? ''))
+        ) {
+          const props = (event as { properties?: { tool?: unknown; callID?: unknown } }).properties
+          const toolName =
+            props && typeof props.tool === 'string'
+              ? props.tool
+              : String((event as { tool?: unknown }).tool ?? '')
+          const callID = props && 'callID' in props ? String(props.callID ?? '') : ''
+          openCodeLog.info(
+            `[opencode] tool-event: type=${String((event as { type?: unknown }).type)} ` +
+              `tool=${toolName || '?'}${callID ? ` callID=${callID}` : ''}`
+          )
+        }
 
         let retryInitiatedThisEvent = false
         let eventWasActivity = false
@@ -1288,11 +1504,19 @@ export class OpenCodeExecutor {
               // Max retries exhausted — PARITY FIX (I): mark the turn poisoned
               // so execute() drops the session mapping (CLI parity).
               endedWithTerminalError = true
-              // Error chunks fall through and emit
-              // below; api_retry chunks were already forwarded above, so
-              // synthesize the terminal error the turn actually ended with
-              // (otherwise downstream sees a truncated-but-completed turn).
-              if (chunk.type === 'api_retry') {
+              // A3 ZOMBIE-RECOVERY (D3): -2 = the retry dispatch itself was
+              // rejected (server unreachable). handleTransientRetry already
+              // yielded the server-unreachable error + failed recovery chunk
+              // and possibly tore the executor down — the caller's turn-end
+              // handling (execute() drops the session mapping) still applies.
+              if (newRetryCount === -2) {
+                if (chunk.type === 'api_retry') continue
+                // raw error chunk: fall through and emit below
+              } else if (chunk.type === 'api_retry') {
+                // Error chunks fall through and emit
+                // below; api_retry chunks were already forwarded above, so
+                // synthesize the terminal error the turn actually ended with
+                // (otherwise downstream sees a truncated-but-completed turn).
                 yield { type: 'error', error: transientMsg }
                 continue
               }
@@ -1794,6 +2018,19 @@ Troubleshooting:
     // PORT-FIX: Close the server child process so the port is released.
     // Previously this reference was never stored, leaving orphaned processes.
     if (this.server) {
+      // B1 CRASH-FORENSICS: detach our close/error breadcrumbs BEFORE close()
+      // so the deliberate teardown is not mistaken for a crash.
+      const server = this.server as unknown as {
+        url: string
+        close(): void
+        removeAllListeners?: (event?: string) => void
+        off?: (event: string, cb: (...args: unknown[]) => void) => void
+      }
+      try {
+        server.removeAllListeners?.()
+      } catch {
+        /* best-effort — the listeners only log */
+      }
       try {
         this.server.close()
       } catch (err) {
@@ -1806,6 +2043,14 @@ Troubleshooting:
     this.isStarted = false
     this.sessionMap.clear()
     this.consecutiveErrors = 0
+    // A5 ZOMBIE-RECOVERY (D5): a torn-down server voids every owner claim —
+    // the incident left ocSessions=3 pinned on a dead server forever.
+    // stop() decides BEFORE forceStop() so the refcount contract is intact;
+    // post-restart sessions re-acquire through ensureStarted().
+    this.serverOwners.clear()
+    // A2 ZOMBIE-RECOVERY: the next ensureStarted() after a restart must probe
+    // the fresh server, not trust a pre-teardown healthy cache entry.
+    this.livenessProbeAt = 0
 
     // EXEC-05: Cancel the serverReady fallback timeout
     if (this.serverReadyTimeout) {
@@ -1889,6 +2134,9 @@ Troubleshooting:
         }
       }
     }, OpenCodeExecutor.HEALTH_CHECK_INTERVAL)
+    // A1 ZOMBIE-RECOVERY (D1): never let the background poll hold the
+    // process/test event loop open — teardown still runs via stopHealthCheck().
+    this.healthCheckTimer.unref?.()
   }
 
   /**
@@ -2421,10 +2669,16 @@ Troubleshooting:
    * reasonable proxy but the badge already falls back to summed totals, and
    * changing that is a UI-behaviour change, not a measurement fix.
    *
-   * Only turns that reach this backstop get a prefix. When the live event path
-   * (`handleMessageUpdated`) reports usage, the caller never calls this and
-   * `prefix_tokens` stays NULL — which is the correct trade while the backstop
-   * is the only OpenCode path that sees per-call boundaries at all.
+   * SCOPE — corrected 2026-09-07. This used to claim that a turn whose usage came
+   * from the live event path never reached this backstop, leaving `prefix_tokens`
+   * NULL. That was false in both directions. `handleMessageUpdated` was reading
+   * `properties.tokens`, a field the server does not emit and its schema forbids
+   * (see §0.3 of docs/blueprint-execution-improvements.md), so the event path
+   * reported **no** usage and this backstop ran on every OpenCode turn — it was
+   * the sole source, not the fallback. That handler now reads `properties.info.
+   * tokens` and sets the prefix itself, using the identical write-once + strictly
+   * positive guard, so the two paths agree by construction rather than by
+   * one of them being dead.
    */
   private async sumAssistantTokensSince(
     sessionId: string,
@@ -2437,6 +2691,9 @@ Troubleshooting:
       const messages =
         ((result as Record<string, unknown>)?.data as Array<Record<string, unknown>>) ?? []
       let counted = 0
+      // Assistant messages inside this turn's window, counted before the token
+      // check — the denominator that makes the zero-match warn below meaningful.
+      let inWindowAssistant = 0
       // Earliest matching assistant message of the turn — its prompt size IS the
       // first-call prefix. Tracked separately from the running totals precisely
       // so the two can never be confused for one another.
@@ -2456,6 +2713,7 @@ Troubleshooting:
           if (!Number.isNaN(parsed)) ts = parsed
         }
         if (ts !== null && ts < sinceMs) continue
+        inWindowAssistant++
         const tokens = info.tokens as Record<string, unknown> | undefined
         if (!tokens || typeof tokens !== 'object') continue
         const input = Number(tokens.input ?? 0)
@@ -2469,12 +2727,28 @@ Troubleshooting:
         tokenUsage.cacheCreationInputTokens += Number(cache?.write ?? 0)
         // Messages arrive chronologically, so the first match is normally the
         // earliest; the timestamp comparison only guards an out-of-order list.
-        // A match with no parsable timestamp can claim the slot but never
-        // displace one that has a real, earlier timestamp.
-        if (!haveFirst || (ts !== null && firstTs !== null && ts < firstTs)) {
+        //
+        // Tie-break caveat (comment corrected 2026-09-07 — it previously claimed
+        // the opposite): because the displacement arm requires `firstTs !== null`,
+        // a match with no parsable timestamp that claims the slot pins `firstTs`
+        // to null and can then **never** be displaced, not even by a real earlier
+        // timestamp. That is the fail-open trade this method already makes for
+        // untimestamped messages; it is recorded, not relied upon.
+        //
+        // The candidate must be strictly positive to claim the slot. The stream
+        // emits an all-zero `tokens` object for each assistant message before the
+        // populated one (live-verified), and the outer `input <= 0 && output <= 0`
+        // guard still admits a message with output but no prompt tokens. Either
+        // would latch `firstPrefix = 0` into an unclaimable slot, and the `> 0`
+        // check below would then write NULL for a turn whose prefix we could see.
+        const candidatePrefix = input + cacheRead
+        if (
+          candidatePrefix > 0 &&
+          (!haveFirst || (ts !== null && firstTs !== null && ts < firstTs))
+        ) {
           haveFirst = true
           firstTs = ts
-          firstPrefix = input + cacheRead
+          firstPrefix = candidatePrefix
         }
         counted++
       }
@@ -2486,10 +2760,18 @@ Troubleshooting:
       // Non-silent failure: the caller only logs when counted > 0, so a backstop
       // that matches nothing used to be indistinguishable from a turn with no
       // messages. Any future SDK reshape surfaces here on the first run.
-      if (messages.length > 0 && counted === 0) {
+      //
+      // Keyed on in-window assistant messages, not on `messages.length`: the
+      // latter counts the session's whole history, so an aborted or immediately
+      // errored turn on an established session tripped this warn every time and
+      // would have trained it into noise. `inWindowAssistant > 0 && counted === 0`
+      // is the precise condition the guard exists for — this turn produced
+      // assistant messages and not one of them carried tokens.
+      if (inWindowAssistant > 0 && counted === 0) {
         openCodeLog.warn(
-          `[opencode] Token backstop fetched ${messages.length} messages but matched 0 assistant ` +
-            `messages with tokens — check SDK message shape`
+          `[opencode] Token backstop matched ${inWindowAssistant} in-window assistant ` +
+            `message(s) (of ${messages.length} fetched) but none carried tokens — ` +
+            `check SDK message shape`
         )
       }
       return counted
@@ -2614,29 +2896,38 @@ Troubleshooting:
   }
 
   /**
-   * Re-send a prompt to the OpenCode session (fire-and-forget for retries).
+   * Re-send a prompt to the OpenCode session for transient retries.
    * BP-WORKTREE-CWD: carries the same per-session directory as the original send.
+   *
+   * A3 ZOMBIE-RECOVERY (D3): the dispatch result is no longer swallowed.
+   *   - client null → {skipped:true} — old semantics (retry counted, stall
+   *     re-armed); the event-stream tests exercise this path with no client.
+   *   - client present but dispatch rejected → {dispatched:false, error} —
+   *     the real zombie shape (stale non-null client, `fetch failed`).
    */
-  private resendPrompt(
+  private async resendPrompt(
     sessionId: string,
     promptBody: SessionPromptData['body'],
     directory?: string
-  ): void {
+  ): Promise<{ dispatched: boolean; skipped?: boolean; error?: Error }> {
     // Defensive: the executor may have been stopped while a retry backoff was
     // sleeping (unit tests also run the retry path without a live client).
     if (!this.client) {
       openCodeLog.warn('[opencode] Retry skipped — client no longer available')
-      return
+      return { dispatched: false, skipped: true }
     }
-    this.client.session
-      .promptAsync({
+    try {
+      await this.client.session.promptAsync({
         path: { id: sessionId },
         body: promptBody,
         ...(directory ? { query: { directory } } : {})
       })
-      .catch((err) => {
-        openCodeLog.error('[opencode] Retry prompt error:', err)
-      })
+      return { dispatched: true }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err))
+      openCodeLog.error('[opencode] Retry prompt dispatch failed:', error)
+      return { dispatched: false, error }
+    }
   }
 
   /**

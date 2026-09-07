@@ -89,7 +89,9 @@ function stallGateStream(
   let preIdx = 0
   let postIdx = 0
   const takePost = (): IteratorResult<unknown> =>
-    postIdx < post.length ? { done: false, value: post[postIdx++] } : { done: true, value: undefined }
+    postIdx < post.length
+      ? { done: false, value: post[postIdx++] }
+      : { done: true, value: undefined }
   return {
     release: () => {
       released = true
@@ -182,9 +184,18 @@ function shrinkRetryDelays(executor: OpenCodeExecutor): void {
   ;(executor as unknown as { retryDelayScale: number }).retryDelayScale = 0.001
 }
 
-/** Minimal fake client capturing promptAsync (resend) + abort calls. */
+/**
+ * Minimal fake client capturing promptAsync (resend) + abort calls.
+ * session.list answers healthy — the A4 stall-path liveness probe calls it.
+ */
 function fakeClient(): {
-  client: { session: { promptAsync: () => Promise<void>; abort: () => Promise<void> } }
+  client: {
+    session: {
+      promptAsync: () => Promise<void>
+      abort: () => Promise<void>
+      list: () => Promise<{ data: unknown[] }>
+    }
+  }
   prompts: number
   aborts: number
 } {
@@ -199,7 +210,8 @@ function fakeClient(): {
         abort: () => {
           calls.aborts++
           return Promise.resolve()
-        }
+        },
+        list: () => Promise.resolve({ data: [] })
       }
     },
     get prompts() {
@@ -402,9 +414,7 @@ describe('processEventStream — SSE-RETRY FIX (A): api_retry interception', () 
     assert.equal(apiRetry!.retryInfo?.retryDelayMs, 30_000, 'slow class must report 30s backoff')
 
     // session_recovery lifecycle chunks
-    const phases = chunks
-      .filter((c) => c.type === 'session_recovery')
-      .map((c) => c.recoveryPhase)
+    const phases = chunks.filter((c) => c.type === 'session_recovery').map((c) => c.recoveryPhase)
     assert.ok(phases.includes('started'), 'session_recovery started missing')
     assert.ok(phases.includes('resuming'), 'session_recovery resuming missing')
 
@@ -438,7 +448,8 @@ describe('processEventStream — SSE-RETRY FIX (A): api_retry interception', () 
     ;(executor as unknown as { client: unknown }).client = fake.client
 
     // 4 transient errors: 3 retries fire, the 4th exhausts the budget
-    const err = () => sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
+    const err = () =>
+      sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
     const { chunks, result } = await runEventStream(executor, [err(), err(), err(), err()])
 
     assert.equal(fake.prompts, 3, 'exactly 3 retries must fire')
@@ -515,9 +526,7 @@ describe('processEventStream — MID-TURN STALL FIX (B)', () => {
     }
     assert.equal(fake.aborts, 1, 'zombie prompt must be aborted on stall')
     assert.equal(fake.prompts, 1, 'prompt must be re-sent after stall retry')
-    const phases = chunks
-      .filter((c) => c.type === 'session_recovery')
-      .map((c) => c.recoveryPhase)
+    const phases = chunks.filter((c) => c.type === 'session_recovery').map((c) => c.recoveryPhase)
     assert.ok(phases.includes('started'), 'stall retry must emit session_recovery started')
     assert.ok(phases.includes('resuming'), 'stall retry must emit session_recovery resuming')
 
@@ -558,7 +567,11 @@ describe('processEventStream — MID-TURN STALL FIX (B)', () => {
       r = await gen.next()
     }
 
-    assert.equal(fake.aborts, 4, 'each stall firing aborts the zombie prompt (3 retries + 1 exhausted)')
+    assert.equal(
+      fake.aborts,
+      4,
+      'each stall firing aborts the zombie prompt (3 retries + 1 exhausted)'
+    )
     assert.equal(fake.prompts, 3)
     const errorChunks = chunks.filter((c) => c.type === 'error')
     assert.ok(errorChunks.length >= 1, 'exhausted stalls must yield a terminal error')
@@ -572,12 +585,7 @@ describe('processEventStream — MID-TURN STALL FIX (B)', () => {
     ;(executor as unknown as { client: unknown }).client = fake.client
 
     // Events arrive every 30ms with a 100ms stall window — no stall should fire
-    const events = [
-      textPartEvent('a'),
-      textPartEvent('b'),
-      textPartEvent('c'),
-      sessionIdleEvent()
-    ]
+    const events = [textPartEvent('a'), textPartEvent('b'), textPartEvent('c'), sessionIdleEvent()]
     const slowStream = {
       [Symbol.asyncIterator]() {
         let i = 0
@@ -647,9 +655,7 @@ describe('processEventStream — PARITY FIX (E): SSE re-subscribe after retry re
     assert.equal(result.lastTransientClass, 'slow')
     assert.equal(result.endedWithTerminalError, false)
     // Recovery lifecycle chunks surfaced
-    const phases = chunks
-      .filter((c) => c.type === 'session_recovery')
-      .map((c) => c.recoveryPhase)
+    const phases = chunks.filter((c) => c.type === 'session_recovery').map((c) => c.recoveryPhase)
     assert.ok(phases.includes('started'))
     assert.ok(phases.includes('resuming'))
   })
@@ -659,7 +665,11 @@ describe('processEventStream — PARITY FIX (E): SSE re-subscribe after retry re
     const err = () =>
       sessionErrorEvent({ name: 'ApiError', data: { message: 'SSE read timed out' } })
     // Re-subscription streams 2..4, each carrying one error then ending
-    const fake = resubscribingClient([fakeStream([err()]), fakeStream([err()]), fakeStream([err()])])
+    const fake = resubscribingClient([
+      fakeStream([err()]),
+      fakeStream([err()]),
+      fakeStream([err()])
+    ])
     ;(executor as unknown as { client: unknown }).client = fake.client
 
     // Initial stream: one error then done (cycle 1)
@@ -845,10 +855,7 @@ describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', 
 
     const { chunks } = await runEventStream(executor, events, {} as never)
     // Re-run with the nudge flag via direct generator invocation
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
@@ -870,9 +877,7 @@ describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', 
     // processEventStream doesn't perform — fake.prompts counts only nudge/resend)
     assert.equal(fake.prompts, 1, 'exactly one nudge must be queued')
     assert.ok(
-      nudgedChunks.some(
-        (c) => c.type === 'status' && c.content?.includes('no-write nudge')
-      ),
+      nudgedChunks.some((c) => c.type === 'status' && c.content?.includes('no-write nudge')),
       'nudge status chunk must be surfaced'
     )
     // Sanity: the first (non-nudged) run produced no nudge
@@ -892,10 +897,7 @@ describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', 
     events.push(sessionIdleEvent())
     // (assertions below — bash regression case follows in its own test)
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
@@ -932,10 +934,7 @@ describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', 
       sessionIdleEvent()
     ]
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
@@ -977,17 +976,14 @@ describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', 
       sessionIdleEvent()
     ]
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
       events: { stream: fakeStream(events) },
       openCodeSessionId: SID,
       promptBody: { parts: [{ type: 'text', text: 'test' }] },
-      tokenUsage: { input:0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
+      tokenUsage: { input: 0, output: 0, cacheReadInputTokens: 0, cacheCreationInputTokens: 0 },
       maxTurns: 0,
       enableNoWriteNudge: true
     })
@@ -1014,10 +1010,7 @@ describe('processEventStream — NO-WRITE NUDGE: build-mode course-correction', 
     for (let i = 0; i < 20; i++) events.push(toolCalledEvent('grep', `call-${i}`))
     events.push(sessionIdleEvent())
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
@@ -1072,10 +1065,7 @@ describe('processEventStream — G1: no-activity timeout poisons the session', (
 
     // A stream that never emits anything — the pre-activity backstop fires
     const hanging = stallingStream([])
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     const gen = processEventStream({
       events: { stream: hanging },
@@ -1193,7 +1183,7 @@ describe('processEventStream — STALL-RETRY ECHO FIX (T006): abort echo must no
     )
     assert.ok(
       chunks.some((c) => c.type === 'text' && c.content === 're-sent run answer'),
-      'the resent run\'s text must be observed'
+      "the resent run's text must be observed"
     )
     assert.equal(result.transientRetries, 1)
     assert.equal(result.endedWithTerminalError, false)
@@ -1212,10 +1202,16 @@ describe('processEventStream — STALL-RETRY ECHO FIX (T006): abort echo must no
     }
     // While the resend is pending: aborted-run idle + abort echo are ignored
     assert.equal(anyExec.isSessionComplete(sessionIdleEvent(), SID, false, true, true), false)
-    assert.equal(anyExec.isSessionComplete(sessionErrorEvent('Aborted'), SID, false, true, true), false)
+    assert.equal(
+      anyExec.isSessionComplete(sessionErrorEvent('Aborted'), SID, false, true, true),
+      false
+    )
     // Once the resend ran (flag cleared): idle is genuine, abort-shaped errors terminal
     assert.equal(anyExec.isSessionComplete(sessionIdleEvent(), SID, false, true, false), true)
-    assert.equal(anyExec.isSessionComplete(sessionErrorEvent('Aborted'), SID, false, true, false), true)
+    assert.equal(
+      anyExec.isSessionComplete(sessionErrorEvent('Aborted'), SID, false, true, false),
+      true
+    )
     // Non-abort errors stay terminal even while a resend is pending
     assert.equal(
       anyExec.isSessionComplete(sessionErrorEvent('invalid model'), SID, false, true, true),
@@ -1239,10 +1235,7 @@ describe('processEventStream — NO-WRITE NUDGE escalation (T005): second, final
     events.push(textPartEvent('Y'.repeat(12_500))) // another 12K → NO third nudge
     events.push(sessionIdleEvent())
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
@@ -1261,9 +1254,7 @@ describe('processEventStream — NO-WRITE NUDGE escalation (T005): second, final
     }
 
     assert.equal(fake.prompts, 2, 'exactly two nudges: initial (tool count) + final (text volume)')
-    const statuses = chunks
-      .filter((c) => c.type === 'status')
-      .map((c) => c.content ?? '')
+    const statuses = chunks.filter((c) => c.type === 'status').map((c) => c.content ?? '')
     assert.ok(
       statuses.some((s) => s.includes('no-write nudge sent —')),
       'the first (tool-count) nudge status must surface'
@@ -1290,10 +1281,7 @@ describe('processEventStream — NO-WRITE NUDGE escalation (T005): second, final
     events.push(textPartEvent('Z'.repeat(25_000))) // narration after the write
     events.push(sessionIdleEvent())
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const processEventStream = proto.processEventStream.bind(executor)
     shrinkRetryDelays(executor)
     const gen = processEventStream({
@@ -1338,10 +1326,7 @@ describe('getOrCreateSession — COLD-BOOTSTRAP RETRY: session.create 500s', () 
     }
     ;(executor as unknown as { client: unknown }).client = fake
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const getOrCreateSession = proto.getOrCreateSession.bind(executor)
     const sessionId = await getOrCreateSession({
       conversationId: 'conv-cold-boot',
@@ -1375,10 +1360,7 @@ describe('getOrCreateSession — COLD-BOOTSTRAP RETRY: session.create 500s', () 
     }
     ;(executor as unknown as { client: unknown }).client = fake
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const getOrCreateSession = proto.getOrCreateSession.bind(executor)
     const sessionId = await getOrCreateSession({
       conversationId: 'conv-cold-boot-2',
@@ -1406,10 +1388,7 @@ describe('getOrCreateSession — COLD-BOOTSTRAP RETRY: session.create 500s', () 
     }
     ;(executor as unknown as { client: unknown }).client = fake
 
-    const proto = OpenCodeExecutor.prototype as unknown as Record<
-      string,
-      (...args: any[]) => any
-    >
+    const proto = OpenCodeExecutor.prototype as unknown as Record<string, (...args: any[]) => any>
     const getOrCreateSession = proto.getOrCreateSession.bind(executor)
     const sessionId = await getOrCreateSession({
       conversationId: 'conv-cold-boot-3',
@@ -1451,6 +1430,144 @@ describe('processEventStream — WORKTREE-SSE: directory-scoped subscription', (
     // global SSE got only server.connected while the instance generated 120+).
     assert.equal(fake.subscribeArgs.length, 1)
     assert.deepEqual(fake.subscribeArgs[0], { query: { directory: '/tmp/some-worktree' } })
+  })
+})
+
+// ── A3/A4 ZOMBIE-RECOVERY (docs/opencode-zombie-server-diagnosis.md) ─────────
+
+describe('processEventStream — A3/A4 ZOMBIE-RECOVERY', () => {
+  /** Stale-client fake: promptAsync rejects with the incident's exact shape. */
+  function deadDispatchClient(rejectWith: Error): {
+    client: Record<string, unknown>
+    prompts: number
+  } {
+    const calls = { prompts: 0 }
+    return {
+      client: {
+        session: {
+          promptAsync: () => {
+            calls.prompts++
+            return Promise.reject(rejectWith)
+          },
+          abort: () => Promise.resolve(),
+          list: () => Promise.resolve({ data: [] })
+        }
+      },
+      get prompts() {
+        return calls.prompts
+      }
+    }
+  }
+
+  test('A3: stall + rejected dispatch (fetch failed) → terminal server-unreachable error, no retry-counted turn', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = deadDispatchClient(new TypeError('fetch failed'))
+    ;(executor as unknown as { client: unknown }).client = fake.client
+    ;(executor as unknown as { isStarted: boolean }).isStarted = true
+
+    // Activity, then silence — the stall fires and the retry dispatch rejects.
+    const hanging = stallingStream([textPartEvent('working')])
+    const { chunks, result } = await runEventStream(executor, [], {
+      stream: hanging,
+      midTurnStallMs: 40
+    })
+
+    const errors = chunks.filter((c) => c.type === 'error')
+    assert.ok(
+      errors.some((c) => /server unreachable/i.test(c.error ?? '')),
+      'terminal error must name the server, not the stall'
+    )
+    assert.ok(
+      chunks.some((c) => c.type === 'session_recovery' && c.recoveryPhase === 'failed'),
+      'failed dispatch must emit a failed recovery chunk'
+    )
+    assert.equal(result.endedWithTerminalError, true)
+    // Budget NOT advanced past the failed dispatch: transientRetries stays 0
+    // (the -2 sentinel is not a retry count).
+    assert.equal(result.transientRetries, 0)
+    assert.equal(fake.prompts, 1, 'exactly one dispatch attempt was made')
+    // Connection-class rejection → executor torn down (isStarted unpoisoned).
+    assert.equal(executor.isRunning(), false)
+  })
+
+  test('A3: server-alive 5xx dispatch rejection → -2 terminal WITHOUT forceStop', async () => {
+    const executor = new OpenCodeExecutor()
+    const fake = deadDispatchClient(new Error('HTTP 503 Service Unavailable'))
+    ;(executor as unknown as { client: unknown }).client = fake.client
+    ;(executor as unknown as { isStarted: boolean }).isStarted = true
+
+    const { chunks, result } = await runEventStream(executor, [], {
+      stream: stallingStream([textPartEvent('working')]),
+      midTurnStallMs: 40
+    })
+
+    assert.ok(
+      chunks.some((c) => c.type === 'error' && /server unreachable/i.test(c.error ?? '')),
+      'the -2 terminal must still surface the unreachable error'
+    )
+    assert.equal(result.endedWithTerminalError, true)
+    assert.equal(
+      executor.isRunning(),
+      true,
+      'a 5xx is server-side — the executor must NOT be torn down for it'
+    )
+  })
+
+  test('A4: stall against a dead server → immediate terminal, zero retries', async () => {
+    const executor = new OpenCodeExecutor()
+    let aborts = 0
+    let prompts = 0
+    ;(executor as unknown as { client: unknown }).client = {
+      session: {
+        promptAsync: () => {
+          prompts++
+          return Promise.resolve()
+        },
+        abort: () => {
+          aborts++
+          return Promise.resolve()
+        },
+        // session.list rejects → checkHealth reports unhealthy.
+        list: () => Promise.reject(new TypeError('fetch failed'))
+      }
+    }
+    ;(executor as unknown as { isStarted: boolean }).isStarted = true
+
+    const { chunks, result } = await runEventStream(executor, [], {
+      stream: stallingStream([textPartEvent('starting')]),
+      midTurnStallMs: 40
+    })
+
+    assert.ok(
+      chunks.some((c) => c.type === 'error' && /died mid-turn/i.test(c.error ?? '')),
+      'fail-fast must name the dead server'
+    )
+    // A4's whole point: no retry budget, no backoff, no resend.
+    assert.equal(prompts, 0, 'dead server must not be re-prompted')
+    assert.equal(
+      chunks.filter((c) => c.type === 'session_recovery').length,
+      0,
+      'fail-fast must consume zero session_recovery chunks'
+    )
+    assert.equal(result.transientRetries, 0)
+    assert.equal(result.endedWithTerminalError, true)
+    assert.equal(executor.isRunning(), false, 'dead server must be torn down')
+    // abort() may or may not reach the dead server — it is best-effort; the
+    // assertions above are about the retry semantics, not the abort.
+    assert.ok(aborts === 0 || aborts === 1)
+  })
+
+  test('regression: null-client stall keeps retry-counting semantics (A3 skip branch)', async () => {
+    // The pre-A3 behavior — a stall with no client still counts retries and
+    // re-arms the stall window (skipped dispatch ≠ failed dispatch).
+    const executor = new OpenCodeExecutor()
+    const { result } = await runEventStream(executor, [], {
+      stream: stallingStream([textPartEvent('working')]),
+      midTurnStallMs: 40
+    })
+    assert.equal(result.transientRetries, 3, 'null client must keep counting retries')
+    assert.equal(result.endedWithTerminalError, true)
+    assert.equal(executor.isRunning(), false, 'fresh executor: isStarted was never set')
   })
 })
 

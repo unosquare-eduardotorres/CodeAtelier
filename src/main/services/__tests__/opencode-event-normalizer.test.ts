@@ -8,7 +8,9 @@
  *  - Dispatch per event type (text part, tool-invocation, thinking, status).
  *  - Transient vs permanent error classification + rate_limit emission.
  *  - Child/subagent session filtering + foreign session drop.
- *  - 2% context-delta gating on session.updated.
+ *  - message.updated usage read through `properties.info.tokens` (real wire
+ *    shape, captured 2026-09-07) incl. the Gate T prefix and a cross-session pin.
+ *  - session.updated proven to be a no-op (it carries no usage).
  *  - thinking→text turn_boundary emission (F16).
  *  - Missing type/properties → [].
  */
@@ -142,58 +144,179 @@ describe('normalizeOpenCodeEvent — turn boundary (F16)', () => {
   })
 })
 
-describe('normalizeOpenCodeEvent — PARITY FIX (G): message.updated token usage', () => {
-  test('assistant message.updated with tokens populates all four usage fields', () => {
-    const usage = freshUsage()
-    const out = normalizeOpenCodeEvent(
-      {
-        type: 'message.updated',
-        properties: {
-          tokens: { total: 127, input: 100, output: 20, reasoning: 0, cache: { read: 5, write: 2 } }
-        }
-      },
-      SID,
-      usage,
-      freshState()
-    )
-    assert.deepEqual(out, [], 'token-only message.updated emits no chunks')
-    assert.equal(usage.input, 100)
-    assert.equal(usage.output, 20)
-    assert.equal(usage.cacheReadInputTokens, 5)
-    assert.equal(usage.cacheCreationInputTokens, 2)
+describe('normalizeOpenCodeEvent — message.updated token usage (captured payload)', () => {
+  // These fixtures are the VERBATIM wire shape captured from the running server
+  // on 2026-09-07 (opencode 1.18.25, /event tap + OpenAPI /doc — see §0.3 of
+  // docs/blueprint-execution-improvements.md). They are deliberately NOT derived
+  // from `@opencode-ai/sdk`'s types: the pinned SDK is 1.18.18 and declares
+  // `properties: { info }` with no `sessionID`, while the server we actually
+  // spawn emits `{ sessionID, info }` and marks both required. Building fixtures
+  // from the .d.ts is what let the previous flat-shape tests pass green against
+  // a handler that could never fire in production.
+  const messageUpdated = (
+    tokens: Record<string, unknown> | undefined,
+    opts: { sessionID?: string; role?: string } = {}
+  ): Record<string, unknown> => ({
+    type: 'message.updated',
+    properties: {
+      sessionID: opts.sessionID ?? SID,
+      info: {
+        id: 'msg_07d9d7a0f00179H85Jtc6rVdBR',
+        role: opts.role ?? 'assistant',
+        sessionID: opts.sessionID ?? SID,
+        modelID: 'Qwen3.8-27B-8bit',
+        providerID: 'mlx-remote',
+        time: { created: 1788813867535, completed: 1788813926522 },
+        ...(tokens ? { tokens } : {})
+      }
+    }
   })
 
-  test('message.updated with zero tokens leaves usage untouched', () => {
+  // Real values from the capture: total === input + cache.read + output.
+  const REAL_TOKENS = {
+    total: 9562,
+    input: 1323,
+    output: 47,
+    reasoning: 0,
+    cache: { read: 8192, write: 0 }
+  }
+
+  test('assistant message.updated populates all four usage fields from info.tokens', () => {
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS), SID, usage, freshState())
+    assert.deepEqual(out, [], 'token-only message.updated emits no chunks')
+    assert.equal(usage.input, 1323)
+    assert.equal(usage.output, 47)
+    assert.equal(usage.cacheReadInputTokens, 8192)
+    assert.equal(usage.cacheCreationInputTokens, 0)
+  })
+
+  test('CHARACTERIZATION: the old flat properties.tokens shape populates nothing', () => {
+    // The shape the handler read until 2026-09-07. The server's event schema sets
+    // `additionalProperties: false` on `properties`, so this payload is not just
+    // unobserved — it is structurally impossible. If someone "simplifies" the
+    // handler back to a flat read, this test fails instead of silently zeroing
+    // every OpenCode turn's usage again.
     const usage = freshUsage()
     normalizeOpenCodeEvent(
-      { type: 'message.updated', properties: { tokens: { input: 0, output: 0 } } },
-      SID,
-      usage,
-      freshState()
-    )
-    assert.equal(usage.input, 0)
-    assert.equal(usage.output, 0)
-  })
-
-  test('message.updated text part still emits text chunk alongside tokens', () => {
-    const usage = freshUsage()
-    const out = normalizeOpenCodeEvent(
       {
         type: 'message.updated',
         properties: {
-          tokens: { input: 10, output: 5 },
-          part: { type: 'text', content: 'hi' }
+          sessionID: SID,
+          tokens: { total: 127, input: 100, output: 20, cache: { read: 5, write: 2 } }
         }
       },
       SID,
       usage,
       freshState()
     )
-    assert.equal(out.length, 1)
-    assert.equal(out[0].type, 'text')
-    assert.equal(out[0].content, 'hi')
-    assert.equal(usage.input, 10)
-    assert.equal(usage.output, 5)
+    assert.equal(usage.input, 0, 'flat properties.tokens must not be read')
+    assert.equal(usage.output, 0)
+    assert.equal(usage.cacheReadInputTokens, 0)
+    assert.equal(usage.firstCallContextTokens, undefined)
+  })
+
+  test('the all-zero update that precedes each message does not clobber real totals', () => {
+    // Live-observed: opencode emits ~3 message.updated per assistant message and
+    // the FIRST carries an all-zero tokens object.
+    const usage = freshUsage()
+    const state = freshState()
+    normalizeOpenCodeEvent(
+      messageUpdated({ input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }),
+      SID,
+      usage,
+      state
+    )
+    assert.equal(usage.input, 0)
+    assert.equal(usage.firstCallContextTokens, undefined, 'zero must not claim the prefix slot')
+
+    normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS), SID, usage, state)
+    assert.equal(usage.input, 1323)
+    assert.equal(usage.firstCallContextTokens, 1323 + 8192)
+  })
+
+  test('user-role message.updated is ignored', () => {
+    const usage = freshUsage()
+    normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS, { role: 'user' }), SID, usage, freshState())
+    assert.equal(usage.input, 0)
+    assert.equal(usage.firstCallContextTokens, undefined)
+  })
+
+  test('message.updated with no tokens object is a no-op', () => {
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(messageUpdated(undefined), SID, usage, freshState())
+    assert.deepEqual(out, [])
+    assert.equal(usage.input, 0)
+  })
+
+  test('Gate T: first assistant message sets firstCallContextTokens = input + cache.read', () => {
+    // input is the UNCACHED portion of the prompt and cache.read the cached one,
+    // so the sum is that call's full prompt size. Verified against the capture:
+    // total(9562) === input(1323) + cache.read(8192) + output(47).
+    const usage = freshUsage()
+    normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS), SID, usage, freshState())
+    assert.equal(usage.firstCallContextTokens, 9515)
+    assert.equal(
+      REAL_TOKENS.total,
+      REAL_TOKENS.input + REAL_TOKENS.cache.read + REAL_TOKENS.output,
+      'token arithmetic assumption behind the prefix formula'
+    )
+  })
+
+  test('Gate T: firstCallContextTokens is write-once across the turn', () => {
+    // Second assistant message of the same turn, from the same capture. Its
+    // prompt is larger (the loop appended a tool result); the prefix must stay
+    // pinned to the FIRST call or it stops being a prefix.
+    const usage = freshUsage()
+    const state = freshState()
+    normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS), SID, usage, state)
+    normalizeOpenCodeEvent(
+      messageUpdated({
+        total: 9591,
+        input: 1387,
+        output: 12,
+        reasoning: 0,
+        cache: { read: 8192, write: 0 }
+      }),
+      SID,
+      usage,
+      state
+    )
+    assert.equal(usage.firstCallContextTokens, 9515, 'prefix pinned to the first call')
+    assert.equal(usage.input, 1387, 'running usage is still last-message-wins')
+  })
+
+  test('Gate T: a fully-cached first call still records a prefix', () => {
+    // input 0 / cache.read 8192 / output > 0. Guarding on `input > 0` instead of
+    // the sum would drop this, and the executor's post-turn backstop would still
+    // record it — the two paths must agree.
+    const usage = freshUsage()
+    normalizeOpenCodeEvent(
+      messageUpdated({ input: 0, output: 50, reasoning: 0, cache: { read: 8192, write: 0 } }),
+      SID,
+      usage,
+      freshState()
+    )
+    assert.equal(usage.firstCallContextTokens, 8192)
+  })
+
+  test('CROSS-SESSION: message.updated for a sibling session must not touch usage', () => {
+    // The regression pin for the shared OpenCode server. Before the handler read
+    // a real field this was harmless; now that it folds tokens into the turn, a
+    // sibling session's usage leaking past the filter would corrupt both the
+    // running totals and the Gate T prefix.
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(
+      messageUpdated(REAL_TOKENS, { sessionID: 'ses_someone_elses_session' }),
+      SID,
+      usage,
+      freshState()
+    )
+    assert.deepEqual(out, [])
+    assert.equal(usage.input, 0)
+    assert.equal(usage.output, 0)
+    assert.equal(usage.cacheReadInputTokens, 0)
+    assert.equal(usage.firstCallContextTokens, undefined)
   })
 })
 
@@ -232,40 +355,70 @@ describe('normalizeOpenCodeEvent — error classification', () => {
   })
 })
 
-describe('normalizeOpenCodeEvent — context delta gating', () => {
-  test('updates token usage and emits context_usage_update past 2% delta', () => {
+describe('normalizeOpenCodeEvent — session.updated is a no-op', () => {
+  // Captured 2026-09-07 (opencode 1.18.25): `session.updated` is exactly
+  // `{ sessionID, info: Session }` with `additionalProperties: false`, and
+  // `Session` has no `usage` member under any name. The handler previously read
+  // `properties.usage` and `properties.finishReason` — both impossible — so its
+  // token accounting, context_usage_update emission and finish-reason tracking
+  // never ran. The tests that used to live here asserted on fabricated payloads
+  // and were green for exactly that reason.
+  const sessionUpdated = (info: Record<string, unknown> = {}): Record<string, unknown> => ({
+    type: 'session.updated',
+    properties: {
+      sessionID: SID,
+      info: {
+        id: SID,
+        directory: '/tmp/probe',
+        title: 'probe',
+        version: '1.18.25',
+        cost: 0,
+        // Cumulative session-lifetime totals — NOT this turn's usage. Present in
+        // the real payload, deliberately not read.
+        tokens: { input: 2710, output: 59, reasoning: 0, cache: { read: 16384, write: 0 } },
+        ...info
+      }
+    }
+  })
+
+  test('real session.updated payload emits nothing and touches no usage', () => {
     const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(sessionUpdated(), SID, usage, freshState())
+    assert.deepEqual(out, [])
+    assert.equal(usage.input, 0)
+    assert.equal(usage.output, 0)
+    assert.equal(usage.cacheReadInputTokens, 0)
+  })
+
+  test('cumulative Session.tokens is NOT folded into per-turn usage', () => {
+    // Substituting Session.tokens here would report a number that grows across
+    // the whole session as if it were one turn's cost.
+    const usage = freshUsage()
+    normalizeOpenCodeEvent(sessionUpdated(), SID, usage, freshState())
+    assert.notEqual(usage.input, 2710)
+    assert.equal(usage.input, 0)
+  })
+
+  test('CHARACTERIZATION: the old flat usage/finishReason shape produces nothing', () => {
+    const usage = freshUsage()
+    const state = freshState()
     const out = normalizeOpenCodeEvent(
       {
         type: 'session.updated',
         properties: {
-          usage: { inputTokens: 10000, contextWindowSize: 100000, outputTokens: 50 }
+          sessionID: SID,
+          usage: { inputTokens: 10000, contextWindowSize: 100000, outputTokens: 50 },
+          finishReason: 'length'
         }
       },
       SID,
       usage,
-      freshState()
+      state
     )
-    assert.equal(usage.input, 10000)
-    assert.equal(usage.output, 50)
-    const update = out.find((c) => c.type === 'context_usage_update')
-    assert.ok(update)
-    assert.equal(update!.contextUsageUpdate!.percentage, 10)
-  })
-
-  test('sub-2% delta from last percentage is emitted (no gating)', () => {
-    const out = normalizeOpenCodeEvent(
-      {
-        type: 'session.updated',
-        properties: { usage: { inputTokens: 10000, contextWindowSize: 100000 } }
-      },
-      SID,
-      freshUsage(),
-      freshState({ lastContextPercentage: 9 }) // Was 10% vs 9% = 1% delta < 2%
-    )
-    const update = out.find((c) => c.type === 'context_usage_update')
-    assert.ok(update)
-    assert.equal(update!.contextUsageUpdate!.percentage, 10)
+    assert.deepEqual(out, [], 'no context_usage_update, no compact_boundary')
+    assert.equal(usage.input, 0)
+    assert.equal(state.lastFinishReason, undefined)
+    assert.equal(state.lastContextPercentage, undefined)
   })
 })
 
@@ -784,41 +937,6 @@ describe('normalizeOpenCodeEvent — handleStructuredOutputPart', () => {
       freshState()
     )
     assert.deepEqual(out, [])
-  })
-})
-
-describe('normalizeOpenCodeEvent — handleSessionUpdated edge cases', () => {
-  test('finishReason=length emits compact_boundary', () => {
-    const out = normalizeOpenCodeEvent(
-      {
-        type: 'session.updated',
-        properties: {
-          finishReason: 'length',
-          usage: { inputTokens: 50000, contextWindowSize: 200000 }
-        }
-      },
-      SID,
-      freshUsage(),
-      freshState()
-    )
-    const boundary = out.find((c) => c.type === 'compact_boundary')
-    assert.ok(boundary, 'should emit compact_boundary on finishReason=length')
-  })
-
-  test('zero contextWindowSize suppresses context_usage_update', () => {
-    const out = normalizeOpenCodeEvent(
-      {
-        type: 'session.updated',
-        properties: { usage: { inputTokens: 100, contextWindowSize: 0 } }
-      },
-      SID,
-      freshUsage(),
-      freshState()
-    )
-    assert.equal(
-      out.find((c) => c.type === 'context_usage_update'),
-      undefined
-    )
   })
 })
 

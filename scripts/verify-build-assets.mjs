@@ -45,9 +45,6 @@ if (!existsSync('out/queries/tree-sitter-language-pack')) {
 // against the actual build output. Pre-existing offenders are baselined so the
 // build stays green while still failing on anything new.
 const BASELINE = new Set([
-  'blueprint-lead-review.service -> ../db/repositories',
-  'blueprint-lead-review.service -> ./memory-extraction.service',
-  'blueprint-lead-review.service -> ../db/repositories/blueprint-event.repository',
   'code-graph.service -> ../db/repositories',
   'code-graph.service -> ../db',
   'index -> ../db/repositories',

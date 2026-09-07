@@ -397,3 +397,8 @@ module.exports = async function afterPack(context) {
   })
   console.log('[afterPack] Fuses flipped successfully')
 }
+
+// Exposed for direct verification — this mapping is the whole of the
+// cross-build guard, and it is not otherwise reachable without running a
+// full pack.
+module.exports.expectedEnginePackages = expectedEnginePackages

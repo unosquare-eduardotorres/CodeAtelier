@@ -148,8 +148,15 @@ export abstract class BlueprintBaseAdapter extends BaseRoleAdapter {
    * ("issue with the selected model"), failing the phase outright.
    *
    * Keyed on getModelAction() so provider and model always come from the same
-   * snapshot entry. An explicit per-run choice still wins, and phases with no
-   * snapshot entry return undefined and keep the workspace provider.
+   * snapshot entry. An explicit per-run choice still wins.
+   *
+   * Corrected 2026-09-07: this used to end "phases with no snapshot entry return
+   * undefined and keep the workspace provider". That stopped being true when
+   * `blueprintSnapshotAssignment` gained its live-resolution fallback — an action
+   * the snapshot does not cover now resolves the workspace binding *for that
+   * action* and returns its provider, which is the point (provider and model come
+   * from one assignment either way). `undefined` is now returned only when the
+   * blueprint row is missing or the lookup threw.
    */
   override getLlmProvider(): LLMProvider | undefined {
     if (this.explicitLlmProvider) return this.explicitLlmProvider

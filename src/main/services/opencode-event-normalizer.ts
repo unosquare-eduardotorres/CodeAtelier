@@ -6,6 +6,7 @@
  */
 
 import type { StreamChunk } from './agent-base.service'
+import type { ExecutorTokenUsage } from './executor-types'
 import { summarizeToolInput } from './index'
 import { extractResultSummary } from '../ipc/tool-result-summarizer'
 import { TRANSIENT_ERROR_PATTERNS } from './opencode-transient-patterns'
@@ -83,12 +84,17 @@ function routeThinkTags(text: string, state: NormalizerState): StreamChunk[] {
 }
 
 /** Token usage tracker passed into normalizeEvent */
-export interface ExecutorTokenUsage {
-  input: number
-  output: number
-  cacheReadInputTokens: number
-  cacheCreationInputTokens: number
-}
+/**
+ * Re-exported from `executor-types` rather than redeclared.
+ *
+ * This file used to carry its own structurally-narrower copy that omitted
+ * `contextWindowTokens` and `firstCallContextTokens`. Because the narrow shape
+ * is assignable from the wide one, the executor could pass the real object in
+ * and typecheck cleanly while handlers here were unable to *see* the prefix
+ * field — so writing it from the live event path was a type error rather than an
+ * obvious omission. One definition means the two paths cannot drift again.
+ */
+export type { ExecutorTokenUsage }
 
 /** State references from the OpenCodeExecutor that handlers may need */
 export interface NormalizerState {
@@ -373,59 +379,31 @@ function handleMessagePartUpdated(
   }
 }
 
-function handleSessionUpdated(
-  properties: EventProperties,
-  _sessionId: string,
-  tokenUsage: ExecutorTokenUsage,
-  state: NormalizerState
-): StreamChunk[] {
-  const chunks: StreamChunk[] = []
-  const usage = properties.usage as Record<string, number> | undefined
-  if (usage) {
-    tokenUsage.input = usage.inputTokens ?? tokenUsage.input
-    tokenUsage.output = usage.outputTokens ?? tokenUsage.output
-    tokenUsage.cacheReadInputTokens = usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
-    tokenUsage.cacheCreationInputTokens =
-      usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
-  }
-
-  // GAP-12: Emit per-turn context usage updates.
-  // Context consumption = fresh input + cache reads + cache writes, matching
-  // Claude Code / agent-stream-processor. Using usage.inputTokens alone misses
-  // cached tokens (often the bulk of the window) and under-reported usage.
-  const contextTokens =
-    (usage?.inputTokens ?? 0) +
-    (usage?.cacheReadInputTokens ?? 0) +
-    (usage?.cacheCreationInputTokens ?? 0)
-  if (contextTokens > 0 && usage?.contextWindowSize) {
-    const percentage = Math.round((contextTokens / usage.contextWindowSize) * 100)
-    state.lastContextPercentage = percentage
-    chunks.push({
-      type: 'context_usage_update',
-      contextUsageUpdate: {
-        inputTokens: contextTokens,
-        contextWindowSize: usage.contextWindowSize,
-        percentage
-      }
-    })
-  }
-
-  // 6C-2: Track finishReason for terminal status mapping
-  const finishReason = properties.finishReason as string | undefined
-  if (finishReason) {
-    state.lastFinishReason = finishReason
-    openCodeLog.info(`[opencode] Session finishReason: ${finishReason}`)
-
-    // Emit context_exhausted signal when context window is full
-    if (finishReason === 'length') {
-      chunks.push({
-        type: 'compact_boundary',
-        content: 'Context window exhausted — compaction needed'
-      })
-    }
-  }
-
-  return chunks
+/**
+ * `session.updated` carries neither usage nor a finish reason — it is a no-op.
+ *
+ * Live-verified 2026-09-07 (opencode 1.18.25, OpenAPI `/doc` plus a captured
+ * stream): the event is exactly `{ sessionID, info: Session }` with
+ * `additionalProperties: false`, and `Session` has no `usage` member under any
+ * name. This handler previously read `properties.usage` and
+ * `properties.finishReason`, both structurally impossible, so its token
+ * accounting, its `context_usage_update` emission and its terminal-reason
+ * tracking never once executed.
+ *
+ * They are DELETED rather than relocated. Per-turn usage belongs on
+ * `message.updated` (`properties.info.tokens`, see `handleMessageUpdated`) with
+ * the executor's post-turn backstop behind it — that is the only place per-call
+ * boundaries are visible. `Session.tokens` does exist, but it is a
+ * session-lifetime cumulative total, so substituting it here would have
+ * reported a growing number as if it were one turn's cost.
+ *
+ * Still registered in EVENT_HANDLERS so session mutations do not fall through to
+ * the "Unhandled event type" log. See §0.3 of
+ * docs/blueprint-execution-improvements.md for the capture and for the two
+ * consumers this leaves stranded (G10).
+ */
+function handleSessionUpdated(): StreamChunk[] {
+  return []
 }
 
 function handleSessionError(properties: EventProperties): StreamChunk[] {
@@ -640,33 +618,64 @@ function handleMessageRemoved(properties: EventProperties): StreamChunk[] {
   return removedId ? [{ type: 'session_state', content: `message_removed:${removedId}` }] : []
 }
 
+/**
+ * Per-turn token usage. This is the primary usage signal on the OpenCode path —
+ * GLM and other providers report nothing else.
+ *
+ * SHAPE FIX 2026-09-07. This used to read `properties.tokens`. The server emits
+ * `message.updated` as exactly `{ sessionID, info: Message }` with
+ * `additionalProperties: false`, so a top-level `tokens` is not merely absent —
+ * it is prohibited, and this handler was a no-op for every OpenCode turn ever
+ * run. Usage lives at `properties.info.tokens` on the AssistantMessage. The
+ * stale `@opencode-ai/sdk` types are what made the flat shape look plausible;
+ * evidence and method are in §0.3 of docs/blueprint-execution-improvements.md.
+ *
+ * The `properties.part` branch went with it: `message.updated` has no `part`
+ * (that is `message.part.updated`, handled separately), so it was unreachable.
+ */
 function handleMessageUpdated(
   properties: EventProperties,
   _sessionId: string,
   tokenUsage: ExecutorTokenUsage
 ): StreamChunk[] {
-  // PARITY FIX (G): opencode reports per-message token usage on assistant
-  // message.updated events — shape {total, input, output, reasoning,
-  // cache: {read, write}}. GLM (and other providers) never emit session.updated
-  // usage, so this is the only usage signal for them. Last message wins; the
-  // executor's post-turn backstop sums per-message tokens when this is absent.
-  const tokens = properties.tokens as Record<string, unknown> | undefined
-  if (tokens && typeof tokens === 'object') {
-    const input = Number(tokens.input ?? 0)
-    const output = Number(tokens.output ?? 0)
-    if (input > 0 || output > 0) {
-      const cache = tokens.cache as Record<string, unknown> | undefined
-      tokenUsage.input = input
-      tokenUsage.output = output
-      tokenUsage.cacheReadInputTokens = Number(cache?.read ?? 0)
-      tokenUsage.cacheCreationInputTokens = Number(cache?.write ?? 0)
-    }
+  const info = properties.info as Record<string, unknown> | undefined
+  if (!info || info.role !== 'assistant') return []
+  const tokens = info.tokens as Record<string, unknown> | undefined
+  if (!tokens || typeof tokens !== 'object') return []
+
+  const input = Number(tokens.input ?? 0)
+  const output = Number(tokens.output ?? 0)
+  // opencode emits an all-zero `tokens` object for an assistant message before
+  // the populated one (live-verified: ~3 updates per message, first is zeros).
+  // Without this guard that zero would overwrite the turn's real totals.
+  if (input <= 0 && output <= 0) return []
+
+  const cache = tokens.cache as Record<string, unknown> | undefined
+  const cacheRead = Number(cache?.read ?? 0)
+  // Last message wins — these are per-message absolutes, not deltas.
+  tokenUsage.input = input
+  tokenUsage.output = output
+  tokenUsage.cacheReadInputTokens = cacheRead
+  tokenUsage.cacheCreationInputTokens = Number(cache?.write ?? 0)
+
+  // Gate T. Repairing the read above has a side effect that would otherwise
+  // silently undo it: once this handler reports usage, the executor stops
+  // calling its post-turn backstop, and the backstop was the only thing setting
+  // `prefix_tokens` — so the column would go back to NULL. Set it here too.
+  //
+  // `input + cacheRead` is that call's FULL prompt size: opencode reports
+  // `total = input + cache.read + output`, i.e. `input` is the uncached portion
+  // and `cache.read` the cached one (measured, §0.3). Deliberately the same
+  // strictly-positive + write-once condition as `sumAssistantTokensSince`, so a
+  // fully-cached first call (input 0, cache.read 8 K) is recorded identically by
+  // both paths instead of one of them dropping it. `undefined` is true only for
+  // the turn's first assistant message: `tokenUsage` is constructed fresh per
+  // turn by the executor.
+  const prefix = input + cacheRead
+  if (tokenUsage.firstCallContextTokens === undefined && prefix > 0) {
+    tokenUsage.firstCallContextTokens = prefix
   }
-  const msgPart = properties.part as Record<string, unknown> | undefined
-  if (msgPart?.type === 'text') {
-    const text = msgPart.content as string | undefined
-    if (text) return [{ type: 'text', content: text }]
-  }
+
   return []
 }
 
@@ -1165,10 +1174,24 @@ export function normalizeOpenCodeEvent(
   // Filter events for this session — but allow child session events through
   const eventSessionId = properties.sessionID as string | undefined
   // G2: part-level events (message.part.updated / message.part.delta) carry the
-  // owning session NESTED in properties.part.sessionID, not at the properties
-  // top level (live-verified on opencode 1.18.18). Without this, sibling-session
-  // parts on the shared server passed the filter below and normalized as OUR
-  // chunks — faking prompt activity and resetting the executor's stall watches.
+  // owning session NESTED in properties.part.sessionID. Without this,
+  // sibling-session parts on the shared server passed the filter below and
+  // normalized as OUR chunks — faking prompt activity and resetting the
+  // executor's stall watches.
+  //
+  // Re-verified 2026-09-07 against the server we actually run (opencode 1.18.25;
+  // `createOpencodeServer` spawns `opencode` from PATH, so the pinned SDK's
+  // 1.18.18 types describe a different build). On 1.18.25 the top-level
+  // `properties.sessionID` is present AND required on all four of
+  // message.updated, session.updated, message.part.updated and
+  // message.part.delta — so `eventSessionId` alone already resolves correctly and
+  // this nested lookup is now belt-and-braces rather than the only source. It is
+  // kept because it costs nothing and the `?? eventSessionId` fallback makes it
+  // correct under both shapes.
+  //
+  // This is what makes the message.updated token fix safe on a shared server:
+  // another session's usage is filtered out below BEFORE handleMessageUpdated
+  // can fold it into our turn. Pinned by a cross-session test.
   const effectiveSessionId =
     type === 'message.part.updated' || type === 'message.part.delta'
       ? ((properties.part as Record<string, unknown> | undefined)?.sessionID as

@@ -48,6 +48,9 @@ import {
   blueprintPhaseRepository,
   blueprintTaskRepository
 } from '../db/repositories/blueprint.repository'
+import { workspaceRepository } from '../db/repositories'
+import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
+import { memoryExtractionService } from './memory-extraction.service'
 import type {
   BlueprintPhaseCompletePayload,
   BlueprintPhaseArtifactPayload
@@ -550,15 +553,8 @@ export class BlueprintLeadReviewService extends EventEmitter {
     workspacePath: string
   ): void {
     try {
-      const { workspaceRepository: wsRepo } =
-        require('../db/repositories') as typeof import('../db/repositories')
-      const wsSettings = wsRepo.getSettings(workspaceId)
+      const wsSettings = workspaceRepository.getSettings(workspaceId)
       if ((wsSettings as Record<string, unknown>).memoryCaptureBlueprints === false) return
-
-      const { memoryExtractionService } =
-        require('./memory-extraction.service') as typeof import('./memory-extraction.service')
-      const { blueprintEventRepository } =
-        require('../db/repositories/blueprint-event.repository') as typeof import('../db/repositories/blueprint-event.repository')
 
       const blueprint = blueprintRepository.findById(blueprintId)
       if (!blueprint) return

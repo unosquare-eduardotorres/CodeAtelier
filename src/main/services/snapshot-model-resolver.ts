@@ -161,6 +161,15 @@ export function resolveModelFromSnapshot(
   }
 
   // G6: Blueprint synthetic IDs — read frozen snapshot from blueprint.settings_json
+  //
+  // The `getModel` fallback below is NOT the "no frozen entry for this action"
+  // path — `blueprintSnapshotAssignment` handles that itself by resolving the
+  // live workspace binding, so it returns an assignment for every action a real
+  // blueprint can ask about. What is left is narrow and exceptional: the
+  // blueprint row is missing, or the repository threw. Keeping it means a
+  // deleted-mid-run blueprint degrades to live resolution instead of crashing
+  // the phase; it is deliberately not a provider/model-agreement path, because
+  // by the time we are here there is no snapshot to agree with.
   if (BLUEPRINT_CONV_RE.test(conversationId)) {
     const assignment = blueprintAssignment(conversationId, modelAction)
     if (assignment?.modelId) return assignment.modelId

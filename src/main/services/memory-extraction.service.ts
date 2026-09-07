@@ -1082,7 +1082,11 @@ class MemoryExtractionService {
           apiKey: glm.apiKey,
           feature: 'memory_feed',
           workspaceId,
-          maxTokens: 4096,
+          // GLM-REASONING (C2): reasoning tokens consume from the same budget
+          // as the answer — 4096 starved `content` to empty on every doc.
+          // 8192 leaves room for both; the empty-text throw below now only
+          // fires when content AND reasoning_content are both empty.
+          maxTokens: 8192,
           timeoutMs: 60_000,
           chatCompletionsPath: '/chat/completions'
         })

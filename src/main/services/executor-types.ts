@@ -46,8 +46,14 @@ export interface ExecutorTokenUsage {
    * (system prompt + tool schemas + user message) before any tool result was
    * appended. Unlike `contextWindowTokens` it is never overwritten, so it is
    * the only quantity against which prefix-reduction work can be measured.
-   * Omitted by backends that report no per-call usage (e.g. OpenCode); there is
-   * NO summed-total fallback — the sum over-counts by ~10-30x.
+   * There is NO summed-total fallback — the sum over-counts by ~10-30x.
+   *
+   * Set by both backends as of 2026-09-07. The Claude path writes it from
+   * `TokenAccountant`; the OpenCode path writes it from the first assistant
+   * `message.updated` and, when that yields nothing, from the executor's
+   * post-turn backstop — both using the same write-once, strictly-positive
+   * guard. It is still omitted where a turn produced no positive prompt size, in
+   * which case `prefix_tokens` is left NULL rather than recorded as 0.
    */
   firstCallContextTokens?: number
 }

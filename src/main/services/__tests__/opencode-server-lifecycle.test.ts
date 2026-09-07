@@ -31,18 +31,19 @@ import { setupElectronStub } from './electron-stub'
 // the stub is active (same pattern as notification.service.test.ts).
 setupElectronStub()
 
-const { ServerRefTracker, OpenCodeExecutor, openCodeExecutor } = require('../opencode-executor') as {
-  ServerRefTracker: new () => {
-    acquire(key: string): void
-    release(key: string): boolean
-    has(key: string): boolean
-    size: number
-    shouldStop(): boolean
-    clear(): void
+const { ServerRefTracker, OpenCodeExecutor, openCodeExecutor } =
+  require('../opencode-executor') as {
+    ServerRefTracker: new () => {
+      acquire(key: string): void
+      release(key: string): boolean
+      has(key: string): boolean
+      size: number
+      shouldStop(): boolean
+      clear(): void
+    }
+    OpenCodeExecutor: new () => ExecForTest
+    openCodeExecutor: ExecForTest
   }
-  OpenCodeExecutor: new () => ExecForTest
-  openCodeExecutor: ExecForTest
-}
 
 interface ExecForTest {
   serverOwnerCount: number
@@ -56,6 +57,7 @@ interface ExecForTest {
   forceStopForTest(): Promise<void>
   __setStartOnceImplForTest(impl: () => Promise<void>): void
   __setKillStaleImplForTest(impl: () => Promise<void>): void
+  startHealthCheck?: (cb?: (healthy: boolean, version?: string) => void) => void
 }
 
 // ── Pure refcount arithmetic ─────────────────────────────────────────────────
@@ -250,6 +252,127 @@ describe('OpenCodeExecutor server lifecycle', () => {
     // No start → isStarted false → the stale-kill path is NOT skipped.
     await ex.killStaleServerForTest()
     assert.equal(killCalls, 1)
+  })
+
+  // ── A1/A2/A5 ZOMBIE-RECOVERY (docs/opencode-zombie-server-diagnosis.md) ──
+
+  test('A2: zombie server (isStarted=true, stale client) is force-restarted', async () => {
+    const ex = freshExecutor()
+    let starts = 0
+    ex.__setStartOnceImplForTest(async () => {
+      starts++
+    })
+    // First start succeeds (marks isStarted, no client set by the seam).
+    await ex.ensureStartedForTest('k2')
+    assert.equal(starts, 1)
+    // Inject the zombie: a stale non-null client whose session.list rejects
+    // with the exact incident shape (TypeError: fetch failed).
+    ;(ex as unknown as { client: unknown }).client = {
+      session: { list: () => Promise.reject(new TypeError('fetch failed')) }
+    }
+    await ex.ensureStartedForTest('k2')
+    // The zombie was detected → teardown + restart ran (start impl called again).
+    assert.equal(starts, 2, 'zombie must be force-restarted')
+    assert.equal(ex.isRunning(), true)
+    // A5: forceStop cleared owners; the caller re-acquired k2 for the fresh server.
+    assert.equal(ex.serverOwnerCount, 1)
+    // The stale client must not survive the restart.
+    assert.equal((ex as unknown as { client: unknown }).client, null)
+  })
+
+  test('A2: healthy server on the fast path — single start, no restart', async () => {
+    const ex = freshExecutor()
+    let starts = 0
+    ex.__setStartOnceImplForTest(async () => {
+      starts++
+    })
+    await ex.ensureStartedForTest('k1')
+    ;(ex as unknown as { client: unknown }).client = {
+      session: { list: () => Promise.resolve({ data: [] }) }
+    }
+    await ex.ensureStartedForTest('k2')
+    assert.equal(starts, 1, 'healthy server must NOT be restarted')
+    assert.equal(ex.isRunning(), true)
+    assert.equal(ex.serverOwnerCount, 2)
+  })
+
+  test('A1: start() arms the health monitor exactly once (direct success)', async () => {
+    const ex = freshExecutor()
+    let healthStarts = 0
+    ;(ex as unknown as { startHealthCheck: () => void }).startHealthCheck = () => {
+      healthStarts++
+    }
+    await ex.startForTest()
+    assert.equal(healthStarts, 1)
+  })
+
+  test('A1: health monitor also armed after a ServeError-retry success', async () => {
+    const ex = freshExecutor()
+    let attempts = 0
+    ex.__setStartOnceImplForTest(async () => {
+      attempts++
+      if (attempts === 1) throw new Error('ServeError: port 4096 already in use')
+    })
+    let healthStarts = 0
+    ;(ex as unknown as { startHealthCheck: () => void }).startHealthCheck = () => {
+      healthStarts++
+    }
+    await ex.startForTest()
+    assert.equal(attempts, 2)
+    assert.equal(healthStarts, 1, 'retry success must arm the monitor exactly once')
+  })
+
+  test('A1: failed start (non-port error) does NOT arm the health monitor', async () => {
+    const ex = freshExecutor()
+    ex.__setStartOnceImplForTest(async () => {
+      throw new Error('OpenCode CLI not found')
+    })
+    let healthStarts = 0
+    ;(ex as unknown as { startHealthCheck: () => void }).startHealthCheck = () => {
+      healthStarts++
+    }
+    await assert.rejects(ex.startForTest(), /CLI not found/)
+    assert.equal(healthStarts, 0)
+  })
+
+  test('A5: forceStop voids every owner claim (ocSessions=3 fix)', async () => {
+    const ex = freshExecutor()
+    await ex.ensureStartedForTest('k1')
+    await ex.ensureStartedForTest('k2')
+    await ex.ensureStartedForTest('k3')
+    assert.equal(ex.serverOwnerCount, 3)
+    await ex.forceStopForTest()
+    assert.equal(ex.serverOwnerCount, 0, 'a torn-down server voids every claim')
+    assert.equal(ex.isRunning(), false)
+  })
+
+  test('A2 probe cache: N concurrent ensureStarted against a healthy client → 1 session.list', async () => {
+    const ex = freshExecutor()
+    ex.__setStartOnceImplForTest(async () => {
+      /* no-op */
+    })
+    await ex.ensureStartedForTest('k0')
+    let listCalls = 0
+    // Microtask-delayed resolution so concurrent callers genuinely overlap
+    // on the probe before any of them lands in the healthy-cache window.
+    ;(ex as unknown as { client: unknown }).client = {
+      session: {
+        list: () =>
+          new Promise((resolve) => {
+            listCalls++
+            setTimeout(() => resolve({ data: [] }), 10)
+          })
+      }
+    }
+    await Promise.all([
+      ex.ensureStartedForTest('a'),
+      ex.ensureStartedForTest('b'),
+      ex.ensureStartedForTest('c'),
+      ex.ensureStartedForTest('d'),
+      ex.ensureStartedForTest('e')
+    ])
+    assert.equal(listCalls, 1, 'concurrent probes must share one in-flight round-trip')
+    assert.equal(ex.isRunning(), true)
   })
 })
 

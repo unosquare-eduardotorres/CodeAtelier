@@ -12,9 +12,20 @@
  *   npm run test:unit
  */
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import { test, describe, summaryAsync } from './test-harness'
 import { OpenCodeExecutor } from '../opencode-executor'
 import type { ExecutorTokenUsage } from '../executor-types'
+
+/**
+ * The same module instance the executor's `electron-log/main` import resolves to
+ * (electron-stub rewrites that specifier to this file, and Node caches by
+ * resolved path). Required directly rather than imported so the handle is the
+ * mock's own exports, including its warn/error recorder.
+ */
+const logMock = createRequire(import.meta.url)('./__electron_log_mock.cjs') as {
+  __findRecords(level: string, substring: string): Array<{ level: string; message: string }>
+}
 
 // ── Helpers ──
 
@@ -188,6 +199,40 @@ describe('sumAssistantTokensSince — firstCallContextTokens (Gate T)', () => {
     await sumWith([sdkAssistant(T0_SECONDS + 10, { input: 9000, output: 10 })], T0_MS, usage)
     assert.equal(usage.firstCallContextTokens, 42_000)
   })
+
+  test('a zero-prompt first message does not block a later real one', async () => {
+    // The defect: the slot was claimed by whichever message came first, even at
+    // prefix 0. Because `firstTs` then pins and nothing can displace it, the
+    // `> 0` guard at the end wrote NULL for a turn whose prefix was right there
+    // in the second message. opencode really does emit output-without-prompt
+    // messages, so this was reachable, not theoretical.
+    const usage = freshUsage()
+    await sumWith(
+      [
+        sdkAssistant(T0_SECONDS + 10, { input: 0, output: 250, cache: { read: 0, write: 0 } }),
+        sdkAssistant(T0_SECONDS + 20, { input: 1323, output: 47, cache: { read: 8192, write: 0 } })
+      ],
+      T0_MS,
+      usage
+    )
+    assert.equal(usage.firstCallContextTokens, 1323 + 8192)
+  })
+
+  test('a fully-cached first message claims the slot (input 0, cache.read > 0)', async () => {
+    // Matches the live event path's guard exactly: the candidate is
+    // `input + cache.read`, not `input`, so a fully-cached first call is a real
+    // prefix rather than a skipped one.
+    const usage = freshUsage()
+    await sumWith(
+      [
+        sdkAssistant(T0_SECONDS + 10, { input: 0, output: 50, cache: { read: 8192, write: 0 } }),
+        sdkAssistant(T0_SECONDS + 20, { input: 900, output: 20, cache: { read: 8192, write: 0 } })
+      ],
+      T0_MS,
+      usage
+    )
+    assert.equal(usage.firstCallContextTokens, 8192)
+  })
 })
 
 // ── Characterization: the bug must not silently return ──
@@ -322,6 +367,71 @@ describe('sumAssistantTokensSince — failure modes', () => {
   test('empty message list returns 0', async () => {
     const usage = freshUsage()
     assert.equal(await sumWith([], T0_MS, usage), 0)
+  })
+})
+
+// ── The zero-match warn must stay meaningful ──
+
+describe('sumAssistantTokensSince — zero-match warn', () => {
+  // The harness interleaves async tests, so the mock's warn ring is shared and
+  // resetting it per test races. Each case therefore fetches a DISTINCT number
+  // of messages and matches on the `(of N fetched)` fragment the warn already
+  // prints — which scopes the assertion to its own scenario regardless of order.
+  const fetchedFragment = (n: number): string => `(of ${n} fetched)`
+
+  /** `n` assistant messages, all created before the turn window opened. */
+  function history(n: number): Record<string, unknown>[] {
+    return Array.from({ length: n }, (_, i) =>
+      sdkAssistant(T0_SECONDS - 600 + i, { input: 5000, output: 10 })
+    )
+  }
+
+  test('does NOT warn for an aborted turn on a session with history', async () => {
+    // The false positive the old `messages.length > 0` condition produced: a
+    // turn that errored before its first assistant message, on a session that
+    // already has plenty of older ones. Nothing is wrong here, and warning on it
+    // every time is how a diagnostic gets tuned out.
+    const counted = await sumWith(history(3), T0_MS, freshUsage())
+    assert.equal(counted, 0)
+    assert.deepEqual(
+      logMock.__findRecords('warn', fetchedFragment(3)),
+      [],
+      'out-of-window history must not trip the shape warning'
+    )
+  })
+
+  test('DOES warn when in-window assistant messages carried no tokens', async () => {
+    // The real condition it exists for: this turn produced assistant messages
+    // and not one of them carried usage — i.e. the SDK shape moved again.
+    const counted = await sumWith(
+      [
+        ...history(3),
+        sdkAssistant(T0_SECONDS + 10, { input: 0, output: 0, cache: { read: 0, write: 0 } })
+      ],
+      T0_MS,
+      freshUsage()
+    )
+    assert.equal(counted, 0)
+    const warned = logMock.__findRecords('warn', fetchedFragment(4))
+    assert.equal(warned.length, 1, 'in-window messages without tokens must warn')
+    assert.ok(
+      warned[0].message.includes('1 in-window assistant'),
+      `warn should report the in-window count, got: ${warned[0].message}`
+    )
+  })
+
+  test('does NOT warn when the turn counted normally', async () => {
+    const counted = await sumWith(
+      [
+        ...history(3),
+        sdkAssistant(T0_SECONDS + 10, { input: 1000, output: 20 }),
+        sdkAssistant(T0_SECONDS + 20, { input: 1100, output: 25 })
+      ],
+      T0_MS,
+      freshUsage()
+    )
+    assert.equal(counted, 2)
+    assert.deepEqual(logMock.__findRecords('warn', fetchedFragment(5)), [])
   })
 })
 
