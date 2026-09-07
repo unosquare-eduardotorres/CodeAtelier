@@ -563,6 +563,23 @@ export const IPC_CHANNELS = {
   AUDIT_RECORD_FINDING_HANDOFF: 'audit:recordFindingHandoff',
   AUDIT_GET_FINDING_HANDOFFS: 'audit:getFindingHandoffs',
 
+  // Design audit (Impeccable-powered). Shares audit storage via audit_runs.kind.
+  DESIGN_ROUTE: 'design:route',
+  DESIGN_START: 'design:start',
+  DESIGN_CANCEL: 'design:cancel',
+  DESIGN_GET_LATEST: 'design:getLatest',
+  DESIGN_GET_HISTORY: 'design:getHistory',
+  DESIGN_DELETE_RUN: 'design:deleteRun',
+  DESIGN_CONTEXT_STATUS: 'design:contextStatus',
+  DESIGN_GENERATE_REPORT: 'design:generateReport',
+  DESIGN_HANDOFF_TO_BLUEPRINT: 'design:handoffToBlueprint',
+  // Renderer-bound events (mirror the AUDIT_* event channels).
+  DESIGN_PROGRESS: 'design:progress',
+  DESIGN_RESULT: 'design:result',
+  DESIGN_INTERMEDIATE: 'design:intermediate',
+  DESIGN_STREAM_CHUNK: 'design:stream-chunk',
+  DESIGN_COMPLETE: 'design:complete',
+
   // Plan Hub (unified plan registry)
   PLAN_GET_ALL: 'plan:getAll',
   PLAN_GET_BY_ID: 'plan:getById',
@@ -1068,6 +1085,12 @@ export const DEFAULT_MODEL_CONFIG: Record<import('./types').ModelAction, string>
   // Prompt optimization
   'prompt:optimize': 'claude-haiku-4-5-20251001',
 
+  // Design audit (Impeccable). Evaluate matches the `audit` role default;
+  // route is a cheap one-shot classifier; init drives an attended interview.
+  'design:audit': 'claude-opus-5',
+  'design:route': 'claude-haiku-4-5-20251001',
+  'design:init': 'claude-sonnet-5',
+
   // Background one-shot actions
   'commit-message': 'claude-haiku-4-5-20251001',
   'pr-description': 'claude-haiku-4-5-20251001',
@@ -1183,6 +1206,27 @@ export const MODEL_ROLE_ROWS: readonly import('./types').ModelRoleRowDef[] = [
     primaryAction: 'council-chairman'
   },
   {
+    group: 'design',
+    label: 'Evaluate',
+    description: 'Runs the audit and critique design passes',
+    actions: ['design:audit'],
+    primaryAction: 'design:audit'
+  },
+  {
+    group: 'design',
+    label: 'Route',
+    description: 'Maps a design brief to preselected commands — cheap and short',
+    actions: ['design:route'],
+    primaryAction: 'design:route'
+  },
+  {
+    group: 'design',
+    label: 'Init',
+    description: 'Attended setup of design context (PRODUCT.md, DESIGN.md)',
+    actions: ['design:init'],
+    primaryAction: 'design:init'
+  },
+  {
     group: 'background',
     label: 'Memory Extraction',
     description: 'Extract facts from conversations into workspace memory',
@@ -1218,6 +1262,7 @@ export const MODEL_ROLE_GROUP_LABELS: Record<import('./types').ModelRoleGroup, s
   blueprint: 'Blueprint',
   quality: 'Quality & Review',
   council: 'Council',
+  design: 'Design',
   background: 'Background Tasks'
 }
 
@@ -1367,6 +1412,29 @@ export function resolveModelAction(
 
   // Standard roles: ${role}:${plan|build}
   return `${role}:${isBuildMode ? 'build' : 'plan'}` as import('./types').ModelAction
+}
+
+/**
+ * Attribution invariant: does a recorded (provider, model) pair contradict itself?
+ *
+ * `provider` and `model` are resolved from two DIFFERENT model actions:
+ * provider from the adapter's own `getModelAction()`, model from
+ * `resolveModelAction(adapter.role, isBuild)`. Those agree for most roles but
+ * not for the four adapters that share `role: 'blueprint-review'` (code-review,
+ * lead-review, peer-review, plan-revision), nor for the escalation ladder, which
+ * runs a BUILD adapter under `blueprint:lead-review`. When they diverge the two
+ * columns are read out of different snapshot entries and one of them is wrong.
+ *
+ * DETECTION ONLY — which column is wrong cannot be decided from the pair alone,
+ * so callers warn rather than "correct" it. `claude-*` model ids are only ever
+ * served by the `claude` provider; GLM and local models never carry that prefix.
+ */
+export function providerModelDisagree(
+  provider: string | null | undefined,
+  model: string | null | undefined
+): boolean {
+  if (!provider || !model) return false
+  return model.startsWith('claude-') !== (provider === 'claude')
 }
 
 // ── Prompt Verbosity ─────────────────────────────────────────────────
@@ -1535,6 +1603,24 @@ export const MODEL_ACTIONS_META: Record<
     label: 'Audit',
     description: 'Workspace health auditing sessions',
     icon: '🔍',
+    section: 'background'
+  },
+  'design:audit': {
+    label: 'Design Evaluate',
+    description: 'Runs the audit and critique design passes',
+    icon: '🎨',
+    section: 'background'
+  },
+  'design:route': {
+    label: 'Design Route',
+    description: 'Maps a design brief to preselected commands',
+    icon: '🧭',
+    section: 'background'
+  },
+  'design:init': {
+    label: 'Design Init',
+    description: 'Attended setup of design context files',
+    icon: '🧭',
     section: 'background'
   },
   grill: {

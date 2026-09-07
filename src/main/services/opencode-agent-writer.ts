@@ -102,10 +102,11 @@ export class OpenCodeAgentWriter {
 
     // ENH-2: Build per-agent permission block matching our plan/build mode
     // GAP-18: task: allow in build mode enables subagent spawning
+    // D1b: OpenCode 1.18 matches lowercase tool names — emit both casings.
     const permissionBlock =
       opts.mode === 'build'
-        ? 'permission:\n  Write: allow\n  Edit: allow\n  Bash: allow\n  task: allow'
-        : 'permission:\n  Write: ask\n  Edit: ask\n  Bash: ask\n  task: deny'
+        ? 'permission:\n  Write: allow\n  Edit: allow\n  Bash: allow\n  task: allow\n  write: allow\n  edit: allow\n  bash: allow'
+        : 'permission:\n  Write: ask\n  Edit: ask\n  Bash: ask\n  task: deny\n  write: ask\n  edit: ask\n  bash: ask'
 
     // F-1/F-2/F-3: Provider-specific frontmatter options
     const providerOptions = this.buildProviderOptions(opts.provider.providerId, opts.mode)
@@ -179,10 +180,11 @@ position. They are NOT duplicated here to avoid token waste.
 
     // ENH-2: Per-agent permission block
     // GAP-18: task: allow in build mode enables subagent spawning
+    // D1b: OpenCode 1.18 matches lowercase tool names — emit both casings.
     const permissionBlock =
       opts.mode === 'build'
-        ? 'permission:\n  Write: allow\n  Edit: allow\n  Bash: allow\n  task: allow'
-        : 'permission:\n  Write: ask\n  Edit: ask\n  Bash: ask\n  task: deny'
+        ? 'permission:\n  Write: allow\n  Edit: allow\n  Bash: allow\n  task: allow\n  write: allow\n  edit: allow\n  bash: allow'
+        : 'permission:\n  Write: ask\n  Edit: ask\n  Bash: ask\n  task: deny\n  write: ask\n  edit: ask\n  bash: ask'
 
     const content = `---
 name: ${name}

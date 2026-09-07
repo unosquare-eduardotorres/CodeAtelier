@@ -9,7 +9,8 @@ import type {
   AuditorStatus,
   AuditFinding,
   AuditCoverageStats,
-  AuditSelectedSkills
+  AuditSelectedSkills,
+  AuditRunKind
 } from '../../../shared/types'
 
 // ── Row shapes (snake_case from DB) ──
@@ -23,6 +24,8 @@ interface AuditRunRow {
   selected_tracks: string // JSON
   detected_techs: string // JSON
   selected_skills: string | null // JSON (per-track skill ids)
+  /** 'code' (Workspace Health) | 'design' (Impeccable). Migration 160. */
+  kind: string
   created_at: string
   updated_at: string
 }
@@ -55,6 +58,9 @@ function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
     selectedTracks: safeParseJSON<AuditTrackId[]>(row.selected_tracks, []),
     detectedTechs: safeParseJSON<string[]>(row.detected_techs, []),
     selectedSkills: safeParseJSON<AuditSelectedSkills>(row.selected_skills, {}),
+    // Rows written before migration 160 have no value only if the column was
+    // somehow bypassed; the NOT NULL DEFAULT makes 'code' the honest fallback.
+    kind: (row.kind as AuditRunKind) ?? 'code',
     results,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -97,22 +103,29 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
     mode: AuditMode,
     selectedTracks: AuditTrackId[],
     detectedTechs: string[],
-    selectedSkills: AuditSelectedSkills = {}
+    selectedSkills: AuditSelectedSkills = {},
+    kind: AuditRunKind = 'code'
   ): AuditRun {
     const db = this.db()
 
     // Keep only the 10 most recent runs (delete oldest beyond limit)
     // CASCADE delete on audit_runs removes child audit_results automatically
+    //
+    // Retention is per-kind: code and design runs each keep their own 10.
+    // Without the kind filter a burst of design runs would silently evict a
+    // user's Workspace Health history (and vice versa), since both populations
+    // share this table.
     db.prepare(
-      `DELETE FROM audit_runs WHERE workspace_id = ? AND id NOT IN (
-        SELECT id FROM audit_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 9
+      `DELETE FROM audit_runs WHERE workspace_id = ? AND kind = ? AND id NOT IN (
+        SELECT id FROM audit_runs WHERE workspace_id = ? AND kind = ?
+        ORDER BY created_at DESC LIMIT 9
       )`
-    ).run(workspaceId, workspaceId)
+    ).run(workspaceId, kind, workspaceId, kind)
 
     const row = db
       .prepare(
-        `INSERT INTO audit_runs (workspace_id, mode, status, selected_tracks, detected_techs, selected_skills)
-         VALUES (?, ?, 'pending', ?, ?, ?)
+        `INSERT INTO audit_runs (workspace_id, mode, status, selected_tracks, detected_techs, selected_skills, kind)
+         VALUES (?, ?, 'pending', ?, ?, ?, ?)
          RETURNING *`
       )
       .get(
@@ -120,7 +133,8 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
         mode,
         JSON.stringify(selectedTracks),
         JSON.stringify(detectedTechs),
-        JSON.stringify(selectedSkills)
+        JSON.stringify(selectedSkills),
+        kind
       ) as AuditRunRow
 
     return mapRunRow(row)
@@ -243,12 +257,24 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
     return mapRunRow(row, resultRows.map(mapResultRow))
   }
 
-  /** Get the N most recent runs for a workspace, each joined with results. */
-  getHistoryForWorkspace(workspaceId: string, limit: number = 10): AuditRun[] {
+  /**
+   * Get the N most recent runs for a workspace, each joined with results.
+   *
+   * Scoped to one `kind`; defaults to 'code' so every existing Workspace Health
+   * caller keeps its exact previous behaviour.
+   */
+  getHistoryForWorkspace(
+    workspaceId: string,
+    limit: number = 10,
+    kind: AuditRunKind = 'code'
+  ): AuditRun[] {
     const db = this.db()
     const runRows = db
-      .prepare('SELECT * FROM audit_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?')
-      .all(workspaceId, limit) as AuditRunRow[]
+      .prepare(
+        `SELECT * FROM audit_runs WHERE workspace_id = ? AND kind = ?
+         ORDER BY created_at DESC LIMIT ?`
+      )
+      .all(workspaceId, kind, limit) as AuditRunRow[]
 
     return runRows.map((row) => {
       const resultRows = db
@@ -278,11 +304,14 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
   }
 
   /** Get the latest run for a workspace, joined with its results. */
-  getLatestForWorkspace(workspaceId: string): AuditRun | null {
+  getLatestForWorkspace(workspaceId: string, kind: AuditRunKind = 'code'): AuditRun | null {
     const db = this.db()
     const runRow = db
-      .prepare('SELECT * FROM audit_runs WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1')
-      .get(workspaceId) as AuditRunRow | undefined
+      .prepare(
+        `SELECT * FROM audit_runs WHERE workspace_id = ? AND kind = ?
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(workspaceId, kind) as AuditRunRow | undefined
 
     if (!runRow) return null
 

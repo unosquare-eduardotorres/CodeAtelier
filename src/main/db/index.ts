@@ -26,7 +26,7 @@ let db: Database.Database | null = null
 // Only migrations with version > current user_version are executed.
 // Failed migrations throw (surfacing real errors) instead of being silently swallowed.
 
-export const CURRENT_SCHEMA_VERSION = 159
+export const CURRENT_SCHEMA_VERSION = 160
 
 export interface Migration {
   version: number
@@ -1961,6 +1961,9 @@ export const migrations: Migration[] = [
           overall_score INTEGER,
           selected_tracks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(selected_tracks)),
           detected_techs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(detected_techs)),
+          -- Discriminates Workspace Health runs from Impeccable design runs
+          -- (migration 160). Kept in sync with that migration's ALTER.
+          kind TEXT NOT NULL DEFAULT 'code' CHECK (kind IN ('code', 'design')),
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -4921,6 +4924,44 @@ export const migrations: Migration[] = [
       )
 
       dbLogger.info('[migration-159] ✓ Added memory_cleanup_runs (undo log for the memory sweep)')
+    }
+  },
+  {
+    version: 160,
+    name: 'audit-runs-kind-discriminator',
+    up: (db) => {
+      // The design audit reuses audit storage rather than duplicating four
+      // tables plus their retention and handoff machinery. `kind` is what keeps
+      // the two populations apart: Workspace Health reads `kind = 'code'`, the
+      // design page reads `kind = 'design'`.
+      //
+      // DEFAULT 'code' is what makes this safe for existing data — every row
+      // written before this migration was a code audit, so the backfill is
+      // exact rather than a guess, and every existing query keeps returning
+      // what it returned before once the explicit filter is added.
+      //
+      // Guarded by table_info: on a FRESH database schema.sql has already
+      // created the column, and a bare ALTER would fail with 'duplicate column
+      // name' and roll this migration's transaction back.
+      const columns = db.prepare(`PRAGMA table_info(audit_runs)`).all() as {
+        name: string
+      }[]
+      if (!columns.some((c) => c.name === 'kind')) {
+        db.exec(
+          `ALTER TABLE audit_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'code'
+             CHECK (kind IN ('code', 'design'))`
+        )
+      }
+
+      // Every read path is scoped by workspace AND kind, so the composite index
+      // is what the planner actually wants; the older workspace-only index
+      // stays for queries that do not discriminate.
+      db.exec(
+        `CREATE INDEX IF NOT EXISTS idx_audit_runs_workspace_kind
+           ON audit_runs(workspace_id, kind, created_at DESC)`
+      )
+
+      dbLogger.info("[migration-160] ✓ audit_runs.kind ('code' | 'design') + composite index")
     }
   }
 ]

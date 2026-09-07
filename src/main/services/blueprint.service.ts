@@ -1118,6 +1118,14 @@ export class BlueprintService extends EventEmitter {
       // M7.4 — optional layer: resolves to an off-binding when no model is
       // bound; the snapshot records the deliberate state either way.
       codeReview: resolveAssignment({ action: 'blueprint:code-review', ...resolveOpts }),
+      // Added 2026-09-07. These two were the only phases that actually RUN but
+      // were never frozen, so they resolved live while every other phase was
+      // pinned — and their provider fell back to the workspace default while
+      // their model came from the `build` entry, which sent escalation rungs to
+      // the Claude CLI with a GLM model id. Freezing them makes the ladder
+      // reproducible on the same terms as the phases it escalates from.
+      leadReview: resolveAssignment({ action: 'blueprint:lead-review', ...resolveOpts }),
+      peerReview: resolveAssignment({ action: 'blueprint:peer-review', ...resolveOpts }),
       verify: resolveAssignment({ action: 'blueprint:verify', ...resolveOpts }),
       snapshotAt: new Date().toISOString()
     }

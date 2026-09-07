@@ -153,6 +153,22 @@ export type BlueprintTelemetryKind =
    * dispatch on one".
    */
   | 'prerequisite'
+  /**
+   * D3b — one row per scheduler settle of a task at/beyond
+   * TASK_DISPATCH_ATTEMPT_CEILING (never dispatched, counted toward
+   * completion). The absolute backstop against unbounded dispatch loops: any
+   * future reset-path bug re-opens one, and this row is the after-the-fact
+   * evidence it fired.
+   */
+  | 'attempt_ceiling'
+  /**
+   * D4 — one row per protocol-miss budget exhaustion on a task: the provider
+   * produced N consecutive turn outcomes with neither a completion block nor
+   * any write activity, so recovery nudging stopped and the rung failed
+   * `infra`/non-retryable. Separates "budget exhausted" (provider cannot
+   * follow the protocol at all) from ordinary per-turn misses.
+   */
+  | 'protocol_miss_budget'
 
 export interface BlueprintTelemetryRow {
   id: string

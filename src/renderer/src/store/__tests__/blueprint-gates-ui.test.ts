@@ -219,6 +219,7 @@ describe('gate reasons are humanised for display', () => {
       'timeout',
       'command_error',
       'command_missing',
+      'import_env',
       'no_tests',
       'vacuous_test',
       'preexisting_failure',

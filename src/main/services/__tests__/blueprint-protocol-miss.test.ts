@@ -21,6 +21,8 @@ import { test, describe, summaryAsync } from './test-harness'
 import {
   BlueprintBuildService,
   isProtocolMissRung,
+  PROTOCOL_MISS_BUDGET,
+  PROTOCOL_MISS_BUDGET_FAILURE_REASON,
   shouldPassProtocolMissAsUnproven
 } from '../blueprint-build.service'
 import { BlueprintService } from '../blueprint.service'
@@ -251,6 +253,62 @@ describe('isRetryableError — protocol-miss wording', () => {
     assert.doesNotMatch(reason, /parse.*fail/i)
     assert.doesNotMatch(reason, /Cannot retry/i)
     assert.doesNotMatch(reason, /not found/i)
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// D4 — consecutive protocol-miss budget
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('D4 — protocol-miss budget', () => {
+  test('budget is 3 (three consecutive misses exhaust it)', () => {
+    assert.equal(PROTOCOL_MISS_BUDGET, 3)
+  })
+
+  test('the budget failure reason is NON-retryable (scheduleAutoRetry refuses)', () => {
+    assert.equal(
+      BlueprintService.isRetryableErrorStatic(PROTOCOL_MISS_BUDGET_FAILURE_REASON),
+      false,
+      'the budget-exhaustion wording must not fund an auto retry'
+    )
+  })
+
+  test('the budget failure reason does NOT match the retryable /protocol miss/i pattern', () => {
+    // Hyphenated "protocol-miss" deliberately — the retryable pattern matches
+    // "protocol miss" (space), so this exhaustion wording stays non-retryable.
+    assert.doesNotMatch(PROTOCOL_MISS_BUDGET_FAILURE_REASON, /protocol miss/i)
+    assert.match(PROTOCOL_MISS_BUDGET_FAILURE_REASON, /budget/i)
+  })
+
+  test('a success rung resets the streak (a stochastic model is never budgeted out)', () => {
+    // miss, miss, success ⇒ streak 0 — the fold in recordRungEvidence resets
+    // on any rung that is NOT the isProtocolMissRung signature.
+    const outcomes = [
+      isProtocolMissRung({
+        success: false,
+        failureReason: 'verification failed — no completion block (protocol miss)',
+        writesBefore: 0,
+        writesAfter: 0
+      }),
+      isProtocolMissRung({
+        success: false,
+        failureReason: 'verification failed — no completion block (protocol miss)',
+        writesBefore: 0,
+        writesAfter: 0
+      }),
+      isProtocolMissRung({ success: true, writesBefore: 0, writesAfter: 4 })
+    ]
+    let streak = 0
+    for (const miss of outcomes) streak = miss ? streak + 1 : 0
+    assert.equal(streak, 0, 'a success between misses resets the counter')
+  })
+
+  test('three consecutive misses reach the budget (fold simulation)', () => {
+    const misses = [true, true, true]
+    let streak = 0
+    for (const miss of misses) streak = miss ? streak + 1 : 0
+    assert.ok(streak >= PROTOCOL_MISS_BUDGET, 'three misses exhaust the budget')
+    assert.ok(streak >= PROTOCOL_MISS_BUDGET)
   })
 })
 

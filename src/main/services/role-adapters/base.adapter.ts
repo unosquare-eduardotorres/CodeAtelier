@@ -356,6 +356,25 @@ export abstract class BaseRoleAdapter implements AgentRoleAdapter {
   }
 
   /**
+   * The `ModelAction` this adapter actually routes on, when it is not the one
+   * `resolveModelAction(role, isBuildMode)` derives from the role.
+   *
+   * WHY THIS EXISTS: `provider` and `model` used to be resolved from two
+   * different actions — provider from the adapter's own action (via
+   * `getLlmProvider()`), model from the role-derived one — so any adapter whose
+   * action does not match its role read the two out of DIFFERENT model-routing
+   * entries. Four blueprint adapters share `role: 'blueprint-review'`, and the
+   * escalation ladder runs a BUILD adapter under `blueprint:lead-review`, so the
+   * divergence sent an escalation rung to the Claude CLI carrying a GLM model id.
+   *
+   * Returning `undefined` (the default) means "my role derives my action" — which
+   * is true for every non-blueprint adapter.
+   */
+  getUsageModelAction(): ModelAction | undefined {
+    return undefined
+  }
+
+  /**
    * Pattern 3: Extend interaction timeout for local LLM providers.
    * Local models are much slower but still productive.
    */

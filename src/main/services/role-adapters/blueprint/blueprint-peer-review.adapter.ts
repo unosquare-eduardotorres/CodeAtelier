@@ -30,6 +30,12 @@ export class BlueprintPeerReviewAdapter extends BlueprintBaseAdapter {
   constructor(params: {
     workspaceId: string
     blueprintId: string
+    /**
+     * The task under review. Required, not optional: peer review is always
+     * per-task, and omitting it left every peer-review usage row with a NULL
+     * `task_id`, so per-task review spend could not be attributed at all.
+     */
+    taskId: string
     phaseContext: PhaseContext
     /** Task-scoped diff (baseline..HEAD, write-set filtered). */
     diff: string
@@ -37,7 +43,11 @@ export class BlueprintPeerReviewAdapter extends BlueprintBaseAdapter {
     packet: BlueprintWorkPacket | null
     taskDescription: string
   }) {
-    super({ workspaceId: params.workspaceId, blueprintId: params.blueprintId })
+    super({
+      workspaceId: params.workspaceId,
+      blueprintId: params.blueprintId,
+      taskId: params.taskId
+    })
     this.phaseContext = params.phaseContext
     this.diff = params.diff
     this.packet = params.packet

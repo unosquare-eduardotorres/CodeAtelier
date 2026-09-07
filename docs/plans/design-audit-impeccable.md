@@ -30,13 +30,13 @@ Integration model is **reference, not copy**: `impeccable` is an exact-pinned pr
 | Q8 | Model settings | New `design` ModelRoleGroup, 3 rows: **Evaluate** (`design:audit`), **Route** (`design:route`, haiku-class default), **Init** (`design:init`). |
 | Q9 | Findings file | Written to `<workspace>/.impeccable/critique/YYYY-MM-DD-<commands>-<scope-slug>.md` (Impeccable's tracked-artifact convention — future `/impeccable` sessions discover it) + full result persisted in DB as source of truth (report regenerable). |
 | Q10 | Execution engine | New `DesignAgentService` mirroring `AuditAgentService` (multi-round, coverage-gated `AgentSessionService` sessions); per-command Impeccable guidance as a prompt layer; detector runs for `audit` AND `critique` (Impeccable merges detector output into both) and its findings are deduped in. |
+| Q12 | Skill provisioning | Impeccable's skill markdown is **not in the npm tarball** — it is materialised by the engine's `install` subcommand. We run that once into an **app-managed directory under `userData`** (`userData/impeccable-skill/`) and read from there. *Alternative rejected: installing into the user's workspace `.claude/skills/` — mutates their repo and dirties their git status without consent.* |
 | Q11 | Move to Blueprint | ONE blueprint: description = prefabricated design-remediation brief (goal + command routing table + selected findings inline, severity-ordered); report attached as reference doc via **copy-on-attach** (durable against repo edits mid-pipeline; workspace-file no-copy is the rejected alternative); `settingsJson` = `{ source: 'design', sourceDesignRunId, commandIds, scope, reportPath }`. Mirrors `AUDIT_HANDOFF_TO_BLUEPRINT`. Design-sourced blueprints get skill injection into BUILD. |
 
 ## Resolved at implementation time (re-verify, do not trust memory)
 
 - `CURRENT_SCHEMA_VERSION` in `src/main/db/index.ts` — memory values (85/94/100/120/147/157) are all stale records from different eras. Read it; the migration number for this feature is `CURRENT + 1`.
 - Test runners: `src/main/services/__tests__/run-tests.ts` (unit) and `src/main/db/repositories/__tests__/run-tests.ts` (repo) are the executed entrypoints; `src/main/__tests__/run-all.ts` is the coverage aggregator with known drift. Register new tests in **both** run-tests.ts AND run-all.ts.
-- Impeccable tarball layout (exact SKILL.md path, engine binary location, platform optional deps) — inspect `node_modules/impeccable` after install; candidates: `skill/SKILL.md`, `dist/universal/impeccable/SKILL.md`.
 - Detector `--json` output schema (field names, severity level names) — undocumented in full; capture real output once and pin the mapper to it.
 - Actual model IDs available in `AVAILABLE_MODELS` (memory disagrees: opus-4-7 vs opus-4-8, sonnet-4-6 vs sonnet-5) — use whatever the `audit` role defaults to as the Evaluate default.
 
@@ -50,7 +50,7 @@ Integration model is **reference, not copy**: `impeccable` is an exact-pinned pr
 - **Agent sessions**: `runAgenticClaude()` (`agentic-claude-runner.ts`) — `-p`, `--mcp-config`, `--allowedTools`, `--model`, `--max-turns`; **no `--skills` flag exists** — skill content must ride in the prompt.
 - **Model config**: `ModelAction` union (`src/shared/types.ts:665`), `DEFAULT_MODEL_CONFIG` + `MODEL_ROLE_ROWS` + `MODEL_ROLE_GROUP_LABELS` (`src/shared/constants.ts:1025/1075/1206`), resolution via `resolveAssignment` (roles → overrides → defaults), optional-role off-binding (`OPTIONAL_MODEL_ROLE_ACTIONS`), UI `ModelRolesSection.tsx` (group sections via `rolesInGroup(group)`).
 - **Page wiring**: `HealthPage.tsx` views `landing|configure|active|plan`; tab render in `WorkspaceSettingsContent.tsx:130+`; zustand precedent `audit.store.ts`; handoff hook `health/useAuditHandoff.ts`.
-- **Packaging**: prod deps survive `npm prune --omit=dev` (`scripts/build-mac.sh:119+`); `scripts/afterPack.js` prunes "non-essential assets" from copied node_modules (keeps `.js/.mjs/.cjs/.ts/.json`) — **must whitelist the impeccable payload**; `OnlyLoadAppFromAsar: false`.
+- **Packaging**: prod deps survive `npm prune --omit=dev` (`scripts/build-mac.sh:119+`); **`build/afterPack.js`** (registered at `electron-builder.yml:12`) prunes "non-essential assets" from copied node_modules (keeps `.js/.mjs/.cjs/.ts/.json`) — the impeccable payload is now explicitly whitelisted; `OnlyLoadAppFromAsar: false`.
 - **Detector contract**: `impeccable detect --json <target>` — exit `0` clean / `2` findings / `1` failure; JSON on stdout, human output on stderr; honors `.impeccable/config.json` + inline `impeccable-disable` waivers; web files only (html/css/jsx/tsx/vue/svelte/astro/css-modules + configured template extensions); design-system checks unlock only when DESIGN.md exists; `--scope type|layout` domain narrowing available.
 
 ## Architecture
@@ -91,28 +91,73 @@ flowchart TD
 
 ---
 
-## P1 — Foundation: dependency, runtime resolver, packaging
+## P1 — Foundation: dependency, runtime resolver, provisioning, packaging
 
-- [ ] **P1.1** `package.json`: add `"impeccable": "3.6.1"` to **dependencies** (exact pin, like `better-sqlite3`). `npm install`; inspect tarball layout and record the real SKILL.md path + engine binary location in this file (see "Resolved at implementation time").
-- [ ] **P1.2** NEW `src/main/services/impeccable-runtime.service.ts`:
-  - `resolvePackageRoot()` — dev: `process.cwd()/node_modules/impeccable`; packaged: `join(app.getAppPath(), 'node_modules', 'impeccable')` (mirror the dev/packaged split at `skill-prompt-composer.ts:313`).
-  - `resolveSkillMarkdown()` — locate SKILL.md from P1.1 findings; mtime-cached read (composer pattern); returns `{ path, content }` or `null`.
-  - `resolveDetectorCommand()` — prefer platform engine binary from the package / `node_modules/.bin/impeccable`; **never `npx` in the packaged app** (no Node PATH guarantee); dev-only npx fallback allowed.
-  - `checkAvailability()` — `runProbeAsync` pattern (version probe, 5s budget, cached result, never throws) → `{ available, reason? }`.
-- [ ] **P1.3** `scripts/afterPack.js`: whitelist `node_modules/impeccable/**` markdown + engine binaries against asset pruning; verify `build-mac.sh` handles the platform-specific optional dep (mirror better-sqlite3 prebuilt platform-strip logic if the engine ships per-platform prebuilts).
-- [ ] **P1.4** NEW `src/main/services/__tests__/impeccable-runtime.test.ts` — path resolution (dev/packaged), silent `null` when package missing, availability caching. Register in run-tests.ts + run-all.ts.
-- **Verify**: unit tests green; `npm run build && scripts/build-mac.sh`, mount DMG, confirm `node_modules/impeccable` payload intact. **This is a hard gate before P3.**
+> **Status: `[C]` coded, unit-verified. ⚠️ The packaging/DMG gate is DEFERRED, not passed.**
+>
+> **Deferred gate (must run before P3 — P3 is the detector work that actually spawns the engine in a shipped app):**
+> `scripts/build-mac.sh` → `codesign --verify --deep --strict` → mount the DMG → confirm
+> `Contents/Resources/app/node_modules/@impeccable/cli-darwin-arm64/bin/impeccable` is present, executable, and runs `--version` → launch the packaged app and repeat the dev smoke to prove `app.getAppPath()` resolution works in production.
+> Deferred because the script runs `npm prune --omit=dev` against the shared tree and relies on an EXIT trap to restore it; a SIGKILL (or a backgrounded/timed-out invocation) skips the trap and leaves `node_modules` stripped. Recovery is `rm -rf node_modules && npm install --include=dev`.
+> **P2 does not depend on this gate** — it is shared types, catalog, migration, model roles and an IPC skeleton, none of which touch the engine binary.
+
+### Ground truth captured during implementation (supersedes earlier guesses)
+
+| Topic | Verified fact (engine v0.1.3 / npm 4.0.4, 2026-09-07) |
+|---|---|
+| Version | Latest npm is **`4.0.4`** (published 2026-09-06), not 3.6.1. Pinned exactly. |
+| afterPack hook | Lives at **`build/afterPack.js`** (`electron-builder.yml:12`). `scripts/` has no afterPack. |
+| Tarball contents | **No skill markdown at all.** 6 files: `cli/bin/cli.js` (4.3 KB launcher shim), `package.json`, `LICENSE`, `README*.md` × 3. |
+| Real engine | Self-contained **12.7 MB Mach-O** in an `os`/`cpu`-gated optional dep: `@impeccable/cli-darwin-arm64@0.1.3` → `bin/impeccable`. **No Node required** — so we spawn it directly and sidestep the `RunAsNode: false` fuse. |
+| Platform packages | `@impeccable/cli-{darwin,linux,windows}-{arm64,x64}` — note the OS token is **`windows`**, not node's `win32`; exe is `impeccable.exe` there. |
+| Resolution tiers | Upstream order (`cli/bin/cli.js`): `$IMPECCABLE_BIN` → optional dep → **`$IMPECCABLE_HOME`/`~/.impeccable`/bin/**`<engineVersion>`**/** (version-partitioned, not flat) → download. |
+| Three version numbers | npm pkg `4.0.4` · engine binary `0.1.3` (the optionalDependency range; its `--version` prints `4.0.0`) · skill content `4.2.2` (SKILL.md frontmatter). Do not conflate. |
+| `install` flags | `-y`, `--providers=`, `--scope=project|global`, `--no-hooks`, `--force`. Fully non-interactive with `-y`; exits 0. |
+| **`--scope=project` containment** | **Walks UP to the nearest `.git` and installs into that repo root — it ignores cwd.** Verified: running from `<repo>/nested/deep` wrote `<repo>/.claude`. Setting `cwd` is NOT containment. An empty `.git` dir planted at the provision root stops the walk. (This bit us: an early test run wrote into this repo.) |
+| Install payload | `.claude/skills/impeccable/SKILL.md` (11.7 KB) + `reference/*.md` × 35 per-command playbooks (`audit` 7.9 KB, `critique` 42.7 KB — budget before injecting) + `scripts/command-metadata.json` (command catalog, useful for P2.1) + `scripts/` launchers + a duplicate 12 MB engine under `scripts/bin/<target>/`. Also `.claude/agents/impeccable-*.md` × 4. ~14 MB total. |
+| Payload source | `install` **downloads** the skill payload — first provisioning needs network; offline → degrade path. |
+| Prune survival | `@impeccable/*` survives `npm prune --omit=dev` (optional dep of a prod dep). Confirmed via dry-run. |
+
+> ⚠️ **Environment trap:** this shell has `NODE_ENV=production`, which makes npm default to `omit=dev` — a bare `npm install <pkg>` silently removed all 828 dev packages. Always run `NODE_ENV=development npm install --include=dev` here.
+
+- [C] **P1.1** `package.json`: `"impeccable": "4.0.4"` in **dependencies** (exact pin, like `better-sqlite3`). Installed layout verified: `node_modules/impeccable/cli/bin/cli.js`, `node_modules/@impeccable/cli-darwin-arm64/bin/impeccable` (12.7 MB, mode 755), `.bin/impeccable` + `.bin/impeccable-darwin-arm64`.
+- [C] **P1.2** NEW `src/main/services/impeccable-runtime.service.ts` — sole owner of engine-path knowledge:
+  - `resolvePlatformTarget()` — platform → `{ target, packageName, exeName }`, replicating the upstream mapping.
+  - `resolveEngineBinary()` — 4-tier resolution above, `X_OK`-checked, memoised, returns the bare name as a PATH fallback; **never `npx`** (no Node guarantee in the packaged app).
+  - `checkAvailability()` — `--version` probe, 5 s budget, memoised, shared in-flight promise, never throws.
+  - `runEngine(args, opts)` — the only spawn point; 32 MB `maxBuffer` for `detect --json`; a non-zero exit is reported as a `code`, not an error (the detector uses exit 2 for "findings").
+- [C] **P1.3** NEW `src/main/services/impeccable-provision.service.ts` — lazy, app-managed skill provisioning under `userData/impeccable-skill/`, stamp fast-path (`.provision-stamp.json`), single in-flight install, `.git` containment marker, mtime-cached `readSkillMarkdown()` / `readCommandMarkdown(id)` (the seam P3.2 injects into prompts), sync `getProvisionState()`.
+- [C] **P1.4** `build/afterPack.js`: `PROTECTED_PATH_PATTERNS` short-circuits `prune()` for `node_modules/@impeccable/**` and `node_modules/impeccable/**`; post-copy **hard assertion** throws if `impeccable` is a prod dep but no `@impeccable/cli-*` engine is present/executable; the `strip -x` pass is documented as `.node`-only so the vendor Mach-O is never touched.
+- [C] **P1.5** NEW `impeccable-runtime.test.ts` + `impeccable-provision.test.ts` (33 tests), registered in **both** `run-tests.ts` and `run-all.ts`.
+  - Async bodies are wrapped in `runExclusive()` because they swap `process.env.IMPECCABLE_BIN`, and the harness starts every async test concurrently.
+  - **No test may call `process.chdir()` or reassign `process.env.PATH`.** `runExclusive` only serialises against *other* `runExclusive` users, so a global mutation still corrupts the rest of the 271-file suite. The bundled-dependency tier is instead redirected with the `__setAppRootForTests()` seam, and the "engine unavailable" branch is driven by an engine whose `--version` exits non-zero rather than by emptying PATH.
+- [C] **P1.6** (unplanned, root-cause fix) `src/main/services/__tests__/workspace-mcp-config-logic.test.ts` replaced the whole `require.cache` entry for `src/main/logger` with `{ chatAgentLogger }` and never restored it. Because it is registered at position 227 and never undone, **every** file loaded after it saw `skillLogger`/`dbLogger`/etc. as `undefined` — which is what actually made all 27 Impeccable tests fail in the aggregate run while passing standalone (`TypeError: Cannot read properties of undefined (reading 'info')`). The stub now spreads the real exports and overrides only `chatAgentLogger`. Two other test files (`memory-engine-pipeline-p26`, `memory-extract-body-p26`) carry comments describing this same "module-level `log` undefined" symptom, so this landmine had already cost time elsewhere. Both Impeccable services additionally route logging through an optional-call shim, since they promise never to throw.
+- **Verify**: [V] `npm run typecheck` clean · [V] 33/33 Impeccable unit tests green **in the full 271-file `npm run test:unit` run** (12 909 passed / 5 failed; all 5 failures belong to unrelated pre-existing uncommitted WIP — `opencode-token-backstop`, `specialist-ingestion-gate`, `blueprint-session-resume`, `blueprint-preflight` login-shell env — and none are Impeccable) · [V] eslint clean · [V] dev smoke against the real engine (`available: true`, version `4.0.0`, SKILL.md 11 661 chars, `reference/{audit,critique,polish,harden}.md` all read, repo `git status` byte-identical before/after) · [ ] **DMG gate outstanding**: `scripts/build-mac.sh` incl. `codesign --verify --deep --strict`, then mount and confirm the engine is present + executable and `--version` runs from `Contents/Resources/app/node_modules/@impeccable/cli-darwin-arm64/bin/impeccable`. **Hard gate before P3.**
 
 ## P2 — Shared catalog, types, migration, model roles, IPC skeleton
 
-- [ ] **P2.1** `src/shared/constants.ts`: `DESIGN_COMMANDS: readonly DesignCommandDef[]` — 16 entries: evaluate (`audit`, `critique`) + refine (`polish`, `harden`, `optimize`, `distill`, `animate`, `typeset`, `layout`, `bolder`, `quieter`, `colorize`, `delight`, `adapt`, `clarify`, `onboard`). Each: `{ id, name, category: 'evaluate'|'refine'|'simplify'|'harden', description, impeccableCommand, incompatibleWith: DesignCommandId[] }`. Matrix per Impeccable's own philosophy: `bolder`↔`quieter` (two halves of voice, never neutral); `distill` vs additive (`animate`, `colorize`, `delight`, `bolder`); evaluate combines freely with everything. Plus `IMPECCABLE_DESIGN_EXTENSIONS` (html, css, jsx, tsx, vue, svelte, astro, mjs + css-module patterns) and `DESIGN_BRIEF_EXAMPLES` (chips: "I want to animate this user page", "Audit the current UX", "This page feels generic / AI-made", …).
-- [ ] **P2.2** NEW pure helper (same file or `src/shared/design-commands.ts`): `validateDesignCommandSet(ids): { valid: boolean; conflicts: [a, b][] }` + `evaluateCommandsSelected(ids)`.
-- [ ] **P2.3** `src/shared/types.ts`: `DesignCommandId` (union), `DesignRunConfig { commandIds, scope, brief, llmProvider? }`, `DesignContextStatus { productMd: boolean; designMd: boolean; stale: boolean }`; extend `ModelAction` with `'design:audit' | 'design:route' | 'design:init'`; extend `ModelRoleGroup` with `'design'`; `AuditFinding.source?: string` (`'impeccable-detector'` vs LLM).
-- [ ] **P2.4** `src/shared/constants.ts`: `DEFAULT_MODEL_CONFIG` += design actions (evaluate → same default as `audit` role; route/init → haiku/sonnet-class); `MODEL_ROLE_ROWS` += 3 design rows (Evaluate: actions `[design:audit]`; Route: `[design:route]`; Init: `[design:init]`); `MODEL_ROLE_GROUP_LABELS.design = 'Design'`; IPC channels `DESIGN_ROUTE`, `DESIGN_START`, `DESIGN_CANCEL`, `DESIGN_GET_LATEST`, `DESIGN_GET_HISTORY`, `DESIGN_DELETE_RUN`, `DESIGN_CONTEXT_STATUS`, `DESIGN_GENERATE_REPORT`, `DESIGN_HANDOFF_TO_BLUEPRINT` (namespace `design:*`).
-- [ ] **P2.5** Migration (next number after current `CURRENT_SCHEMA_VERSION`): `ALTER TABLE audit_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'code'` + index on `(workspace_id, kind)`. Sweep `AuditRepository` read paths to filter `kind = 'code'` (Health) — existing flows must be untouched.
-- [ ] **P2.6** NEW `src/main/ipc/design.ipc.ts` — skeleton with `requireObject/requireString` validation mirroring audit.ipc.ts; register in `src/main/ipc/index.ts` `registerAllIpcHandlers()` (currently 49 modules).
-- [ ] **P2.7** Tests: `validateDesignCommandSet` matrix cases (valid pairs, each conflict, empty set), catalog integrity (unique ids, symmetric incompatibility), migration round-trip in repo test runner. Register everywhere.
-- **Verify**: `npm run typecheck`; unit green; Health e2e still green (kind filter regression).
+> **Status: `[C]` coded, typecheck + unit + repo suites green.**
+>
+> **Deviations from the original P2 text, and why:**
+> 1. The catalogue lives in a NEW `src/shared/design-commands.ts`, not in `constants.ts` — `constants.ts` is already 3.3k lines, and P2.2 explicitly allowed a dedicated module. Types stayed in `types.ts` as specified.
+> 2. The catalogue is grounded in the engine's own `scripts/command-metadata.json` (23 commands) and the SKILL.md `argument-hint` families rather than invented. The plan's 16 map **exactly** onto Impeccable's own groupings: evaluate (audit, critique) · refine/amplify (animate, bolder, colorize, delight, layout, quieter, typeset) · simplify (adapt, clarify, distill) · harden (harden, onboard, optimize, polish).
+> 3. **`overdrive` is the one refine command the plan omitted** — it is a real, non-deprecated command ("technically ambitious implementations"). It is excluded for now and documented as such in `design-commands.ts`; adding it later is a one-entry change. The other 6 engine commands (`shape`, `init`, `document`, `extract`, `live`, deprecated `craft`) are excluded per Q3/Q4.
+> 4. Migration number is **160** (`CURRENT_SCHEMA_VERSION` was 159, not the stale 85/94/120 in memory).
+> 5. Retention is now **per-kind**. The original text only mentioned filtering read paths, but `createRun`'s 10-run prune was workspace-scoped — unfiltered, a burst of design runs would have silently evicted the user's Workspace Health history. A test pins this.
+> 6. `DESIGN_DELETE_RUN` verifies `kind === 'design'` before deleting, so the design page cannot delete a Health run by id.
+
+- [C] **P2.1** `src/shared/design-commands.ts` (not constants.ts — see deviation 1): `DESIGN_COMMANDS: readonly DesignCommandDef[]` — 16 entries: evaluate (`audit`, `critique`) + refine (`polish`, `harden`, `optimize`, `distill`, `animate`, `typeset`, `layout`, `bolder`, `quieter`, `colorize`, `delight`, `adapt`, `clarify`, `onboard`). Each: `{ id, name, category: 'evaluate'|'refine'|'simplify'|'harden', description, impeccableCommand, incompatibleWith: DesignCommandId[] }`. Matrix per Impeccable's own philosophy: `bolder`↔`quieter` (two halves of voice, never neutral); `distill` vs additive (`animate`, `colorize`, `delight`, `bolder`); evaluate combines freely with everything. Plus `IMPECCABLE_DESIGN_EXTENSIONS` (html, css, jsx, tsx, vue, svelte, astro, mjs + css-module patterns) and `DESIGN_BRIEF_EXAMPLES` (chips: "I want to animate this user page", "Audit the current UX", "This page feels generic / AI-made", …).
+- [C] **P2.2** Pure helpers in the same module: `validateDesignCommandSet(ids)` (conflicts normalised to catalogue order so a clash yields ONE badge, not two; unknown ids ignored so a stale id cannot mask a real conflict), `evaluateCommandsSelected(ids)`, `refineCommandsSelected(ids)`, `isDesignRelevantPath(p)`, `getDesignCommand(id)`.
+- [C] **P2.3** `src/shared/types.ts`: `DesignCommandId` (union), `DesignRunConfig { commandIds, scope, brief, llmProvider? }`, `DesignContextStatus { productMd: boolean; designMd: boolean; stale: boolean }`; extend `ModelAction` with `'design:audit' | 'design:route' | 'design:init'`; extend `ModelRoleGroup` with `'design'`; `AuditFinding.source?: string` (`'impeccable-detector'` vs LLM).
+- [C] **P2.4** `src/shared/constants.ts` — note `MODEL_ACTIONS_META` is a THIRD `Record<ModelAction, …>` the original text missed; all three must gain the new actions or typecheck fails. `DEFAULT_MODEL_CONFIG` += design actions (evaluate → same default as `audit` role; route/init → haiku/sonnet-class); `MODEL_ROLE_ROWS` += 3 design rows (Evaluate: actions `[design:audit]`; Route: `[design:route]`; Init: `[design:init]`); `MODEL_ROLE_GROUP_LABELS.design = 'Design'`; IPC channels `DESIGN_ROUTE`, `DESIGN_START`, `DESIGN_CANCEL`, `DESIGN_GET_LATEST`, `DESIGN_GET_HISTORY`, `DESIGN_DELETE_RUN`, `DESIGN_CONTEXT_STATUS`, `DESIGN_GENERATE_REPORT`, `DESIGN_HANDOFF_TO_BLUEPRINT` (namespace `design:*`).
+- [C] **P2.5** Migration **160**: `ALTER TABLE audit_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'code'` + index on `(workspace_id, kind)`. Sweep `AuditRepository` read paths to filter `kind = 'code'` (Health) — existing flows must be untouched.
+- [C] **P2.6** NEW `src/main/ipc/design.ipc.ts` — read paths (`GET_LATEST`/`GET_HISTORY`/`DELETE_RUN`) are fully functional and kind-scoped; execution channels validate eagerly and return a structured `{ ok: false, reason }` until P3 rather than throwing. `parseDesignRunConfig` re-enforces the incompatibility matrix in main, so an out-of-date renderer cannot start a contradictory run. — skeleton with `requireObject/requireString` validation mirroring audit.ipc.ts; register in `src/main/ipc/index.ts` `registerAllIpcHandlers()` (currently 49 modules).
+- [C] **P2.7** Tests: NEW `src/main/services/__tests__/design-commands.test.ts` (31 tests — catalogue integrity incl. symmetry of the matrix, every conflict pair, partitioning, extension helpers), registered in `run-tests.ts` + `run-all.ts`; `kind` round-trip, per-kind history/latest isolation and per-kind retention appended to the existing `audit.repository.test.ts` (already registered in the repo runner).
+- **Verify**: [V] `npm run typecheck` + eslint clean · [V] `npm run test:repo` **612 passed / 0 failed** · [V] `npm run test:unit` **12 938 passed / 7 failed**, and every design + impeccable suite executed and passed. Of the 7:
+  - **1 was a real regression from this phase and is fixed** — `model-roles-assignment.test.ts` asserted "covers all five groups"; adding the `design` group made it six. Renamed and updated. (Grepped for other group-count assumptions: none.)
+  - 3 are load-flakiness (`blueprint-preflight` ×2, `blueprint-build-deep-phase25`) — all pass standalone on an unloaded machine (42/42 and 53/53).
+  - 3 are pre-existing and unrelated (`infers_dotnet_and_csharp_from_cs_files`, `resume / rotation / flag-off / stale`, and a login-shell env probe), present in the baseline run before any of this work.
+- [ ] Health **e2e** regression not yet run — the `kind` filter is covered by repo-level tests (per-kind history, latest, and retention isolation), but the e2e pass is still outstanding.
 
 ## P3 — Execution engine
 
@@ -166,11 +211,14 @@ flowchart TD
 
 ## Implementation order
 
-P1 → P2 → P3 → P4 (P4.1 parallel with P4.2–P4.6) → P5 → P6 → P7. Each phase exits typecheck+unit green. P1.3/P1.4 packaging gate is a hard checkpoint before any P3 detector work.
+P1 → P2 → P3 → P4 (P4.1 parallel with P4.2–P4.6) → P5 → P6 → P7. Each phase exits typecheck+unit green. The **P1.4 packaging/DMG gate** is a hard checkpoint before any P3 detector work.
 
 ## Risks & mitigations
 
-- **afterPack strips skill/binary payload** → explicit whitelist (P1.3) + DMG verification gate.
+- **afterPack strips skill/binary payload** → explicit whitelist + hard build assertion (P1.4) + DMG verification gate.
+- **Codesign rejects the nested 12.7 MB vendor Mach-O** → the most likely P1 blocker. `build-mac.sh:242` gates on `codesign --verify --deep --strict`; electron-builder signs after `afterPack`, so it should be picked up. If not, sign it explicitly inside the hook with the same identity.
+- **`install` escapes to the enclosing git repo** → `.git` containment marker at the provision root; a test asserts nothing is written outside `userData`.
+- **DMG grows ~12.7 MB** (plus ~14 MB in `userData` after first provisioning, which includes a duplicate engine copy) → accepted.
 - **Detector JSON schema drift** (undocumented fields) → exact version pin, defensive parser, severity map validated against captured real output before the mapper is finalized.
 - **Upstream release cadence** (3.2→3.6 in days) → exact pin; upgrades deliberate; tarball-layout knowledge isolated in `impeccable-runtime.service.ts`.
 - **SKILL.md exceeds prompt budgets** → tiered trimming (composer pattern), per-command section filtering, hard cap; budgets are constants to tune.

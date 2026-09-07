@@ -74,8 +74,23 @@ module.exports = async function afterPack(context) {
     const CODE_EXTS = new Set(['.js', '.mjs', '.cjs', '.ts', '.d.ts', '.json'])
     const KEEP_IMAGES = new Set(['icon.png', 'icon.icns', 'background.png'])
 
+    // Packages whose payload must survive pruning untouched. The Impeccable
+    // engine is an extensionless ~12.7 MB Mach-O binary at
+    // @impeccable/cli-<os>-<arch>/bin/impeccable; it happens to match none of
+    // the rules above today, but that is incidental. Protect it explicitly so a
+    // future prune-rule change cannot silently ship a broken design audit.
+    const PROTECTED_PATH_PATTERNS = [
+      `${path.sep}node_modules${path.sep}@impeccable${path.sep}`,
+      `${path.sep}node_modules${path.sep}impeccable${path.sep}`
+    ]
+    function isProtected(dir) {
+      const probe = dir.endsWith(path.sep) ? dir : dir + path.sep
+      return PROTECTED_PATH_PATTERNS.some((p) => probe.includes(p))
+    }
+
     let removed = 0
     function prune(dir) {
+      if (isProtected(dir)) return
       try {
         const entries = fs.readdirSync(dir, { withFileTypes: true })
         for (const entry of entries) {
@@ -118,6 +133,59 @@ module.exports = async function afterPack(context) {
 
     const afterCount = countFiles(nmTarget)
     console.log(`[afterPack] node_modules: ${fileCount} → ${afterCount} files`)
+
+    // ── 1c. Assert the Impeccable engine payload shipped ──────────────────
+    // The design audit resolves this binary at runtime from app.getAppPath().
+    // If it is missing we would ship a feature that fails only on the user's
+    // machine — fail the build loudly instead.
+    let declaresImpeccable = false
+    try {
+      const rootPkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf-8'))
+      declaresImpeccable = Boolean(rootPkg.dependencies && rootPkg.dependencies.impeccable)
+    } catch {
+      /* no package.json is a separate, louder problem */
+    }
+
+    if (declaresImpeccable) {
+      const scopeDir = path.join(nmTarget, '@impeccable')
+      let engines = []
+      try {
+        engines = fs
+          .readdirSync(scopeDir, { withFileTypes: true })
+          .filter((e) => e.isDirectory() && e.name.startsWith('cli-'))
+          .map((e) => e.name)
+      } catch {
+        /* handled by the throw below */
+      }
+      if (engines.length === 0) {
+        throw new Error(
+          `[afterPack] impeccable is a production dependency but no @impeccable/cli-* engine ` +
+            `package was found at ${scopeDir}. The design audit would be broken in this build. ` +
+            `Run \`npm install\` (without --omit=optional) before packaging.`
+        )
+      }
+      for (const name of engines) {
+        const exe = name.includes('windows') ? 'impeccable.exe' : 'impeccable'
+        const binPath = path.join(scopeDir, name, 'bin', exe)
+        let st
+        try {
+          st = fs.statSync(binPath)
+        } catch {
+          throw new Error(`[afterPack] impeccable engine binary missing: ${binPath}`)
+        }
+        // cp -a / fs.cpSync preserve mode; verify rather than assume, since a
+        // non-executable engine fails at runtime with a confusing EACCES.
+        if (process.platform !== 'win32' && !(st.mode & 0o111)) {
+          throw new Error(
+            `[afterPack] impeccable engine binary is not executable: ${binPath} ` +
+              `(mode ${st.mode.toString(8)})`
+          )
+        }
+        console.log(
+          `[afterPack] impeccable engine OK: ${name} (${(st.size / 1024 / 1024).toFixed(1)} MB)`
+        )
+      }
+    }
   } else {
     console.warn('[afterPack] node_modules not found at project root — skipping copy')
   }
@@ -195,6 +263,10 @@ module.exports = async function afterPack(context) {
           const full = path.join(dir, entry.name)
           if (entry.isDirectory()) {
             stripDotNode(full)
+            // NOTE: this pass is deliberately `.node`-only. The Impeccable
+            // engine is a foreign vendor Mach-O with no extension, so it is
+            // never matched here — stripping a third-party signed binary risks
+            // corrupting it.
           } else if (entry.name.endsWith('.node')) {
             try {
               execSync(`strip -x "${full}"`, { stdio: 'pipe' })

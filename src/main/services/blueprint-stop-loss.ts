@@ -24,6 +24,18 @@ export const STOP_LOSS_REASON_RE = /stop-loss after \d+ identical gate failure/i
  */
 export const STOP_LOSS_EXCLUSION_ATTEMPT_CAP = 6
 
+/**
+ * D3b — hard dispatch ceiling: 2 × STOP_LOSS_EXCLUSION_ATTEMPT_CAP (≈ 4 full
+ * ladders). The retry exclusion and the requeue guard above close the KNOWN
+ * reset paths, but any future reset-path bug (a new status mutation, a missed
+ * guard) would re-open an unbounded dispatch loop — the blueprint-2b08bb6e
+ * incident ran 29 attempts on a task. A task at or beyond this ceiling is
+ * settled by BOTH schedulers' resume pre-passes: never dispatched, counted
+ * toward completion, one `attempt_ceiling` telemetry row. Monotonic `attempts`
+ * means nothing legitimate ever reaches it — a healthy task completes in 1–3.
+ */
+export const TASK_DISPATCH_ATTEMPT_CEILING = STOP_LOSS_EXCLUSION_ATTEMPT_CAP * 2
+
 /** Suffix format used at write time and parsed at read time. */
 export function formatStopLossCommandSuffix(command: string): string {
   // Gate commands are paren-free (`isSafeGateCommand` refuses them), so a

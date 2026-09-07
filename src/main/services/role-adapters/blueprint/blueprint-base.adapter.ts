@@ -156,6 +156,17 @@ export abstract class BlueprintBaseAdapter extends BaseRoleAdapter {
     return blueprintSnapshotAssignment(this.blueprintId, this.getModelAction())?.provider
   }
 
+  /**
+   * Blueprint phases route on their own declared action, not on one derived from
+   * `role` — four adapters share `role: 'blueprint-review'` and the escalation
+   * ladder runs this BUILD adapter under `blueprint:lead-review`. Exposing it is
+   * what keeps the model resolved from the SAME routing entry as the provider
+   * `getLlmProvider()` just read.
+   */
+  override getUsageModelAction(): ModelAction {
+    return this.getModelAction()
+  }
+
   /** Subclasses implement to build phase-specific prompts. */
   protected abstract buildPhaseSystemPrompt(): string
 

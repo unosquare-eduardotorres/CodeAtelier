@@ -1980,10 +1980,12 @@ Troubleshooting:
 
       // Check that our expected agents are present
       const agentNames = new Set(agents.map((a) => a.name))
-      // B-1: Include Grill and Audit subagents in expected list
-      // (names are lowercase — must match the agent files' `name:` frontmatter,
-      // which opencode resolves case-sensitively against default_agent/commands)
-      const expectedAgents = ['davinci', 'Grill', 'Audit']
+      // B-1 (D-cleanup): only `davinci` is guaranteed. The workspace agent
+      // writer (opencode-agent-writer.ts) writes exactly `davinci` + the
+      // dynamically-named specialist — never `Grill`/`Audit` — so expecting
+      // them here produced a false "Missing expected agents: Grill, Audit"
+      // warning on every worktree session (blueprint 2b08bb6e: ×29).
+      const expectedAgents = ['davinci']
       const missingExpected = expectedAgents.filter((name) => !agentNames.has(name))
       const reported = `directory ${probed} reported [${agents.map((a) => a.name).join(', ')}]`
 
@@ -2388,17 +2390,41 @@ Troubleshooting:
    * carried tokens. Best-effort: any failure (or no client) returns 0 and the
    * caller keeps whatever usage it already has.
    *
-   * Timestamp handling: opencode reports `created` as unix seconds (or ms /
-   * ISO string depending on version) — all three are parsed. A message with no
-   * parsable timestamp is counted (fail-open): under-counting a turn that ran
-   * is worse than occasionally including a boundary message.
+   * Message shape: `session.messages()` resolves to
+   * `Array<{ info: Message; parts: Part[] }>` — every token field lives on
+   * `info`, never on the array element. Reading them off the element made
+   * `info.role` undefined, so the loop skipped every message and this backstop
+   * silently counted 0 for the entire GLM/OpenCode path.
    *
-   * KNOWN GAP: this only accumulates totals — it records no per-call snapshot,
-   * so `contextWindowTokens` and `firstCallContextTokens` are never set on this
-   * path and `turn_usage.prefix_tokens` stays NULL for OpenCode turns. That is
-   * deliberate: the accumulated sum spans every round-trip of the agentic loop
-   * and would over-state a first-call prefix by ~10-30x. Fixing it means
-   * tracking per-message input+cache here and setting first/last snapshots.
+   * Timestamp handling: opencode reports `info.time.created` as unix seconds
+   * (or ms / ISO string depending on version) — all three are parsed. A message
+   * with no parsable timestamp is counted (fail-open): under-counting a turn
+   * that ran is worse than occasionally including a boundary message.
+   *
+   * `tokens.reasoning` is deliberately NOT folded into `output`: the live event
+   * path (`handleMessageUpdated`) records input/output/cache only, and provider
+   * SDKs report reasoning as a breakdown *of* output rather than in addition to
+   * it. Adding it here would both double-count and make the backstop disagree
+   * with the primary signal for the same turn.
+   *
+   * GAP CLOSED 2026-09-07 — `firstCallContextTokens` is now set, making Gate T
+   * measurable on OpenCode. It comes from the EARLIEST matching assistant
+   * message only (`tokens.input + tokens.cache.read`, which is precisely that
+   * call's prompt size), **never** from the accumulated sum — the sum spans every
+   * round-trip of the agentic loop and over-states a first-call prefix by ~10-30x.
+   * The "NULL rather than a wrong number" contract is preserved: nothing is set
+   * unless the value is strictly positive, and an already-set value is never
+   * overwritten.
+   *
+   * REMAINING GAP: `contextWindowTokens` (latest round-trip occupancy, used by
+   * the context badge) is still not set here — the last assistant message is a
+   * reasonable proxy but the badge already falls back to summed totals, and
+   * changing that is a UI-behaviour change, not a measurement fix.
+   *
+   * Only turns that reach this backstop get a prefix. When the live event path
+   * (`handleMessageUpdated`) reports usage, the caller never calls this and
+   * `prefix_tokens` stays NULL — which is the correct trade while the backstop
+   * is the only OpenCode path that sees per-call boundaries at all.
    */
   private async sumAssistantTokensSince(
     sessionId: string,
@@ -2411,9 +2437,17 @@ Troubleshooting:
       const messages =
         ((result as Record<string, unknown>)?.data as Array<Record<string, unknown>>) ?? []
       let counted = 0
-      for (const m of messages) {
-        if (m.role !== 'assistant') continue
-        const createdRaw = (m.created ?? m.createdAt) as unknown
+      // Earliest matching assistant message of the turn — its prompt size IS the
+      // first-call prefix. Tracked separately from the running totals precisely
+      // so the two can never be confused for one another.
+      let haveFirst = false
+      let firstTs: number | null = null
+      let firstPrefix = 0
+      for (const entry of messages) {
+        const info = (entry as Record<string, unknown>)?.info as Record<string, unknown> | undefined
+        if (!info || info.role !== 'assistant') continue
+        const time = info.time as Record<string, unknown> | undefined
+        const createdRaw = (time?.created ?? info.created ?? info.createdAt) as unknown
         let ts: number | null = null
         if (typeof createdRaw === 'number') {
           ts = createdRaw < 1e12 ? createdRaw * 1000 : createdRaw // seconds vs ms
@@ -2422,17 +2456,41 @@ Troubleshooting:
           if (!Number.isNaN(parsed)) ts = parsed
         }
         if (ts !== null && ts < sinceMs) continue
-        const tokens = m.tokens as Record<string, unknown> | undefined
+        const tokens = info.tokens as Record<string, unknown> | undefined
         if (!tokens || typeof tokens !== 'object') continue
         const input = Number(tokens.input ?? 0)
         const output = Number(tokens.output ?? 0)
         if (input <= 0 && output <= 0) continue
         const cache = tokens.cache as Record<string, unknown> | undefined
+        const cacheRead = Number(cache?.read ?? 0)
         tokenUsage.input += input
         tokenUsage.output += output
-        tokenUsage.cacheReadInputTokens += Number(cache?.read ?? 0)
+        tokenUsage.cacheReadInputTokens += cacheRead
         tokenUsage.cacheCreationInputTokens += Number(cache?.write ?? 0)
+        // Messages arrive chronologically, so the first match is normally the
+        // earliest; the timestamp comparison only guards an out-of-order list.
+        // A match with no parsable timestamp can claim the slot but never
+        // displace one that has a real, earlier timestamp.
+        if (!haveFirst || (ts !== null && firstTs !== null && ts < firstTs)) {
+          haveFirst = true
+          firstTs = ts
+          firstPrefix = input + cacheRead
+        }
         counted++
+      }
+      // Gate T: a prefix of 0 is not a measurement, it is an absent one — leave
+      // the column NULL rather than record a number that would drag a floor down.
+      if (firstPrefix > 0 && tokenUsage.firstCallContextTokens === undefined) {
+        tokenUsage.firstCallContextTokens = firstPrefix
+      }
+      // Non-silent failure: the caller only logs when counted > 0, so a backstop
+      // that matches nothing used to be indistinguishable from a turn with no
+      // messages. Any future SDK reshape surfaces here on the first run.
+      if (messages.length > 0 && counted === 0) {
+        openCodeLog.warn(
+          `[opencode] Token backstop fetched ${messages.length} messages but matched 0 assistant ` +
+            `messages with tokens — check SDK message shape`
+        )
       }
       return counted
     } catch (err) {

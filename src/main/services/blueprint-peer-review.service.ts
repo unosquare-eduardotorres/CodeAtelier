@@ -127,6 +127,7 @@ export class BlueprintPeerReviewService extends EventEmitter {
       const adapter = new BlueprintPeerReviewAdapter({
         workspaceId,
         blueprintId,
+        taskId: task.taskId,
         phaseContext,
         diff,
         packet: task.packetJson ?? null,

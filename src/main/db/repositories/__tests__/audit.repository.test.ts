@@ -199,5 +199,64 @@ if (!env) {
     test('deleteRun() returns false for unknown id', () => {
       assert.equal(auditRepository.deleteRun('nonexistent'), false)
     })
+
+    // ── kind discriminator (migration 160) ──
+    // audit_runs is shared storage: Workspace Health writes 'code', the
+    // Impeccable design audit writes 'design'. These tests pin the isolation.
+
+    test("createRun() defaults kind to 'code' so Health is unchanged", () => {
+      const run = auditRepository.createRun(wsId, 'light', ['security'], ['node'])
+      assert.equal(run.kind, 'code')
+    })
+
+    test("createRun() round-trips kind 'design'", () => {
+      const run = auditRepository.createRun(wsId, 'light', ['security'], ['node'], {}, 'design')
+      assert.equal(run.kind, 'design')
+      assert.equal(auditRepository.findRunById(run.id).kind, 'design')
+    })
+
+    test('getLatestForWorkspace() never returns a run of the other kind', () => {
+      auditRepository.createRun(wsId, 'light', ['security'], [], {}, 'design')
+      auditRepository.createRun(wsId, 'light', ['security'], [], {}, 'code')
+
+      // Asserts kind rather than a specific id: created_at has second
+      // granularity, so runs made in the same second tie and their relative
+      // order is not defined. Kind isolation is the actual contract.
+      assert.equal(auditRepository.getLatestForWorkspace(wsId, 'design').kind, 'design')
+      assert.equal(auditRepository.getLatestForWorkspace(wsId, 'code').kind, 'code')
+      // Default argument must stay 'code' — every existing caller relies on it.
+      assert.equal(auditRepository.getLatestForWorkspace(wsId).kind, 'code')
+    })
+
+    test('getHistoryForWorkspace() partitions history by kind', () => {
+      const before = auditRepository.getHistoryForWorkspace(wsId, 50, 'design').length
+      auditRepository.createRun(wsId, 'light', ['security'], [], {}, 'design')
+      auditRepository.createRun(wsId, 'light', ['security'], [], {}, 'code')
+
+      const design = auditRepository.getHistoryForWorkspace(wsId, 50, 'design')
+      assert.equal(design.length, before + 1)
+      for (const r of design) assert.equal(r.kind, 'design')
+
+      const code = auditRepository.getHistoryForWorkspace(wsId, 50)
+      for (const r of code) assert.equal(r.kind, 'code')
+    })
+
+    test('retention prunes per kind — design runs never evict Health history', () => {
+      // Retention keeps 10 per workspace. Before the kind filter this loop
+      // would have deleted every existing 'code' run for the workspace.
+      const codeRun = auditRepository.createRun(wsId, 'light', ['security'], [], {}, 'code')
+      for (let i = 0; i < 12; i++) {
+        auditRepository.createRun(wsId, 'light', ['security'], [], {}, 'design')
+      }
+
+      assert.ok(
+        auditRepository.findRunById(codeRun.id),
+        'a burst of design runs must not evict a code run'
+      )
+      assert.ok(
+        auditRepository.getHistoryForWorkspace(wsId, 50, 'design').length <= 10,
+        'design runs are still capped by retention'
+      )
+    })
   })
 }

@@ -131,9 +131,12 @@ describe('localBackendLabel', () => {
 })
 
 describe('MODEL_ROLE_ROWS — shared catalogue', () => {
-  test('covers all five groups', () => {
+  test('covers all six groups', () => {
     const groups = new Set(MODEL_ROLE_ROWS.map((r) => r.group))
-    assert.deepEqual([...groups].sort(), ['background', 'blueprint', 'chat', 'council', 'quality'])
+    assert.deepEqual(
+      [...groups].sort(),
+      ['background', 'blueprint', 'chat', 'council', 'design', 'quality']
+    )
   })
 
   /**

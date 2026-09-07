@@ -185,6 +185,43 @@ describe('OpenCodeConfigWriter private methods', () => {
         assert.equal(rule, 'allow', `danger mode must allow ${tool} (got ${String(rule)})`)
       }
     })
+
+    // D1b: OpenCode 1.18's native tool names are lowercase and its permission
+    // keys ARE the tool names — PascalCase keys are silently ignored, so
+    // edit/bash fell back to `ask` and BUILD turns ended aborted.
+    // Both casings must be present; lowercase must be `allow` in build mode.
+    test('build_mode_emits_lowercase_tool_keys (D1b)', () => {
+      const perms = w.buildPermissions('build')
+      assert.equal(perms.write, 'allow', 'lowercase write key required for OpenCode 1.18+')
+      assert.equal(perms.edit, 'allow', 'lowercase edit key required for OpenCode 1.18+')
+      assert.equal(perms.bash, 'allow', 'lowercase bash key required for OpenCode 1.18+')
+      assert.equal(perms.read, 'allow')
+      assert.equal(perms.glob, 'allow')
+      assert.equal(perms.grep, 'allow')
+      // PascalCase kept for CLI-backend consumers — both casings coexist
+      assert.equal(perms.Write, 'allow')
+      assert.equal(perms.Edit, 'allow')
+      assert.equal(perms.Bash, 'allow')
+    })
+
+    test('danger_mode_emits_lowercase_tool_keys (D1b)', () => {
+      const perms = w.buildPermissions('danger')
+      assert.equal(perms.write, 'allow')
+      assert.equal(perms.edit, 'allow')
+      assert.equal(perms.bash, 'allow')
+    })
+
+    test('plan_mode_lowercase_keys_mirror_ask_and_bash_globs (D1b)', () => {
+      const perms = w.buildPermissions('plan')
+      assert.equal(perms.write, 'ask')
+      assert.equal(perms.edit, 'ask')
+      assert.equal(typeof perms.bash, 'object', 'lowercase bash must mirror the glob allowlist')
+      const bashGlobs = perms.bash as Record<string, string>
+      assert.equal(bashGlobs['*'], 'ask')
+      assert.equal(bashGlobs['git status *'], 'allow')
+      assert.equal(bashGlobs['npm test *'], 'allow')
+      assert.equal(bashGlobs['find *'], 'allow')
+    })
   })
 
   // ── buildCompactionConfig ──

@@ -25,12 +25,11 @@ import {
   MCP_TOOLS,
   RECOMMENDED_LOCAL_MODELS,
   requiresContext1MBeta,
-  resolveModelAction,
   supportsContext1M
 } from '../../shared/constants'
 
 import { modelConfigService } from './model-config.service'
-import { resolveModelFromSnapshot } from './snapshot-model-resolver'
+import { resolveAdapterModelAction, resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { contextWindowResolver } from './context-window-resolver'
 import {
   canUseContext1MBeta,
@@ -264,7 +263,12 @@ export class AgentExecutorFactory {
       params
     const { allowedTools, disallowedTools } = mcpResult
 
-    const modelAction = resolveModelAction(this.s.adapter.role, isBuildMode)
+    // LOAD-BEARING: this is the model actually handed to the executor, and the
+    // provider it runs under was resolved from the adapter's own action. Deriving
+    // the action from `role` here instead sent the escalation ladder (a BUILD
+    // adapter running as `blueprint:lead-review`) to the Claude CLI with the
+    // build entry's GLM model id.
+    const modelAction = resolveAdapterModelAction(this.s.adapter, isBuildMode)
     const resolvedModel = resolveModelFromSnapshot(
       this.s.currentConversationId,
       this.s.workspacePath!,

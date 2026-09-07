@@ -80,7 +80,11 @@ import { normalizePath } from '../../shared/gate-analysis'
 import type { ResolvedGateCommands } from '../../shared/gate-command-types'
 import { getTimeoutTier } from './provider-timeout-tiers'
 import { resolveBlueprintGateCommands } from './blueprint-gate-command-pipeline'
-import { formatStopLossCommandSuffix, isDeterministicStopLoss } from './blueprint-stop-loss'
+import {
+  formatStopLossCommandSuffix,
+  isDeterministicStopLoss,
+  TASK_DISPATCH_ATTEMPT_CEILING
+} from './blueprint-stop-loss'
 import type { WorkspaceManifests } from '../../shared/gate-command-detect'
 import { readWorkspaceManifests } from './blueprint-preflight.service'
 import { renderWorkPacket } from '../../shared/work-packet-prompt'
@@ -901,6 +905,21 @@ export function isProtocolMissRung(input: {
   if (reason.startsWith('executor error:')) return false
   return input.writesAfter === input.writesBefore
 }
+
+/** D4 — wording for the protocol-miss budget exhaustion (write + read sites). */
+export const PROTOCOL_MISS_BUDGET_FAILURE_REASON =
+  'protocol-miss budget exhausted: provider never emits blueprint-phase-complete'
+
+/**
+ * D4 — per-task consecutive protocol-miss budget. Every GLM-shaped miss buys
+ * 2 recovery nudges + a synthesized fallback (~4 min per doomed attempt) with
+ * no cumulative cap, so a provider that cannot follow the protocol at all
+ * burned the ladder for nothing. After this many CONSECUTIVE misses (no
+ * completion block AND no write activity — the `isProtocolMissRung`
+ * signature) the ladder stops nudging and fails the rung `infra`, with
+ * non-retryable wording so `scheduleAutoRetry` refuses to fund a 4th.
+ */
+export const PROTOCOL_MISS_BUDGET = 3
 
 /** Check whether two file sets overlap. */
 function filesOverlap(a: Set<string>, b: Set<string>): boolean {
@@ -1731,6 +1750,65 @@ export class BlueprintBuildService extends EventEmitter {
    *   failed tasks (plus undispatched tasks at drain) are skipped; healthy
    *   peers keep running.
    */
+  /**
+   * T003/G5 — the current test command, resolved through the SAME pipeline the
+   * stop-loss write site used (blueprint-gate-command-pipeline.ts). Shared by
+   * the executeWave/executeDag resume pre-passes and the D3a requeue guard.
+   * Lazy on purpose: the disk scan it drives is not free, and only tasks that
+   * actually carry a stop-loss reason need it.
+   */
+  private lazyStopLossCommandFor(
+    blueprintId: string,
+    workspacePath: string
+  ): () => string | null | undefined {
+    let current: string | null | undefined
+    return () => {
+      if (current === undefined) {
+        try {
+          current =
+            resolveBlueprintGateCommands(blueprintId, workspacePath).commands.test?.command ?? null
+        } catch {
+          current = null
+        }
+      }
+      return current
+    }
+  }
+
+  /**
+   * D3b — emit the settle events + telemetry for a task at/beyond the hard
+   * dispatch ceiling. Called by both schedulers' resume pre-passes; the caller
+   * owns the terminal/completion bookkeeping.
+   */
+  private emitAttemptCeiling(params: {
+    blueprintId: string
+    workspaceId: string
+    taskId: string
+    wave: number
+    attempts: number
+    scheduler: 'wave' | 'dag'
+  }): void {
+    const { blueprintId, workspaceId, taskId, wave, attempts, scheduler } = params
+    bpLog.warn(
+      `[${scheduler === 'wave' ? 'executeWave' : 'executeDag'}] Task ${taskId} settled failed — ` +
+        `attempt ceiling (${attempts} attempts ≥ ${TASK_DISPATCH_ATTEMPT_CEILING}) — not dispatched`
+    )
+    this.safeEmit('waveTaskComplete', {
+      blueprintId,
+      workspaceId,
+      wave,
+      taskId,
+      status: 'failed'
+    } satisfies BlueprintWaveTaskCompletePayload)
+    blueprintTelemetryRepository.record({
+      blueprintId,
+      kind: 'attempt_ceiling',
+      phase: 'build',
+      taskId,
+      data: { attempts, ceiling: TASK_DISPATCH_ATTEMPT_CEILING, scheduler }
+    })
+  }
+
   private async executeDag(params: {
     dag: TaskDag
     /** P1a — every task in the blueprint, for gate-time peer-file exemption. */
@@ -1787,22 +1865,32 @@ export class BlueprintBuildService extends EventEmitter {
     let resumedCount = 0
     let userSkippedCount = 0
     let stopLossSettledCount = 0
+    let ceilingSettledCount = 0
     // G5 — same lazy stop-loss probe as executeWave (see its comment).
-    let stopLossCurrentCommand: string | null | undefined
-    const stopLossCommandFor = (): string | null | undefined => {
-      if (stopLossCurrentCommand === undefined) {
-        try {
-          stopLossCurrentCommand =
-            resolveBlueprintGateCommands(blueprintId, workspacePath).commands.test?.command ?? null
-        } catch {
-          stopLossCurrentCommand = null
-        }
-      }
-      return stopLossCurrentCommand
-    }
+    const stopLossCommandFor = this.lazyStopLossCommandFor(blueprintId, workspacePath)
     for (const node of dag.nodes.values()) {
       const rec = taskById.get(node.taskId)
       if (!rec) continue
+      // D3b — hard dispatch ceiling: settle BEFORE any other consideration.
+      // A task at/beyond TASK_DISPATCH_ATTEMPT_CEILING is never dispatched by
+      // ANY path (a future reset bug included); it counts toward completion
+      // like the G5 stop-loss accommodation and leaves an `attempt_ceiling`
+      // telemetry row as the after-the-fact evidence.
+      if (rec.status === 'failed' && rec.attempts >= TASK_DISPATCH_ATTEMPT_CEILING) {
+        terminal.add(node.taskId)
+        result.tasksCompleted++
+        ceilingSettledCount++
+        markComplete(dag, node.taskId)
+        this.emitAttemptCeiling({
+          blueprintId,
+          workspaceId,
+          taskId: node.taskId,
+          wave: node.wave,
+          attempts: rec.attempts,
+          scheduler: 'dag'
+        })
+        continue
+      }
       if (rec.skippedByUserAt) {
         terminal.add(node.taskId)
         result.tasksCompleted++
@@ -1849,7 +1937,12 @@ export class BlueprintBuildService extends EventEmitter {
         } satisfies BlueprintWaveTaskCompletePayload)
       }
     }
-    if (resumedCount > 0 || userSkippedCount > 0 || stopLossSettledCount > 0) {
+    if (
+      resumedCount > 0 ||
+      userSkippedCount > 0 ||
+      stopLossSettledCount > 0 ||
+      ceilingSettledCount > 0
+    ) {
       this.safeEmit('phaseProgress', {
         blueprintId,
         workspaceId,
@@ -1857,7 +1950,12 @@ export class BlueprintBuildService extends EventEmitter {
         text:
           `Skipping ${resumedCount} already-completed and ${userSkippedCount} user-skipped` +
           `${stopLossSettledCount > 0 ? ` and ${stopLossSettledCount} stop-loss-excluded` : ''}` +
-          ` task${resumedCount + userSkippedCount + stopLossSettledCount > 1 ? 's' : ''} (resume)`,
+          `${ceilingSettledCount > 0 ? ` and ${ceilingSettledCount} attempt-ceiling` : ''}` +
+          ` task${
+            resumedCount + userSkippedCount + stopLossSettledCount + ceilingSettledCount > 1
+              ? 's'
+              : ''
+          } (resume)`,
         kind: 'system'
       })
     }
@@ -2109,9 +2207,20 @@ export class BlueprintBuildService extends EventEmitter {
       // `requeueUsed` is per-call state and a requeued task gets a fresh
       // ladder, so only this set bounds the loop. A second stop-loss on the
       // same task falls through to the normal failure path (escalation).
+      //
+      // D3a — the requeue itself was a reset leak: `requeuedTasks` is
+      // per-scheduler-invocation state, so EVERY phase retry granted one fresh
+      // requeue (~11 retries ≈ the blueprint-2b08bb6e 29-attempt loop). Guard
+      // with the same deterministic-stop-loss predicate the retry reset and
+      // the resume pre-passes use: a task the stop-loss would exclude (or one
+      // already at the belt-and-braces cap) falls through to the normal
+      // failure path instead of being reset.
       if (settled.taskResult.requeueAfterDrain === true && !requeuedTasks.has(settled.taskId)) {
         const rec = taskById.get(settled.taskId)
-        if (rec) {
+        const stopLossBlocked =
+          rec !== undefined &&
+          isDeterministicStopLoss(rec.failureReason ?? '', rec.attempts, stopLossCommandFor())
+        if (rec && !stopLossBlocked) {
           bpLog.info(
             `[executeDag] Task ${settled.taskId} requeued behind the drain point ` +
               `(stop-loss fired with zero own work)`
@@ -2129,6 +2238,12 @@ export class BlueprintBuildService extends EventEmitter {
             if (!readySince.has(id) && !dispatched.has(id)) readySince.set(id, Date.now())
           }
           continue
+        }
+        if (stopLossBlocked) {
+          bpLog.warn(
+            `[executeDag] Task ${settled.taskId} requeue REFUSED — deterministic stop-loss ` +
+              `(attempts=${rec?.attempts ?? '?'}) — falling through to the failure path`
+          )
         }
       }
 
@@ -2305,25 +2420,34 @@ export class BlueprintBuildService extends EventEmitter {
     let skippedCount = 0
     let userSkippedCount = 0
     let stopLossSettledCount = 0
+    let ceilingSettledCount = 0
     // G5 — the current test command, resolved through the SAME pipeline the
     // stop-loss write site used (see blueprint-gate-command-pipeline.ts). Only
     // computed when some task actually carries a stop-loss reason: the disk
     // scan it drives is not free.
-    let stopLossCurrentCommand: string | null | undefined
-    const stopLossCommandFor = (): string | null | undefined => {
-      if (stopLossCurrentCommand === undefined) {
-        try {
-          stopLossCurrentCommand =
-            resolveBlueprintGateCommands(blueprintId, workspacePath).commands.test?.command ?? null
-        } catch {
-          stopLossCurrentCommand = null
-        }
-      }
-      return stopLossCurrentCommand
-    }
+    const stopLossCommandFor = this.lazyStopLossCommandFor(blueprintId, workspacePath)
     for (const task of waveTasks) {
       const dbTask = blueprintTaskRepository.findById(task.id)
       const effectiveStatus = dbTask?.status ?? task.status
+      // D3b — hard dispatch ceiling: settle before anything else, identical to
+      // the executeDag resume pre-pass. A future reset-path bug must not be
+      // able to buy an unbounded 13th, 14th… dispatch.
+      if (
+        effectiveStatus === 'failed' &&
+        (dbTask?.attempts ?? 0) >= TASK_DISPATCH_ATTEMPT_CEILING
+      ) {
+        result.tasksCompleted++
+        ceilingSettledCount++
+        this.emitAttemptCeiling({
+          blueprintId,
+          workspaceId,
+          taskId: task.taskId,
+          wave: waveNum,
+          attempts: dbTask?.attempts ?? 0,
+          scheduler: 'wave'
+        })
+        continue
+      }
       // BP-TASK-USER-SKIP-01: a user-skipped task is settled. It is never
       // dispatched and never enters `pending`, so it cannot fail the wave and
       // cannot trigger the downstream skip cascade. It counts toward completion
@@ -2413,6 +2537,18 @@ export class BlueprintBuildService extends EventEmitter {
           `Skipping ${stopLossSettledCount} stop-loss-excluded task` +
           `${stopLossSettledCount > 1 ? 's' : ''} in Wave ${waveNum} ` +
           `(deterministic gate failure — fix the environment or override the gate command)`,
+        kind: 'system'
+      })
+    }
+    if (ceilingSettledCount > 0) {
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `Skipping ${ceilingSettledCount} attempt-ceiling task` +
+          `${ceilingSettledCount > 1 ? 's' : ''} in Wave ${waveNum} ` +
+          `(${TASK_DISPATCH_ATTEMPT_CEILING}+ builder attempts consumed — hard dispatch ceiling)`,
         kind: 'system'
       })
     }
@@ -3208,6 +3344,16 @@ export class BlueprintBuildService extends EventEmitter {
      * produced the identical failure.
      */
     let consecutiveProtocolMisses = 0
+    // D4 — cross-ladder persistence. The streak above is per-ladder state, but
+    // the observed loop spanned PHASE retries (each granting a fresh ladder).
+    // A task whose previous ladder exhausted the budget carries the budget
+    // wording in its persisted failureReason — and that reason survives the
+    // retry reset to pending — so pre-seed the streak from it: the new ladder
+    // fails at rung 1 instead of re-funding the nudges. An operator remedy
+    // (switch provider) clears the reason through a successful rung.
+    if (task.failureReason?.includes(PROTOCOL_MISS_BUDGET_FAILURE_REASON)) {
+      consecutiveProtocolMisses = PROTOCOL_MISS_BUDGET
+    }
     let writesAtLastRungStart = 0
     /** 1.4 — the one-time stop-loss→requeue conversion has been spent. */
     let requeueUsed = false
@@ -3384,6 +3530,52 @@ export class BlueprintBuildService extends EventEmitter {
     }
 
     for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
+      // D4 — consecutive protocol-miss budget. When the previous rungs all
+      // missed the ```blueprint-phase-complete handshake with ZERO write
+      // activity (the `isProtocolMissRung` signature), the provider cannot
+      // follow the protocol at all: every further rung would buy the same 2
+      // recovery nudges + synthesized fallback (~4 min each) and produce the
+      // same bytes. Stop nudging, fail the rung `infra` with non-retryable
+      // wording, and surface one telemetry row. Any rung that produced a
+      // completion block or writes reset the counter (the fold in
+      // `recordRungEvidence`), so a stochastic model is never budgeted out.
+      if (consecutiveProtocolMisses >= PROTOCOL_MISS_BUDGET) {
+        bpLog.warn(
+          `[executeTaskWithGates] ${task.taskId} — protocol-miss budget exhausted ` +
+            `(${consecutiveProtocolMisses} consecutive rungs with no completion block and no ` +
+            `write activity) — failing infra, refusing to fund another rung`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text:
+            `⚠ Task ${task.taskId}: provider never emits the required completion block — ` +
+            `stopping after ${consecutiveProtocolMisses} consecutive misses (infrastructure, not retryable)`,
+          kind: 'system'
+        })
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'protocol_miss_budget',
+          phase: 'build',
+          taskId: task.taskId,
+          attempt,
+          data: {
+            consecutiveMisses: consecutiveProtocolMisses,
+            budget: PROTOCOL_MISS_BUDGET,
+            attemptsSpent: attempt - 1
+          }
+        })
+        return {
+          success: false,
+          completion: null,
+          discoveries: [],
+          failureReason: PROTOCOL_MISS_BUDGET_FAILURE_REASON,
+          failureClass: 'infra',
+          resumeSafe: false
+        }
+      }
+
       // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
       // command/manifest caches when a gate reports `no_command`/`command_missing`
       // or a task's write-set touches a toolchain manifest; without this re-read,
@@ -4582,7 +4774,13 @@ export class BlueprintBuildService extends EventEmitter {
     return report.gates.some(
       (g) =>
         g.verdict === 'unverifiable' &&
-        (g.reason === 'no_command' || g.reason === 'command_missing')
+        (g.reason === 'no_command' ||
+          g.reason === 'command_missing' ||
+          // D2b — a collection-time import failure means the resolved command's
+          // ENVIRONMENT is wrong for this worktree (PYTHONPATH/package root),
+          // the same "the resolved command cannot serve here" family: one
+          // cheap re-resolution may find an override or a different root.
+          g.reason === 'import_env')
     )
   }
 

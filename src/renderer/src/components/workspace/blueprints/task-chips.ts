@@ -47,6 +47,7 @@ const REASON_LABEL: Record<UnverifiableReason, string> = {
   timeout: 'timed out',
   command_error: 'command error',
   command_missing: 'runner missing',
+  import_env: 'suite not collected',
   no_tests: 'no tests',
   vacuous_test: 'already green',
   preexisting_failure: 'broken on arrival',

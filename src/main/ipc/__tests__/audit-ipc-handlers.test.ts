@@ -49,6 +49,7 @@ function makeRun(overrides?: Partial<AuditRun>): AuditRun {
     overallScore: null,
     selectedTracks: ['code', 'testing'],
     detectedTechs: ['typescript'],
+    kind: 'code',
     results: [],
     createdAt: '2025-06-01T12:00:00.000Z',
     updatedAt: '2025-06-01T12:30:00.000Z',

@@ -72,6 +72,16 @@ export type UnverifiableReason =
    * Environmental, not a code failure — retrying cannot change it.
    */
   | 'command_missing'
+  /**
+   * The runner started but the test suite could not be COLLECTED: a
+   * collection-time `Failed to import test module:` banner followed by
+   * `ModuleNotFoundError`/`ImportError` (e.g. PYTHONPATH missing the package
+   * root in the worktree env). Environmental, not a code failure — the
+   * operator remedy is setting PYTHONPATH or overriding the gate command.
+   * A `ModuleNotFoundError` raised from a test BODY is a genuine red test and
+   * stays `fail`.
+   */
+  | 'import_env'
   /** The packet declared test files, but none of them exist on disk. */
   | 'no_tests'
   /** The task's tests were green BEFORE the build session — they prove nothing. */

@@ -24,11 +24,25 @@ try {
     error: () => {},
     debug: () => {}
   }
+  // Preserve every OTHER scoped logger the module exports and override only
+  // chatAgentLogger. This cache entry is never restored, so replacing the whole
+  // exports object poisons `require.cache` for the rest of the shared run: any
+  // file loaded later that imports a different scope (skillLogger, dbLogger, …)
+  // gets `undefined` and dies on its first log call, far from this file.
+  // electron-log is already stubbed by setupElectronStub() above, so requiring
+  // the real module here is safe.
+  const realExports: Record<string, unknown> = (() => {
+    try {
+      return { ...(require(loggerPath) as Record<string, unknown>) }
+    } catch {
+      return {}
+    }
+  })()
   require.cache[loggerPath] = {
     id: loggerPath,
     filename: loggerPath,
     loaded: true,
-    exports: { chatAgentLogger: loggerMock },
+    exports: { ...realExports, chatAgentLogger: loggerMock },
     children: [],
     paths: [],
     path: ''

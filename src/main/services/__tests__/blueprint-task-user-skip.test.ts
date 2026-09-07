@@ -451,6 +451,200 @@ if (!env) {
       )
     })
   })
+
+  // ═════════════════════════════════════════════════════════════════════
+  // D3 — hard dispatch ceiling + requeue guard (blueprint-2b08bb6e)
+  // ═════════════════════════════════════════════════════════════════════
+  describe('D3b — attempt ceiling settles a task in both schedulers', () => {
+    /** Seed a task with `attempts` already recorded and a failure reason. */
+    function seedAtAttempts(
+      attempts: number,
+      failureReason = 'some future reset-path wording drift'
+    ): { blueprintId: string; taskId: string } {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const t = findTask(blueprintId, 'T001')
+      blueprintTaskRepository.setOutcome(t.id, { failureReason, outcomeKind: null })
+      for (let i = 0; i < attempts; i++) blueprintTaskRepository.recordAttempt(t.id)
+      return { blueprintId, taskId: 'T001' }
+    }
+
+    test('executeWave never dispatches a task at attempts = ceiling, records attempt_ceiling telemetry', async () => {
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const { TASK_DISPATCH_ATTEMPT_CEILING } = require('../blueprint-stop-loss')
+      assert.equal(TASK_DISPATCH_ATTEMPT_CEILING, 12, '2 × STOP_LOSS_EXCLUSION_ATTEMPT_CAP')
+
+      const { blueprintId } = seedAtAttempts(TASK_DISPATCH_ATTEMPT_CEILING)
+
+      const svc = new BlueprintBuildService()
+      const dispatchedIds: string[] = []
+      svc.executeTaskWithGates = async (p: { task: { taskId: string } }): Promise<unknown> => {
+        dispatchedIds.push(p.task.taskId)
+        return {
+          success: true,
+          completion: { filesCreated: [], filesModified: [], summary: 'done' },
+          discoveries: []
+        }
+      }
+
+      const result = {
+        tasksCompleted: 0,
+        tasksResumed: 0,
+        filesCreated: [],
+        filesModified: [],
+        discoveries: [],
+        failed: false,
+        taskTimings: [],
+        taskFailures: []
+      }
+      await svc.executeWave({
+        waveNum: 1,
+        waveTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        allTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        blueprintId,
+        workspaceId: wsId,
+        workspacePath: '/tmp/nonexistent-workspace',
+        executionPath: '/tmp/nonexistent-workspace',
+        phaseContext: {} as never,
+        result
+      })
+
+      assert.equal(dispatchedIds.length, 0, 'a ceilinged task is never dispatched')
+      assert.equal(
+        result.tasksCompleted,
+        1,
+        'it counts toward wave completion (settled, not stuck)'
+      )
+      assert.equal(result.failed, false, 'the wave does not hang on it')
+      const telemetry =
+        require('../../db/repositories/blueprint-telemetry.repository').blueprintTelemetryRepository.findByBlueprint(
+          blueprintId
+        )
+      const ceilingRow = telemetry.find(
+        (r: { kind: string; taskId: string | null }) =>
+          r.kind === 'attempt_ceiling' && r.taskId === 'T001'
+      )
+      assert.ok(ceilingRow, 'an attempt_ceiling telemetry row must be recorded')
+      assert.equal(ceilingRow.data.attempts, TASK_DISPATCH_ATTEMPT_CEILING)
+    })
+
+    test('a task below the ceiling (attempts = 5) still dispatches — no over-blocking', async () => {
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const { TASK_DISPATCH_ATTEMPT_CEILING } = require('../blueprint-stop-loss')
+
+      const { blueprintId } = seedAtAttempts(5, 'a wording that matches no stop-loss clause')
+
+      const svc = new BlueprintBuildService()
+      const dispatchedIds: string[] = []
+      svc.executeTaskWithGates = async (p: { task: { taskId: string } }): Promise<unknown> => {
+        dispatchedIds.push(p.task.taskId)
+        return {
+          success: true,
+          completion: { filesCreated: [], filesModified: [], summary: 'done' },
+          discoveries: []
+        }
+      }
+
+      const result = {
+        tasksCompleted: 0,
+        tasksResumed: 0,
+        filesCreated: [],
+        filesModified: [],
+        discoveries: [],
+        failed: false,
+        taskTimings: [],
+        taskFailures: []
+      }
+      await svc.executeWave({
+        waveNum: 1,
+        waveTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        allTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        blueprintId,
+        workspaceId: wsId,
+        workspacePath: '/tmp/nonexistent-workspace',
+        executionPath: '/tmp/nonexistent-workspace',
+        phaseContext: {} as never,
+        result
+      })
+
+      assert.ok(
+        dispatchedIds.includes('T001'),
+        'a task below the ceiling with no stop-loss reason must still dispatch'
+      )
+      assert.ok(TASK_DISPATCH_ATTEMPT_CEILING > 5)
+    })
+  })
+
+  // ═══════════════════════════════════════════════════════════════════
+  // D3b (DAG arm) — the ceiling settle also holds in the DAG scheduler
+  // ═══════════════════════════════════════════════════════════════════
+  describe('D3b — executeDag settles a ceilinged task without dispatching it', () => {
+    test('a failed task at attempts = ceiling is settled, never dispatched, telemetry recorded', async () => {
+      // Reuse the DAG harness from blueprint-dag-scheduler.test.ts semantics,
+      // but this file owns the executeDag pre-pass assertions for user-skip /
+      // stop-loss — the ceiling belongs beside them.
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const { TASK_DISPATCH_ATTEMPT_CEILING } = require('../blueprint-stop-loss')
+      assert.equal(TASK_DISPATCH_ATTEMPT_CEILING, 12)
+
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const t = findTask(blueprintId, 'T001')
+      blueprintTaskRepository.setOutcome(t.id, {
+        failureReason: 'wording drift that matches nothing',
+        outcomeKind: null
+      })
+      for (let i = 0; i < TASK_DISPATCH_ATTEMPT_CEILING; i++)
+        blueprintTaskRepository.recordAttempt(t.id)
+
+      const svc = new BlueprintBuildService()
+      const dispatchedIds: string[] = []
+      svc.dispatchTask = (p: { task: { taskId: string } }): void => {
+        dispatchedIds.push(p.task.taskId)
+      }
+
+      const result = {
+        tasksCompleted: 0,
+        tasksResumed: 0,
+        filesCreated: [],
+        filesModified: [],
+        discoveries: [],
+        failed: false,
+        taskTimings: [],
+        taskFailures: [],
+        scheduler: {
+          mode: 'dag' as const,
+          perTaskWaitMs: {},
+          drainCount: 0,
+          maxParallelism: 0,
+          parallelismHistogram: {}
+        }
+      }
+      const { buildTaskDag } = require('../../../shared/task-dag')
+      const dag = buildTaskDag([{ taskId: 'T001', wave: 1, dependsOnJson: [] }])
+      await svc.executeDag({
+        dag,
+        allTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        blueprintId,
+        workspaceId: wsId,
+        workspacePath: '/tmp/nonexistent-workspace',
+        executionPath: '/tmp/nonexistent-workspace',
+        phaseContext: {} as never,
+        result
+      })
+
+      assert.equal(dispatchedIds.length, 0, 'the ceilinged task is never dispatched')
+      assert.equal(result.tasksCompleted, 1, 'it counts toward completion (settled, not stuck)')
+      const telemetry =
+        require('../../db/repositories/blueprint-telemetry.repository').blueprintTelemetryRepository.findByBlueprint(
+          blueprintId
+        )
+      const ceilingRow = telemetry.find(
+        (r: { kind: string; taskId: string | null }) =>
+          r.kind === 'attempt_ceiling' && r.taskId === 'T001'
+      )
+      assert.ok(ceilingRow, 'an attempt_ceiling telemetry row must be recorded')
+      assert.equal(ceilingRow.data.scheduler, 'dag')
+    })
+  })
 }
 
 // summaryAsync() calls process.exit() — only run it as the entry point, or the

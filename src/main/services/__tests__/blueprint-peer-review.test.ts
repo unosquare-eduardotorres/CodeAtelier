@@ -193,6 +193,7 @@ if (!env) {
       const adapter = new BlueprintPeerReviewAdapter({
         workspaceId: 'ws-1',
         blueprintId: 'bp-1',
+        taskId: 'T001',
         phaseContext,
         diff: 'diff --git a/src/a.ts b/src/a.ts\n+export const a = 1',
         packet: {
@@ -229,6 +230,7 @@ if (!env) {
       const adapter = new BlueprintPeerReviewAdapter({
         workspaceId: 'ws-1',
         blueprintId: 'bp-1',
+        taskId: 'T002',
         phaseContext,
         diff: '',
         packet: null,
@@ -244,12 +246,31 @@ if (!env) {
       const adapter: any = new BlueprintPeerReviewAdapter({
         workspaceId: 'ws-1',
         blueprintId: 'bp-1',
+        taskId: 'T003',
         phaseContext,
         diff: '',
         packet: null,
         taskDescription: 'T'
       })
       assert.equal(adapter.getModelAction(), 'blueprint:peer-review')
+    })
+
+    test('telemetryContext carries the reviewed taskId', () => {
+      const { BlueprintPeerReviewAdapter } = require('../role-adapters/blueprint/blueprint-peer-review.adapter')
+      const adapter: any = new BlueprintPeerReviewAdapter({
+        workspaceId: 'ws-1',
+        blueprintId: 'bp-1',
+        taskId: 'T007',
+        phaseContext,
+        diff: '',
+        packet: null,
+        taskDescription: 'T'
+      })
+      // Peer review is per-task; without this every peer-review usage row lands
+      // with task_id = NULL and per-task review spend is unattributable.
+      assert.equal(adapter.telemetryContext.taskId, 'T007')
+      assert.equal(adapter.telemetryContext.blueprintId, 'bp-1')
+      assert.equal(adapter.telemetryContext.feature, 'blueprint-peer-review')
     })
   })
 

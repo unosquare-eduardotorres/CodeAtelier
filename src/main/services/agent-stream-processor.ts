@@ -19,7 +19,7 @@ import {
   CLAUDE_DEFAULT_CONTEXT_WINDOW,
   CLAUDE_1M_CONTEXT_WINDOW,
   MCP_TOOLS,
-  resolveModelAction
+  providerModelDisagree
 } from '../../shared/constants'
 import { resolveContextTier } from './context-management'
 import {
@@ -27,7 +27,7 @@ import {
   resolveCompactionThresholds as resolveCompactionThresholdsPolicy,
   resolveAppliedThresholds
 } from './compaction-policy'
-import { resolveModelFromSnapshot } from './snapshot-model-resolver'
+import { resolveAdapterModelAction, resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { featureForAgentRole } from './usage-tracker.service'
 import { supportsContext1M } from '../../shared/constants'
 import { conversationRepository, turnUsageRepository } from '../db/repositories'
@@ -110,7 +110,10 @@ export class AgentStreamProcessor {
     }
 
     const isBuild = this.s.currentMode !== 'plan'
-    const modelAction = resolveModelAction(this.s.adapter.role, isBuild)
+    // Same action the adapter resolved its PROVIDER from — see
+    // resolveAdapterModelAction. Using the role-derived action here is what let
+    // the two columns describe different routing entries.
+    const modelAction = resolveAdapterModelAction(this.s.adapter, isBuild)
     const resolvedModel = resolveModelFromSnapshot(
       conversationId,
       this.s.workspacePath!,
@@ -129,6 +132,21 @@ export class AgentStreamProcessor {
     // Prefer the stream's resolved provider; fall back to the session default
     // only if the stream did not record one.
     const provider = streamState.llmProvider ?? this.s.llmProvider
+
+    // A4 follow-up: `provider` and `resolvedModel` are resolved from two
+    // different model actions (adapter's own vs role-derived), so on blueprints
+    // with mixed routing they can be read out of different snapshot entries and
+    // contradict each other. Detection before correction — which of the two is
+    // wrong depends on which action actually drove the executor, and that is not
+    // knowable here.
+    if (providerModelDisagree(provider, resolvedModel)) {
+      this.s.log.warn(
+        `[PIPELINE:attribution] provider='${provider}' disagrees with model='${resolvedModel}' ` +
+          `(role=${this.s.adapter.role}, action=${modelAction}, agent=${this.s.adapter.agentId}) — ` +
+          `one of the two columns is wrong for this turn`
+      )
+    }
+
     const telemetry = this.s.adapter.telemetryContext
 
     const { totalTokens, turnRecorded } = this.s.tokenTracker.recordTurn(meta, {
@@ -584,7 +602,7 @@ export class AgentStreamProcessor {
       this.s.compactAutoThreshold = auto
     } else {
       const isBuildCompact = this.s.currentMode !== 'plan'
-      const modelAction = resolveModelAction(this.s.adapter.role, isBuildCompact)
+      const modelAction = resolveAdapterModelAction(this.s.adapter, isBuildCompact)
       const model = resolveModelFromSnapshot(
         this.s.currentConversationId,
         this.s.workspacePath!,

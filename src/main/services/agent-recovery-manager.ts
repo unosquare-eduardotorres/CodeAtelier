@@ -12,8 +12,7 @@ import type { AgentSessionHost, StreamLoopState, StreamChunk } from './agent-ses
 import { SESSION_CONSTANTS } from './agent-session-host'
 import type { AgentIntent, LLMProvider } from '../../shared/types'
 import type { AdapterMcpResult } from './agent-session.types'
-import { resolveModelAction } from '../../shared/constants'
-import { resolveModelFromSnapshot } from './snapshot-model-resolver'
+import { resolveAdapterModelAction, resolveModelFromSnapshot } from './snapshot-model-resolver'
 import { conversationRepository } from '../db/repositories'
 import { localPlanStateService } from './local-plan-state.service'
 import type { DiscoveredContext } from './local-plan-state.service'
@@ -361,7 +360,7 @@ export class AgentRecoveryManager {
           model: resolveModelFromSnapshot(
             conversationId,
             this.s.workspacePath!,
-            resolveModelAction(this.s.adapter.role, false),
+            resolveAdapterModelAction(this.s.adapter, false),
             false
           ),
           sessionId: this.s.sessionMap.get(conversationId),
@@ -435,7 +434,7 @@ export class AgentRecoveryManager {
         model: resolveModelFromSnapshot(
           conversationId,
           this.s.workspacePath!,
-          resolveModelAction(this.s.adapter.role, isBuildMode),
+          resolveAdapterModelAction(this.s.adapter, isBuildMode),
           isBuildMode
         ),
         isBuildMode,

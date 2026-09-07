@@ -108,8 +108,13 @@ class ModelConfigService {
     // to glm-5.3 spent an entire build phase on Opus. Callers that can honour
     // the real provider resolve through the snapshot path; anything landing
     // here has already lost it, so say so rather than substituting in silence.
+    // D-cleanup: demoted warn → debug. On a non-Claude workspace (GLM default)
+    // EVERY action resolve hits this branch — blueprint 2b08bb6e logged it ×95
+    // per run and buried the signal it was added for. Routing is unaffected
+    // (the provider-aware resolver in snapshot-model-resolver.ts owns the real
+    // path); this line is diagnostics only.
     if (roleAssignment?.modelId && roleAssignment.provider !== 'claude') {
-      log.warn(
+      log.debug(
         `[model-config] '${action}' is bound to ` +
           `${roleAssignment.provider}/${roleAssignment.modelId}, but this resolver can only ` +
           `return a Claude model id - the caller is not provider-aware and will run on the ` +
@@ -143,13 +148,10 @@ class ModelConfigService {
       return roleAssignment.modelId
     }
 
-    // BP-MODEL-BLEED: a non-Claude binding reaching here is silently downgraded
-    // to the Claude default below - that is how a `blueprint:build` role bound
-    // to glm-5.3 spent an entire build phase on Opus. Callers that can honour
-    // the real provider resolve through the snapshot path; anything landing
-    // here has already lost it, so say so rather than substituting in silence.
+    // BP-MODEL-BLEED (D-cleanup: warn → debug, see getModel) — diagnostics
+    // only; the provider-aware resolver owns the real routing.
     if (roleAssignment?.modelId && roleAssignment.provider !== 'claude') {
-      log.warn(
+      log.debug(
         `[model-config] '${action}' is bound to ` +
           `${roleAssignment.provider}/${roleAssignment.modelId}, but this resolver can only ` +
           `return a Claude model id - the caller is not provider-aware and will run on the ` +

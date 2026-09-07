@@ -724,13 +724,20 @@ export type ModelAction =
   /** Layer 4 — adversarial whole-diff review phase. Optional: off unless explicitly bound. */
   | 'blueprint:code-review'
   | 'prompt:optimize'
+  // ── Design audit (Impeccable-powered) ──
+  /** Runs the evaluate-class design commands (audit / critique) as agent sessions. */
+  | 'design:audit'
+  /** Cheap one-shot: maps a free-text brief to preselected commands. */
+  | 'design:route'
+  /** Attended design-context setup (PRODUCT.md / DESIGN.md). */
+  | 'design:init'
   // ── Background one-shot actions ──
   | 'commit-message'
   | 'pr-description'
   | 'condense'
 
 /** Which section of the routing UI a role row belongs to. */
-export type ModelRoleGroup = 'chat' | 'blueprint' | 'quality' | 'council' | 'background'
+export type ModelRoleGroup = 'chat' | 'blueprint' | 'quality' | 'council' | 'design' | 'background'
 
 /**
  * One row of the model-routing catalogue.
@@ -2425,6 +2432,84 @@ export interface AuditFinding {
   description: string
   filePath?: string
   recommendation?: string
+  /**
+   * Where the finding came from. Absent for ordinary LLM-authored findings;
+   * `'impeccable-detector'` marks deterministic detector output, which is
+   * excluded from agent coverage stats and badged separately in the UI.
+   */
+  source?: string
+}
+
+// ─── Design audit (Impeccable) ────────────────────────────────────────
+// Design runs reuse audit storage via the `kind` discriminator on audit_runs.
+
+/**
+ * The 16 selectable Impeccable commands.
+ *
+ * Deliberately a subset of the engine's 23: `shape`, `init`, `document`,
+ * `extract`, `live` and the deprecated `craft` are not cards (Q3/Q4), and
+ * `overdrive` is held back for now.
+ */
+export type DesignCommandId =
+  // evaluate — the only commands that actually execute in a design run
+  | 'audit'
+  | 'critique'
+  // refine — amplify / visual voice
+  | 'animate'
+  | 'bolder'
+  | 'colorize'
+  | 'delight'
+  | 'layout'
+  | 'quieter'
+  | 'typeset'
+  // simplify — reduce and clarify
+  | 'adapt'
+  | 'clarify'
+  | 'distill'
+  // harden — production readiness
+  | 'harden'
+  | 'onboard'
+  | 'optimize'
+  | 'polish'
+
+/** Card grouping, mirroring Impeccable's own command families. */
+export type DesignCommandCategory = 'evaluate' | 'refine' | 'simplify' | 'harden'
+
+export interface DesignCommandDef {
+  id: DesignCommandId
+  name: string
+  category: DesignCommandCategory
+  description: string
+  /** The verb passed to the engine / named in the remediation brief. */
+  impeccableCommand: string
+  /** Ids that cannot be selected alongside this one. Always symmetric. */
+  incompatibleWith: DesignCommandId[]
+}
+
+/** What a design run looks at. */
+export interface DesignScope {
+  mode: 'project' | 'paths'
+  /** Workspace-relative files/dirs. Empty when mode is 'project'. */
+  paths: string[]
+}
+
+export interface DesignRunConfig {
+  commandIds: DesignCommandId[]
+  scope: DesignScope
+  /** The user's free-text goal, used for routing and the remediation brief. */
+  brief: string
+  llmProvider?: string
+}
+
+/**
+ * Presence of the context files Impeccable commands expect. Never blocks a run
+ * — missing context degrades result quality and shows a warning (Q4/P5.3).
+ */
+export interface DesignContextStatus {
+  productMd: boolean
+  designMd: boolean
+  /** DESIGN.md is older than recently-changed UI sources. */
+  stale: boolean
 }
 
 export interface AuditCoverageStats {
@@ -2472,6 +2557,13 @@ export interface AuditResult {
   }
 }
 
+/**
+ * Which pipeline produced a run. `audit_runs` is shared storage: Workspace
+ * Health writes 'code', the Impeccable design audit writes 'design', and every
+ * workspace-scoped read filters on it (migration 160).
+ */
+export type AuditRunKind = 'code' | 'design'
+
 export interface AuditRun {
   id: string
   workspaceId: string
@@ -2482,6 +2574,8 @@ export interface AuditRun {
   detectedTechs: string[]
   /** Per-track skills the user selected for this run (Deep mode). Execution deferred. */
   selectedSkills?: AuditSelectedSkills
+  /** Defaults to 'code' for every run written before migration 160. */
+  kind: AuditRunKind
   results: AuditResult[] // joined for UI convenience
   createdAt: string
   updatedAt: string

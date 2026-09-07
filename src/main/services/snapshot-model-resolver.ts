@@ -22,7 +22,9 @@ import {
   blueprintRepository,
   workspaceRepository
 } from '../db/repositories'
-import { modelConfigService } from './model-config.service'
+import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
+import { resolveModelAction } from '../../shared/constants'
+import type { AgentRole } from '../../shared/types'
 import { decryptSettingsKey } from '../ipc/encrypt-settings-keys'
 import log from 'electron-log'
 
@@ -54,8 +56,16 @@ export const BLUEPRINT_CONV_RE =
  * `blueprint:lead-review` while keeping a `blueprint-build-...` conversation id:
  * keying on the id would hand it the build assignment's model (e.g. glm-5.3)
  * while the adapter resolved lead-review's provider (claude), and the CLI would
- * reject the model. Actions absent here have no snapshot entry and fall through
- * to live resolution, which is correct for them.
+ * reject the model.
+ *
+ * `leadReview` / `peerReview` were MISSING here until 2026-09-07, and their
+ * absence was not benign: with no key, the provider resolved to `null` and fell
+ * back to the workspace default while the model still resolved from the `build`
+ * entry, so on a GLM-build blueprint every escalation rung was dispatched to the
+ * Claude CLI carrying `model: glm-5.3`. Blueprints created before that date have
+ * no frozen entry under these keys — `blueprintSnapshotAssignment` falls back to
+ * the live workspace binding for the same action, which keeps provider and model
+ * agreeing for them too.
  */
 const ACTION_SNAPSHOT_KEY: Record<string, string> = {
   'blueprint:specify': 'specify',
@@ -65,6 +75,8 @@ const ACTION_SNAPSHOT_KEY: Record<string, string> = {
   'blueprint:review': 'review',
   'blueprint:build': 'build',
   'blueprint:code-review': 'codeReview',
+  'blueprint:lead-review': 'leadReview',
+  'blueprint:peer-review': 'peerReview',
   'blueprint:verify': 'verify'
 }
 
@@ -77,15 +89,46 @@ export function blueprintSnapshotAssignment(
   blueprintId: string,
   modelAction: ModelAction
 ): ResolvedAssignment | null {
-  const key = ACTION_SNAPSHOT_KEY[modelAction]
-  if (!key) return null
   try {
     const bp = blueprintRepository.findById(blueprintId)
-    const snap = bp?.settingsJson?.modelSnapshot as Record<string, ResolvedAssignment> | undefined
-    return snap?.[key] ?? null
+    if (!bp) return null
+
+    const key = ACTION_SNAPSHOT_KEY[modelAction]
+    if (key) {
+      const snap = bp.settingsJson?.modelSnapshot as Record<string, ResolvedAssignment> | undefined
+      const frozen = snap?.[key]
+      if (frozen) return frozen
+    }
+
+    // No frozen entry for this action. Resolve the LIVE workspace binding rather
+    // than returning null: null used to send provider and model down two
+    // different fallbacks (workspace default provider vs per-action model
+    // routing), which is exactly how they came to disagree. One assignment for
+    // one action means they cannot.
+    //
+    // Reproducibility is only weakened where it never existed — these are the
+    // actions the snapshot does not cover (legacy blueprints predating a key, or
+    // a non-blueprint action reaching here).
+    return resolveAssignment({ action: modelAction, ...buildResolveOpts(bp.workspaceId) })
   } catch {
     return null
   }
+}
+
+/**
+ * The `ModelAction` an adapter actually routes on.
+ *
+ * SINGLE SOURCE OF TRUTH: provider resolution reads the adapter's own action
+ * (`BlueprintBaseAdapter.getLlmProvider()`), so model resolution must read the
+ * same one or the two describe different routing entries. Prefer what the
+ * adapter declares; fall back to the role-derived action for every adapter that
+ * declares nothing, which is all of them outside the blueprint pipeline.
+ */
+export function resolveAdapterModelAction(
+  adapter: { role: AgentRole; getUsageModelAction?(): ModelAction | undefined },
+  isBuildMode: boolean
+): ModelAction {
+  return adapter.getUsageModelAction?.() ?? resolveModelAction(adapter.role, isBuildMode)
 }
 
 /**

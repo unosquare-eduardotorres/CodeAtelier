@@ -500,6 +500,11 @@ const TEST_FILES: string[] = [
   './recall-server.test',
   // ─── Mermaid sanitizer pipeline (shared LLM output fixups) ───
   './mermaid-sanitizers.test',
+  // ─── Impeccable design engine (binary resolution + skill provisioning) ───
+  './impeccable-runtime.test',
+  './impeccable-provision.test',
+  // ─── Design command catalogue + selection rules (pure) ───
+  './design-commands.test',
   // ─── Loopback update feed server (cloud-drive auto-update transport) ───
   './update-feed-server.test',
   // ─── Update feed publishing + failure surfacing ───
@@ -735,6 +740,8 @@ const TEST_FILES: string[] = [
   './glm-provider.test',
   './glm-explicit-provider.test',
   './opencode-executor-logic.test',
+  './opencode-token-backstop.test',
+  './blueprint-provider-model-attribution.test',
   './prompt-builder-extractors.test',
   './prompt-builder-local.test',
   './workspace-mcp-config-builder.test',

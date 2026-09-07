@@ -236,6 +236,118 @@ describe('runWaveCommandGates — missing runner is unverifiable, never fail (F1
     assert.equal(fullSuite?.reason, 'command_missing')
   })
 
+  // ── D2b — collection-time import failure is environmental, not a red suite ──
+  // The blueprint-2b08bb6e / T004 shape: PYTHONPATH missing the package root in
+  // the worktree env. The runner STARTED (so not command_missing) but could not
+  // COLLECT the suite — that must be unverifiable(import_env), never fail.
+  describe('D2b — collection-time import failure → unverifiable(import_env)', () => {
+    const T004_OUTPUT = [
+      'ssss',
+      '======================================================================',
+      'ERROR: test_ui_taxonomy_pin (unittest.loader._FailedTest)',
+      '----------------------------------------------------------------------',
+      'ImportError: Failed to import test module: test_ui_taxonomy_pin',
+      'Traceback (most recent call last):',
+      '  File "unittest/loader.py", line 428, in _find_test_path',
+      "ModuleNotFoundError: No module named 'crsos_ui'"
+    ]
+
+    test('collection banner + ModuleNotFoundError → unverifiable(import_env) with PYTHONPATH hint', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            'multiplexer/.venv-mux/Scripts/python.exe -m unittest discover -s tests': {
+              exitCode: 1,
+              output: T004_OUTPUT
+            }
+          }),
+          'multiplexer/.venv-mux/Scripts/python.exe -m unittest discover -s tests'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(
+        fullSuite?.verdict,
+        'unverifiable',
+        'an env-fault collection failure is not a red suite'
+      )
+      assert.equal(fullSuite?.reason, 'import_env')
+      assert.ok(
+        fullSuite?.evidence.some((e) => e.includes('crsos_ui')),
+        'evidence must name the missing module'
+      )
+      assert.ok(
+        fullSuite?.evidence.some((e) => /PYTHONPATH/.test(e)),
+        'evidence must carry the operator remedy (PYTHONPATH / gate-command override)'
+      )
+      assert.equal(report.overall, 'unverifiable')
+    })
+
+    test('pytest collection error shape → unverifiable(import_env)', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            'python -m pytest tests/': {
+              exitCode: 2,
+              output: [
+                '============================= test session starts =============================',
+                'ERROR collecting tests/test_pin.py',
+                "ImportError while importing test module 'tests/test_pin.py'.",
+                "E   ModuleNotFoundError: No module named 'crsos_ui'"
+              ]
+            }
+          }),
+          'python -m pytest tests/'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(fullSuite?.verdict, 'unverifiable')
+      assert.equal(fullSuite?.reason, 'import_env')
+    })
+
+    test('test-body ModuleNotFoundError (no collection banner) stays a hard FAIL', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            'python -m pytest tests/': {
+              exitCode: 1,
+              output: [
+                '================================== FAILURES ===================================',
+                '________________________________ test_pin ___________________________________',
+                'tests/test_pin.py:4: in test_pin',
+                '    from crsos_ui import taxonomy',
+                "E   ModuleNotFoundError: No module named 'crsos_ui'",
+                '=========================== 1 failed in 0.02s ============================'
+              ]
+            }
+          }),
+          'python -m pytest tests/'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(
+        fullSuite?.verdict,
+        'fail',
+        'a ModuleNotFoundError raised from a test BODY is a genuine red test'
+      )
+    })
+
+    test('banner without a following ModuleNotFoundError stays a hard FAIL (no fail-open on a lone banner)', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            'python -m pytest tests/': {
+              exitCode: 1,
+              output: ['ImportError: Failed to import test module: test_x', 'assert 1 == 2']
+            }
+          }),
+          'python -m pytest tests/'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(fullSuite?.verdict, 'fail')
+    })
+  })
+
   // ── T003/G4 — the POSIX missing-path signature is shell-shaped, not a bare
   // substring. `python: can't open file … No such file or directory` is a RED
   // SUITE (the interpreter ran; the test file it was pointed at is absent) and

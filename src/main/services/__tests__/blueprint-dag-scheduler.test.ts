@@ -125,8 +125,14 @@ if (!env) {
    * durationMs, optionally failing. runWaveGates is stubbed to record the
    * wave numbers it was invoked with. Serialized via runExclusive — the
    * pref stub is a process-global swap.
+   *
+   * `opts.beforeRun(blueprintId)` runs after seeding, before executeDag —
+   * D3 tests use it to pre-load `attempts` (the residual-leak scenario).
    */
-  async function runDag(specs: TaskSpec[], opts?: { cap?: number }): Promise<DagRunResult> {
+  async function runDag(
+    specs: TaskSpec[],
+    opts?: { cap?: number; beforeRun?: (blueprintId: string) => void }
+  ): Promise<DagRunResult> {
     return runExclusive(async () => {
       const wsId = freshWs()
       const { blueprintId } = seedTasks(specs, wsId)
@@ -194,6 +200,7 @@ if (!env) {
       }
 
       try {
+        opts?.beforeRun?.(blueprintId)
         const { buildTaskDag } = require('../../../shared/task-dag')
         const dag = buildTaskDag(
           specs.map((s) => ({ taskId: s.taskId, wave: s.wave, dependsOnJson: s.dependsOn ?? [] }))
@@ -899,6 +906,62 @@ if (!env) {
         1,
         'markReadyAgain restores the dependent\u2019s in-degree'
       )
+    })
+
+    // D3a — the requeue was itself a reset leak: `requeuedTasks` is
+    // per-scheduler-invocation state, so every phase retry granted one fresh
+    // requeue (~11 retries ≈ the 29-attempt loop in blueprint 2b08bb6e). The
+    // guard refuses the requeue when the task's row is already stop-loss
+    // territory (here: attempts at the belt-and-braces cap) and lets it fall
+    // through to the normal failure path instead.
+    test('D3a — a requeue on a task at the attempts cap is REFUSED and falls to failure', async () => {
+      const run = await runDag(
+        [{ taskId: 'T001', wave: 1, files: ['src/a.ts'], requeueOnce: true }],
+        {
+          beforeRun: (blueprintId) => {
+            // The residual-leak scenario: a prior reset path left the task
+            // pending with attempts already at STOP_LOSS_EXCLUSION_ATTEMPT_CAP.
+            // No stop-loss wording needed — the cap trigger alone must refuse.
+            const t = blueprintTaskRepository
+              .findByBlueprint(blueprintId)
+              .find((r: any) => r.taskId === 'T001')
+            for (let i = 0; i < 6; i++) blueprintTaskRepository.recordAttempt(t.id)
+          }
+        }
+      )
+      assert.equal(
+        run.dispatchCount.get('T001'),
+        1,
+        'the requeue must not buy a second dispatch for a stop-loss-capped task'
+      )
+      assert.equal(
+        run.statuses.get('T001'),
+        'failed',
+        'the refused requeue falls through to the normal failure path'
+      )
+    })
+
+    test('D3a — a requeue on a healthy low-attempt task still requeues (no over-blocking)', async () => {
+      const run = await runDag(
+        [{ taskId: 'T001', wave: 1, files: ['src/a.ts'], requeueOnce: true }],
+        {
+          beforeRun: (blueprintId) => {
+            const t = blueprintTaskRepository
+              .findByBlueprint(blueprintId)
+              .find((r: any) => r.taskId === 'T001')
+            // attempts = 2: below the cap, and the stubbed failure carries no
+            // stop-loss wording, so isDeterministicStopLoss is false.
+            blueprintTaskRepository.recordAttempt(t.id)
+            blueprintTaskRepository.recordAttempt(t.id)
+          }
+        }
+      )
+      assert.equal(
+        run.dispatchCount.get('T001'),
+        2,
+        'a task below the cap with no stop-loss reason still gets its one requeue'
+      )
+      assert.equal(run.statuses.get('T001'), 'complete')
     })
   })
 }

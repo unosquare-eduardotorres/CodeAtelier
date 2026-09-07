@@ -1230,6 +1230,64 @@ function isCommandMissing(output: readonly string[]): boolean {
   })
 }
 
+/**
+ * D2b — collection-time import-failure signatures (unittest / py.test).
+ *
+ * The incident shape (blueprint 2b08bb6e, T004, 29 attempts): the worktree env
+ * lacked `PYTHONPATH=multiplexer`, so the runner started fine but could not
+ * COLLECT the suite —
+ *
+ *   ImportError: Failed to import test module: test_ui_taxonomy_pin
+ *   Traceback (most recent call last):
+ *     ...
+ *   ModuleNotFoundError: No module named 'crsos_ui'
+ *
+ * (py.test's equivalent: `ERROR collecting …` / `ImportError while importing
+ * test module …`.) That is environmental (nothing a builder attempt can
+ * change), yet it graded as `fail` → identical fingerprint → loop.
+ *
+ * The discriminator is the COLLECTION BANNER itself, not output position:
+ * unittest's loader wraps a collection import failure in a `_FailedTest`, so
+ * the banner appears AFTER the `====`/`----` separator lines a "prologue-only"
+ * scan would stop at. Only the loader ever prints these banners — a
+ * `ModuleNotFoundError` raised from a test BODY has no banner and stays `fail`.
+ */
+const FAILED_TO_IMPORT_RE = /(?:ImportError:\s*)?Failed to import (?:the )?test module[:\s]/i
+const PYTEST_COLLECTION_ERROR_RE =
+  /(?:ERROR collecting |ImportError while importing test module|error[s]? during collection)/i
+const IMPORT_ERROR_RE =
+  /^(?:[E\s]+)?(?:[\w.]*Error(?:\([^)]*\))?:\s*)?ModuleNotFoundError: No module named ['"]?([\w.]+)/i
+
+/** True when the suite could not be COLLECTED because an import failed — environmental. */
+function isImportEnvFailure(output: readonly string[]): boolean {
+  for (let i = 0; i < output.length; i++) {
+    const line = output[i]
+    if (!FAILED_TO_IMPORT_RE.test(line) && !PYTEST_COLLECTION_ERROR_RE.test(line)) continue
+    // The import error follows within a few lines (the loader prints the
+    // traceback between the banner and the error).
+    for (let j = i + 1; j <= Math.min(i + 8, output.length - 1); j++) {
+      if (IMPORT_ERROR_RE.test(output[j])) return true
+    }
+  }
+  return false
+}
+
+/** Extract the missing module name from a collection-time import failure, if present. */
+function missingImportedModule(output: readonly string[]): string | null {
+  for (const line of output) {
+    const m = IMPORT_ERROR_RE.exec(line)
+    if (m?.[1]) return m[1]
+  }
+  return null
+}
+
+/** D2b — the operator remedy appended to `import_env` gate evidence. */
+const IMPORT_ENV_REMEDY =
+  'The test suite could not be COLLECTED because an import failed — this is an ' +
+  'environment fault (missing PYTHONPATH / package root), not a code defect. ' +
+  'Operator remedy: set PYTHONPATH for the gate command or override the workspace gate command. ' +
+  'Do not attempt to fix this in code.'
+
 // ── Change collection ──
 
 /** Why a changed path was not attributed to the graded task. */
@@ -2270,6 +2328,26 @@ async function gateCommand(
     )
   }
   if (outcome.exitCode !== 0) {
+    // D2b — collection-time import failure: the runner ran but could not
+    // collect the suite (PYTHONPATH/package-root missing in the worktree env).
+    // Environmental — same family as `command_missing`, distinct remedy.
+    // Checked BEFORE `isCommandMissing` because a collection failure whose
+    // banner lands in the first two lines also contains the bare "no module
+    // named" substring — the more specific signature wins.
+    if (isImportEnvFailure(outcome.output)) {
+      const missing = missingImportedModule(outcome.output)
+      return unverifiable(
+        name,
+        'import_env',
+        [
+          `${command.command} — the test suite could not be collected` +
+            (missing ? ` (missing module: ${missing})` : ''),
+          IMPORT_ENV_REMEDY,
+          ...outcome.output
+        ],
+        outcome.durationMs
+      )
+    }
     // A missing runner is environmental, not a code failure: grading it `fail`
     // fails the phase deterministically and no retry can ever change it.
     if (isCommandMissing(outcome.output)) {
@@ -2417,6 +2495,24 @@ async function gateTaskTests(
     )
   }
   if (outcome.exitCode !== 0 || outcome.timedOut) {
+    // D2b — same collection-time import-failure classification as `gateCommand`,
+    // for the task's own tests (the T004 shape). Checked BEFORE
+    // `isCommandMissing` for the same reason as there: the more specific
+    // collection banner wins over the bare "no module named" substring.
+    if (!outcome.timedOut && isImportEnvFailure(outcome.output)) {
+      const missing = missingImportedModule(outcome.output)
+      return unverifiable(
+        'task-tests',
+        'import_env',
+        [
+          `${command.command} — the test suite could not be collected` +
+            (missing ? ` (missing module: ${missing})` : ''),
+          IMPORT_ENV_REMEDY,
+          ...outcome.output
+        ],
+        outcome.durationMs
+      )
+    }
     // Same environmental distinction as `gateCommand`: a task-test command whose
     // binary is absent is `unverifiable`, never a red-suite `fail`.
     if (!outcome.timedOut && isCommandMissing(outcome.output)) {
@@ -2855,7 +2951,15 @@ export function buildGateFixInstructions(
   }
 ): string {
   const failed = report.gates.filter((g) => g.verdict === 'fail')
-  if (failed.length === 0) return ''
+  // D2b — collection-time import failures are `unverifiable`, so they never
+  // appear in `failed`; surface them in their own section so a builder facing
+  // a mixed report (e.g. write-set fail + task-tests import_env) is told this
+  // one is an environment fault it must NOT try to fix in code — "fix the
+  // import" was exactly the loop driver in blueprint 2b08bb6e (T004).
+  const importEnv = report.gates.filter(
+    (g) => g.verdict === 'unverifiable' && g.reason === 'import_env'
+  )
+  if (failed.length === 0 && importEnv.length === 0) return ''
 
   const restored = opts?.restoredTestFiles ?? []
   const reverted = opts?.revertedFiles ?? []
@@ -2902,11 +3006,20 @@ export function buildGateFixInstructions(
         : ''
     return `${header}\n\n${body}\n\n**Required:** ${instruction}${restoreNote}${revertedNote}`
   })
+  const importEnvSections = importEnv.map((gate) => {
+    const body = gate.evidence.map((line) => `- ${line}`).join('\n')
+    return (
+      `### Gate: ${gate.name} — could not run (environment)\n\n${body}\n\n` +
+      '**No code action.** This check never executed — do not try to make the ' +
+      'import succeed by editing source or tests. The operator must set ' +
+      'PYTHONPATH for the gate command or override the workspace gate command.'
+    )
+  })
 
   return (
     'The previous attempt failed deterministic quality gates. ' +
     'These are machine-checked facts, not opinions — fix exactly what is listed.\n\n' +
-    sections.join('\n\n') +
+    [...sections, ...importEnvSections].join('\n\n') +
     '\n\n' +
     REVERT_SCOPE_RULE
   )

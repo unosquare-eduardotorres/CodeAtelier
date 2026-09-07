@@ -474,8 +474,14 @@ describe('destructive-revert (P1b) — replay of run 984eac4d', () => {
     const report = await runGates(ctx, baseline)
     const gate = report.gates.find((g) => g.name === 'destructive-revert')!
     assert.equal(gate.verdict, 'fail', JSON.stringify(report.gates, null, 2))
-    assert.ok(gate.evidence.some((e) => e.includes('T002')), 'names the victim task')
-    assert.ok(gate.evidence.some((e) => e.includes('.env.example')), 'names the file')
+    assert.ok(
+      gate.evidence.some((e) => e.includes('T002')),
+      'names the victim task'
+    )
+    assert.ok(
+      gate.evidence.some((e) => e.includes('.env.example')),
+      'names the file'
+    )
     assert.equal(report.overall, 'fail')
   })
 
@@ -594,7 +600,10 @@ describe('destructive-revert (P1b) — replay of run 984eac4d', () => {
 
     const gate = report.gates.find((g) => g.name === 'destructive-revert')!
     assert.equal(gate.verdict, 'fail', JSON.stringify(gate.evidence, null, 2))
-    assert.ok(gate.evidence.some((e) => e.includes('T008')), 'names T008 as the victim')
+    assert.ok(
+      gate.evidence.some((e) => e.includes('T008')),
+      'names T008 as the victim'
+    )
     assert.ok(
       gate.evidence.some((e) => e.includes('sendInternalSignoffNotice')),
       'names the destroyed export'
@@ -698,7 +707,8 @@ describe('build gate baseline (P2a) — a task is not blamed for a tree it inher
       'src/feature.ts': 'export const a = 1\n',
       'src/feature.test.ts': "test('a', () => {})\n"
     })
-    const introduced = "src/feature.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'."
+    const introduced =
+      "src/feature.ts(3,1): error TS2322: Type 'string' is not assignable to type 'number'."
     const ctx = ctxFor(dir, buildRunner(INHERITED, [...INHERITED, introduced]), {
       commandGates: ['build']
     })
@@ -1118,6 +1128,38 @@ describe('buildGateFixInstructions', () => {
         gates: [{ name: 'lint', verdict: 'pass', evidence: [], durationMs: 1 }]
       }),
       ''
+    )
+  })
+
+  // D2b — an import_env gate is `unverifiable`, so it never lands in `failed`;
+  // it gets its own section whose instruction is the OPERATOR remedy, not a
+  // code-fix instruction ("fix the import" was the T004 loop driver).
+  test('D2b — import_env gate renders the environmental remedy, not a code-fix instruction', () => {
+    const text = buildGateFixInstructions({
+      overall: 'unverifiable',
+      gates: [
+        {
+          name: 'task-tests',
+          verdict: 'unverifiable',
+          reason: 'import_env',
+          evidence: [
+            'pytest — the test suite could not be collected (missing module: crsos_ui)',
+            'The test suite could not be COLLECTED because an import failed — this is an environment fault (missing PYTHONPATH / package root), not a code defect.'
+          ],
+          durationMs: 1
+        }
+      ]
+    })
+    assert.ok(text.length > 0, 'an import_env gate alone still produces instructions')
+    assert.ok(/PYTHONPATH/.test(text), 'names the remedy the operator must apply')
+    assert.ok(
+      /override the workspace gate command/.test(text),
+      'names the gate-command override alternative'
+    )
+    assert.ok(/No code action/.test(text), 'explicitly tells the builder not to fix it in code')
+    assert.ok(
+      !/Make the listed tests pass by changing the implementation/.test(text),
+      'must NOT carry the task-tests code-fix instruction'
     )
   })
 })

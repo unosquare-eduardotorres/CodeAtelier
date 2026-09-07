@@ -535,32 +535,44 @@ export class OpenCodeConfigWriter {
         // LSP and skill always allowed
         lsp: 'allow',
         skill: 'allow',
-        todowrite: 'allow'
+        todowrite: 'allow',
+        // D1b: OpenCode 1.18's native tool names are lowercase and its permission
+        // config keys ARE the tool names — unknown (PascalCase) keys are ignored,
+        // so `edit`/`bash` fell back to the default `ask` and turns ended aborted.
+        // Emit both casings: lowercase for OpenCode's own evaluation, PascalCase
+        // kept for any CLI-backend consumer that still matches the old names.
+        write: 'allow',
+        edit: 'allow',
+        bash: 'allow',
+        read: 'allow',
+        glob: 'allow',
+        grep: 'allow'
       }
     }
 
     // Plan mode: granular Bash permissions via glob patterns
+    const safeBashGlobs: Record<string, string> = {
+      '*': 'ask',
+      // Safe read-only commands auto-approved in plan mode
+      'git status *': 'allow',
+      'git log *': 'allow',
+      'git diff *': 'allow',
+      'git branch *': 'allow',
+      'npm test *': 'allow',
+      'npm run typecheck *': 'allow',
+      'npm run lint *': 'allow',
+      'npx tsc --noEmit *': 'allow',
+      'ls *': 'allow',
+      'cat *': 'allow',
+      'head *': 'allow',
+      'tail *': 'allow',
+      'wc *': 'allow',
+      'find *': 'allow'
+    }
     return {
       Write: 'ask',
       Edit: 'ask',
-      Bash: {
-        '*': 'ask',
-        // Safe read-only commands auto-approved in plan mode
-        'git status *': 'allow',
-        'git log *': 'allow',
-        'git diff *': 'allow',
-        'git branch *': 'allow',
-        'npm test *': 'allow',
-        'npm run typecheck *': 'allow',
-        'npm run lint *': 'allow',
-        'npx tsc --noEmit *': 'allow',
-        'ls *': 'allow',
-        'cat *': 'allow',
-        'head *': 'allow',
-        'tail *': 'allow',
-        'wc *': 'allow',
-        'find *': 'allow'
-      },
+      Bash: safeBashGlobs,
       Read: 'allow',
       Glob: 'allow',
       Grep: 'allow',
@@ -574,7 +586,11 @@ export class OpenCodeConfigWriter {
       // Allow planning tools
       todowrite: 'allow',
       skill: 'allow',
-      lsp: 'allow'
+      lsp: 'allow',
+      // D1b: lowercase mirrors — OpenCode 1.18 matches these, not PascalCase.
+      write: 'ask',
+      edit: 'ask',
+      bash: safeBashGlobs
     }
   }
 
