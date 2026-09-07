@@ -8,7 +8,7 @@
 import type { BrowserWindow } from 'electron'
 import { ipcMain, dialog } from 'electron'
 import { writeFile } from 'node:fs/promises'
-import { IPC_CHANNELS, AUDIT_TRACKS } from '../../shared/constants'
+import { IPC_CHANNELS, getAuditTrack } from '../../shared/constants'
 import type {
   AuditMode,
   AuditTrackId,
@@ -217,7 +217,7 @@ function registerAuditLifecycleHandlers(_mainWindow: BrowserWindow): void {
             let weightedSum = 0
             let totalWeight = 0
             for (const r of completed) {
-              const w = AUDIT_TRACKS[r.trackId]?.weight ?? 1.0
+              const w = getAuditTrack(r.trackId)?.weight ?? 1.0
               weightedSum += (r.score ?? 0) * w
               totalWeight += w
             }
@@ -507,7 +507,7 @@ function registerAuditExportHandlers(mainWindow: BrowserWindow): void {
       ]
 
       for (const trackId of run.selectedTracks) {
-        const track = AUDIT_TRACKS[trackId]
+        const track = getAuditTrack(trackId)
         const result = run.results.find((r) => r.trackId === trackId)
         if (!track || !result) continue
 

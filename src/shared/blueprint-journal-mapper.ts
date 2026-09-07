@@ -16,6 +16,7 @@ import type {
   QuestionAnswerState
 } from './blueprint-clarify-parsers'
 import { parseBlueprintPlan, parseBlueprintTasks } from './blueprint-artifact-parsers'
+import { formatPhaseLabel } from './blueprint-types'
 import type { ToolActivity } from './types'
 
 // ── Types ──
@@ -138,11 +139,11 @@ export function journalEventsToChatMessages(events: JournalEvent[]): HydratedCha
         const ev = p.event as string | undefined
         if (ev === 'phaseStart') {
           const phase = (p.phase as string) ?? 'unknown'
-          const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+          const phaseLabel = formatPhaseLabel(phase)
           messages.push({ type: 'system', content: `${phaseLabel} phase started`, timestamp: ts })
         } else if (ev === 'phaseComplete') {
           const phase = (p.phase as string) ?? 'unknown'
-          const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+          const phaseLabel = formatPhaseLabel(phase)
           const status = (p.status as string) ?? 'complete'
           messages.push({ type: 'system', content: `${phaseLabel} phase ${status}`, timestamp: ts })
         } else if (ev === 'waveStart') {

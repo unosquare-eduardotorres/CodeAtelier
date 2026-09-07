@@ -19,7 +19,7 @@
  * a *routing* signal: it tells the generated remediation brief which Impeccable
  * fix command should address a cluster of findings. Nothing here mutates code.
  */
-import type { DesignCommandDef, DesignCommandId } from './types'
+import type { AuditTrackId, DesignCommandDef, DesignCommandId } from './types'
 
 /**
  * Commands that actually execute during a design run. Everything else shapes
@@ -187,6 +187,32 @@ export const DESIGN_COMMANDS_BY_ID: Readonly<Record<string, DesignCommandDef>> =
 
 export function getDesignCommand(id: string): DesignCommandDef | undefined {
   return DESIGN_COMMANDS_BY_ID[id]
+}
+
+// ── Track id encoding ────────────────────────────────────────────────────────
+// Design runs reuse `audit_results.track_id`, so a command id is stored with a
+// `design:` prefix. The prefix is what keeps design rows distinguishable from
+// the seven Workspace Health auditors by value alone.
+
+/** `critique` → `design:critique`. The only place this prefix is constructed. */
+export function toDesignTrackId(id: DesignCommandId): `design:${DesignCommandId}` {
+  return `design:${id}`
+}
+
+/** True when a track id belongs to a design run. Narrows for the caller. */
+export function isDesignTrackId(id: string): id is `design:${DesignCommandId}` {
+  return id.startsWith('design:')
+}
+
+/**
+ * `design:critique` → `critique`. Returns null for code tracks and for a
+ * `design:`-prefixed id that is not in the catalogue (a stale row from an older
+ * build must not be handed back as a valid command).
+ */
+export function designCommandFromTrackId(id: AuditTrackId): DesignCommandId | null {
+  if (!isDesignTrackId(id)) return null
+  const command = id.slice('design:'.length)
+  return DESIGN_COMMANDS_BY_ID[command] ? (command as DesignCommandId) : null
 }
 
 /**

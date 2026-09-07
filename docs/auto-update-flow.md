@@ -336,6 +336,52 @@ and stays advisory: that is the catch-up path when one channel has fallen
 behind, and neither script bumps, so building Windows alone lands it on exactly
 the version macOS already published.
 
+### A local copy is not delivery
+
+Copying an artifact into the OneDrive folder publishes it **on the build Mac**.
+It says nothing about any other machine. `latest.yml` is ~1 KB and
+`code-atelier-<version>-setup.exe` is ~180 MB, and the sync client transfers them
+independently — so the pointer routinely arrives on a consumer minutes to hours
+before the thing it points at.
+
+That gap is the single most common support report: `Cannot download
+"…-setup.exe", status 404`. The 404 comes from **our own loopback feed server**
+(`update-feed-server.ts`), not from the network — it `stat()`s the resolved path,
+doesn't find it, and 404s. It also explains why "retrying tomorrow works": by
+then the installer has finished syncing. Note the error text never prints the
+port, so the URL in it looks malformed when it is not.
+
+Two defences, one per side:
+
+**Publisher — never advertise ahead of your own writes.** The publish step is
+ordered `copy artifacts → stage the manifest → verify every reference → publish
+the manifest`, and the manifest is renamed into place only after every file it
+names has been checked. Verification compares the **byte count against the
+manifest's own `size:`**, not just existence, because a partially copied artifact
+sits at its final name and passes `[ -f ]`. Artifacts are themselves copied to a
+temp sibling and renamed, so no reader ever sees a half-written `.exe` under its
+real name. A failed verification now leaves the previous release live instead of
+replacing it with a manifest nothing can satisfy.
+
+**Client — do not offer what is not there.** `artifactReadiness()` in
+`auto-update.service.ts` resolves the manifest's artifact url through the feed
+server's own `resolvePath()` and stats it before `UPDATE_AVAILABLE` reaches the
+renderer. Absent, or shorter than the declared size, and the update is not
+offered; `downloadUpdate()` re-checks in case the file changed while the card sat
+on screen. A background check stays silent and simply succeeds on a later poll —
+not-yet-synced is not an error. A check the user asked for gets a plain-language
+answer instead of an HTTP status:
+
+```
+  v1.0.105 is published but hasn't finished syncing to this PC yet.
+  It will install automatically once the sync catches up.
+```
+
+A GitHub feed has no local root to inspect and is never gated.
+
+To force a machine to hold the files locally: right-click the `Code Atelier`
+folder → **Always keep on this device**.
+
 ---
 
 ## File Map

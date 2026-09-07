@@ -28,7 +28,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { AuditTrackId, AuditRun, AuditMode, AuditFinding } from '../../../../shared/types'
-import { AUDIT_TRACKS, deriveApplicability } from '../../../../shared/constants'
+import { getAuditTrack, deriveApplicability } from '../../../../shared/constants'
 import AuditStreamView from './AuditStreamView'
 import AuditScoreHero from './AuditScoreHero'
 import CompletedFindingsList from './CompletedFindingsList'
@@ -140,10 +140,17 @@ export default function HealthDetailPanel({
     return <EmptyState mode={mode} detectedTechs={currentRun?.detectedTechs ?? []} />
   }
 
-  const track = AUDIT_TRACKS[activeTrackId]
+  const track = getAuditTrack(activeTrackId)
   const result = currentRun?.results.find((r) => r.trackId === activeTrackId)
   const Icon = ICON_MAP[track?.icon ?? ''] ?? Code
   const status = result?.status
+
+  // This panel renders a Workspace Health auditor. A track id with no catalogue
+  // entry (a `design:*` id, or one from an older build) has nothing to show here
+  // — design runs get their own view.
+  if (!track) {
+    return <EmptyState mode={mode} detectedTechs={currentRun?.detectedTechs ?? []} />
+  }
 
   // ── B) Track selected, no run exists yet ──
   if (!currentRun || !status) {

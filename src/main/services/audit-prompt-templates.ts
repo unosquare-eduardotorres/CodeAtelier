@@ -13,7 +13,7 @@
  * FQ MCP tool names removed from domain prompts (already in tool schemas).
  */
 
-import type { AuditTrackId } from '../../shared/types'
+import type { CodeAuditTrackId } from '../../shared/types'
 import { AUDIT_TRACKS } from '../../shared/constants'
 
 // ── Base Template ──────────────────────────────────────────────────────────
@@ -63,7 +63,7 @@ Read files before scoring. Always emit audit-score, even if out of tool calls.
  * W3-F11: Unified domain prompts for all models.
  * FQ MCP tool names removed — already present in tool schemas.
  */
-const AUDITOR_DOMAIN_PROMPTS: Record<AuditTrackId, string> = {
+const AUDITOR_DOMAIN_PROMPTS: Record<CodeAuditTrackId, string> = {
   code: `You audit code quality across frontend and backend: SOLID adherence, naming conventions, cyclomatic complexity, error handling, dead code, duplication, and type safety. Look for code smells, overly complex functions, and inconsistent patterns.`,
 
   testing: `You audit testing strategy: test pyramid balance, critical path coverage, fixture quality, assertion specificity, and CI/CD integration. Look for untested critical paths, brittle tests, and excessive mocking.`,
@@ -90,7 +90,7 @@ export interface RoundContext {
 }
 
 export interface AuditPromptParams {
-  trackId: AuditTrackId
+  trackId: CodeAuditTrackId
   workspaceName: string
   detectedTechs: string[]
   skillContent?: string // Deep mode only — injected skill text

@@ -16,6 +16,7 @@ import log from 'electron-log'
 import type {
   AuditMode,
   AuditTrackId,
+  CodeAuditTrackId,
   AuditFinding,
   AuditorStatus,
   AuditTrack,
@@ -25,7 +26,7 @@ import type {
   AgentStatus
 } from '../../shared/types'
 import type { StreamChunk } from './agent-base.service'
-import { AUDIT_TRACKS } from '../../shared/constants'
+import { AUDIT_TRACKS, isCodeAuditTrackId } from '../../shared/constants'
 import { AgentSessionService } from './agent-session.service'
 import { runOneShotClaude } from './one-shot-claude'
 import { AuditRoleAdapter } from './role-adapters/audit.adapter'
@@ -306,6 +307,16 @@ export class AuditAgentService extends EventEmitter {
     mode: AuditMode
     llmProvider?: LLMProvider
   }): Promise<AuditResultPayload> {
+    // The single narrowing gate between the shared `AuditTrackId` vocabulary
+    // (which also carries `design:<command>` ids) and this service, which only
+    // ever executes the seven Workspace Health auditors. A design track
+    // reaching here is a routing bug — throwing surfaces it as a failed result
+    // instead of an audit that silently inspects zero files.
+    if (!isCodeAuditTrackId(params.trackId)) {
+      throw new Error(`[audit] '${params.trackId}' is not a Workspace Health track`)
+    }
+    const trackParams = { ...params, trackId: params.trackId }
+
     const state = this.getOrCreateState(params.workspaceId)
     let lastError: Error | null = null
 
@@ -320,7 +331,7 @@ export class AuditAgentService extends EventEmitter {
       }
 
       try {
-        return await this.executeMultiRoundAudit(params, state)
+        return await this.executeMultiRoundAudit(trackParams, state)
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err))
         const isRetryable = this.isRetryableError(lastError)
@@ -358,7 +369,7 @@ export class AuditAgentService extends EventEmitter {
     params: {
       workspaceId: string
       workspacePath: string
-      trackId: AuditTrackId
+      trackId: CodeAuditTrackId
       mode: AuditMode
       llmProvider?: LLMProvider
     },
@@ -560,7 +571,7 @@ export class AuditAgentService extends EventEmitter {
     params: {
       workspaceId: string
       workspacePath: string
-      trackId: AuditTrackId
+      trackId: CodeAuditTrackId
       mode: AuditMode
       batch: string[]
       roundNumber: number
@@ -867,7 +878,7 @@ export class AuditAgentService extends EventEmitter {
 
 function calculateOverallScore(
   results: AuditResultPayload[],
-  tracks: Record<AuditTrackId, AuditTrack>
+  tracks: Partial<Record<AuditTrackId, AuditTrack>>
 ): number | null {
   // Exclude tracks whose coverage was insufficient (or not-applicable) — a
   // hallucinated 0 from an empty audit must not drag down the overall score.

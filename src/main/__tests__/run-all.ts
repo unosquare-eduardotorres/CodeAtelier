@@ -686,6 +686,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/local-context-reconstructor.test',
   '../services/__tests__/local-plan-state-maprow.test',
   '../services/__tests__/design-commands.test',
+  '../ipc/__tests__/design-ipc.test',
   '../services/__tests__/impeccable-provision.test',
   '../services/__tests__/impeccable-runtime.test',
   '../services/__tests__/mcp-tool-consistency.test',

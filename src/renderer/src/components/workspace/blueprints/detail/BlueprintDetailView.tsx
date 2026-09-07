@@ -25,6 +25,7 @@ import {
   CheckCircle2,
   GitBranch
 } from 'lucide-react'
+import { formatPhaseLabel } from '../../../../../../shared/blueprint-types'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
 import { summarizeLedger } from '../../../../../../shared/gate-types'
 import { readJiraSyncLog } from '../../../../../../shared/jira.types'
@@ -513,7 +514,7 @@ export function BlueprintDetailView({
                   <div className="flex flex-col gap-0.5 flex-1">
                     <span className="text-sm font-medium">
                       {failureContext?.title ??
-                        `${failedPhase.phase.charAt(0).toUpperCase() + failedPhase.phase.slice(1)} phase failed`}
+                        `${formatPhaseLabel(failedPhase.phase)} phase failed`}
                     </span>
                     <span className="text-xs opacity-80">
                       {failureContext?.description ??
@@ -617,9 +618,7 @@ export function BlueprintDetailView({
         {bp.status === 'cancelled' &&
           (() => {
             const interruptedPhase = bp.currentPhase
-            const phaseLabel = interruptedPhase
-              ? interruptedPhase.charAt(0).toUpperCase() + interruptedPhase.slice(1)
-              : 'next'
+            const phaseLabel = interruptedPhase ? formatPhaseLabel(interruptedPhase) : 'next'
             return (
               <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-info/20 bg-info-muted text-info">
                 <StopCircle size={16} className="mt-0.5 flex-shrink-0" />
@@ -645,9 +644,7 @@ export function BlueprintDetailView({
           !isRunning &&
           (() => {
             const interruptedPhase = bp.currentPhase
-            const phaseLabel = interruptedPhase
-              ? interruptedPhase.charAt(0).toUpperCase() + interruptedPhase.slice(1)
-              : 'current'
+            const phaseLabel = interruptedPhase ? formatPhaseLabel(interruptedPhase) : 'current'
             return (
               <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-info/20 bg-info-muted text-info">
                 <RotateCcw size={16} className="mt-0.5 flex-shrink-0" />

@@ -140,11 +140,14 @@ export class BlueprintPeerReviewService extends EventEmitter {
 
       session = new AgentSessionService(adapter)
 
-      // 4. Progress — the pass runs under the build umbrella.
+      // 4. Progress — the pass runs under the build umbrella, keyed to the task's
+      // lane. Un-keyed build-phase progress is blanked out by the chat view once
+      // any lane exists, so without taskId this stream is invisible.
       this.safeEmit('phaseProgress', {
         blueprintId,
         workspaceId,
         phase: 'build',
+        taskId: task.taskId,
         text: `Peer review: reviewing task ${task.taskId} against its work packet`,
         kind: 'system'
       })
@@ -162,7 +165,8 @@ export class BlueprintPeerReviewService extends EventEmitter {
           workspaceId,
           phase: 'build',
           workspacePath,
-          mode: 'plan'
+          mode: 'plan',
+          taskId: task.taskId
         })
       }
       onStatus = (status: AgentStatus): void => {
@@ -215,6 +219,7 @@ export class BlueprintPeerReviewService extends EventEmitter {
         blueprintId,
         workspaceId,
         phase: 'build',
+        taskId: task.taskId,
         text:
           review.findings.length === 0
             ? `Peer review: task ${task.taskId} clean — no findings`

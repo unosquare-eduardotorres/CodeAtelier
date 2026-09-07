@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { BookOpen, Plus, XCircle, RotateCcw, AlertTriangle, PlayCircle, X } from 'lucide-react'
 import { BlueprintHistoryItem, BlueprintFilterBar, PHASE_CONFIG } from '.'
 import type { BlueprintFilter } from '.'
+import { formatPhaseLabel } from '../../../../../shared/blueprint-types'
 import type { Blueprint } from '../../../../../shared/blueprint-types'
 
 interface BlueprintLandingViewProps {
@@ -130,7 +131,7 @@ export default function BlueprintLandingView({
               <XCircle size={16} className="mt-0.5 flex-shrink-0" />
               <div className="flex flex-col gap-0.5 flex-1">
                 <span className="text-sm font-medium">
-                  {lastError.phase.charAt(0).toUpperCase() + lastError.phase.slice(1)} phase failed
+                  {formatPhaseLabel(lastError.phase)} phase failed
                 </span>
                 <span className="text-xs opacity-80">{lastError.message}</span>
               </div>

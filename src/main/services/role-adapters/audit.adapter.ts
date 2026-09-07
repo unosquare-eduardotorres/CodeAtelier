@@ -11,7 +11,7 @@
  *   - MCP servers mounted: code-graph + semantic-search + git-context (NO control-actions).
  */
 
-import type { AuditMode, AuditTrackId } from '../../../shared/types'
+import type { AuditMode, CodeAuditTrackId } from '../../../shared/types'
 import type { RoundContext } from '../audit-prompt-templates'
 import type {
   AdapterPromptContext,
@@ -30,7 +30,7 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
   interactionTimeoutMs = 5 * 60_000 // 5 min per auditor (adjusted for local LLMs in onSessionStart)
 
   private readonly workspaceId: string
-  private readonly trackId: AuditTrackId
+  private readonly trackId: CodeAuditTrackId
   private readonly mode: AuditMode
   private readonly skillContent?: string
   private readonly roundContext?: RoundContext
@@ -41,7 +41,7 @@ export class AuditRoleAdapter extends BaseRoleAdapter {
 
   constructor(params: {
     workspaceId: string
-    trackId: AuditTrackId
+    trackId: CodeAuditTrackId
     mode: AuditMode
     skillContent?: string
     roundContext?: RoundContext

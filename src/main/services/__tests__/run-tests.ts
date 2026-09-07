@@ -505,6 +505,8 @@ const TEST_FILES: string[] = [
   './impeccable-provision.test',
   // ─── Design command catalogue + selection rules (pure) ───
   './design-commands.test',
+  // ─── Design IPC trust boundary (path containment, caps, kind guard) ───
+  '../../ipc/__tests__/design-ipc.test',
   // ─── Loopback update feed server (cloud-drive auto-update transport) ───
   './update-feed-server.test',
   // ─── Update feed publishing + failure surfacing ───

@@ -90,6 +90,63 @@ describe('update-feed-server — resolveFeedPath', () => {
   })
 })
 
+// ── Readiness helper ──
+
+/**
+ * `resolvePath` lets the caller ask "where would you serve this url from?"
+ * before handing the url to electron-updater. It must agree with the request
+ * handler exactly — a readiness check that resolved a url differently from the
+ * server would either gate a perfectly good update or wave through a 404.
+ */
+describe('update-feed-server — resolvePath', () => {
+  test('resolves_a_manifest_relative_artifact_url', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'update-feed-resolve-'))
+    const server = await startUpdateFeedServer(dir)
+    try {
+      assert.equal(
+        server.resolvePath('1.0.105/win/code-atelier-1.0.105-setup.exe'),
+        join(resolve(dir), '1.0.105', 'win', 'code-atelier-1.0.105-setup.exe')
+      )
+    } finally {
+      await server.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('decodes_percent_encoded_names_the_way_a_request_would', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'update-feed-resolve-'))
+    const server = await startUpdateFeedServer(dir)
+    try {
+      const encoded = encodeURIComponent('Code Atelier-1.0.105-arm64-mac.zip')
+      assert.equal(
+        server.resolvePath(`1.0.105/mac/${encoded}`),
+        join(resolve(dir), '1.0.105', 'mac', 'Code Atelier-1.0.105-arm64-mac.zip')
+      )
+    } finally {
+      await server.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('rejects_traversal_exactly_as_the_request_handler_does', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'update-feed-resolve-'))
+    const server = await startUpdateFeedServer(dir)
+    try {
+      assert.equal(server.resolvePath('../../etc/passwd'), null)
+      assert.equal(server.resolvePath('1.0.105/../../secrets.txt'), null)
+      // A leading slash is tolerated — manifests are relative, but a stray one
+      // must not turn into an empty segment and reject a valid artifact.
+      assert.equal(
+        server.resolvePath('/1.0.105/win/setup.exe'),
+        join(resolve(dir), '1.0.105', 'win', 'setup.exe')
+      )
+    } finally {
+      await server.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 // ── Server integration ──
 
 describe('update-feed-server — HTTP behaviour', () => {

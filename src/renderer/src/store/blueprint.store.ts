@@ -23,6 +23,7 @@ import {
   resolveHydrationAction,
   resolvePostFetchAction
 } from '../../../shared/blueprint-hydration-helpers'
+import { formatPhaseLabel } from '../../../shared/blueprint-types'
 import type {
   Blueprint,
   BlueprintWithDetails,
@@ -59,6 +60,10 @@ export interface StreamEvent {
 
 /** Module-level counter for unique tool IDs (fixes Date.now() same-ms collisions). */
 let toolSeq = 0
+
+// Shared with the journal mapper and the phase banners so live and hydrated
+// transcripts render identical labels.
+export { formatPhaseLabel }
 
 /** Format milliseconds into human-friendly elapsed string (e.g. "1m 18s") */
 export function formatPhaseDuration(ms: number): string {
@@ -1011,7 +1016,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
 
       set((state) => {
         // System message for EVERY phase start (unified transcript)
-        const phaseLabel = data.phase.charAt(0).toUpperCase() + data.phase.slice(1)
+        const phaseLabel = formatPhaseLabel(data.phase)
         const msgs = [
           ...state.chatMessages,
           { type: 'system' as const, content: `${phaseLabel} phase started`, timestamp: now }
@@ -1173,25 +1178,35 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       const completionData = (data as Record<string, unknown>).completion as
         Record<string, unknown> | undefined
 
-      // System message with duration
-      const phaseLabel = data.phase.charAt(0).toUpperCase() + data.phase.slice(1)
-      const durationStr = duration ? ` · ${formatPhaseDuration(duration)}` : ''
-      const statusStr = data.status === 'complete' ? 'complete' : data.status
-      const systemMsg = `${phaseLabel} phase ${statusStr}${durationStr}`
+      // G1: the optional lead-review pass emits a SECOND phaseComplete{phase:'verify'}
+      // once it finishes — verify itself already emitted a terminal one before handing
+      // off. Recording it again would append a duplicate "Verify phase complete" line
+      // and overwrite verify's real completion metrics with this pass's thin payload.
+      // It still has to fall through to the terminal branch below, because the pass's
+      // progress chunks re-adopt the run (isRunning: true) and nothing else settles it.
+      const isLeadReviewPass = completionData?.leadReviewPass === true
 
-      set((state) => ({
-        phaseDurations: duration
-          ? { ...state.phaseDurations, [phaseKey]: duration }
-          : state.phaseDurations,
-        phaseCompletions:
-          completionMetrics || completionData
-            ? { ...state.phaseCompletions, [phaseKey]: completionMetrics ?? completionData ?? {} }
-            : state.phaseCompletions,
-        chatMessages: [
-          ...state.chatMessages,
-          { type: 'system' as const, content: systemMsg, timestamp: Date.now() }
-        ]
-      }))
+      if (!isLeadReviewPass) {
+        // System message with duration
+        const phaseLabel = formatPhaseLabel(data.phase)
+        const durationStr = duration ? ` · ${formatPhaseDuration(duration)}` : ''
+        const statusStr = data.status === 'complete' ? 'complete' : data.status
+        const systemMsg = `${phaseLabel} phase ${statusStr}${durationStr}`
+
+        set((state) => ({
+          phaseDurations: duration
+            ? { ...state.phaseDurations, [phaseKey]: duration }
+            : state.phaseDurations,
+          phaseCompletions:
+            completionMetrics || completionData
+              ? { ...state.phaseCompletions, [phaseKey]: completionMetrics ?? completionData ?? {} }
+              : state.phaseCompletions,
+          chatMessages: [
+            ...state.chatMessages,
+            { type: 'system' as const, content: systemMsg, timestamp: Date.now() }
+          ]
+        }))
+      }
 
       // Refresh full blueprint details so the phases array stays complete
       // (new phase rows are created just before each phase runs, not at blueprint creation)

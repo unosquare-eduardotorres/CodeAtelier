@@ -7,21 +7,60 @@
  * Run: tsx src/main/ipc/__tests__/ipc-blueprint-deep.test.ts
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { test, describe, summaryAsync } from '../../services/__tests__/test-harness'
 import {
   setupFullMock,
   getHandlers,
   mockMainWindow,
+  sentEvents,
   tryInvokeHandler
 } from '../../services/__tests__/setup-full-mock'
 
 setupFullMock()
 
 let blueprintLoaded = false
+type ListenerCounter = {
+  listenerCount: (e: string) => number
+  emit: (e: string, p: unknown) => void
+}
+const wiredEmitters: Record<string, ListenerCounter | null> = {}
+
+/**
+ * Resolve a service singleton through blueprint.ipc's OWN module children.
+ *
+ * A plain require() is not safe here: in the shared run the suite's mock window
+ * purges require.cache, so re-requiring a service returns a FRESH singleton with
+ * none of the wiring's listeners on it, while blueprint.ipc keeps holding the
+ * original. The children array keeps direct Module references, so it always
+ * yields the exact instance the wiring registered its listeners on.
+ */
+function serviceBoundToIpc(fileFragment: string, exportName: string): ListenerCounter | null {
+  const ipcMod = require.cache[require.resolve('../../ipc/blueprint.ipc')]
+  const child = ipcMod?.children.find((c: NodeModule) => c.filename.includes(fileFragment))
+  return ((child?.exports as Record<string, unknown> | undefined)?.[exportName] ??
+    null) as ListenerCounter | null
+}
 
 try {
+  // The forwarders dispatch through the SessionEventRouter singleton; without
+  // this the sends throw inside forward()'s try/catch and nothing is captured.
+  require('../../services/session-event-router').initSessionEventRouter(mockMainWindow)
   const mod = require('../../ipc/blueprint.ipc')
   mod.registerBlueprintIpc(mockMainWindow)
+  wiredEmitters['code-review'] = serviceBoundToIpc(
+    'blueprint-code-review.service',
+    'blueprintCodeReviewService'
+  )
+  wiredEmitters['peer-review'] = serviceBoundToIpc(
+    'blueprint-peer-review.service',
+    'blueprintPeerReviewService'
+  )
+  wiredEmitters['lead-review'] = serviceBoundToIpc(
+    'blueprint-lead-review.service',
+    'blueprintLeadReviewService'
+  )
   blueprintLoaded = true
 } catch (err) {
   console.log(`⚠ blueprint.ipc load failed: ${(err as Error).message?.split('\n')[0]}`)
@@ -226,6 +265,71 @@ if (blueprintLoaded) {
         assert.ok(r.ok === true || r.ok === false)
       })
     }
+  })
+
+  // Regression guard: every phase service's events must be bridged to the
+  // renderer by wireOnceEventForwarding(). A service missing from that function
+  // streams nothing to the UI even though the phase runs correctly.
+  describe('blueprint.ipc — phase event forwarding wiring', () => {
+    const wired: Array<[string, string[]]> = [
+      ['code-review', ['phaseStart', 'phaseProgress', 'phaseComplete', 'phaseArtifact', 'status']],
+      ['peer-review', ['phaseProgress', 'status']],
+      ['lead-review', ['phaseProgress', 'phaseComplete', 'phaseArtifact', 'status']]
+    ]
+
+    for (const [name, events] of wired) {
+      for (const ev of events) {
+        test(`${name} service has a '${ev}' listener`, () => {
+          const svc = wiredEmitters[name]
+          assert.ok(svc, `${name} service was not resolvable through blueprint.ipc's imports`)
+          const count = svc.listenerCount(ev)
+          assert.ok(count > 0, `Expected ≥1 '${ev}' listener on ${name} service, got ${count}`)
+        })
+      }
+    }
+
+    // Listener presence alone does not prove the payload reaches the renderer:
+    // the forwarder drops anything without a workspaceId and routes through the
+    // event router. Emit a real chunk and assert it lands on the channel.
+    test('code-review phaseProgress reaches the renderer channel', () => {
+      const svc = wiredEmitters['code-review']
+      assert.ok(svc, "code-review service was not resolvable through blueprint.ipc's imports")
+      const before = sentEvents.length
+      svc.emit('phaseProgress', {
+        blueprintId: 'bp-stream-1',
+        workspaceId: 'ws-stream-1',
+        phase: 'code-review',
+        text: 'reviewing diff'
+      })
+      const forwarded = sentEvents
+        .slice(before)
+        .find(
+          (e) =>
+            e.channel === 'blueprint:phaseProgress' &&
+            (e.data as { phase?: string })?.phase === 'code-review'
+        )
+      assert.ok(forwarded, 'No blueprint:phaseProgress event captured for phase code-review')
+      const data = forwarded.data as { workspaceId?: string; text?: string }
+      assert.equal(data.workspaceId, 'ws-stream-1')
+      assert.equal(data.text, 'reviewing diff')
+    })
+
+    // A code-review failure schedules an auto-retry; without a dispatch entry
+    // the retry logs "Unknown phase" and the run stalls.
+    test('auto-retry dispatch covers the code-review phase', () => {
+      const src = readFileSync(join(__dirname, '..', 'blueprint.ipc.ts'), 'utf-8')
+      const autoRetryBlock = src.slice(src.indexOf('[auto-retry] Dispatching'))
+      assert.ok(
+        autoRetryBlock.includes("'code-review':"),
+        'auto-retry phaseDispatch map has no code-review entry'
+      )
+      assert.ok(
+        autoRetryBlock
+          .slice(0, autoRetryBlock.indexOf('const dispatch ='))
+          .includes("isRoleEnabled(workspacePath, 'blueprint:code-review')"),
+        'auto-retry code-review entry is missing the role gate the manual retry applies'
+      )
+    })
   })
 }
 

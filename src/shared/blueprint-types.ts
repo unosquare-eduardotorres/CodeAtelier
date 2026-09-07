@@ -702,6 +702,19 @@ export const BLUEPRINT_PHASE_ORDER: readonly BlueprintPhaseType[] = [
   'verify'
 ] as const
 
+/**
+ * Human-readable phase label for transcript system messages and UI banners.
+ * Hyphenated phase ids ('code-review') must not render as "Code-review", and
+ * live text must match hydrated text — every site formatting a phase id for
+ * display uses this so a reload never disagrees with the live run.
+ */
+export function formatPhaseLabel(phase: string): string {
+  return phase
+    .split('-')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
 /** Map blueprint phase → active status name for the blueprint record */
 export const PHASE_TO_STATUS: Record<BlueprintPhaseType, BlueprintStatus> = {
   specify: 'specifying',

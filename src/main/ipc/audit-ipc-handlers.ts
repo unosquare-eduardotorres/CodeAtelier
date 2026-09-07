@@ -6,7 +6,7 @@
  * after validating the sender and fetching data from repositories.
  */
 
-import { AUDIT_TRACKS } from '../../shared/constants'
+import { getAuditTrack } from '../../shared/constants'
 import type { AuditFinding, AuditResult, AuditRun, AuditPlan } from '../../shared/types'
 
 // ── Overall Score ────────────────────────────────────────────────────────────
@@ -35,7 +35,7 @@ export function computeAuditOverallScore(results: AuditResult[]): OverallScoreRe
     let weightedSum = 0
     let totalWeight = 0
     for (const r of completed) {
-      const w = AUDIT_TRACKS[r.trackId]?.weight ?? 1.0
+      const w = getAuditTrack(r.trackId)?.weight ?? 1.0
       weightedSum += (r.score ?? 0) * w
       totalWeight += w
     }
@@ -92,7 +92,7 @@ export function generateAuditReportMarkdown(run: AuditRun, workspaceName: string
   ]
 
   for (const trackId of run.selectedTracks) {
-    const track = AUDIT_TRACKS[trackId]
+    const track = getAuditTrack(trackId)
     const result = run.results.find((r) => r.trackId === trackId)
     if (!track || !result) continue
 

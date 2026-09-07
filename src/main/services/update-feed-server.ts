@@ -21,6 +21,17 @@ export interface FeedServerHandle {
   url: string
   /** Absolute directory being served */
   root: string
+  /**
+   * Map a manifest-relative artifact url (e.g. `1.0.105/win/app-setup.exe`) to
+   * the absolute path this server would serve it from, or null when the url is
+   * one this server would refuse.
+   *
+   * Callers use this to check an artifact is on disk *before* handing the url to
+   * electron-updater. It delegates to the same `resolveFeedPath` the request
+   * handler uses, so a readiness check and an actual request can never disagree
+   * about what a url maps to.
+   */
+  resolvePath: (relativeUrl: string) => string | null
   close: () => Promise<void>
 }
 
@@ -199,6 +210,8 @@ export function startUpdateFeedServer(rootDir: string): Promise<FeedServerHandle
         // relative to this base, and a missing slash would drop the token.
         url: `http://127.0.0.1:${address.port}/${token}/`,
         root,
+        resolvePath: (relativeUrl) =>
+          resolveFeedPath(root, token, `/${token}/${relativeUrl.replace(/^\/+/, '')}`),
         close: () =>
           new Promise<void>((done) => {
             // Keep-alive sockets would otherwise hold close() open.

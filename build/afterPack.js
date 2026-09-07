@@ -19,6 +19,128 @@ function countFiles(dir) {
 }
 
 /**
+ * electron-builder's `Arch` enum, by ordinal. Imported by value rather than
+ * from `builder-util` because this hook also runs after `npm prune --omit=dev`,
+ * where that package is gone.
+ */
+const ARCH_NAMES = ['ia32', 'x64', 'armv7l', 'arm64', 'universal']
+
+/** Node platform → the OS token Impeccable publishes under (`win32` → `windows`). */
+const IMPECCABLE_OS_TOKENS = { darwin: 'darwin', win32: 'windows', linux: 'linux' }
+
+/**
+ * The `@impeccable/cli-*` package(s) a given build target requires.
+ *
+ * Returns `null` when Impeccable publishes no engine for the target at all
+ * (e.g. linux/armv7l) — that is a warning, not a build failure.
+ *
+ * @param {string} platformName electron-builder's `electronPlatformName`
+ * @param {number} archId electron-builder's `Arch` ordinal
+ */
+function expectedEnginePackages(platformName, archId) {
+  const os = IMPECCABLE_OS_TOKENS[platformName]
+  const arch = ARCH_NAMES[archId]
+  if (!os || !arch) return null
+  // A universal mac build must carry both slices; npm only ever installs the
+  // host's, so this is reported rather than silently half-satisfied.
+  if (arch === 'universal') return [`cli-${os}-arm64`, `cli-${os}-x64`]
+  if (arch !== 'x64' && arch !== 'arm64') return null
+  return [`cli-${os}-${arch}`]
+}
+
+/**
+ * Verify the packaged bundle carries the engine for the target being built —
+ * not merely *an* engine.
+ *
+ * Cross-building (e.g. `build-win.sh` on a Mac) copies the host `node_modules`,
+ * which contains only `@impeccable/cli-darwin-arm64`. A presence-only check
+ * would pass and ship a Mach-O binary inside a Windows app, and the design
+ * audit would then fail on the end user's machine — exactly what this assertion
+ * exists to prevent.
+ *
+ * @param {string} nmTarget packaged node_modules directory
+ * @param {import('electron-builder').AfterPackContext} context
+ */
+function assertImpeccableEngine(nmTarget, context) {
+  const scopeDir = path.join(nmTarget, '@impeccable')
+  const platformName = context.electronPlatformName
+  const expected = expectedEnginePackages(platformName, Number(context.arch))
+
+  let present = []
+  try {
+    present = fs
+      .readdirSync(scopeDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith('cli-'))
+      .map((e) => e.name)
+  } catch {
+    /* reported below as "none present" */
+  }
+
+  if (!expected) {
+    console.warn(
+      `[afterPack] Impeccable publishes no engine for ${platformName}/${ARCH_NAMES[Number(context.arch)] ?? context.arch} — ` +
+        `the design audit will be unavailable in this build (LLM-only degradation).`
+    )
+    return
+  }
+
+  const remedy = (name) =>
+    `Install it explicitly before packaging: \`npm install --no-save --force @impeccable/${name}\` ` +
+    `(the package is os/cpu-gated, so npm skips it when cross-building).`
+
+  const verified = []
+  const missing = []
+  for (const name of expected) {
+    const exe = name.includes('windows') ? 'impeccable.exe' : 'impeccable'
+    const binPath = path.join(scopeDir, name, 'bin', exe)
+    let st
+    try {
+      st = fs.statSync(binPath)
+    } catch {
+      missing.push({ name, binPath })
+      continue
+    }
+    // cp -a / fs.cpSync preserve mode; verify rather than assume, since a
+    // non-executable engine fails at runtime with a confusing EACCES.
+    if (process.platform !== 'win32' && !name.includes('windows') && !(st.mode & 0o111)) {
+      throw new Error(
+        `[afterPack] impeccable engine binary is not executable: ${binPath} ` +
+          `(mode ${st.mode.toString(8)})`
+      )
+    }
+    verified.push(`${name} (${(st.size / 1024 / 1024).toFixed(1)} MB)`)
+  }
+
+  // Universal builds are satisfied by at least one slice — a hard failure would
+  // block a build that still works on the arch we could resolve.
+  const isUniversal = expected.length > 1
+  if (missing.length && (!isUniversal || verified.length === 0)) {
+    const first = missing[0]
+    throw new Error(
+      `[afterPack] impeccable is a production dependency, but the engine for this build target ` +
+        `(${platformName}/${ARCH_NAMES[Number(context.arch)] ?? context.arch}) is missing: ${first.binPath}. ` +
+        `Present instead: ${present.length ? present.join(', ') : '(none)'}. ` +
+        `Shipping this build would put a wrong-platform or absent engine in the app. ${remedy(first.name)}`
+    )
+  }
+  for (const m of missing) {
+    console.warn(`[afterPack] universal build missing one engine slice: ${m.name}`)
+  }
+
+  // A foreign engine adds ~12.7 MB of dead weight and, on macOS, an unsigned
+  // nested Mach-O that codesign will reject. Surface it rather than ship it.
+  const foreign = present.filter((name) => !expected.includes(name))
+  if (foreign.length) {
+    console.warn(`[afterPack] removing non-target impeccable engine(s): ${foreign.join(', ')}`)
+    for (const name of foreign) {
+      fs.rmSync(path.join(scopeDir, name), { recursive: true, force: true })
+    }
+  }
+
+  console.log(`[afterPack] impeccable engine OK for ${platformName}: ${verified.join(', ')}`)
+}
+
+/**
  * electron-builder afterPack hook:
  *  1. Copy node_modules into the app bundle (bypasses electron-builder's
  *     dependency resolver which OOMs on large trees)
@@ -147,44 +269,7 @@ module.exports = async function afterPack(context) {
     }
 
     if (declaresImpeccable) {
-      const scopeDir = path.join(nmTarget, '@impeccable')
-      let engines = []
-      try {
-        engines = fs
-          .readdirSync(scopeDir, { withFileTypes: true })
-          .filter((e) => e.isDirectory() && e.name.startsWith('cli-'))
-          .map((e) => e.name)
-      } catch {
-        /* handled by the throw below */
-      }
-      if (engines.length === 0) {
-        throw new Error(
-          `[afterPack] impeccable is a production dependency but no @impeccable/cli-* engine ` +
-            `package was found at ${scopeDir}. The design audit would be broken in this build. ` +
-            `Run \`npm install\` (without --omit=optional) before packaging.`
-        )
-      }
-      for (const name of engines) {
-        const exe = name.includes('windows') ? 'impeccable.exe' : 'impeccable'
-        const binPath = path.join(scopeDir, name, 'bin', exe)
-        let st
-        try {
-          st = fs.statSync(binPath)
-        } catch {
-          throw new Error(`[afterPack] impeccable engine binary missing: ${binPath}`)
-        }
-        // cp -a / fs.cpSync preserve mode; verify rather than assume, since a
-        // non-executable engine fails at runtime with a confusing EACCES.
-        if (process.platform !== 'win32' && !(st.mode & 0o111)) {
-          throw new Error(
-            `[afterPack] impeccable engine binary is not executable: ${binPath} ` +
-              `(mode ${st.mode.toString(8)})`
-          )
-        }
-        console.log(
-          `[afterPack] impeccable engine OK: ${name} (${(st.size / 1024 / 1024).toFixed(1)} MB)`
-        )
-      }
+      assertImpeccableEngine(nmTarget, context)
     }
   } else {
     console.warn('[afterPack] node_modules not found at project root — skipping copy')

@@ -9,9 +9,9 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import { renderAuditPrompt } from '../audit-prompt-templates'
-import type { AuditTrackId } from '../../../shared/types'
+import type { CodeAuditTrackId } from '../../../shared/types'
 
-const ALL_TRACK_IDS: AuditTrackId[] = [
+const ALL_TRACK_IDS: CodeAuditTrackId[] = [
   'database',
   'code',
   'testing',

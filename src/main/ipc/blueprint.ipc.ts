@@ -27,6 +27,8 @@ import { blueprintReviewService } from '../services/blueprint-review.service'
 import { blueprintBuildService } from '../services/blueprint-build.service'
 import { blueprintVerifyService } from '../services/blueprint-verify.service'
 import { blueprintCodeReviewService } from '../services/blueprint-code-review.service'
+import { blueprintPeerReviewService } from '../services/blueprint-peer-review.service'
+import { blueprintLeadReviewService } from '../services/blueprint-lead-review.service'
 import { modelConfigService } from '../services/model-config.service'
 import { workspaceRepository } from '../db/repositories'
 import { loadBranchOptions } from './load-branch-options'
@@ -1870,6 +1872,67 @@ function wireOnceEventForwarding(): void {
   )
   forwardStatus(blueprintVerifyService as unknown as EventEmitterLike)
 
+  // ── BlueprintCodeReviewService events (Phase 6.5: Code Review) ──
+  forward(
+    blueprintCodeReviewService as unknown as EventEmitterLike,
+    'phaseStart',
+    IPC_CHANNELS.BLUEPRINT_PHASE_START,
+    'code-review-event'
+  )
+  forward(
+    blueprintCodeReviewService as unknown as EventEmitterLike,
+    'phaseProgress',
+    IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS
+  )
+  forward(
+    blueprintCodeReviewService as unknown as EventEmitterLike,
+    'phaseComplete',
+    IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
+    'code-review-event'
+  )
+  forward(
+    blueprintCodeReviewService as unknown as EventEmitterLike,
+    'phaseArtifact',
+    IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
+    'code-review-event'
+  )
+  forwardStatus(blueprintCodeReviewService as unknown as EventEmitterLike)
+
+  // ── Sub-phase review passes (peer review under BUILD, lead review under VERIFY) ──
+  // Both tag their payloads with the umbrella phase, so the existing UI lanes
+  // render them without any renderer-side change. Neither is added to
+  // allPhaseEmitters, because neither owns a phase lifecycle of its own — the
+  // consequence is that their phaseProgress text is LIVE-ONLY: the journal
+  // accumulator taps allPhaseEmitters only, so nothing these passes stream is
+  // persisted to blueprint_events and none of it survives a reload.
+  forward(
+    blueprintPeerReviewService as unknown as EventEmitterLike,
+    'phaseProgress',
+    IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS
+  )
+  forwardStatus(blueprintPeerReviewService as unknown as EventEmitterLike)
+
+  forward(
+    blueprintLeadReviewService as unknown as EventEmitterLike,
+    'phaseProgress',
+    IPC_CHANNELS.BLUEPRINT_PHASE_PROGRESS
+  )
+  forward(
+    blueprintLeadReviewService as unknown as EventEmitterLike,
+    'phaseArtifact',
+    IPC_CHANNELS.BLUEPRINT_PHASE_ARTIFACT,
+    'lead-review-event'
+  )
+  // The lead-review pass owns the terminal VERIFY completion when the verify
+  // service hands off to it — without this the pipeline never reports done.
+  forward(
+    blueprintLeadReviewService as unknown as EventEmitterLike,
+    'phaseComplete',
+    IPC_CHANNELS.BLUEPRINT_PHASE_COMPLETE,
+    'lead-review-event'
+  )
+  forwardStatus(blueprintLeadReviewService as unknown as EventEmitterLike)
+
   // OS notification: Blueprint phase completed or failed
   // Fires for all phases — summary is phase-aware.
 
@@ -1911,6 +1974,8 @@ function wireOnceEventForwarding(): void {
         return 'Review complete — ready for build'
       case 'build':
         return `Build complete: ${(payload.completion as Record<string, unknown>)?.tasksCompleted ?? 0} tasks done`
+      case 'code-review':
+        return 'Code review complete — moving to verification'
       case 'verify':
         return 'Blueprint finished — all phases complete'
       default:
@@ -1924,6 +1989,7 @@ function wireOnceEventForwarding(): void {
     blueprintTasksService as unknown as EventEmitterLike,
     blueprintReviewService as unknown as EventEmitterLike,
     blueprintBuildService as unknown as EventEmitterLike,
+    blueprintCodeReviewService as unknown as EventEmitterLike,
     blueprintVerifyService as unknown as EventEmitterLike
   ]) {
     svc.on('phaseComplete', (...args: unknown[]) => {
@@ -1986,6 +2052,7 @@ function wireOnceEventForwarding(): void {
     blueprintTasksService,
     blueprintReviewService,
     blueprintBuildService,
+    blueprintCodeReviewService,
     blueprintVerifyService
   ] as unknown as EventEmitterLike[]
 
@@ -2185,6 +2252,36 @@ function wireOnceEventForwarding(): void {
           blueprintReviewService.startReviewPhase({ blueprintId, workspaceId, workspacePath }),
         build: () =>
           blueprintBuildService.startBuildPhase({ blueprintId, workspaceId, workspacePath }),
+        // Same role gate as the manual retry handler: the role can be unbound
+        // between the failure and the 5s retry window, and re-running it would
+        // execute a phase the workspace has opted out of. Disabled → settle the
+        // record and advance to the next retryable phase.
+        'code-review': async (): Promise<void> => {
+          if (modelConfigService.isRoleEnabled(workspacePath, 'blueprint:code-review')) {
+            await blueprintCodeReviewService.startCodeReviewPhase({
+              blueprintId,
+              workspaceId,
+              workspacePath
+            })
+            return
+          }
+          blueprintService.settleOptionalPhases(blueprintId)
+          const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
+          const next = phases.find((p) => p.status === 'pending' && p.phase !== 'code-review')
+          if (!next) {
+            bpLog.warn(
+              `[auto-retry] code-review settled — no retryable phase remains for ${blueprintId}`
+            )
+            return
+          }
+          const dispatchNext = phaseDispatch[next.phase]
+          if (!dispatchNext) {
+            bpLog.error(`[auto-retry] Unknown phase: ${next.phase}`)
+            return
+          }
+          bpLog.info(`[auto-retry] code-review settled — dispatching ${next.phase}`)
+          await dispatchNext()
+        },
         verify: () =>
           blueprintVerifyService.startVerifyPhase({ blueprintId, workspaceId, workspacePath })
       }

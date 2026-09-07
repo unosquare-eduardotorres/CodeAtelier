@@ -2398,15 +2398,34 @@ export interface PlatformInfo {
 
 // ── Workspace Health Audit ──
 
-export type AuditTrackId =
+/**
+ * The seven Workspace Health auditors. Closed and exhaustive — every
+ * `Record<CodeAuditTrackId, …>` catalogue (AUDIT_TRACKS, AUDIT_TRACK_SKILLS,
+ * AUDITOR_DOMAIN_PROMPTS, TRACK_FILE_CONFIG) must cover all of them.
+ */
+export type CodeAuditTrackId =
   'database' | 'code' | 'testing' | 'architecture' | 'security' | 'documentation' | 'ui-ux'
+
+/**
+ * A track id as stored in `audit_results.track_id` and `audit_runs.selected_tracks`.
+ *
+ * Design runs share audit storage (`audit_runs.kind = 'design'`), and their
+ * "tracks" are Impeccable commands rather than auditors. Encoding them as
+ * `design:<commandId>` keeps the two populations distinguishable from the value
+ * alone — parsers and UI switch on the prefix — while letting design rows reuse
+ * `AuditRun` / `AuditResult` unchanged.
+ *
+ * `isDesignTrackId` / `designCommandFromTrackId` in `design-commands.ts` are the
+ * supported way to discriminate and unwrap one.
+ */
+export type AuditTrackId = CodeAuditTrackId | `design:${DesignCommandId}`
 
 export type AuditMode = 'light' | 'deep'
 export type AuditRunStatus = 'pending' | 'running' | 'completed' | 'partial' | 'cancelled'
 export type AuditorStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
 
 export interface AuditTrack {
-  id: AuditTrackId
+  id: CodeAuditTrackId
   name: string
   icon: string // Lucide icon name
   description: string
@@ -2422,7 +2441,7 @@ export interface AuditSkill {
   icon: string // Lucide icon name
 }
 
-/** Per-track selected skill ids (Deep mode). */
+/** Per-track selected skill ids (Deep mode). Only code tracks have skills. */
 export type AuditSelectedSkills = Partial<Record<AuditTrackId, string[]>>
 
 export interface AuditFinding {
@@ -2500,6 +2519,16 @@ export interface DesignRunConfig {
   brief: string
   llmProvider?: string
 }
+
+/**
+ * The single return shape for every `design:*` IPC handler.
+ *
+ * One envelope across the namespace so the renderer branches on `ok` once
+ * instead of learning a different shape per channel. Malformed arguments still
+ * reject the invoke (matching every other IPC module); this envelope carries
+ * *expected* outcomes — results, refusals, and not-yet-implemented paths.
+ */
+export type DesignIpcResult<T> = { ok: true; data: T } | { ok: false; reason: string }
 
 /**
  * Presence of the context files Impeccable commands expect. Never blocks a run

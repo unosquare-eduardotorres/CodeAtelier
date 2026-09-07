@@ -129,6 +129,29 @@ describe('patch-feed-manifest — rewriteManifest', () => {
     const { files } = rewriteManifest(WIN_MANIFEST, '1.0.65', 'win')
     assert.equal(files.length, 1)
   })
+
+  test('reports_the_declared_size_for_each_reference', () => {
+    // The publish step verifies bytes, not just existence: a partially copied
+    // artifact sits at its final name and passes `[ -f ]`, then fails the
+    // client's sha512 check after a multi-minute download.
+    const { sizes } = rewriteManifest(MAC_MANIFEST, '1.0.65', 'mac')
+    assert.deepEqual(sizes, {
+      '1.0.65/mac/Code-Atelier-1.0.65-arm64-mac.zip': 202621380,
+      '1.0.65/mac/code-atelier-1.0.65.dmg': 199817138
+    })
+  })
+
+  test('attaches_the_size_to_the_url_it_follows_not_the_next_one', () => {
+    const { sizes } = rewriteManifest(WIN_MANIFEST, '1.0.65', 'win')
+    assert.deepEqual(sizes, { '1.0.65/win/code-atelier-1.0.65-setup.exe': 172657167 })
+  })
+
+  test('omits_the_size_when_the_manifest_declares_none', () => {
+    const manifest = 'version: 1.0.65\npath: code-atelier-1.0.65-setup.exe\n'
+    const { files, sizes } = rewriteManifest(manifest, '1.0.65', 'win')
+    assert.deepEqual(files, ['1.0.65/win/code-atelier-1.0.65-setup.exe'])
+    assert.deepEqual(sizes, {}, 'no size means verify presence only, never guess')
+  })
 })
 
 if (process.argv[1]?.includes('feed-manifest-patch')) {

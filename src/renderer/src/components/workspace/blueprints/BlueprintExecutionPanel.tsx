@@ -27,6 +27,7 @@ import {
   Copy,
   Zap
 } from 'lucide-react'
+import { formatPhaseLabel } from '../../../../../shared/blueprint-types'
 import type {
   BlueprintTask,
   BlueprintTaskStatus,
@@ -389,7 +390,7 @@ function PhaseCompletionCard({
   phase: BlueprintPhaseType
   metrics: Record<string, unknown>
 }): JSX.Element {
-  const phaseLabel = phase.charAt(0).toUpperCase() + phase.slice(1)
+  const phaseLabel = formatPhaseLabel(phase)
   const tasksCompleted = metrics.tasksCompleted as number | undefined
   const totalTasks = metrics.totalTasks as number | undefined
   const filesCreated = metrics.filesCreated as string[] | undefined

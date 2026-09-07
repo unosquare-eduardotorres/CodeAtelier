@@ -1,7 +1,7 @@
 import { autoUpdater } from 'electron-updater'
 import { app, powerMonitor, autoUpdater as squirrelUpdater, type BrowserWindow } from 'electron'
 import log from 'electron-log/main'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { IPC_CHANNELS } from '../../shared/constants'
 import { appPreferenceRepository } from '../db/repositories'
 import { startUpdateFeedServer, type FeedServerHandle } from './update-feed-server'
@@ -11,6 +11,7 @@ import {
   isStaleFeed,
   shouldReportError
 } from './auto-update-helpers'
+import type { UpdateInfo } from 'electron-updater'
 import type { UpdateConfig, UpdateSourceProvider } from '../../shared/types'
 
 const updateLogger = log.scope('AutoUpdate')
@@ -44,6 +45,18 @@ const STAGING_TIMEOUT_MS = 120_000
  * quit path itself is bounded by the 5s failsafe in index.ts.
  */
 const INSTALL_WATCHDOG_MS = 10_000
+
+/**
+ * Whether the artifact a manifest advertises is actually usable on this machine.
+ *
+ * `unknown` means "not ours to judge" (a GitHub feed, or a manifest with no file
+ * reference) and never blocks anything.
+ */
+type ArtifactReadiness =
+  | { state: 'ready' }
+  | { state: 'unknown' }
+  | { state: 'missing'; path: string }
+  | { state: 'partial'; path: string; expected: number; actual: number }
 
 class AutoUpdateService {
   private mainWindow: BrowserWindow | null = null
@@ -89,6 +102,12 @@ class AutoUpdateService {
   private readyAnnounced = false
   /** Version from the last 'update-downloaded', for the deferred announcement. */
   private downloadedVersion: string | null = null
+  /**
+   * The manifest from the most recent 'update-available', so downloadUpdate()
+   * can re-check the artifact instead of trusting a card that may have been on
+   * screen since before the file was removed or replaced.
+   */
+  private lastAvailableInfo: UpdateInfo | null = null
   /** Staging watchdog handle, non-null while waiting on Squirrel. */
   private stagingTimer: ReturnType<typeof setTimeout> | null = null
   /** Install watchdog handle, non-null between a dispatched install and its deadline. */
@@ -110,7 +129,20 @@ class AutoUpdateService {
 
     // Events -> forward to renderer
     autoUpdater.on('update-available', (info) => {
+      const userInitiated = this.userInitiatedCheck
       this.userInitiatedCheck = false
+      this.lastAvailableInfo = info
+
+      // The manifest is ~1 KB and the installer is ~180 MB, so a cloud drive
+      // routinely delivers the pointer long before the thing it points at.
+      // Announcing an update whose artifact is absent gives the user a Download
+      // button that can only 404 — offer it once the bytes are actually here.
+      const readiness = this.artifactReadiness(info)
+      if (readiness.state === 'missing' || readiness.state === 'partial') {
+        this.reportArtifactNotReady(String(info.version), readiness, userInitiated)
+        return
+      }
+
       updateLogger.info('Update available:', info.version)
       this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_AVAILABLE, {
         version: info.version,
@@ -505,7 +537,89 @@ class AutoUpdateService {
     )
   }
 
+  /**
+   * Is the artifact this manifest advertises actually on disk, whole?
+   *
+   * Only the drive feed can be checked: we serve that folder ourselves, so the
+   * same `resolveFeedPath` the request handler uses tells us exactly which file
+   * electron-updater is about to ask for. A GitHub feed lives behind HTTPS and
+   * is never gated.
+   */
+  private artifactReadiness(info: UpdateInfo): ArtifactReadiness {
+    if (!this.feedServer) return { state: 'unknown' }
+
+    const file = info.files?.[0]
+    const relativeUrl = file?.url || info.path
+    if (!relativeUrl) return { state: 'unknown' }
+
+    const absolute = this.feedServer.resolvePath(relativeUrl)
+    // Unresolvable means the server would 404 it too — treat as missing, not
+    // unknown, so a malformed manifest never reaches the user as "available".
+    if (!absolute) return { state: 'missing', path: relativeUrl }
+
+    let actual: number
+    try {
+      const stats = statSync(absolute)
+      if (!stats.isFile()) return { state: 'missing', path: absolute }
+      actual = stats.size
+    } catch {
+      return { state: 'missing', path: absolute }
+    }
+
+    // A cloud drive exposes a partially transferred file at its final name, so
+    // existence alone is not enough. When the manifest carries a size, that is
+    // authoritative — otherwise electron-updater downloads the truncated bytes
+    // and fails the sha512 check minutes later.
+    const expected = typeof file?.size === 'number' ? file.size : null
+    if (expected !== null && actual !== expected) {
+      return { state: 'partial', path: absolute, expected, actual }
+    }
+    return { state: 'ready' }
+  }
+
+  /** What the user is told when the artifact simply has not arrived yet. */
+  private syncingMessage(version: string): string {
+    return `v${version} is published but hasn't finished syncing to this PC yet. It will install automatically once the sync catches up.`
+  }
+
+  /**
+   * An advertised update whose artifact is not usable yet.
+   *
+   * Not an error: the next poll picks it up once the transfer finishes, so a
+   * background check stays silent and only a check the user asked for answers.
+   * The log line carries the resolved path and the byte counts, which is what
+   * separates "not synced yet" from "synced but truncated" without having to ask
+   * the user for anything.
+   */
+  private reportArtifactNotReady(
+    version: string,
+    readiness: Extract<ArtifactReadiness, { state: 'missing' | 'partial' }>,
+    userInitiated: boolean
+  ): void {
+    const detail =
+      readiness.state === 'partial'
+        ? `${readiness.path} is ${readiness.actual} of ${readiness.expected} bytes`
+        : `${readiness.path} is not on this machine`
+    updateLogger.warn(`Update v${version} advertised but its artifact is not ready — ${detail}`)
+
+    if (!userInitiated) return
+    // Already user-readable, so it must not go through describeUpdateError —
+    // that would append the feed path to a message that is not about the feed.
+    this.mainWindow?.webContents.send(IPC_CHANNELS.UPDATE_ERROR, this.syncingMessage(version))
+  }
+
   downloadUpdate(): void {
+    // The card may have been on screen since before the file was removed or
+    // replaced by a republish, so re-check rather than trust the earlier gate.
+    const info = this.lastAvailableInfo
+    if (info) {
+      const readiness = this.artifactReadiness(info)
+      if (readiness.state === 'missing' || readiness.state === 'partial') {
+        // A download is always user-initiated, so this always reports.
+        this.reportArtifactNotReady(String(info.version), readiness, true)
+        return
+      }
+    }
     updateLogger.info('Downloading update...')
     this.downloadInFlight = true
     autoUpdater.downloadUpdate()

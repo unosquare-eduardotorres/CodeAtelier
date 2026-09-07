@@ -30,6 +30,7 @@ import type { LucideIcon } from 'lucide-react'
 import type {
   AuditMode,
   AuditTrackId,
+  CodeAuditTrackId,
   AuditSelectedSkills,
   LLMProvider
 } from '../../../../../shared/types'
@@ -45,7 +46,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Palette
 }
 
-const ALL_TRACK_IDS = Object.keys(AUDIT_TRACKS) as AuditTrackId[]
+const ALL_TRACK_IDS = Object.keys(AUDIT_TRACKS) as CodeAuditTrackId[]
 
 interface HealthConfigureProps {
   initialMode?: AuditMode

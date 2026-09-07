@@ -349,4 +349,40 @@ describe('checkAvailability', () => {
         rmSync(dir, { recursive: true, force: true })
       }
     }))
+
+  test('force re-probes a cached failure so a transient miss can recover', () =>
+    runExclusive(async () => {
+      if (isWindows) return
+      const dir = scratch()
+      const prev = process.env.IMPECCABLE_BIN
+      try {
+        const fake = join(dir, 'engine')
+        // First probe fails — the state a laptop waking from sleep lands in.
+        writeFakeEngine(fake, 'boom', 3)
+        process.env.IMPECCABLE_BIN = fake
+        resetImpeccableRuntimeCache()
+        assert.equal((await checkAvailability()).available, false)
+
+        // Condition clears, but the failure is still inside its TTL.
+        writeFakeEngine(fake, '0.1.3')
+        assert.equal(
+          (await checkAvailability()).available,
+          false,
+          'a fresh failure must stay cached — otherwise every call re-spawns'
+        )
+
+        // An explicit retry (the status-chip action) bypasses it.
+        const forced = await checkAvailability({ force: true })
+        assert.equal(forced.available, true, 'force must re-probe')
+        assert.equal(forced.version, '0.1.3')
+
+        // ...and the recovered success is what subsequent callers see.
+        assert.equal((await checkAvailability()).available, true)
+      } finally {
+        if (prev === undefined) delete process.env.IMPECCABLE_BIN
+        else process.env.IMPECCABLE_BIN = prev
+        resetImpeccableRuntimeCache()
+        rmSync(dir, { recursive: true, force: true })
+      }
+    }))
 })

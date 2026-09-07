@@ -284,6 +284,50 @@ describe('ensureProvisioned', () => {
         f.cleanup()
       }
     }))
+
+  test('a failure is not retried until the cooldown expires or force is passed', () =>
+    runExclusive(async () => {
+      if (isWindows) return
+      const f = setup()
+      try {
+        // `install` downloads its payload, so offline is the expected first-run
+        // failure. Each attempt costs the full 60s timeout, so repeatedly
+        // opening the wizard must not stack retries.
+        const broken = join(f.binDir, 'broken')
+        writeFileSync(
+          broken,
+          [
+            '#!/bin/sh',
+            `echo "$@" >> "${f.counterFile}"`,
+            'if [ "$1" = "--version" ]; then echo 0.1.3; exit 0; fi',
+            'exit 4',
+            ''
+          ].join('\n'),
+          'utf-8'
+        )
+        chmodSync(broken, 0o755)
+        process.env.IMPECCABLE_BIN = broken
+        resetImpeccableRuntimeCache()
+
+        const first = await ensureProvisioned()
+        assert.equal(first.status, 'failed')
+        assert.equal(installCount(f), 1)
+
+        const second = await ensureProvisioned()
+        assert.equal(second.status, 'failed')
+        assert.equal(installCount(f), 1, 'cooldown must suppress the immediate retry')
+        assert.equal(second.reason, first.reason, 'the cached failure is reported verbatim')
+
+        // An explicit retry bypasses the cooldown — and now succeeds, because
+        // the working engine is back.
+        process.env.IMPECCABLE_BIN = join(f.binDir, 'engine')
+        const forced = await ensureProvisioned({ force: true })
+        assert.equal(forced.status, 'ready', `got ${forced.status}: ${forced.reason}`)
+        assert.equal(installCount(f), 2, 'force must re-attempt the install')
+      } finally {
+        f.cleanup()
+      }
+    }))
 })
 
 // ── getProvisionState ────────────────────────────────────────────────────────

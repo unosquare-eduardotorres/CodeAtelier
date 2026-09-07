@@ -13,10 +13,13 @@ import {
   DESIGN_COMMANDS_BY_ID,
   EVALUATE_COMMAND_IDS,
   IMPECCABLE_DESIGN_EXTENSIONS,
+  designCommandFromTrackId,
   evaluateCommandsSelected,
   getDesignCommand,
   isDesignRelevantPath,
+  isDesignTrackId,
   refineCommandsSelected,
+  toDesignTrackId,
   validateDesignCommandSet
 } from '../../../shared/design-commands'
 import type { DesignCommandId } from '../../../shared/types'
@@ -244,5 +247,34 @@ describe('DESIGN_BRIEF_EXAMPLES', () => {
     assert.ok(DESIGN_BRIEF_EXAMPLES.length >= 3)
     assert.equal(new Set(DESIGN_BRIEF_EXAMPLES).size, DESIGN_BRIEF_EXAMPLES.length)
     for (const e of DESIGN_BRIEF_EXAMPLES) assert.ok(e.trim().length > 0)
+  })
+})
+
+// ── Track id encoding ──────────────────────────────────────────────────────
+// Design runs share `audit_results.track_id` with Workspace Health, so the
+// prefix is the only thing separating the two populations by value.
+
+describe('design track ids', () => {
+  test('round-trips every catalogue command', () => {
+    for (const cmd of DESIGN_COMMANDS) {
+      const trackId = toDesignTrackId(cmd.id)
+      assert.equal(trackId, `design:${cmd.id}`)
+      assert.ok(isDesignTrackId(trackId))
+      assert.equal(designCommandFromTrackId(trackId), cmd.id)
+    }
+  })
+
+  test('never claims a Workspace Health track', () => {
+    for (const codeTrack of ['code', 'security', 'ui-ux', 'database'] as const) {
+      assert.ok(!isDesignTrackId(codeTrack))
+      assert.equal(designCommandFromTrackId(codeTrack), null)
+    }
+  })
+
+  test('refuses a prefixed id that is not in the catalogue', () => {
+    // A stale row written by an older build must not be handed back as a
+    // command the rest of the pipeline will try to execute.
+    assert.equal(designCommandFromTrackId('design:overdrive' as never), null)
+    assert.equal(designCommandFromTrackId('design:' as never), null)
   })
 })

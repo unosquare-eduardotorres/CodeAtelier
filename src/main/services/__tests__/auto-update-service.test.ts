@@ -23,6 +23,9 @@
  * Run: tsx src/main/services/__tests__/auto-update-service.test.ts
  */
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 import {
   setupFullMock,
@@ -114,6 +117,9 @@ const internals = autoUpdateService as unknown as {
   maybeCheck: () => void
   checkForUpdates: (userInitiated?: boolean) => void
   onInstallStalled: () => void
+  feedServer: { resolvePath: (relativeUrl: string) => string | null } | null
+  userInitiatedCheck: boolean
+  lastAvailableInfo: unknown
 }
 
 const MINUTE = 60_000
@@ -207,6 +213,46 @@ function captureTimeout(fn: () => void): () => void {
     globalThis.setTimeout = original
   }
   return () => captured?.()
+}
+
+// ── artifact readiness fixtures ────────────────────────────────────
+
+const ARTIFACT_URL = '1.0.200/win/code-atelier-1.0.200-setup.exe'
+const ARTIFACT_BYTES = Buffer.from('0123456789abcdef') // 16 bytes
+let feedRoot = ''
+
+/**
+ * A feed root on disk plus a resolvePath that behaves like the real server's.
+ * `bytes: null` leaves the artifact absent — the state a cloud drive is in when
+ * it has delivered the 1 KB manifest but not the 180 MB installer behind it.
+ */
+function withFeedRoot(bytes: Buffer | null, fn: () => void): void {
+  const dir = mkdtempSync(join(tmpdir(), 'auto-update-feed-'))
+  const root = resolve(dir)
+  feedRoot = root
+  if (bytes) {
+    mkdirSync(join(root, '1.0.200', 'win'), { recursive: true })
+    writeFileSync(join(root, ARTIFACT_URL), bytes)
+  }
+
+  const previous = internals.feedServer
+  internals.feedServer = { resolvePath: (relativeUrl: string) => join(root, relativeUrl) }
+  try {
+    fn()
+  } finally {
+    internals.feedServer = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+/** The manifest electron-updater hands to the 'update-available' handler. */
+function updateInfo(size?: number): unknown {
+  return {
+    version: '1.0.200',
+    releaseDate: '2026-09-01T00:00:00.000Z',
+    files: [{ url: ARTIFACT_URL, sha512: 'abc==', ...(size === undefined ? {} : { size }) }],
+    path: ARTIFACT_URL
+  }
 }
 
 autoUpdateService.init(mockMainWindow)
@@ -496,6 +542,104 @@ describe('auto-update.service — the install must actually end the process', ()
     // The bug: one dead click disabled Restart for the rest of the session,
     // because installRequested was a latch nothing but process death could clear.
     assert.equal(autoUpdaterMock.callsTo('quitAndInstall').length, 2)
+  })
+})
+
+/**
+ * The manifest is ~1 KB and the installer ~180 MB, so a cloud drive routinely
+ * delivers the pointer long before the thing it points at. Announcing that as an
+ * available update gave the user a Download button whose only possible outcome
+ * was `Cannot download "…-setup.exe", status 404` — from our own feed server,
+ * because the file it resolves to is not on the machine yet.
+ */
+describe('auto-update.service — artifact readiness gate', () => {
+  test('an_update_whose_artifact_is_present_is_offered', () => {
+    initAs('win32')
+    withFeedRoot(ARTIFACT_BYTES, () => {
+      autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length))
+      assert.deepEqual(channelsSent(), ['update:available'])
+      assert.equal((sentEvents[0].data as { version: string }).version, '1.0.200')
+    })
+  })
+
+  test('a_manifest_with_no_size_passes_on_presence_alone', () => {
+    initAs('win32')
+    withFeedRoot(ARTIFACT_BYTES, () => {
+      autoUpdaterMock.emit('update-available', updateInfo())
+      assert.deepEqual(channelsSent(), ['update:available'])
+    })
+  })
+
+  test('a_missing_artifact_is_never_offered_as_available', () => {
+    initAs('win32')
+    withFeedRoot(null, () => {
+      internals.userInitiatedCheck = false
+      autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length))
+      assert.deepEqual(channelsSent(), [], 'a background check must stay silent')
+    })
+  })
+
+  test('a_user_initiated_check_is_told_the_artifact_is_still_syncing', () => {
+    initAs('win32')
+    withFeedRoot(null, () => {
+      internals.userInitiatedCheck = true
+      autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length))
+
+      assert.deepEqual(channelsSent(), ['update:error'])
+      const message = String(sentEvents[0].data)
+      assert.match(message, /1\.0\.200/)
+      assert.match(message, /syncing/i)
+      // Not a failure, so it must not read like one — and describeUpdateError must
+      // not have appended the feed path to an already-readable sentence.
+      assert.ok(!message.includes('update source:'), message)
+    })
+  })
+
+  test('a_truncated_artifact_counts_as_not_ready', () => {
+    initAs('win32')
+    // On disk at its final name but short: exactly what a partially transferred
+    // file looks like, and what an existence-only check waves through.
+    withFeedRoot(ARTIFACT_BYTES, () => {
+      internals.userInitiatedCheck = false
+      autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length + 5_000))
+      assert.deepEqual(channelsSent(), [])
+    })
+  })
+
+  test('a_github_feed_is_never_gated', () => {
+    initAs('win32')
+    // No loopback server means no local root to inspect; presence is not ours to
+    // judge, so the update must be offered exactly as before.
+    internals.feedServer = null
+    autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length))
+    assert.deepEqual(channelsSent(), ['update:available'])
+  })
+
+  test('download_re_checks_and_refuses_a_vanished_artifact', () => {
+    initAs('win32')
+    withFeedRoot(ARTIFACT_BYTES, () => {
+      autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length))
+      assert.deepEqual(channelsSent(), ['update:available'])
+
+      // The card is on screen; the file goes away underneath it (removed, or
+      // replaced by a republish) before the user presses Download.
+      rmSync(join(feedRoot, ARTIFACT_URL), { force: true })
+      sentEvents.length = 0
+
+      autoUpdateService.downloadUpdate()
+      assert.equal(autoUpdaterMock.callsTo('downloadUpdate').length, 0)
+      assert.deepEqual(channelsSent(), ['update:error'])
+    })
+  })
+
+  test('download_proceeds_when_the_artifact_is_intact', () => {
+    initAs('win32')
+    withFeedRoot(ARTIFACT_BYTES, () => {
+      autoUpdaterMock.emit('update-available', updateInfo(ARTIFACT_BYTES.length))
+      autoUpdateService.downloadUpdate()
+      assert.equal(autoUpdaterMock.callsTo('downloadUpdate').length, 1)
+    })
+    internals.downloadInFlight = false
   })
 })
 

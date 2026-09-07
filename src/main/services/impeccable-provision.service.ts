@@ -47,6 +47,16 @@ const log = {
 /** `install` downloads the skill payload, so it needs a generous budget. */
 const INSTALL_TIMEOUT_MS = 60_000
 
+/**
+ * How long a failed provision is remembered before we try again.
+ *
+ * `install` DOWNLOADS its payload, so offline is the expected first-run failure,
+ * not an edge case — and each attempt burns the full 60 s timeout. Without a
+ * cooldown, repeatedly opening the wizard while offline stacks 60 s stalls.
+ * Callers that want to retry now pass `{ force: true }`.
+ */
+const FAILURE_COOLDOWN_MS = 60_000
+
 const STAMP_FILENAME = '.provision-stamp.json'
 
 /**
@@ -75,6 +85,7 @@ let rootOverride: string | null = null
 export function __setProvisionRootForTests(root: string | null): void {
   rootOverride = root
   inFlight = undefined
+  lastFailure = undefined
   markdownCache.clear()
 }
 
@@ -146,24 +157,45 @@ export function getProvisionState(): { provisioned: boolean; skillDir: string } 
 }
 
 let inFlight: Promise<ProvisionResult> | undefined
+let lastFailure: { result: ProvisionResult; at: number } | undefined
+
+/** Whether a previous failure is still inside its cooldown window. */
+export function getProvisionCooldownRemainingMs(): number {
+  if (!lastFailure) return 0
+  return Math.max(0, FAILURE_COOLDOWN_MS - (Date.now() - lastFailure.at))
+}
 
 /**
  * Ensure the skill markdown exists on disk, installing it if needed.
  *
  * Fast path (stamp matches) does no subprocess work. Concurrent callers share a
  * single in-flight install so two runs can never race into the same directory.
+ * A recent failure short-circuits for `FAILURE_COOLDOWN_MS` — pass
+ * `{ force: true }` to bypass it, which is what an explicit "retry" does.
  * Never throws.
  */
-export function ensureProvisioned(): Promise<ProvisionResult> {
+export function ensureProvisioned(options: { force?: boolean } = {}): Promise<ProvisionResult> {
   const root = getProvisionRoot()
 
   if (isProvisioned(root)) {
+    lastFailure = undefined
     return Promise.resolve({ status: 'ready', skillDir: join(root, SKILL_SUBPATH) })
   }
+  if (options.force) lastFailure = undefined
   if (inFlight) return inFlight
 
+  const cooldownMs = getProvisionCooldownRemainingMs()
+  if (cooldownMs > 0 && lastFailure) {
+    log.info(
+      `[impeccable] provisioning suppressed for another ${Math.ceil(cooldownMs / 1000)}s ` +
+        `after: ${lastFailure.result.reason}`
+    )
+    return Promise.resolve(lastFailure.result)
+  }
+
   inFlight = (async (): Promise<ProvisionResult> => {
-    const availability = await checkAvailability()
+    // A forced retry must re-probe too: "engine unavailable" is itself cached.
+    const availability = await checkAvailability({ force: options.force })
     if (!availability.available) {
       return { status: 'unavailable', reason: availability.reason ?? 'engine unavailable' }
     }
@@ -218,7 +250,12 @@ export function ensureProvisioned(): Promise<ProvisionResult> {
     }))
     .then((res) => {
       inFlight = undefined
-      if (res.status !== 'ready') log.warn(`[impeccable] provisioning ${res.status}: ${res.reason}`)
+      if (res.status === 'ready') {
+        lastFailure = undefined
+      } else {
+        lastFailure = { result: res, at: Date.now() }
+        log.warn(`[impeccable] provisioning ${res.status}: ${res.reason}`)
+      }
       return res
     })
 

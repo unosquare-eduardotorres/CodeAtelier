@@ -17,6 +17,7 @@ import {
   resolvePostFetchAction
 } from '../../../shared/blueprint-hydration-helpers'
 import { resolveVerifyBannerState } from '../../../shared/blueprint-verify-banner-helpers'
+import { formatPhaseLabel, BLUEPRINT_PHASE_ORDER } from '../../../shared/blueprint-types'
 
 // -- 1. journalEventsToChatMessages mapper --
 
@@ -57,6 +58,23 @@ describe('journalEventsToChatMessages', () => {
     const msgs = journalEventsToChatMessages(events)
     assert.equal(msgs.length, 1)
     assert.equal((msgs[0] as { content: string }).content, 'Build phase complete')
+  })
+
+  // Hydrated labels must match the live-run labels the store renders. Both
+  // sides go through formatPhaseLabel, so 'code-review' is "Code Review" in
+  // the transcript whether it was streamed or reloaded from the journal.
+  test('hyphenated phase ids hydrate with the same label the live run shows', () => {
+    const events: JournalEvent[] = [
+      makeEvent({ seq: 1, type: 'system', payload: { event: 'phaseStart', phase: 'code-review' } }),
+      makeEvent({
+        seq: 2,
+        type: 'system',
+        payload: { event: 'phaseComplete', phase: 'code-review', status: 'complete' }
+      })
+    ]
+    const msgs = journalEventsToChatMessages(events)
+    assert.equal((msgs[0] as { content: string }).content, 'Code Review phase started')
+    assert.equal((msgs[1] as { content: string }).content, 'Code Review phase complete')
   })
 
   test('waveStart and waveComplete system events', () => {
@@ -617,6 +635,28 @@ describe('resolveVerifyBannerState', () => {
 
   test('unknown string status => none', () => {
     assert.equal(resolveVerifyBannerState('unknown', false), 'none')
+  })
+})
+
+// -- formatPhaseLabel (shared by the live store, the journal mapper and the banners) --
+
+describe('formatPhaseLabel', () => {
+  test('single-word phase is capitalised', () => {
+    assert.equal(formatPhaseLabel('verify'), 'Verify')
+  })
+
+  test('hyphenated phase becomes spaced title case', () => {
+    assert.equal(formatPhaseLabel('code-review'), 'Code Review')
+  })
+
+  test('every ordered phase renders without a hyphen', () => {
+    for (const phase of BLUEPRINT_PHASE_ORDER) {
+      assert.ok(!formatPhaseLabel(phase).includes('-'), `${phase} label kept a hyphen`)
+    }
+  })
+
+  test('empty string is passed through', () => {
+    assert.equal(formatPhaseLabel(''), '')
   })
 })
 

@@ -22,7 +22,7 @@ import {
   LayoutDashboard
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import type { AuditTrackId, AuditResult } from '../../../../shared/types'
+import type { AuditTrackId, CodeAuditTrackId, AuditResult } from '../../../../shared/types'
 import { AUDIT_TRACKS, deriveApplicability } from '../../../../shared/constants'
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -35,7 +35,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   Palette
 }
 
-const ALL_TRACK_IDS = Object.keys(AUDIT_TRACKS) as AuditTrackId[]
+const ALL_TRACK_IDS = Object.keys(AUDIT_TRACKS) as CodeAuditTrackId[]
 
 function getScoreColor(score: number): string {
   if (score <= 20) return 'text-danger'

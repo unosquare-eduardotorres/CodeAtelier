@@ -14,7 +14,7 @@
 import { readdirSync, statSync } from 'node:fs'
 import { join, relative, extname } from 'node:path'
 import log from 'electron-log'
-import type { AuditTrackId } from '../../shared/types'
+import type { CodeAuditTrackId } from '../../shared/types'
 
 const discoveryLog = log.scope('audit-discovery')
 
@@ -54,7 +54,7 @@ const MAX_DEPTH = 10
  */
 export function discoverAuditableFiles(
   workspacePath: string,
-  trackId: AuditTrackId
+  trackId: CodeAuditTrackId
 ): AuditDiscoveryResult {
   const config = TRACK_FILE_CONFIG[trackId]
   if (!config) {
@@ -176,7 +176,7 @@ function matchesTrack(relPath: string, config: TrackFileConfig): boolean {
 
 // ── Per-track file configuration ─────────────────────────────────────────
 
-const TRACK_FILE_CONFIG: Record<AuditTrackId, TrackFileConfig> = {
+const TRACK_FILE_CONFIG: Record<CodeAuditTrackId, TrackFileConfig> = {
   database: {
     extensions: ['.sql', '.ts', '.js', '.prisma'],
     pathIncludes: [

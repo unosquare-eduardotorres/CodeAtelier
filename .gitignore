@@ -47,3 +47,8 @@ coverage/
 
 # Session scratch dir (task dialogs, throwaway artifacts)
 tmp/
+
+# Impeccable skill payload, non-Electron fallback root (impeccable-provision.service.ts).
+# Outside the app it provisions into cwd instead of userData — a stray script run
+# from the repo root has created this before.
+.impeccable-skill/

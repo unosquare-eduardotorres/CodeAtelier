@@ -4654,6 +4654,9 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintId,
       workspaceId,
       phase: 'build',
+      // Keyed like the rest of the peer-review stream: un-keyed build progress
+      // is suppressed by the chat view once task lanes exist.
+      taskId: task.taskId,
       text: `Peer review: task ${task.taskId} — one advisory fix attempt for ${outcome.review.findings.length} finding(s)`,
       kind: 'system'
     })

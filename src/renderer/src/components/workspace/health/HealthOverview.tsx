@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { useAuditStore } from '@renderer/store'
 import type { AuditRun, AuditTrackId, AuditFinding } from '../../../../../shared/types'
-import { AUDIT_TRACKS, deriveApplicability } from '../../../../../shared/constants'
+import { getAuditTrack, deriveApplicability } from '../../../../../shared/constants'
 import ScoreGauge from '../ScoreGauge'
 import HealthTrackCard from './HealthTrackCard'
 
@@ -127,7 +127,7 @@ export default function HealthOverview({
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {tracks.map((trackId) => {
-              const track = AUDIT_TRACKS[trackId]
+              const track = getAuditTrack(trackId)
               if (!track) return null
               const result = currentRun.results.find((r) => r.trackId === trackId)
               return (
@@ -186,7 +186,7 @@ export default function HealthOverview({
                         {finding.title}
                       </span>
                       <span className="text-[10px] text-text-muted flex-shrink-0">
-                        {AUDIT_TRACKS[trackId]?.name}
+                        {getAuditTrack(trackId)?.name}
                       </span>
                     </div>
                     {finding.filePath && (

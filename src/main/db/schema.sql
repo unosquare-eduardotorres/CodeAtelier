@@ -494,12 +494,17 @@ CREATE TABLE IF NOT EXISTS audit_runs (
   overall_score INTEGER,
   selected_tracks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(selected_tracks)),
   detected_techs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(detected_techs)),
+  -- Discriminates Workspace Health runs ('code') from Impeccable design runs
+  -- ('design'). Added by migration 160 for existing databases.
+  kind TEXT NOT NULL DEFAULT 'code' CHECK (kind IN ('code', 'design')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_runs_workspace
   ON audit_runs(workspace_id);
+-- idx_audit_runs_workspace_kind lives in migration 160 — indexes over
+-- migration-added columns stay with their migration (convention from 157).
 
 -- Individual auditor results within a run
 CREATE TABLE IF NOT EXISTS audit_results (

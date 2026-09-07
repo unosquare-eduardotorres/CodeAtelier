@@ -14,7 +14,7 @@
 import { useState, useCallback } from 'react'
 import { useAuditStore, useChatStore } from '@renderer/store'
 import { unwrapIpcError } from '@renderer/store/code-changes-errors'
-import { AUDIT_TRACKS } from '../../../../../shared/constants'
+import { getAuditTrack } from '../../../../../shared/constants'
 import type { AuditRun, AuditTrackId } from '../../../../../shared/types'
 import {
   formatDirectFindings,
@@ -67,7 +67,7 @@ export function useAuditHandoff(
     .filter((r) => r.status === 'completed')
     .map((r) => ({
       id: r.trackId,
-      name: AUDIT_TRACKS[r.trackId]?.name ?? r.trackId,
+      name: getAuditTrack(r.trackId)?.name ?? r.trackId,
       issueCount: r.findings.filter((f) => f.severity !== 'info').length,
       score: r.score
     }))

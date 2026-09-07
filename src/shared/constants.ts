@@ -3,6 +3,7 @@ import type {
   GrillTrackId,
   GrillTrack,
   AuditTrackId,
+  CodeAuditTrackId,
   AuditTrack,
   AuditSkill,
   AuditApplicability,
@@ -1921,7 +1922,7 @@ export const GREENFIELD_DEFAULT_TRACKS: GrillTrackId[] = ['requirements', 'archi
 
 // ── Audit Tracks (Workspace Health) ──────────────────────────────────────────
 
-export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
+export const AUDIT_TRACKS: Record<CodeAuditTrackId, AuditTrack> = {
   database: {
     id: 'database',
     name: 'Database',
@@ -2023,6 +2024,32 @@ export const AUDIT_TRACKS: Record<AuditTrackId, AuditTrack> = {
 } as const
 
 /**
+ * True when a track id is one of the seven Workspace Health auditors.
+ *
+ * The narrowing gate between the shared `AuditTrackId` vocabulary (which also
+ * carries `design:<command>` ids for Impeccable runs) and the code-only
+ * catalogues above.
+ */
+export function isCodeAuditTrackId(id: string): id is CodeAuditTrackId {
+  return Object.prototype.hasOwnProperty.call(AUDIT_TRACKS, id)
+}
+
+/**
+ * Tolerant AUDIT_TRACKS lookup for the shared paths — report rendering, handoff
+ * formatting, score weighting — that legitimately see design track ids too.
+ * Returns `undefined` for anything that is not a code auditor; callers already
+ * fall back to the raw id for display.
+ */
+export function getAuditTrack(id: AuditTrackId): AuditTrack | undefined {
+  return isCodeAuditTrackId(id) ? AUDIT_TRACKS[id] : undefined
+}
+
+/** Tolerant AUDIT_TRACK_SKILLS lookup. Design tracks have no selectable skills. */
+export function getAuditTrackSkills(id: AuditTrackId): AuditSkill[] {
+  return isCodeAuditTrackId(id) ? AUDIT_TRACK_SKILLS[id] : []
+}
+
+/**
  * Resolve whether a track result should count toward the overall score.
  *
  * Prefers the service-derived `applicability` when present (live runs); falls
@@ -2046,7 +2073,7 @@ export function deriveApplicability(
  * persisted with the run and shown on revisit; skill *execution* in the audit
  * prompt/tools is deferred.
  */
-export const AUDIT_TRACK_SKILLS: Record<AuditTrackId, AuditSkill[]> = {
+export const AUDIT_TRACK_SKILLS: Record<CodeAuditTrackId, AuditSkill[]> = {
   database: [
     {
       id: 'schema-design',

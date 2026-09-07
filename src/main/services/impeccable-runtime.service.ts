@@ -49,6 +49,16 @@ const log = {
 const AVAILABILITY_PROBE_TIMEOUT_MS = 5_000
 
 /**
+ * How long a *negative* availability result is trusted.
+ *
+ * A success is permanent for the session — the binary is not going to move.
+ * A failure is not: a laptop waking from sleep, or a cold first spawn that
+ * overruns the 5 s probe budget, would otherwise pin "design audit unavailable"
+ * until the app restarts, with no way for the user to retry.
+ */
+const AVAILABILITY_FAILURE_TTL_MS = 60_000
+
+/**
  * Engine binary version, pinned in `impeccable`'s optionalDependencies.
  * Used to locate the launcher's version-partitioned download cache
  * (`~/.impeccable/bin/<version>/`). Kept in sync with the `impeccable` pin in
@@ -130,7 +140,9 @@ let cachedBinary: string | null | undefined
 export function resetImpeccableRuntimeCache(): void {
   cachedBinary = undefined
   cachedAvailability = undefined
+  cachedAvailabilityAt = 0
   availabilityInFlight = undefined
+  availabilityGeneration++
 }
 
 /**
@@ -289,19 +301,51 @@ export interface ImpeccableAvailability {
 }
 
 let cachedAvailability: ImpeccableAvailability | undefined
+let cachedAvailabilityAt = 0
 let availabilityInFlight: Promise<ImpeccableAvailability> | undefined
+/**
+ * Bumped by every forced probe. A probe only commits its result if the
+ * generation is unchanged, so an abandoned in-flight probe cannot land on top
+ * of the fresher answer the user asked for.
+ */
+let availabilityGeneration = 0
+
+/** True when the memoised result may still be served. */
+function availabilityCacheIsFresh(): boolean {
+  if (!cachedAvailability) return false
+  if (cachedAvailability.available) return true
+  return Date.now() - cachedAvailabilityAt < AVAILABILITY_FAILURE_TTL_MS
+}
 
 /**
- * Probe the engine with `--version`. Result is memoised for the app session;
- * concurrent callers share one in-flight probe.
+ * Probe the engine with `--version`.
+ *
+ * Successes are memoised for the app session; failures expire after
+ * `AVAILABILITY_FAILURE_TTL_MS` so a transient miss self-heals. Concurrent
+ * callers share one in-flight probe. Pass `{ force: true }` to bypass the cache
+ * entirely — that is what a user-initiated "retry" in the status chip does.
  *
  * Unavailable is a warning state, never a crash — the LLM half of a design
  * audit still works without the deterministic detector.
  */
-export function checkAvailability(): Promise<ImpeccableAvailability> {
-  if (cachedAvailability) return Promise.resolve(cachedAvailability)
+export function checkAvailability(
+  options: { force?: boolean } = {}
+): Promise<ImpeccableAvailability> {
+  if (options.force) {
+    cachedAvailability = undefined
+    cachedAvailabilityAt = 0
+    // A forced probe must not be answered by one that started before whatever
+    // the user is retrying after changed.
+    availabilityInFlight = undefined
+    availabilityGeneration++
+    // Re-resolve the binary too: the common "retry" case is that the engine was
+    // only just installed, and a null resolution is memoised as well.
+    cachedBinary = undefined
+  }
+  if (availabilityCacheIsFresh()) return Promise.resolve(cachedAvailability!)
   if (availabilityInFlight) return availabilityInFlight
 
+  const generation = availabilityGeneration
   availabilityInFlight = (async (): Promise<ImpeccableAvailability> => {
     const bin = resolveEngineBinary()
     if (!bin) {
@@ -332,8 +376,11 @@ export function checkAvailability(): Promise<ImpeccableAvailability> {
       reason: err instanceof Error ? err.message : String(err)
     }))
     .then((res) => {
-      cachedAvailability = res
-      availabilityInFlight = undefined
+      if (generation === availabilityGeneration) {
+        cachedAvailability = res
+        cachedAvailabilityAt = Date.now()
+        availabilityInFlight = undefined
+      }
       if (!res.available) log.warn(`[impeccable] unavailable: ${res.reason}`)
       return res
     })

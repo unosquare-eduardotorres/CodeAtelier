@@ -1961,9 +1961,6 @@ export const migrations: Migration[] = [
           overall_score INTEGER,
           selected_tracks TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(selected_tracks)),
           detected_techs TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(detected_techs)),
-          -- Discriminates Workspace Health runs from Impeccable design runs
-          -- (migration 160). Kept in sync with that migration's ALTER.
-          kind TEXT NOT NULL DEFAULT 'code' CHECK (kind IN ('code', 'design')),
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
@@ -4941,8 +4938,10 @@ export const migrations: Migration[] = [
       // what it returned before once the explicit filter is added.
       //
       // Guarded by table_info: on a FRESH database schema.sql has already
-      // created the column, and a bare ALTER would fail with 'duplicate column
-      // name' and roll this migration's transaction back.
+      // created audit_runs WITH this column, and a bare ALTER would fail with
+      // 'duplicate column name' and roll this migration's transaction back.
+      // On an existing database schema.sql's CREATE ... IF NOT EXISTS was a
+      // no-op, the column is absent, and the ALTER below is what adds it.
       const columns = db.prepare(`PRAGMA table_info(audit_runs)`).all() as {
         name: string
       }[]

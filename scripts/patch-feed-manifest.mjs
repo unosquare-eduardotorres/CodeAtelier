@@ -16,8 +16,11 @@
  * plain node and production deps exist at that point.
  *
  * CLI: node scripts/patch-feed-manifest.mjs <src.yml> <dest.yml> <version> <platform>
- * Prints one relative path per line to stdout — every file the feed now
- * references, for the caller to verify on disk.
+ * Prints one `<relative-path>\t<size>` line per referenced file to stdout, for the
+ * caller to verify on disk. The size is the manifest's own `size:` field and is
+ * empty when the manifest does not carry one. Existence alone is not a useful
+ * check: a cloud drive exposes a partially copied artifact at its final name, so
+ * the byte count is what separates "published" from "still being written".
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 
@@ -48,7 +51,8 @@ export function parseManifestVersion(text) {
  *   writes into the manifest for artifacts whose filenames contain spaces
  *   (`Code Atelier-1.0.65-arm64-mac.zip` → `Code-Atelier-1.0.65-arm64-mac.zip`).
  *
- * @returns the rewritten text plus the de-duplicated list of referenced paths.
+ * @returns the rewritten text, the de-duplicated list of referenced paths, and a
+ * `path -> size` map for the entries whose manifest block declares a `size:`.
  */
 export function rewriteManifest(text, version, platform) {
   const found = parseManifestVersion(text)
@@ -60,7 +64,18 @@ export function rewriteManifest(text, version, platform) {
   }
 
   const files = []
+  const sizes = {}
+  // The `size:` of a files[] entry sits on a later line than its `url:`, so the
+  // most recent url is what a size line attaches to.
+  let currentRef = null
+
   const lines = text.split('\n').map((line) => {
+    const sizeMatch = /^[ \t]+size:[ \t]*(\d+)[ \t]*$/.exec(line)
+    if (sizeMatch && currentRef !== null) {
+      sizes[currentRef] = Number(sizeMatch[1])
+      return line
+    }
+
     const match = /^([ \t]*-?[ \t]*)(url|path):([ \t]*)(.*)$/.exec(line)
     if (!match) return line
 
@@ -71,15 +86,17 @@ export function rewriteManifest(text, version, platform) {
     // Already prefixed by an earlier run — record it, change nothing.
     if (value.includes('/')) {
       files.push(value)
+      currentRef = value
       return line
     }
 
     const rel = `${version}/${platform}/${value.replace(/ /g, '-')}`
     files.push(rel)
+    currentRef = rel
     return `${indent}${key}:${gap}${quote}${rel}${quote}`
   })
 
-  return { text: lines.join('\n'), files: [...new Set(files)] }
+  return { text: lines.join('\n'), files: [...new Set(files)], sizes }
 }
 
 // ── CLI
@@ -91,9 +108,9 @@ if (isCli) {
     process.exit(2)
   }
   try {
-    const { text, files } = rewriteManifest(readFileSync(src, 'utf8'), version, platform)
+    const { text, files, sizes } = rewriteManifest(readFileSync(src, 'utf8'), version, platform)
     writeFileSync(dest, text)
-    for (const file of files) console.log(file)
+    for (const file of files) console.log(`${file}\t${sizes[file] ?? ''}`)
   } catch (err) {
     console.error(`patch-feed-manifest: ${err instanceof Error ? err.message : String(err)}`)
     process.exit(1)

@@ -7,7 +7,7 @@
  *  - formatConsolidatedPlan: multi-track overview (plan mode)
  */
 
-import { AUDIT_TRACKS } from '../../shared/constants'
+import { getAuditTrack } from '../../shared/constants'
 import type { AuditRun, AuditTrackId, AuditFinding, AuditResult } from '../../shared/types'
 
 const SEVERITY_ORDER: Record<string, number> = {
@@ -33,7 +33,7 @@ function sortBySeverity(findings: AuditFinding[]): AuditFinding[] {
  * direct actionable context.
  */
 export function formatDirectFindings(result: AuditResult): string {
-  const track = AUDIT_TRACKS[result.trackId]
+  const track = getAuditTrack(result.trackId)
   const trackName = track?.name ?? result.trackId
   const actionable = result.findings.filter((f) => f.severity !== 'info')
   const sorted = sortBySeverity(actionable)
@@ -92,7 +92,7 @@ export function formatConsolidatedPlan(run: AuditRun): string {
 
   // Per-track sections
   for (const result of completedResults) {
-    const track = AUDIT_TRACKS[result.trackId]
+    const track = getAuditTrack(result.trackId)
     const trackName = track?.name ?? result.trackId
     const actionable = result.findings.filter((f) => f.severity !== 'info')
     if (actionable.length === 0) continue
@@ -144,7 +144,7 @@ export function buildHandoffTitle(
   issueCount?: number
 ): string {
   if (mode === 'split' && trackId) {
-    const track = AUDIT_TRACKS[trackId]
+    const track = getAuditTrack(trackId)
     const trackName = track?.name ?? trackId
     return `🔍 Audit: ${trackName} — Fix ${issueCount ?? 0} issue${issueCount !== 1 ? 's' : ''}`
   }
