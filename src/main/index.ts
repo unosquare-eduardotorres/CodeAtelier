@@ -36,6 +36,11 @@ import {
 // Was a lazy require('./db/repositories/bug.repository'), which resolved to a
 // non-existent path in packaged builds, so main-process bugs were never recorded.
 import { bugRepository } from './db/repositories/bug.repository'
+// Wire the code-graph DB accessor for tech-stack detection. A static import in
+// the detector would pull db/index (and its `?raw` schema import) into every
+// non-Electron consumer; a lazy relative require there never resolved in
+// packaged builds. The accessor seam keeps both worlds working.
+import { setCodeGraphDbAccessor } from './services/tech-stack-detector.service'
 import { registerAllIpcHandlers } from './ipc'
 import { chatAgentService, skillService } from './services'
 import { memoryExtractionService } from './services/memory-extraction.service'
@@ -376,6 +381,9 @@ function createWindow(): void {
   // ── Initialize database with error handling (#14) ──
   try {
     getDatabase()
+    // Safe only here: by now db/index has fully loaded inside the Electron
+    // bundle. Hand the detector a lazy thunk so it never imports db itself.
+    setCodeGraphDbAccessor(() => getDatabase())
   } catch (error) {
     dbLogger.error('Failed to initialize database:', error)
     dialog.showErrorBox(

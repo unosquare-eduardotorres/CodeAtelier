@@ -2,6 +2,29 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import log from 'electron-log'
 
+/**
+ * Injected DB accessor — the seam that keeps this module importable outside
+ * the Electron/DB context (its original lazy-require rationale).
+ *
+ * Why not a static `import { getDatabase } from '../db/index'`: db/index loads
+ * schema.sql via a vite `?raw` import, which is a SyntaxError under plain
+ * tsx/node — the detector has callers that run there (standalone tests,
+ * MCP-server processes). And why not the old lazy `require('../db/index')`:
+ * relative requires resolve against the FLAT out/main layout after
+ * electron-vite bundling, so detectFromCodeGraph silently returned an empty
+ * map in every packaged build (verify-build-assets flags the chunk).
+ *
+ * `src/main/index.ts` (the only Electron entrypoint that needs the real DB)
+ * wires the real accessor at startup, after `./db` has loaded safely there.
+ */
+export type DatabaseAccessor = () => import('better-sqlite3').Database | null
+let dbAccessor: DatabaseAccessor | null = null
+
+/** Wire the real accessor. Call once from the Electron main entrypoint. */
+export function setCodeGraphDbAccessor(accessor: DatabaseAccessor): void {
+  dbAccessor = accessor
+}
+
 const detectLogger = log.scope('tech-stack-detector')
 
 export interface TechStackResult {
@@ -396,19 +419,15 @@ export function detectFromCodeGraph(workspaceId: string): Map<string, number> {
   const found = new Map<string, number>()
   let rows: Array<{ rel_fname: string }>
   try {
-    // Lazy require: a static `../db/index` import would drag better-sqlite3 and
-    // the `?raw` schema import into every consumer of this module (7 callers,
-    // several of which run outside an Electron/DB context).
-    // KNOWN BROKEN IN PACKAGED BUILDS — relative require() does not survive
-    // electron-vite bundling, so detectFromCodeGraph always returns an empty
-    // map at runtime. The laziness above is a deliberate tradeoff (7 callers
-    // run outside an Electron/DB context), so the fix needs an injected
-    // accessor rather than a plain static import. Tracked separately.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports, no-restricted-syntax
-    const { getDatabase } = require('../db/index') as typeof import('../db/index')
+    // No accessor wired → standalone/non-Electron context → honest empty map.
+    const db = dbAccessor?.()
+    if (!db) {
+      detectLogger.debug(`[detect:code-graph] no DB accessor wired for ${workspaceId}`)
+      return found
+    }
     // DISTINCT collapses the many tags-per-file down to a file list, which is
     // what the ≥N-files threshold is actually about.
-    rows = getDatabase()
+    rows = db
       .prepare(`SELECT DISTINCT rel_fname FROM code_graph_tags WHERE workspace_id = ?`)
       .all(workspaceId) as Array<{ rel_fname: string }>
   } catch (err) {

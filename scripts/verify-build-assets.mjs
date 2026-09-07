@@ -51,7 +51,6 @@ const BASELINE = new Set([
   'code-graph.service -> ../db/repositories',
   'code-graph.service -> ../db',
   'index -> ../db/repositories',
-  'index -> ../db/index',
   'blueprint.service -> ./blueprint-spec.service'
 ])
 
