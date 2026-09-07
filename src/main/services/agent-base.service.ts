@@ -162,19 +162,23 @@ export interface StreamChunk {
  */
 export abstract class AgentBaseService extends EventEmitter {
   protected process: ChildProcess | null = null
-  protected currentStatus: AgentStatus['status'] = 'idle'
-  protected tokenUsage: number = 0
-  protected inputTokens: number = 0
-  protected outputTokens: number = 0
-  protected cacheReadTokens: number = 0
-  protected cacheCreationTokens: number = 0
+  // F1 (2.1) — public (was protected): AgentSessionHost exposes these to
+  // the delegates (stream processor, recovery manager, token tracker).
+  public currentStatus: AgentStatus['status'] = 'idle'
+  public tokenUsage: number = 0
+  public inputTokens: number = 0
+  public outputTokens: number = 0
+  public cacheReadTokens: number = 0
+  public cacheCreationTokens: number = 0
   protected startedAt: number = 0
   protected messageStartedAt: number = 0
   /** Workspace directory — used to relativize file paths in tool summaries */
   protected cwd: string | undefined
 
   /** Database session ID for token tracking */
-  protected dbSessionId: string | null = null
+  // F1 (2.1) — public (was protected): AgentSessionHost exposes it to the
+  // stream processor / token tracker for per-turn attribution.
+  public dbSessionId: string | null = null
 
   /** Scoped logger — each subclass provides its own scope */
   protected abstract readonly log: LogFunctions
@@ -229,7 +233,7 @@ export abstract class AgentBaseService extends EventEmitter {
    * Flushes current token usage to the DB session without completing it.
    * Use for long-lived agents (e.g. the chat agent) so the dashboard shows live data.
    */
-  protected flushTokenUsage(): void {
+  public flushTokenUsage(): void {
     if (!this.dbSessionId) return
     try {
       agentSessionRepository.updateTokenUsage(this.dbSessionId, this.tokenUsage, {

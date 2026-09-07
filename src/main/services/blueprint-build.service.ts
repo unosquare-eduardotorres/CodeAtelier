@@ -24,10 +24,7 @@ import log from 'electron-log'
 import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
-import {
-  PhaseActivityWatchdog,
-  wireAskUserAutoResponder
-} from './blueprint-phase-watchdog'
+import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
 import type {
   BlueprintTask,
   BlueprintTaskOutcomeKind,
@@ -52,18 +49,22 @@ import {
 } from './blueprint-artifact-parsers'
 import { verifyBuildTaskFiles } from './blueprint-task-verification'
 import { fingerprintGateFailure } from './blueprint-failure-fingerprint'
+import { isApiErrorTerminalReason } from './agent-terminal-reasons'
 import { extractFailureMemory, renderFailureMemory } from './blueprint-failure-memory'
 import {
   buildGateFixInstructions,
   captureGateBaseline,
   defaultCommandRunner,
   divergedPacketTestFiles,
+  effectiveTaskTestCommand,
   isBaselineDiffEmpty,
   MAX_LISTED_PATHS,
   restorePacketTestFiles,
   runGates,
   runWaveCommandGates,
   scanTaskCommitSurvival,
+  scanUngatedCommits,
+  sweepOutOfWorksetWrites,
   TASK_ID_IN_SUBJECT,
   type GateBaseline,
   type GateTaskContext
@@ -76,17 +77,18 @@ import {
   type UnverifiedItem
 } from '../../shared/gate-types'
 import { normalizePath } from '../../shared/gate-analysis'
-import { resolveGateCommands } from '../../shared/gate-command-resolver'
+import type { ResolvedGateCommands } from '../../shared/gate-command-types'
 import { getTimeoutTier } from './provider-timeout-tiers'
-import type { GateCommandSet, ResolvedGateCommands } from '../../shared/gate-command-types'
+import { resolveBlueprintGateCommands } from './blueprint-gate-command-pipeline'
+import { formatStopLossCommandSuffix, isDeterministicStopLoss } from './blueprint-stop-loss'
 import type { WorkspaceManifests } from '../../shared/gate-command-detect'
 import { readWorkspaceManifests } from './blueprint-preflight.service'
-import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
 import { renderWorkPacket } from '../../shared/work-packet-prompt'
 import {
   buildTaskDag,
   readyTasks,
   markComplete,
+  markReadyAgain,
   collectTransitiveDependents,
   isDepSatisfied,
   type TaskDag
@@ -103,16 +105,13 @@ import { blueprintTelemetryRepository } from '../db/repositories/blueprint-telem
 import { conversationRepository } from '../db/repositories'
 import { appPreferenceRepository } from '../db/repositories/app-preference.repository'
 import { workspaceRepository } from '../db/repositories/workspace.repository'
-import {
-  runPreflightChecks,
-  buildPreflightDiscoveries,
-  scanGateCommands
-} from './blueprint-preflight.service'
+import { runPreflightChecks, buildPreflightDiscoveries } from './blueprint-preflight.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import {
   ensureBlueprintTrack,
   blueprintTrackOwner,
-  branchHeldElsewhereError
+  branchHeldElsewhereError,
+  resolveBlueprintTrack
 } from './blueprint-track'
 import { recordBaselineCommit } from './blueprint-modified-files'
 import simpleGit from 'simple-git'
@@ -456,6 +455,39 @@ export function buildResumeContinuationMessage(params: {
 }
 
 /** Return type for executeTask, including timing data. */
+/**
+ * F3 (3.1) — decide the system-prompt context and send message for one rung.
+ *
+ * Pure, exported for the byte-equality pin test. The KV-cache prefix the
+ * resume exists to reuse is (system prompt = phase template + taskContext).
+ * Building the continuation message INTO the taskContext — the pre-F3
+ * behaviour — changes the prefix on every resumed rung, so the server
+ * re-prefills exactly the tokens the resume was meant to read from cache.
+ * With a frozen context the prefix is byte-identical to the cold rung's and
+ * the verdict travels as the USER message instead.
+ */
+export function resolveRungPrompts(params: {
+  resuming: boolean
+  /** The generation's first cold rung's taskContext, frozen by the ladder. */
+  frozenTaskContext?: string
+  /** The short retry verdict (`buildResumeContinuationMessage`). */
+  continuationMessage: string
+  /** The cold rung's task context — built by the caller only when cold. */
+  coldTaskContext?: string
+}): { taskContext: string; sendMessage: string | undefined } {
+  if (!params.resuming) {
+    return { taskContext: params.coldTaskContext ?? '', sendMessage: undefined }
+  }
+  if (params.frozenTaskContext) {
+    // Byte-identical prefix; verdict as the user message.
+    return { taskContext: params.frozenTaskContext, sendMessage: params.continuationMessage }
+  }
+  // Cross-run resume after a restart: no frozen context exists. Degrade to
+  // the pre-F3 shape (continuation as taskContext) — a cache miss, but the
+  // only honest option when the cold prompt was never captured.
+  return { taskContext: params.continuationMessage, sendMessage: undefined }
+}
+
 interface TaskResult {
   success: boolean
   completion: Record<string, unknown> | null
@@ -511,6 +543,25 @@ interface TaskResult {
   /** A1 (Phase 3) — cache-read tokens for this rung, from the meta chunk. */
   cacheReadInputTokens?: number
   /**
+   * F2 (2.2) — first-turn cache-read for this rung: the prefix-reuse signal
+   * Gate 1 compares resumed vs cold. `getCacheReadTokens` sums every turn,
+   * which a multi-turn cold rung inflates.
+   */
+  firstTurnCacheReadTokens?: number
+  /**
+   * F12 (1.1) — the terminal reason the session reported for this rung, when
+   * it ended the turn (`api_error`, `max_turns`, …). Carried on the result so
+   * telemetry and the failure rows can name the true cause.
+   */
+  terminalReason?: string
+  /**
+   * F3 (3.1) — the COLD rung's taskContext (the system prompt's variable
+   * section). The ladder freezes it per generation so every resumed rung of
+   * that generation reuses the byte-identical system prompt, preserving the
+   * KV-cache prefix the resume exists to read.
+   */
+  frozenTaskContext?: string
+  /**
    * A1 (Phase 1) — resolves when this rung's session teardown (stop/kill)
    * completes. Fire-and-forget for the rung itself; the ladder AWAITS it
    * only before dispatching a RESUMED rung, so the new `--resume` spawn
@@ -524,6 +575,24 @@ interface TaskResult {
    * stale boolean alone.
    */
   sendOutcome?: Exclude<SendOutcome, 'ok'>
+  /**
+   * 1.4 — set when the stop-loss fired on a repeated fingerprint from a rung
+   * that did ZERO write work of its own, and the scheduler should requeue the
+   * task behind the current drain point instead of escalating to the lead
+   * model. A fresh `executeTaskWithGates` re-captures the gate baseline —
+   * exactly what the operator's manual Retry does, and the reason it works.
+   * Honoured by the DAG scheduler; the wave scheduler ignores it (escalates,
+   * as before).
+   */
+  requeueAfterDrain?: boolean
+  /**
+   * C2 — when the C1 scope-block detector fired, the exact paths the builder
+   * kept trying to write outside its packet (stable across occurrences). The
+   * task settles failed with `outcomeKind = 'needs_scope_amendment'` and a
+   * resolution note listing these, pending the human decision; a TaskResult
+   * without this field never triggers that lane.
+   */
+  scopeAmendmentFiles?: readonly string[]
 }
 
 /**
@@ -558,6 +627,23 @@ function failedTestIntegrityFiles(report: GateReport): readonly string[] {
   return report.gates.find((g) => g.name === 'test-integrity' && g.verdict === 'fail')?.files ?? []
 }
 
+/**
+ * F11 (1.3) — paths the write-set gate attributed to THIS task as violations.
+ *
+ * The retry-cleanup sweep is bounded by exactly these paths: files the gate
+ * PROVED this task wrote outside its set. Not peer files (the gate exempts
+ * those before failing), not packet test files (the test-integrity restore
+ * owns those), not evidence lines — the structured `files` array of the
+ * failed write-set gate result.
+ */
+export function writeSetViolationFiles(report: GateReport | undefined): readonly string[] {
+  const gate = report?.gates.find(
+    (g) =>
+      g.name === 'write-set' && g.verdict === 'fail' && Array.isArray(g.files) && g.files.length > 0
+  )
+  return gate?.files ?? []
+}
+
 /** What one task's whole gate ladder needs, from dispatch through escalation. */
 interface TaskLadderParams {
   task: BlueprintTask
@@ -584,6 +670,62 @@ interface InFlightEntry {
 function normalizePaths(paths: string[] | undefined): Set<string> {
   if (!paths?.length) return new Set()
   return new Set(paths.map((p) => normalize(p)))
+}
+
+/**
+ * C1 — one attempt's gate-failure evidence, as the scope-block detector sees it.
+ * Kept in a bounded log parallel to the B3 fingerprint ring.
+ */
+export interface AttemptEvidence {
+  /** The gate names that FAILED this attempt (e.g. ['task-tests', 'write-set']). */
+  failedGates: readonly string[]
+  /** The write-set gate's structured `files` array — empty when it did not fail. */
+  writeSetFiles: readonly string[]
+}
+
+/**
+ * C1 — detect the blocked-by-scope signature.
+ *
+ * The live failure mode this encodes (blueprint 7624e83f, T011, 15 attempts):
+ * the builder repeatedly produces a fix whose files sit OUTSIDE its packet,
+ * so `write-set` fails on a stable file list while `task-tests` fails on the
+ * suite-red those same files were meant to fix — the two gates alternate,
+ * each attempt "fixing" the other's complaint and reintroducing its own. That
+ * is not non-convergence (the builder IS moving); it is a constraint the
+ * builder cannot change. Escalating spends the premium model on the same
+ * dead end — observed 4× on the motivating run.
+ *
+ * Signature, checked over the bounded evidence log:
+ *   1. both `task-tests` and `write-set` failed at least once, AND
+ *   2. the LATEST write-set failure's file list intersects a PRIOR one's
+ *      (the out-of-set target is stable — the builder keeps returning to the
+ *      same files), AND
+ *   3. at least two DISTINCT gate-failure combinations occurred (the
+ *      alternation itself). Without (3) a task failing `write-set` twice on
+ *      the same files is the B3 consecutive case, not this one.
+ *
+ * Returns the proposed file set (the union of the intersecting lists) when
+ * all three hold, else undefined.
+ */
+export function detectScopeBlock(
+  evidenceLog: readonly AttemptEvidence[]
+): ReadonlySet<string> | undefined {
+  const writeSetFailures = evidenceLog.filter((e) => e.writeSetFiles.length > 0)
+  if (writeSetFailures.length < 2) return undefined
+  const sawTaskTests = evidenceLog.some((e) => e.failedGates.includes('task-tests'))
+  if (!sawTaskTests) return undefined
+  const distinctCombos = new Set(evidenceLog.map((e) => [...e.failedGates].sort().join('+')))
+  if (distinctCombos.size < 2) return undefined
+
+  const latest = writeSetFailures[writeSetFailures.length - 1]
+  const latestSet = new Set(latest.writeSetFiles)
+  const shared = new Set<string>()
+  for (const prior of writeSetFailures.slice(0, -1)) {
+    for (const f of prior.writeSetFiles) {
+      if (latestSet.has(f)) shared.add(f)
+    }
+  }
+  return shared.size > 0 ? shared : undefined
 }
 
 /**
@@ -790,6 +932,24 @@ export function buildTaskCommitSubject(input: { taskId: string; description: str
     )
   }
   return subject
+}
+
+/**
+ * T003 — first whitespace-delimited token of a shell command line. Path-like
+ * tokens never contain spaces on the platforms we gate (quoted paths would
+ * already be a different failure mode), so \S+ is exact for the check's use.
+ */
+function firstCommandToken(command: string): string {
+  return /^\S+/.exec(command.trim())?.[0] ?? ''
+}
+
+/**
+ * T003 — where a path-like interpreter token could live: absolute, relative to
+ * the worktree (the gate command's cwd), and relative to the source root.
+ */
+function resolveTokenCandidates(token: string, gateCtx: GateTaskContext): string[] {
+  if (isAbsolute(token)) return [token]
+  return [resolve(gateCtx.executionPath, token), resolve(gateCtx.workspacePath, token)]
 }
 
 export class BlueprintBuildService extends EventEmitter {
@@ -1626,6 +1786,20 @@ export class BlueprintBuildService extends EventEmitter {
     // pre-pass the ready-set scan would re-dispatch them.
     let resumedCount = 0
     let userSkippedCount = 0
+    let stopLossSettledCount = 0
+    // G5 — same lazy stop-loss probe as executeWave (see its comment).
+    let stopLossCurrentCommand: string | null | undefined
+    const stopLossCommandFor = (): string | null | undefined => {
+      if (stopLossCurrentCommand === undefined) {
+        try {
+          stopLossCurrentCommand =
+            resolveBlueprintGateCommands(blueprintId, workspacePath).commands.test?.command ?? null
+        } catch {
+          stopLossCurrentCommand = null
+        }
+      }
+      return stopLossCurrentCommand
+    }
     for (const node of dag.nodes.values()) {
       const rec = taskById.get(node.taskId)
       if (!rec) continue
@@ -1640,6 +1814,25 @@ export class BlueprintBuildService extends EventEmitter {
           wave: node.wave,
           taskId: node.taskId,
           status: 'skipped'
+        } satisfies BlueprintWaveTaskCompletePayload)
+      } else if (
+        // T003/G5 — a failed task excluded by the deterministic stop-loss is
+        // settled, exactly as in executeWave: mark it terminal so the ready-set
+        // scan never re-dispatches the identical experiment. See the fuller
+        // comment there.
+        rec.status === 'failed' &&
+        isDeterministicStopLoss(rec.failureReason ?? '', rec.attempts, stopLossCommandFor())
+      ) {
+        terminal.add(node.taskId)
+        result.tasksCompleted++
+        stopLossSettledCount++
+        markComplete(dag, node.taskId)
+        this.safeEmit('waveTaskComplete', {
+          blueprintId,
+          workspaceId,
+          wave: node.wave,
+          taskId: node.taskId,
+          status: 'failed'
         } satisfies BlueprintWaveTaskCompletePayload)
       } else if (rec.status === 'complete') {
         terminal.add(node.taskId)
@@ -1656,12 +1849,15 @@ export class BlueprintBuildService extends EventEmitter {
         } satisfies BlueprintWaveTaskCompletePayload)
       }
     }
-    if (resumedCount > 0 || userSkippedCount > 0) {
+    if (resumedCount > 0 || userSkippedCount > 0 || stopLossSettledCount > 0) {
       this.safeEmit('phaseProgress', {
         blueprintId,
         workspaceId,
         phase: 'build',
-        text: `Skipping ${resumedCount} already-completed and ${userSkippedCount} user-skipped task${resumedCount + userSkippedCount > 1 ? 's' : ''} (resume)`,
+        text:
+          `Skipping ${resumedCount} already-completed and ${userSkippedCount} user-skipped` +
+          `${stopLossSettledCount > 0 ? ` and ${stopLossSettledCount} stop-loss-excluded` : ''}` +
+          ` task${resumedCount + userSkippedCount + stopLossSettledCount > 1 ? 's' : ''} (resume)`,
         kind: 'system'
       })
     }
@@ -1806,6 +2002,8 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
     const gatedCohorts = new Set<string>()
+    /** 1.4 — tasks stop-loss-requeued behind a drain point (one shot each). */
+    const requeuedTasks = new Set<string>()
 
     // ── Main loop ──
     while (true) {
@@ -1900,6 +2098,39 @@ export class BlueprintBuildService extends EventEmitter {
       terminal.add(settled.taskId)
       completionsSinceGate++
       markComplete(dag, settled.taskId)
+
+      // 1.4 — a stop-loss that fired on a zero-work repeated fingerprint came
+      // back as `requeueAfterDrain`. Do NOT enter the drain path: reset the
+      // task to pending, pull it out of the terminal sets, and let the loop
+      // redispatch it against a tree the ladder-exit sweep has cleaned — the
+      // fresh `executeTaskWithGates` call re-captures the gate baseline, which
+      // is exactly what the operator's manual Retry does and the reason it
+      // works. CAP: one requeue per task, enforced HERE — the ladder's
+      // `requeueUsed` is per-call state and a requeued task gets a fresh
+      // ladder, so only this set bounds the loop. A second stop-loss on the
+      // same task falls through to the normal failure path (escalation).
+      if (settled.taskResult.requeueAfterDrain === true && !requeuedTasks.has(settled.taskId)) {
+        const rec = taskById.get(settled.taskId)
+        if (rec) {
+          bpLog.info(
+            `[executeDag] Task ${settled.taskId} requeued behind the drain point ` +
+              `(stop-loss fired with zero own work)`
+          )
+          blueprintTaskRepository.updateStatus(rec.id, 'pending')
+          terminal.delete(settled.taskId)
+          markReadyAgain(dag, settled.taskId)
+          dispatched.delete(settled.taskId)
+          gatedCohorts.delete(settled.taskId)
+          completionsSinceGate--
+          requeuedTasks.add(settled.taskId)
+          // Do not fall through to the failure branch below.
+          syncRunningTasks()
+          for (const id of actionableReady()) {
+            if (!readySince.has(id) && !dispatched.has(id)) readySince.set(id, Date.now())
+          }
+          continue
+        }
+      }
 
       if (settled.taskResult.success) {
         if (reportedModified.length > 0) {
@@ -2073,6 +2304,23 @@ export class BlueprintBuildService extends EventEmitter {
     const pending: BlueprintTask[] = []
     let skippedCount = 0
     let userSkippedCount = 0
+    let stopLossSettledCount = 0
+    // G5 — the current test command, resolved through the SAME pipeline the
+    // stop-loss write site used (see blueprint-gate-command-pipeline.ts). Only
+    // computed when some task actually carries a stop-loss reason: the disk
+    // scan it drives is not free.
+    let stopLossCurrentCommand: string | null | undefined
+    const stopLossCommandFor = (): string | null | undefined => {
+      if (stopLossCurrentCommand === undefined) {
+        try {
+          stopLossCurrentCommand =
+            resolveBlueprintGateCommands(blueprintId, workspacePath).commands.test?.command ?? null
+        } catch {
+          stopLossCurrentCommand = null
+        }
+      }
+      return stopLossCurrentCommand
+    }
     for (const task of waveTasks) {
       const dbTask = blueprintTaskRepository.findById(task.id)
       const effectiveStatus = dbTask?.status ?? task.status
@@ -2092,6 +2340,33 @@ export class BlueprintBuildService extends EventEmitter {
           wave: waveNum,
           taskId: task.taskId,
           status: 'skipped'
+        } satisfies BlueprintWaveTaskCompletePayload)
+        continue
+      }
+      // T003/G5 — a failed task excluded from the retry reset by the
+      // deterministic stop-loss is settled, same as a user skip. Without this
+      // the resume pre-pass pushed it into `pending` and the wave re-ran the
+      // IDENTICAL experiment the stop-loss just refused to fund — the exact
+      // loop G5 exists to close. The exclusion only applies while the resolved
+      // test command is unchanged (retryPhase's own predicate), so a changed
+      // command still lets the wave re-grade the task.
+      if (
+        effectiveStatus === 'failed' &&
+        dbTask &&
+        isDeterministicStopLoss(dbTask.failureReason ?? '', dbTask.attempts, stopLossCommandFor())
+      ) {
+        result.tasksCompleted++
+        stopLossSettledCount++
+        bpLog.info(
+          `[executeWave] Task ${task.taskId} settled failed — deterministic gate stop-loss ` +
+            `(fix the environment or override the gate command to re-run it)`
+        )
+        this.safeEmit('waveTaskComplete', {
+          blueprintId,
+          workspaceId,
+          wave: waveNum,
+          taskId: task.taskId,
+          status: 'failed'
         } satisfies BlueprintWaveTaskCompletePayload)
         continue
       }
@@ -2126,6 +2401,18 @@ export class BlueprintBuildService extends EventEmitter {
         workspaceId,
         phase: 'build',
         text: `Skipping ${userSkippedCount} user-skipped task${userSkippedCount > 1 ? 's' : ''} in Wave ${waveNum}`,
+        kind: 'system'
+      })
+    }
+    if (stopLossSettledCount > 0) {
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `Skipping ${stopLossSettledCount} stop-loss-excluded task` +
+          `${stopLossSettledCount > 1 ? 's' : ''} in Wave ${waveNum} ` +
+          `(deterministic gate failure — fix the environment or override the gate command)`,
         kind: 'system'
       })
     }
@@ -2694,7 +2981,152 @@ export class BlueprintBuildService extends EventEmitter {
           workspaceId,
           taskId: task.taskId
         })
+        // F11 (1.3) — the whole-task exit sweep. When the TASK settles failed,
+        // its out-of-set writes must not outlive the ladder to contaminate the
+        // operator's manual Retry of this task, the wave gates, or any peer
+        // that declares the same files. Bounded by the LAST failed write-set
+        // report's `files` list; the per-attempt sweep (inside the ladder)
+        // already ran for each graded failure.
+        await this.sweepFailedAttemptWrites(gateCtx, baseline, outcome, {
+          blueprintId,
+          workspaceId,
+          taskId: task.taskId,
+          stage: 'ladder-exit'
+        })
       }
+    }
+  }
+
+  /**
+   * C1/C2 — park a task whose evidence log shows the blocked-by-scope
+   * signature, instead of escalating to the lead model.
+   *
+   * Returns the parked TaskResult (caller returns it verbatim), or undefined
+   * when the signature is absent — the caller falls through to its normal
+   * lane. The signature and its rationale live on `detectScopeBlock`.
+   */
+  private parkIfScopeBlocked(params: {
+    task: BlueprintTask
+    blueprintId: string
+    workspaceId: string
+    attempt: number
+    cycleLength: number
+    attemptEvidenceLog: readonly AttemptEvidence[]
+    lastResult: TaskResult | null
+  }): TaskResult | undefined {
+    const scopeBlock = detectScopeBlock(params.attemptEvidenceLog)
+    if (!scopeBlock || scopeBlock.size === 0) return undefined
+    const proposed = [...scopeBlock].sort()
+    bpLog.warn(
+      `[gates] Task ${params.task.taskId} blocked_by_scope — write-set/task-tests ` +
+        `alternation with a stable out-of-set file list (${proposed.join(', ')}) ` +
+        `— parking for scope amendment instead of escalating`
+    )
+    this.safeEmit('phaseProgress', {
+      blueprintId: params.blueprintId,
+      workspaceId: params.workspaceId,
+      phase: 'build',
+      text:
+        `⚠ Task ${params.task.taskId}: blocked by scope — the fix needs ` +
+        `${proposed.join(', ')}, which the task's write-set does not grant. ` +
+        `Parked for review instead of escalating.`,
+      kind: 'system'
+    })
+    blueprintTelemetryRepository.record({
+      blueprintId: params.blueprintId,
+      kind: 'scope_amendment',
+      phase: 'build',
+      taskId: params.task.taskId,
+      attempt: params.attempt,
+      data: {
+        proposedFiles: proposed,
+        cycleLength: params.cycleLength,
+        attemptCount: params.attempt,
+        evidence: params.attemptEvidenceLog.map((e) => ({
+          failedGates: [...e.failedGates],
+          writeSetFiles: [...e.writeSetFiles]
+        }))
+      }
+    })
+    return {
+      ...(params.lastResult as TaskResult),
+      success: false,
+      failureReason: `blocked_by_scope: needs ${proposed.join(', ')} in the write-set`,
+      failureClass: 'quality',
+      outcomeKind: 'needs_scope_amendment',
+      scopeAmendmentFiles: proposed
+    }
+  }
+
+  /**
+   * F11 (1.3) — revert the out-of-set writes a failed attempt left behind.
+   *
+   * `sweepOutOfWorksetWrites` (gates service) does the tree work, bounded by
+   * the write-set gate's `files` array. This wrapper adds the three things the
+   * ladder owns and the sweep must not: the preference kill switch, the
+   * `retry_cleanup` telemetry row, and the phaseProgress signal. Best-effort —
+   * never throws onto the failure path it is cleaning up after.
+   */
+  private async sweepFailedAttemptWrites(
+    gateCtx: GateTaskContext,
+    baseline: GateBaseline,
+    result: TaskResult | null,
+    ids: {
+      blueprintId: string
+      workspaceId: string
+      taskId: string
+      stage: 'per-attempt' | 'ladder-exit'
+      attempt?: number
+    }
+  ): Promise<string[]> {
+    try {
+      if (!appPreferenceRepository.getAppPreferences().blueprintRetryCleanup) return []
+      const violations = writeSetViolationFiles(result?.gateReport)
+      if (violations.length === 0) return []
+      const sweep = await sweepOutOfWorksetWrites(gateCtx, baseline, violations, gateCtx.signal)
+      const reverted = sweep.reverted
+      const patchPath = sweep.patchPath
+      if (reverted.length === 0 && !patchPath) return []
+      const listed = reverted.slice(0, MAX_LISTED_PATHS).join(', ')
+      const more =
+        reverted.length > MAX_LISTED_PATHS ? ` …and ${reverted.length - MAX_LISTED_PATHS} more` : ''
+      bpLog.info(
+        `[gates] Task ${ids.taskId} — retry cleanup reverted ${reverted.length} ` +
+          `out-of-set path(s) to the pre-session state (${ids.stage}): ${listed}${more}`
+      )
+      this.safeEmit('phaseProgress', {
+        blueprintId: ids.blueprintId,
+        workspaceId: ids.workspaceId,
+        phase: 'build',
+        text:
+          `↺ Task ${ids.taskId}: reverted ${reverted.length} out-of-set file(s) the failed ` +
+          `attempt left behind — ${listed}${more}`,
+        kind: 'system'
+      })
+      // E11 — after the decision, not before a dispatch.
+      blueprintTelemetryRepository.record({
+        blueprintId: ids.blueprintId,
+        kind: 'retry_cleanup',
+        phase: 'build',
+        taskId: ids.taskId,
+        ...(ids.attempt !== undefined ? { attempt: ids.attempt } : {}),
+        data: {
+          stage: ids.stage,
+          fileCount: reverted.length,
+          offeredCount: violations.length,
+          files: reverted.slice(0, MAX_LISTED_PATHS),
+          // B4 — where the reverted hunks were preserved. Absent when capture
+          // was impossible (no diff, no artifact prefix, git unusable) — the
+          // sweep is best-effort reversibility, never a precondition.
+          ...(patchPath ? { patchPath } : {})
+        }
+      })
+      return reverted
+    } catch (err) {
+      // Best effort by construction: this runs on the way out of a task that
+      // already failed, and must never replace its failure with its own.
+      bpLog.warn(`[gates] Retry cleanup sweep failed for ${ids.taskId}:`, err)
+      return []
     }
   }
 
@@ -2741,10 +3173,26 @@ export class BlueprintBuildService extends EventEmitter {
 
     let gateFixInstructions: string | undefined
     let lastResult: TaskResult | null = null
-    /** B3 — fingerprint of the previous attempt's gate failure, for the stop-loss. */
-    let lastFingerprint = ''
-    /** How many attempts IN A ROW have produced `lastFingerprint` (1 = just this one). */
+    /**
+     * B3 — bounded ring of the last few gate-failure fingerprints, for the
+     * stop-loss. A ring, not a single `lastFingerprint`: consecutive-equality
+     * only catches 1-cycles, and the observed failure mode on 7624e83f T011 was
+     * a 2-cycle (`task-tests → write-set → task-tests → …`) that RESET the
+     * consecutive counter every attempt and burned the full ladder twice.
+     */
+    const fingerprintRing: string[] = []
+    const FINGERPRINT_RING_CAPACITY = 4
+    /** 1 when the current fingerprint equals the immediately previous one; >1
+     * for a longer recurrence caught by the ring (cycle length = gap + 1). */
     let repeatCount = 0
+    /** Length of the recurrence the ring caught (1 = consecutive, 2 = A,B,A, …). */
+    let cycleLength = 1
+    /**
+     * C1 — per-attempt gate-failure evidence, parallel to the fingerprint ring
+     * (same cap). `detectScopeBlock` reads it at stop-loss time to decide
+     * between escalation and the assisted scope-amendment lane.
+     */
+    const attemptEvidenceLog: AttemptEvidence[] = []
     /** B3 — set when the stop-loss trips, carried out on the returned TaskResult. */
     let stopLossNote = ''
     /** A11 — overload re-runs spent so far, across the whole ladder. */
@@ -2761,6 +3209,8 @@ export class BlueprintBuildService extends EventEmitter {
      */
     let consecutiveProtocolMisses = 0
     let writesAtLastRungStart = 0
+    /** 1.4 — the one-time stop-loss→requeue conversion has been spent. */
+    let requeueUsed = false
     /**
      * A1 — the task's conversation identity, stable across attempts. Attempts
      * that resume keep this id (and with it the persisted session id); attempts
@@ -2801,6 +3251,14 @@ export class BlueprintBuildService extends EventEmitter {
     let prevExecuteAttempt: number | undefined
     /** A1 (Phase 1) — the previous rung's teardown promise, awaited before a resumed dispatch. */
     let resultTeardown: Promise<void> | undefined
+    /**
+     * F3 (3.1) — this generation's frozen taskContext. Captured from the
+     * generation's FIRST cold rung (`result.frozenTaskContext`) and re-passed
+     * to every resumed rung so the system-prompt prefix stays byte-identical
+     * to the one the KV cache holds. Cleared on `rotateGeneration()` — a new
+     * generation is a new conversation with no cached prefix to preserve.
+     */
+    let frozenTaskContext: string | undefined
     /**
      * A1 (Phases 0+3) — fold a rung's TaskResult into the ladder's decision
      * state + honest telemetry. One place, so the three executeTask call
@@ -2846,6 +3304,30 @@ export class BlueprintBuildService extends EventEmitter {
         consecutiveProtocolMisses = 0
       }
       writesAtLastRungStart = rungWrites
+      // F7 (2.4) — a resumed rung that FAILED must still emit a terminal row.
+      // The `succeeded` write below is gated on result.success; a resumed
+      // failure previously emitted NOTHING (its attempted row was the last
+      // trace), so the report's "attempted but none resolved" warning fired on
+      // runs where every resume genuinely failed. Emit `resumed-but-failed`
+      // here — one place, after the evidence fold, for the ladder rung AND the
+      // overload/F4 re-runs (they call recordRungEvidence too).
+      if (decision.resume && !result.success) {
+        this.recordResumeTelemetry(
+          { blueprintId, taskId: task.taskId, attempt, executeAttempt: result.executeAttempt },
+          'resumed-but-failed',
+          {
+            sessionId: decision.sessionId,
+            generation: taskGeneration,
+            failedAfterResume: true,
+            ...(result.cacheReadInputTokens !== undefined
+              ? { cacheReadInputTokens: result.cacheReadInputTokens }
+              : {}),
+            ...(result.firstTurnCacheReadTokens !== undefined
+              ? { firstTurnCacheReadTokens: result.firstTurnCacheReadTokens }
+              : {})
+          }
+        )
+      }
       if (decision.resume && result.success) {
         // A1 (Phase 3) — the rung succeeded, but did the executor actually
         // RESUME? A granted permit that the executor dropped (poisoned id,
@@ -2861,6 +3343,9 @@ export class BlueprintBuildService extends EventEmitter {
               generation: taskGeneration,
               ...(result.cacheReadInputTokens !== undefined
                 ? { cacheReadInputTokens: result.cacheReadInputTokens }
+                : {}),
+              ...(result.firstTurnCacheReadTokens !== undefined
+                ? { firstTurnCacheReadTokens: result.firstTurnCacheReadTokens }
                 : {})
             }
           )
@@ -2892,18 +3377,38 @@ export class BlueprintBuildService extends EventEmitter {
     const rotateGeneration = (): number => {
       taskGeneration++
       ladderParams.taskGeneration = taskGeneration
+      // F3 (3.1) — the rotated generation is a fresh conversation with no
+      // cached prefix; its first (cold) rung re-freezes the context.
+      frozenTaskContext = undefined
       return taskGeneration
     }
 
     for (let attempt = 1; attempt <= MAX_BUILDER_ATTEMPTS; attempt++) {
       // P1.2 — refresh gate context per retry iteration. R2.1 invalidates the
-      // command/manifest caches when a gate reports `no_command` or a task's
-      // write-set touches a toolchain manifest; without this re-read, attempt 2
-      // would grade against the same stale resolution attempt 1 saw — a
+      // command/manifest caches when a gate reports `no_command`/`command_missing`
+      // or a task's write-set touches a toolchain manifest; without this re-read,
+      // attempt 2 would grade against the same stale resolution attempt 1 saw — a
       // scaffolded toolchain from attempt 1's session would stay invisible.
       if (attempt > 1) {
         gateCtx.manifests = this.readManifestsCached(blueprintId, workspacePath)
         gateCtx.commands = this.resolveGateCommandsFor(blueprintId, workspacePath)
+      }
+
+      // T003 — pre-dispatch prerequisite check. A resolved test command whose
+      // INTERPRETER is a path (venv-shaped or otherwise path-like) that does not
+      // exist on this machine is a doomed rung: the builder cannot fix it, the
+      // gate would burn the attempt (pre-fix behavior: a plain `fail` feeding
+      // the retry ladder). Fail fast BEFORE dispatching — no builder attempt, no
+      // GLM turn, no ladder rung. Re-checked every rung so provisioning the
+      // interpreter mid-run lets the next rung proceed without a phase restart.
+      const prerequisite = this.checkTaskInterpreterPrerequisite({
+        gateCtx,
+        blueprintId,
+        workspaceId,
+        taskId: task.taskId
+      })
+      if (prerequisite) {
+        return prerequisite
       }
 
       // A1 — decide resume vs cold for THIS rung before it dispatches. On
@@ -2948,6 +3453,7 @@ export class BlueprintBuildService extends EventEmitter {
         ...ladderParams,
         gateFixInstructions,
         taskGeneration,
+        ...(frozenTaskContext ? { frozenTaskContext } : {}),
         ...(resumeDecision.resume && resumeDecision.sessionId
           ? {
               resumeSessionId: resumeDecision.sessionId,
@@ -2958,8 +3464,23 @@ export class BlueprintBuildService extends EventEmitter {
           : {})
       }
 
+      // 1.4 — snapshot of the shared write box at rung DISPATCH (before
+      // executeTask runs), not at return: the rung's own write-tool calls must
+      // land AFTER this snapshot or `rungOwnWrites` is identically zero and
+      // every stalled case reads as zero-work. The overload and F4 re-runs
+      // below share this iteration's ladderParams and add to the box;
+      // subtracting THIS value at stop-loss time yields exactly "did the whole
+      // iteration (rung + re-runs) produce work". (writesAtLastRungStart
+      // cannot be reused here: recordRungEvidence has already advanced it
+      // past this rung by the time the gate branch runs.)
+      const writesAtIterationStart = writeActivity.writeToolCalls + writeActivity.bashCalls
+
       let result = await this.executeTask(rungParams)
       blueprintTaskRepository.recordAttempt(task.id)
+      // F3 (3.3) — freeze the generation's taskContext from the first cold
+      // rung that produced one. Resumed rungs do not refresh it (they reuse).
+      if (!frozenTaskContext && result.frozenTaskContext)
+        frozenTaskContext = result.frozenTaskContext
 
       // A1 (Phases 0+3) — carry this rung's evidence forward for the next
       // rung's decision, with honest resume-outcome telemetry. The
@@ -3069,6 +3590,7 @@ export class BlueprintBuildService extends EventEmitter {
           ...ladderParams,
           gateFixInstructions,
           taskGeneration,
+          ...(frozenTaskContext ? { frozenTaskContext } : {}),
           ...(overloadResume.resume && overloadResume.sessionId
             ? {
                 resumeSessionId: overloadResume.sessionId,
@@ -3163,6 +3685,7 @@ export class BlueprintBuildService extends EventEmitter {
             ...ladderParams,
             gateFixInstructions,
             taskGeneration,
+            ...(frozenTaskContext ? { frozenTaskContext } : {}),
             ...(infraResume.resume && infraResume.sessionId
               ? {
                   resumeSessionId: infraResume.sessionId,
@@ -3245,7 +3768,31 @@ export class BlueprintBuildService extends EventEmitter {
         { stage: 'ladder', attempt }
       )
 
-      gateFixInstructions = buildGateFixInstructions(report, { restoredTestFiles })
+      // F11 (1.3) — per-attempt retry cleanup: revert THIS attempt's out-of-set
+      // writes before the fingerprint is taken and the next attempt dispatches,
+      // so the next rung is not charged for this one's leftovers. The exact
+      // T014 scenario: a1 writes out-of-set, a2 does zero work, a2 fails the
+      // write-set gate on a1's file. With the sweep, a2's tree is clean and a2's
+      // zero-work rung is graded (or hard-failed) on its own activity.
+      const revertedFiles = await this.sweepFailedAttemptWrites(
+        gateCtx,
+        baseline,
+        // The gates just re-ran on this attempt's work; their verdict — not
+        // `result.gateReport` from a prior rung — is what bounds the sweep.
+        {
+          success: false,
+          completion: null,
+          discoveries: [],
+          gateReport: report,
+          failureClass: 'quality'
+        },
+        { blueprintId, workspaceId, taskId: task.taskId, stage: 'per-attempt', attempt }
+      )
+
+      gateFixInstructions = buildGateFixInstructions(report, {
+        restoredTestFiles,
+        revertedFiles
+      })
       const failedNames = report.gates
         .filter((g) => g.verdict === 'fail')
         .map((g) => g.name)
@@ -3259,9 +3806,36 @@ export class BlueprintBuildService extends EventEmitter {
       // can change the outcome is a DIFFERENT model on a different prompt, so go
       // there now instead of after the third identical failure. A fingerprint
       // that VARIES keeps today's behaviour exactly — the builder is still moving.
+      //
+      // B3 (ring) — the recurrence need not be CONSECUTIVE. T011 on 7624e83f
+      // oscillated task-tests → write-set → task-tests, resetting a
+      // consecutive-equality counter on every attempt and burning the full
+      // ladder twice. A bounded ring of the last few fingerprints catches any
+      // recurrence within the window, not just the 1-cycle; `cycleLength`
+      // records which one fired so 2-cycles are distinguishable in telemetry.
       const fingerprint = fingerprintGateFailure(report)
-      repeatCount = fingerprint !== '' && fingerprint === lastFingerprint ? repeatCount + 1 : 1
-      lastFingerprint = fingerprint
+      if (fingerprint !== '') {
+        const gap = fingerprintRing.lastIndexOf(fingerprint)
+        // lastIndexOf over the ring INCLUDING nothing current — the push happens
+        // after the check, so the ring holds strictly PRIOR attempts.
+        if (gap === -1) {
+          repeatCount = 1
+          cycleLength = 1
+        } else {
+          cycleLength = fingerprintRing.length - gap
+          repeatCount += 1
+        }
+        fingerprintRing.push(fingerprint)
+        if (fingerprintRing.length > FINGERPRINT_RING_CAPACITY) fingerprintRing.shift()
+      } else {
+        // Empty fingerprint = no failure signature to compare. The original
+        // consecutive-equality check broke the chain here (lastFingerprint was
+        // overwritten with ''); the ring must do the same or a A → (no
+        // signature) → A sequence would read as a 2-cycle it is not.
+        repeatCount = 1
+        cycleLength = 1
+        fingerprintRing.length = 0
+      }
 
       // The claim is about the RUN LENGTH, not the loop index: attempts 2 and 3
       // being identical is a run of 2, not 3. And a "stop-loss" on the last
@@ -3270,6 +3844,14 @@ export class BlueprintBuildService extends EventEmitter {
       const attemptsLeft = MAX_BUILDER_ATTEMPTS - attempt
       const stalled = repeatCount >= 2 && attemptsLeft > 0
 
+      // C1 — evidence for the scope-block detector, same window as the ring.
+      const failedGateList = report.gates.filter((g) => g.verdict === 'fail').map((g) => g.name)
+      attemptEvidenceLog.push({
+        failedGates: failedGateList,
+        writeSetFiles: writeSetViolationFiles(report) as readonly string[]
+      })
+      if (attemptEvidenceLog.length > FINGERPRINT_RING_CAPACITY) attemptEvidenceLog.shift()
+
       // The fingerprint normaliser handles ids/numbers/paths but not SHAs, ANSI
       // codes or hostnames, and gate evidence is command-output tails — so
       // whether this stop-loss is too coarse or too sensitive is an empirical
@@ -3277,7 +3859,7 @@ export class BlueprintBuildService extends EventEmitter {
       // real run instead of a guess.
       bpLog.info(
         `[gates] Task ${task.taskId} attempt ${attempt} gate fingerprint ` +
-          `(repeat ${repeatCount}): ${fingerprint.slice(0, 120)}`
+          `(repeat ${repeatCount}, cycle ${cycleLength}): ${fingerprint.slice(0, 120)}`
       )
 
       this.safeEmit('phaseProgress', {
@@ -3287,8 +3869,12 @@ export class BlueprintBuildService extends EventEmitter {
         text:
           `⚠ Task ${task.taskId} failed quality gate(s): ${failedNames} — ` +
           (stalled
-            ? `identical failure ${repeatCount}× in a row, skipping the remaining ` +
-              `${attemptsLeft} builder attempt(s) — escalating to the lead-review model`
+            ? cycleLength > 1
+              ? `same failure recurring on every ${cycleLength}th attempt ` +
+                `(${repeatCount} occurrences), skipping the remaining ` +
+                `${attemptsLeft} builder attempt(s) — escalating to the lead-review model`
+              : `identical failure ${repeatCount}× in a row, skipping the remaining ` +
+                `${attemptsLeft} builder attempt(s) — escalating to the lead-review model`
             : attempt < MAX_BUILDER_ATTEMPTS
               ? `retrying (attempt ${attempt + 1}/${MAX_BUILDER_ATTEMPTS})`
               : 'escalating to the lead-review model'),
@@ -3314,10 +3900,81 @@ export class BlueprintBuildService extends EventEmitter {
         waveNum: params.waveNum,
         failureClass: 'quality',
         reason: `quality gate failed: ${failedNames}`,
-        extra: { failedGates: failedNames, fingerprint: fingerprint.slice(0, 200), repeatCount }
+        extra: {
+          failedGates: failedNames,
+          fingerprint: fingerprint.slice(0, 200),
+          repeatCount,
+          cycleLength
+        }
       })
 
       if (stalled) {
+        // C1/C2 — the blocked-by-scope signature beats BOTH lanes below. The
+        // builder is not non-converging (the evidence log shows it moving
+        // between task-tests and write-set); it is repeatedly producing a fix
+        // whose files its packet forbids. Escalation spends the premium model
+        // on a constraint it cannot change (observed 4× on the motivating
+        // run), and a zero-work requeue re-enters the same alternation. Park
+        // the task for the human instead. (Only reachable while rungs remain
+        // to skip; the last-attempt shape is caught after the loop.)
+        const parked = this.parkIfScopeBlocked({
+          task,
+          blueprintId,
+          workspaceId,
+          attempt,
+          cycleLength,
+          attemptEvidenceLog,
+          lastResult
+        })
+        if (parked) return parked
+
+        // 1.4 — requeue instead of escalate when the repeated rung did NO work
+        // of its own. The identical fingerprint + zero own write activity
+        // means the rung is being graded on a tree state it cannot change
+        // (1.1/1.2 misfired, or contamination the sweep could not bound). A
+        // lead-review escalation there spends a premium model on a verdict it
+        // cannot change; a requeue re-captures the baseline at the drain point
+        // — exactly the mechanism that makes the operator's manual Retry work.
+        // Capped: one requeue per task (requeueUsed below).
+        const rungOwnWrites =
+          writeActivity.writeToolCalls + writeActivity.bashCalls - writesAtIterationStart
+        const zeroWorkRepeat = stalled && rungOwnWrites === 0
+        if (zeroWorkRepeat && !requeueUsed) {
+          requeueUsed = true
+          bpLog.warn(
+            `[gates] Task ${task.taskId} stop-loss with ZERO own write activity — ` +
+              `requeueing behind the drain point instead of escalating (one-time)`
+          )
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'build',
+            text:
+              `↺ Task ${task.taskId}: identical gate failure with no new work — ` +
+              `requeueing behind the current wave instead of escalating to the lead-review model`,
+            kind: 'system'
+          })
+          blueprintTelemetryRepository.record({
+            blueprintId,
+            kind: 'stop_loss',
+            phase: 'build',
+            taskId: task.taskId,
+            attempt,
+            data: {
+              repeatCount,
+              cycleLength,
+              attemptsSkipped: attemptsLeft,
+              failedGates: failedNames,
+              fingerprint: fingerprint.slice(0, 200),
+              action: 'requeue'
+            }
+          })
+          return {
+            ...lastResult,
+            success: false,
+            requeueAfterDrain: true
+          }
+        }
         // Carried on the TaskResult, not written to the row here: every settled
         // task passes through handleTaskCompletion, which overwrites
         // `failure_reason` unconditionally (null on a recovered task, the final
@@ -3328,7 +3985,15 @@ export class BlueprintBuildService extends EventEmitter {
         stopLossNote =
           `stop-loss after ${repeatCount} identical gate failure(s) ` +
           `(${failedNames}) — skipped ${attemptsLeft} builder ` +
-          `attempt(s), escalated to blueprint:lead-review`
+          `attempt(s), escalated to blueprint:lead-review` +
+          // T003 — record the test command the verdict was rendered on. The
+          // retryPhase exclusion (blueprint-stop-loss.ts) compares it against
+          // the CURRENT resolution: identical command = same deterministic
+          // experiment = excluded; changed command = new experiment = retried.
+          // Paren-free by contract (`isSafeGateCommand`), so it round-trips.
+          (gateCtx.commands.test?.command
+            ? formatStopLossCommandSuffix(gateCtx.commands.test.command)
+            : '')
         bpLog.warn(
           `[gates] Task ${task.taskId} stop-loss: gate failure fingerprint unchanged ` +
             `across ${repeatCount} attempts — skipping ${attemptsLeft} ` +
@@ -3345,6 +4010,7 @@ export class BlueprintBuildService extends EventEmitter {
           attempt,
           data: {
             repeatCount,
+            cycleLength,
             attemptsSkipped: attemptsLeft,
             failedGates: failedNames,
             fingerprint: fingerprint.slice(0, 200)
@@ -3353,6 +4019,27 @@ export class BlueprintBuildService extends EventEmitter {
         break
       }
     }
+
+    // C1/C2 — the scope-block check BEFORE the premium rung. With
+    // MAX_BUILDER_ATTEMPTS = 3, a 2-cycle (task-tests → write-set →
+    // task-tests) completes exactly on the LAST attempt, where the
+    // last-attempt guard above correctly refuses to claim a saving — so the
+    // in-loop `stalled` branch never sees it. This is precisely the shape
+    // that burned 15 attempts + 4 lead escalations on 7624e83f T011: the
+    // builder had the fix, the write-set refused it, exhaustion escalated
+    // anyway. When the evidence log shows the signature, park the task for
+    // the human instead of spending the lead model on a constraint it
+    // cannot change.
+    const parked = this.parkIfScopeBlocked({
+      task,
+      blueprintId,
+      workspaceId,
+      attempt: attemptEvidenceLog.length,
+      cycleLength,
+      attemptEvidenceLog,
+      lastResult
+    })
+    if (parked) return parked
 
     // Builder retries exhausted — one attempt by the strong model, then hard hold.
     const escalated = await this.escalateToLead({
@@ -3452,8 +4139,13 @@ export class BlueprintBuildService extends EventEmitter {
     // `resolveSession` cross-restart guard exists for, and it needs its own
     // measured window before it becomes default.
     if (params.allowCrossRun && params.outcome === undefined) {
+      // F5 (3.2) — the cross-run branch never consulted `blueprintSessionResume`:
+      // the master kill switch was honoured by every in-ladder decision and
+      // bypassed by exactly the branch with the LEAST evidence. Master flag
+      // off → cold, as today, regardless of the sub-flag.
       const crossFlagOn =
-        appPreferenceRepository.getAppPreferences().blueprintCrossRunResume === true
+        appPreferenceRepository.getAppPreferences().blueprintCrossRunResume === true &&
+        appPreferenceRepository.getAppPreferences().blueprintSessionResume === true
       const providerUnchanged =
         modelConfigService.getProvider(params.workspacePath) === params.providerAtStart
       if (crossFlagOn && providerUnchanged) {
@@ -3555,10 +4247,17 @@ export class BlueprintBuildService extends EventEmitter {
         sessionId: decision.sessionId,
         generation: params.generation
       })
-    } else if (params.outcome !== undefined || params.previousRungWasResume === true) {
+    } else if (
+      params.outcome !== undefined ||
+      params.previousRungWasResume === true ||
+      rungFailedAtSessionLevel
+    ) {
       // A decline is only news when a real failure prompted the decision:
       // attempt 1 always declines (nothing to resume yet) and would otherwise
-      // flood the table with one no-op row per task per run.
+      // flood the table with one no-op row per task per run. F7 (2.4) adds
+      // `rungFailedAtSessionLevel` — a throw-path failure (stall watchdog,
+      // TASK_TIMEOUT_MS, poisoned session, dropped id) is as real a prompt as
+      // a send outcome, and its decline was previously written NOWHERE.
       this.recordResumeTelemetry(params, 'declined', {
         reason: decision.reason,
         failureClass: params.outcome !== undefined ? 'infra' : undefined,
@@ -3577,7 +4276,7 @@ export class BlueprintBuildService extends EventEmitter {
       /** A1 (Phase 0) — the DB-derived attempt of the rung being decided about. */
       executeAttempt?: number
     },
-    status: 'attempted' | 'succeeded' | 'declined' | 'failed-silently',
+    status: 'attempted' | 'succeeded' | 'declined' | 'failed-silently' | 'resumed-but-failed',
     data: {
       reason?: ResumeDeclineReason
       failureClass?: TaskFailureClass
@@ -3589,6 +4288,10 @@ export class BlueprintBuildService extends EventEmitter {
       silentReason?: string
       /** A1 (Phase 3) — cache-read tokens of the rung, for Gate 1. */
       cacheReadInputTokens?: number
+      /** F2 (2.2) — FIRST-turn cache read, the discriminating Gate 1 metric. */
+      firstTurnCacheReadTokens?: number
+      /** F7 (2.4) — why a resumed rung that failed never produced a terminal row. */
+      failedAfterResume?: boolean
       /** GLM-PROTOCOL-MISS-04 — consecutive zero-write protocol-miss rungs. */
       consecutiveProtocolMisses?: number
     }
@@ -3866,6 +4569,118 @@ export class BlueprintBuildService extends EventEmitter {
   }
 
   /**
+   * T003 fix — R2.1 helper: true when a gate report shows the resolved command
+   * itself is wrong for this machine (`no_command` — nothing resolved; or
+   * `command_missing` — what resolved cannot execute here).
+   *
+   * Both mean re-detection is worth one cheap disk scan: the toolchain may have
+   * appeared (scaffold task wrote package.json) or the interpreter may need
+   * re-resolving against a different root (venv rewrite, Item 2). A plain
+   * `fail`/`timeout` says nothing about resolution, so it never invalidates.
+   */
+  private isCommandResolutionStale(report: GateReport): boolean {
+    return report.gates.some(
+      (g) =>
+        g.verdict === 'unverifiable' &&
+        (g.reason === 'no_command' || g.reason === 'command_missing')
+    )
+  }
+
+  /**
+   * T003 — fail fast when the resolved test command's interpreter does not
+   * exist, BEFORE dispatching a doomed builder rung.
+   *
+   * Scoped to path-like first tokens only (`contains / or \`, venv-shaped or
+   * not): bare `pytest`/`npm` resolve through PATH, where absence is the
+   * gate's own `command_missing` territory (Item 1), not a pre-dispatch
+   * concern — a PATH check here would need a shell probe per rung.
+   *
+   * Returns a failing TaskResult (infra class, no attempt consumed — mirrors
+   * the F4/overload convention) or null when the prerequisite holds and the
+   * rung should dispatch.
+   */
+  private checkTaskInterpreterPrerequisite(params: {
+    gateCtx: GateTaskContext
+    blueprintId: string
+    workspaceId: string
+    taskId: string
+  }): TaskResult | null {
+    const { gateCtx, blueprintId, workspaceId, taskId } = params
+    // T003/G2+G6 — the SAME source the G6 gate grades on: the packet's
+    // `testCommand` (post-venv-rewrite) when the packet declares `testFiles`,
+    // else the resolved workspace-level `commands.test`. Reading only
+    // `commands.test` here meant a packet-declared venv command missing on
+    // disk dispatched a rung the gate then failed environmentally, forever.
+    const resolvedCommand = effectiveTaskTestCommand(gateCtx)
+    const command = resolvedCommand?.command
+    if (!command) return null
+
+    const token = firstCommandToken(command)
+    // Only path-like tokens are checkable without a shell probe.
+    if (!/[/\\]/.test(token)) return null
+
+    const candidates = resolveTokenCandidates(token, gateCtx)
+    if (candidates.some((c) => existsSync(c))) return null
+
+    const failureReason =
+      `prerequisite-unmet: test interpreter ${token} not found ` +
+      `(venvs are gitignored and absent in blueprint worktrees — provision it or override the gate command)`
+    bpLog.warn(`[gates] Task ${taskId} — ${failureReason}`)
+
+    // Actionable evidence survives app reload via the build-phase record,
+    // mirroring the verification-warning pattern.
+    try {
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase) {
+        blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+          type: 'verification-warning',
+          contentMd:
+            `## Task ${taskId} — not dispatched: test interpreter missing\n\n` +
+            `No builder attempt was spent. The resolved test command is:\n\n` +
+            `\`${command}\`\n\n` +
+            `Its interpreter token \`${token}\` does not exist on this machine ` +
+            `(checked absolute and against the worktree and source roots). ` +
+            `Venvs are gitignored, so a worktree checkout never contains one — ` +
+            `provision the venv in the source workspace or override the ` +
+            `workspace's gate command.\n`
+        })
+      }
+    } catch (err) {
+      bpLog.warn(`[gates] Could not persist prerequisite-unmet artifact for ${taskId}:`, err)
+    }
+
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text: `⚠ Task ${taskId}: ${failureReason} — builder not dispatched`,
+      kind: 'system'
+    })
+
+    // P3b convention — the row IS the observability: nothing else records that
+    // a rung was skipped pre-dispatch and why. Kind is 'prerequisite', not
+    // 'gate': this is a distinct class of event (nothing executed), and
+    // lumping it under 'gate' made pre-dispatch skips indistinguishable from
+    // wave-gate outcomes in any kind-grouped query.
+    blueprintTelemetryRepository.record({
+      blueprintId,
+      kind: 'prerequisite',
+      phase: 'build',
+      taskId,
+      data: { prerequisite: 'test-interpreter', token, command }
+    })
+
+    return {
+      success: false,
+      completion: null,
+      discoveries: [],
+      failureReason,
+      failureClass: 'infra',
+      resumeSafe: false
+    }
+  }
+
+  /**
    * Run the gates for one attempt and persist the verdict.
    *
    * Persisting here rather than at the end of the ladder is deliberate: a crash
@@ -3900,15 +4715,15 @@ export class BlueprintBuildService extends EventEmitter {
     blueprintTaskRepository.setGateReport(task.id, report, ledgerItems)
 
     // R2.1 — gate-command cache invalidation. Two triggers:
-    //   (a) a command gate could not resolve a command: the toolchain may have
-    //       appeared since the cache was built (scaffold task wrote package.json);
+    //   (a) a command gate could not resolve a command OR the resolved command
+    //       is missing on this machine (T003: a worktree venv path that never
+    //       existed) — the toolchain may have appeared since the cache was
+    //       built, or re-resolution may find a different answer;
     //   (b) this task's declared write-set intersects a toolchain manifest: the
     //       toolchain may have just been created or rewritten.
     // Invalidation is cheap (one disk scan) and self-correcting: the next task
     // re-resolves, and if nothing changed the answer is identical.
-    const noCommand = report.gates.some(
-      (g) => g.verdict === 'unverifiable' && g.reason === 'no_command'
-    )
+    const noCommand = this.isCommandResolutionStale(report)
     const touchedManifest = [
       ...(task.packetJson?.allowedFiles ?? []),
       ...(task.filePathsJson ?? [])
@@ -3918,7 +4733,7 @@ export class BlueprintBuildService extends EventEmitter {
       this.manifestCache.delete(gateCtx.blueprintId)
       bpLog.info(
         `[gates] R2.1 cache invalidation for ${gateCtx.blueprintId} ` +
-          `(${noCommand ? 'no_command' : ''}${noCommand && touchedManifest ? ' + ' : ''}${touchedManifest ? 'manifest write-set' : ''})`
+          `(${noCommand ? 'command resolution stale (no_command/command_missing)' : ''}${noCommand && touchedManifest ? ' + ' : ''}${touchedManifest ? 'manifest write-set' : ''})`
       )
     }
 
@@ -4204,6 +5019,46 @@ export class BlueprintBuildService extends EventEmitter {
       ])
     }
 
+    // B1 — attribution for ungated commits in this wave's range. Both real
+    // cascade bugs of the W16 post-mortem (import cycle, tenancy assertion)
+    // landed as manual terminal commits: no T###/R### in the subject, so no
+    // gate ever graded them and the wave's failure read as the dispatched
+    // task's fault. Surfaced only, never a verdict change — a manual commit
+    // the app cannot intercept is a fact, not a fail. Only scanned when the
+    // wave actually failed: on a pass there is nothing to attribute.
+    let ungated: { sha: string; subject: string }[] | null = null
+    if (report.overall === 'fail') {
+      const settings = (blueprintRepository.findById(blueprintId)?.settingsJson ?? {}) as Record<
+        string,
+        unknown
+      >
+      // buildBaselineCommit is captured at BUILD start (see startBuildPhase),
+      // so `<buildBaselineCommit>..HEAD` is exactly this run's commits — the
+      // same range VERIFY's survival scan grades. Waves overlap under the DAG
+      // scheduler, so "since the build began" is the honest per-wave bound.
+      const baselineCommit =
+        typeof settings.buildBaselineCommit === 'string' ? settings.buildBaselineCommit : null
+      const scan = await scanUngatedCommits({
+        cwd: executionPath,
+        baselineCommit,
+        runner: defaultCommandRunner
+      })
+      if (scan.commits !== null) {
+        ungated = scan.commits
+        if (ungated.length > 0) {
+          bpLog.warn(
+            `[gates] Wave ${waveNum} failed with ${ungated.length} ungated commit(s) in range: ` +
+              ungated
+                .slice(0, MAX_LISTED_PATHS)
+                .map((c) => `${c.sha.slice(0, 8)} "${c.subject.slice(0, 120)}"`)
+                .join(', ')
+          )
+        }
+      } else {
+        bpLog.warn(`[gates] Ungated-commit scan unavailable: ${scan.reason ?? 'unknown'}`)
+      }
+    }
+
     // P1.1 — persist the wave report as a build-phase artifact (mirrors the
     // discoveries pattern). Best-effort: a DB failure here must not turn a
     // passing wave into a failed one.
@@ -4212,7 +5067,7 @@ export class BlueprintBuildService extends EventEmitter {
       if (buildPhase) {
         blueprintPhaseRepository.appendArtifact(buildPhase.id, {
           type: 'wave-gates',
-          contentJson: { wave: waveNum, report }
+          contentJson: { wave: waveNum, report, ungatedCommits: ungated ?? undefined }
         })
       }
     } catch (err) {
@@ -4243,6 +5098,24 @@ export class BlueprintBuildService extends EventEmitter {
         ` (${report.gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`,
       kind: 'system'
     })
+
+    // B1 — name the ungated commits so a wave failure can be attributed to
+    // manual work rather than swallowed as the dispatched task's fault.
+    if (report.overall === 'fail' && ungated && ungated.length > 0) {
+      const listed = ungated
+        .slice(0, MAX_LISTED_PATHS)
+        .map((c) => `${c.sha.slice(0, 8)} "${c.subject.slice(0, 120)}"`)
+        .join(', ')
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text:
+          `⚠ Wave ${waveNum} gates failed. ${ungated.length} commit(s) since the build began ` +
+          `carry no task id and were never gated: ${listed}`,
+        kind: 'system'
+      })
+    }
 
     this.safeEmit('taskGates', {
       blueprintId,
@@ -4277,10 +5150,92 @@ export class BlueprintBuildService extends EventEmitter {
   }
 
   /**
-   * R3.1 — manifest snapshot cache, invalidated together with the gate-command
-   * cache (same triggers, same lifetime): the toolchain that decides test
-   * targeting is the toolchain that decides gate commands.
+   * B2 — gate the worktree on demand: the affordance that would have caught
+   * both W16 cascade bugs before they landed.
+   *
+   * Same command gates as a wave run (lint/build/full-suite via
+   * `runWaveCommandGates`), but triggered from the UI between waves — after a
+   * manual rescue commit, or whenever the user wants a verdict on the tree as
+   * it stands. The report is persisted as a `wave-gates` artifact with
+   * `taskId: 'MANUAL'` so it survives reload and renders in the existing
+   * deliverable view. Never mutates ledger or task state: a manual run is a
+   * probe, not a grading event.
+   *
+   * Concurrency: `runWaveCommandGates` serialises per executionPath through
+   * `withWorktreeLock` inside `gateCommand`, so a manual run cannot interleave
+   * with a live wave gate in the same worktree — it queues behind it.
    */
+  async gateWorktreeOnDemand(params: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+  }): Promise<GateReport> {
+    const { blueprintId, workspaceId, workspacePath } = params
+    // Read-only track resolution: a manual gate run must not create a worktree
+    // or take a branch that isn't already this blueprint's. If the blueprint
+    // has no track, the primary tree IS the execution tree (same fallback
+    // `resolveBlueprintTrack` gives VERIFY).
+    const target = resolveBlueprintTrack(blueprintId, workspacePath)
+    const executionPath = target.path
+
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text: 'Manual gate run: running lint/build/test gates — this can take a while',
+      kind: 'system'
+    })
+
+    let report: GateReport
+    try {
+      report = await runWaveCommandGates({
+        blueprintId,
+        taskId: 'MANUAL',
+        workspacePath,
+        executionPath,
+        plannedFiles: [],
+        packet: null,
+        commands: this.resolveGateCommandsFor(blueprintId, workspacePath)
+      })
+    } catch (err) {
+      bpLog.error('[gates] Manual gate run threw:', err)
+      report = buildGateReport([
+        {
+          name: 'build',
+          verdict: 'unverifiable',
+          reason: 'analysis_unavailable',
+          evidence: boundEvidence([err instanceof Error ? err.message : String(err)]),
+          durationMs: 0
+        }
+      ])
+    }
+
+    // Persist alongside the wave reports so the evidence survives reload and
+    // reuses the existing GateReport renderer in the build deliverable.
+    try {
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase) {
+        blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+          type: 'wave-gates',
+          contentJson: { wave: 'MANUAL', report }
+        })
+      }
+    } catch (err) {
+      bpLog.warn('[gates] Could not persist manual gate-run artifact:', err)
+    }
+
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text:
+        `Manual gates: ${report.overall}` +
+        ` (${report.gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`,
+      kind: 'system'
+    })
+
+    return report
+  }
   private manifestCache = new Map<string, WorkspaceManifests>()
 
   private readManifestsCached(blueprintId: string, workspacePath: string): WorkspaceManifests {
@@ -4303,10 +5258,11 @@ export class BlueprintBuildService extends EventEmitter {
    * the PLAN artifact — doing that per task, per retry, for every wave is pure
    * overhead for an answer that cannot change mid-phase.
    *
-   * R2.1 — the cache is invalidated (see `invalidateGateCommandCache`) when a
-   * command gate reports `no_command` (the toolchain may have appeared since)
-   * or when a task's write-set intersects a toolchain manifest (the toolchain
-   * may have just been created or rewritten).
+   * R2.1 — the cache is invalidated (see `isCommandResolutionStale` +
+   * `gradeTask`) when a command gate reports `no_command` or `command_missing`
+   * (the toolchain may have appeared, or the resolved interpreter may need
+   * re-binding) or when a task's write-set intersects a toolchain manifest (the
+   * toolchain may have just been created or rewritten).
    */
   private resolveGateCommandsFor(blueprintId: string, workspacePath: string): ResolvedGateCommands {
     const cached = this.gateCommandCache.get(blueprintId)
@@ -4319,24 +5275,11 @@ export class BlueprintBuildService extends EventEmitter {
     blueprintId: string,
     workspacePath: string
   ): ResolvedGateCommands {
-    let declared: GateCommandSet = {}
-    try {
-      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'plan')
-      for (const artifact of planPhase?.artifactsJson ?? []) {
-        if (!artifact.contentMd) continue
-        const parsed = parseGateCommands(artifact.contentMd)
-        if (Object.keys(parsed).length > 0) declared = { ...declared, ...parsed }
-      }
-    } catch (err) {
-      bpLog.warn('[gates] Could not read declared gate commands from the PLAN artifact:', err)
-    }
-
-    const settings = workspaceRepository.getSettingsByPath(workspacePath)
-    const resolved = resolveGateCommands({
-      override: settings?.gateCommands as GateCommandSet | undefined,
-      declared,
-      detected: scanGateCommands(workspacePath)
-    })
+    // T003/G1+G6+G7 — the resolution tail (PLAN parse → precedence resolve →
+    // venv rewrite) lives in ONE pipeline module shared with the verify
+    // service and retryPhase, so the three call-sites can never diverge again
+    // (G7: verify skipped the rewrite; G1: retryPhase compared un-rewritten).
+    const { commands: resolved } = resolveBlueprintGateCommands(blueprintId, workspacePath)
 
     this.gateCommandCache.set(blueprintId, resolved)
     bpLog.info(
@@ -4579,7 +5522,24 @@ export class BlueprintBuildService extends EventEmitter {
       // Persist it too — the event is transient, so without this a reload leaves
       // nothing on disk explaining why the task is red, and the retry that
       // follows has no idea what it is walking back into.
-      blueprintTaskRepository.setOutcome(task.id, { failureReason: reason, outcomeKind: null })
+      //
+      // C2 — a parked outcome (`needs_scope_amendment`) keeps its kind and
+      // carries the resolution note naming the exact files to grant; every
+      // other failure clears the kind, as before.
+      if (taskResult.outcomeKind === 'needs_scope_amendment') {
+        const files = taskResult.scopeAmendmentFiles ?? []
+        blueprintTaskRepository.setOutcome(task.id, {
+          failureReason: reason,
+          outcomeKind: 'needs_scope_amendment',
+          resolutionNote:
+            files.length > 0
+              ? `Grant these files to ${task.taskId} and retry, or close it out: ` +
+                `${files.join(', ')}`
+              : (taskResult.failureReason ?? reason)
+        })
+      } else {
+        blueprintTaskRepository.setOutcome(task.id, { failureReason: reason, outcomeKind: null })
+      }
       // R1 — no `task_failure` row here. It used to be written at settle, which
       // meant one row per TASK and none at all for a task that retried and then
       // succeeded. The rows now come from inside `executeTaskWithGates`, one per
@@ -5091,6 +6051,14 @@ export class BlueprintBuildService extends EventEmitter {
      * supplies the conversation id at send time, after start().
      */
     resumeConversationId?: string
+    /**
+     * F3 (3.1) — this generation's first cold taskContext, frozen by the
+     * ladder. A resumed rung reuses it byte-identically so the system-prompt
+     * prefix (phase template + taskContext) matches the cached prefix; the
+     * retry verdict travels as the USER message instead. Absent on a
+     * cross-run resume after a restart (no cold rung was observed).
+     */
+    frozenTaskContext?: string
   }): Promise<TaskResult> {
     const {
       task,
@@ -5147,19 +6115,36 @@ export class BlueprintBuildService extends EventEmitter {
     // thing the session does NOT have is the verdict of the failure that
     // triggered this retry, so that is all this message carries.
     //
+    // F3 (3.1) — the continuation goes in the USER message, never the system
+    // prompt. The KV prefix a resume reuses is the system prompt (phase
+    // template + taskContext); baking the verdict into taskContext changes
+    // the prefix every rung, so the resumed turn re-prefills what it was meant
+    // to read from cache. The ladder freezes the generation's first cold
+    // taskContext (`params.frozenTaskContext`) and every resumed rung of that
+    // generation reuses it byte-identically.
+    //
     // Note: failure memory (P2) is deliberately suppressed here — it belongs on
     // COLD gate-failure retries, where the fresh session has never seen the
     // failed attempt's output. On a resumed retry the same content is already
     // in the transcript.
     let taskContext: string
     let failureMemoryExtraction: string | null = null
+    let sendMessageOverride: string | undefined
+    // F3 (3.1) — set by the cold branch, stamped on the result in the finally.
+    let coldTaskContext: string | undefined
     if (resuming) {
-      taskContext = buildResumeContinuationMessage({
-        taskId: task.taskId,
-        attempt,
-        failureReason: currentRow?.failureReason ?? task.failureReason,
-        gateFixInstructions: params.gateFixInstructions
+      const rungPrompts = resolveRungPrompts({
+        resuming: true,
+        frozenTaskContext: params.frozenTaskContext,
+        continuationMessage: buildResumeContinuationMessage({
+          taskId: task.taskId,
+          attempt,
+          failureReason: currentRow?.failureReason ?? task.failureReason,
+          gateFixInstructions: params.gateFixInstructions
+        })
       })
+      taskContext = rungPrompts.taskContext
+      sendMessageOverride = rungPrompts.sendMessage
     } else {
       // Cold rung — byte-identical to pre-Phase-2 behaviour.
       failureMemoryExtraction = priorPartial?.contentMd
@@ -5182,6 +6167,11 @@ export class BlueprintBuildService extends EventEmitter {
         modelConfigService.isLocalProvider(workspacePath),
         failureMemoryExtraction
       )
+      // F3 (3.1) — captured for the finally, which stamps it on the returned
+      // TaskResult: the ladder freezes it as this generation's system-prompt
+      // taskContext, and resumed rungs reuse it byte-identically. Only the
+      // COLD branch populates it.
+      coldTaskContext = taskContext
     }
 
     // Create adapter + session
@@ -5384,7 +6374,12 @@ export class BlueprintBuildService extends EventEmitter {
         }
       })
 
-      const sendPromise = session.send(adapter.getPhaseMessage(), syntheticConvId)
+      const sendPromise = session.send(
+        // F3 (3.1) — a resumed rung sends the continuation message as the USER
+        // message (frozen system prefix); a cold rung sends the phase kickoff.
+        sendMessageOverride ?? adapter.getPhaseMessage(),
+        syntheticConvId
+      )
 
       try {
         await Promise.race([sendPromise, timeoutPromise, abortPromise, stallWatchdog.promise])
@@ -5444,366 +6439,434 @@ export class BlueprintBuildService extends EventEmitter {
           sendOutcome
         }
       } else {
-        // Parse output
-        const text = session.getStreamedContent(syntheticConvId)
-        const completion = parsePhaseCompletionBlock(text, 'build') ?? null
-
-        if (!completion && text.length > 200) {
-          bpLog.warn(
-            `[executeTask] Task ${task.taskId}: no completion block in ${text.length}-char output`
+        // F12 (1.1) — an API-error rung is NEVER graded. The turn died before
+        // producing content (`terminalReason` ∈ API_ERROR_TERMINAL_REASONS);
+        // its disk state is the PREVIOUS attempt's, so any gate verdict would
+        // grade someone else's work, and the zero-work rung would be charged
+        // with the previous attempt's out-of-set writes (live: T014 — `api_error`,
+        // `writes=0 bash=0`, booked `quality: write-set`, tripped stop-loss,
+        // escalated, and never reached the infra/resume path A1 exists for).
+        // SPEC has refused to grade this shape since API-ERROR-FAIL; BUILD
+        // never consulted `terminalReason` at all. Short-circuit here, before
+        // completion parsing: infra class, error outcome (resume-safe), no
+        // gates. The F4 infra-retry loop picks it up on the same iteration.
+        const terminalReason = session.getLastTerminalReason()
+        if (isApiErrorTerminalReason(terminalReason)) {
+          bpLog.error(
+            `[executeTask] Task ${task.taskId} FAILED — terminal reason "${terminalReason}" ` +
+              `(API/model error) — not grading; classified infra, resume-safe`
           )
-        }
-        bpLog.info(
-          `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
-        )
-
-        // Parse discoveries block from task output
-        const taskDiscoveries = parseDiscoveriesBlock(text) ?? []
-
-        // BP-VERIFY-TASK-FILES-01: Deterministic disk verification — never trust unverified claims.
-        // Check that files the LLM claimed to create/modify actually exist on disk.
-        // FIX-3: Pass tDispatch as taskStartedAt for mtime freshness checking.
-        // Claimed paths are resolved against this root and anything escaping it
-        // is rejected, so the wrong root fails every claim in the task.
-        // The primary checkout is passed as the secondary root: planned paths are
-        // recorded as absolute paths in it, so claims naming them must be re-rooted
-        // onto the worktree rather than reported missing (R007).
-        const verification = verifyBuildTaskFiles({
-          executionPath,
-          workspacePath,
-          completion,
-          plannedFiles: task.filePathsJson,
-          taskStartedAt: tDispatch
-        })
-
-        // BP-ACCEPTANCE-DEVIATION-01: an acceptance criterion that baked in a
-        // count discovered while planning ("all 78 commands") fails correct work
-        // when the source has since drifted. The agent reports the mismatch
-        // instead of failing on it — it surfaces as a warning for VERIFY and the
-        // human, not as a red task.
-        const acceptanceDeviation =
-          typeof completion?.acceptanceDeviation === 'string'
-            ? completion.acceptanceDeviation.trim()
-            : ''
-        if (acceptanceDeviation) {
-          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-          if (buildPhase) {
-            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-              type: 'verification-warning',
-              contentMd:
-                `## Task ${task.taskId} — acceptance criterion deviates from the source\n\n` +
-                `${acceptanceDeviation}\n`
-            })
-          }
-          taskDiscoveries.push(`Task ${task.taskId} acceptance deviation: ${acceptanceDeviation}`)
-        }
-
-        // FIX-2: No-write-activity hard-fail rule (hoisted — the unproven branch
-        // below needs it too). A completion that claims files while the session
-        // invoked no write-capable tool and no Bash is describing a prior run's
-        // output, not this one. This is the *direct* measurement of "did the agent
-        // work"; mtime freshness is only a proxy for it.
-        const claimedFiles =
-          asStringArray(completion?.filesCreated).length +
-          asStringArray(completion?.filesModified).length
-        const hasPlannedFiles = task.filePathsJson?.length > 0
-        // P0: TASK-scoped, not attempt-scoped. The local counters are reset on
-        // every `executeTask` call, so on any attempt that continues a previous
-        // one they read zero for work that demonstrably happened. Falls back to
-        // the locals for callers outside the gate ladder, where the two are equal.
-        const cumulativeWriteToolCalls = params.writeActivity?.writeToolCalls ?? writeToolCalls
-        const cumulativeBashCalls = params.writeActivity?.bashCalls ?? bashCalls
-        const noWriteActivity = cumulativeWriteToolCalls === 0 && cumulativeBashCalls === 0
-        // GLM-PROTOCOL-MISS-01: hoisted — the "wrote but didn't sign" recovery
-        // below branches on it alongside the write counters. All-zero means the
-        // verifier found no discrepancy it could name: no completion block, every
-        // checkable planned file present, none fresh vs THIS attempt's dispatch
-        // (files written by an earlier attempt of the same task read as stale).
-        const allZero =
-          verification.missingClaimed.length === 0 &&
-          verification.staleClaimed.length === 0 &&
-          verification.missingPlanned.length === 0
-
-        // BP-VERIFY-UNPROVEN-01: "exists but not provably fresh" is not "missing".
-        // An agent that inspects code, finds it already correct and declines to
-        // rewrite it produces stale-only claims — identical on disk to an agent
-        // that did nothing. The two are separated by write activity, not by mtime,
-        // and not (as before) by pattern-matching the task description.
-        if (verification.verdict === 'unproven' && !noWriteActivity) {
-          bpLog.warn(
-            `[executeTask] Task ${task.taskId} verification UNPROVEN — ` +
-              `${verification.staleClaimed.length} claimed file(s) exist but are not fresh; ` +
-              `task made ${cumulativeWriteToolCalls} write call(s) and ${cumulativeBashCalls} Bash call(s) — passing with warning`
-          )
-          // Append a warning artifact (not failure) so it's visible in Deliverables
-          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-          if (buildPhase) {
-            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-              type: 'verification-warning',
-              contentMd:
-                `## Task ${task.taskId} — completed, freshness unproven\n\n` +
-                `Every file this task claimed is present on disk, but ` +
-                `${verification.staleClaimed.length} of them were not modified during this run. ` +
-                `The session did perform write activity, so the task is treated as complete ` +
-                `— VERIFY still checks the same files.\n\n` +
-                `**Unproven files (${verification.staleClaimed.length}):**\n` +
-                verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
-                '\n'
-            })
-          }
-          taskDiscoveries.push(
-            `Task ${task.taskId}: ${verification.staleClaimed.length} claimed file(s) exist but were unmodified this run — verify their content.`
-          )
-          taskResult = {
-            success: true,
-            completion,
-            discoveries: taskDiscoveries,
-            outcomeKind: 'unproven'
-          }
-        } else if (
-          shouldPassProtocolMissAsUnproven({
-            allZero,
-            cumulativeWriteToolCalls,
-            cumulativeBashCalls,
-            hasPlannedFiles
-          })
-        ) {
-          // GLM-PROTOCOL-MISS-01: "wrote but didn't sign". GLM-5.3 frequently
-          // completes the work (write tools fire, planned files land on disk)
-          // but ends the turn without the ```blueprint-phase-complete fence.
-          // Before this branch that shape failed as `infra` + `resumeSafe` and
-          // burned MAX_BUILDER_ATTEMPTS identical retries on a stochastic
-          // protocol miss. Direct evidence of work — cumulative write/Bash
-          // calls — plus every planned file present is the same evidence the
-          // BP-VERIFY-UNPROVEN-01 branch above trusts; mtime freshness is only
-          // a proxy for it (and attempt-scoped, so multi-attempt tasks read
-          // stale). Zero-write tasks never reach here (`noWriteActivity` guard)
-          // and still hard-fail in `shouldFailForNoWriteActivity`. VERIFY
-          // re-checks the same files either way.
-          bpLog.warn(
-            `[executeTask] Task ${task.taskId} protocol miss — no completion block, ` +
-              `but session performed ${cumulativeWriteToolCalls} write call(s) and ` +
-              `${cumulativeBashCalls} Bash call(s) with all planned files present — ` +
-              `passing as unproven instead of retrying`
-          )
-          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-          if (buildPhase) {
-            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-              type: 'verification-warning',
-              contentMd:
-                `## Task ${task.taskId} — completed, completion block missing (unproven)\n\n` +
-                `The session performed ${cumulativeWriteToolCalls} write tool call(s) and ` +
-                `${cumulativeBashCalls} Bash call(s), and every planned file is present on ` +
-                `disk, but the model never emitted the required ` +
-                `\`\`\`blueprint-phase-complete block (protocol miss). The task is ` +
-                `treated as complete — VERIFY still checks the same files.\n\n` +
-                `**Planned files (${(task.filePathsJson ?? []).length}):**\n` +
-                (task.filePathsJson ?? []).map((f) => `- \`${f}\``).join('\n') +
-                '\n'
-            })
-          }
-          taskDiscoveries.push(
-            `Task ${task.taskId}: model skipped the blueprint-phase-complete block ` +
-              `(protocol miss) — work accepted on write activity + file presence only.`
-          )
-          taskResult = {
-            success: true,
-            completion,
-            discoveries: taskDiscoveries,
-            outcomeKind: 'unproven'
-          }
-        } else if (!verification.ok) {
-          // F5 — all-zero discrepancy: `!ok` with zero missing/stale/planned means
-          // there was no completion block to verify against (the turn likely
-          // died in an API/transport error before emitting one). The generic
-          // counts message would render "0 claimed missing, 0 stale, 0 planned
-          // missing" — three empty sections that explain nothing.
-          const missingList =
-            verification.missingClaimed.length > 0
-              ? verification.missingClaimed
-              : verification.missingPlanned
-          if (allZero) {
-            bpLog.error(
-              `[executeTask] Task ${task.taskId} FAILED verification — no completion block ` +
-                `in CLI output (protocol miss — model ended the turn without emitting ` +
-                `the \`blueprint-phase-complete\` block; an API/transport error is only ` +
-                `suspected when an executor error was recorded); ` +
-                `no file discrepancies found`
-            )
-          } else {
-            bpLog.error(
-              `[executeTask] Task ${task.taskId} FAILED verification — ` +
-                `${verification.missingClaimed.length} claimed missing, ` +
-                `${verification.staleClaimed.length} stale, ` +
-                `${verification.missingPlanned.length} planned missing: ` +
-                `${missingList.slice(0, 10).join(', ')}${missingList.length > 10 ? ` (+${missingList.length - 10} more)` : ''}`
-            )
-          }
-
-          // Append artifact so the discrepancy is visible in Deliverables
-          const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-          if (buildPhase) {
-            blueprintPhaseRepository.appendArtifact(buildPhase.id, {
-              type: 'verification-failure',
-              contentMd: allZero
-                ? `## Task ${task.taskId} — status could not be determined\n\n` +
-                  `The CLI output contained no completion block, so there were no claims ` +
-                  `to verify. The model most likely ended its turn without emitting the ` +
-                  `required \`\`\`blueprint-phase-complete\`\`\` block (a protocol miss); ` +
-                  `an API/transport error is only suspected when the executor recorded ` +
-                  `one. No file discrepancies were found.\n`
-                : `## Task ${task.taskId} — claimed files missing on disk\n\n` +
-                  (verification.missingClaimed.length > 0
-                    ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
-                      verification.missingClaimed.map((f) => `- \`${f}\``).join('\n') +
-                      '\n\n'
-                    : '') +
-                  (verification.staleClaimed.length > 0
-                    ? `**Claimed but stale (${verification.staleClaimed.length}):**\n` +
-                      verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
-                      '\n\n'
-                    : '') +
-                  (verification.missingPlanned.length > 0
-                    ? `**Planned but absent (${verification.missingPlanned.length}):**\n` +
-                      verification.missingPlanned.map((f) => `- \`${f}\``).join('\n') +
-                      '\n'
-                    : '')
-            })
-          }
-
-          // Surface to UI via existing phaseProgress channel (system message)
-          // GAP-2 FIX: Include stale-aware branch so the message reflects the real reason
           this.safeEmit('phaseProgress', {
             blueprintId,
             workspaceId,
             phase: 'build',
-            text: allZero
-              ? `⚠ Task ${task.taskId} marked FAILED — no completion block in CLI output ` +
-                `(protocol miss — model did not emit the blueprint-phase-complete block); ` +
-                `no file discrepancies found`
-              : `⚠ Task ${task.taskId} marked FAILED — ` +
-                (verification.missingClaimed.length > 0
-                  ? `claimed ${claimedFiles} file(s), ${verification.missingClaimed.length} missing on disk`
-                  : `no output files found (${verification.missingPlanned.length} planned files absent)`),
+            text: `⚠ Task ${task.taskId} FAILED — API/model error ("${terminalReason}") — retrying on infrastructure, not graded`,
             kind: 'system'
           })
-
-          // Append missingPlanned (non-fatal) to discoveries so subsequent waves see the drift
-          if (verification.missingPlanned.length > 0) {
-            taskDiscoveries.push(
-              `Task ${task.taskId} drift: planned files not found on disk: ${verification.missingPlanned.join(', ')}`
-            )
-          }
-
-          // Build descriptive failure reason for UI surfacing
-          const verifyFailParts: string[] = []
-          if (verification.missingClaimed.length > 0)
-            verifyFailParts.push(`${verification.missingClaimed.length} claimed missing`)
-          if (verification.staleClaimed.length > 0)
-            verifyFailParts.push(`${verification.staleClaimed.length} stale`)
-          if (verification.missingPlanned.length > 0)
-            verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
-          const verifyFailReason = allZero
-            ? 'verification failed — no completion block in CLI output (protocol miss — model did not emit the required blueprint-phase-complete block)'
-            : `verification failed — ${verifyFailParts.join(', ')}`
-
-          // WAVE-RACE FIX: when the session never produced a completion block
-          // AND the executor emitted an error, the error is the actionable
-          // cause — the missing files are only the symptom of a session that
-          // died before writing anything. GLM protocol miss (no executor error)
-          // keeps the protocol-miss reason so telemetry/telemetry rows name the
-          // real cause instead of blaming transport.
-          const failureReason =
-            !completion && executorErrorBox.value
-              ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
-              : verifyFailReason
-
           taskResult = {
             success: false,
-            completion,
-            discoveries: taskDiscoveries,
-            failureReason,
-            // Either an executor error or files the session claimed but never
-            // wrote: in both cases the work was never graded, so nothing is
-            // known about its quality.
+            completion: null,
+            discoveries: [],
+            failureReason: `api terminal error: ${terminalReason}`,
             failureClass: 'infra',
-            // The transcript is intact — nothing overflowed and no turn budget
-            // was exhausted — so a resume would pick up where this stopped.
-            resumeSafe: true
+            resumeSafe: true,
+            sendOutcome: 'error',
+            terminalReason
           }
         } else {
-          // If the completion claims files BUT the session never invoked a
-          // write-capable tool, the files on disk are stale from a prior run.
-          // Also fail when no completion + zero write calls + task has planned files.
-          // This is the guard that keeps the R029 hole shut now that stale-only
-          // claims no longer hard-fail on their own.
-          // The diff is only consulted when the counters already point at a
-          // failure — the happy path never pays for a git diff. See
-          // `shouldFailForNoWriteActivity` for why the diff outranks the counters.
-          const baselineDiffEmpty =
-            noWriteActivity && params.baselineDiffEmpty ? await params.baselineDiffEmpty() : null
-          if (baselineDiffEmpty === false) {
-            bpLog.info(
-              `[executeTask] Task ${task.taskId} recorded no write tools, but the gate ` +
-                `baseline diff is non-empty — an earlier attempt's work stands, ` +
-                `not a stale-file claim`
+          // Parse output
+          const text = session.getStreamedContent(syntheticConvId)
+          const completion = parsePhaseCompletionBlock(text, 'build') ?? null
+
+          if (!completion && text.length > 200) {
+            bpLog.warn(
+              `[executeTask] Task ${task.taskId}: no completion block in ${text.length}-char output`
             )
           }
+          bpLog.info(
+            `[executeTask] Task ${task.taskId} complete — status: ${completion?.status ?? 'unknown'}`
+          )
 
-          if (
-            shouldFailForNoWriteActivity({
-              cumulativeWriteToolCalls,
-              cumulativeBashCalls,
-              claimedFiles,
-              hasCompletion: Boolean(completion),
-              hasPlannedFiles,
-              baselineDiffEmpty
-            })
-          ) {
-            bpLog.error(
-              `[executeTask] Task ${task.taskId} FAILED — no-write-activity: ` +
-                `claimed ${claimedFiles} file(s) but the task invoked 0 write tools and ` +
-                `0 Bash calls across all attempts, and changed nothing since its baseline`
-            )
-            this.safeEmit('phaseProgress', {
+          // Parse discoveries block from task output
+          const taskDiscoveries = parseDiscoveriesBlock(text) ?? []
+
+          // BP-VERIFY-TASK-FILES-01: Deterministic disk verification — never trust unverified claims.
+          // Check that files the LLM claimed to create/modify actually exist on disk.
+          // FIX-3: Pass tDispatch as taskStartedAt for mtime freshness checking.
+          // Claimed paths are resolved against this root and anything escaping it
+          // is rejected, so the wrong root fails every claim in the task.
+          // The primary checkout is passed as the secondary root: planned paths are
+          // recorded as absolute paths in it, so claims naming them must be re-rooted
+          // onto the worktree rather than reported missing (R007).
+          const verification = verifyBuildTaskFiles({
+            executionPath,
+            workspacePath,
+            completion,
+            plannedFiles: task.filePathsJson,
+            taskStartedAt: tDispatch
+          })
+
+          // BP-ACCEPTANCE-DEVIATION-01: an acceptance criterion that baked in a
+          // count discovered while planning ("all 78 commands") fails correct work
+          // when the source has since drifted. The agent reports the mismatch
+          // instead of failing on it — it surfaces as a warning for VERIFY and the
+          // human, not as a red task.
+          const acceptanceDeviation =
+            typeof completion?.acceptanceDeviation === 'string'
+              ? completion.acceptanceDeviation.trim()
+              : ''
+          if (acceptanceDeviation) {
+            const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(
               blueprintId,
-              workspaceId,
-              phase: 'build',
-              text: `⚠ Task ${task.taskId} FAILED — no write-tool activity detected (stale file guard)`,
-              kind: 'system'
-            })
-            taskResult = {
-              success: false,
-              completion,
-              discoveries: taskDiscoveries,
-              // WAVE-RACE FIX: executor error (server failed to start / died)
-              // is the actionable cause when present — see executorErrorBox above.
-              failureReason:
-                !completion && executorErrorBox.value
-                  ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
-                  : 'no-write-activity',
-              failureClass: 'infra',
-              resumeSafe: true
+              'build'
+            )
+            if (buildPhase) {
+              blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+                type: 'verification-warning',
+                contentMd:
+                  `## Task ${task.taskId} — acceptance criterion deviates from the source\n\n` +
+                  `${acceptanceDeviation}\n`
+              })
             }
-          } else {
+            taskDiscoveries.push(`Task ${task.taskId} acceptance deviation: ${acceptanceDeviation}`)
+          }
+
+          // FIX-2: No-write-activity hard-fail rule (hoisted — the unproven branch
+          // below needs it too). A completion that claims files while the session
+          // invoked no write-capable tool and no Bash is describing a prior run's
+          // output, not this one. This is the *direct* measurement of "did the agent
+          // work"; mtime freshness is only a proxy for it.
+          const claimedFiles =
+            asStringArray(completion?.filesCreated).length +
+            asStringArray(completion?.filesModified).length
+          const hasPlannedFiles = task.filePathsJson?.length > 0
+          // P0: TASK-scoped, not attempt-scoped — but only for a rung that
+          // CONTINUES a previous one. F12 (1.2): on a COLD rung the cumulative
+          // counters grant credit for attempt 1's writes, so a zero-work rung
+          // that died on `api_error` skipped the no-write hard-fail, took the
+          // protocol-miss branch, and was handed to the gates to be graded on
+          // the previous attempt's tree. A cold rung with zero own-activity
+          // falls back to the per-attempt locals and hard-fails as before.
+          // (`resuming` — resumeSessionId set by the ladder's permit — is the
+          // exact population A1's cumulative counters exist for.)
+          const cumulativeWriteToolCalls = resuming
+            ? (params.writeActivity?.writeToolCalls ?? writeToolCalls)
+            : writeToolCalls
+          const cumulativeBashCalls = resuming
+            ? (params.writeActivity?.bashCalls ?? bashCalls)
+            : bashCalls
+          const noWriteActivity = cumulativeWriteToolCalls === 0 && cumulativeBashCalls === 0
+          // GLM-PROTOCOL-MISS-01: hoisted — the "wrote but didn't sign" recovery
+          // below branches on it alongside the write counters. All-zero means the
+          // verifier found no discrepancy it could name: no completion block, every
+          // checkable planned file present, none fresh vs THIS attempt's dispatch
+          // (files written by an earlier attempt of the same task read as stale).
+          const allZero =
+            verification.missingClaimed.length === 0 &&
+            verification.staleClaimed.length === 0 &&
+            verification.missingPlanned.length === 0
+
+          // BP-VERIFY-UNPROVEN-01: "exists but not provably fresh" is not "missing".
+          // An agent that inspects code, finds it already correct and declines to
+          // rewrite it produces stale-only claims — identical on disk to an agent
+          // that did nothing. The two are separated by write activity, not by mtime,
+          // and not (as before) by pattern-matching the task description.
+          if (verification.verdict === 'unproven' && !noWriteActivity) {
+            bpLog.warn(
+              `[executeTask] Task ${task.taskId} verification UNPROVEN — ` +
+                `${verification.staleClaimed.length} claimed file(s) exist but are not fresh; ` +
+                `task made ${cumulativeWriteToolCalls} write call(s) and ${cumulativeBashCalls} Bash call(s) — passing with warning`
+            )
+            // Append a warning artifact (not failure) so it's visible in Deliverables
+            const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(
+              blueprintId,
+              'build'
+            )
+            if (buildPhase) {
+              blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+                type: 'verification-warning',
+                contentMd:
+                  `## Task ${task.taskId} — completed, freshness unproven\n\n` +
+                  `Every file this task claimed is present on disk, but ` +
+                  `${verification.staleClaimed.length} of them were not modified during this run. ` +
+                  `The session did perform write activity, so the task is treated as complete ` +
+                  `— VERIFY still checks the same files.\n\n` +
+                  `**Unproven files (${verification.staleClaimed.length}):**\n` +
+                  verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
+                  '\n'
+              })
+            }
+            taskDiscoveries.push(
+              `Task ${task.taskId}: ${verification.staleClaimed.length} claimed file(s) exist but were unmodified this run — verify their content.`
+            )
             taskResult = {
               success: true,
               completion,
               discoveries: taskDiscoveries,
-              outcomeKind:
-                verification.preexistingClaimed.length > 0 && claimedFiles === 0
-                  ? 'preexisting'
-                  : // A2 — when the turn was rescued by a recovery nudge, say so
-                    // on the row: the nudge rate per run is the metric this item
-                    // exists to move, and `verified` alone would hide it.
-                    // `preexisting`/`unproven` stay more specific than `nudged`
-                    // and win when both apply.
-                    session.wasNudged()
-                    ? 'nudged'
-                    : 'verified'
+              outcomeKind: 'unproven'
+            }
+          } else if (
+            shouldPassProtocolMissAsUnproven({
+              allZero,
+              cumulativeWriteToolCalls,
+              cumulativeBashCalls,
+              hasPlannedFiles
+            })
+          ) {
+            // GLM-PROTOCOL-MISS-01: "wrote but didn't sign". GLM-5.3 frequently
+            // completes the work (write tools fire, planned files land on disk)
+            // but ends the turn without the ```blueprint-phase-complete fence.
+            // Before this branch that shape failed as `infra` + `resumeSafe` and
+            // burned MAX_BUILDER_ATTEMPTS identical retries on a stochastic
+            // protocol miss. Direct evidence of work — cumulative write/Bash
+            // calls — plus every planned file present is the same evidence the
+            // BP-VERIFY-UNPROVEN-01 branch above trusts; mtime freshness is only
+            // a proxy for it (and attempt-scoped, so multi-attempt tasks read
+            // stale). Zero-write tasks never reach here (`noWriteActivity` guard)
+            // and still hard-fail in `shouldFailForNoWriteActivity`. VERIFY
+            // re-checks the same files either way.
+            bpLog.warn(
+              `[executeTask] Task ${task.taskId} protocol miss — no completion block, ` +
+                `but session performed ${cumulativeWriteToolCalls} write call(s) and ` +
+                `${cumulativeBashCalls} Bash call(s) with all planned files present — ` +
+                `passing as unproven instead of retrying`
+            )
+            const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(
+              blueprintId,
+              'build'
+            )
+            if (buildPhase) {
+              blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+                type: 'verification-warning',
+                contentMd:
+                  `## Task ${task.taskId} — completed, completion block missing (unproven)\n\n` +
+                  `The session performed ${cumulativeWriteToolCalls} write tool call(s) and ` +
+                  `${cumulativeBashCalls} Bash call(s), and every planned file is present on ` +
+                  `disk, but the model never emitted the required ` +
+                  `\`\`\`blueprint-phase-complete block (protocol miss). The task is ` +
+                  `treated as complete — VERIFY still checks the same files.\n\n` +
+                  `**Planned files (${(task.filePathsJson ?? []).length}):**\n` +
+                  (task.filePathsJson ?? []).map((f) => `- \`${f}\``).join('\n') +
+                  '\n'
+              })
+            }
+            taskDiscoveries.push(
+              `Task ${task.taskId}: model skipped the blueprint-phase-complete block ` +
+                `(protocol miss) — work accepted on write activity + file presence only.`
+            )
+            taskResult = {
+              success: true,
+              completion,
+              discoveries: taskDiscoveries,
+              outcomeKind: 'unproven'
+            }
+          } else if (!verification.ok) {
+            // F5 — all-zero discrepancy: `!ok` with zero missing/stale/planned means
+            // there was no completion block to verify against (the turn likely
+            // died in an API/transport error before emitting one). The generic
+            // counts message would render "0 claimed missing, 0 stale, 0 planned
+            // missing" — three empty sections that explain nothing.
+            const missingList =
+              verification.missingClaimed.length > 0
+                ? verification.missingClaimed
+                : verification.missingPlanned
+            if (allZero) {
+              bpLog.error(
+                `[executeTask] Task ${task.taskId} FAILED verification — no completion block ` +
+                  `in CLI output (protocol miss — model ended the turn without emitting ` +
+                  `the \`blueprint-phase-complete\` block; an API/transport error is only ` +
+                  `suspected when an executor error was recorded); ` +
+                  `no file discrepancies found`
+              )
+            } else {
+              bpLog.error(
+                `[executeTask] Task ${task.taskId} FAILED verification — ` +
+                  `${verification.missingClaimed.length} claimed missing, ` +
+                  `${verification.staleClaimed.length} stale, ` +
+                  `${verification.missingPlanned.length} planned missing: ` +
+                  `${missingList.slice(0, 10).join(', ')}${missingList.length > 10 ? ` (+${missingList.length - 10} more)` : ''}`
+              )
+            }
+
+            // Append artifact so the discrepancy is visible in Deliverables
+            const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(
+              blueprintId,
+              'build'
+            )
+            if (buildPhase) {
+              blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+                type: 'verification-failure',
+                contentMd: allZero
+                  ? `## Task ${task.taskId} — status could not be determined\n\n` +
+                    `The CLI output contained no completion block, so there were no claims ` +
+                    `to verify. The model most likely ended its turn without emitting the ` +
+                    `required \`\`\`blueprint-phase-complete\`\`\` block (a protocol miss); ` +
+                    `an API/transport error is only suspected when the executor recorded ` +
+                    `one. No file discrepancies were found.\n`
+                  : `## Task ${task.taskId} — claimed files missing on disk\n\n` +
+                    (verification.missingClaimed.length > 0
+                      ? `**Claimed but absent (${verification.missingClaimed.length}):**\n` +
+                        verification.missingClaimed.map((f) => `- \`${f}\``).join('\n') +
+                        '\n\n'
+                      : '') +
+                    (verification.staleClaimed.length > 0
+                      ? `**Claimed but stale (${verification.staleClaimed.length}):**\n` +
+                        verification.staleClaimed.map((f) => `- \`${f}\``).join('\n') +
+                        '\n\n'
+                      : '') +
+                    (verification.missingPlanned.length > 0
+                      ? `**Planned but absent (${verification.missingPlanned.length}):**\n` +
+                        verification.missingPlanned.map((f) => `- \`${f}\``).join('\n') +
+                        '\n'
+                      : '')
+              })
+            }
+
+            // Surface to UI via existing phaseProgress channel (system message)
+            // GAP-2 FIX: Include stale-aware branch so the message reflects the real reason
+            this.safeEmit('phaseProgress', {
+              blueprintId,
+              workspaceId,
+              phase: 'build',
+              text: allZero
+                ? `⚠ Task ${task.taskId} marked FAILED — no completion block in CLI output ` +
+                  `(protocol miss — model did not emit the blueprint-phase-complete block); ` +
+                  `no file discrepancies found`
+                : `⚠ Task ${task.taskId} marked FAILED — ` +
+                  (verification.missingClaimed.length > 0
+                    ? `claimed ${claimedFiles} file(s), ${verification.missingClaimed.length} missing on disk`
+                    : `no output files found (${verification.missingPlanned.length} planned files absent)`),
+              kind: 'system'
+            })
+
+            // Append missingPlanned (non-fatal) to discoveries so subsequent waves see the drift
+            if (verification.missingPlanned.length > 0) {
+              taskDiscoveries.push(
+                `Task ${task.taskId} drift: planned files not found on disk: ${verification.missingPlanned.join(', ')}`
+              )
+            }
+
+            // Build descriptive failure reason for UI surfacing
+            const verifyFailParts: string[] = []
+            if (verification.missingClaimed.length > 0)
+              verifyFailParts.push(`${verification.missingClaimed.length} claimed missing`)
+            if (verification.staleClaimed.length > 0)
+              verifyFailParts.push(`${verification.staleClaimed.length} stale`)
+            if (verification.missingPlanned.length > 0)
+              verifyFailParts.push(`${verification.missingPlanned.length} planned missing`)
+            const verifyFailReason = allZero
+              ? 'verification failed — no completion block in CLI output (protocol miss — model did not emit the required blueprint-phase-complete block)'
+              : `verification failed — ${verifyFailParts.join(', ')}`
+
+            // WAVE-RACE FIX: when the session never produced a completion block
+            // AND the executor emitted an error, the error is the actionable
+            // cause — the missing files are only the symptom of a session that
+            // died before writing anything. GLM protocol miss (no executor error)
+            // keeps the protocol-miss reason so telemetry/telemetry rows name the
+            // real cause instead of blaming transport.
+            const failureReason =
+              !completion && executorErrorBox.value
+                ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
+                : verifyFailReason
+
+            taskResult = {
+              success: false,
+              completion,
+              discoveries: taskDiscoveries,
+              failureReason,
+              // Either an executor error or files the session claimed but never
+              // wrote: in both cases the work was never graded, so nothing is
+              // known about its quality.
+              failureClass: 'infra',
+              // The transcript is intact — nothing overflowed and no turn budget
+              // was exhausted — so a resume would pick up where this stopped.
+              resumeSafe: true
+            }
+          } else {
+            // If the completion claims files BUT the session never invoked a
+            // write-capable tool, the files on disk are stale from a prior run.
+            // Also fail when no completion + zero write calls + task has planned files.
+            // This is the guard that keeps the R029 hole shut now that stale-only
+            // claims no longer hard-fail on their own.
+            // The diff is only consulted when the counters already point at a
+            // failure — the happy path never pays for a git diff. See
+            // `shouldFailForNoWriteActivity` for why the diff outranks the counters.
+            const baselineDiffEmpty =
+              noWriteActivity && params.baselineDiffEmpty ? await params.baselineDiffEmpty() : null
+            if (baselineDiffEmpty === false) {
+              bpLog.info(
+                `[executeTask] Task ${task.taskId} recorded no write tools, but the gate ` +
+                  `baseline diff is non-empty — an earlier attempt's work stands, ` +
+                  `not a stale-file claim`
+              )
+            }
+
+            if (
+              shouldFailForNoWriteActivity({
+                cumulativeWriteToolCalls,
+                cumulativeBashCalls,
+                claimedFiles,
+                hasCompletion: Boolean(completion),
+                hasPlannedFiles,
+                baselineDiffEmpty
+              })
+            ) {
+              bpLog.error(
+                `[executeTask] Task ${task.taskId} FAILED — no-write-activity: ` +
+                  `claimed ${claimedFiles} file(s) but the task invoked 0 write tools and ` +
+                  `0 Bash calls across all attempts, and changed nothing since its baseline`
+              )
+              this.safeEmit('phaseProgress', {
+                blueprintId,
+                workspaceId,
+                phase: 'build',
+                text: `⚠ Task ${task.taskId} FAILED — no write-tool activity detected (stale file guard)`,
+                kind: 'system'
+              })
+              taskResult = {
+                success: false,
+                completion,
+                discoveries: taskDiscoveries,
+                // WAVE-RACE FIX: executor error (server failed to start / died)
+                // is the actionable cause when present — see executorErrorBox above.
+                failureReason:
+                  !completion && executorErrorBox.value
+                    ? `executor error: ${executorErrorBox.value.slice(0, 200)}`
+                    : 'no-write-activity',
+                failureClass: 'infra',
+                resumeSafe: true
+              }
+            } else {
+              taskResult = {
+                success: true,
+                completion,
+                discoveries: taskDiscoveries,
+                outcomeKind:
+                  verification.preexistingClaimed.length > 0 && claimedFiles === 0
+                    ? 'preexisting'
+                    : // A2 — when the turn was rescued by a recovery nudge, say so
+                      // on the row: the nudge rate per run is the metric this item
+                      // exists to move, and `verified` alone would hide it.
+                      // `preexisting`/`unproven` stay more specific than `nudged`
+                      // and win when both apply.
+                      session.wasNudged()
+                      ? 'nudged'
+                      : // T003/A5 — the recovery FALLBACK signed this completion
+                        // (no real recovery text landed): the pipeline synthesized
+                        // the marker, the model never attested the work. `unproven`
+                        // is the honest stamp — same semantics the protocol-miss
+                        // pass already uses, no schema change needed.
+                        // NOTE (audit item 5): the protocol-miss branch is the
+                        // PRIMARY net; this fallback-signed stamp is the SECOND —
+                        // it catches completions whose recovery text landed but
+                        // was synthesized, which the protocol miss never sees.
+                        session.wasFallbackSigned()
+                        ? 'unproven'
+                        : 'verified'
+              }
             }
           }
-        }
+        } // end of F12 api-error short-circuit
       } // end of sendOutcome === 'ok' else block
     } catch (err) {
       tComplete = Date.now()
@@ -5912,6 +6975,15 @@ export class BlueprintBuildService extends EventEmitter {
       // A1 (Phase 3) — cache-read tokens for this rung, straight off the token
       // tracker; this is what makes Gate 1 answerable without a join.
       taskResult.cacheReadInputTokens = session.getCacheReadTokens(syntheticConvId)
+      // F2 (2.2) — first-turn cache read, the discriminating Gate 1 metric.
+      taskResult.firstTurnCacheReadTokens = session.getFirstTurnCacheRead(syntheticConvId)
+      // F3 (3.1) — carry the cold rung's taskContext so the ladder can freeze
+      // the generation's system-prompt prefix for resumed rungs.
+      if (coldTaskContext !== undefined) taskResult.frozenTaskContext = coldTaskContext
+      // F12 (1.1) — carry the terminal reason onto the result for telemetry.
+      if (session.getLastTerminalReason() !== undefined) {
+        taskResult.terminalReason = session.getLastTerminalReason()
+      }
 
       // Phase 1.1: Take teardown OFF the critical path.
       // Resolve the task promise NOW (freeing the dispatch slot), then stop the

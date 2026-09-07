@@ -48,16 +48,14 @@ import type {
   ClarifyQuestionsBlock
 } from '../../shared/blueprint-clarify-parsers'
 import type { BlueprintTaskStatus } from '../../shared/blueprint-types'
-import {
-  modelConfigService,
-  resolveAssignment,
-  buildResolveOpts
-} from './model-config.service'
+import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
 import { resolveContextTier } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { contextWindowResolver } from './context-window-resolver'
 import { syncBlueprintDone } from './jira-issue-sync.service'
 import { isSlowTransientError } from './opencode-transient-patterns'
+import { isDeterministicStopLoss, parseStopLossCommand } from './blueprint-stop-loss'
+import { resolveBlueprintGateCommands } from './blueprint-gate-command-pipeline'
 
 export type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 
@@ -1337,9 +1335,7 @@ export class BlueprintService extends EventEmitter {
       // Every remaining phase was optional and disabled — the run is complete.
       blueprintRepository.updateStatus(blueprintId, 'complete')
       void syncBlueprintDone(blueprintId)
-      bpLog.info(
-        `[advancePhase] Blueprint ${blueprintId} — all remaining phases skipped/complete`
-      )
+      bpLog.info(`[advancePhase] Blueprint ${blueprintId} — all remaining phases skipped/complete`)
       return null
     }
 
@@ -1566,6 +1562,16 @@ export class BlueprintService extends EventEmitter {
       )
     }
 
+    // T003/G1 — the CURRENT `test` gate command comes from the SAME shared
+    // pipeline the build service's cache rebuild and the verify service use
+    // (blueprint-gate-command-pipeline.ts), so the stop-loss comparison is
+    // byte-identical in pipeline to the write site: the ladder resolves through
+    // `resolveGateCommandsFor` → `rebuildGateCommandCache` → the pipeline, and
+    // the command the stop-loss SUFFIX records came from that same resolution.
+    // A local re-implementation here skipped the venv rewrite and compared an
+    // un-rewritten string against a rewritten one — the strings differed, the
+    // exclusion lifted, and the identical experiment re-ran (the T003 loop).
+
     // BP-RETRY-PIPELINE-EARLY-GUARD: Check pipeline availability BEFORE any DB
     // mutations. Without this, the state machine guard at line 890 can throw
     // AFTER tasks, status, and remediationRound have already been modified,
@@ -1688,7 +1694,26 @@ export class BlueprintService extends EventEmitter {
     // Complete tasks are left untouched — they'll be skipped by BP-RESUME-01.
     if (targetPhase.phase === 'build') {
       const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
+      // T003 — the CURRENT `test` gate command, resolved the same way the
+      // ladder resolves it (override → declared → detected), so the stop-loss
+      // exclusion can detect a CHANGED command (operator override / PLAN
+      // re-declaration / environment change) and lift itself.
+      const retryWorkspacePath = workspaceRepository.findById(blueprint.workspaceId)?.repoPath
+      let currentTestCommand: string | null = null
+      if (retryWorkspacePath) {
+        try {
+          currentTestCommand =
+            resolveBlueprintGateCommands(blueprintId, retryWorkspacePath).commands.test?.command ??
+            null
+        } catch (err) {
+          bpLog.warn(
+            '[retryPhase] Gate-command resolution failed — stop-loss cannot compare commands:',
+            err
+          )
+        }
+      }
       let resetCount = 0
+      let excludedStopLoss = 0
       for (const task of tasks) {
         if (task.status === 'failed' || task.status === 'skipped' || task.status === 'running') {
           // BP-TASK-USER-SKIP-01: a human decided this task is not worth
@@ -1696,6 +1721,48 @@ export class BlueprintService extends EventEmitter {
           // may have been made after `tasks` was loaded.
           const fresh = blueprintTaskRepository.findById(task.id)
           if (fresh?.skippedByUserAt) continue
+          // T003 fix — a deterministic gate stop-loss is NOT retryable. The B3
+          // stop-loss fires when the gate failure fingerprint is unchanged
+          // across attempts: the same environment, the same command, the same
+          // result. Resetting such a task re-runs the identical ladder on the
+          // identical machine and burns MAX_BUILDER_ATTEMPTS more builder
+          // sessions + a lead escalation for a verdict nothing in the code can
+          // change (missing venv interpreter, uninstalled runner). The operator
+          // unblocks it by fixing the environment or overriding the gate
+          // command — Items 1–2 make those failures classify honestly, and the
+          // exclusion only lifts when the resolved test command CHANGED since
+          // the stop-loss was recorded (a changed command is a new experiment).
+          if (
+            fresh &&
+            isDeterministicStopLoss(fresh.failureReason ?? '', fresh.attempts, currentTestCommand)
+          ) {
+            excludedStopLoss++
+            bpLog.info(
+              `[retryPhase] Excluded ${task.taskId} from reset — deterministic gate stop-loss ` +
+                `(fix the environment or override the gate command)`
+            )
+            // T003/G5 observability — the exclusion was previously visible
+            // only in the log. A telemetry row survives the app reload, is
+            // queryable after the run, and records WHICH commands were compared
+            // — the difference between "the code excluded a task" and "why it
+            // excluded it", which is exactly what an operator needs to lift it.
+            try {
+              blueprintTelemetryRepository.record({
+                blueprintId,
+                kind: 'stop_loss_exclusion',
+                phase: 'build',
+                taskId: task.taskId,
+                data: {
+                  kept: true,
+                  recordedCommand: parseStopLossCommand(fresh.failureReason ?? ''),
+                  currentCommand: currentTestCommand
+                }
+              })
+            } catch (err) {
+              bpLog.warn(`[retryPhase] Could not record stop-loss exclusion telemetry:`, err)
+            }
+            continue
+          }
           blueprintTaskRepository.updateStatus(task.id, 'pending')
           // R2.3 — silent-degradation fix: `resetForRetry` existed but was never
           // called on this path, so a retried task carried its previous gate
@@ -1710,6 +1777,19 @@ export class BlueprintService extends EventEmitter {
         bpLog.info(
           `[retryPhase] Reset ${resetCount} non-complete task(s) to pending for build retry`
         )
+      }
+      if (excludedStopLoss > 0) {
+        this.emit('phaseProgress', {
+          blueprintId,
+          workspaceId: blueprint.workspaceId,
+          phase: 'build',
+          text:
+            `⚠ ${excludedStopLoss} task(s) excluded from this retry — their gate failures were ` +
+            `deterministic (stop-loss: identical failure across attempts). Fix the ` +
+            `environment or override the workspace gate command to re-enable them; ` +
+            `a changed test command lifts the exclusion automatically.`,
+          kind: 'system'
+        })
       }
     }
 

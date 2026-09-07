@@ -23,7 +23,7 @@
  */
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
@@ -282,6 +282,76 @@ if (!env) {
       const plain = ['src/a.ts', 'src/b/c.ts', 'README.md']
       assert.ok(!plain.some((f) => isManifestFile(f)))
     })
+
+    // T003 — `command_missing` must invalidate the command caches exactly as
+    // `no_command` does, so re-detection (and the venv rewrite) gets a chance
+    // on the next rung instead of grading against the same dead resolution.
+    test('a command_missing gate verdict marks resolution stale and invalidates the caches', () => {
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const svc = new BlueprintBuildService()
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'T003 R2.1' })
+      const blueprintId = bp.id
+
+      svc.gateCommandCache.set(blueprintId, {
+        test: {
+          command: 'multiplexer/.venv-mux/Scripts/python.exe -m unittest',
+          provenance: 'declared'
+        }
+      })
+      svc.manifestCache.set(blueprintId, {})
+
+      // The report the gate produces when the interpreter path is absent
+      // (T003: cmd.exe "The system cannot find the path specified.").
+      const commandMissingReport = {
+        overall: 'unverifiable',
+        gates: [
+          {
+            name: 'task-tests',
+            verdict: 'unverifiable',
+            reason: 'command_missing',
+            evidence: ['multiplexer/.venv-mux/Scripts/python.exe — the runner is not installed'],
+            durationMs: 1
+          }
+        ]
+      }
+      assert.equal(
+        svc.isCommandResolutionStale(commandMissingReport),
+        true,
+        'command_missing must mark resolution stale (T003)'
+      )
+      assert.equal(
+        svc.isCommandResolutionStale({
+          overall: 'fail',
+          gates: [
+            { name: 'task-tests', verdict: 'fail', evidence: ['assert 1 == 2'], durationMs: 1 }
+          ]
+        }),
+        false,
+        'a red suite says nothing about resolution'
+      )
+      assert.equal(
+        svc.isCommandResolutionStale({
+          overall: 'unverifiable',
+          gates: [
+            {
+              name: 'build',
+              verdict: 'unverifiable',
+              reason: 'no_command',
+              evidence: [],
+              durationMs: 1
+            }
+          ]
+        }),
+        true,
+        'no_command keeps its R2.1 behavior'
+      )
+
+      // The invalidation gradeTask performs on a stale resolution:
+      svc.gateCommandCache.delete(blueprintId)
+      svc.manifestCache.delete(blueprintId)
+      assert.equal(svc.gateCommandCache.has(blueprintId), false)
+      assert.equal(svc.manifestCache.has(blueprintId), false)
+    })
   })
 
   // ── setEscalatedTo ──
@@ -334,6 +404,10 @@ if (!env) {
     rowFailureReason: string | null
     /** The reason on the RETURNED result, which is where the stop-loss note rides. */
     failureReason: string | null
+    /** C1/C2 — for the scope-park assertions. */
+    blueprintId: string
+    taskId: string
+    outcomeKind: string | null | undefined
   }
 
   /**
@@ -356,8 +430,15 @@ if (!env) {
 
     let builderRuns = 0
     let escalated = false
-    svc.executeTask = async (): Promise<unknown> => {
+    svc.executeTask = async (p: {
+      writeActivity?: { writeToolCalls: number }
+    }): Promise<unknown> => {
       builderRuns++
+      // 1.4 — the zero-work requeue intercepts a stop-loss whose rung wrote
+      // nothing. These tests exercise the stop-loss→ESCALATION path, so the
+      // stub simulates a rung that wrote a file (a real builder session
+      // always emits at least one write-capable tool_use on a graded failure).
+      if (p?.writeActivity) p.writeActivity.writeToolCalls++
       return { success: true, completion: null, discoveries: [] }
     }
     let graded = 0
@@ -387,7 +468,7 @@ if (!env) {
       priorDiscoveries: [],
       tDispatch: Date.now(),
       waveNum: 1
-    })) as { failureReason?: string | null }
+    })) as { failureReason?: string | null; outcomeKind?: string | null }
 
     const after = blueprintTaskRepository.findById(task.id)
     // Removed here rather than in a trailing cleanup test: the harness starts
@@ -402,7 +483,10 @@ if (!env) {
       escalated,
       attempts: after.attempts,
       rowFailureReason: after.failureReason,
-      failureReason: result?.failureReason ?? null
+      failureReason: result?.failureReason ?? null,
+      blueprintId: bp.id,
+      taskId: task.id,
+      outcomeKind: result?.outcomeKind
     }
   }
 
@@ -454,9 +538,14 @@ if (!env) {
       let lastInstructions = ''
       const gradedDamaged: boolean[] = []
 
-      svc.executeTask = async (p: { gateFixInstructions?: string }): Promise<unknown> => {
+      svc.executeTask = async (p: {
+        gateFixInstructions?: string
+        writeActivity?: { writeToolCalls: number }
+      }): Promise<unknown> => {
         builderRuns++
         lastInstructions = p?.gateFixInstructions ?? ''
+        // 1.4 — simulate a rung that wrote (see runLadder for why).
+        if (p?.writeActivity) p.writeActivity.writeToolCalls++
         // Attempt 1 edits the spec instead of the implementation.
         if (reweakenEveryAttempt || builderRuns === 1) {
           writeFileSync(join(dir, 't.test.ts'), WEAKENED)
@@ -615,8 +704,12 @@ if (!env) {
 
       let builderRuns = 0
       // EVERY session weakens the spec — including the lead model's.
-      svc.executeTask = async (): Promise<unknown> => {
+      svc.executeTask = async (p: {
+        writeActivity?: { writeToolCalls: number }
+      }): Promise<unknown> => {
         builderRuns++
+        // 1.4 — simulate a rung that wrote (see runLadder for why).
+        if (p?.writeActivity) p.writeActivity.writeToolCalls++
         writeFileSync(join(dir, 't.test.ts'), WEAKENED)
         return opts.sessionSucceeds === false
           ? {
@@ -818,6 +911,361 @@ if (!env) {
       { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
     )
   })
+
+  // ═════════════════════════════════════════════════════════════════════
+  // B3 (ring) — recurrence, not just consecutive equality
+  //
+  // T011 on 7624e83f oscillated task-tests → write-set → task-tests: every
+  // attempt reset a consecutive counter, rounds 3 and 4 burned the full
+  // ladder. The ring catches any recurrence inside its window.
+  // ═══════════════════════════════════════════════════════════════════
+
+  describe('B3 (ring) — stop-loss on a RECURRED (non-consecutive) fingerprint', () => {
+    test(
+      'an A,B,A,B 2-cycle trips the ring stop-loss while rungs remain (A,B,A on the last rung does not)',
+      async () => {
+        // MAX_BUILDER_ATTEMPTS = 3: an A,B,A recurrence completes exactly on
+        // the last rung, where the last-attempt guard (correctly) claims no
+        // saving — that terminal shape is the C1 post-loop park's job, not
+        // the stop-loss's. The ring's own cut is observable only when the
+        // recurrence is detected with a rung left to skip — which needs the
+        // 4th attempt of a 2-cycle, i.e. beyond this ladder's cap. What CAN
+        // be asserted here is the complement: A,B,A neither cuts (nothing to
+        // skip) nor FALSELY announces a stop-loss, and A,B,C keeps all
+        // rungs. The ring-vs-consecutive distinction is therefore pinned by
+        // the empty-chain test above (the old consecutive logic cleared the
+        // chain on every alternation; the ring does not) and by the C1
+        // parking test below, whose signature IS the alternation.
+        const run = await runLadder([
+          gateFail('expected 3 assertions, got 0'),
+          gateFail('unused variable foo'),
+          gateFail('expected 7 assertions, got 0')
+        ])
+        assert.equal(run.builderRuns, 3, 'nothing skippable on the last rung')
+        assert.ok(
+          !(run.failureReason ?? '').includes('stop-loss'),
+          'a stop-loss on the final attempt saves nothing and must not be claimed'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'distinct failures A,B,C keep all 3 builder attempts',
+      async () => {
+        const run = await runLadder([
+          gateFail('expected 3 assertions, got 0'),
+          gateFail('unused variable foo'),
+          gateFail('missing return type')
+        ])
+        assert.equal(run.builderRuns, 3, 'no recurrence inside the window — no cut')
+        assert.equal(run.escalated, true)
+        assert.ok(!(run.failureReason ?? '').includes('stop-loss'))
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'an empty-fingerprint attempt breaks the chain: A, (no signature), A does not trip',
+      async () => {
+        const run = await runLadder([
+          gateFail('expected 3 assertions, got 0'),
+          { overall: 'fail', gates: [] },
+          gateFail('expected 7 assertions, got 0')
+        ])
+        assert.equal(run.builderRuns, 3, 'the ring must clear on an empty signature')
+        assert.ok(!(run.failureReason ?? '').includes('stop-loss'))
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+  })
+
+  // ═════════════════════════════════════════════════════════════════════
+  // C1/C2 — blocked_by_scope: the write-set / task-tests alternation with a
+  // stable out-of-set file list parks the task instead of escalating.
+  //
+  // The live signature: the builder keeps producing the SAME out-of-set fix
+  // (stable `files` on the write-set gate) while task-tests stays red on the
+  // defect that fix would cure — each attempt "fixes" one gate and
+  // reintroduces the other.
+  // ═══════════════════════════════════════════════════════════════════
+
+  /** A gate report whose write-set failure carries a structured files array. */
+  const writeSetFail = (files: string[]): unknown => ({
+    overall: 'fail',
+    gates: [
+      {
+        name: 'write-set',
+        verdict: 'fail',
+        evidence: files.map((f) => `outside write-set: ${f}`),
+        files,
+        durationMs: 1
+      }
+    ]
+  })
+
+  const taskTestsFail = (msg: string): unknown => ({
+    overall: 'fail',
+    gates: [{ name: 'task-tests', verdict: 'fail', evidence: [msg], durationMs: 1 }]
+  })
+
+  describe('C1/C2 — blocked_by_scope parks the task for a human decision', () => {
+    test(
+      'alternating task-tests/write-set with a stable files list parks instead of escalating',
+      async () => {
+        const outOfSet = ['apps/enrollment/src/lib/enrollment/sign-gate.ts']
+        const run = await runLadder([
+          writeSetFail(outOfSet),
+          taskTestsFail('npm run test:e2e:portal exited 1'),
+          writeSetFail(outOfSet)
+        ])
+        // MAX_BUILDER_ATTEMPTS = 3: the 2-cycle completes on the last rung,
+        // exhaustion would escalate — the park intercepts BEFORE the premium
+        // rung (the exact 4-escalation waste of the motivating run).
+        assert.equal(run.builderRuns, 3, 'all builder rungs spent (2-cycle needs 3)')
+        assert.equal(
+          run.escalated,
+          false,
+          'the premium model must NOT be spent on a constraint it cannot change'
+        )
+        assert.match(run.failureReason ?? '', /blocked_by_scope/, 'the park reason names the lane')
+        assert.match(
+          run.failureReason ?? '',
+          /sign-gate\.ts/,
+          'and the exact files the human must grant'
+        )
+        // C2 — the telemetry row and the parked outcome kind.
+        const rows = blueprintTelemetryRepository
+          .findByBlueprint(run.blueprintId)
+          .filter((r: { kind: string }) => r.kind === 'scope_amendment')
+        assert.equal(rows.length, 1, 'exactly one scope_amendment row')
+        const data = rows[0].data as { proposedFiles?: string[] }
+        assert.deepEqual(data.proposedFiles, outOfSet)
+        // This test calls the ladder directly, so handleTaskCompletion (the
+        // row writer) did not run — the kind rides on the RESULT instead.
+        assert.equal(run.outcomeKind, 'needs_scope_amendment')
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'write-set failing twice on the same files WITHOUT task-tests is the B3 case, not C1',
+      async () => {
+        const run = await runLadder([
+          writeSetFail(['src/rogue.ts']),
+          writeSetFail(['src/rogue.ts']),
+          writeSetFail(['src/rogue.ts'])
+        ])
+        assert.equal(run.escalated, true, 'no alternation → no scope park, plain stop-loss')
+        assert.match(run.failureReason ?? '', /stop-loss/)
+        assert.ok(!(run.failureReason ?? '').includes('blocked_by_scope'))
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'a write-set failure whose files VARY each attempt does not trip C1',
+      async () => {
+        const run = await runLadder([
+          taskTestsFail('suite red'),
+          writeSetFail(['src/one.ts']),
+          taskTestsFail('suite red'),
+          writeSetFail(['src/two.ts'])
+        ])
+        assert.equal(
+          run.escalated,
+          true,
+          'no stable out-of-set target — the builder is still exploring, escalate'
+        )
+        assert.ok(!(run.failureReason ?? '').includes('blocked_by_scope'))
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+  })
+
+  // ── T003 — pre-dispatch prerequisite check ──
+
+  describe('T003 — pre-dispatch prerequisite: missing test interpreter fails fast', () => {
+    /** The effective (post-rewrite) per-task test command, captured at grading. */
+    interface PrereqRun {
+      builderRuns: number
+      failureReason: string | null
+      failureClass: string | undefined
+      attempts: number
+      telemetryRows: Array<Record<string, unknown>>
+      effectiveCommand: string | null
+      /** The temp repo root (workspacePath = executionPath in this harness). */
+      dir: string
+    }
+
+    /**
+     * Drive the real ladder with a venv-path test command; `venvExists` decides
+     * disk state. Without `packet`, the venv command comes from the
+     * workspace-level resolution (`resolveGateCommandsFor`); with `packet`, it
+     * comes from the PACKET's `testCommand` — the G2/G6 path that must flow
+     * through the SAME prerequisite check and the SAME venv rewrite.
+     */
+    async function runPrereqLadder(
+      venvExists: boolean,
+      packet?: { allowedFiles: string[]; testFiles: string[]; testCommand: string }
+    ): Promise<PrereqRun> {
+      const dir = makeRepo()
+      const bp = blueprintRepository.create({ workspaceId: wsId, title: 'T003 prereq' })
+      let task = blueprintTaskRepository.create({
+        blueprintId: bp.id,
+        taskId: 'T003',
+        wave: 1,
+        description: 'Doomed task',
+        filePathsJson: ['a.ts']
+      })
+
+      const venvRel = 'multiplexer/.venv-mux/Scripts/python.exe'
+      if (venvExists) {
+        mkdirSync(join(dir, 'multiplexer/.venv-mux/Scripts'), { recursive: true })
+        writeFileSync(join(dir, venvRel), '# stub')
+      }
+      if (packet) task = blueprintTaskRepository.setPacket(task.id, packet)
+
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const { effectiveTaskTestCommand } =
+        require('../blueprint-gates.service') as typeof import('../blueprint-gates.service')
+      const svc = new BlueprintBuildService()
+      let builderRuns = 0
+      svc.executeTask = async (p: {
+        writeActivity?: { writeToolCalls: number }
+      }): Promise<unknown> => {
+        builderRuns++
+        if (p?.writeActivity) p.writeActivity.writeToolCalls++
+        return { success: true, completion: null, discoveries: [] }
+      }
+      // The effective command the prerequisite check derives from — captured
+      // at grading time so the assertion sees the same string the check used.
+      let effectiveCommand: string | null = null
+      svc.gradeTask = async (gateCtx: unknown): Promise<unknown> => {
+        const eff = effectiveTaskTestCommand(gateCtx as never)
+        if (!effectiveCommand && eff) effectiveCommand = eff.command
+        return {
+          overall: 'pass',
+          gates: [{ name: 'task-tests', verdict: 'pass', evidence: [], durationMs: 1 }]
+        }
+      }
+      svc.resolveGateCommandsFor = (): unknown =>
+        packet
+          ? {}
+          : {
+              test: { command: `${venvRel} -m unittest discover -s tests`, provenance: 'declared' }
+            }
+      svc.readManifestsCached = (): unknown => ({})
+
+      const result = (await svc.executeTaskWithGates({
+        task,
+        blueprintId: bp.id,
+        workspaceId: wsId,
+        workspacePath: dir,
+        executionPath: dir,
+        phaseContext: {} as never,
+        priorDiscoveries: [],
+        tDispatch: Date.now(),
+        waveNum: 1
+      })) as {
+        failureReason?: string | null
+        failureClass?: string
+      }
+
+      const telemetryRows = blueprintTelemetryRepository
+        .findByBlueprint(bp.id)
+        .filter((r: any) => r.kind === 'gate' || r.kind === 'prerequisite')
+        .map((r: any) => ({ kind: r.kind, ...(r.dataJson ?? r.data) }))
+      const after = blueprintTaskRepository.findById(task.id)
+      try {
+        rmSync(dir, { recursive: true, force: true })
+      } catch {
+        /* best effort */
+      }
+      return {
+        builderRuns,
+        failureReason: result?.failureReason ?? null,
+        failureClass: result?.failureClass,
+        attempts: after.attempts,
+        telemetryRows,
+        effectiveCommand,
+        dir
+      }
+    }
+
+    test(
+      'missing venv interpreter → NO dispatch, prerequisite-unmet infra result, no attempt burned',
+      async () => {
+        const run = await runPrereqLadder(false)
+        assert.equal(run.builderRuns, 0, 'a doomed rung must not dispatch a builder session')
+        assert.equal(run.attempts, 0, 'no builder attempt may be consumed')
+        assert.ok(run.failureReason?.startsWith('prerequisite-unmet:'), `saw: ${run.failureReason}`)
+        assert.ok(run.failureReason?.includes('multiplexer/.venv-mux/Scripts/python.exe'))
+        assert.equal(run.failureClass, 'infra')
+        assert.ok(
+          run.telemetryRows.some(
+            (r) => r.kind === 'prerequisite' && r.prerequisite === 'test-interpreter'
+          ),
+          'a telemetry row must record the skipped dispatch (kind: prerequisite)'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'interpreter present → dispatch happens normally',
+      async () => {
+        const run = await runPrereqLadder(true)
+        assert.ok(run.builderRuns >= 1, 'the rung must dispatch when the prerequisite holds')
+        assert.equal(run.attempts, run.builderRuns)
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    // ── G2+G6 — the packet `testCommand` flows through the same fix stack ──
+
+    test(
+      'packet-declared venv command missing on disk → still fail-fast (no dispatch)',
+      async () => {
+        const run = await runPrereqLadder(false, {
+          allowedFiles: ['a.ts'],
+          testFiles: ['tests/test_a.py'],
+          testCommand: 'multiplexer/.venv-mux/Scripts/python.exe -m unittest discover -s tests'
+        })
+        assert.equal(
+          run.builderRuns,
+          0,
+          'a packet-declared doomed interpreter must not dispatch — before G2 the check read only commands.test and never saw it'
+        )
+        assert.equal(run.attempts, 0, 'no builder attempt may be consumed')
+        assert.ok(run.failureReason?.startsWith('prerequisite-unmet:'), `saw: ${run.failureReason}`)
+        assert.ok(run.failureReason?.includes('multiplexer/.venv-mux/Scripts/python.exe'))
+        assert.equal(run.failureClass, 'infra')
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+
+    test(
+      'packet command present in SOURCE → rewritten and dispatched (the gate grades the rewritten form)',
+      async () => {
+        const run = await runPrereqLadder(true, {
+          allowedFiles: ['a.ts'],
+          testFiles: ['tests/test_a.py'],
+          testCommand: 'multiplexer/.venv-mux/Scripts/python.exe -m unittest discover -s tests'
+        })
+        assert.ok(run.builderRuns >= 1, 'the rung must dispatch once the rewrite holds')
+        assert.equal(run.attempts, run.builderRuns, 'attempts consumed normally')
+        // workspacePath = executionPath = dir here, and the venv stub lives in
+        // dir — so the rewrite yields the absolute source path under dir.
+        assert.equal(
+          run.effectiveCommand,
+          `${join(run.dir, 'multiplexer', '.venv-mux', 'Scripts', 'python.exe')} -m unittest discover -s tests`,
+          'G6 must grade the REWRITTEN packet command — the raw relative token would never resolve'
+        )
+      },
+      { skipReason: GIT_AVAILABLE ? undefined : 'git not available' }
+    )
+  })
 }
 
 // ── B3 — the fingerprint itself (pure; runs without a DB) ──
@@ -872,6 +1320,81 @@ describe('failure fingerprint (B3)', () => {
     // report with no failing gate would trip the stop-loss on itself.
     assert.equal(fingerprintGateFailure({ overall: 'pass', gates: [] } as never), '')
     assert.equal(fingerprintGateFailure(null), '')
+  })
+})
+
+// ── C1 — the scope-block detector itself (pure; runs without a DB) ──
+
+describe('detectScopeBlock (C1)', () => {
+  const { detectScopeBlock } = require('../blueprint-build.service') as {
+    detectScopeBlock: (
+      log: readonly { failedGates: readonly string[]; writeSetFiles: readonly string[] }[]
+    ) => ReadonlySet<string> | undefined
+  }
+
+  const e = (failedGates: string[], writeSetFiles: string[] = []) => ({
+    failedGates,
+    writeSetFiles
+  })
+
+  test('the live signature parks: task-tests/write-set alternation, stable files', () => {
+    const files = ['apps/enrollment/src/lib/enrollment/sign-gate.ts']
+    const hit = detectScopeBlock([
+      e(['task-tests']),
+      e(['write-set'], files),
+      e(['task-tests']),
+      e(['write-set'], files)
+    ])
+    assert.ok(hit)
+    assert.deepEqual([...hit].sort(), files)
+  })
+
+  test('both gates must appear: write-set twice without task-tests is NOT C1', () => {
+    const hit = detectScopeBlock([
+      e(['write-set'], ['src/rogue.ts']),
+      e(['write-set'], ['src/rogue.ts'])
+    ])
+    assert.equal(hit, undefined)
+  })
+
+  test('a single write-set occurrence is not enough', () => {
+    const hit = detectScopeBlock([
+      e(['task-tests']),
+      e(['write-set'], ['src/a.ts']),
+      e(['task-tests'])
+    ])
+    assert.equal(hit, undefined)
+  })
+
+  test('varying file lists do not intersect → undefined', () => {
+    const hit = detectScopeBlock([
+      e(['task-tests']),
+      e(['write-set'], ['src/one.ts']),
+      e(['task-tests']),
+      e(['write-set'], ['src/two.ts'])
+    ])
+    assert.equal(hit, undefined)
+  })
+
+  test('the intersection wins, not the union: only the recurring paths are proposed', () => {
+    const hit = detectScopeBlock([
+      e(['task-tests']),
+      e(['write-set'], ['src/shared.ts', 'src/transient.ts']),
+      e(['task-tests']),
+      e(['write-set'], ['src/shared.ts'])
+    ])
+    assert.ok(hit)
+    assert.deepEqual([...hit], ['src/shared.ts'])
+  })
+
+  test('identical failed-gate combos throughout is NOT alternation (B3\u2019s case)', () => {
+    // task-tests AND write-set failing together every time — one combination,
+    // no alternation. This is a plain B3 recurrence, not a scope block.
+    const hit = detectScopeBlock([
+      e(['task-tests', 'write-set'], ['src/a.ts']),
+      e(['task-tests', 'write-set'], ['src/a.ts'])
+    ])
+    assert.equal(hit, undefined)
   })
 })
 

@@ -318,6 +318,139 @@ if (!env) {
       assert.equal(findTask(blueprintId, 'T001').status, 'pending')
     })
   })
+
+  // T003 — a deterministic gate stop-loss is not a retryable failure. These
+  // mirror the user-skip tests above: same seed, same stubs, different reason.
+  describe('retryPhase excludes deterministic stop-loss tasks (T003)', () => {
+    const STOP_LOSS_REASON =
+      'quality gate failed after escalation: task-tests — stop-loss after 2 identical ' +
+      'gate failure(s) (task-tests) — skipped 1 builder attempt(s), escalated to ' +
+      'blueprint:lead-review (command: multiplexer/.venv-mux/Scripts/python.exe -m unittest)'
+
+    function setStopLoss(blueprintId: string, taskId: string, reason: string): void {
+      const t = findTask(blueprintId, taskId)
+      blueprintTaskRepository.setOutcome(t.id, { failureReason: reason, outcomeKind: null })
+      // attempts >= 2: the stop-loss requires ≥2 identical failures
+      blueprintTaskRepository.recordAttempt(t.id)
+      blueprintTaskRepository.recordAttempt(t.id)
+    }
+
+    test('a stop-loss task stays failed while a plain failed task resets', () => {
+      const { blueprintId } = seedFailedBuild([
+        { taskId: 'T001', status: 'failed' },
+        { taskId: 'T002', status: 'failed' }
+      ])
+      setStopLoss(blueprintId, 'T002', STOP_LOSS_REASON)
+
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
+
+      assert.equal(findTask(blueprintId, 'T001').status, 'pending', 'plain failed task resets')
+      assert.equal(
+        findTask(blueprintId, 'T002').status,
+        'failed',
+        'stop-loss task must not re-run the identical experiment'
+      )
+      assert.ok(
+        findTask(blueprintId, 'T002').failureReason?.includes('stop-loss'),
+        'the reason survives so the UI can explain the exclusion'
+      )
+    })
+
+    test('belt-and-braces: attempts >= cap excludes even without stop-loss wording', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const t = findTask(blueprintId, 'T001')
+      blueprintTaskRepository.setOutcome(t.id, {
+        failureReason: 'some future wording drift',
+        outcomeKind: null
+      })
+      for (let i = 0; i < 6; i++) blueprintTaskRepository.recordAttempt(t.id)
+
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
+      assert.equal(findTask(blueprintId, 'T001').status, 'failed')
+    })
+
+    test('a NON-stop-loss failure still resets (ordinary retry path intact)', () => {
+      const { blueprintId } = seedFailedBuild([{ taskId: 'T001', status: 'failed' }])
+      const t = findTask(blueprintId, 'T001')
+      blueprintTaskRepository.setOutcome(t.id, {
+        failureReason: 'quality gate failed after escalation: task-tests',
+        outcomeKind: null
+      })
+      blueprintTaskRepository.recordAttempt(t.id)
+
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
+      assert.equal(findTask(blueprintId, 'T001').status, 'pending')
+    })
+
+    // G5 — the exclusion must not stall the wave. The excluded task stays
+    // `failed` (never reset to pending), so the resume pre-pass in executeWave
+    // has to account it as settled — the same accommodation a user-skipped
+    // task gets — or the wave never completes its bookkeeping and the build
+    // hangs with "0 tasks dispatched, 1 task unaccounted".
+    test('an excluded stop-loss task does not stall executeWave (G5)', async () => {
+      const { BlueprintBuildService } = require('../blueprint-build.service')
+      const svc = new BlueprintBuildService()
+
+      const { blueprintId } = seedFailedBuild([
+        { taskId: 'T001', status: 'failed' },
+        { taskId: 'T002', status: 'failed' }
+      ])
+      setStopLoss(blueprintId, 'T001', STOP_LOSS_REASON)
+
+      withStubbedMachine(() => blueprintService.retryPhase(blueprintId))
+
+      // T002 was reset to pending; T001 stays failed with the stop-loss reason.
+      assert.equal(findTask(blueprintId, 'T002').status, 'pending', 'the peer resets normally')
+
+      // Stub the LADDER (what dispatchTask starts), not dispatchTask itself:
+      // the real dispatch path must run so the wave's settle accounting sees a
+      // real in-flight entry for T002.
+      const dispatchedIds: string[] = []
+      svc.executeTaskWithGates = async (p: { task: { taskId: string } }): Promise<unknown> => {
+        dispatchedIds.push(p.task.taskId)
+        return {
+          success: true,
+          completion: { filesCreated: [], filesModified: [], summary: 'done' },
+          discoveries: []
+        }
+      }
+
+      const result = {
+        tasksCompleted: 0,
+        tasksResumed: 0,
+        filesCreated: [],
+        filesModified: [],
+        discoveries: [],
+        failed: false,
+        taskTimings: [],
+        taskFailures: []
+      }
+
+      await svc.executeWave({
+        waveNum: 1,
+        waveTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        allTasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+        blueprintId,
+        workspaceId: wsId,
+        workspacePath: '/tmp/nonexistent-workspace',
+        executionPath: '/tmp/nonexistent-workspace',
+        phaseContext: {} as never,
+        result
+      })
+
+      assert.ok(
+        !dispatchedIds.includes('T001'),
+        'the excluded stop-loss task must not be dispatched'
+      )
+      assert.ok(dispatchedIds.includes('T002'), 'the reset peer task must dispatch')
+      assert.equal(result.failed, false, 'an excluded task cannot fail the wave')
+      assert.equal(
+        result.tasksCompleted,
+        2,
+        'both tasks must be accounted: T002 by dispatch, T001 as settled-failed'
+      )
+    })
+  })
 }
 
 // summaryAsync() calls process.exit() — only run it as the entry point, or the

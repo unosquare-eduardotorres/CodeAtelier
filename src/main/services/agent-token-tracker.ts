@@ -292,4 +292,41 @@ export class AgentTokenTracker {
     this.cacheStats = { totalInput: 0, cacheRead: 0, cacheCreation: 0, turns: 0 }
     this.turnBreakdown = []
   }
+
+  /**
+   * F2 (2.2) — cache-read tokens of the FIRST turn only.
+   *
+   * `getCacheEfficiency().savedTokens` sums every turn of the rung, so cold
+   * rungs that ran several turns report >0 and Gate 1's resumed-vs-cold
+   * comparison stops discriminating. The first turn's cache read is the
+   * prefix-reuse signal: a resumed rung's first turn should read heavily, a
+   * cold rung's should not.
+   *
+   * In-memory path: `turnBreakdown` is append-ordered, so `[0]` is the first
+   * RECORDED turn — across a whole rung (and the ladder's re-runs share one
+   * tracker), the earliest entry is the honest "first turn". DB fallback:
+   * `turn_usage` rows sorted by turnNumber, earliest first. `undefined` when
+   * no turn was recorded (never a coerced 0 — that would read as "measured
+   * zero" in the report).
+   */
+  getFirstTurnCacheRead(conversationId?: string | null): number | undefined {
+    if (this.turnBreakdown.length > 0) {
+      return this.turnBreakdown.reduce(
+        (first, entry) => (entry.timestamp < first.timestamp ? entry : first),
+        this.turnBreakdown[0]
+      ).cacheReadTokens
+    }
+    if (conversationId) {
+      try {
+        const dbTurns = turnUsageRepository.findByConversation(conversationId)
+        if (dbTurns.length > 0) {
+          const first = dbTurns.reduce((a, b) => (a.turnNumber <= b.turnNumber ? a : b))
+          return first.cacheReadTokens
+        }
+      } catch (err) {
+        this.log.error('Failed to load turn usage from DB for first-turn cache read:', err)
+      }
+    }
+    return undefined
+  }
 }

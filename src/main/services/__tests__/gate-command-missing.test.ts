@@ -19,7 +19,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
 
-import { detectGateCommands, pythonRunnerPrefix, type WorkspaceManifests } from '../../../shared/gate-command-detect'
+import {
+  detectGateCommands,
+  pythonRunnerPrefix,
+  type WorkspaceManifests
+} from '../../../shared/gate-command-detect'
 import { buildTestCommand } from '../../../shared/gate-test-targeting'
 import {
   runWaveCommandGates,
@@ -87,7 +91,9 @@ describe('detectGateCommands — Python test command preference chain (F1a)', ()
 // ── F1c: command_missing → unverifiable ──
 
 /** A runner that answers every command from a scripted table. */
-function scriptedRunner(script: Record<string, { exitCode: number; output: string[] }>): CommandRunner {
+function scriptedRunner(
+  script: Record<string, { exitCode: number; output: string[] }>
+): CommandRunner {
   return async (command) => {
     const entry = script[command]
     if (!entry) {
@@ -190,6 +196,130 @@ describe('runWaveCommandGates — missing runner is unverifiable, never fail (F1
     const fullSuite = report.gates.find((g) => g.name === 'full-suite')
     assert.equal(fullSuite?.verdict, 'unverifiable')
     assert.equal(fullSuite?.reason, 'command_missing')
+  })
+
+  // T003 — the interpreter PATH is absent (not a PATH lookup). These are the
+  // signatures a venv-python declared in TASKS but missing from the worktree
+  // produces; before the fix they graded as a plain `fail` and fed the retry
+  // ladder forever.
+  test('cmd.exe "The system cannot find the path specified." (absent interpreter PATH) → unverifiable(command_missing)', async () => {
+    const report = await runWaveCommandGates(
+      waveCtx(
+        scriptedRunner({
+          'multiplexer/.venv-mux/Scripts/python.exe -m unittest discover -s tests': {
+            exitCode: 1,
+            output: ['The system cannot find the path specified.']
+          }
+        }),
+        'multiplexer/.venv-mux/Scripts/python.exe -m unittest discover -s tests'
+      )
+    )
+    const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+    assert.equal(fullSuite?.verdict, 'unverifiable', 'an absent interpreter path is environmental')
+    assert.equal(fullSuite?.reason, 'command_missing')
+  })
+
+  test('sh "no such file or directory" (absent interpreter PATH) → unverifiable(command_missing)', async () => {
+    const report = await runWaveCommandGates(
+      waveCtx(
+        scriptedRunner({
+          '.venv/bin/python -m pytest': {
+            exitCode: 1,
+            output: ['sh: .venv/bin/python: no such file or directory']
+          }
+        }),
+        '.venv/bin/python -m pytest'
+      )
+    )
+    const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+    assert.equal(fullSuite?.verdict, 'unverifiable')
+    assert.equal(fullSuite?.reason, 'command_missing')
+  })
+
+  // ── T003/G4 — the POSIX missing-path signature is shell-shaped, not a bare
+  // substring. `python: can't open file … No such file or directory` is a RED
+  // SUITE (the interpreter ran; the test file it was pointed at is absent) and
+  // the bare-substring form graded it `command_missing`, failing open. ──
+  describe('G4 — POSIX absent-interpreter signature is shell-shaped', () => {
+    test('`sh: 1: .venv/bin/python: not found` (with pid) → command_missing', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            '.venv/bin/python -m pytest': {
+              exitCode: 127,
+              output: ['sh: 1: .venv/bin/python: not found']
+            }
+          }),
+          '.venv/bin/python -m pytest'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(fullSuite?.verdict, 'unverifiable')
+      assert.equal(fullSuite?.reason, 'command_missing')
+    })
+
+    test('`bash: /x/.venv/bin/python: No such file or directory` (absolute) → command_missing', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            '/x/.venv/bin/python -m pytest': {
+              exitCode: 127,
+              output: ['bash: /x/.venv/bin/python: No such file or directory']
+            }
+          }),
+          '/x/.venv/bin/python -m pytest'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(fullSuite?.verdict, 'unverifiable')
+      assert.equal(fullSuite?.reason, 'command_missing')
+    })
+
+    test('`python: can\u2019t open file … No such file or directory` stays a hard FAIL (the G4 false positive)', async () => {
+      const report = await runWaveCommandGates(
+        waveCtx(
+          scriptedRunner({
+            '.venv/bin/python -m pytest tests/x.py': {
+              exitCode: 2,
+              output: ["python: can't open file 'tests/x.py': [Errno 2] No such file or directory"]
+            }
+          }),
+          '.venv/bin/python -m pytest tests/x.py'
+        )
+      )
+      const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+      assert.equal(
+        fullSuite?.verdict,
+        'fail',
+        'the interpreter RAN and could not find its script — that is a red suite, not an absent runner'
+      )
+      assert.equal(report.overall, 'fail')
+    })
+  })
+
+  test('new signatures respect the first-2-lines guard: quoted in a LATER line stays fail', async () => {
+    const report = await runWaveCommandGates(
+      waveCtx(
+        scriptedRunner({
+          'uv run pytest': {
+            exitCode: 1,
+            output: [
+              '============================= test session starts =============================',
+              'platform linux -- Python 3.12.13, pytest-9.1.1',
+              "FAILED tests/test_cli.py::test_spawn - AssertionError: stderr was 'The system cannot find the path specified.'",
+              '1 failed, 83 passed'
+            ]
+          }
+        }),
+        'uv run pytest'
+      )
+    )
+    const fullSuite = report.gates.find((g) => g.name === 'full-suite')
+    assert.equal(
+      fullSuite?.verdict,
+      'fail',
+      'a red suite quoting the new signature must not fail open'
+    )
   })
 })
 
@@ -294,7 +424,11 @@ function recordingRunner(seen: string[]): CommandRunner {
 }
 
 describe('taskTestCommand wiring — manifests drive the per-task runner prefix (Gap 1)', () => {
-  function pyCtx(dir: string, manifests: WorkspaceManifests | undefined, seen: string[]): GateTaskContext {
+  function pyCtx(
+    dir: string,
+    manifests: WorkspaceManifests | undefined,
+    seen: string[]
+  ): GateTaskContext {
     return {
       blueprintId: 'bp-1',
       taskId: 'T001',
@@ -319,10 +453,17 @@ describe('taskTestCommand wiring — manifests drive the per-task runner prefix 
       execFileSync('git', ['commit', '-q', '-m', 'baseline'], { cwd: dir })
 
       const seen: string[] = []
-      await captureGateBaseline(pyCtx(dir, {
-        pyprojectToml: '[project]\nname = "x"\ndependencies = ["pytest"]\n',
-        venvPython: 'C:\\Users\\aldair.garcia\\Documents\\Redshift_Agent\\.venv\\Scripts\\python.exe'
-      }, seen))
+      await captureGateBaseline(
+        pyCtx(
+          dir,
+          {
+            pyprojectToml: '[project]\nname = "x"\ndependencies = ["pytest"]\n',
+            venvPython:
+              'C:\\Users\\aldair.garcia\\Documents\\Redshift_Agent\\.venv\\Scripts\\python.exe'
+          },
+          seen
+        )
+      )
 
       assert.ok(
         seen.includes(

@@ -115,8 +115,19 @@ export function extractWorkPacket(rawTask: unknown): BlueprintWorkPacket | null 
   // unsafe values are dropped HERE, at the boundary — downstream code can then
   // treat a present `testCommand` as pre-vetted. The gate service re-checks as
   // defence-in-depth for packets that bypassed this parser.
+  //
+  // A command with no `testFiles` is dropped for the same reason and in the
+  // same place: `testFiles` is the declared contract for what a task may be
+  // graded on, and a command that runs something WIDER than that contract
+  // (observed in the wild: a 2-file CI task carrying the whole Docker +
+  // Playwright portal suite) grades the task on the entire system, including
+  // defects outside its write-set. A task that genuinely has no tests should
+  // leave `testFiles` empty — its test gate then reports `unverifiable`, which
+  // is the honest answer — not borrow a suite it does not own.
   const testCommand =
-    typeof source.testCommand === 'string' && isSafeGateCommand(source.testCommand)
+    typeof source.testCommand === 'string' &&
+    isSafeGateCommand(source.testCommand) &&
+    packet.testFiles !== undefined
       ? source.testCommand.trim()
       : undefined
   if (testCommand) packet.testCommand = testCommand

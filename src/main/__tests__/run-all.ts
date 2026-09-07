@@ -207,7 +207,10 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-build.service.test',
   '../services/__tests__/blueprint-send-outcome.test',
   '../services/__tests__/blueprint-session-resume.test',
+  '../services/__tests__/blueprint-retry-correctness.test',
+  '../services/__tests__/agent-session-host-surface.test',
   '../services/__tests__/opencode-seed-session.test',
+  '../services/__tests__/opencode-agent-preflight.test',
   '../services/__tests__/blueprint-verify-conditions.test',
   // ─── Run 31: Plan Hub — unified plan registry ───
   '../services/__tests__/audit-plan-mapper.test',
@@ -773,6 +776,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/blueprint-dag-ui.test',
   '../services/__tests__/blueprint-gates.test',
   '../services/__tests__/gate-command-missing.test',
+  '../services/__tests__/gate-command-rewrite.test',
+  '../services/__tests__/blueprint-stop-loss.test',
   '../services/__tests__/blueprint-verify-gates.test',
   '../services/__tests__/blueprint-gates-remediation.test',
   '../services/__tests__/blueprint-gate-attribution.test',
@@ -785,6 +790,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/blueprint-lead-review.test',
   '../services/__tests__/blueprint-peer-review.test',
   '../services/__tests__/blueprint-wave-gates-persist.test',
+  '../services/__tests__/blueprint-gate-worktree.test',
   // ─── Phase 1 improvements: E12 retry classes / E1 clarify auto-skip / A6 task commit ───
   '../services/__tests__/blueprint-phase1-improvements.test',
   // ─── Round 3: e2e-testing behavioral coverage ───

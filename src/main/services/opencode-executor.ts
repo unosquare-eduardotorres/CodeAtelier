@@ -1509,21 +1509,35 @@ export class OpenCodeExecutor {
       // internally ('default agent "davinci" not found') but still answers
       // 204 — the app then waits the full no-activity timeout on events that
       // can never arrive. Fail fast with the real cause instead.
+      // BP-WORKTREE-CWD: the check MUST be scoped to the same directory the
+      // prompt below is scoped to — an unscoped query answers for the
+      // server-root instance, which is not the instance that serves this
+      // prompt when cwd is a worktree.
       if (options.agent) {
         try {
-          const { missingExpected } = await this.validateAgents()
-          if (missingExpected.includes(options.agent)) {
+          const validation = await this.validateAgents(options.cwd)
+          if (
+            validation.status === 'missing' &&
+            validation.missingExpected.includes(options.agent)
+          ) {
             const msg =
               `OpenCode agent '${options.agent}' is not available on the server — ` +
-              `agent definitions were not found for this session's directory. ` +
-              `Prompt rejected before send.`
+              `${validation.message}. Prompt rejected before send.`
             openCodeLog.error(`[opencode] ${msg}`)
             yield { type: 'error', error: msg }
             return
           }
+          if (validation.status === 'unreachable') {
+            // We could not ask — that is not evidence the agent is absent, and
+            // must not block the prompt (the list endpoint differs from prompt
+            // resolution anyway).
+            openCodeLog.warn(
+              `[opencode] Agent preflight inconclusive (proceeding): ${validation.message}`
+            )
+          }
         } catch (err) {
-          // Validation itself failing must not block the prompt — the agent
-          // may still resolve (list endpoint differs from prompt resolution).
+          // Defensive: validateAgents swallows its own failures, but a throw
+          // from here must never be fatal to the prompt either.
           openCodeLog.warn(
             `[opencode] Agent preflight check failed (proceeding): ${(err as Error).message}`
           )
@@ -1919,16 +1933,43 @@ Troubleshooting:
   /**
    * MISS-7: Validate that our agent definitions loaded correctly in OpenCode.
    * Returns the list of available agents and flags any that failed to load.
+   *
+   * BP-WORKTREE-CWD: `/agent` is DIRECTORY-SCOPED, exactly like `/event` and
+   * `/session/{id}/prompt_async` (SDK: `AppAgentsData.query.directory`). An
+   * unscoped call answers for the SERVER-ROOT instance, whose agent registry
+   * is a different one from the instance that will serve a worktree prompt —
+   * so a caller about to prompt a directory-scoped session MUST pass that
+   * directory. Without it the preflight describes an instance nobody is
+   * talking to: a false negative rejects a build that would have worked, a
+   * false positive re-opens the 204-then-timeout the preflight exists to
+   * prevent. (agent-session.service WORKTREE-AGENTS mirrors the agent
+   * definitions into the worktree; this is the query side of that fix.)
+   *
+   * The `status` discriminator keeps three previously-conflated causes apart:
+   * `missing` means the server answered and the agent is genuinely absent —
+   * the only answer that carries enough information to reject a prompt.
+   * `unreachable` means we could not ask (no client, or the call threw) and
+   * therefore know nothing.
    */
-  async validateAgents(): Promise<{
+  async validateAgents(directory?: string): Promise<{
+    status: 'ok' | 'unreachable' | 'missing'
     agents: Array<{ name: string; model?: string; mode?: string }>
     missingExpected: string[]
+    message: string
   }> {
-    if (!this.client) return { agents: [], missingExpected: ['davinci'] }
+    const probed = directory ?? '<server root>'
+    if (!this.client) {
+      return {
+        status: 'unreachable',
+        agents: [],
+        missingExpected: [],
+        message: 'the OpenCode server was never connected — no agent list could be requested'
+      }
+    }
     try {
       const result = await (
         this.client as Record<string, unknown> & typeof this.client
-      ).app?.agents?.()
+      ).app?.agents?.(directory ? ({ query: { directory } } as never) : undefined)
       const agentList =
         ((result as Record<string, unknown>)?.data as Array<Record<string, unknown>>) ?? []
       const agents = agentList.map((a) => ({
@@ -1944,19 +1985,24 @@ Troubleshooting:
       // which opencode resolves case-sensitively against default_agent/commands)
       const expectedAgents = ['davinci', 'Grill', 'Audit']
       const missingExpected = expectedAgents.filter((name) => !agentNames.has(name))
+      const reported = `directory ${probed} reported [${agents.map((a) => a.name).join(', ')}]`
 
       if (missingExpected.length > 0) {
-        openCodeLog.warn(`[opencode] Missing expected agents: ${missingExpected.join(', ')}`)
-      } else {
-        openCodeLog.info(
-          `[opencode] Agent validation passed: ${agents.map((a) => a.name).join(', ')}`
+        // Step 3: log WHAT the server returned, not just what we wanted. An
+        // empty list points at an un-mirrored worktree; a partial list
+        // ([Grill, Audit]) points at a definition that failed to load.
+        openCodeLog.warn(
+          `[opencode] Missing expected agents: ${missingExpected.join(', ')} — ${reported}`
         )
+        return { status: 'missing', agents, missingExpected, message: reported }
       }
 
-      return { agents, missingExpected }
+      openCodeLog.info(`[opencode] Agent validation passed — ${reported}`)
+      return { status: 'ok', agents, missingExpected, message: reported }
     } catch (err) {
-      openCodeLog.warn(`[opencode] Agent validation failed: ${(err as Error).message}`)
-      return { agents: [], missingExpected: ['davinci'] }
+      const message = `agent list request for directory ${probed} failed: ${(err as Error).message}`
+      openCodeLog.warn(`[opencode] Agent validation inconclusive — ${message}`)
+      return { status: 'unreachable', agents: [], missingExpected: [], message }
     }
   }
 
@@ -1984,9 +2030,27 @@ Troubleshooting:
    * to the caller (agent-session.service owns persistence); this executor
    * stays repository-free by design. No-op when a mapping already exists — a
    * live mapping always outranks a persisted one.
+   *
+   * F6 (3.3) — a malformed id is refused outright instead of mapped. The
+   * cross-run resume path passes whatever the conversations row holds; a
+   * garbage id (empty after trim, wrong shape) would otherwise be mapped and
+   * later handed to the server as a resume target, failing opaquely at
+   * request time. OpenCode ids are `ses_<base58>`-shaped; the check is
+   * deliberately shape-based (not server-verified) because the executor has
+   * no server round-trip to spare here.
    */
   seedSession(conversationId: string, sessionId: string): void {
     if (!conversationId || !sessionId) return
+    // F6 (3.3) — shape guard, mirroring CLIExecutor's CLAUDE_SESSION_ID_PATTERN
+    // duty on the CLI side. `ses_` ids are alphanumeric+dash/underscore; a
+    // blank or punctuation-laden value is a corrupt row, not a session id.
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{7,}$/.test(sessionId)) {
+      openCodeLog.warn(
+        `[opencode] seedSession REFUSED malformed id for conversation=${conversationId} ` +
+          `— not mapping garbage (F6)`
+      )
+      return
+    }
     if (this.sessionMap.has(conversationId)) return
     this.sessionMap.set(conversationId, sessionId)
     openCodeLog.info(

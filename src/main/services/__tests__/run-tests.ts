@@ -442,8 +442,14 @@ const TEST_FILES: string[] = [
   './blueprint-send-outcome.test',
   // ─── A1 — durable session per build task (resume on resume-safe retries) ───
   './blueprint-session-resume.test',
+  // ─── Retry correctness (F11/F12: infra rungs never graded, cold write credit, cleanup sweep, frozen prefix) ───
+  './blueprint-retry-correctness.test',
+  // ─── F1/F2/F12 — AgentSessionService host surface (nudge stamp, terminal reason, first-turn cache read) ───
+  './agent-session-host-surface.test',
   // ─── A1 Phase 5 — OpenCode executor seedSession (resume substrate after restart) ───
   './opencode-seed-session.test',
+  // ─── BP-WORKTREE-CWD — agent preflight must query the session's directory ───
+  './opencode-agent-preflight.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
   './phase-summaries-verify.test',
   // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
@@ -655,6 +661,8 @@ const TEST_FILES: string[] = [
   '../../../shared/__tests__/blueprint-dag-ui.test',
   './blueprint-gates.test',
   './gate-command-missing.test',
+  './gate-command-rewrite.test',
+  './blueprint-stop-loss.test',
   './blueprint-verify-gates.test',
   './blueprint-gates-remediation.test',
   './blueprint-gate-attribution.test',
@@ -667,6 +675,7 @@ const TEST_FILES: string[] = [
   './blueprint-lead-review.test',
   './blueprint-peer-review.test',
   './blueprint-wave-gates-persist.test',
+  './blueprint-gate-worktree.test',
   // ─── Phase 1 improvements: E12 retry classes / E1 clarify auto-skip / A6 task commit ───
   './blueprint-phase1-improvements.test',
   // ─── Registry drift repair ───

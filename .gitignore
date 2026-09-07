@@ -44,3 +44,6 @@ coverage/
 
 # Chat attachment scratch (images pasted into an assistant session)
 .tmp-attach/
+
+# Session scratch dir (task dialogs, throwaway artifacts)
+tmp/

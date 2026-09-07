@@ -80,6 +80,24 @@ export type BlueprintTelemetryKind =
    */
   | 'test_restore'
   /**
+   * F11 (1.3) — one row per kernel revert of a failed attempt's out-of-set
+   * writes (`sweepOutOfWorksetWrites`), per-attempt or at ladder exit. The
+   * complement of `test_restore`: together they answer "how often does the
+   * kernel end up undoing builder damage, and does the retry after the sweep
+   * actually converge".
+   */
+  | 'retry_cleanup'
+  /**
+   * C2 — one row per scope-block parking: the builder repeatedly produced a
+   * fix whose files sat outside its write-set (task-tests/write-set
+   * alternation with a stable out-of-set list), and the task was parked with
+   * `needs_scope_amendment` instead of escalating. Carries the proposed
+   * files plus the per-attempt evidence, so the human decision (grant the
+   * files and retry / close out) and the detector's precision are both
+   * auditable after the fact.
+   */
+  | 'scope_amendment'
+  /**
    * E1-fix — one row per SPECIFY completion recording the CLARIFY auto-skip
    * decision (skipped or not, markerCount, veto state, reason). Without it
    * there is no way to tell "the skip works" from "it never fires" — in
@@ -119,6 +137,22 @@ export type BlueprintTelemetryKind =
    * row is the watch metric (data: { count, total }).
    */
   | 'unproven_outcomes'
+  /**
+   * T003/G5 — one row per retryPhase EXCLUSION of a deterministic stop-loss
+   * task (data: kept, recordedCommand, currentCommand). The exclusion was
+   * previously visible only in the log, which dies with the app: this row is
+   * what lets an operator see, after the run, WHICH commands were compared
+   * when the exclusion held — and lift it by changing one of them.
+   */
+  | 'stop_loss_exclusion'
+  /**
+   * T003 — one row per PRE-DISPATCH prerequisite skip (a resolved test command
+   * whose interpreter token does not exist on this machine). Distinct from
+   * `gate`: nothing executed here, and a kind-grouped query must be able to
+   * separate "the gate graded a missing command" from "the ladder refused to
+   * dispatch on one".
+   */
+  | 'prerequisite'
 
 export interface BlueprintTelemetryRow {
   id: string

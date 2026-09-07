@@ -939,6 +939,31 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     return result
   })
 
+  // ── blueprint:gateWorktree — B2: run the wave command gates on demand ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GATE_WORKTREE, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_GATE_WORKTREE
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+    const workspaceId = requireString(args, 'workspaceId', ch)
+
+    // A5 fix, same as preflightRun: derive workspacePath server-side
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace?.repoPath) {
+      bpLog.warn(`[${ch}] No workspace found for ${workspaceId}`)
+      throw new Error(`Workspace not found: ${workspaceId}`)
+    }
+
+    bpLog.info(`[${ch}] Manual gate run for ${blueprintId}`)
+
+    return blueprintBuildService.gateWorktreeOnDemand({
+      blueprintId,
+      workspaceId,
+      workspacePath: workspace.repoPath
+    })
+  })
+
   // ── blueprint:getConstitution — Get workspace constitution ──
 
   ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_CONSTITUTION, (event, rawArgs: unknown) => {

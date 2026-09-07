@@ -62,6 +62,16 @@ export type BlueprintTaskOutcomeKind =
   /** A human closed the task out — the work is done, just not provable here. */
   | 'accepted_by_user'
   /**
+   * C2 — the builder found a fix outside its write-set and the gates will
+   * not let it land (alternating task-tests/write-set failures with a stable
+   * out-of-set file list). The task is parked pending a human decision:
+   * grant the files (then retry) or leave it failed. Distinct from a plain
+   * failure because the evidence says the work is DONE, only the scope is
+   * wrong — escalating burns a premium model on a constraint it cannot
+   * change.
+   */
+  | 'needs_scope_amendment'
+  /**
    * A2 — the turn ended without a completion block and the recovery nudge
    * rescued text into the stream. The work stands, but the nudge rate is the
    * metric A2 exists to move, so the rescue is visible per task.

@@ -64,7 +64,10 @@ function readResumeRows(blueprintId: string): Array<Record<string, unknown>> {
   if (!db) return []
   const rows = db
     .prepare(
-      `SELECT data FROM blueprint_telemetry WHERE blueprint_id = ? AND kind = 'session_resume'`
+      // F4 (2.3) — the column is `data_json` (see the telemetry row interface:
+      // `data_json: string`); the old `SELECT data` threw after the 14-minute
+      // run, on every assertion.
+      `SELECT data_json AS data FROM blueprint_telemetry WHERE blueprint_id = ? AND kind = 'session_resume'`
     )
     .all(blueprintId) as Array<{ data: string | null }>
   return rows.flatMap((r) => {
@@ -202,12 +205,22 @@ test.describe('A1 — session resume (live LLM)', () => {
       expect(r.silentReason, 'a failed-silently row names its sub-reason').toBeTruthy()
     }
 
-    // A green run with zero resumes is a valid negative result — the spec
-    // only fails when resume bookkeeping is INCONSISTENT.
+    // F4 (2.3) — a green run with zero resumes is NOT a silent pass. The
+    // spec's purpose is to measure resume accounting; when the run produced
+    // no resume rows at all there was nothing to measure — fail loudly with
+    // an annotated reason instead of exiting green (a green exit on an
+    // unmeasured run is how A1 stayed unbenchmarked for two cycles).
+    const totalRows = attempted.length + succeeded.length + failedSilently.length
     test.info().annotations.push({
       type: 'resumeRows',
       description: JSON.stringify(rows)
     })
+    if (totalRows === 0) {
+      test.skip(
+        true,
+        'zero session_resume rows — nothing to measure (run predates A1, flag off, or the run never retried)'
+      )
+    }
 
     // ── Cleanup ──
     await page

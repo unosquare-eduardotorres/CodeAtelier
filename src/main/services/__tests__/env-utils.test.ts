@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import { delimiter } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
-import { buildEnvWithPath } from '../env-utils'
+import { buildEnvWithPath, buildGateEnv } from '../env-utils'
 
 /** Snapshot + restore process.env around a mutation. */
 function withEnv(patch: Record<string, string | undefined>, fn: () => void): void {
@@ -20,6 +20,11 @@ function withEnv(patch: Record<string, string | undefined>, fn: () => void): voi
     'HOME',
     'USERPROFILE',
     'NODE_ENV',
+    'NODE_OPTIONS',
+    'CI',
+    'FORCE_COLOR',
+    'npm_config_production',
+    'npm_lifecycle_event',
     'CLAUDE_SHIM_DIR'
   ])
   for (const k of keys) saved[k] = process.env[k]
@@ -132,6 +137,118 @@ describe('env-utils › buildEnvWithPath', () => {
       const env = buildEnvWithPath()
       assert.equal(env.PATH, undefined)
     })
+  })
+})
+
+describe('env-utils › buildGateEnv', () => {
+  // The W16 incident: NODE_ENV=production in the launching shell made `npm ci`
+  // skip devDependencies in the TARGET repo, so its test runner was absent and
+  // three suites reported bogus reds ("No such built-in module: node:").
+  test('deletes NODE_ENV=production from the parent environment', () => {
+    withEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/me',
+        USERPROFILE: undefined,
+        NODE_ENV: 'production'
+      },
+      () => {
+        const env = buildGateEnv()
+        assert.equal('NODE_ENV' in env, false)
+        assert.equal(env.NODE_ENV, undefined)
+      }
+    )
+  })
+
+  test('deletes npm_* lifecycle/config leakage from a `npm run dev` launch', () => {
+    withEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/me',
+        USERPROFILE: undefined,
+        NODE_ENV: 'development',
+        npm_config_production: 'true',
+        npm_lifecycle_event: 'dev',
+        npm_config_user_agent: 'npm/10.0.0 node/v22.0.0'
+      },
+      () => {
+        const env = buildGateEnv()
+        assert.equal('npm_config_production' in env, false)
+        assert.equal('npm_lifecycle_event' in env, false)
+        assert.equal('npm_config_user_agent' in env, false)
+        const npmKeys = Object.keys(env).filter((k) => k.startsWith('npm_'))
+        assert.deepEqual(npmKeys, [])
+      }
+    )
+  })
+
+  test('deletes NODE_OPTIONS and vitest worker identity', () => {
+    withEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/me',
+        USERPROFILE: undefined,
+        NODE_OPTIONS: '--import tsx',
+        VITEST: 'true',
+        VITEST_POOL_ID: '3',
+        VITEST_WORKER_ID: '7'
+      },
+      () => {
+        const env = buildGateEnv()
+        assert.equal('NODE_OPTIONS' in env, false)
+        assert.equal('VITEST' in env, false)
+        assert.equal('VITEST_POOL_ID' in env, false)
+        assert.equal('VITEST_WORKER_ID' in env, false)
+      }
+    )
+  })
+
+  test('sets CI=true and FORCE_COLOR=0 (deterministic output)', () => {
+    withEnv({ PATH: '/usr/bin', HOME: '/home/me', USERPROFILE: undefined }, () => {
+      const env = buildGateEnv()
+      assert.equal(env.CI, 'true')
+      assert.equal(env.FORCE_COLOR, '0')
+    })
+  })
+
+  // Regression guard vs buildEnvWithPath: a packaged app launched from Finder
+  // has a minimal PATH, and without the prepends npm-based gates report
+  // command_missing → environmentalFailure.
+  test('keeps the three PATH prepends (no regression vs buildEnvWithPath)', () => {
+    withEnv({ PATH: '/usr/bin', HOME: '/home/me', USERPROFILE: undefined }, () => {
+      const parts = (buildGateEnv().PATH ?? '').split(delimiter)
+      assert.deepEqual(parts.slice(0, 4), [
+        '/usr/local/bin',
+        '/opt/homebrew/bin',
+        '/home/me/.local/bin',
+        '/usr/bin'
+      ])
+    })
+  })
+
+  test('parent process.env is not mutated', () => {
+    withEnv(
+      {
+        PATH: '/usr/bin',
+        HOME: '/home/me',
+        USERPROFILE: undefined,
+        NODE_ENV: 'production',
+        npm_config_production: 'true',
+        // Explicitly cleared: the assertion below would otherwise depend on
+        // whether THIS test run happens to execute under a CI runner.
+        CI: undefined,
+        FORCE_COLOR: undefined
+      },
+      () => {
+        buildGateEnv()
+        assert.equal(process.env.NODE_ENV, 'production')
+        assert.equal(process.env.npm_config_production, 'true')
+        assert.equal(process.env.CI, undefined)
+        assert.equal(process.env.FORCE_COLOR, undefined)
+        // PATH untouched — the prepend lives only in the returned copy.
+        assert.equal((process.env.PATH ?? '').split(delimiter)[0], '/usr/bin')
+      }
+    )
   })
 })
 

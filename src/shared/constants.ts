@@ -780,6 +780,9 @@ export const IPC_CHANNELS = {
   BLUEPRINT_PREFLIGHT_RUN: 'blueprint:preflightRun',
   BLUEPRINT_PREFLIGHT_RESULT: 'blueprint:preflightResult',
 
+  // B2 — gate the worktree on demand (manual gate run between waves)
+  BLUEPRINT_GATE_WORKTREE: 'blueprint:gateWorktree',
+
   // E2E Testing
   TESTING_LIST_SCENARIOS: 'testing:listScenarios',
   TESTING_PREFLIGHT: 'testing:preflight',

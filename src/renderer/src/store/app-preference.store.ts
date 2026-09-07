@@ -33,7 +33,10 @@ const defaultPreferences: AppPreferences = {
   autoSkipClarify: true,
   blueprintSessionResume: true,
   // A1 Phase 4 — default OFF (cross-restart resume needs its measured window)
-  blueprintCrossRunResume: false
+  blueprintCrossRunResume: false,
+  // F11 (1.3) — retry-cleanup sweep default ON (mirrors the repository's
+  // getBool default)
+  blueprintRetryCleanup: true
 }
 
 const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
@@ -58,7 +61,8 @@ const preferenceStorageKeys: Record<AppPreferenceKey, string> = {
   blueprintFailureMemory: 'blueprint_failure_memory',
   autoSkipClarify: 'auto_skip_clarify',
   blueprintSessionResume: 'blueprint_session_resume',
-  blueprintCrossRunResume: 'blueprint_cross_run_resume'
+  blueprintCrossRunResume: 'blueprint_cross_run_resume',
+  blueprintRetryCleanup: 'blueprint_retry_cleanup'
 }
 
 interface AppPreferenceState {

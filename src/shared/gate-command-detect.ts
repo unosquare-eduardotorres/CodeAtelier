@@ -95,8 +95,15 @@ function dotnetCwd(projects: readonly string[]): string | undefined {
   return dir === '' ? undefined : dir
 }
 
-/** Quote a path that would otherwise split into multiple shell arguments. */
-function quoteIfNeeded(path: string): string {
+/**
+ * Quote a path that would otherwise split into multiple shell arguments.
+ *
+ * Exported (T003/G3) so the venv rewrite (`gate-command-rewrite.ts`) quotes its
+ * absolute replacements exactly like the detector quotes `venvPython` — two
+ * copies of one quoting rule would drift, and a source root with spaces would
+ * break only one of them.
+ */
+export function quoteIfNeeded(path: string): string {
   return /\s/.test(path) ? `"${path}"` : path
 }
 

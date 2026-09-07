@@ -43,8 +43,16 @@ const TURN_LIMIT_STALLED_MSG =
 export class AgentRecoveryManager {
   private readonly s: AgentSessionHost
 
-  constructor(session: unknown) {
-    this.s = session as AgentSessionHost
+  /**
+   * F1 (2.1) — typed host reference. Was `unknown`, which erased every field
+   * access the manager makes: `this.s.lastTurnNudged` could drift from
+   * `AgentSessionHost` (and did — see the accessor below) without a compile
+   * error. The session still passes `this as unknown as AgentSessionHost` at
+   * the construction site; the type HERE is what makes the next drift fail
+   * the build.
+   */
+  constructor(session: AgentSessionHost) {
+    this.s = session
   }
 
   // ── N7: Shared auto-continue logic ──────────────────────────────────────
@@ -510,6 +518,12 @@ export class AgentRecoveryManager {
       // actual recovery: a nudge that produced nothing is a failure to recover,
       // not a nudge outcome worth tracking as a rescue.
       if (recoveryResult.recovered) this.s.lastTurnNudged = true
+      // T003/A5 — the mirror flag for the FALLBACK: when no real recovery
+      // landed, the nudge service synthesized a completion marker the model
+      // never signed. BUILD stamps outcome_kind='unproven' on it — the fallback
+      // keeps the run moving, but the work is attested by the pipeline, not
+      // the model (same honesty the protocol-miss pass already applies).
+      if (!recoveryResult.recovered) this.s.lastTurnFallbackSigned = true
       const recovCtx = this.s.activeStreams?.get(conversationId)
       if (recovCtx) {
         recovCtx.accumulatedText += recoveryResult.text

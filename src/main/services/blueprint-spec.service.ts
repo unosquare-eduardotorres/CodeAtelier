@@ -80,6 +80,8 @@ export function stripClarificationsSection(md: string): string {
   return md.slice(0, idx).trimEnd()
 }
 
+import { API_ERROR_TERMINAL_REASONS } from './agent-terminal-reasons'
+
 /**
  * Corrective nudge sent when the model's turn yields zero parseable fenced blocks.
  * Uses the EXACT fence names the parsers expect (blueprint-clarify-findings, etc.).
@@ -89,18 +91,6 @@ export const CLARIFY_CORRECTION_MESSAGE =
   'Your last turn contained none of the required fenced blocks. ' +
   'Re-emit the findings block (```blueprint-clarify-findings) and either a questions block ' +
   '(```blueprint-clarify-questions) or the completion block (```blueprint-phase-complete).'
-
-/**
- * API-ERROR-FAIL: terminal reasons that mean the model/API call itself died
- * (e.g. GLM `api_error`). A turn that ended with one of these produced no real
- * content — the corrective nudge cannot fix a dead API call, and the free-text
- * fallback would strand the user in awaitingInput forever.
- */
-const API_ERROR_TERMINAL_REASONS: ReadonlySet<string> = new Set([
-  'api_error',
-  'model_error',
-  'failed'
-])
 
 /** Thrown when a clarify turn ended with an API-error terminal reason and no parseable output. */
 export class ClarifyApiError extends Error {
@@ -880,10 +870,7 @@ export class BlueprintSpecService extends EventEmitter {
 
         // Drive the same UI flow as the fenced-block path
         const questionsBlock: ClarifyQuestionsBlock = { questions: newQuestions }
-        this.previouslyAskedQuestions.set(
-          blueprintId,
-          this.mergeAsked(blueprintId, newQuestions)
-        )
+        this.previouslyAskedQuestions.set(blueprintId, this.mergeAsked(blueprintId, newQuestions))
         this.clarifyUiState.set(blueprintId, { questions: questionsBlock, awaitingInput: false })
         this.pushClarifyState(blueprintId, workspaceId)
         this.safeEmit('clarifyQuestions', { blueprintId, workspaceId, questions: questionsBlock })

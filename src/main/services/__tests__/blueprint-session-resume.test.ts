@@ -673,6 +673,32 @@ if (!env) {
           appPreferenceRepository.set('blueprint_cross_run_resume', 'false')
           rmSync(dir, { recursive: true, force: true })
         })()
+
+        // ── Phase 12 (F5/3.2): master OFF × cross-run ON — the kill switch wins ──
+        await (async () => {
+          const dir = makeRepo()
+          const bp = blueprintRepository.create({ workspaceId: wsId, title: 'F5 kill switch' })
+          const task = seedTask(bp.id)
+          const convId = `blueprint-build-${bp.id}-${task.taskId}`
+          const { blueprintService } = require('../blueprint.service')
+          blueprintService.ensurePhaseConversation(wsId, bp.id, 'build', convId)
+          conversationRepository.updateSessionId(convId, 'sess-killswitch-1')
+
+          const { rungExecutions } = await runLadder({
+            dir,
+            blueprintId: bp.id,
+            results: [rungSuccess()],
+            flagOn: false, // master kill switch OFF
+            crossRunOn: true // sub-flag ON — must NOT override the master
+          })
+          assert.equal(
+            rungExecutions[0].resumeSessionId,
+            undefined,
+            'the master kill switch (blueprintSessionResume OFF) forces cold even with the cross-run sub-flag on'
+          )
+          appPreferenceRepository.set('blueprint_cross_run_resume', 'false')
+          rmSync(dir, { recursive: true, force: true })
+        })()
       })
     })
 

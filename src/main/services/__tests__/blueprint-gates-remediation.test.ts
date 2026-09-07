@@ -30,10 +30,7 @@ import {
 } from '../blueprint-gates.service'
 import { extractWorkPacket } from '../../../shared/work-packet-parser'
 import { isSafeGateCommand } from '../../../shared/gate-command-types'
-import {
-  buildTestCommand,
-  detectTestToolchain
-} from '../../../shared/gate-test-targeting'
+import { buildTestCommand, detectTestToolchain } from '../../../shared/gate-test-targeting'
 import { scanAddedLinesForStubs } from '../../../shared/gate-analysis'
 import type { BlueprintWorkPacket } from '../../../shared/blueprint-types'
 
@@ -146,10 +143,7 @@ function ctxFor(
   }
 }
 
-function verdictOf(
-  gates: { name: string; verdict: string }[],
-  name: string
-): string | undefined {
+function verdictOf(gates: { name: string; verdict: string }[], name: string): string | undefined {
   return gates.find((g) => g.name === name)?.verdict
 }
 
@@ -181,8 +175,11 @@ describe('R1.1 — packet testCommand sanitisation', () => {
     }
   })
 
-  test('extractWorkPacket keeps a safe testCommand', () => {
-    const packet = extractWorkPacket({ testCommand: 'npm run test:unit' })
+  test('extractWorkPacket keeps a safe testCommand alongside testFiles', () => {
+    const packet = extractWorkPacket({
+      testFiles: ['src/feature.test.ts'],
+      testCommand: 'npm run test:unit'
+    })
     assert.equal(packet?.testCommand, 'npm run test:unit')
   })
 
@@ -227,6 +224,87 @@ describe('R1.1 — packet testCommand sanitisation', () => {
     ]) {
       assert.ok(isSafeGateCommand(safe), `must be safe: ${safe}`)
     }
+  })
+})
+
+// ═══════════════════════════════════════════════════════════════════════════
+// B1 — testCommand is honoured ONLY alongside testFiles
+//
+// The motivating defect (blueprint 7624e83f T011): a 2-file CI task whose
+// packet declared `testFiles: []` but `testCommand: npm run test:e2e:portal`
+// — the whole Docker + Playwright portal suite. The task was graded on the
+// entire system, burned 15 attempts on a defect outside its write-set, and
+// the prompt's own contract ("leave testFiles empty… reports unverifiable,
+// which is honest") was overridden by the broader command.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('B1 — packet testCommand requires testFiles', () => {
+  test('extractWorkPacket drops a safe testCommand when the packet declares no testFiles', () => {
+    const packet = extractWorkPacket({
+      allowedFiles: ['.github/workflows/ci.yml'],
+      testFiles: [],
+      testCommand: 'npm run test:e2e:portal'
+    })
+    assert.equal(
+      packet?.testCommand,
+      undefined,
+      'command broader than an empty test scope is dropped'
+    )
+    assert.deepEqual(packet?.allowedFiles, ['.github/workflows/ci.yml'], 'other fields survive')
+  })
+
+  test('extractWorkPacket keeps the testCommand when testFiles is present', () => {
+    const packet = extractWorkPacket({
+      allowedFiles: ['src/a.ts'],
+      testFiles: ['src/a.test.ts'],
+      testCommand: 'npm run test:unit -- src/a.test.ts'
+    })
+    assert.equal(packet?.testCommand, 'npm run test:unit -- src/a.test.ts')
+  })
+
+  test('defence-in-depth: a bypassed packet (testCommand, no testFiles) yields task-tests unverifiable/no_command', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      '.github/workflows/ci.yml': 'name: ci\n'
+    })
+    // A packet that bypassed the parser — or predates the parse-time drop —
+    // still carries the suite-wide command with an empty file list. The gate
+    // service must treat it as absent, exactly like an unsafe command.
+    const ctx = ctxFor(dir, gitRunner({ 'npm run test:e2e:portal': { exitCode: 1 } }), {
+      packet: {
+        allowedFiles: ['.github/workflows/ci.yml'],
+        testCommand: 'npm run test:e2e:portal'
+      }
+    })
+    const baseline = await captureGateBaseline(ctx)
+    assert.equal(baseline.redProof, 'unavailable')
+
+    write(dir, { '.github/workflows/ci.yml': 'name: ci\n# edited\n' })
+    const report = await runGates(ctx, baseline)
+    const tests = report.gates.find((g) => g.name === 'task-tests')!
+    assert.equal(tests.verdict, 'unverifiable')
+    assert.equal(tests.reason, 'no_command')
+    // And the honest message names the empty test scope.
+    assert.match(tests.evidence[0] ?? '', /no test command resolved/)
+  })
+
+  test('B1 does not regress R3.1: a packet with testFiles and no command still gets a detected template', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo({
+      'src/feature.ts': 'export const a = 1\n',
+      'src/feature.test.ts': "test('a', () => {})\n"
+    })
+    const ctx = ctxFor(dir, redThenGreenRunner('npx vitest run src/feature.test.ts'), {
+      packet: { allowedFiles: ['src/feature.ts'], testFiles: ['src/feature.test.ts'] },
+      manifests: { packageJson: '{"devDependencies":{"vitest":"^3.2.0"}}' }
+    })
+    const baseline = await captureGateBaseline(ctx)
+    write(dir, { 'src/feature.ts': 'export const a = 2\n' })
+    const report = await runGates(ctx, baseline)
+    const tests = report.gates.find((g) => g.name === 'task-tests')!
+    // The detected template must still fire when the file list is non-empty.
+    assert.equal(tests.verdict, 'pass')
   })
 })
 
@@ -407,19 +485,15 @@ describe('R1.2 — parallel-wave attribution (exemptFiles)', () => {
 
     const results = await Promise.all(
       ['a', 'b'].map(async (which) => {
-        const ctx: GateTaskContext = ctxFor(
-          dir,
-          redThenGreenRunner('run-task-tests'),
-          {
-            taskId: `T00${which.toUpperCase()}`,
-            packet: {
-              allowedFiles: [`src/${which}.ts`],
-              testFiles: [`src/${which}.test.ts`],
-              testCommand: 'run-task-tests'
-            },
-            exemptFiles: which === 'a' ? ['src/b.ts'] : ['src/a.ts']
-          }
-        )
+        const ctx: GateTaskContext = ctxFor(dir, redThenGreenRunner('run-task-tests'), {
+          taskId: `T00${which.toUpperCase()}`,
+          packet: {
+            allowedFiles: [`src/${which}.ts`],
+            testFiles: [`src/${which}.test.ts`],
+            testCommand: 'run-task-tests'
+          },
+          exemptFiles: which === 'a' ? ['src/b.ts'] : ['src/a.ts']
+        })
         const baseline = await captureGateBaseline(ctx)
         return runGates(ctx, baseline)
       })
@@ -825,10 +899,7 @@ describe('R2.2 — stub-rule narrowing', () => {
   })
 
   test('NotImplementedError is still a stub', () => {
-    assert.equal(
-      scanAddedLinesForStubs(line('  raise NotImplementedError("soon")')).length,
-      1
-    )
+    assert.equal(scanAddedLinesForStubs(line('  raise NotImplementedError("soon")')).length, 1)
   })
 })
 
@@ -924,10 +995,7 @@ describe('R3.1 — detectTestToolchain', () => {
   })
 
   test('jest detected from devDependencies', () => {
-    assert.equal(
-      detectTestToolchain({ packageJson: '{"devDependencies":{"jest":"^29"}}' }),
-      'jest'
-    )
+    assert.equal(detectTestToolchain({ packageJson: '{"devDependencies":{"jest":"^29"}}' }), 'jest')
   })
 
   test('pytest from pyproject or config file', () => {
@@ -1071,7 +1139,10 @@ describe('R3.3 — wave-level command gates', () => {
     assert.equal(report.overall, 'fail', 'a red suite must fail the wave')
     const suite = report.gates.find((g) => g.name === 'full-suite')!
     assert.equal(suite.verdict, 'fail')
-    assert.ok(suite.evidence.some((e) => e.includes('exited 1')), 'evidence names the failure')
+    assert.ok(
+      suite.evidence.some((e) => e.includes('exited 1')),
+      'evidence names the failure'
+    )
   })
 
   test('P0.2 — absent test command → unverifiable/no_command, never a spawn, wave not failed', async () => {
@@ -1164,7 +1235,10 @@ describe('R3.3 — wave-level command gates', () => {
     const report = await runGates(ctx, baseline)
 
     assert.ok(!report.gates.some((g) => g.name === 'lint'), 'lint belongs to the drain point')
-    assert.ok(report.gates.some((g) => g.name === 'build'), 'build runs per task')
+    assert.ok(
+      report.gates.some((g) => g.name === 'build'),
+      'build runs per task'
+    )
     assert.deepEqual(calls, ['run-build', 'run-task-tests'])
   })
 

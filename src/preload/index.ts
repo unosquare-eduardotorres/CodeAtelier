@@ -3452,6 +3452,25 @@ const api = {
     hasWarnings: boolean
   } | null> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RUN, args),
 
+  /** B2 — run the wave command gates (lint/build/full-suite) on the blueprint's
+   *  worktree right now, from the UI. Returns the same GateReport shape the
+   *  wave-gates artifact carries, so the existing renderer renders it. */
+  blueprintGateWorktree: (args: {
+    blueprintId: string
+    workspaceId: string
+  }): Promise<{
+    gates: Array<{
+      name: string
+      verdict: string
+      evidence: string[]
+      reason?: string
+      durationMs: number
+    }>
+    overall: string
+    startedAt?: string
+    shortCircuited?: boolean
+  }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GATE_WORKTREE, args),
+
   onBlueprintPreflightResult: (
     cb: (data: {
       blueprintId: string

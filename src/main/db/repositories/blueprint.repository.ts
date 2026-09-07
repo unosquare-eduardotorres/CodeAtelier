@@ -697,6 +697,9 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
     outcome: {
       failureReason?: string | null
       outcomeKind?: BlueprintTaskOutcomeKind | null
+      /** C2 — the human-facing note that goes with a parked outcome
+       * (`needs_scope_amendment`): the exact files to grant or refuse. */
+      resolutionNote?: string | null
     }
   ): BlueprintTask | undefined {
     const sets: string[] = []
@@ -708,6 +711,10 @@ export class BlueprintTaskRepository extends BaseRepository<BlueprintTaskRow, Bl
     if ('outcomeKind' in outcome) {
       sets.push('outcome_kind = ?')
       values.push(outcome.outcomeKind ?? null)
+    }
+    if ('resolutionNote' in outcome) {
+      sets.push('resolution_note = ?')
+      values.push(outcome.resolutionNote ?? null)
     }
     if (sets.length === 0) return this.findById(id)
 

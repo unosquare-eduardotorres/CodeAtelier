@@ -32,6 +32,7 @@ import type {
 } from '../../shared/preflight-types'
 import { detectGateCommands, type WorkspaceManifests } from '../../shared/gate-command-detect'
 import type { GateCommandSet } from '../../shared/gate-command-types'
+import { buildGateEnv } from './env-utils'
 
 const pfLog = log.scope('blueprint-preflight')
 
@@ -202,7 +203,11 @@ export async function captureLoginShellEnv(): Promise<Set<string>> {
           {
             encoding: 'utf-8',
             timeout: 5000,
-            env: { ...process.env },
+            // Probes target-repo CLI tools: same scrub as gate spawns, so a
+            // stray NODE_ENV/npm_* in the launching shell cannot skew what the
+            // probe sees (and the PATH prepends keep npm discoverable from a
+            // Finder-launched app).
+            env: buildGateEnv(),
             windowsHide: true
           },
           (err, stdout) => {
@@ -324,6 +329,10 @@ export function runProbeAsync(
           timeout: PROBE_BUDGET_MS,
           cwd: cwd || undefined,
           shell: process.platform === 'win32', // A8: .cmd shim resolution
+          // Same scrub as gate spawns: probes must not inherit this app's
+          // NODE_ENV/npm_* state, and a Finder-launched app needs the PATH
+          // prepends to find the target repo's CLI tools at all.
+          env: buildGateEnv(),
           stdio: 'pipe',
           windowsHide: true
         } as Parameters<typeof execFile>[2],

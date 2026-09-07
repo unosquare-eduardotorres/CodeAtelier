@@ -115,7 +115,7 @@ The packet is also the machine contract. After each task runs, the system checks
 | `forbiddenFiles` | Any file changed here **fails the task**. |
 | `testFiles` | Hashed before and after. Any edit, deletion, skip or test-count drop **fails the task**. |
 | `acceptanceCriteria[].howVerified` | Read by the reviewer to settle whether the task is done. |
-| `testCommand` | Run before the task (must fail) and after (must pass). |
+| `testCommand` | Run before the task (must fail) and after (must pass). **Honoured only when `testFiles` is non-empty** — a packet with no `testFiles` has its `testCommand` dropped, and its test gate reports `unverifiable`. A command wider than the task's own test files will be rejected: it grades the task on the entire system, including defects outside its write-set. |
 
 So an inaccurate packet fails correct work. Take the write-set seriously: list every file the task legitimately needs to touch, including files it creates.
 
@@ -123,7 +123,7 @@ So an inaccurate packet fails correct work. Take the write-set seriously: list e
 
 **Author the failing tests as part of task generation.** Each task that changes behaviour gets a task earlier in its wave chain (or the same task) that writes the test files, and names them in `testFiles`. The builder's job is then to make a red test green — which the system can prove — rather than to self-report success, which it cannot.
 
-If a task genuinely cannot be tested (pure config, a generated file), leave `testFiles` empty and say why in the description. That task's test gate reports *unverifiable*, which is honest, rather than *pass*, which would be a lie.
+If a task genuinely cannot be tested (pure config, a generated file), leave `testFiles` empty and say why in the description. That task's test gate reports *unverifiable*, which is honest, rather than *pass*, which would be a lie. **Do not give such a task a `testCommand`** — the command would run a suite broader than the task's own (empty) test scope and grade it on the whole system.
 
 ### Task sizing
 
@@ -172,6 +172,7 @@ Before completing, verify:
 - [ ] Same-wave tasks have no file overlap
 - [ ] No acceptance criterion contains a hard-coded count or file total
 - [ ] Every validating/gating task declares `dependsOn` for what it checks
+- [ ] No task's `testCommand` runs a suite wider than its own `testFiles`
 - [ ] Total tasks reasonable (5-30 for typical features)
 
 ## Discoveries

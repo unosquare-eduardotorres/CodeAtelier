@@ -230,6 +230,24 @@ export function markComplete(dag: TaskDag, taskId: string): string[] {
 }
 
 /**
+ * 1.4 — the inverse of `markComplete`: a task that settled FAILED was
+ * requeued (stop-loss with zero own work), so its dependents' in-degree must
+ * be RESTORED — the requeued task is pending again and its dependents are
+ * blocked on it again. Idempotent guard: never raises a dependent's in-degree
+ * above its structural `deps.length`, so a double requeue cannot wedge the
+ * graph. Returns [] for unknown ids (defensive).
+ */
+export function markReadyAgain(dag: TaskDag, taskId: string): void {
+  const node = dag.nodes.get(taskId)
+  if (!node) return
+  for (const dep of node.dependents) {
+    const d = dag.nodes.get(dep)
+    if (!d) continue
+    d.inDegree = Math.min(d.deps.length, d.inDegree + 1)
+  }
+}
+
+/**
  * Transitive dependents of the roots (excluding the roots themselves) —
  * the reachability set the failure cascade skips: only tasks that actually
  * depend on a failed task are skipped; healthy peers keep running.

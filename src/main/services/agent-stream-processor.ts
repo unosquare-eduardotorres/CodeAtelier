@@ -102,6 +102,10 @@ export class AgentStreamProcessor {
 
     if (meta.terminalReason) {
       streamState.lastTerminalReason = meta.terminalReason
+      // F12 (1.1) — mirror onto the session so callers that hold the session
+      // (BUILD's executeTask) can read the turn's terminal reason without the
+      // stream-local state. Reset per send like lastSendOutcome.
+      this.s.lastTerminalReason = meta.terminalReason
       this.s.log.info(`[PIPELINE:terminal-reason] ${meta.terminalReason} for ${conversationId}`)
     }
 

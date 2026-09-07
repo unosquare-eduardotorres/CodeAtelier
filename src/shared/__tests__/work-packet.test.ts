@@ -80,13 +80,19 @@ describe('extractWorkPacket', () => {
   })
 
   test('R1.1: a safe testCommand survives sanitisation', () => {
+    // testFiles included: the parser (pre-T003 working-tree change) drops a
+    // testCommand whose packet declares no testFiles — the declared contract
+    // for what a task may be graded on. The sanitisation property under test
+    // here is the METACHARACTER filter, not the testFiles coupling.
     for (const safe of [
       'npm run test:unit',
       'npx vitest run src/a.test.ts',
       'pytest tests/test_a.py',
       'go test ./pkg/foo'
     ]) {
-      const packet = extractWorkPacket({ packet: { testCommand: safe } })
+      const packet = extractWorkPacket({
+        packet: { testCommand: safe, testFiles: ['src/a.test.ts'] }
+      })
       assert.equal(packet?.testCommand, safe)
     }
   })

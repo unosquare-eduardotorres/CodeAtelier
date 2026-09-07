@@ -159,9 +159,12 @@ function main(): void {
     let attempted = 0
     let succeeded = 0
     let failedSilently = 0
+    let resumedButFailed = 0
     const silentByReason = new Map<string, number>()
     const declinedByReason = new Map<string, number>()
     const cacheReads: number[] = []
+    const firstTurnResumed: number[] = []
+    const firstTurnCold: number[] = []
     for (const row of resumeRows) {
       let data: Record<string, unknown> = {}
       try {
@@ -175,6 +178,9 @@ function main(): void {
         if (typeof data.cacheReadInputTokens === 'number' && data.cacheReadInputTokens > 0) {
           cacheReads.push(data.cacheReadInputTokens)
         }
+        if (typeof data.firstTurnCacheReadTokens === 'number') {
+          firstTurnResumed.push(data.firstTurnCacheReadTokens)
+        }
       } else if (data.status === 'failed-silently') {
         failedSilently++
         const reason = typeof data.silentReason === 'string' ? data.silentReason : 'unknown'
@@ -182,6 +188,10 @@ function main(): void {
         if (typeof data.cacheReadInputTokens === 'number' && data.cacheReadInputTokens > 0) {
           cacheReads.push(data.cacheReadInputTokens)
         }
+      } else if (data.status === 'resumed-but-failed') {
+        // F7 (2.4) — a resumed rung that failed. Previously invisible: its
+        // attempted row was the last trace.
+        resumedButFailed++
       } else if (data.status === 'declined') {
         const reason = typeof data.reason === 'string' ? data.reason : 'unknown'
         declinedByReason.set(reason, (declinedByReason.get(reason) ?? 0) + 1)
@@ -189,7 +199,7 @@ function main(): void {
     }
     console.log(
       `\nsession_resume honesty: attempted=${attempted} succeeded=${succeeded} ` +
-        `failed-silently=${failedSilently} ` +
+        `failed-silently=${failedSilently} resumed-but-failed=${resumedButFailed} ` +
         `declined=${[...declinedByReason.values()].reduce((a, b) => a + b, 0)}`
     )
     for (const [reason, n] of [...declinedByReason].sort((a, b) => b[1] - a[1])) {
@@ -212,16 +222,69 @@ function main(): void {
           `or the executor never reported usage`
       )
     }
+    // F2 (2.2) — the DISCRIMINATING Gate 1 metric. The sum above conflates a
+    // multi-turn cold rung with a resumed one; the first-turn read does not.
+    // The cold baseline is every attempted-but-declined rung's first turn…
+    // which the session_resume table does not carry — so it is read from
+    // turn_usage below when the DB has any rows for these conversations.
+    if (firstTurnResumed.length > 0) {
+      const mean = Math.round(firstTurnResumed.reduce((a, b) => a + b, 0) / firstTurnResumed.length)
+      console.log(
+        `  first-turn cache-read (resumed): mean=${mean.toLocaleString()} tokens ` +
+          `over ${firstTurnResumed.length} rung(s) — the prefix-reuse signal proper`
+      )
+    }
+    if (firstTurnCold.length > 0) {
+      const mean = Math.round(firstTurnCold.reduce((a, b) => a + b, 0) / firstTurnCold.length)
+      console.log(
+        `  first-turn cache-read (cold baseline): mean=${mean.toLocaleString()} tokens over ${firstTurnCold.length} rung(s)`
+      )
+    }
     if (failedSilently > 0) {
       console.log(
         `  ⚠ ${failedSilently} granted resume(s) ran COLD silently — executor dropped the id ` +
           `(see failed-silently/* above; fix forward, the rows carry the sub-reason)`
       )
     }
-    if (attempted > 0 && succeeded + failedSilently === 0) {
+    if (resumedButFailed > 0) {
+      console.log(
+        `  ℹ ${resumedButFailed} resumed rung(s) FAILED after resuming — F7 terminal rows; ` +
+          `join with task_failure on executeAttempt for the cause`
+      )
+    }
+    if (attempted > 0 && succeeded + failedSilently + resumedButFailed === 0) {
       console.log(
         `  ⚠ resumes attempted but none resolved — rungs never returned; check for crashes mid-rung`
       )
+    }
+
+    // F14 (3.5) — token gates marked n/a, never a zero-measurement. The
+    // GLM/OpenCode backend records no usage for blueprint-build (61 rows, all
+    // zero, on the audited run), so a bare "0" reads as a measurement of
+    // zero rather than an uninstrumented backend. Any report printed from
+    // such a run must say so — otherwise Gate 1 is "answered" by a number
+    // the backend never reported.
+    try {
+      const usageTotal = db
+        .prepare(`SELECT COUNT(*) AS n FROM usage_log WHERE feature = 'blueprint-build'`)
+        .get() as { n: number }
+      if (usageTotal.n > 0) {
+        const usageZero = db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM usage_log WHERE feature = 'blueprint-build'
+               AND input_tokens = 0 AND cache_read_tokens = 0 AND cache_creation_tokens = 0`
+          )
+          .get() as { n: number }
+        if (usageZero.n === usageTotal.n) {
+          console.log(
+            `  ℹ token gates are n/a on this store — the backend (GLM/OpenCode) reports no ` +
+              `usage (${usageZero.n}/${usageTotal.n} blueprint-build rows all-zero). ` +
+              `A zero here is NOT a measurement; Gate 1 needs a Claude-backed run.`
+          )
+        }
+      }
+    } catch {
+      /* usage_log absent in this store — sections 1–2 stand alone */
     }
   }
 

@@ -141,11 +141,23 @@ export interface AgentSessionHost {
   maxTurnsContinuations: number
   lastSendOutcome: SendOutcome
   /**
+   * F12 (1.1) — terminal reason of the LAST turn, straight off the `_meta`
+   * chunk (`[PIPELINE:terminal-reason]`). Exposed so BUILD can refuse to grade
+   * a rung that died on an API error; see `agent-terminal-reasons.ts`.
+   */
+  lastTerminalReason: string | undefined
+  /**
    * A2 — set when the last turn ended without a completion summary and the
    * recovery nudge recovered text into the stream. Read by BUILD to stamp
    * `outcome_kind='nudged'` so the nudge rate is queryable per task.
    */
   lastTurnNudged: boolean
+  /**
+   * T003/A5 — set when the recovery FALLBACK fired instead of a real recovery:
+   * the pipeline synthesized a completion marker the model never signed. Read
+   * by BUILD to stamp `outcome_kind='unproven'` (mirrors `lastTurnNudged`).
+   */
+  lastTurnFallbackSigned: boolean
   /**
    * A1 (Phase 3) — what the executor actually did with the last send()'s resume
    * request: `resumed` / `mismatched` (server returned a different id) /

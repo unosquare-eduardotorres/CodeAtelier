@@ -191,7 +191,14 @@ export function splitContentBlocks(
  * role-specific pieces (prompt, MCP, control callbacks, intent detection).
  */
 export class AgentSessionService extends AgentBaseService {
-  protected readonly log = chatAgentLogger
+  /**
+   * F1 (2.1) — public (was protected): the delegates read `log` off the host
+   * surface, and the typed `AgentRecoveryManager`/`AgentStreamProcessor`
+   * constructors (no longer `unknown`) now check every field this class
+   * passes them at compile time — the F1 drift guarantee without the
+   * `implements` clause's all-or-nothing visibility rewrite.
+   */
+  override readonly log = chatAgentLogger
 
   // Compaction defaults — initialization values before applyCompactionThresholds runs.
   // The real thresholds are resolved dynamically based on the model's effective context
@@ -211,8 +218,9 @@ export class AgentSessionService extends AgentBaseService {
   /** Minimum gap between idle-timer restarts, so per-token chunks don't churn timers. */
   private static readonly IDLE_TIMER_RESET_THROTTLE_MS = 5_000
 
-  private workspacePath: string | null = null
-  private workspaceId: string | null = null
+  // F1 (2.1) — public: AgentSessionHost exposes these to the delegates.
+  public workspacePath: string | null = null
+  public workspaceId: string | null = null
   /**
    * Session-level track owner, when this session is not a chat.
    *
@@ -226,11 +234,12 @@ export class AgentSessionService extends AgentBaseService {
    *
    * Null for chats, which resolve by conversation id per turn.
    */
-  private trackOwner: { ownerKind: TrackOwnerKind; ownerId: string } | null = null
+  public trackOwner: { ownerKind: TrackOwnerKind; ownerId: string } | null = null
   /** Most-recently-started conversation — for backward-compat queries (logging, UI, bridge). */
-  private _lastActiveConversationId: string | null = null
+  public _lastActiveConversationId: string | null = null
   /** Per-conversation stream contexts (text accumulator + abort controller). */
-  private readonly activeStreams = new Map<
+  // F1 (2.1) — public: AgentSessionHost exposes the map to the delegates.
+  public readonly activeStreams = new Map<
     string,
     import('./agent-session-host').ActiveStreamContext
   >()
@@ -252,9 +261,9 @@ export class AgentSessionService extends AgentBaseService {
   private currentStartSha: string | undefined
   /** Per-session set of fact IDs already injected — prevents re-injection on subsequent turns. */
   private injectedFactIds = new Set<string>()
-  private currentMode: ConversationMode = 'plan'
-  private costPreference: CostPreference = 'balanced'
-  private llmProvider: LLMProvider = 'claude'
+  public currentMode: ConversationMode = 'plan'
+  public costPreference: CostPreference = 'balanced'
+  public llmProvider: LLMProvider = 'claude'
   /**
    * GLM-6: Explicit per-run provider selection supplied by the adapter (the Grill /
    * Council / Audit provider toggles). Undefined for workspace-driven sessions.
@@ -263,17 +272,19 @@ export class AgentSessionService extends AgentBaseService {
    */
   private providerOverride: LLMProvider | undefined
   /** Active executor backend — derived from llmProvider on start(). Default: 'cli'. */
-  private executorBackend: ExecutorBackend = 'cli'
+  public executorBackend: ExecutorBackend = 'cli'
 
   /** Maps conversationId → SDK session_id for resume. */
-  private readonly sessionMap = new Map<string, string>()
+  // F1 (2.1) — public: AgentSessionHost exposes the map to the delegates
+  // (recovery manager, stream processor) that manage session ids.
+  readonly sessionMap = new Map<string, string>()
   /**
    * Conversations whose CLI session was left with an unanswered user turn (the
    * turn was aborted or yielded zero chunks). Consumed — and cleared — by the
    * next resolveSession() call, which starts a fresh session instead of
    * resuming. See recordTurnBoundary().
    */
-  private readonly poisonedSessions = new Set<string>()
+  readonly poisonedSessions = new Set<string>()
 
   /** Whether the last executeStream was terminated by the interaction timeout. */
   private _lastTimedOut = false
@@ -312,15 +323,19 @@ export class AgentSessionService extends AgentBaseService {
     return executor
   }
   /** CLI MCP config writer — generates --mcp-config JSON for Claude CLI sessions. */
-  private readonly mcpConfigWriter = new CliMcpConfigWriter()
+  // F1 (2.1) — public: AgentSessionHost exposes it to the executor factory.
+  readonly mcpConfigWriter = new CliMcpConfigWriter()
   /** IPC bridge — Unix domain socket for control-actions MCP server ↔ Electron main process. */
-  private ipcBridge: IpcBridge | null = null
+  // F1 (2.1) — public: AgentSessionHost exposes it to the stream processor.
+  public ipcBridge: IpcBridge | null = null
 
-  private readonly tokenTracker = new AgentTokenTracker()
-  private readonly circuitBreaker = new AgentCircuitBreaker()
+  // F1 (2.1) — `implements AgentSessionHost` requires public visibility on
+  // the sub-service fields the interface exposes to delegates.
+  readonly tokenTracker = new AgentTokenTracker()
+  readonly circuitBreaker = new AgentCircuitBreaker()
   readonly recoveryNudge = new RecoveryNudgeService()
   /** S8: Tracks tool activity for structured summaries, plan state, and compaction decisions */
-  private readonly toolActivityAccumulator = new ToolActivityAccumulator()
+  readonly toolActivityAccumulator = new ToolActivityAccumulator()
 
   // ── Delegates (extracted from this file to reduce complexity) ──
   private readonly streamProcessor: AgentStreamProcessor
@@ -330,17 +345,17 @@ export class AgentSessionService extends AgentBaseService {
   compactSuggestThreshold = AgentSessionService.DEFAULT_COMPACT_SUGGEST_THRESHOLD
   compactAutoThreshold = AgentSessionService.DEFAULT_COMPACT_AUTO_THRESHOLD
   compactSuggested = false
-  private compactCount = 0
+  public compactCount = 0
   /** Turns elapsed since last compact suggestion — re-suggest every 3 turns if dismissed. */
   turnsSinceCompactSuggestion = 0
-  private lastContextTokens: number | undefined
+  public lastContextTokens: number | undefined
   /** Effective context window for the current session (model-aware: 200K for Opus, 1M for Sonnet). */
   effectiveContextWindow: number | undefined
 
   // F5: Per-conversation resume target — prevents cross-conversation races.
   // Previously instance-level, which meant switching conversations could
   // consume the wrong conversation's resumeAt target.
-  private readonly pendingResumeAt = new Map<string, string>()
+  public readonly pendingResumeAt = new Map<string, string>()
 
   /** Auto-continue on max_turns: how many times we've resumed so far this message. */
   maxTurnsContinuations = 0
@@ -352,6 +367,45 @@ export class AgentSessionService extends AgentBaseService {
    * lands. Read via wasNudged() by the BUILD service for outcome tracking.
    */
   private _lastTurnNudged = false
+  /**
+   * T003/A5 — the recovery FALLBACK signed the last turn's completion (no real
+   * recovery text landed). Reset per send; read via wasFallbackSigned() by the
+   * BUILD service to stamp `outcome_kind='unproven'`.
+   */
+  private _lastTurnFallbackSigned = false
+  /**
+   * F12 (1.1) — terminal reason of the last send()'s turn, mirrored from the
+   * stream state by the stream processor. Reset per send. Read via
+   * getLastTerminalReason().
+   */
+  private _lastTerminalReason: string | undefined
+  /**
+   * AgentSessionHost surface — the delegates (recovery manager, stream
+   * processor) write through these proxied accessors. The F1 lesson: the
+   * manager wrote `this.s.lastTurnNudged` while the class only had
+   * `_lastTurnNudged` and no accessor, and `constructor(session: unknown)`
+   * erased the check — 3 recoveries, 0 stamps.
+   */
+  get lastTurnNudged(): boolean {
+    return this._lastTurnNudged
+  }
+  set lastTurnNudged(v: boolean) {
+    this._lastTurnNudged = v
+  }
+
+  get lastTurnFallbackSigned(): boolean {
+    return this._lastTurnFallbackSigned
+  }
+  set lastTurnFallbackSigned(v: boolean) {
+    this._lastTurnFallbackSigned = v
+  }
+
+  get lastTerminalReason(): string | undefined {
+    return this._lastTerminalReason
+  }
+  set lastTerminalReason(v: string | undefined) {
+    this._lastTerminalReason = v
+  }
   /**
    * A1 (Phase 3) — outcome of the last send()'s RESUME request. See
    * getLastResumeOutcome(). Reset to 'none' at the top of each send (same
@@ -373,7 +427,7 @@ export class AgentSessionService extends AgentBaseService {
   /** SES-02: Guard flag to prevent concurrent ensureIpcBridge() calls from creating duplicate bridges. */
   private ipcBridgeStarting = false
 
-  private controlToolState: ControlToolState = {
+  public controlToolState: ControlToolState = {
     plan: false,
     askUser: false
   }
@@ -408,12 +462,19 @@ export class AgentSessionService extends AgentBaseService {
     return this._opencodeOwnerKey
   }
 
+  // F1 (2.1) — public (was a private constructor param): AgentSessionHost
+  // exposes `adapter` to the delegates, and `implements AgentSessionHost`
+  // makes the visibility mismatch a compile error.
   constructor(
-    private readonly adapter: AgentRoleAdapter,
+    readonly adapter: AgentRoleAdapter,
     instanceId?: string
   ) {
     super()
     this.instanceId = instanceId
+    // F1 (2.1) — the delegates receive the REAL type now (not `unknown`): the
+    // recovery manager writes `this.s.lastTurnNudged`, and an untyped
+    // constructor erased that check. The class itself declares `implements
+    // AgentSessionHost`, so the next drift is a compile error here too.
     this.streamProcessor = new AgentStreamProcessor(this)
     this.recoveryManager = new AgentRecoveryManager(this)
     this.executorFactory = new AgentExecutorFactory(this)
@@ -605,8 +666,21 @@ export class AgentSessionService extends AgentBaseService {
    * nudge rescued? BUILD stamps `outcome_kind='nudged'` on the task so the
    * nudge rate per run is queryable without log scraping.
    */
+  // F1 (2.1) — the host interface carries the field; the class method is the
+  // public read API for callers that hold the session (BUILD). Both exist on
+  // purpose (see the accessors above).
   wasNudged(): boolean {
     return this._lastTurnNudged
+  }
+
+  /**
+   * T003/A5 — did the last send() end with a PIPELINE-SYNTHESIZED completion
+   * (the recovery-nudge fallback), not a model-signed one? BUILD stamps
+   * `outcome_kind='unproven'`: the fallback keeps the run moving but the work
+   * itself was never attested by the model.
+   */
+  wasFallbackSigned(): boolean {
+    return this._lastTurnFallbackSigned
   }
 
   /**
@@ -621,12 +695,36 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   /**
+   * F12 (1.1) — terminal reason of the last send()'s turn, for callers that
+   * hold the session (BUILD's executeTask) rather than the stream state.
+   * Reset per send, exactly like lastSendOutcome.
+   */
+  getLastTerminalReason(): string | undefined {
+    return this._lastTerminalReason
+  }
+
+  /**
    * A1 (Phase 3) — cumulative cache-read tokens for one conversation's turns
    * (in-memory while the session lives, DB-backed after a restart). This is
    * the number Gate 1 needs on the telemetry row — no join required.
    */
   getCacheReadTokens(conversationId: string): number {
     return this.tokenTracker.getCacheEfficiency(conversationId).savedTokens
+  }
+
+  /**
+   * F2 (2.2) — cache-read tokens of the conversation's FIRST turn only.
+   *
+   * `getCacheReadTokens` sums every turn of the rung, so a cold rung that ran
+   * several turns reports >0 and Gate 1's "resumed ≫ cold" comparison loses
+   * all discriminating power. The first turn's cache read is the honest
+   * signal: it is exactly the prefix the resume exists to reuse — a resumed
+   * rung's first turn should read the cache heavily, a cold rung's should
+   * not. Falls back to the DB-backed turn_usage rows the same way
+   * getCacheEfficiency does (turn 1 by turnNumber, earliest by timestamp).
+   */
+  getFirstTurnCacheRead(conversationId: string): number | undefined {
+    return this.tokenTracker.getFirstTurnCacheRead(conversationId)
   }
 
   getCacheEfficiency(): CacheEfficiencyReport {
@@ -1787,6 +1885,10 @@ export class AgentSessionService extends AgentBaseService {
     this.lastSendOutcome = 'ok'
     // A2 — per-send reset: the flag describes THIS turn's nudge outcome only.
     this._lastTurnNudged = false
+    // T003/A5 — per-send reset, same reasoning as _lastTurnNudged.
+    this._lastTurnFallbackSigned = false
+    // F12 (1.1) — per-send reset, same place as lastSendOutcome.
+    this._lastTerminalReason = undefined
     // A1 (Phase 3) — per-send reset: the value describes THIS turn's resume
     // request only. 'none' is the honest default (cold send / OpenCode native
     // resume, where the executor reports no explicit refusal).
@@ -1921,7 +2023,9 @@ export class AgentSessionService extends AgentBaseService {
   }
 
   // Local per-conversation turn counter (adapter may also maintain its own).
-  private readonly turnCounts = new Map<string, number>()
+  // F1 (2.1) — public: AgentSessionHost exposes the counter map to the
+  // recovery manager (max_turns continuation increments it).
+  readonly turnCounts = new Map<string, number>()
   private incrementTurnCount(conversationId: string, hasExistingSession: boolean): number {
     // When resuming an existing session, the first turn after resume should be
     // treated as turn 2+ so adapters skip one-time injections.
@@ -2002,7 +2106,7 @@ export class AgentSessionService extends AgentBaseService {
     // onMemory removed — memory tools now on dedicated memory MCP server
   }
 
-  private emitAdapterEvent(evt: AgentSessionEventName, payload: unknown): void {
+  public emitAdapterEvent(evt: AgentSessionEventName, payload: unknown): void {
     this.emit(evt, payload)
   }
 
@@ -2094,7 +2198,7 @@ export class AgentSessionService extends AgentBaseService {
 
   // ── Stream orchestration ──────────────────────────────────────────
 
-  private async executeStream(opts: ExecuteStreamOptions): Promise<void> {
+  public async executeStream(opts: ExecuteStreamOptions): Promise<void> {
     // Stash for max_turns auto-continue replay (handleStreamError needs these)
     this.lastStreamOpts = opts
 
@@ -2493,7 +2597,7 @@ export class AgentSessionService extends AgentBaseService {
    * Resolve the context window size for the active local LLM model.
    * Sync path — checks static RECOMMENDED_LOCAL_MODELS only; falls back to 128K.
    */
-  private resolveLocalContextWindow(): number {
+  public resolveLocalContextWindow(): number {
     return this.executorFactory.resolveLocalContextWindow()
   }
 
@@ -2548,6 +2652,25 @@ export class AgentSessionService extends AgentBaseService {
     // WRONG-EXECUTOR-03: Pass the resolved executor to buildCLIExecuteOptions so
     // the canContinue check uses THIS conversation's executor, not _lastActiveConversationId's.
     const cliOptions = this.buildCLIExecuteOptions(params, executor)
+    // F8 — 1h prompt-cache TTL for every CLI turn. Default is 5m; BUILD's
+    // overload backoff ladder reaches 240s, so the third backoff ALREADY
+    // exceeds the default TTL and pays a full re-prefill on a cache that had
+    // not gone cold for any reason but time. The 1h TTL keeps the prefix
+    // (system prompt + task context, identical across rungs of a ladder)
+    // warm through the whole ladder. Verified field-side via
+    // `ephemeral_1h_input_tokens` in the usage rows.
+    //
+    // Scoped to the spawn env here so chat/council/grill sessions inherit it
+    // too (their ladders share the same prefix-stability argument), while any
+    // future executor that builds its own env is unaffected by default.
+    if (cliOptions.envOverrides) {
+      cliOptions.envOverrides = {
+        ...cliOptions.envOverrides,
+        CLAUDE_CODE_PROMPT_CACHE_TTL: cliOptions.envOverrides.CLAUDE_CODE_PROMPT_CACHE_TTL ?? '1h'
+      }
+    } else {
+      cliOptions.envOverrides = { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' }
+    }
     return executor.execute(cliOptions)
   }
 

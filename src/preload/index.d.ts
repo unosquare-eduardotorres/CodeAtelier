@@ -1826,6 +1826,21 @@ interface Api {
     hasBlockers: boolean
     hasWarnings: boolean
   } | null>
+  /** B2 — run the wave command gates (lint/build/full-suite) on the blueprint's
+   *  worktree right now, from the UI. Same GateReport shape the wave-gates
+   *  artifact carries. */
+  blueprintGateWorktree: (args: { blueprintId: string; workspaceId: string }) => Promise<{
+    gates: Array<{
+      name: string
+      verdict: string
+      evidence: string[]
+      reason?: string
+      durationMs: number
+    }>
+    overall: string
+    startedAt?: string
+    shortCircuited?: boolean
+  }>
   onBlueprintPreflightResult: (
     cb: (data: {
       blueprintId: string

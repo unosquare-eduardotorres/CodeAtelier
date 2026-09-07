@@ -79,6 +79,32 @@ if (!loaded) {
       )
       assert.equal(before, undefined, 'no collateral mappings created')
     })
+
+    // F6 (3.3) — malformed ids are refused, not mapped. The cross-run resume
+    // path passes whatever the conversations row holds; garbage mapped now
+    // fails opaquely at request time later.
+    test('refuses a malformed session id (F6 shape guard)', () => {
+      exec.seedSession(`${runKey}-garbage-1`, 'not a session id!')
+      exec.seedSession(`${runKey}-garbage-2`, 'ab') // too short
+      exec.seedSession(`${runKey}-garbage-3`, '_leading') // must start alphanumeric
+      assert.equal(
+        exec.getSessionId(`${runKey}-garbage-1`),
+        undefined,
+        'space/punctuation id never mapped'
+      )
+      assert.equal(exec.getSessionId(`${runKey}-garbage-2`), undefined, 'short id never mapped')
+      assert.equal(
+        exec.getSessionId(`${runKey}-garbage-3`),
+        undefined,
+        'non-alphanumeric-leading id never mapped'
+      )
+    })
+
+    test('accepts the real opencode id shapes (ses_…)', () => {
+      const ok = `ses-${runKey}-ok1`
+      exec.seedSession(`${runKey}-ok`, ok)
+      assert.equal(exec.getSessionId(`${runKey}-ok`), ok)
+    })
   })
 }
 

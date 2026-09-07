@@ -12,7 +12,12 @@ export default defineConfig({
   projects: [
     {
       name: 'electron',
-      testMatch: '**/*.e2e.ts'
+      testMatch: '**/*.e2e.ts',
+      // F4 (2.3) — live-LLM specs need LIVE_LLM=1 AND a cloud provider AND up
+      // to 15 minutes; including them in the default project meant every
+      // local/every-run invocation loaded them just to skip. The dedicated
+      // `electron-live` project below owns them.
+      testIgnore: '**/*-live.e2e.ts'
     },
     {
       name: 'electron-live',

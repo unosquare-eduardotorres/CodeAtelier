@@ -24,7 +24,6 @@ import { AgentSessionService } from './agent-session.service'
 import { BlueprintVerifyAdapter } from './role-adapters/blueprint/blueprint-verify.adapter'
 import { buildVerifyGoalCondition } from './blueprint-goal-conditions'
 import { parsePhaseCompletionBlock, asStringArray } from './blueprint-artifact-parsers'
-import { parseGateCommands } from '../../shared/blueprint-artifact-parsers'
 import { scanCompletedTaskFiles, applyDeterministicFileCheck } from './blueprint-task-verification'
 import { blueprintService, capArtifactForIpc } from './blueprint.service'
 import { syncBlueprintDone } from './jira-issue-sync.service'
@@ -47,9 +46,7 @@ import {
   type GateReport
 } from '../../shared/gate-types'
 import { resolveFeatureBaseline } from './blueprint-feature-diff'
-import { resolveGateCommands } from '../../shared/gate-command-resolver'
-import type { GateCommandSet } from '../../shared/gate-command-types'
-import { scanGateCommands } from './blueprint-preflight.service'
+import { resolveBlueprintGateCommands } from './blueprint-gate-command-pipeline'
 import { codeGraphService } from './code-graph.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import { resolveBlueprintTrack, blueprintTrackOwner, autoLandBlueprint } from './blueprint-track'
@@ -1037,28 +1034,17 @@ export class BlueprintVerifyService extends EventEmitter {
     const findings: Array<{ source: string; severity: string; gate: string; description: string }> =
       []
 
-    // 1. Resolve commands: override (workspace settings) → declared (PLAN
-    //    artifact `gate-commands` block) → detected (toolchain scan).
-    let declared: GateCommandSet = {}
-    try {
-      const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'plan')
-      for (const artifact of planPhase?.artifactsJson ?? []) {
-        if (!artifact.contentMd) continue
-        const parsed = parseGateCommands(artifact.contentMd)
-        if (Object.keys(parsed).length > 0) declared = { ...declared, ...parsed }
-      }
-    } catch (err) {
-      bpLog.warn('[verify:quality-gates] Could not read declared gate commands:', err)
-    }
-
+    // 1. Resolve commands — override (workspace settings) → declared (PLAN
+    //    artifact `gate-commands` block) → detected (toolchain scan) → venv
+    //    rewrite. T003/G7: the SAME pipeline module the build service's cache
+    //    rebuild uses — before this, verify skipped the venv rewrite, so a
+    //    venv declared in the PLAN ran (rewritten, green) in BUILD and
+    //    un-rewritten (missing, red) in VERIFY on the same blueprint.
     let commands
     try {
-      const settings = workspaceRepository.getSettingsByPath(workspacePath)
-      commands = resolveGateCommands({
-        override: settings?.gateCommands as GateCommandSet | undefined,
-        declared,
-        detected: scanGateCommands(executionPath)
-      })
+      commands = resolveBlueprintGateCommands(blueprintId, workspacePath, {
+        scanRoot: executionPath
+      }).commands
     } catch (err) {
       bpLog.warn('[verify:quality-gates] Command resolution failed:', err)
       commands = {}

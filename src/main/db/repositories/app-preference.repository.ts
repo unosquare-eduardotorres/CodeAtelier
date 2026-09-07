@@ -89,7 +89,12 @@ export class AppPreferenceRepository extends BaseRepository<
       // the cross-run branch has no in-ladder evidence and needs its own
       // measured window before it could ever default on. See the note on
       // AppPreferences.blueprintCrossRunResume.
-      blueprintCrossRunResume: this.getBool('blueprint_cross_run_resume', false)
+      blueprintCrossRunResume: this.getBool('blueprint_cross_run_resume', false),
+      // F11 (1.3) — retry cleanup, default ON: revert a failed attempt's
+      // out-of-set writes (bounded by the write-set gate's violations list)
+      // before the next attempt dispatches. OFF restores the pre-F11 behaviour
+      // (leftovers persist; the operator's manual Retry re-baselines them).
+      blueprintRetryCleanup: this.getBool('blueprint_retry_cleanup', true)
     }
   }
 }

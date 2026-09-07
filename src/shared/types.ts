@@ -567,6 +567,14 @@ export interface AppPreferences {
    * measured window, then decide.
    */
   blueprintCrossRunResume: boolean
+  /**
+   * F11 (1.3) — revert a failed attempt's out-of-set writes before the next
+   * attempt dispatches (default: true), bounded by the write-set gate's
+   * violations list. Kill switch: OFF leaves the failed attempt's out-of-set
+   * edits on disk, i.e. the pre-F11 behaviour where every later attempt is
+   * charged for them.
+   */
+  blueprintRetryCleanup: boolean
 }
 
 // ── Workspace Deploy Models ──

@@ -15,7 +15,8 @@ import {
   Circle,
   AlertTriangle,
   SkipForward,
-  Undo2
+  Undo2,
+  ShieldCheck
 } from 'lucide-react'
 import type { BlueprintPhase, BlueprintTask } from '../../../../../../shared/blueprint-types'
 import type { GateReport } from '../../../../../../shared/gate-types'
@@ -56,12 +57,21 @@ export function BuildDeliverable({
     (json?.deviations as Array<{ rule: number; description: string; files?: string[] }>) ?? []
 
   // M9.4 — persisted wave-gate evidence (P1.1). One artifact per wave; survives
-  // reload, unlike the transient taskGates event.
+  // reload, unlike the transient taskGates event. B2 manual runs land here too
+  // with wave: 'MANUAL' — rendered by the same row shape, newest last.
   const waveGateReports = phase.artifactsJson
     .filter((a) => a.type === 'wave-gates')
-    .map((a) => a.contentJson as { wave: number; report: GateReport })
-    .filter((w) => w && typeof w.wave === 'number' && w.report?.gates)
-    .sort((a, b) => a.wave - b.wave)
+    .map(
+      (a) =>
+        a.contentJson as {
+          wave: number | 'MANUAL'
+          report: GateReport
+          /** B1 — commits in range with no task id, named on a failed wave. */
+          ungatedCommits?: Array<{ sha: string; subject: string }>
+        }
+    )
+    .filter((w) => w && (typeof w.wave === 'number' || w.wave === 'MANUAL') && w.report?.gates)
+    .sort((a, b) => waveSortKey(a.wave) - waveSortKey(b.wave))
 
   const progressPct =
     totalTasks > 0 ? Math.min(100, Math.round((tasksCompleted / totalTasks) * 100)) : 0
@@ -91,7 +101,30 @@ export function BuildDeliverable({
   const [acceptDraft, setAcceptDraft] = useState<{ taskId: string; note: string } | null>(null)
   const [bulkDraft, setBulkDraft] = useState<string | null>(null)
   const [bulkPending, setBulkPending] = useState(false)
+  // B2 — manual gate run state
+  const [gatesPending, setGatesPending] = useState(false)
   const loadBlueprint = useBlueprintStore((s) => s.loadBlueprint)
+  const activeWorkspaceId = useBlueprintStore((s) => s.activeWorkspaceId)
+
+  // B2 — the affordance that would have caught both W16 cascade bugs before
+  // they landed: run the wave command gates on demand, between waves.
+  const runGatesNow = async (): Promise<void> => {
+    if (!activeWorkspaceId) return
+    setGatesPending(true)
+    try {
+      await window.api.blueprintGateWorktree({
+        blueprintId: phase.blueprintId,
+        workspaceId: activeWorkspaceId
+      })
+      // The report lands as a wave-gates artifact (wave: 'MANUAL'); reload so
+      // it renders without waiting for a page refresh.
+      await loadBlueprint(phase.blueprintId)
+    } catch (error) {
+      rendererLog.error('Manual gate run failed:', error)
+    } finally {
+      setGatesPending(false)
+    }
+  }
 
   const toggleSkip = async (
     task: BlueprintTask,
@@ -335,19 +368,44 @@ export function BuildDeliverable({
         </div>
       )}
 
-      {/* Wave-gate evidence (M9.4) — lint/build/full-suite per wave, persisted */}
-      {waveGateReports.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+      {/* Wave-gate evidence (M9.4) — lint/build/full-suite per wave, persisted.
+          B2 — the header button runs the same gates on demand; manual runs join
+          this list as wave 'MANUAL'. Always rendered: the button is the point
+          even when no wave has reported yet. */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
             Wave Gates
           </h3>
+          <button
+            type="button"
+            onClick={() => void runGatesNow()}
+            disabled={gatesPending || !activeWorkspaceId}
+            data-testid="blueprint-run-gates-now"
+            title="Run the wave command gates (lint/build/full-suite) on the worktree as it stands — useful after a manual rescue commit"
+            className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary disabled:opacity-40 transition-colors"
+          >
+            {gatesPending ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <ShieldCheck size={12} />
+            )}
+            {gatesPending ? 'Running gates…' : 'Run gates now'}
+          </button>
+        </div>
+        {waveGateReports.length > 0 && (
           <div className="space-y-2">
-            {waveGateReports.map(({ wave, report }) => (
-              <WaveGateRow key={wave} wave={wave} report={report} />
+            {waveGateReports.map((w, i) => (
+              <WaveGateRow
+                key={`${w.wave}-${i}`}
+                wave={w.wave}
+                report={w.report}
+                ungatedCommits={w.ungatedCommits}
+              />
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Files created / modified — clickable, open in the shared viewer.
           blueprintId ctx → the viewer reads from the blueprint's execution
@@ -420,11 +478,26 @@ const GATE_VERDICT_STYLE: Record<string, string> = {
   unverifiable: 'text-warning bg-warning/10'
 }
 
-function WaveGateRow({ wave, report }: { wave: number; report: GateReport }): JSX.Element {
+/** MANUAL sorts after every numbered wave (the newest probe). */
+function waveSortKey(wave: number | 'MANUAL'): number {
+  return wave === 'MANUAL' ? Number.MAX_SAFE_INTEGER : wave
+}
+
+function WaveGateRow({
+  wave,
+  report,
+  ungatedCommits
+}: {
+  wave: number | 'MANUAL'
+  report: GateReport
+  ungatedCommits?: Array<{ sha: string; subject: string }>
+}): JSX.Element {
   return (
     <div className="rounded-lg border border-border-subtle bg-surface-inset/30 px-3 py-2">
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-mono font-semibold text-text-secondary">Wave {wave}</span>
+        <span className="text-xs font-mono font-semibold text-text-secondary">
+          {wave === 'MANUAL' ? 'Manual' : `Wave ${wave}`}
+        </span>
         <span
           className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
             report.overall === 'fail'
@@ -447,6 +520,26 @@ function WaveGateRow({ wave, report }: { wave: number; report: GateReport }): JS
           </span>
         ))}
       </div>
+      {/* B1 — attribution for commits no gate ever graded (manual terminal
+          commits during the wave). Shown only on failed waves, by design. */}
+      {ungatedCommits && ungatedCommits.length > 0 && (
+        <div className="mt-2 rounded-md border border-warning/20 bg-warning/5 px-2.5 py-1.5">
+          <div className="flex items-center gap-1.5 mb-1">
+            <AlertTriangle size={11} className="text-warning" />
+            <span className="text-[11px] text-warning">
+              {ungatedCommits.length} commit{ungatedCommits.length > 1 ? 's' : ''} since the build
+              began carry no task id and were never gated:
+            </span>
+          </div>
+          <ul className="space-y-0.5">
+            {ungatedCommits.slice(0, 5).map((c) => (
+              <li key={c.sha} className="text-[11px] font-mono text-text-muted truncate">
+                {c.sha.slice(0, 8)} “{c.subject}”
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }

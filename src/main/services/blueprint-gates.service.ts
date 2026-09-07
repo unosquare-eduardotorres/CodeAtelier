@@ -18,7 +18,15 @@
 
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { dirname, join, resolve, relative, isAbsolute } from 'node:path'
 import log from 'electron-log'
 
@@ -40,6 +48,7 @@ import {
 } from '../../shared/gate-command-types'
 import { buildTestCommand, detectTestToolchain } from '../../shared/gate-test-targeting'
 import { pythonRunnerPrefix, type WorkspaceManifests } from '../../shared/gate-command-detect'
+import { rewriteVenvInterpreter } from '../../shared/gate-command-rewrite'
 import {
   countTests,
   evaluateTestIntegrity,
@@ -52,6 +61,8 @@ import {
   type TestFileState
 } from '../../shared/gate-analysis'
 import type { BlueprintWorkPacket } from '../../shared/blueprint-types'
+
+import { buildGateEnv } from './env-utils'
 
 const gateLog = log.scope('blueprint-gates')
 
@@ -208,7 +219,10 @@ export const defaultCommandRunner: CommandRunner = (command, opts) =>
         cwd: opts.cwd,
         shell: true,
         windowsHide: true,
-        env: process.env
+        // Gate commands run against a TARGET repo: they must not inherit this
+        // app's build mode (NODE_ENV), npm lifecycle state, or vitest worker
+        // identity — see buildGateEnv for the incidents that motivated this.
+        env: buildGateEnv()
       })
     } catch (err) {
       resolvePromise({
@@ -690,6 +704,221 @@ export function divergedPacketTestFiles(ctx: GateTaskContext, baseline: GateBase
 const DIAGNOSTIC_LINE = /\(\d+,\d+\)|:\d+:\d+/
 
 /**
+ * F11 (1.3) — neutralise a failed attempt's out-of-set writes before the next
+ * attempt dispatches.
+ *
+ * THE BUG THIS CLOSES (live: T014): the gate baseline is captured once before
+ * attempt 1 and never advances, so a failed attempt's out-of-set edits stay in
+ * the worktree and every later attempt is charged for them — forever. A rung
+ * that died on `api_error` with `writes=0 bash=0` failed `write-set` on a file
+ * it never touched: the violation was attempt 1's, still on disk. The manual
+ * Retry button "fixes" the task only because a fresh run re-captures the
+ * baseline and absorbs the leftovers as pre-existing. This sweep is that
+ * insight applied to the automatic path: revert what the gate PROVED this
+ * task wrote outside its set, so attempt N+1 starts from the tree attempt N
+ * was graded against, minus attempt N's condemnable edits.
+ *
+ * Bounds, in order:
+ *   - only paths named by the failed write-set gate's `files` array (the
+ *     gate already excluded peer-owned, pre-existing and bookkeeping paths);
+ *   - `ctx.exemptFiles` is re-checked here anyway — the exemption set is
+ *     refreshed per attempt and a peer may have DECLARED the path since the
+ *     gate ran (its in-flight work must never be swept);
+ *   - inside the execution path, symlink-hardened (`resolveInsideForWrite`);
+ *   - tracked at `baseline.baselineCommit` → `git checkout <commit> -- <path>`;
+ *     untracked at baseline → deleted (the file did not exist when the task
+ *     started);
+ *   - no baseline commit → the sweep degrades to a no-op (never a blind
+ *     delete on a tree git cannot describe).
+ *
+ * Never throws: runs in the ladder's `finally`, where a sweep failure must not
+ * replace the failure it is cleaning up after.
+ */
+export interface SweepOutcome {
+  /** The paths actually reverted (what the old string return carried). */
+  reverted: string[]
+  /**
+   * B4 — absolute path of the patch preserving the reverted hunks, when the
+   * capture succeeded. `git apply <patch>` restores them verbatim, so the
+   * sweep is reversible. Written BEFORE any revert, so a failure midway
+   * still leaves a complete record of everything the sweep was about to
+   * destroy (and everything it already had).
+   */
+  patchPath?: string
+}
+
+export async function sweepOutOfWorksetWrites(
+  ctx: GateTaskContext,
+  baseline: GateBaseline,
+  violations: readonly string[],
+  signal?: AbortSignal
+): Promise<SweepOutcome> {
+  // The default runner spawns through `shell: true`, so a path containing a
+  // space would split into two argv entries and checkout the wrong tree
+  // object. POSIX single-quote, with the embedded-quote escape.
+  const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+  const reverted: string[] = []
+  if (violations.length === 0) return { reverted }
+  const commit = baseline.baselineCommit
+  if (!commit) {
+    gateLog.warn(`[gates] ${ctx.taskId}: retry cleanup skipped — no baseline commit to revert to`)
+    return { reverted }
+  }
+  const peerOwned = new Set((ctx.exemptFiles ?? []).map(normalizePath))
+
+  // B4 — preserve what this sweep is about to revert, before reverting it.
+  // Motivated by a live run where the out-of-set "violation" was the ONLY
+  // copy of a correct fix (a client component pulling `pg`/`nodemailer` into
+  // the browser bundle), and reverting it would have destroyed the work
+  // outright. The capture is bounded by the same `violations` array the
+  // revert loop walks, so the patch is exactly the sweep's blast radius:
+  // `git diff -- <paths>` for tracked content, plus the full bytes of any
+  // path untracked at HEAD (the revert loop would `rm` those — a diff
+  // against HEAD does not contain them). Best-effort: a capture failure
+  // degrades to today's behaviour (revert with no patch) rather than
+  // skipping the sweep, but it is logged loudly.
+  const patchPath = await captureSweepPatch(ctx, commit, violations, signal)
+
+  for (const raw of violations) {
+    const rel = normalizePath(raw)
+    if (peerOwned.has(rel)) {
+      gateLog.warn(
+        `[gates] ${ctx.taskId}: retry cleanup NOT reverting ${rel} — a peer task now declares it`
+      )
+      continue
+    }
+    const abs = resolveInsideForWrite(ctx.executionPath, rel)
+    if (!abs) continue
+    try {
+      if (!existsSync(abs)) continue // already gone — nothing to revert
+      // Tracked at the baseline commit? The probe runs on the raw runner (not
+      // the `git()` helper) because the two failure modes must stay distinct:
+      // exit 1 = path absent from that tree (untracked at baseline → delete);
+      // spawn error = git itself broken (→ skip — a blind delete would remove
+      // a TRACKED file on a machine whose git is unusable).
+      const probe = await defaultCommandRunner(
+        `git cat-file -e ${shellQuote(`${commit}:${rel}`)}`,
+        { cwd: ctx.executionPath, timeoutMs: GIT_TIMEOUT_MS, signal, captureFull: true }
+      )
+      if (probe.spawnError) {
+        gateLog.warn(
+          `[gates] ${ctx.taskId}: retry cleanup probe failed for ${rel} — skipping (git unusable)`
+        )
+        continue
+      }
+      if (probe.exitCode === 0) {
+        // Routed through `git()` (captureFull, `--` before the path) but with
+        // the path quoted for the same shell reason as the probe.
+        const outcome = await git(
+          ['checkout', commit, '--', shellQuote(rel)],
+          ctx.executionPath,
+          defaultCommandRunner,
+          signal
+        )
+        if (outcome !== null) reverted.push(rel)
+        else gateLog.warn(`[gates] ${ctx.taskId}: retry cleanup checkout failed for ${rel}`)
+      } else {
+        rmSync(abs, { force: true })
+        reverted.push(rel)
+      }
+    } catch (err) {
+      gateLog.warn(`[gates] ${ctx.taskId}: retry cleanup failed for ${rel}:`, err)
+    }
+  }
+  return { reverted, ...(patchPath ? { patchPath } : {}) }
+}
+
+/**
+ * B4 — the patch capture half of {@link sweepOutOfWorksetWrites}.
+ *
+ * Writes `<artifactPrefix>/retry-cleanup-<taskId>-<attempt-token>.patch`
+ * inside the blueprint's own artifact directory (the same prefix the
+ * write-set gate already exempts as app bookkeeping), so the patch can
+ * never itself become an out-of-set write. Returns undefined on any
+ * failure — the sweep must never refuse to run because its historian
+ * could not take notes.
+ */
+async function captureSweepPatch(
+  ctx: GateTaskContext,
+  commit: string,
+  violations: readonly string[],
+  signal?: AbortSignal
+): Promise<string | undefined> {
+  try {
+    const shellQuote = (s: string): string => `'${s.replace(/'/g, `'\\''`)}'`
+    // Paths that exist on disk but not at the baseline commit — the sweep's
+    // `rm` branch. Only these need their bytes embedded; tracked paths are
+    // fully described by `git diff -- <paths>`.
+    const untrackedBytes: string[] = []
+    for (const raw of violations) {
+      const rel = normalizePath(raw)
+      const abs = resolveInsideForWrite(ctx.executionPath, rel)
+      if (!abs || !existsSync(abs)) continue
+      const probe = await defaultCommandRunner(
+        `git cat-file -e ${shellQuote(`${commit}:${rel}`)}`,
+        { cwd: ctx.executionPath, timeoutMs: GIT_TIMEOUT_MS, signal, captureFull: true }
+      )
+      if (probe.spawnError) continue // git unusable — diff below will fail too
+      if (probe.exitCode !== 0) {
+        const bytes = readFileSync(abs)
+        if (bytes.length <= MAX_CAPTURE_BYTES) {
+          // `git apply`-shaped new-file hunk: without the `diff --git` + `new
+          // file mode` header the section is prose, and a combined patch
+          // that is half-parseable applies NEITHER half.
+          const lines = bytes.toString('utf8').split('\n')
+          // A trailing newline makes the last element '' — git hunk counts
+          // exclude that phantom line.
+          const contentLines = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines
+          untrackedBytes.push(
+            `diff --git a/${rel} b/${rel}\n` +
+              `new file mode 100644\n` +
+              `--- /dev/null\n` +
+              `+++ b/${rel}\n` +
+              `@@ -0,0 +1,${contentLines.length} @@\n` +
+              contentLines.map((l) => `+${l}`).join('\n')
+          )
+        }
+      }
+    }
+    const quoted = violations.map((v) => shellQuote(normalizePath(v))).join(' ')
+    // Against the BASELINE commit, not HEAD: the revert below is
+    // `git checkout <commit> -- <path>`, so the patch must describe the same
+    // delta (worktree vs that commit) or re-applying it would not restore
+    // what the sweep destroyed. A plain `git diff` would also miss staged
+    // changes; diffing against the commit covers index and worktree both.
+    const diff = await defaultCommandRunner(`git diff ${shellQuote(commit)} -- ${quoted}`, {
+      cwd: ctx.executionPath,
+      timeoutMs: GIT_TIMEOUT_MS,
+      signal,
+      captureFull: true
+    })
+    if (diff.spawnError && untrackedBytes.length === 0) return undefined
+    // Each section carries exactly ONE trailing newline: git apply rejects a
+    // blank line between file sections ("corrupt patch"), and the runner's
+    // split/rejoin can leave the tracked diff ending in '' — which joins back
+    // to a trailing newline already. Normalise, then concatenate directly.
+    const endWithNewline = (s: string): string => (s.endsWith('\n') ? s : s + '\n')
+    const trackedBody =
+      diff.exitCode === 0 && diff.output.length > 0 ? endWithNewline(diff.output.join('\n')) : ''
+    const body = trackedBody + untrackedBytes.map(endWithNewline).join('')
+    if (!body.trim()) return undefined // nothing diverged — nothing to preserve
+
+    const dir = ctx.artifactPrefix ? join(ctx.executionPath, ctx.artifactPrefix) : ctx.executionPath
+    mkdirSync(dir, { recursive: true })
+    const token = `${ctx.taskId}-${Date.now()}`
+    const patchPath = join(dir, `retry-cleanup-${token}.patch`)
+    writeFileSync(patchPath, body, 'utf8')
+    gateLog.info(
+      `[gates] ${ctx.taskId}: retry cleanup preserved ${violations.length} path(s) → ${patchPath}`
+    )
+    return patchPath
+  } catch (err) {
+    gateLog.warn(`[gates] ${ctx.taskId}: retry cleanup patch capture failed:`, err)
+    return undefined
+  }
+}
+
+/**
  * Position-independent signatures of the diagnostics in a command's output.
  *
  * Line and column numbers are normalised away: editing a file shifts every
@@ -841,6 +1070,20 @@ function taskTestFiles(ctx: GateTaskContext): string[] {
 }
 
 function taskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined {
+  // Defence-in-depth (same shape as the parser's parse-time drop): a packet
+  // `testCommand` is honoured ONLY alongside `testFiles`. The packet's file
+  // list is the declared contract for what this task may be graded on, and a
+  // command broader than that contract — observed in the wild: a 2-file CI
+  // task whose packet declared the whole Docker + Playwright portal suite —
+  // grades the task on the entire system, including defects outside its
+  // write-set. Packets that bypassed the parser (or predate the parse-time
+  // drop) are caught here; `gateTaskTests` then reports `unverifiable` /
+  // `no_command`, which is the honest verdict for a task with no tests of
+  // its own.
+  const testFiles = taskTestFiles(ctx)
+
+  if (testFiles.length === 0) return undefined
+
   const packetCommand = ctx.packet?.testCommand?.trim()
   if (packetCommand) {
     if (!isSafeGateCommand(packetCommand)) {
@@ -849,13 +1092,23 @@ function taskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined 
       )
       return undefined
     }
-    return { command: packetCommand, provenance: 'declared' }
+    // T003/G2 — the packet command runs with cwd = worktree, where a
+    // gitignored venv never exists. Same rewrite the cache-level resolution
+    // applies: rebind the venv interpreter token to the SOURCE checkout, which
+    // is valid from any cwd because a venv python resolves site-packages from
+    // its own home, never cwd. Without this, packet-declared commands were the
+    // ONE resolution path the rewrite never touched (G6 graded them red
+    // forever; the pre-dispatch check never saw them at all).
+    const r = rewriteVenvInterpreter(packetCommand, {
+      sourceRoot: ctx.workspacePath,
+      worktreeRoot: ctx.executionPath
+    })
+    return { command: r.command, provenance: 'declared' }
   }
 
   // R3.1 — ecosystem template (M2.6 Option 2): when the packet declares test
   // FILES but no command, build a narrow per-task command from the detected
   // toolchain. The full suite is never used here — that is VERIFY's job (M8).
-  const testFiles = taskTestFiles(ctx)
   if (testFiles.length) {
     const toolchain = ctx.manifests ? detectTestToolchain(ctx.manifests) : null
     // Same environment-aware runner chain as the full-suite gate: a bare
@@ -874,6 +1127,23 @@ function taskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined 
     }
   }
   return undefined
+}
+
+/**
+ * T003/G2+G6 — the effective per-task test command, WITHOUT running it.
+ *
+ * The single source the pre-dispatch prerequisite check
+ * (`checkTaskInterpreterPrerequisite`) and the G6 gate (`gateTaskTests` →
+ * `taskTestCommand`) both derive from: the PACKET `testCommand` (post-venv-
+ * rewrite) when the packet declares `testFiles`, else the resolved
+ * workspace-level `commands.test`. Before this helper the two sites read
+ * different sources — the prerequisite check read only `commands.test`, so a
+ * packet-declared venv command that was missing on disk dispatched a doomed
+ * builder rung the gate then graded as an environmental `command_missing`,
+ * forever. Both sites now consume this, so they cannot diverge again.
+ */
+export function effectiveTaskTestCommand(ctx: GateTaskContext): ResolvedGateCommand | undefined {
+  return taskTestCommand(ctx) ?? (ctx.commands.test ? { ...ctx.commands.test } : undefined)
 }
 
 function commandCwd(ctx: GateTaskContext, command: ResolvedGateCommand): string {
@@ -921,10 +1191,27 @@ const unverifiable = (
  * <100ms, because the shell's "'pytest' is not recognized" line was captured
  * but never inspected).
  */
+/**
+ * T003/G4 — POSIX "the interpreter PATH is absent" signatures. These are
+ * SHELL-SHAPED lines (`sh: 1: .venv/bin/python: not found`), not bare
+ * substrings: `python: can't open file 'tests/x.py': [Errno 2] No such file
+ * or directory` is a RED suite (the interpreter ran; the test file it was
+ * pointed at is missing) and must stay `fail`. A bare substring match graded
+ * that red suite as `command_missing` and failed open.
+ */
+const POSIX_MISSING_PATH_RE =
+  /^(\/.*\/)?(sh|bash|zsh|dash|ksh)((:? )?\d+)?: [^:]+: (no such file or directory|not found)/i
+
 const MISSING_COMMAND_SIGNATURES = [
   'is not recognized as', // cmd.exe / PowerShell
   'command not found', // sh / bash / zsh
-  'no module named' // `python -m <runner>` with the runner absent
+  'no module named', // `python -m <runner>` with the runner absent
+  // T003 loop fix — the interpreter PATH is absent, not a PATH lookup. With
+  // `shell: true` these are exit-1 outputs, not spawnErrors, so without these
+  // signatures a venv-python declared in TASKS but missing from the worktree
+  // (gitignored, never provisioned) graded as a plain `fail` and fed the retry
+  // ladder forever — nothing a builder attempt could change.
+  'the system cannot find the path specified' // cmd.exe — absent interpreter PATH (unambiguous)
 ] as const
 
 /** True when the output shows the command's binary was never executed. */
@@ -934,9 +1221,13 @@ function isCommandMissing(output: readonly string[]): boolean {
   // suite's assertion text can legitimately quote those strings (a test
   // asserting on subprocess error text) — that appears AFTER the header, and
   // matching it would flip a real regression to `unverifiable`, failing open.
-  return output
-    .slice(0, 2)
-    .some((line) => MISSING_COMMAND_SIGNATURES.some((sig) => line.toLowerCase().includes(sig)))
+  return output.slice(0, 2).some((line) => {
+    const lower = line.toLowerCase()
+    return (
+      MISSING_COMMAND_SIGNATURES.some((sig) => lower.includes(sig)) ||
+      POSIX_MISSING_PATH_RE.test(line)
+    )
+  })
 }
 
 // ── Change collection ──
@@ -1585,6 +1876,67 @@ function gateDestructiveRevert(scan: CommitSurvivalScan): GateResult {
   })
 }
 
+export interface UngatedCommitScan {
+  /** null when the scan could NOT run — attribution is then simply absent. */
+  commits: { sha: string; subject: string }[] | null
+  /** Why it could not run. Set only when `commits` is null. */
+  reason?: string
+  durationMs: number
+}
+
+/**
+ * B1 — commits in `<baseline>..HEAD` whose subject carries no task id: work
+ * that no gate ever graded and no ledger entry attributes.
+ *
+ * Both real cascade bugs in the W16 post-mortem (`2e798341` → import cycle,
+ * `4d25cfb4` → tenancy assertion) landed as manual terminal commits during the
+ * wave, then surfaced later as THE WAVE's failure. Today a red wave reads as
+ * the dispatched task's fault even when an ungated commit caused it.
+ *
+ * Attribution only — never a fail on its own, never a ledger entry. Consistent
+ * with the "unverifiable ⇒ ledger, not failure" doctrine: a manual commit the
+ * app cannot intercept is a fact to surface, not a verdict to invent.
+ *
+ * Same `null` = unverifiable contract as `CommitSurvivalScan`: no baseline
+ * commit or a failed `git log` yields `commits: null` and the caller reports
+ * nothing rather than "zero ungated commits" (which would be a false clean).
+ */
+export async function scanUngatedCommits(opts: {
+  cwd: string
+  baselineCommit: string | null
+  runner: CommandRunner
+  signal?: AbortSignal
+}): Promise<UngatedCommitScan> {
+  const started = Date.now()
+  const { cwd, baselineCommit, runner, signal } = opts
+  const fail = (reason: string): UngatedCommitScan => ({
+    commits: null,
+    reason,
+    durationMs: Date.now() - started
+  })
+
+  if (!baselineCommit) return fail('no git baseline commit')
+
+  const logOut = await git(
+    ['log', '--format=%H%x1f%s', `${baselineCommit}..HEAD`],
+    cwd,
+    runner,
+    signal
+  )
+  if (logOut === null) return fail('git log failed')
+
+  const commits: { sha: string; subject: string }[] = []
+  for (const line of logOut.split('\n')) {
+    if (line.trim() === '') continue
+    const [sha, subject = ''] = line.split('\x1f')
+    if (!sha.trim()) continue
+    if (TASK_ID_IN_SUBJECT.test(subject)) continue
+    commits.push({ sha: sha.trim(), subject: subject.trim() })
+    if (commits.length >= MAX_SURVIVAL_COMMITS) break
+  }
+  return { commits, durationMs: Date.now() - started }
+}
+
 function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
   const started = Date.now()
   if (changes.unavailable) {
@@ -1650,7 +2002,14 @@ function gateWriteSet(ctx: GateTaskContext, changes: ChangeSet): GateResult {
         ...evaluation.violations.map((f) => `outside write-set: ${f}`),
         ...exemptEvidence
       ],
-      { counts, durationMs: Date.now() - started }
+      {
+        counts,
+        durationMs: Date.now() - started,
+        // F11 (1.3) — the structured path list the retry-cleanup sweep is
+        // bounded by. Evidence lines are prose for the model; `files` is the
+        // machine-readable bound for the kernel's own revert.
+        files: [...evaluation.forbidden, ...evaluation.violations]
+      }
     )
   }
 
@@ -2485,12 +2844,21 @@ export function buildGateFixInstructions(
      * inexplicable to it.
      */
     restoredTestFiles?: readonly string[]
+    /**
+     * F11 (1.3) — out-of-set files the kernel already reverted to the
+     * pre-session state (`sweepOutOfWorksetWrites`). Same reasoning as the
+     * restore note: the next attempt must be TOLD what was undone, or its
+     * gate verdict ("file clean") contradicts its own memory of having
+     * written it, and it "helpfully" re-applies the out-of-set edit.
+     */
+    revertedFiles?: readonly string[]
   }
 ): string {
   const failed = report.gates.filter((g) => g.verdict === 'fail')
   if (failed.length === 0) return ''
 
   const restored = opts?.restoredTestFiles ?? []
+  const reverted = opts?.revertedFiles ?? []
   // The fix prompt competes with the failing assertion for the model's
   // attention: a 40-file packet turns the restore note into 40 lines of paths
   // and the actual failure is what gets dropped. `boundEvidence` caps the
@@ -2499,6 +2867,12 @@ export function buildGateFixInstructions(
     ...restored.slice(0, MAX_LISTED_PATHS).map((f) => `- ${f}`),
     ...(restored.length > MAX_LISTED_PATHS
       ? [`- …and ${restored.length - MAX_LISTED_PATHS} more`]
+      : [])
+  ]
+  const revertedLines = [
+    ...reverted.slice(0, MAX_LISTED_PATHS).map((f) => `- ${f}`),
+    ...(reverted.length > MAX_LISTED_PATHS
+      ? [`- …and ${reverted.length - MAX_LISTED_PATHS} more`]
       : [])
   ]
   const sections = failed.map((gate) => {
@@ -2513,7 +2887,20 @@ export function buildGateFixInstructions(
           '\nDo not edit them again and do not try to revert them yourself — ' +
           'they are back to the specification. Change the implementation instead.'
         : ''
-    return `${header}\n\n${body}\n\n**Required:** ${instruction}${restoreNote}`
+    // F11 (1.3) — the reverted-file note attaches to the write-set gate (the
+    // gate whose verdict produced the sweep's bound) on ANY task, and to any
+    // failed gate when the sweep ran, so the model is always told what the
+    // kernel already undid.
+    const revertedNote =
+      reverted.length > 0 &&
+      (gate.name === 'write-set' || failed.some((g) => g.name === 'write-set'))
+        ? '\n\n' +
+          'The kernel has ALREADY reverted these out-of-set files to their pre-session state:\n' +
+          revertedLines.join('\n') +
+          '\nDo not re-apply changes to them — they were outside this task\u2019s write-set and have ' +
+          'been undone. Your next attempt is graded on a clean tree; stay inside your write-set.'
+        : ''
+    return `${header}\n\n${body}\n\n**Required:** ${instruction}${restoreNote}${revertedNote}`
   })
 
   return (

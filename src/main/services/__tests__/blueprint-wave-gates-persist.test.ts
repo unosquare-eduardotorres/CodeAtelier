@@ -11,6 +11,7 @@
  * Run: tsx src/main/services/__tests__/blueprint-wave-gates-persist.test.ts
  */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -165,6 +166,194 @@ if (!env) {
           .filter((a: any) => a.type === 'wave-gates')
           .map((a: any) => a.contentJson.wave)
         assert.deepEqual(waves, [1, 2], 'one artifact per wave, in order')
+      })
+    })
+
+    /**
+     * B1 — when a wave gate fails, commits in the range that carry no task id
+     * are named in the persisted artifact so the failure can be attributed to
+     * manual/ungated work instead of reading as the dispatched task's fault.
+     *
+     * Both cascade bugs of the W16 post-mortem landed as terminal commits with
+     * no `T###`/`R###` in the subject. The scan is attribution-only: a passing
+     * wave never scans, and an unverifiable scan (no baseline / git failure)
+     * records nothing rather than a false "zero ungated".
+     */
+    describe('B1 — ungated commits are named when a wave gate fails', () => {
+      const mkGitRepo = (dir: string): string => {
+        execFileSync('git', ['init', '-q'], { cwd: dir })
+        execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir })
+        execFileSync('git', ['config', 'user.name', 't'], { cwd: dir })
+        writeFileSync(join(dir, 'seed.txt'), 'seed')
+        execFileSync('git', ['add', '.'], { cwd: dir })
+        execFileSync('git', ['commit', '-qm', 'T001: seed'], { cwd: dir })
+        return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf-8' }).trim()
+      }
+
+      /** PLAN artifact declaring `false` as the test command: exit 1, no output,
+       *  no missing-command signature → a deterministic red full-suite. */
+      const declareRedTest = (bp: { id: string }): void => {
+        const planPhase = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'plan')
+        blueprintPhaseRepository.appendArtifact(planPhase.id, {
+          type: 'gate-commands',
+          contentMd:
+            '```gate-commands\n{"test": "false"}\n```'
+        })
+      }
+
+      test('a failing wave names the ungated commit in the persisted artifact', async () => {
+        const dir = makeDir()
+        const baseline = mkGitRepo(dir)
+        // The manual "rescue" commit the W16 post-mortem is about: real work,
+        // no task id, made in a terminal while the wave ran.
+        writeFileSync(join(dir, 'rescue.txt'), 'rescue')
+        execFileSync('git', ['add', '.'], { cwd: dir })
+        execFileSync('git', ['commit', '-qm', 'lift sign gate out of submission-repo'], { cwd: dir })
+
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'B1 ungated' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        blueprintRepository.update(bp.id, {
+          settingsJson: { buildBaselineCommit: baseline }
+        })
+        declareRedTest(bp)
+
+        const events: string[] = []
+        const handler = (e: Record<string, unknown>): void => {
+          // The ledger warning ("⚠ Wave N: N check(s) could not be verified")
+          // shares the "⚠ Wave" prefix — filter on the attribution phrase.
+          if (e.blueprintId === bp.id && String(e.text).includes('never gated')) {
+            events.push(String(e.text))
+          }
+        }
+        // runWaveGates emits via its own EventEmitter (safeEmit), not via
+        // blueprint.service — the F4 tests below listen there because
+        // saveRetryContext lives there.
+        blueprintBuildService.on('phaseProgress', handler)
+        let report: import('../../../shared/gate-types').GateReport
+        try {
+          report = await blueprintBuildService.runWaveGates({
+            blueprintId: bp.id,
+            workspaceId: wsId,
+            workspacePath: dir,
+            executionPath: dir,
+            waveNum: 16
+          })
+        } finally {
+          blueprintBuildService.off('phaseProgress', handler)
+        }
+
+        assert.equal(report.overall, 'fail', 'the declared red test must fail the wave')
+
+        const rec = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'build')
+        const artifact = rec?.artifactsJson?.findLast((a: any) => a.type === 'wave-gates')
+        assert.ok(artifact, 'wave-gates artifact exists')
+        const ungated = artifact.contentJson.ungatedCommits as
+          | { sha: string; subject: string }[]
+          | undefined
+        assert.ok(Array.isArray(ungated) && ungated.length === 1, 'exactly the rescue commit')
+        assert.equal(ungated[0].subject, 'lift sign gate out of submission-repo')
+        assert.match(ungated[0].sha, /^[0-9a-f]{40}$/, 'full sha for precise attribution')
+
+        assert.equal(events.length, 1, 'exactly one ⚠ attribution emit')
+        assert.ok(
+          events[0].includes('carry no task id and were never gated'),
+          `emit carries the attribution phrasing — got: ${events[0]}`
+        )
+        assert.ok(events[0].includes('lift sign gate out of submission-repo'))
+      })
+
+      test('an attributed commit set (every subject carries T###) is not flagged', async () => {
+        const dir = makeDir()
+        const baseline = mkGitRepo(dir)
+        writeFileSync(join(dir, 'work.txt'), 'work')
+        execFileSync('git', ['add', '.'], { cwd: dir })
+        execFileSync('git', ['commit', '-qm', 'T042: make the change'], { cwd: dir })
+
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'B1 all gated' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        blueprintRepository.update(bp.id, {
+          settingsJson: { buildBaselineCommit: baseline }
+        })
+        declareRedTest(bp)
+
+        const report = await blueprintBuildService.runWaveGates({
+          blueprintId: bp.id,
+          workspaceId: wsId,
+          workspacePath: dir,
+          executionPath: dir,
+          waveNum: 3
+        })
+        assert.equal(report.overall, 'fail')
+
+        const rec = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'build')
+        const artifact = rec?.artifactsJson?.findLast((a: any) => a.type === 'wave-gates')
+        assert.deepEqual(
+          artifact.contentJson.ungatedCommits,
+          [],
+          'a fully-attributed range records an empty list, not undefined'
+        )
+      })
+
+      test('a passing wave never scans — no git cost, no attribution noise', async () => {
+        const dir = makeDir()
+        const baseline = mkGitRepo(dir)
+        writeFileSync(join(dir, 'rescue.txt'), 'rescue')
+        execFileSync('git', ['add', '.'], { cwd: dir })
+        execFileSync('git', ['commit', '-qm', 'ungated manual commit'], { cwd: dir })
+
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'B1 pass no scan' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        blueprintRepository.update(bp.id, {
+          settingsJson: { buildBaselineCommit: baseline }
+        })
+        // No gate-commands declaration and an empty dir → all gates `no_command`
+        // → overall `unverifiable`, never `fail`. The scan must not run.
+        const report = await blueprintBuildService.runWaveGates({
+          blueprintId: bp.id,
+          workspaceId: wsId,
+          workspacePath: dir,
+          executionPath: dir,
+          waveNum: 5
+        })
+        assert.notEqual(report.overall, 'fail')
+
+        const rec = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'build')
+        const artifact = rec?.artifactsJson?.findLast((a: any) => a.type === 'wave-gates')
+        assert.equal(
+          artifact.contentJson.ungatedCommits,
+          undefined,
+          'a non-failing wave records no ungated scan at all'
+        )
+      })
+
+      test('no baseline commit → scan unverifiable, artifact records nothing', async () => {
+        const dir = makeDir()
+        mkGitRepo(dir)
+        writeFileSync(join(dir, 'rescue.txt'), 'rescue')
+        execFileSync('git', ['add', '.'], { cwd: dir })
+        execFileSync('git', ['commit', '-qm', 'ungated manual commit'], { cwd: dir })
+
+        const bp = blueprintRepository.create({ workspaceId: wsId, title: 'B1 no baseline' })
+        blueprintPhaseRepository.createAllPhases(bp.id)
+        // deliberately no buildBaselineCommit in settingsJson
+        declareRedTest(bp)
+
+        const report = await blueprintBuildService.runWaveGates({
+          blueprintId: bp.id,
+          workspaceId: wsId,
+          workspacePath: dir,
+          executionPath: dir,
+          waveNum: 7
+        })
+        assert.equal(report.overall, 'fail')
+
+        const rec = blueprintPhaseRepository.findByBlueprintAndPhase(bp.id, 'build')
+        const artifact = rec?.artifactsJson?.findLast((a: any) => a.type === 'wave-gates')
+        assert.equal(
+          artifact.contentJson.ungatedCommits,
+          undefined,
+          'unverifiable scan records nothing — never a false "zero ungated"'
+        )
       })
     })
 
