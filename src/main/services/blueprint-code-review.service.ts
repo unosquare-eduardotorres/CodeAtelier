@@ -156,6 +156,16 @@ export class BlueprintCodeReviewService extends EventEmitter {
     workspaceId: string
     workspacePath: string
   }): Promise<void> {
+    // MODEL-SNAPSHOT-REFRESH: resolve the phase's frozen assignment against the
+    // CURRENT workspace binding before anything dispatches. First statement —
+    // model resolution happens later, at session creation. Must never block the
+    // phase start.
+    try {
+      blueprintService.refreshModelSnapshotForPhase(params.blueprintId, 'code-review')
+    } catch {
+      /* best effort */
+    }
+
     const { blueprintId, workspaceId, workspacePath } = params
 
     bpLog.info(`[startCodeReviewPhase] Blueprint ${blueprintId} — starting CODE-REVIEW`)

@@ -798,6 +798,15 @@ export const IPC_CHANNELS = {
   BLUEPRINT_PREFLIGHT_RUN: 'blueprint:preflightRun',
   BLUEPRINT_PREFLIGHT_RESULT: 'blueprint:preflightResult',
 
+  // Testability ledger — export the "what was never proven" report as Markdown
+  BLUEPRINT_EXPORT_TESTABILITY: 'blueprint:exportTestability',
+
+  // Testability ledger — the same rows the export renders, for the follow-up UI
+  BLUEPRINT_TESTABILITY_ENTRIES: 'blueprint:testabilityEntries',
+
+  // Testability ledger — record which entries became follow-up ideas
+  BLUEPRINT_LINK_TESTABILITY_IDEAS: 'blueprint:linkTestabilityIdeas',
+
   // B2 — gate the worktree on demand (manual gate run between waves)
   BLUEPRINT_GATE_WORKTREE: 'blueprint:gateWorktree',
 

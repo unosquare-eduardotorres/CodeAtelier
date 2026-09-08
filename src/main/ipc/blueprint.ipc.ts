@@ -6,8 +6,9 @@
  * - webContents.send for event forwarding (phaseStart, phaseProgress, etc.)
  */
 
-import { app, ipcMain, BrowserWindow } from 'electron'
+import { app, ipcMain, BrowserWindow, dialog } from 'electron'
 import { existsSync, mkdirSync, copyFileSync, statSync, rmSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { join, isAbsolute, basename, normalize, sep } from 'node:path'
 import log from 'electron-log'
 import { IPC_CHANNELS } from '../../shared/constants'
@@ -30,7 +31,7 @@ import { blueprintCodeReviewService } from '../services/blueprint-code-review.se
 import { blueprintPeerReviewService } from '../services/blueprint-peer-review.service'
 import { blueprintLeadReviewService } from '../services/blueprint-lead-review.service'
 import { modelConfigService } from '../services/model-config.service'
-import { workspaceRepository } from '../db/repositories'
+import { workspaceRepository, ideaRepository } from '../db/repositories'
 import { loadBranchOptions } from './load-branch-options'
 import { getModifiedFilesSince } from '../services/blueprint-modified-files'
 import { trackService } from '../services/track.service'
@@ -53,12 +54,48 @@ import type {
 } from '../../shared/blueprint-types'
 import { runPreflightChecks } from '../services/blueprint-preflight.service'
 import {
+  exportTestabilityLedger,
+  collectTestability,
+  readTestabilityIdeaRefs,
+  selectTestabilityIdeas,
+  testabilityIdeaDraft,
+  TESTABILITY_IDEA_IDS_KEY,
+  type TestabilitySources,
+  type TestabilitySubject
+} from './blueprint-testability'
+import type { PreflightCheck } from '../../shared/preflight-types'
+import {
   reserveBlueprintBranch,
   resolveBlueprintBase,
   readBranchChoice
 } from '../services/blueprint-track'
 
 const bpLog = log.scope('blueprint-ipc')
+
+/**
+ * Repository-backed sources for the Testability Ledger, shared by the Markdown
+ * export and the entries IPC so the follow-up dialog can never show a different
+ * (shorter) list than the exported file.
+ */
+function testabilitySourcesFor(
+  blueprintId: string,
+  blueprint: TestabilitySubject
+): TestabilitySources {
+  return {
+    blueprint,
+    tasks: blueprintTaskRepository.findByBlueprint(blueprintId),
+    // Preflight lives on the REVIEW phase as a `preflight` artifact. Its absence
+    // is normal (the blueprint may never have reached REVIEW), so a failure to
+    // read it degrades the report rather than sinking it.
+    readPreflight: () => {
+      const reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
+      const artifact = reviewPhase?.artifactsJson?.find((a) => a.type === 'preflight')
+      return (artifact?.contentJson as { checks?: PreflightCheck[] } | undefined)?.checks
+    },
+    onPreflightError: (err) =>
+      bpLog.warn('[blueprint:testability] Could not read preflight artifact:', err)
+  }
+}
 
 // M6: No per-workspace cleanup needed — listeners are registered once and route by payload.workspaceId
 
@@ -939,6 +976,96 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     }
 
     return result
+  })
+
+  // ── blueprint:exportTestability — export the "never proven" ledger as Markdown ──
+
+  ipcMain.handle(
+    IPC_CHANNELS.BLUEPRINT_EXPORT_TESTABILITY,
+    async (event, rawArgs: unknown): Promise<{ exported: boolean }> => {
+      validateSender(event)
+      const ch = IPC_CHANNELS.BLUEPRINT_EXPORT_TESTABILITY
+      const args = requireObject(rawArgs, ch)
+      const blueprintId = requireString(args, 'blueprintId', ch)
+
+      const blueprint = blueprintRepository.findById(blueprintId)
+      if (!blueprint) throw new Error(`Blueprint ${blueprintId} not found`)
+
+      const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (!window) throw new Error('No window available to host the save dialog')
+
+      const result = await exportTestabilityLedger(testabilitySourcesFor(blueprintId, blueprint), {
+        showSaveDialog: async (defaultPath) =>
+          dialog.showSaveDialog(window, {
+            title: 'Export Testability Ledger',
+            defaultPath,
+            filters: [{ name: 'Markdown', extensions: ['md'] }]
+          }),
+        writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf-8')
+      })
+
+      if (result.exported) {
+        bpLog.info(`[blueprint:exportTestability] Exported ${blueprintId} to ${result.filePath}`)
+      }
+      return { exported: result.exported }
+    }
+  )
+
+  // ── blueprint:testabilityEntries — the same rows the Markdown export renders ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_TESTABILITY_ENTRIES, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_TESTABILITY_ENTRIES
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) throw new Error(`Blueprint ${blueprintId} not found`)
+
+    return {
+      entries: collectTestability(testabilitySourcesFor(blueprintId, blueprint)),
+      convertedIdeaRefs: readTestabilityIdeaRefs(blueprint.settingsJson)
+    }
+  })
+
+  // ── blueprint:linkTestabilityIdeas — turn ledger rows into follow-up ideas ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_LINK_TESTABILITY_IDEAS, async (event, rawArgs: unknown) => {
+    validateSender(event)
+    const ch = IPC_CHANNELS.BLUEPRINT_LINK_TESTABILITY_IDEAS
+    const args = requireObject(rawArgs, ch)
+    const blueprintId = requireString(args, 'blueprintId', ch)
+    const rawKeys = (args as { entryKeys?: unknown }).entryKeys
+    if (!Array.isArray(rawKeys)) throw new Error(`${ch}: entryKeys must be an array`)
+    const selected = new Set(rawKeys.filter((k): k is string => typeof k === 'string' && !!k))
+
+    const blueprint = blueprintRepository.findById(blueprintId)
+    if (!blueprint) throw new Error(`Blueprint ${blueprintId} not found`)
+
+    // Recompute in main rather than trusting renderer-supplied entry bodies:
+    // the ledger is the source of truth and the dedupe map must key off it.
+    const entries = collectTestability(testabilitySourcesFor(blueprintId, blueprint))
+    const alreadyLinked = readTestabilityIdeaRefs(blueprint.settingsJson)
+
+    const created: Array<{ entryKey: string; ideaId: string }> = []
+    for (const { entryKey, entry } of selectTestabilityIdeas(entries, selected, alreadyLinked)) {
+      const draft = testabilityIdeaDraft(entry, blueprint.title)
+      const idea = ideaRepository.create(blueprint.workspaceId, draft.title, draft.description)
+      created.push({ entryKey, ideaId: idea.id })
+    }
+
+    if (created.length > 0) {
+      const merged = { ...alreadyLinked }
+      for (const { entryKey, ideaId } of created) merged[entryKey] = ideaId
+      blueprintRepository.update(blueprintId, {
+        settingsJson: { ...blueprint.settingsJson, [TESTABILITY_IDEA_IDS_KEY]: merged }
+      })
+      bpLog.info(
+        `[blueprint:linkTestabilityIdeas] Created ${created.length} follow-up idea(s) for ${blueprintId}`
+      )
+    }
+
+    return { created: created.length, ideaIds: created.map((c) => c.ideaId) }
   })
 
   // ── blueprint:gateWorktree — B2: run the wave command gates on demand ──

@@ -161,6 +161,17 @@ export function detectGateCommands(manifests: WorkspaceManifests): GateCommandSe
 
     const smokeScript = pickScript(scripts, ['smoke', 'test:smoke'])
     if (smokeScript) out.smoke = { command: runScript(pm, smokeScript) }
+
+    // The e2e suite. Only ever executed when the blueprint asks for that depth,
+    // but detected unconditionally so the depth selector can tell the user
+    // up-front whether a command even exists to run.
+    //
+    // `test` is deliberately NOT a fallback: running the unit suite and calling
+    // it end-to-end proof is the exact false-green this feature exists to stop.
+    const e2eScript = pickScript(scripts, ['test:e2e', 'e2e', 'e2e:test', 'test:playwright'])
+    if (e2eScript && !PLACEHOLDER_TEST_SCRIPT.test(scripts[e2eScript])) {
+      out.e2e = { command: runScript(pm, e2eScript) }
+    }
   }
 
   // ── .NET ──

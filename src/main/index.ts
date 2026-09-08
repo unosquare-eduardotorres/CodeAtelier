@@ -56,6 +56,7 @@ import { landingService } from './services/landing.service'
 import { grillAgentService } from './services/grill-agent.service'
 import { grillPersistenceController } from './services/grill-persistence.controller'
 import { auditAgentService } from './services/audit-agent.service'
+import { designAgentService } from './services/design-agent.service'
 import { mpaOrchestrationService } from './services/mpa-orchestration.service'
 import { councilService } from './services/council.service'
 import { blueprintPlanRevisionService } from './services/blueprint-plan-revision.service'
@@ -927,6 +928,13 @@ app.on('before-quit', async (event) => {
       await auditAgentService.shutdown()
     } catch (e) {
       log.debug('Audit shutdown error (expected during quit):', e)
+    }
+
+    // Cleanup design runs (shares audit storage, separate orchestrator)
+    try {
+      await designAgentService.shutdown()
+    } catch (e) {
+      log.debug('Design shutdown error (expected during quit):', e)
     }
 
     // Cleanup MPA pipelines

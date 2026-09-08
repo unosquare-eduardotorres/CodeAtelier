@@ -15,11 +15,13 @@ import { join } from 'path'
 import log from 'electron-log'
 import { resolveContextTier } from './context-management'
 import type { ContextWindowTier } from './context-management'
+import { resolveVerificationDepth } from '../../shared/blueprint-types'
 import type {
   BlueprintPhaseType,
   PhaseContext,
   BlueprintArtifact,
-  BlueprintRevisionRequest
+  BlueprintRevisionRequest,
+  VerificationDepth
 } from '../../shared/blueprint-types'
 
 const promptLog = log.scope('blueprint-prompt-loader')
@@ -206,7 +208,13 @@ const BLUEPRINT_SETTINGS_PROMPT_KEYS = new Set([
   'branchName',
   'branchChoice',
   'jiraIssueKey',
-  'jiraIssueKeys'
+  'jiraIssueKeys',
+  // The agent MUST see this one. VERIFY runs an `e2e` gate at that depth, and a
+  // gate whose tests nobody was asked to write can only ever report
+  // `unverifiable` — a verification level that can never pass is worse than not
+  // offering it. PLAN reads this to declare an `e2e` gate-commands entry and
+  // TASKS to schedule the work that makes it real.
+  'verificationDepth'
 ])
 
 /**
@@ -705,7 +713,58 @@ function replaceVariables(
         '{{REVISION_FEEDBACK}}',
         context.revisionRequests?.length ? formatRevisionFeedback(context.revisionRequests) : ''
       )
+      // The verification depth the human asked for, rendered as an INSTRUCTION
+      // rather than a fact. Empty at `standard`, so blueprints that never touch
+      // the setting render a byte-identical prompt.
+      .replace(
+        '{{VERIFICATION_DEPTH_DIRECTIVE}}',
+        formatVerificationDepthDirective(resolveVerificationDepth(context.blueprint?.settings))
+      )
   )
+}
+
+/**
+ * Turn the chosen verification depth into work the authoring phases must do.
+ *
+ * Without this the depth is inert: VERIFY would run an `e2e` gate whose tests
+ * nobody was ever asked to write, the gate would report `unverifiable` forever,
+ * and a level that can never pass is worse than not offering one. PLAN reads
+ * this to declare the gate command; TASKS reads it to schedule the work that
+ * makes the command real.
+ *
+ * Returns '' for `standard` — the default must not alter any existing prompt.
+ */
+export function formatVerificationDepthDirective(depth: VerificationDepth): string {
+  if (depth === 'standard') return ''
+
+  const lines: string[] = [
+    '## Verification Depth (REQUIRED)',
+    '',
+    `The human set this blueprint's verification depth to **${depth}**. That is a commitment about EVIDENCE, and it is your job to make it satisfiable.`,
+    ''
+  ]
+
+  if (depth === 'integration') {
+    lines.push(
+      '- Declare a `smoke` command in your `gate-commands` block: one command that proves the application actually boots.',
+      '- If no such command exists yet, your plan MUST include the task that creates it.',
+      '- A build that compiles is not a build that runs. The smoke gate is that difference.'
+    )
+  } else {
+    lines.push(
+      '- Declare BOTH a `smoke` and an `e2e` command in your `gate-commands` block.',
+      '- `e2e` must exercise a real user path through the assembled application. It is never the same command as `test`: a unit suite passing tells you nothing about whether a button is wired to anything.',
+      '- Your plan MUST include the tasks that create the end-to-end suite and its harness (runner config, fixtures, npm script) when they do not already exist, plus at least one end-to-end scenario per primary user story.',
+      '- "The component renders" is not sufficient. Scenarios must drive the real flow and assert the outcome the user cares about, so unwired components and placeholder data fail loudly.'
+    )
+  }
+
+  lines.push(
+    '',
+    'The gate runs whether or not you prepared for it. If no command resolves, the blueprint finishes UNPROVEN and the work it covers is reported as untested.',
+    ''
+  )
+  return lines.join('\n')
 }
 
 // ── Fallback Prompts (used when .md files aren't found yet) ──
@@ -731,6 +790,8 @@ function buildFallbackPrompt(phase: BlueprintPhaseType): string {
 </previous_artifacts>
 
 {{RETRY_CONTEXT}}
+
+{{VERIFICATION_DEPTH_DIRECTIVE}}
 
 ## Instructions
 

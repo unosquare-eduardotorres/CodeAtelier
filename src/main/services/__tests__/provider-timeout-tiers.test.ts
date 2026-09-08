@@ -10,6 +10,8 @@
  * 2. Local tier preserves the historical values (regression guard).
  * 3. Consumer wiring smoke: the config writer's provider options carry the
  *    tier values (sdkRead / chunkTimeout).
+ * 4. P2 — `resolveStallWindowMs`: the dead-stall window, and the proof that
+ *    shortening it cannot break the ordering invariant above.
  */
 
 import assert from 'node:assert/strict'
@@ -43,6 +45,21 @@ try {
   buildProviderConfig = writer.buildProviderConfig.bind(writer)
 } catch {
   buildProviderConfig = null
+}
+
+// P2 — same lazy-require + skip pattern: opencode-executor's import chain is
+// heavy, so a standalone run skips these and the runner exercises them.
+let resolveStallWindowMs:
+  | ((input: {
+      midTurnStallMs: number
+      outstandingToolCall: boolean
+      sawWriteActivity: boolean
+    }) => number)
+  | null = null
+try {
+  resolveStallWindowMs = require('../opencode-executor').resolveStallWindowMs
+} catch {
+  resolveStallWindowMs = null
 }
 
 describe('getTimeoutTier — ordering invariant', () => {
@@ -126,6 +143,69 @@ describe('provider-timeout-tiers — consumer wiring smoke', () => {
         options.chunkTimeout,
         tier.chunkTimeoutMs,
         `${providerId} chunkTimeout must match tier chunkTimeoutMs`
+      )
+    }
+  })
+})
+
+// ═══ P2 — dead-stall window ═════════════════════════════════════════════
+
+describe('resolveStallWindowMs — dead vs slow', () => {
+  const FULL = 480_000
+
+  test('nothing outstanding ⇒ the full mid-turn window (slow-but-alive is untouched)', () => {
+    if (!resolveStallWindowMs) return
+    assert.equal(
+      resolveStallWindowMs({
+        midTurnStallMs: FULL,
+        outstandingToolCall: false,
+        sawWriteActivity: false
+      }),
+      FULL
+    )
+  })
+
+  test('outstanding tool call + zero writes ⇒ shortened (the observed hang shape)', () => {
+    if (!resolveStallWindowMs) return
+    assert.equal(
+      resolveStallWindowMs({
+        midTurnStallMs: FULL,
+        outstandingToolCall: true,
+        sawWriteActivity: false
+      }),
+      240_000
+    )
+  })
+
+  test('a turn that has already written keeps the full window', () => {
+    if (!resolveStallWindowMs) return
+    // The exemption that protects a long `npm test` / build command: once the
+    // turn has produced files, a slow tool is not evidence of death.
+    assert.equal(
+      resolveStallWindowMs({
+        midTurnStallMs: FULL,
+        outstandingToolCall: true,
+        sawWriteActivity: true
+      }),
+      FULL
+    )
+  })
+
+  test('the shortened window never inverts the tier ordering', () => {
+    if (!resolveStallWindowMs) return
+    // Shortening can only make the executor act EARLIER, so the watchdog still
+    // fires last on both tiers. This is the invariant fb03fdff was written for.
+    for (const isRemote of [false, true]) {
+      const tier = getTimeoutTier(isRemote)
+      const dead = resolveStallWindowMs({
+        midTurnStallMs: tier.midTurnStallMs,
+        outstandingToolCall: true,
+        sawWriteActivity: false
+      })
+      assert.ok(dead <= tier.midTurnStallMs, 'dead-stall window must not exceed the full window')
+      assert.ok(
+        dead < tier.taskWatchdogMs,
+        `dead-stall (${dead}) must stay under taskWatchdog (${tier.taskWatchdogMs})`
       )
     }
   })

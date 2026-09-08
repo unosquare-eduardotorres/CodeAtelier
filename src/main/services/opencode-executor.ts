@@ -295,6 +295,51 @@ function isWriteClassTool(toolName: string | undefined): boolean {
 }
 
 /**
+ * P2 — fraction of the mid-turn stall window used when the turn looks DEAD
+ * rather than slow. Half, so the remote tier's 480s becomes 240s and the local
+ * tier's 240s becomes 120s — both still comfortably longer than any tool call
+ * that is actually running, and both still below `taskWatchdogMs`, so the
+ * executor's own retry keeps firing before the phase watchdog (the ordering
+ * invariant in provider-timeout-tiers.ts is preserved: shortening a window can
+ * only make the executor act EARLIER).
+ */
+export const DEAD_STALL_FRACTION = 0.5
+
+/**
+ * P2 — how long to wait for the next stream event, given what the turn is
+ * currently doing.
+ *
+ * The mid-turn stall window is sized for a slow-but-alive turn: observed healthy
+ * remote build turns run 7-8 minutes with heavy server-side buffering, so 480s
+ * of silence is not by itself proof of death. But one shape IS proof: a tool
+ * call was dispatched, its result never came back, and the turn has not written
+ * anything at all. That is the shape of the observed 8-minute hangs (three
+ * `git status` Bash calls, `writes=0`, zero stream events, `llm=761103ms`) —
+ * nothing is streaming, nothing is on disk, and the only outstanding thing is a
+ * tool that never returned. Waiting the full window there buys nothing.
+ *
+ * Deliberately conservative on both discriminators:
+ * - `outstandingToolCall` is tracked by callID (the normalizer emits exactly one
+ *   `tool_use` and one `tool_result` per callID); an uncorrelatable call never
+ *   shortens the window.
+ * - `sawWriteActivity` exempts any turn that has already written — those are the
+ *   turns that legitimately sit in a long test/build command.
+ *
+ * A false positive costs one abort+resend from the same 3-retry budget, not a
+ * task failure.
+ */
+export function resolveStallWindowMs(input: {
+  midTurnStallMs: number
+  /** A tool call started and its result has not arrived. */
+  outstandingToolCall: boolean
+  /** Any write-class tool fired in this turn. */
+  sawWriteActivity: boolean
+}): number {
+  if (!input.outstandingToolCall || input.sawWriteActivity) return input.midTurnStallMs
+  return Math.max(1, Math.round(input.midTurnStallMs * DEAD_STALL_FRACTION))
+}
+
+/**
  * NO-WRITE NUDGE: the in-band course-correction text. Queued as the next user
  * message while the session is busy (live-verified queue semantics) — the model
  * sees it mid-loop and pivots to writing.
@@ -1159,8 +1204,23 @@ export class OpenCodeExecutor {
     // generation the model could not interrupt).
     let nudgeCount = 0
     let textLengthAtLastNudge = 0
+    // Tracked unconditionally (not only under enableNoWriteNudge): P2's
+    // dead-stall discriminator reads it on every session.
     let writeToolSeen = false
     let toolCallCount = 0
+    /**
+     * P2/P4 — tool calls that started and have not reported a result, keyed by
+     * callID. The normalizer emits exactly one `tool_use` and one `tool_result`
+     * per callID (deduped via emittedToolUse/emittedToolResult), so this stays
+     * balanced; a call with no id is simply not tracked, which can only make
+     * the dead-stall check more conservative.
+     *
+     * P4: it also carries the start time, so every tool gets a start line and an
+     * end line with its duration in main.log. Before this, a tool call that hung
+     * for eight minutes left NO trace in our logs — diagnosing it required
+     * querying the opencode HTTP API after the fact.
+     */
+    const outstandingToolCalls = new Map<string, { tool: string; startedAt: number }>()
     // PARITY FIX (E): true from the moment a retry re-sends the prompt until
     // the resent run shows prompt activity. The SSE stream routinely CLOSES
     // after session.error — without a re-subscribe the resent prompt's events
@@ -1208,12 +1268,22 @@ export class OpenCodeExecutor {
     let stallPromise = new Promise<'mid-turn-stall'>((resolve) => {
       stallResolve = resolve
     })
+    /** P2 — the window the CURRENT wait was armed with (full or dead-stall). */
+    let armedStallMs = stallMs
     const resetStallWatch = (): void => {
       if (stallTimer) clearTimeout(stallTimer)
+      // P2 — re-resolved on every re-arm, so the window tracks what the turn is
+      // doing right now: a tool result or a write immediately restores the full
+      // window for the next wait.
+      armedStallMs = resolveStallWindowMs({
+        midTurnStallMs: stallMs,
+        outstandingToolCall: outstandingToolCalls.size > 0,
+        sawWriteActivity: writeToolSeen
+      })
       stallPromise = new Promise<'mid-turn-stall'>((resolve) => {
         stallResolve = resolve
       })
-      stallTimer = setTimeout(() => stallResolve?.('mid-turn-stall'), stallMs)
+      stallTimer = setTimeout(() => stallResolve?.('mid-turn-stall'), armedStallMs)
     }
 
     let iterator = events.stream[Symbol.asyncIterator]()
@@ -1249,9 +1319,17 @@ export class OpenCodeExecutor {
         // the next event. Abort the zombie prompt, then run the shared
         // transient-retry path (counts against the same 3-retry budget).
         if (iterResult === 'mid-turn-stall') {
+          const deadStall = armedStallMs < stallMs
           openCodeLog.warn(
-            `[opencode] Mid-turn stall — no stream activity for ${stallMs}ms — ` +
-              `aborting zombie prompt and retrying (attempt ${transientRetryCount + 1}/${MAX_TRANSIENT_RETRIES})`
+            `[opencode] ${deadStall ? 'Dead-stall' : 'Mid-turn stall'} — no stream activity ` +
+              `for ${armedStallMs}ms` +
+              (deadStall
+                ? ` (outstanding: ${[...outstandingToolCalls.values()]
+                    .map((t) => `${t.tool}@${Date.now() - t.startedAt}ms`)
+                    .join(', ')}; zero writes — shortened from ${stallMs}ms)`
+                : '') +
+              ` — aborting zombie prompt and retrying ` +
+              `(attempt ${transientRetryCount + 1}/${MAX_TRANSIENT_RETRIES})`
           )
           // A4 ZOMBIE-RECOVERY (D4): fail fast when the stall fired against a
           // DEAD server. The incident burned the full 3×(stall+backoff) cycle
@@ -1286,7 +1364,9 @@ export class OpenCodeExecutor {
           // 'stalled' matches SLOW_TRANSIENT_PATTERNS → slow-class backoff.
           // This path calls handleTransientRetry directly (bypassing the
           // isTransientError gate — 'stalled' is not a provider error string).
-          const stallMessage = `stream stalled — no activity for ${Math.round(stallMs / 1000)}s`
+          const stallMessage =
+            `stream stalled — no activity for ${Math.round(armedStallMs / 1000)}s` +
+            (deadStall ? ' with a tool call outstanding and no writes' : '')
           const stallChunk: StreamChunk = { type: 'error', error: stallMessage }
           const stallRetryGen = this.handleTransientRetry(
             stallChunk,
@@ -1307,6 +1387,9 @@ export class OpenCodeExecutor {
             // stall window fresh (the previous promise already resolved) and
             // flag the pending resend for the re-subscribe path.
             resendAwaitingActivity = true
+            // P2: the aborted run's tool calls will never report a result — they
+            // must not make the resent run look dead before it dispatches one.
+            outstandingToolCalls.clear()
             resetStallWatch()
             iterResult = await nextEvent()
             continue
@@ -1356,6 +1439,7 @@ export class OpenCodeExecutor {
             // first run's tail events; fresh pre-activity backstop for the new
             // subscription.
             sawTurnActivity = false
+            outstandingToolCalls.clear() // P2 — same reasoning as the stall-retry path
             armNoActivityWatch()
             iterResult = await nextEvent()
             continue
@@ -1523,15 +1607,41 @@ export class OpenCodeExecutor {
             }
           }
 
+          // P2/P4 — a tool result closes the outstanding call it belongs to,
+          // which restores the full stall window on the next re-arm, and is the
+          // only place we can measure how long the tool actually took.
+          if (chunk.type === 'tool_result' && chunk.toolId) {
+            const started = outstandingToolCalls.get(chunk.toolId)
+            if (started) {
+              openCodeLog.info(
+                `[opencode] tool-end: ${started.tool} callID=${chunk.toolId} ` +
+                  `duration=${Date.now() - started.startedAt}ms`
+              )
+              outstandingToolCalls.delete(chunk.toolId)
+            }
+          }
+
           // Count tool invocations as turns
           if (chunk.type === 'tool_use') {
             turnCount++
+            // P2/P4 — dead-stall inputs + per-tool timing, tracked for every
+            // session (the nudge gating below is a separate, build-mode-only
+            // concern).
+            if (chunk.toolId) {
+              outstandingToolCalls.set(chunk.toolId, {
+                tool: chunk.toolName ?? '?',
+                startedAt: Date.now()
+              })
+              openCodeLog.info(
+                `[opencode] tool-start: ${chunk.toolName ?? '?'} callID=${chunk.toolId}`
+              )
+            }
+            if (isWriteClassTool(chunk.toolName)) writeToolSeen = true
             // NO-WRITE NUDGE: track write-class tools and fire the one-shot
             // course-correction at the threshold. Queued via prompt_async — the
             // busy session receives it as the next user message (live-verified).
             if (params.enableNoWriteNudge) {
               toolCallCount++
-              if (isWriteClassTool(chunk.toolName)) writeToolSeen = true
               // Tool-count trigger: first nudge only — escalation is reserved
               // for the text-volume trigger (post-nudge narration shape).
               if (
@@ -1583,6 +1693,7 @@ export class OpenCodeExecutor {
           // observed (re-subscribe on stream end) and the stall window starts
           // fresh (the previous promise may already be resolved).
           resendAwaitingActivity = true
+          outstandingToolCalls.clear() // P2 — same reasoning as the stall-retry path
           resetStallWatch()
         } else if (eventWasActivity) {
           // PARITY FIX (F): re-arm the mid-turn stall window ONLY on genuine

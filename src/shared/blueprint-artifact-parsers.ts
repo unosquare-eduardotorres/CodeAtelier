@@ -5,7 +5,11 @@
  * Main process re-exports these to keep its existing API.
  */
 
-import { sanitizeGateCommandSet, type GateCommandSet } from './gate-command-types'
+import {
+  GATE_COMMAND_KINDS,
+  sanitizeGateCommandSet,
+  type GateCommandSet
+} from './gate-command-types'
 import {
   LEAD_RUBRIC_CATEGORIES,
   MAX_REVIEW_FINDINGS,
@@ -99,7 +103,9 @@ export function parseGateCommands(text: string): GateCommandSet {
   // declaration silently vanishes on the most common shape.
   const raw = parsed as Record<string, unknown>
   const normalized: GateCommandSet = {}
-  for (const kind of ['build', 'lint', 'test', 'smoke'] as const) {
+  // Driven off GATE_COMMAND_KINDS rather than a literal list: a kind added to
+  // the set but forgotten here would be silently undeclarable by the PLAN phase.
+  for (const kind of GATE_COMMAND_KINDS) {
     const value = raw[kind]
     if (typeof value === 'string') {
       normalized[kind] = { command: value }

@@ -39,6 +39,7 @@ const GROUP_MAP: Record<string, string> = {
   chat: 'code-atelier-chat',
   grill: 'code-atelier-grill',
   audit: 'code-atelier-audit',
+  design: 'code-atelier-design',
   mpa: 'code-atelier-mpa',
   blueprint: 'code-atelier-blueprint',
   council: 'code-atelier-council',
@@ -50,6 +51,7 @@ const SERVICE_LABELS: Record<string, string> = {
   chat: 'Chat',
   grill: 'Grill Me',
   audit: 'Audit',
+  design: 'Design Review',
   mpa: 'Multi-Phase Agent',
   blueprint: 'Blueprint',
   council: 'Council'

@@ -1,0 +1,13 @@
+[
+  {
+    "antipattern": "wide-tracking",
+    "name": "Wide letter tracking",
+    "description": "Excessive letter-spacing on body text hurts readability.",
+    "severity": "warning",
+    "category": "quality",
+    "file": "/Users/dev/projects/sample-app/src/styles/tokens.css",
+    "line": 27,
+    "snippet": "letter-spacing: 0.25em",
+    "importedBy": ["main.css", "admin.css", "print.css"]
+  }
+]

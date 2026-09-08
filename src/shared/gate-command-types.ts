@@ -6,7 +6,7 @@
  * gates come online progressively as the toolchain appears on disk.
  */
 
-export type GateCommandKind = 'build' | 'lint' | 'test' | 'smoke'
+export type GateCommandKind = 'build' | 'lint' | 'test' | 'smoke' | 'e2e'
 
 /** Where a command came from. Precedence is override > declared > detected. */
 export type GateCommandProvenance =
@@ -30,6 +30,12 @@ export interface GateCommandSet {
   lint?: GateCommand
   test?: GateCommand
   smoke?: GateCommand
+  /**
+   * The end-to-end suite. Only ever RUN when the blueprint's verification depth
+   * asks for it — resolving it is free, so it is resolved unconditionally and
+   * the depth decides whether the gate executes.
+   */
+  e2e?: GateCommand
 }
 
 export interface ResolvedGateCommand extends GateCommand {
@@ -42,13 +48,15 @@ export interface ResolvedGateCommands {
   lint?: ResolvedGateCommand
   test?: ResolvedGateCommand
   smoke?: ResolvedGateCommand
+  e2e?: ResolvedGateCommand
 }
 
 export const GATE_COMMAND_KINDS: readonly GateCommandKind[] = [
   'build',
   'lint',
   'test',
-  'smoke'
+  'smoke',
+  'e2e'
 ] as const
 
 /** Per-gate timeouts. Build is generous — a cold .NET or Rust build is slow. */
@@ -56,7 +64,11 @@ export const GATE_TIMEOUTS_MS: Record<GateCommandKind, number> = {
   lint: 5 * 60_000,
   build: 30 * 60_000,
   test: 30 * 60_000,
-  smoke: 5 * 60_000
+  smoke: 5 * 60_000,
+  // Browser-driving suites are the slowest thing in the stack and are the whole
+  // point of asking for this depth — a timeout here would ledger the run as
+  // unproven, which is exactly the outcome the user chose the depth to avoid.
+  e2e: 45 * 60_000
 }
 
 /**

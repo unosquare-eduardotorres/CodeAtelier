@@ -169,6 +169,13 @@ export type BlueprintTelemetryKind =
    * follow the protocol at all) from ordinary per-turn misses.
    */
   | 'protocol_miss_budget'
+  /**
+   * P3 — one row per repeated-infra budget exhaustion on a task: N consecutive
+   * rungs failed `infra` with the same normalised reason (typically the same
+   * stall/no-activity wait), so the ladder stopped instead of re-running the
+   * identical watchdog window. Carries the fingerprint that did it.
+   */
+  | 'infra_repeat_budget'
 
 export interface BlueprintTelemetryRow {
   id: string

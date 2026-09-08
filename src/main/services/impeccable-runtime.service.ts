@@ -218,10 +218,20 @@ export interface EngineRunResult {
  * `maxBuffer` is raised because `detect --json` over a large workspace can emit
  * well past node's 1 MB default, which would otherwise surface as a truncated
  * parse failure.
+ *
+ * `signal` is forwarded to `execFile`, which kills the child when it aborts.
+ * The result then looks like a timeout kill (`timedOut: true`); callers that
+ * own the signal are the ones that can tell the two apart, so they check
+ * `signal.aborted` themselves rather than this wrapper guessing.
  */
 export function runEngine(
   args: string[],
-  options: { cwd?: string; timeoutMs?: number; env?: NodeJS.ProcessEnv } = {}
+  options: {
+    cwd?: string
+    timeoutMs?: number
+    env?: NodeJS.ProcessEnv
+    signal?: AbortSignal
+  } = {}
 ): Promise<EngineRunResult> {
   const bin = resolveEngineBinary()
   if (!bin) {
@@ -252,6 +262,7 @@ export function runEngine(
           timeout: options.timeoutMs ?? 60_000,
           maxBuffer: 32 * 1024 * 1024,
           env: options.env ?? process.env,
+          signal: options.signal,
           windowsHide: true
         },
         (err, stdout, stderr) => {

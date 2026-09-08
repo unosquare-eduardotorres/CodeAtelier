@@ -34,7 +34,14 @@ import type {
   BlueprintApprovalNeededPayload
 } from '../../shared/blueprint-types'
 import { runPreflightChecks } from './blueprint-preflight.service'
-import type { ApprovalPreflightData } from '../../shared/preflight-types'
+import { resolveBlueprintGateCommands } from './blueprint-gate-command-pipeline'
+import { resolveVerificationDepth } from '../../shared/blueprint-types'
+import {
+  verificationDepthPreflightCheck,
+  type ApprovalPreflightData,
+  type PreflightResult
+} from '../../shared/preflight-types'
+import { E2E_LEDGER_TASK_ID } from '../../shared/gate-types'
 
 const bpLog = log.scope('blueprint-review')
 
@@ -57,6 +64,16 @@ export class BlueprintReviewService extends EventEmitter {
     workspaceId: string
     workspacePath: string
   }): Promise<void> {
+    // MODEL-SNAPSHOT-REFRESH: resolve the phase's frozen assignment against the
+    // CURRENT workspace binding before anything dispatches. First statement —
+    // model resolution happens later, at session creation. Must never block the
+    // phase start.
+    try {
+      blueprintService.refreshModelSnapshotForPhase(params.blueprintId, 'review')
+    } catch {
+      /* best effort */
+    }
+
     const { blueprintId, workspaceId, workspacePath } = params
 
     bpLog.info(`[startReviewPhase] Blueprint ${blueprintId} — starting REVIEW`)
@@ -265,7 +282,12 @@ export class BlueprintReviewService extends EventEmitter {
       try {
         const tasks = blueprintTaskRepository.findByBlueprint(blueprintId)
         const taskDescriptions = tasks.map((t) => t.description)
-        const preflightResult = await runPreflightChecks(workspacePath, taskDescriptions)
+        const preflightResult = this.withVerificationDepthCheck(
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          await runPreflightChecks(workspacePath, taskDescriptions)
+        )
 
         // A6+R2-2 fix: atomic replace — avoids stale-read hazard from step 1
         if (reviewPhase) {
@@ -398,6 +420,94 @@ export class BlueprintReviewService extends EventEmitter {
         endedAtGate ? { keepGate: true } : undefined
       )
     }
+  }
+
+  /**
+   * U3 — fold the "you asked for a depth whose command does not exist" warning
+   * into the preflight result the approval gate renders.
+   *
+   * Best-effort by construction: command resolution reads the PLAN artifact and
+   * the workspace, either of which can throw, and preflight must never block the
+   * gate (premortem #4). On any failure the original result is returned
+   * unchanged.
+   */
+  private withVerificationDepthCheck(
+    blueprintId: string,
+    workspaceId: string,
+    workspacePath: string,
+    result: PreflightResult
+  ): PreflightResult {
+    try {
+      const depth = resolveVerificationDepth(
+        blueprintRepository.findById(blueprintId)?.settingsJson
+      )
+      const { commands } = resolveBlueprintGateCommands(blueprintId, workspacePath)
+      const resolved = { smoke: commands.smoke !== undefined, e2e: commands.e2e !== undefined }
+
+      // G1 — at depth `e2e`, "no e2e command anywhere" is FULLY KNOWN here.
+      // Resolution has already consulted every source (workspace override → the
+      // PLAN artifact's gate-commands declaration → detection), and none of them
+      // can gain an entry between REVIEW and VERIFY. Ledgering it now marks the
+      // blueprint unproven at the human decision point instead of 45 minutes
+      // into the tail, when the only remaining option is to re-run everything.
+      if (depth === 'e2e' && !resolved.e2e) {
+        this.ledgerMissingE2ECommand(blueprintId, workspaceId)
+      }
+
+      const check = verificationDepthPreflightCheck(depth, resolved)
+      if (!check) return result
+      // Warnings sort ahead of passes; blockers keep the front of the list.
+      const insertAt = result.checks.findIndex((c) => c.status !== 'blocker')
+      const checks = [...result.checks]
+      checks.splice(insertAt < 0 ? checks.length : insertAt, 0, check)
+      return {
+        ...result,
+        checks,
+        hasBlockers: result.hasBlockers || check.status === 'blocker',
+        hasWarnings: result.hasWarnings || check.status === 'warn'
+      }
+    } catch (err) {
+      bpLog.warn('[startReviewPhase] Verification-depth preflight check failed:', err)
+      return result
+    }
+  }
+
+  /**
+   * G1 — record "the requested end-to-end proof has no command" in the ledger at
+   * REVIEW, and say so in the phase stream.
+   *
+   * Deliberately NOT a keyword scan of what TASKS authored: asserting that the
+   * model "wrote e2e work" by pattern-matching its prose would manufacture
+   * exactly the false confidence this feature exists to prevent. A declared
+   * command is the only mechanical proxy worth trusting.
+   *
+   * `appendUnverified` de-duplicates on (taskId, gate, reason), and the BUILD
+   * backstop and VERIFY both ledger under `E2E_LEDGER_TASK_ID`, so writing early
+   * cannot double-count the same gap later.
+   */
+  private ledgerMissingE2ECommand(blueprintId: string, workspaceId: string): void {
+    blueprintRepository.appendUnverified(blueprintId, [
+      {
+        taskId: E2E_LEDGER_TASK_ID,
+        gate: 'e2e',
+        reason: 'no_command',
+        detail: 'Verification depth is “End-to-end” but no e2e command resolved at REVIEW.',
+        at: new Date().toISOString()
+      }
+    ])
+    bpLog.warn(
+      `[startReviewPhase] Blueprint ${blueprintId} — depth is e2e with no e2e command; ledgered as unproven`
+    )
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'review',
+      text:
+        '⚠️ Verification depth is “End-to-end” but no e2e command resolved. ' +
+        'The end-to-end gate cannot run, so this blueprint is already recorded as ' +
+        'unproven end to end. Declare an `e2e` command in the plan’s gate-commands ' +
+        'block, or under Workspace Settings → Repository → Gate commands.'
+    })
   }
 
   // ── Approval Summary Builder ──

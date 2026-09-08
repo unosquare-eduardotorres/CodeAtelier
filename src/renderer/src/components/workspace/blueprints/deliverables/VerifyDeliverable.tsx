@@ -16,12 +16,16 @@ import {
   ScanEye
 } from 'lucide-react'
 import type { BlueprintPhase } from '../../../../../../shared/blueprint-types'
+import type { GateReport } from '../../../../../../shared/gate-types'
 import { PHASE_ICONS } from '../phase-icons'
 import { useFileViewerStore } from '@renderer/store/file-viewer.store'
+import { useBlueprintStore } from '@renderer/store/blueprint.store'
 import FileLanguageIcon from '../../../common/FileLanguageIcon'
 import { DeliverableHeader, MetricTile, DiscoveriesSection, CappedMarkdownBlock } from './shared'
 import { findArtifact, extractDiscoveries } from './artifact-helpers'
+import { GateReportRow } from './GateReportRow'
 import { ModifiedFilesSection } from './ModifiedFilesSection'
+import { VerificationDepthCaveat } from '../VerificationDepthBadge'
 
 // ── Types ──
 
@@ -204,6 +208,17 @@ export function VerifyDeliverable({
   const requirementsCovered = (json?.requirementsCovered as number) ?? 0
   const totalRequirements = (json?.totalRequirements as number) ?? 0
   const qualityGates = (json?.qualityGates as QualityGate[]) ?? []
+
+  // U1 — the DETERMINISTIC gate report (`verify-gates`, written by
+  // `runVerifyQualityGates`). Distinct from `json.qualityGates` above, which is
+  // the model's own account of its run: the e2e verdict lives here and nowhere
+  // else, so without this the one gate the depth setting exists to produce was
+  // invisible. Last artifact wins — a re-verify appends a fresh one.
+  const verifyGateReports = phase.artifactsJson
+    .filter((a) => a.type === 'verify-gates')
+    .map((a) => (a.contentJson as { report?: GateReport } | undefined)?.report)
+    .filter((r): r is GateReport => Boolean(r?.gates?.length))
+  const verifyGateReport = verifyGateReports[verifyGateReports.length - 1] ?? null
   const recommendation = (json?.recommendation as string) ?? null
   const humanVerification = (json?.humanVerificationNeeded as string[]) ?? []
   const discoveries = extractDiscoveries(phase.artifactsJson)
@@ -235,6 +250,9 @@ export function VerifyDeliverable({
 
   // Finding chips open the file in the shared viewer (blueprint drawer shows it)
   const openFileInViewer = useFileViewerStore((s) => s.openFile)
+  // The depth lives on the blueprint record, not the phase — read it from the
+  // store rather than threading a prop through every deliverable call site.
+  const blueprintSettings = useBlueprintStore((s) => s.currentBlueprint?.settingsJson)
   const handleOpenFindingFile = (file: string): void => {
     // blueprintId ctx → viewer reads from the blueprint's execution track
     if (blueprintId) void openFileInViewer(file, { blueprintId })
@@ -293,8 +311,28 @@ export function VerifyDeliverable({
         className={`flex items-center gap-3 px-4 py-3 rounded-xl border ${display.bgClass} mb-6`}
       >
         <DisplayIcon size={20} className={display.textClass} />
-        <span className={`text-sm font-semibold ${display.textClass}`}>{display.label}</span>
+        <div className="flex flex-col gap-0.5">
+          <span className={`text-sm font-semibold ${display.textClass}`}>{display.label}</span>
+          {/* U2 — which depth this verdict is a verdict AT. */}
+          <VerificationDepthCaveat settingsJson={blueprintSettings} />
+        </div>
       </div>
+
+      {/* 1a. Deterministic gate report — what the machine measured, as opposed
+          to what the verifier model reported below. */}
+      {verifyGateReport && (
+        <div className="mb-6">
+          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+            <ShieldCheck size={12} className="inline mr-1" />
+            Deterministic Gates
+          </h3>
+          <GateReportRow
+            label="Verify"
+            report={verifyGateReport}
+            testId="blueprint-verify-gates-row"
+          />
+        </div>
+      )}
 
       {/* 1b. Lead-review pass (M6.1) — advisory whole-diff review verdict */}
       {leadPassJson && (

@@ -1,0 +1,13 @@
+{
+  "findings": [
+    {
+      "antipattern": "side-tab",
+      "name": "Side-tab accent border",
+      "severity": "warning",
+      "category": "slop",
+      "file": "/Users/dev/projects/sample-app/src/app.css",
+      "line": 12
+    }
+  ],
+  "summary": { "total": 1 }
+}

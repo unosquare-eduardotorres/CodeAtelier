@@ -210,13 +210,13 @@ describe('resolveGateCommands', () => {
 
   test('unresolved kinds are reported so their gates can return unverifiable', () => {
     const r = resolveGateCommands({ detected })
-    assert.deepEqual(unresolvedGateKinds(r).sort(), ['lint', 'smoke'])
+    assert.deepEqual(unresolvedGateKinds(r).sort(), ['e2e', 'lint', 'smoke'])
   })
 
   test('nothing anywhere leaves every gate unresolved', () => {
     const r = resolveGateCommands({})
     assert.deepEqual(r, {})
-    assert.deepEqual(unresolvedGateKinds(r).sort(), ['build', 'lint', 'smoke', 'test'])
+    assert.deepEqual(unresolvedGateKinds(r).sort(), ['build', 'e2e', 'lint', 'smoke', 'test'])
   })
 
   test('an unsafe override does not shadow a safe lower-precedence command', () => {

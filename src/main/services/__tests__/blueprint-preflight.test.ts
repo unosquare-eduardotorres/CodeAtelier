@@ -27,9 +27,18 @@ import {
   buildPreflightDiscoveries,
   mergeChecks,
   captureLoginShellEnv,
-  resetLoginShellCache
+  resetLoginShellCache,
+  resolveConnectivityTarget,
+  probeTcpAsync
 } from '../blueprint-preflight.service'
-import type { PreflightCheck, PreflightResult } from '../../../shared/preflight-types'
+import {
+  parseDsnTarget,
+  verificationDepthPreflightCheck,
+  type PreflightCheck,
+  type PreflightResult,
+  type PreflightServiceDef
+} from '../../../shared/preflight-types'
+import { createServer } from 'node:net'
 
 // ── Registry tests ──
 
@@ -591,6 +600,283 @@ describe('envVarAlternatives — DATABASE_URL satisfied by split DSNs', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+// ── G2: infrastructure reachability ──
+
+describe('parseDsnTarget', () => {
+  test('strips_credentials_from_a_full_dsn', () => {
+    // The whole reason this returns a struct instead of a string: the password
+    // must be gone before anything downstream can put the value in a message.
+    const t = parseDsnTarget('postgresql://admin:hunter2@db.internal:6543/app', 5432)
+    assert.deepEqual(t, { host: 'db.internal', port: 6543 })
+    assert.ok(!JSON.stringify(t).includes('hunter2'), 'no credential may survive parsing')
+    assert.ok(!JSON.stringify(t).includes('admin'))
+  })
+
+  test('falls_back_to_the_default_port', () => {
+    assert.deepEqual(parseDsnTarget('postgres://user@db.internal/app', 5432), {
+      host: 'db.internal',
+      port: 5432
+    })
+  })
+
+  test('accepts_a_bare_host_port', () => {
+    // REDIS_URL=cache.internal:6379 is a shape people really write.
+    assert.deepEqual(parseDsnTarget('cache.internal:6379', 6379), {
+      host: 'cache.internal',
+      port: 6379
+    })
+  })
+
+  test('accepts_a_bare_host', () => {
+    assert.deepEqual(parseDsnTarget('cache.internal', 6379), { host: 'cache.internal', port: 6379 })
+  })
+
+  test('drops_credentials_from_a_schemeless_dsn', () => {
+    const t = parseDsnTarget('user:hunter2@db.internal:3306', 3306)
+    assert.deepEqual(t, { host: 'db.internal', port: 3306 })
+    assert.ok(!JSON.stringify(t).includes('hunter2'))
+  })
+
+  test('mongodb_srv_is_never_probed', () => {
+    // The real hosts come from a DNS SRV lookup, so probing the seed name on
+    // 27017 would report an outage that does not exist.
+    assert.equal(parseDsnTarget('mongodb+srv://u:p@cluster0.abcd.mongodb.net/app', 27017), null)
+  })
+
+  test('ipv6_literals_keep_their_host', () => {
+    assert.deepEqual(parseDsnTarget('postgres://[::1]:5433/app', 5432), { host: '::1', port: 5433 })
+  })
+
+  test('unusable_values_yield_null_rather_than_throwing', () => {
+    // An unparseable connection string is a reason to skip the probe, not to
+    // fail preflight.
+    for (const bad of [
+      '',
+      '   ',
+      'postgres://:99999/app',
+      'host:0',
+      'host:not-a-port',
+      // Prose is not a hostname. Without this guard the bare-host branch would
+      // accept it and report the resulting DNS failure as an outage.
+      'not a dsn at all!!',
+      'TODO: set me'
+    ]) {
+      assert.equal(parseDsnTarget(bad, 5432), null, `expected null for ${JSON.stringify(bad)}`)
+    }
+  })
+
+  test('a_unix_socket_path_is_skipped', () => {
+    assert.equal(parseDsnTarget('postgres:///var/run/postgresql', 5432), null)
+  })
+})
+
+describe('resolveConnectivityTarget', () => {
+  const def = KNOWN_SERVICES.find((s) => s.id === 'postgres') as PreflightServiceDef
+
+  test('postgres_redis_mongo_and_mysql_all_declare_a_probe', () => {
+    for (const id of ['postgres', 'redis', 'mongodb', 'mysql']) {
+      const svc = KNOWN_SERVICES.find((s) => s.id === id)
+      assert.ok(svc, `${id} missing from the registry`)
+      assert.ok(svc.connectivityProbe, `${id} has no connectivity probe`)
+      assert.ok(svc.connectivityProbe.defaultPort > 0)
+    }
+  })
+
+  test('uses_the_first_declared_var_that_parses', () => {
+    const resolved = resolveConnectivityTarget(
+      def,
+      new Map([
+        ['DATABASE_URL', 'postgres://u:p@primary.internal:5432/app'],
+        ['DB_READ_DSN', 'postgres://u:p@replica.internal:5432/app']
+      ])
+    )
+    assert.equal(resolved?.envVar, 'DATABASE_URL')
+    assert.equal(resolved?.target.host, 'primary.internal')
+  })
+
+  test('skips_a_var_whose_value_cannot_be_parsed', () => {
+    const resolved = resolveConnectivityTarget(
+      def,
+      new Map([
+        ['DATABASE_URL', 'not a dsn at all!!'],
+        ['DB_WRITE_DSN', 'postgres://u:p@fallback.internal:5432/app']
+      ])
+    )
+    assert.equal(
+      resolved?.envVar,
+      'DB_WRITE_DSN',
+      'an unusable first value must not end the search'
+    )
+  })
+
+  test('no_dsn_means_no_probe', () => {
+    assert.equal(resolveConnectivityTarget(def, new Map()), null)
+  })
+
+  test('a_service_without_a_probe_declaration_is_never_probed', () => {
+    const stripe = KNOWN_SERVICES.find((s) => s.id === 'stripe') as PreflightServiceDef
+    assert.equal(resolveConnectivityTarget(stripe, new Map([['DATABASE_URL', 'x:1']])), null)
+  })
+})
+
+describe('probeTcpAsync', () => {
+  test('a_listening_port_is_reachable', async () => {
+    const server = createServer()
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        resolve((server.address() as { port: number }).port)
+      })
+    })
+    try {
+      const result = await probeTcpAsync({ host: '127.0.0.1', port })
+      assert.equal(result.reachable, true)
+    } finally {
+      server.close()
+    }
+  })
+
+  test('a_closed_port_is_unreachable_and_names_the_reason', async () => {
+    // Bind then immediately release, so the port is almost certainly free.
+    const server = createServer()
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        resolve((server.address() as { port: number }).port)
+      })
+    })
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+
+    const result = await probeTcpAsync({ host: '127.0.0.1', port })
+    assert.equal(result.reachable, false)
+    assert.ok(result.error, 'a failure must say why')
+  })
+
+  test('an_unroutable_host_settles_within_its_own_timeout', async () => {
+    // 192.0.2.0/24 is TEST-NET-1 (RFC 5737): guaranteed non-routable, so the SYN
+    // is dropped rather than refused. Without the explicit cap this would hang
+    // for the OS default of over a minute.
+    const started = Date.now()
+    const result = await probeTcpAsync({ host: '192.0.2.1', port: 5432 }, 300)
+    const elapsed = Date.now() - started
+
+    assert.equal(result.reachable, false)
+    assert.ok(elapsed < 3000, `probe took ${elapsed}ms — the timeout did not hold`)
+  })
+
+  test('an_unresolvable_hostname_is_unreachable_not_a_throw', async () => {
+    const result = await probeTcpAsync(
+      { host: 'preflight-nonexistent-host.invalid', port: 5432 },
+      1000
+    )
+    assert.equal(result.reachable, false)
+  })
+})
+
+describe('connectivity verdicts stay warnings', () => {
+  test('a_dead_database_warns_and_never_blocks', async () => {
+    // The doctrine this pins: a service may legitimately be provisioned during
+    // BUILD, so an unreachable host is information, not a veto.
+    const dir = mkdtempSync(join(tmpdir(), 'preflight-conn-'))
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 't', dependencies: { pg: '^8' } })
+      )
+      writeFileSync(join(dir, '.env'), 'DATABASE_URL=postgres://u:p@192.0.2.1:5432/app\n')
+
+      const result = await runPreflightChecks(dir)
+      const conn = result.checks.find((c) => c.id === 'postgres-reachable')
+      assert.ok(conn, 'a declared DSN must produce a reachability check')
+      assert.equal(conn.status, 'warn', 'connectivity failure is never a blocker')
+      assert.equal(conn.kind, 'service')
+      assert.ok(conn.message.includes('192.0.2.1:5432'), 'the message must name the target')
+      assert.ok(!conn.message.includes('hunter'), 'sanity: no credential text')
+      assert.ok(!conn.message.includes(':p@'), 'credentials must never reach the message')
+      assert.equal(result.hasBlockers, false, 'a dead host alone must not block the gate')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('no_dsn_means_no_reachability_check_at_all', async () => {
+    // Fabricating "unreachable" for a workspace that never named a host would be
+    // noise, not evidence.
+    const dir = mkdtempSync(join(tmpdir(), 'preflight-noconn-'))
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 't', dependencies: { pg: '^8' } })
+      )
+      const result = await runPreflightChecks(dir)
+      assert.equal(
+        result.checks.find((c) => c.id === 'postgres-reachable'),
+        undefined
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('the_whole_phase_stays_inside_its_budget_with_dead_hosts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'preflight-budget-'))
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 't', dependencies: { pg: '^8', ioredis: '^5', mongoose: '^8' } })
+      )
+      writeFileSync(
+        join(dir, '.env'),
+        'DATABASE_URL=postgres://192.0.2.1:5432/app\n' +
+          'REDIS_URL=redis://192.0.2.2:6379\n' +
+          'MONGODB_URI=mongodb://192.0.2.3:27017/app\n'
+      )
+
+      const started = Date.now()
+      await runPreflightChecks(dir)
+      const elapsed = Date.now() - started
+
+      // Three black-hole hosts probed in parallel, not in series.
+      assert.ok(elapsed < 15000, `preflight took ${elapsed}ms with three dead hosts`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── G1: verification-depth readiness ──
+
+describe('verificationDepthPreflightCheck', () => {
+  test('e2e_depth_without_an_e2e_command_is_a_blocker', () => {
+    // The user asked for the strongest proof and the pipeline has no way to
+    // produce ANY. `blocker` re-labels Approve as "Build Anyway" — loud at the
+    // last human decision point, but still not a hard stop.
+    const check = verificationDepthPreflightCheck('e2e', { smoke: true, e2e: false })
+    assert.equal(check?.id, 'verification-depth-e2e')
+    assert.equal(check?.status, 'blocker')
+    assert.ok(check?.remediation, 'a blocker without a next step is just an obstacle')
+  })
+
+  test('missing_smoke_command_stays_a_warning', () => {
+    // The stronger e2e gate may still exercise the boot path, so this one is not
+    // fully known here the way the e2e case is.
+    const check = verificationDepthPreflightCheck('integration', { smoke: false, e2e: false })
+    assert.equal(check?.id, 'verification-depth-smoke')
+    assert.equal(check?.status, 'warn')
+  })
+
+  test('e2e_gap_outranks_the_smoke_gap', () => {
+    const check = verificationDepthPreflightCheck('e2e', { smoke: false, e2e: false })
+    assert.equal(check?.id, 'verification-depth-e2e', 'report the strongest missing proof first')
+  })
+
+  test('standard_depth_never_complains', () => {
+    assert.equal(verificationDepthPreflightCheck('standard', { smoke: false, e2e: false }), null)
+  })
+
+  test('satisfied_depth_produces_no_check', () => {
+    assert.equal(verificationDepthPreflightCheck('e2e', { smoke: true, e2e: true }), null)
   })
 })
 

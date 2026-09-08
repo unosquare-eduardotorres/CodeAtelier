@@ -5,7 +5,10 @@
  *
  * 1. `shouldPassProtocolMissAsUnproven` — the "wrote but didn't sign" gate:
  *    all-zero verification + cumulative write activity + planned files ⇒ pass
- *    as unproven; zero-write tasks never pass (they hard-fail separately).
+ *    as unproven; zero-activity tasks never pass (they hard-fail separately),
+ *    and (P1) a Bash-only task passes only when the gate baseline diff proves
+ *    the tree actually changed.
+ * 5. `infraFailureFingerprint` — the P3 repeated-infra signature predicate.
  * 2. `isRetryableError` — the protocol-miss failureReason stays retryable
  *    (message-only rewording must not silently de-retry).
  * 3. `isProtocolMissRung` — the poisoned-transcript signature predicate
@@ -20,6 +23,9 @@ import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from './test-harness'
 import {
   BlueprintBuildService,
+  infraFailureFingerprint,
+  INFRA_REPEAT_BUDGET,
+  INFRA_REPEAT_FAILURE_REASON,
   isProtocolMissRung,
   PROTOCOL_MISS_BUDGET,
   PROTOCOL_MISS_BUDGET_FAILURE_REASON,
@@ -38,33 +44,93 @@ describe('shouldPassProtocolMissAsUnproven — wrote-but-didnt-sign gate', () =>
         allZero: true,
         cumulativeWriteToolCalls: 3,
         cumulativeBashCalls: 0,
-        hasPlannedFiles: true
+        hasPlannedFiles: true,
+        // Not consulted when a write tool fired — asserted explicitly below.
+        baselineDiffEmpty: true
       }),
       true
     )
   })
 
-  test('passes when the only activity is Bash calls (e.g. generator scripts)', () => {
+  test('write activity is decided by the counters — the diff is not consulted', () => {
+    // Regression guard for P1: the new baseline check must apply ONLY to the
+    // zero-write shape. A task that wrote and then reverted its own change
+    // (empty diff) still passes exactly as before.
+    for (const baselineDiffEmpty of [true, false, null]) {
+      assert.equal(
+        shouldPassProtocolMissAsUnproven({
+          allZero: true,
+          cumulativeWriteToolCalls: 2,
+          cumulativeBashCalls: 0,
+          hasPlannedFiles: true,
+          baselineDiffEmpty
+        }),
+        true,
+        `writes > 0 must pass regardless of baselineDiffEmpty=${String(baselineDiffEmpty)}`
+      )
+    }
+  })
+
+  test('P1 — Bash-only passes ONLY when the baseline diff proves the tree changed', () => {
+    // A task can legitimately do all its work through a generator script, which
+    // is why bash > 0 is allowed to reach the pass at all — but the evidence is
+    // the diff, not the counter.
     assert.equal(
       shouldPassProtocolMissAsUnproven({
         allZero: true,
         cumulativeWriteToolCalls: 0,
         cumulativeBashCalls: 2,
-        hasPlannedFiles: true
+        hasPlannedFiles: true,
+        baselineDiffEmpty: false
       }),
       true
     )
   })
 
-  test('fails when there was zero write activity — zero-write tasks must keep failing', () => {
+  test('P1 — the R013 shape (writes=0, bash=3, nothing changed) now FAILS', () => {
+    // Live incident: three `git status --porcelain` calls that hung without
+    // executing, and a planned README.md that had existed for hours. The old
+    // AND-guard accepted that as "work". Bash count is not write evidence.
+    assert.equal(
+      shouldPassProtocolMissAsUnproven({
+        allZero: true,
+        cumulativeWriteToolCalls: 0,
+        cumulativeBashCalls: 3,
+        hasPlannedFiles: true,
+        baselineDiffEmpty: true
+      }),
+      false
+    )
+  })
+
+  test('P1 — an unanswerable diff does NOT grant a zero-write pass', () => {
+    // Deliberately the opposite default to shouldFailForNoWriteActivity: there,
+    // null falls back to the counters and preserves prior behaviour. Here the
+    // counters are exactly what proved untrustworthy, so "we cannot measure it"
+    // must not be read as "it happened".
+    assert.equal(
+      shouldPassProtocolMissAsUnproven({
+        allZero: true,
+        cumulativeWriteToolCalls: 0,
+        cumulativeBashCalls: 3,
+        hasPlannedFiles: true,
+        baselineDiffEmpty: null
+      }),
+      false
+    )
+  })
+
+  test('fails when there was zero activity at all — zero-write tasks must keep failing', () => {
     assert.equal(
       shouldPassProtocolMissAsUnproven({
         allZero: true,
         cumulativeWriteToolCalls: 0,
         cumulativeBashCalls: 0,
-        hasPlannedFiles: true
+        hasPlannedFiles: true,
+        baselineDiffEmpty: false
       }),
-      false
+      false,
+      'no tools ran at all — a non-empty diff belongs to someone else'
     )
   })
 
@@ -74,7 +140,8 @@ describe('shouldPassProtocolMissAsUnproven — wrote-but-didnt-sign gate', () =>
         allZero: false,
         cumulativeWriteToolCalls: 5,
         cumulativeBashCalls: 1,
-        hasPlannedFiles: true
+        hasPlannedFiles: true,
+        baselineDiffEmpty: false
       }),
       false
     )
@@ -86,7 +153,8 @@ describe('shouldPassProtocolMissAsUnproven — wrote-but-didnt-sign gate', () =>
         allZero: true,
         cumulativeWriteToolCalls: 2,
         cumulativeBashCalls: 0,
-        hasPlannedFiles: false
+        hasPlannedFiles: false,
+        baselineDiffEmpty: false
       }),
       false
     )
@@ -100,7 +168,8 @@ describe('shouldPassProtocolMissAsUnproven — wrote-but-didnt-sign gate', () =>
         allZero: false,
         cumulativeWriteToolCalls: 4,
         cumulativeBashCalls: 0,
-        hasPlannedFiles: true
+        hasPlannedFiles: true,
+        baselineDiffEmpty: false
       }),
       false
     )
@@ -309,6 +378,125 @@ describe('D4 — protocol-miss budget', () => {
     for (const miss of misses) streak = miss ? streak + 1 : 0
     assert.ok(streak >= PROTOCOL_MISS_BUDGET, 'three misses exhaust the budget')
     assert.ok(streak >= PROTOCOL_MISS_BUDGET)
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════
+// P3 — repeated-infra budget (infraFailureFingerprint)
+// ════════════════════════════════════════════════════════════════════════
+
+describe('infraFailureFingerprint — truth table', () => {
+  const STALL = 'no prompt activity within 300000ms'
+
+  test('an infra failure yields a fingerprint', () => {
+    assert.equal(
+      infraFailureFingerprint({ success: false, failureClass: 'infra', failureReason: STALL }),
+      'no prompt activity within #ms'
+    )
+  })
+
+  test('digits are normalised — the same stall at a different timeout is the SAME failure', () => {
+    // This is the point of the normalisation: fb03fdff moved the windows, and a
+    // streak must not reset just because the number in the message changed.
+    assert.equal(
+      infraFailureFingerprint({ success: false, failureClass: 'infra', failureReason: STALL }),
+      infraFailureFingerprint({
+        success: false,
+        failureClass: 'infra',
+        failureReason: 'no prompt activity within 480000ms'
+      })
+    )
+  })
+
+  test('different infra failures do not fold together', () => {
+    assert.notEqual(
+      infraFailureFingerprint({ success: false, failureClass: 'infra', failureReason: STALL }),
+      infraFailureFingerprint({
+        success: false,
+        failureClass: 'infra',
+        failureReason: 'executor error: OpenCode server died mid-turn'
+      })
+    )
+  })
+
+  test('success, quality and aborted rungs yield null (no streak)', () => {
+    assert.equal(
+      infraFailureFingerprint({ success: true, failureClass: 'infra', failureReason: STALL }),
+      null
+    )
+    // Quality failures are what the retry ladder EXISTS for — never capped here.
+    assert.equal(
+      infraFailureFingerprint({
+        success: false,
+        failureClass: 'quality',
+        failureReason: 'task-tests gate failed'
+      }),
+      null
+    )
+    assert.equal(
+      infraFailureFingerprint({
+        success: false,
+        failureClass: 'aborted',
+        failureReason: 'aborted'
+      }),
+      null
+    )
+    assert.equal(infraFailureFingerprint({ success: false, failureClass: 'infra' }), null)
+  })
+
+  test('protocol misses are excluded — they have their own budget', () => {
+    // Double counting would cut PROTOCOL_MISS_BUDGET's recovery nudges short.
+    assert.equal(
+      infraFailureFingerprint({
+        success: false,
+        failureClass: 'infra',
+        failureReason:
+          'verification failed — no completion block in CLI output (protocol miss — ' +
+          'model did not emit the required blueprint-phase-complete block)'
+      }),
+      null
+    )
+  })
+
+  test('three identical infra failures exhaust the budget; a different one resets (fold simulation)', () => {
+    const fold = (reasons: (string | null)[]): number => {
+      let streak = 0
+      let last: string | null = null
+      for (const reason of reasons) {
+        const fp = reason
+          ? infraFailureFingerprint({
+              success: false,
+              failureClass: 'infra',
+              failureReason: reason
+            })
+          : null
+        if (fp !== null && fp === last) streak++
+        else streak = fp === null ? 0 : 1
+        last = fp
+      }
+      return streak
+    }
+    // R010/R011/R012's shape: the same dead wait, over and over.
+    assert.ok(fold([STALL, STALL, STALL]) >= INFRA_REPEAT_BUDGET)
+    // A success in the middle resets it.
+    assert.equal(fold([STALL, STALL, null, STALL]), 1)
+    // So does a genuinely different infra failure.
+    assert.equal(fold([STALL, STALL, 'executor error: server died', STALL]), 1)
+  })
+
+  test('the repeated-infra failure reason is NON-retryable (scheduleAutoRetry refuses)', () => {
+    assert.equal(
+      BlueprintService.isRetryableErrorStatic(INFRA_REPEAT_FAILURE_REASON),
+      false,
+      'the exhaustion wording must not fund another identical wait'
+    )
+  })
+
+  test('the exhaustion wording does not re-match the retryable no-activity pattern', () => {
+    // It must not carry the very phrase it is reporting on, or scheduleAutoRetry
+    // would classify it as the transient failure it is meant to stop.
+    assert.doesNotMatch(INFRA_REPEAT_FAILURE_REASON, /no prompt activity within/i)
+    assert.match(INFRA_REPEAT_FAILURE_REASON, /budget/i)
   })
 })
 

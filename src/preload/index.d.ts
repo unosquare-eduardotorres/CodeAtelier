@@ -146,6 +146,7 @@ import type {
   BlueprintBranchMode,
   BlueprintHandoffOptions
 } from '../shared/blueprint-handoff'
+import type { TestabilityEntry } from '../shared/testability-report'
 
 interface Api {
   // Workspace
@@ -1826,6 +1827,20 @@ interface Api {
     hasBlockers: boolean
     hasWarnings: boolean
   } | null>
+  /** Export the testability ledger — the work this blueprint never proved — as
+   *  Markdown. Resolves `{ exported: false }` when the user cancels the dialog. */
+  blueprintExportTestability: (args: { blueprintId: string }) => Promise<{ exported: boolean }>
+  /** The same ledger rows the Markdown export renders, plus the map of rows that
+   *  already became follow-up ideas (entry key → idea id). */
+  blueprintTestabilityEntries: (args: { blueprintId: string }) => Promise<{
+    entries: TestabilityEntry[]
+    convertedIdeaRefs: Record<string, string>
+  }>
+  /** Create one idea per selected ledger row; already-linked rows are skipped. */
+  blueprintLinkTestabilityIdeas: (args: {
+    blueprintId: string
+    entryKeys: string[]
+  }) => Promise<{ created: number; ideaIds: string[] }>
   /** B2 — run the wave command gates (lint/build/full-suite) on the blueprint's
    *  worktree right now, from the UI. Same GateReport shape the wave-gates
    *  artifact carries. */

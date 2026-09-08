@@ -65,6 +65,16 @@ export class BlueprintTasksService extends EventEmitter {
     workspaceId: string
     workspacePath: string
   }): Promise<void> {
+    // MODEL-SNAPSHOT-REFRESH: resolve the phase's frozen assignment against the
+    // CURRENT workspace binding before anything dispatches. First statement —
+    // model resolution happens later, at session creation. Must never block the
+    // phase start.
+    try {
+      blueprintService.refreshModelSnapshotForPhase(params.blueprintId, 'tasks')
+    } catch {
+      /* best effort */
+    }
+
     const { blueprintId, workspaceId, workspacePath } = params
 
     bpLog.info(`[startTasksPhase] Blueprint ${blueprintId} — starting TASKS`)

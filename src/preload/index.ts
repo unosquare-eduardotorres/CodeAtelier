@@ -125,6 +125,7 @@ import type {
   BlueprintBranchMode,
   BlueprintHandoffOptions
 } from '../shared/blueprint-handoff'
+import type { TestabilityEntry } from '../shared/testability-report'
 
 const api = {
   // ── Workspace ──
@@ -3451,6 +3452,29 @@ const api = {
     hasBlockers: boolean
     hasWarnings: boolean
   } | null> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_PREFLIGHT_RUN, args),
+
+  /** Export the testability ledger — the work this blueprint never proved — as
+   *  Markdown. Resolves `{ exported: false }` when the user cancels the dialog. */
+  blueprintExportTestability: (args: { blueprintId: string }): Promise<{ exported: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_EXPORT_TESTABILITY, args),
+
+  /** The same ledger rows the Markdown export renders, plus the map of rows that
+   *  already became follow-up ideas. Computed in main because preflight lives on
+   *  the REVIEW phase artifact, which the renderer cannot see. */
+  blueprintTestabilityEntries: (args: {
+    blueprintId: string
+  }): Promise<{
+    entries: TestabilityEntry[]
+    convertedIdeaRefs: Record<string, string>
+  }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_TESTABILITY_ENTRIES, args),
+
+  /** Create one idea per selected ledger row. Rows already linked to an idea are
+   *  skipped server-side, so clicking twice cannot duplicate them. */
+  blueprintLinkTestabilityIdeas: (args: {
+    blueprintId: string
+    entryKeys: string[]
+  }): Promise<{ created: number; ideaIds: string[] }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_LINK_TESTABILITY_IDEAS, args),
 
   /** B2 — run the wave command gates (lint/build/full-suite) on the blueprint's
    *  worktree right now, from the UI. Returns the same GateReport shape the

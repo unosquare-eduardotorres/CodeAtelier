@@ -422,6 +422,7 @@ const TEST_FILES: string[] = [
   '../../mcp-servers/__tests__/native-module-smoke.test',
   // ─── Blueprint Environment Preflight (dependency validation before BUILD) ───
   './blueprint-preflight.test',
+  './blueprint-review-e2e-depth.test',
   './blueprint-gate-launch.test',
   './blueprint-tasks-mapreduce.test',
   // ─── Blueprint Task Verification (deterministic disk check after BUILD tasks) ───
@@ -507,6 +508,14 @@ const TEST_FILES: string[] = [
   './design-commands.test',
   // ─── Design IPC trust boundary (path containment, caps, kind guard) ───
   '../../ipc/__tests__/design-ipc.test',
+  // ─── Impeccable detector mapper (real captured JSON fixtures) ───
+  './impeccable-detector.test',
+  // ─── Design prompt assembly (section stripping + hard budget cap) ───
+  './design-prompt-templates.test',
+  // ─── Design orchestration: detector/LLM merge + scope discovery ───
+  './design-agent.test',
+  // ─── Design run orchestration: runDesign event sequence + IPC wiring ───
+  './design-orchestration.test',
   // ─── Loopback update feed server (cloud-drive auto-update transport) ───
   './update-feed-server.test',
   // ─── Update feed publishing + failure surfacing ───
@@ -656,6 +665,8 @@ const TEST_FILES: string[] = [
   '../../../shared/__tests__/gate-rollup.test',
   '../../../shared/__tests__/model-family.test',
   '../../../shared/__tests__/gate-commands.test',
+  '../../../shared/__tests__/testability-ledger.test',
+  '../../ipc/__tests__/blueprint-testability-export.test',
   '../../../shared/__tests__/gate-analysis.test',
   '../../../shared/__tests__/doc-classification.test',
   '../../../shared/__tests__/work-packet.test',
@@ -744,6 +755,7 @@ const TEST_FILES: string[] = [
   './opencode-executor-logic.test',
   './opencode-token-backstop.test',
   './blueprint-provider-model-attribution.test',
+  './blueprint-model-snapshot-refresh.test',
   './prompt-builder-extractors.test',
   './prompt-builder-local.test',
   './workspace-mcp-config-builder.test',

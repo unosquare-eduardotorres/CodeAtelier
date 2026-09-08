@@ -292,11 +292,18 @@ export interface PermissionResponse {
 export interface CompletionNotification {
   workspaceId: string
   workspaceName: string
-  service: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprint' | 'council' | 'memory'
+  service: 'chat' | 'grill' | 'audit' | 'design' | 'mpa' | 'blueprint' | 'council' | 'memory'
   status: 'completed' | 'failed' | 'needs_input'
   summary: string
-  /** Target page for click-to-navigate from OS notification */
-  targetPage?: 'chat' | 'grill' | 'audit' | 'mpa' | 'blueprints' | 'council' | 'memory'
+  /**
+   * Target page for click-to-navigate from OS notification.
+   *
+   * `design` has no `PAGE_NAV_MAP` entry until the Design page lands (P4.5) —
+   * an unmapped value is a safe no-op there (the click switches workspace and
+   * navigates nowhere), which is preferable to announcing "Audit completed" for
+   * a design run and dropping the user on the wrong page.
+   */
+  targetPage?: 'chat' | 'grill' | 'audit' | 'design' | 'mpa' | 'blueprints' | 'council' | 'memory'
   /** Entity ID for deep navigation (blueprintId, sessionId, etc.) */
   entityId?: string
 }
@@ -2521,6 +2528,18 @@ export interface DesignRunConfig {
 }
 
 /**
+ * The part of a `DesignRunConfig` worth persisting on the run row.
+ *
+ * `llmProvider` is deliberately excluded: it is a per-execution choice, not an
+ * input a regenerated report should reproduce.
+ */
+export interface DesignRunSettings {
+  commandIds: DesignCommandId[]
+  scope: DesignScope
+  brief: string
+}
+
+/**
  * The single return shape for every `design:*` IPC handler.
  *
  * One envelope across the namespace so the renderer branches on `ok` once
@@ -2603,6 +2622,14 @@ export interface AuditRun {
   detectedTechs: string[]
   /** Per-track skills the user selected for this run (Deep mode). Execution deferred. */
   selectedSkills?: AuditSelectedSkills
+  /**
+   * Design-run inputs. Present only when `kind === 'design'`.
+   *
+   * Shares the `selected_skills` column with `selectedSkills` — the two
+   * populations are disjoint by `kind`, so no migration was needed to carry the
+   * brief and scope a report or blueprint handoff has to reproduce later.
+   */
+  designConfig?: DesignRunSettings
   /** Defaults to 'code' for every run written before migration 160. */
   kind: AuditRunKind
   results: AuditResult[] // joined for UI convenience

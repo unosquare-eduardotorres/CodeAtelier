@@ -22,6 +22,8 @@
 
 {{REVISION_FEEDBACK}}
 
+{{VERIFICATION_DEPTH_DIRECTIVE}}
+
 ## Workspace Context
 
 <workspace_docs>

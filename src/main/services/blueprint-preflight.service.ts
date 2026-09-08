@@ -20,9 +20,11 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { execFile, spawnSync, type ExecFileException } from 'node:child_process'
+import { createConnection } from 'node:net'
 import log from 'electron-log'
 
 import { collectCandidateDirs } from './tech-stack-detector.service'
+import { parseDsnTarget, type ConnectivityTarget } from '../../shared/preflight-types'
 import type {
   PreflightCheck,
   PreflightCheckStatus,
@@ -38,6 +40,17 @@ const pfLog = log.scope('blueprint-preflight')
 
 /** Global budget (ms) for all CLI probes combined. Unfinished probes → warn. */
 const PROBE_BUDGET_MS = 5000
+
+/**
+ * Per-probe cap for TCP reachability (ms).
+ *
+ * Bounded by construction rather than by the global budget timer: connectivity
+ * probes all run in parallel, so N services cost ~1s of wall clock in total and
+ * cannot push the phase past its 5s promise even when every host is a black
+ * hole. A dropped SYN to a firewalled host is the slow case this exists for —
+ * the OS default would hang for over a minute.
+ */
+const CONNECT_TIMEOUT_MS = 1000
 
 // ── Known Services Registry (G1: start small, grow conservatively) ──
 
@@ -80,7 +93,65 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     },
     presenceProbe: { cmd: 'psql', args: ['--version'] },
     presenceWarnOnly: true, // B5: hosted DBs don't need local psql
+    // G2: `psql --version` says a client is installed, not that a database
+    // answers. Before this, a DATABASE_URL pointing at a dead host passed
+    // preflight clean and every DB task then failed at BUILD.
+    connectivityProbe: {
+      dsnEnvVars: ['DATABASE_URL', 'DB_WRITE_DSN', 'DB_READ_DSN', 'POSTGRES_URL', 'PG_URL'],
+      defaultPort: 5432
+    },
     installHint: 'brew install postgresql  (or use Docker: docker run -p 5432:5432 postgres)'
+  },
+  {
+    id: 'redis',
+    name: 'Redis',
+    packagePatterns: ['redis', 'ioredis', 'bullmq', 'bull', 'connect-redis'],
+    fileMarkers: ['redis.conf'],
+    taskKeywords: ['redis'],
+    requiredEnvVars: ['REDIS_URL'],
+    envVarAlternatives: { REDIS_URL: ['REDIS_URI', 'REDIS_HOST', 'CACHE_URL'] },
+    presenceProbe: { cmd: 'redis-cli', args: ['--version'] },
+    presenceWarnOnly: true, // hosted/containerised Redis needs no local CLI
+    connectivityProbe: {
+      dsnEnvVars: ['REDIS_URL', 'REDIS_URI', 'CACHE_URL', 'REDIS_HOST'],
+      defaultPort: 6379
+    },
+    installHint: 'brew install redis  (or use Docker: docker run -p 6379:6379 redis)'
+  },
+  {
+    id: 'mongodb',
+    name: 'MongoDB',
+    packagePatterns: ['mongodb', 'mongoose', '@nestjs/mongoose'],
+    fileMarkers: ['mongod.conf'],
+    taskKeywords: ['mongodb', 'mongoose'],
+    requiredEnvVars: ['MONGODB_URI'],
+    envVarAlternatives: { MONGODB_URI: ['MONGO_URL', 'MONGODB_URL', 'MONGO_URI', 'DATABASE_URL'] },
+    presenceProbe: { cmd: 'mongosh', args: ['--version'] },
+    presenceWarnOnly: true, // Atlas and other hosted clusters need no local shell
+    // Note: `mongodb+srv://` URIs are deliberately NOT probed — their real hosts
+    // come from a DNS SRV lookup, so probing the seed name would report a false
+    // outage. See parseDsnTarget.
+    connectivityProbe: {
+      dsnEnvVars: ['MONGODB_URI', 'MONGO_URL', 'MONGODB_URL', 'MONGO_URI'],
+      defaultPort: 27017
+    },
+    installHint: 'brew install mongodb-community  (or use Docker: docker run -p 27017:27017 mongo)'
+  },
+  {
+    id: 'mysql',
+    name: 'MySQL',
+    packagePatterns: ['mysql', 'mysql2', 'knex-mysql'],
+    fileMarkers: ['my.cnf'],
+    taskKeywords: ['mysql', 'mariadb'],
+    requiredEnvVars: ['MYSQL_URL'],
+    envVarAlternatives: { MYSQL_URL: ['MYSQL_URI', 'MARIADB_URL', 'DATABASE_URL'] },
+    presenceProbe: { cmd: 'mysql', args: ['--version'] },
+    presenceWarnOnly: true,
+    connectivityProbe: {
+      dsnEnvVars: ['MYSQL_URL', 'MYSQL_URI', 'MARIADB_URL', 'DATABASE_URL'],
+      defaultPort: 3306
+    },
+    installHint: 'brew install mysql  (or use Docker: docker run -p 3306:3306 mysql)'
   },
   {
     id: 'stripe',
@@ -272,6 +343,92 @@ async function getAvailableEnvKeys(workspacePath: string): Promise<Set<string>> 
   }
 
   return available
+}
+
+/**
+ * Read env VALUES for connectivity probing.
+ *
+ * Separate from `getAvailableEnvKeys` on purpose. Presence checks only ever need
+ * names, and the login-shell capture deliberately discards values, so this
+ * reads the two sources that do carry them: the process environment and the
+ * workspace dotenv files. A DSN that exists only in the user's login shell is
+ * therefore not probed — no check is emitted at all, which is the honest
+ * outcome, rather than a fabricated "unreachable".
+ *
+ * The values never leave this module: `parseDsnTarget` reduces each one to
+ * host+port before anything reaches a check message.
+ */
+async function getEnvValues(workspacePath: string): Promise<Map<string, string>> {
+  const values = new Map<string, string>()
+
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value && value.length > 0) values.set(key, value)
+  }
+  for (const file of ['.env', '.env.local']) {
+    for (const [key, value] of parseDotenvFile(join(workspacePath, file))) {
+      if (value.length > 0) values.set(key, value)
+    }
+  }
+
+  return values
+}
+
+/**
+ * Pick the DSN this service should be probed on, reduced to host+port.
+ *
+ * Exported for tests: the precedence (first declared var that both exists and
+ * parses) and the credential stripping are the parts worth pinning.
+ */
+export function resolveConnectivityTarget(
+  def: PreflightServiceDef,
+  envValues: ReadonlyMap<string, string>
+): { envVar: string; target: ConnectivityTarget } | null {
+  if (!def.connectivityProbe) return null
+  for (const envVar of def.connectivityProbe.dsnEnvVars) {
+    const raw = envValues.get(envVar)
+    if (!raw) continue
+    const target = parseDsnTarget(raw, def.connectivityProbe.defaultPort)
+    if (target) return { envVar, target }
+  }
+  return null
+}
+
+/**
+ * Can we open a TCP connection to this host:port?
+ *
+ * Never throws, always settles within `timeoutMs`. Connects and immediately
+ * destroys the socket — a completed handshake is the entire question; speaking
+ * the wire protocol is not preflight's business.
+ */
+export function probeTcpAsync(
+  target: ConnectivityTarget,
+  timeoutMs: number = CONNECT_TIMEOUT_MS
+): Promise<{ reachable: boolean; error?: string }> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (reachable: boolean, error?: string): void => {
+      if (settled) return
+      settled = true
+      try {
+        socket.destroy()
+      } catch {
+        /* already gone */
+      }
+      resolve(error ? { reachable, error } : { reachable })
+    }
+
+    let socket: ReturnType<typeof createConnection>
+    try {
+      socket = createConnection({ host: target.host, port: target.port })
+    } catch (err) {
+      resolve({ reachable: false, error: String(err) })
+      return
+    }
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => finish(true))
+    socket.once('timeout', () => finish(false, 'connection timed out'))
+    socket.once('error', (err: Error & { code?: string }) => finish(false, err.code ?? err.message))
+  })
 }
 
 /**
@@ -475,6 +632,7 @@ export async function runPreflightChecks(
 ): Promise<PreflightResult> {
   const detected = detectRequiredServices(workspacePath, taskDescriptions)
   const availableEnv = await getAvailableEnvKeys(workspacePath)
+  const envValues = await getEnvValues(workspacePath)
   const envExampleKeys = readEnvExampleKeys(workspacePath)
   const checks: PreflightCheck[] = []
 
@@ -662,6 +820,44 @@ export async function runPreflightChecks(
           : `${envVar} is not set (optional — some features may be limited)`,
         remediation: isAvailable ? undefined : `Add ${envVar} to your .env file if needed`,
         sources
+      })
+    }
+  }
+
+  // ── Phase 5 (G2): TCP reachability for services that name a DSN ──
+  //
+  // Runs after the CLI/env checks so its result can be reported alongside them,
+  // and in parallel across services so the whole phase costs ~CONNECT_TIMEOUT_MS
+  // of wall clock regardless of how many hosts are dead.
+  const connectivityJobs = detected
+    .map(({ def, sources }) => {
+      const resolved = resolveConnectivityTarget(def, envValues)
+      return resolved ? { def, sources, ...resolved } : null
+    })
+    .filter((job): job is NonNullable<typeof job> => job !== null)
+
+  if (connectivityJobs.length > 0) {
+    const results = await Promise.all(
+      connectivityJobs.map(async (job) => ({ job, probe: await probeTcpAsync(job.target) }))
+    )
+    for (const { job, probe } of results) {
+      // Host and port only — the DSN's credentials never reach this string.
+      const where = `${job.target.host}:${job.target.port}`
+      checks.push({
+        id: `${job.def.id}-reachable`,
+        name: `${job.def.name} reachable`,
+        kind: 'service',
+        // G8/doctrine: connectivity failure is a WARNING, never a blocker. The
+        // service may legitimately be provisioned during BUILD (a compose file
+        // that has not been brought up yet is not a broken workspace).
+        status: probe.reachable ? 'pass' : 'warn',
+        message: probe.reachable
+          ? `${job.def.name} answered at ${where} (from ${job.envVar})`
+          : `Nothing answered at ${where} (from ${job.envVar}) — ${probe.error ?? 'unreachable'}`,
+        remediation: probe.reachable
+          ? undefined
+          : `Start ${job.def.name}, or point ${job.envVar} at a running instance. If it is provisioned during the build, ignore this.`,
+        sources: job.sources
       })
     }
   }

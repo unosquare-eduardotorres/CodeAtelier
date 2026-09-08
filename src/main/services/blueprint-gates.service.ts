@@ -60,7 +60,13 @@ import {
   type AddedLine,
   type TestFileState
 } from '../../shared/gate-analysis'
-import type { BlueprintWorkPacket } from '../../shared/blueprint-types'
+import {
+  DEFAULT_VERIFICATION_DEPTH,
+  depthRequiresE2E,
+  depthRequiresSmoke,
+  type BlueprintWorkPacket,
+  type VerificationDepth
+} from '../../shared/blueprint-types'
 
 import { buildGateEnv } from './env-utils'
 
@@ -2644,24 +2650,106 @@ export async function runWaveCommandGates(ctx: GateTaskContext): Promise<GateRep
  * never treats as a fail. A red full-suite or red smoke IS a fail — backstop
  * parity with the wave level (M8.1).
  */
-export async function runVerifyGates(ctx: GateTaskContext): Promise<GateReport> {
+export async function runVerifyGates(
+  ctx: GateTaskContext,
+  opts: { depth?: VerificationDepth; e2eProvenAt?: string | null } = {}
+): Promise<GateReport> {
   const runner = ctx.runner ?? defaultCommandRunner
+  const depth = opts.depth ?? DEFAULT_VERIFICATION_DEPTH
   const startedAt = new Date().toISOString()
   const gates: GateResult[] = []
 
-  for (const [name, kind] of [
-    ['full-suite', 'test'],
-    ['smoke', 'smoke']
-  ] as const) {
-    gates.push(await gateCommand(name, kind, ctx, runner))
+  // full-suite and smoke run at every depth — unchanged from M8.2. The e2e gate
+  // is additive and only appears when the blueprint explicitly asked for that
+  // depth: running a browser suite nobody requested would add 45 minutes to
+  // every blueprint.
+  //
+  // `e2eProvenAt` is the BUILD backstop's green verdict on the SAME commit. At a
+  // 45-minute budget, re-running the suite here would double the cost of the
+  // depth setting to re-prove a tree nothing has touched since. The gate is
+  // still reported — as a pass that names the commit it was proved on — so the
+  // verdict is never quietly absent.
+  const skipE2E = depthRequiresE2E(depth) && Boolean(opts.e2eProvenAt)
+  const planned: ReadonlyArray<readonly [GateName, GateCommandKind]> =
+    depthRequiresE2E(depth) && !skipE2E
+      ? ([
+          ['full-suite', 'test'],
+          ['smoke', 'smoke'],
+          ['e2e', 'e2e']
+        ] as const)
+      : ([
+          ['full-suite', 'test'],
+          ['smoke', 'smoke']
+        ] as const)
+
+  for (const [name, kind] of planned) {
+    gates.push(annotateDepthRequirement(await gateCommand(name, kind, ctx, runner), depth))
+  }
+
+  if (skipE2E) {
+    gates.push({
+      name: 'e2e',
+      verdict: 'pass',
+      evidence: [
+        `end-to-end suite already passed on this exact tree during BUILD ` +
+          `(HEAD ${String(opts.e2eProvenAt).slice(0, 8)}) — not re-run`
+      ],
+      durationMs: 0
+    })
   }
 
   const report = buildGateReport(gates, { startedAt })
   gateLog.info(
-    `[runVerifyGates] ${ctx.blueprintId}/verify → ${report.overall} ` +
+    `[runVerifyGates] ${ctx.blueprintId}/verify (depth: ${depth}) → ${report.overall} ` +
       `(${gates.map((g) => `${g.name}:${g.verdict}`).join(' ')})`
   )
   return report
+}
+
+/**
+ * The e2e gate on its own, for the BUILD-phase backstop.
+ *
+ * Runs once on the settled tree after the last wave, so a suite that never
+ * boots is discovered before VERIFY rather than at the end of the pipeline.
+ * Deliberately NOT part of `runWaveCommandGates`: at a 45-minute budget, once
+ * per wave would dominate the run time of the whole blueprint.
+ */
+export async function runE2EGate(ctx: GateTaskContext): Promise<GateReport> {
+  const runner = ctx.runner ?? defaultCommandRunner
+  const startedAt = new Date().toISOString()
+  const gate = annotateDepthRequirement(await gateCommand('e2e', 'e2e', ctx, runner), 'e2e')
+  const report = buildGateReport([gate], { startedAt })
+  gateLog.info(
+    `[runE2EGate] ${ctx.blueprintId}/${ctx.taskId} → ${report.overall} (e2e:${gate.verdict})`
+  )
+  return report
+}
+
+/**
+ * Mark an `unverifiable` gate that the chosen depth actually REQUIRED.
+ *
+ * The verdict is untouched — `unverifiable` never becomes `fail`, and a missing
+ * command is still an environment fact rather than a code defect. What changes
+ * is that the evidence says so out loud, which is what makes the depth ladder
+ * mean something: at `standard` a missing smoke command is unremarkable, at
+ * `integration` it is the one proof the user asked for and did not get. The
+ * testability report keys its "required proof missing" section off this line.
+ */
+export const DEPTH_REQUIRED_EVIDENCE_PREFIX = 'REQUIRED by verification depth'
+
+function annotateDepthRequirement(gate: GateResult, depth: VerificationDepth): GateResult {
+  if (gate.verdict !== 'unverifiable') return gate
+  const required =
+    (gate.name === 'smoke' && depthRequiresSmoke(depth)) ||
+    (gate.name === 'e2e' && depthRequiresE2E(depth))
+  if (!required) return gate
+  return {
+    ...gate,
+    evidence: [
+      ...gate.evidence,
+      `${DEPTH_REQUIRED_EVIDENCE_PREFIX} '${depth}' — this blueprint finishes without the proof it asked for`
+    ]
+  }
 }
 
 /** Hard budget for the structural gate's reindex — see `runStructuralGate`. */

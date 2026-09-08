@@ -18,9 +18,12 @@
 import { useState, useCallback, useRef, useEffect, type JSX } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { Paperclip, Link2, Upload, Maximize2, X, Check } from 'lucide-react'
-import type {
-  ReferenceDocument,
-  BlueprintBranchChoice
+import {
+  DEFAULT_VERIFICATION_DEPTH,
+  VERIFICATION_DEPTHS,
+  type ReferenceDocument,
+  type BlueprintBranchChoice,
+  type VerificationDepth
 } from '../../../../../shared/blueprint-types'
 import BlueprintBranchPicker from './BlueprintBranchPicker'
 import { useClipboardImagePaste, MAX_IMAGE_ATTACHMENTS, IMAGE_REGEX } from '@renderer/hooks'
@@ -72,6 +75,9 @@ export function BlueprintInputView({
   const [title, setTitle] = useState(initialTitle)
   const [description, setDescription] = useState(initialDescription)
   const [branchChoice, setBranchChoice] = useState<BlueprintBranchChoice>({ mode: 'auto' })
+  const [verificationDepth, setVerificationDepth] = useState<VerificationDepth>(
+    DEFAULT_VERIFICATION_DEPTH
+  )
   const [referenceDocs, setReferenceDocs] = useState<ReferenceDocument[]>([])
   const [imageAttachments, setImageAttachments] = useState<string[]>([])
   const [showExpandModal, setShowExpandModal] = useState(false)
@@ -184,6 +190,8 @@ export function BlueprintInputView({
     setImageAttachments((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
+  const selectedDepth = VERIFICATION_DEPTHS.find((d) => d.value === verificationDepth)
+
   // ── Submit ──
   const handleSubmit = useCallback(() => {
     if (!title.trim()) return
@@ -203,13 +211,26 @@ export function BlueprintInputView({
     // only a deliberate choice is persisted — settings_json stays empty for the
     // common case, and old blueprints keep reading the same way.
     if (branchChoice.mode !== 'auto') settings.branchChoice = branchChoice
+    // Same rule as branchChoice: only a deliberate departure from the default is
+    // persisted, so `standard` blueprints keep an empty settings blob.
+    if (verificationDepth !== DEFAULT_VERIFICATION_DEPTH) {
+      settings.verificationDepth = verificationDepth
+    }
 
     onStart({
       title: title.trim(),
       description: description.trim() || undefined,
       settingsJson: Object.keys(settings).length > 0 ? settings : undefined
     })
-  }, [title, description, referenceDocs, imageAttachments, branchChoice, onStart])
+  }, [
+    title,
+    description,
+    referenceDocs,
+    imageAttachments,
+    branchChoice,
+    verificationDepth,
+    onStart
+  ])
 
   // ── Keyboard shortcut ──
   const handleKeyDown = useCallback(
@@ -344,6 +365,44 @@ export function BlueprintInputView({
                 value={branchChoice}
                 onChange={setBranchChoice}
               />
+
+              {/* Verification depth — how hard VERIFY is asked to prove the
+                  feature actually runs. The caveat line is deliberately shown
+                  for the SELECTED level: the failure this guards against is a
+                  user reading "passed" as "works". */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium uppercase tracking-wide text-text-muted">
+                  Verification depth
+                </label>
+                <div
+                  role="radiogroup"
+                  aria-label="Verification depth"
+                  className="flex rounded-lg border border-border-subtle overflow-hidden"
+                >
+                  {VERIFICATION_DEPTHS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={verificationDepth === option.value}
+                      data-testid={`verification-depth-${option.value}`}
+                      onClick={() => setVerificationDepth(option.value)}
+                      title={option.description}
+                      className={`flex-1 px-2 py-1.5 text-[10px] font-medium transition-colors ${
+                        verificationDepth === option.value
+                          ? 'bg-accent/15 text-accent'
+                          : 'text-text-muted hover:bg-surface-raised hover:text-text-secondary'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[10px] leading-relaxed text-text-muted">
+                  {selectedDepth?.description}{' '}
+                  <span className="text-warning/80">{selectedDepth?.caveat}</span>
+                </p>
+              </div>
 
               {/* Supported format chips */}
               <div className="flex flex-wrap gap-1">

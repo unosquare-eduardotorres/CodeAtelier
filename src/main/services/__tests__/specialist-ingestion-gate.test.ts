@@ -15,7 +15,7 @@
  * the better-sqlite3 native module is unavailable.
  */
 import assert from 'node:assert/strict'
-import { test, describe, summaryAsync } from './test-harness'
+import { test, describe, beforeEach, afterEach, summaryAsync } from './test-harness'
 import { trySetupTestDb, seedWorkspace } from '../../db/repositories/__tests__/db-test-helper'
 import {
   isIngestionSatisfied,
@@ -24,7 +24,7 @@ import {
   extractPromptBlock,
   specialistBuilderService
 } from '../specialist-builder.service'
-import { detectFromCodeGraph } from '../tech-stack-detector.service'
+import { detectFromCodeGraph, setCodeGraphDbAccessor } from '../tech-stack-detector.service'
 import { SpecialistIngestionRequiredError } from '../../../shared/errors'
 import type { BootstrapRunSummary } from '../../../shared/types'
 import type { TechStackResult } from '../tech-stack-detector.service'
@@ -321,6 +321,14 @@ if (!env) {
   })
 
   describe('detectFromCodeGraph', () => {
+    // The detector reads the DB through an injected accessor that only
+    // src/main/index.ts wires at Electron startup. Without this the function
+    // takes its honest "no accessor" early return and every assertion below
+    // passes vacuously against an empty map. Reset after each test so the
+    // seam cannot leak into other files sharing this runner process.
+    beforeEach(() => setCodeGraphDbAccessor(() => db))
+    afterEach(() => setCodeGraphDbAccessor(() => null))
+
     const insertTags = (workspaceId: string, relFname: string, count = 1): void => {
       const stmt = db.prepare(
         `INSERT OR IGNORE INTO code_graph_tags

@@ -78,6 +78,90 @@ export type BlueprintTaskOutcomeKind =
    */
   | 'nudged'
 
+// ── Verification Depth ──
+
+/**
+ * How hard VERIFY is asked to prove the feature actually runs.
+ *
+ * The levels are a ladder of EVIDENCE, not of effort: each one adds a gate that
+ * answers a question the level below cannot. The motivating failure is a
+ * blueprint that finishes green having only ever proven the code compiles —
+ * components created but never mounted, buttons wired to nothing, mock data
+ * left in place. `standard` is exactly that level of proof, and naming it
+ * honestly is the point: the user picks it knowing what it does not check.
+ *
+ *   - `standard`    build + lint + unit tests. Proves the code compiles and its
+ *                   own units pass. Proves NOTHING about the assembled app.
+ *   - `integration` adds the smoke gate — the app must actually boot. Catches
+ *                   the "ships, then crashes on launch" class.
+ *   - `e2e`         adds the end-to-end gate — a real user path must pass.
+ *                   Catches unwired components and placeholder data.
+ *
+ * Stored on `blueprints.settingsJson.verificationDepth`. Absent ⇒ `standard`,
+ * which is the pre-existing behaviour, so old blueprints are unaffected.
+ */
+export type VerificationDepth = 'standard' | 'integration' | 'e2e'
+
+/** The default when a blueprint carries no explicit choice — today's behaviour. */
+export const DEFAULT_VERIFICATION_DEPTH: VerificationDepth = 'standard'
+
+/**
+ * UI metadata for the depth selector, weakest → strongest.
+ *
+ * `caveat` is deliberately blunt about what each level leaves unproven: the
+ * whole feature exists because "it passed" was read as "it works".
+ */
+export const VERIFICATION_DEPTHS: ReadonlyArray<{
+  value: VerificationDepth
+  label: string
+  description: string
+  caveat: string
+}> = [
+  {
+    value: 'standard',
+    label: 'Standard',
+    description: 'Build, lint and unit tests.',
+    caveat: 'Does not prove the app runs or that any UI is wired up.'
+  },
+  {
+    value: 'integration',
+    label: 'Integration',
+    description: 'Adds a smoke gate — the app must boot.',
+    caveat: 'Does not prove user-facing flows work end to end.'
+  },
+  {
+    value: 'e2e',
+    label: 'End-to-end',
+    description: 'Adds an end-to-end gate — a real user path must pass.',
+    caveat: 'Needs an e2e command; without one VERIFY reports it as unproven.'
+  }
+] as const
+
+/**
+ * Read the depth off a blueprint's settings blob.
+ *
+ * Defensive by design: `settingsJson` is untyped JSON that predates this field,
+ * so anything unrecognised degrades to `standard` rather than throwing on a
+ * blueprint created before the setting existed.
+ */
+export function resolveVerificationDepth(
+  settings: Record<string, unknown> | null | undefined
+): VerificationDepth {
+  const raw = settings?.verificationDepth
+  if (raw === 'integration' || raw === 'e2e' || raw === 'standard') return raw
+  return DEFAULT_VERIFICATION_DEPTH
+}
+
+/** True when `depth` requires the smoke gate to actually run (integration and above). */
+export function depthRequiresSmoke(depth: VerificationDepth): boolean {
+  return depth === 'integration' || depth === 'e2e'
+}
+
+/** True when `depth` requires the end-to-end gate to actually run. */
+export function depthRequiresE2E(depth: VerificationDepth): boolean {
+  return depth === 'e2e'
+}
+
 // ── Work Packets ──
 
 /**

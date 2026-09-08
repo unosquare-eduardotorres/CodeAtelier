@@ -216,22 +216,44 @@ describe('design IPC — handlers', () => {
     }
   })
 
-  test('unimplemented handlers report a structured failure, never throw', async () => {
-    const res = await tryInvokeHandler(IPC_CHANNELS.DESIGN_START, {
-      commandIds: ['audit'],
-      brief: 'audit the dashboard'
+  // DESIGN_START / DESIGN_CANCEL became real in P3.5. The channels that are
+  // still stubs must keep degrading structurally rather than throwing.
+  test('still-unimplemented handlers report a structured failure, never throw', async () => {
+    const res = await tryInvokeHandler(IPC_CHANNELS.DESIGN_CONTEXT_STATUS, {
+      workspaceId: 'ws-1'
     })
-    assert.ok(res.ok, 'DESIGN_START should resolve rather than throw')
+    assert.ok(res.ok, 'DESIGN_CONTEXT_STATUS should resolve rather than throw')
     assert.deepEqual((res.result as { ok: boolean }).ok, false)
     assert.match((res.result as { reason: string }).reason, /not implemented/)
   })
 
-  test('DESIGN_START rejects an invalid payload before doing any work', async () => {
+  test('DESIGN_START rejects an incompatible selection before doing any work', async () => {
     const res = await tryInvokeHandler(IPC_CHANNELS.DESIGN_START, {
+      workspaceId: 'ws-1',
       commandIds: ['bolder', 'quieter']
     })
     assert.equal(res.ok, false)
     if (!res.ok) assert.match(res.error.message, /incompatible/)
+  })
+
+  test('DESIGN_START requires a workspaceId', async () => {
+    const res = await tryInvokeHandler(IPC_CHANNELS.DESIGN_START, { commandIds: ['audit'] })
+    assert.equal(res.ok, false)
+    if (!res.ok) assert.match(res.error.message, /workspaceId/)
+  })
+
+  test('DESIGN_START refuses a workspace that does not exist', async () => {
+    const repo = getMockRepo('workspace')
+    repo.findById.mockReset().mockReturnValue(null)
+
+    const res = await tryInvokeHandler(IPC_CHANNELS.DESIGN_START, {
+      workspaceId: 'ws-missing',
+      commandIds: ['audit'],
+      brief: 'audit the dashboard'
+    })
+    assert.ok(res.ok, 'a missing workspace is an expected outcome, not an exception')
+    assert.deepEqual((res.result as { ok: boolean }).ok, false)
+    assert.match((res.result as { reason: string }).reason, /not found/)
   })
 
   test('DESIGN_ROUTE bounds the brief it forwards to the LLM', async () => {

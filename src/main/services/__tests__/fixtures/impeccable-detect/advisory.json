@@ -1,0 +1,23 @@
+[
+  {
+    "antipattern": "em-dash-overuse",
+    "name": "Em-dash overuse",
+    "description": "Em-dash saturation in body copy is an AI cadence tell. Advisory only: humans use em-dashes legitimately, so this fires only on saturation — at least 8 em-dashes (— or --) at a density near one per 500 characters of body text — never on a long article that uses a few. Prefer commas, colons, periods, or parentheses.",
+    "severity": "advisory",
+    "category": "slop",
+    "file": "/Users/dev/projects/sample-app/src/renderer/index.html",
+    "line": 0,
+    "snippet": "22 em-dashes in body text",
+    "advisory": true
+  },
+  {
+    "antipattern": "gradient-text",
+    "name": "Gradient text",
+    "description": "Gradient-filled headline text is a recognizable AI-generated UI tell.",
+    "severity": "warning",
+    "category": "quality",
+    "file": "/Users/dev/projects/sample-app/src/renderer/index.html",
+    "line": 42,
+    "snippet": "background-clip: text"
+  }
+]

@@ -25,10 +25,11 @@ const KIND_LABELS: Record<GateCommandKind, { label: string; hint: string }> = {
   build: { label: 'Build', hint: 'e.g. npm run build' },
   lint: { label: 'Lint', hint: 'e.g. npm run lint' },
   test: { label: 'Test', hint: 'e.g. npm run test:unit' },
-  smoke: { label: 'Smoke', hint: 'e.g. npm run smoke' }
+  smoke: { label: 'Smoke', hint: 'e.g. npm run smoke' },
+  e2e: { label: 'End-to-end', hint: 'e.g. npm run test:e2e' }
 }
 
-const KINDS: GateCommandKind[] = ['build', 'lint', 'test', 'smoke']
+const KINDS: GateCommandKind[] = ['build', 'lint', 'test', 'smoke', 'e2e']
 
 export default function GateCommandsSection({
   workspaceId,

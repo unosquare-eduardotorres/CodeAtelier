@@ -437,6 +437,7 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/branch-options.test',
   // ─── Blueprint Environment Preflight ───
   '../services/__tests__/blueprint-preflight.test',
+  '../services/__tests__/blueprint-review-e2e-depth.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
   '../services/__tests__/phase-summaries-verify.test',
   // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
@@ -685,8 +686,12 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/language-detector.test',
   '../services/__tests__/local-context-reconstructor.test',
   '../services/__tests__/local-plan-state-maprow.test',
+  '../services/__tests__/design-agent.test',
   '../services/__tests__/design-commands.test',
+  '../services/__tests__/design-orchestration.test',
+  '../services/__tests__/design-prompt-templates.test',
   '../ipc/__tests__/design-ipc.test',
+  '../services/__tests__/impeccable-detector.test',
   '../services/__tests__/impeccable-provision.test',
   '../services/__tests__/impeccable-runtime.test',
   '../services/__tests__/mcp-tool-consistency.test',
@@ -774,6 +779,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../shared/__tests__/gate-rollup.test',
   '../../shared/__tests__/model-family.test',
   '../../shared/__tests__/gate-commands.test',
+  '../../shared/__tests__/testability-ledger.test',
+  '../ipc/__tests__/blueprint-testability-export.test',
   '../../shared/__tests__/gate-analysis.test',
   '../../shared/__tests__/doc-classification.test',
   '../../shared/__tests__/work-packet.test',

@@ -10,7 +10,8 @@ import type {
   AuditFinding,
   AuditCoverageStats,
   AuditSelectedSkills,
-  AuditRunKind
+  AuditRunKind,
+  DesignRunSettings
 } from '../../../shared/types'
 
 // ── Row shapes (snake_case from DB) ──
@@ -49,6 +50,15 @@ interface AuditResultRow {
 // ── Row mappers ──
 
 function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
+  // Rows written before migration 160 have no value only if the column was
+  // somehow bypassed; the NOT NULL DEFAULT makes 'code' the honest fallback.
+  const kind = (row.kind as AuditRunKind) ?? 'code'
+
+  // `selected_skills` carries per-track skill ids for a code run and the design
+  // brief/scope for a design run. The two are disjoint by `kind`, so each is
+  // surfaced under its own typed field and never under the other's.
+  const isDesign = kind === 'design'
+
   return {
     id: row.id,
     workspaceId: row.workspace_id,
@@ -57,10 +67,17 @@ function mapRunRow(row: AuditRunRow, results: AuditResult[] = []): AuditRun {
     overallScore: row.overall_score,
     selectedTracks: safeParseJSON<AuditTrackId[]>(row.selected_tracks, []),
     detectedTechs: safeParseJSON<string[]>(row.detected_techs, []),
-    selectedSkills: safeParseJSON<AuditSelectedSkills>(row.selected_skills, {}),
-    // Rows written before migration 160 have no value only if the column was
-    // somehow bypassed; the NOT NULL DEFAULT makes 'code' the honest fallback.
-    kind: (row.kind as AuditRunKind) ?? 'code',
+    selectedSkills: isDesign ? {} : safeParseJSON<AuditSelectedSkills>(row.selected_skills, {}),
+    ...(isDesign
+      ? {
+          designConfig: safeParseJSON<DesignRunSettings>(row.selected_skills, {
+            commandIds: [],
+            scope: { mode: 'project', paths: [] },
+            brief: ''
+          })
+        }
+      : {}),
+    kind,
     results,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -103,7 +120,7 @@ export class AuditRepository extends BaseRepository<AuditRunRow, AuditRun> {
     mode: AuditMode,
     selectedTracks: AuditTrackId[],
     detectedTechs: string[],
-    selectedSkills: AuditSelectedSkills = {},
+    selectedSkills: AuditSelectedSkills | DesignRunSettings = {},
     kind: AuditRunKind = 'code'
   ): AuditRun {
     const db = this.db()

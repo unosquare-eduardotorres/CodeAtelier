@@ -35,16 +35,24 @@ setupElectronStub()
 // `setupElectronStub()` call, and blueprint-build.service reaches db/index.ts,
 // whose `schema.sql?raw` import only resolves once the stub's loader is
 // installed. Same reason blueprint-gate-ladder.test.ts requires it lazily.
-const { shouldFailForNoWriteActivity } = require('../blueprint-build.service') as {
-  shouldFailForNoWriteActivity: (input: {
-    cumulativeWriteToolCalls: number
-    cumulativeBashCalls: number
-    claimedFiles: number
-    hasCompletion: boolean
-    hasPlannedFiles: boolean
-    baselineDiffEmpty: boolean | null
-  }) => boolean
-}
+const { shouldFailForNoWriteActivity, shouldPassProtocolMissAsUnproven } =
+  require('../blueprint-build.service') as {
+    shouldFailForNoWriteActivity: (input: {
+      cumulativeWriteToolCalls: number
+      cumulativeBashCalls: number
+      claimedFiles: number
+      hasCompletion: boolean
+      hasPlannedFiles: boolean
+      baselineDiffEmpty: boolean | null
+    }) => boolean
+    shouldPassProtocolMissAsUnproven: (input: {
+      allZero: boolean
+      cumulativeWriteToolCalls: number
+      cumulativeBashCalls: number
+      hasPlannedFiles: boolean
+      baselineDiffEmpty: boolean | null
+    }) => boolean
+  }
 const { captureGateBaseline, isBaselineDiffEmpty } = require('../blueprint-gates.service') as {
   captureGateBaseline: (
     ctx: GateTaskContext
@@ -173,6 +181,71 @@ describe('shouldFailForNoWriteActivity — the stale-claim decision', () => {
         hasPlannedFiles: false
       }),
       false
+    )
+  })
+})
+
+// ── 1b. P1 — the R013 hole: Bash counters are not write evidence ──
+
+describe('P1 — a Bash-only task cannot buy a protocol-miss pass', () => {
+  // R013 (live): the task made 0 write calls and 3 Bash calls, all three
+  // `git status --porcelain`, none of which ever executed — a hung Bash call
+  // still increments the counter. Its one planned file (README.md) had existed
+  // since hours earlier, so `allZero` + `hasPlannedFiles` were both satisfied by
+  // a file nobody wrote. The task was accepted as `unproven`.
+  const r013 = {
+    allZero: true,
+    cumulativeWriteToolCalls: 0,
+    cumulativeBashCalls: 3,
+    hasPlannedFiles: true
+  }
+
+  test('the R013 shape is rejected when the tree did not change', () => {
+    assert.equal(shouldPassProtocolMissAsUnproven({ ...r013, baselineDiffEmpty: true }), false)
+  })
+
+  test('the stale-claim guard alone would NOT have caught it — which is why P1 exists', () => {
+    // `shouldFailForNoWriteActivity` requires writes AND bash to be zero, so
+    // bash=3 walks straight past it. The two guards are complementary: this one
+    // catches "claimed files with nothing running at all", P1 catches "something
+    // ran, but nothing changed".
+    assert.equal(
+      shouldFailForNoWriteActivity({
+        cumulativeWriteToolCalls: 0,
+        cumulativeBashCalls: 3,
+        claimedFiles: 1,
+        hasCompletion: false,
+        hasPlannedFiles: true,
+        baselineDiffEmpty: true
+      }),
+      false
+    )
+  })
+
+  test('against a real repo: untouched tree ⇒ rejected, real work ⇒ accepted', async () => {
+    if (!GIT_AVAILABLE) return
+    const dir = makeRepo()
+    const ctx = ctxFor(dir)
+    const baseline = await captureGateBaseline(ctx)
+
+    // Nothing happened since the baseline — exactly R013.
+    assert.equal(
+      shouldPassProtocolMissAsUnproven({
+        ...r013,
+        baselineDiffEmpty: await isBaselineDiffEmpty(ctx, baseline)
+      }),
+      false
+    )
+
+    // The legitimate shape this branch must keep passing: a generator script
+    // (Bash) that really produced files.
+    writeFileSync(join(dir, 'generated.ts'), 'export const g = 1\n')
+    assert.equal(
+      shouldPassProtocolMissAsUnproven({
+        ...r013,
+        baselineDiffEmpty: await isBaselineDiffEmpty(ctx, baseline)
+      }),
+      true
     )
   })
 })

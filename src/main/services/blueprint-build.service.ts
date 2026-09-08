@@ -25,7 +25,13 @@ import type { StreamChunk } from './agent-base.service'
 import type { AgentStatus } from '../../shared/types'
 import { forwardBlueprintChunk } from './blueprint-chunk-forwarder'
 import { PhaseActivityWatchdog, wireAskUserAutoResponder } from './blueprint-phase-watchdog'
+import {
+  DEFAULT_VERIFICATION_DEPTH,
+  depthRequiresE2E,
+  resolveVerificationDepth
+} from '../../shared/blueprint-types'
 import type {
+  VerificationDepth,
   BlueprintTask,
   BlueprintTaskOutcomeKind,
   BlueprintPhaseStartPayload,
@@ -60,6 +66,7 @@ import {
   isBaselineDiffEmpty,
   MAX_LISTED_PATHS,
   restorePacketTestFiles,
+  runE2EGate,
   runGates,
   runWaveCommandGates,
   scanTaskCommitSurvival,
@@ -72,10 +79,12 @@ import {
 import {
   boundEvidence,
   buildGateReport,
+  E2E_LEDGER_TASK_ID,
   ledgerItemsFrom,
   type GateReport,
   type UnverifiedItem
 } from '../../shared/gate-types'
+import { resolveHeadSha } from './blueprint-feature-diff'
 import { normalizePath } from '../../shared/gate-analysis'
 import type { ResolvedGateCommands } from '../../shared/gate-command-types'
 import { getTimeoutTier } from './provider-timeout-tiers'
@@ -864,8 +873,23 @@ export function shouldFailForNoWriteActivity(input: {
  * Direct write activity + planned files present is the same evidence the
  * BP-VERIFY-UNPROVEN-01 branch trusts, so this shape passes as `unproven`
  * instead of burning MAX_BUILDER_ATTEMPTS identical retries on a stochastic
- * protocol miss. Zero-write tasks return false here and hard-fail in
+ * protocol miss. Zero-activity tasks return false here and hard-fail in
  * `shouldFailForNoWriteActivity`, exactly as before.
+ *
+ * P1 — Bash calls are NOT a substitute for write calls. The original guard was
+ * an AND (`writes === 0 && bash === 0`), so a task with `writes=0, bash=3`
+ * passed on Bash activity alone. Live evidence (R013): all three Bash calls
+ * were `git status --porcelain`, and they hung without ever executing — a Bash
+ * call that never ran still increments the counter. `allZero` +
+ * `hasPlannedFiles` only require the planned files to EXIST, and that task's
+ * file had existed for hours. The accepted evidence was therefore "the file
+ * exists" + "Bash was invoked", which is no evidence at all.
+ *
+ * So when no write tool fired, the pass falls back to the one measurement that
+ * cannot be faked: the gate baseline diff (same source `shouldFailForNoWriteActivity`
+ * already treats as outranking the counters). `null` — git could not answer —
+ * does NOT grant the pass: the baseline is captured at BUILD start, so null is
+ * a degraded case, and accepting unmeasurable work is the exact failure here.
  */
 export function shouldPassProtocolMissAsUnproven(input: {
   /** Verification found no discrepancy it could name (no completion block path). */
@@ -876,9 +900,16 @@ export function shouldPassProtocolMissAsUnproven(input: {
   cumulativeBashCalls: number
   /** The task has planned filePathsJson entries to point at. */
   hasPlannedFiles: boolean
+  /**
+   * P1 — did the tree change vs the task's gate baseline?
+   * true = nothing changed, false = something did, null = git could not answer.
+   * Only consulted when `cumulativeWriteToolCalls === 0`.
+   */
+  baselineDiffEmpty: boolean | null
 }): boolean {
   if (!input.allZero) return false
   if (input.cumulativeWriteToolCalls === 0 && input.cumulativeBashCalls === 0) return false
+  if (input.cumulativeWriteToolCalls === 0 && input.baselineDiffEmpty !== false) return false
   return input.hasPlannedFiles
 }
 
@@ -920,6 +951,56 @@ export const PROTOCOL_MISS_BUDGET_FAILURE_REASON =
  * non-retryable wording so `scheduleAutoRetry` refuses to fund a 4th.
  */
 export const PROTOCOL_MISS_BUDGET = 3
+
+/**
+ * P3 — stable fingerprint of a repeatable INFRA failure, or null when the rung
+ * is not one.
+ *
+ * The ladder already caps repeated protocol misses; it had no cap on repeated
+ * *infrastructure* failures. Live evidence: R010/R011/R012 each burned their
+ * attempts on the identical `no prompt activity within 300000ms`, so one task
+ * sat through the same dead wait six or seven times. Nothing about the rung
+ * changes between those attempts — same provider, same silence — so re-running
+ * it only spends wall-clock.
+ *
+ * Normalisation: lowercased, digits collapsed to `#` (so `within 300000ms` and
+ * `within 480000ms` are the SAME failure, which is the point), whitespace
+ * collapsed, truncated. Session ids and timings therefore never break a streak
+ * that is otherwise identical.
+ *
+ * Excluded on purpose:
+ * - non-`infra` classes — `quality` failures are what the retry ladder is FOR,
+ *   and `aborted` is the user.
+ * - anything carrying the protocol-miss signature: that streak is governed by
+ *   `PROTOCOL_MISS_BUDGET` with its own write-activity reset, and double
+ *   counting would cut its recovery nudges short.
+ */
+export function infraFailureFingerprint(input: {
+  success: boolean
+  failureClass?: TaskFailureClass
+  failureReason?: string
+}): string | null {
+  if (input.success) return null
+  if (input.failureClass !== 'infra') return null
+  const reason = input.failureReason?.trim()
+  if (!reason) return null
+  if (/protocol miss/i.test(reason)) return null
+  return reason.toLowerCase().replace(/\d+/g, '#').replace(/\s+/g, ' ').slice(0, 160)
+}
+
+/** P3 — wording for the repeated-infra-failure stop (write + read sites). */
+export const INFRA_REPEAT_FAILURE_REASON =
+  'repeated-infra budget exhausted: the same infrastructure failure recurred on every attempt'
+
+/**
+ * P3 — how many CONSECUTIVE rungs may fail with the SAME infra fingerprint
+ * before the ladder stops. Each such rung costs a full watchdog window (up to
+ * 540s on the remote tier) and produces the identical result, so three is
+ * already generous: it leaves room for a genuinely transient blip to clear
+ * (any different failure, or any success, resets the streak) while capping the
+ * observed 6-7 identical dead waits per task.
+ */
+export const INFRA_REPEAT_BUDGET = 3
 
 /** Check whether two file sets overlap. */
 function filesOverlap(a: Set<string>, b: Set<string>): boolean {
@@ -993,6 +1074,17 @@ export class BlueprintBuildService extends EventEmitter {
     workspaceId: string
     workspacePath: string
   }): Promise<void> {
+    // MODEL-SNAPSHOT-REFRESH: resolve build's frozen assignment (plus the
+    // escalation ladder, so rungs stay in agreement with the rung they escalate
+    // from) against the CURRENT workspace binding before anything dispatches.
+    // First statement — model resolution happens later, at session creation.
+    // Must never block the phase start.
+    try {
+      blueprintService.refreshModelSnapshotForPhase(params.blueprintId, 'build')
+    } catch {
+      /* best effort */
+    }
+
     const { blueprintId, workspaceId, workspacePath } = params
 
     bpLog.info(`[startBuildPhase] Blueprint ${blueprintId} — starting BUILD`)
@@ -1435,6 +1527,20 @@ export class BlueprintBuildService extends EventEmitter {
           })
           if (result.failed) break
         }
+      }
+
+      // Final-wave e2e backstop: at depth `e2e`, prove a real user path works
+      // on the settled tree before the pipeline moves on. Runs once, after the
+      // last wave, and only when the build is otherwise green — a half-built
+      // tree cannot pass an end-to-end suite and failing it again says nothing.
+      if (!result.failed) {
+        await this.runFinalE2EBackstop({
+          blueprintId,
+          workspaceId,
+          workspacePath,
+          executionPath,
+          result
+        })
       }
 
       // P3a — reconcile the record against the tree before anything downstream
@@ -3355,6 +3461,27 @@ export class BlueprintBuildService extends EventEmitter {
       consecutiveProtocolMisses = PROTOCOL_MISS_BUDGET
     }
     let writesAtLastRungStart = 0
+    /**
+     * P3 — repeated-infra escape state. A rung that fails `infra` with the same
+     * normalised reason as the previous one increments this; any other outcome
+     * (success, a different failure, a quality failure) resets it. See
+     * `infraFailureFingerprint`.
+     *
+     * Seeded from the task's PERSISTED failure reason, because an infra failure
+     * exits the ladder almost immediately (the `!result.success` return below
+     * the gates) — so the observed 6-7 identical dead waits per task did not
+     * happen inside one ladder, they spanned phase retries, each granting a
+     * fresh one. Seeding is what makes the streak span them too. Note this is a
+     * seed of 1, NOT of the whole budget: a task that was stopped still gets a
+     * real attempt when an operator retries it by hand, because the provider may
+     * simply have recovered.
+     */
+    let lastInfraFingerprint: string | null = infraFailureFingerprint({
+      success: false,
+      failureClass: 'infra',
+      failureReason: task.failureReason ?? undefined
+    })
+    let consecutiveIdenticalInfraFailures = lastInfraFingerprint === null ? 0 : 1
     /** 1.4 — the one-time stop-loss→requeue conversion has been spent. */
     let requeueUsed = false
     /**
@@ -3450,6 +3577,25 @@ export class BlueprintBuildService extends EventEmitter {
         consecutiveProtocolMisses = 0
       }
       writesAtLastRungStart = rungWrites
+      // P3 — update the repeated-infra escape state. Same fold point, same
+      // reason: the overload and F4 re-run results pass through here too, and
+      // those are exactly the rungs that re-ran the identical dead wait.
+      const infraFingerprint = infraFailureFingerprint({
+        success: result.success,
+        failureClass: result.failureClass,
+        failureReason: result.failureReason
+      })
+      if (infraFingerprint !== null && infraFingerprint === lastInfraFingerprint) {
+        consecutiveIdenticalInfraFailures++
+        bpLog.warn(
+          `[executeTaskWithGates] ${task.taskId} — identical infra failure repeated ` +
+            `(streak: ${consecutiveIdenticalInfraFailures}/${INFRA_REPEAT_BUDGET}): ` +
+            `${result.failureReason}`
+        )
+      } else {
+        consecutiveIdenticalInfraFailures = infraFingerprint === null ? 0 : 1
+      }
+      lastInfraFingerprint = infraFingerprint
       // F7 (2.4) — a resumed rung that FAILED must still emit a terminal row.
       // The `succeeded` write below is gated on result.success; a resumed
       // failure previously emitted NOTHING (its attempted row was the last
@@ -3571,6 +3717,53 @@ export class BlueprintBuildService extends EventEmitter {
           completion: null,
           discoveries: [],
           failureReason: PROTOCOL_MISS_BUDGET_FAILURE_REASON,
+          failureClass: 'infra',
+          resumeSafe: false
+        }
+      }
+
+      // P3 — repeated-infra budget. When the last N rungs all failed `infra`
+      // with the SAME normalised reason, the next rung buys another full
+      // watchdog window (up to 540s) to reproduce it. R010/R011/R012 each spent
+      // 6-7 attempts on the identical `no prompt activity within 300000ms`.
+      // Stop, fail `infra` with non-retryable wording, and leave one telemetry
+      // row saying which failure did it. Any different failure or any success
+      // resets the streak in `recordRungEvidence`, so a transient blip is never
+      // budgeted out.
+      if (consecutiveIdenticalInfraFailures >= INFRA_REPEAT_BUDGET) {
+        bpLog.warn(
+          `[executeTaskWithGates] ${task.taskId} — repeated-infra budget exhausted ` +
+            `(${consecutiveIdenticalInfraFailures} consecutive rungs failed with the same ` +
+            `infrastructure reason) — refusing to fund another identical wait`
+        )
+        this.safeEmit('phaseProgress', {
+          blueprintId,
+          workspaceId,
+          phase: 'build',
+          text:
+            `⚠ Task ${task.taskId}: the same infrastructure failure recurred on ` +
+            `${consecutiveIdenticalInfraFailures} consecutive attempts — stopping ` +
+            `(infrastructure, not retryable)`,
+          kind: 'system'
+        })
+        blueprintTelemetryRepository.record({
+          blueprintId,
+          kind: 'infra_repeat_budget',
+          phase: 'build',
+          taskId: task.taskId,
+          attempt,
+          data: {
+            consecutiveFailures: consecutiveIdenticalInfraFailures,
+            budget: INFRA_REPEAT_BUDGET,
+            fingerprint: lastInfraFingerprint,
+            attemptsSpent: attempt - 1
+          }
+        })
+        return {
+          success: false,
+          completion: null,
+          discoveries: [],
+          failureReason: INFRA_REPEAT_FAILURE_REASON,
           failureClass: 'infra',
           resumeSafe: false
         }
@@ -3904,6 +4097,51 @@ export class BlueprintBuildService extends EventEmitter {
       // Overload exhaustion leaves `failureReason` as exactly 'overload' — the
       // string `executeWave`'s drain check compares on equality.
       if (!result.success || !baseline) {
+        // P3 — this is where a repeated infra failure actually leaves the ladder,
+        // so it is where the budget has to be spent. Re-labelling the reason is
+        // the whole mechanism: the wording is non-retryable, so the phase-level
+        // `scheduleAutoRetry` stops funding another identical wait instead of
+        // granting the fresh ladder that produced the 6-7 repeats.
+        if (
+          consecutiveIdenticalInfraFailures >= INFRA_REPEAT_BUDGET &&
+          result.failureReason !== 'overload'
+        ) {
+          bpLog.warn(
+            `[executeTaskWithGates] ${task.taskId} — repeated-infra budget exhausted ` +
+              `(${consecutiveIdenticalInfraFailures} consecutive failures with the same ` +
+              `infrastructure reason: ${result.failureReason}) — stopping the retry chain`
+          )
+          this.safeEmit('phaseProgress', {
+            blueprintId,
+            workspaceId,
+            phase: 'build',
+            text:
+              `⚠ Task ${task.taskId}: the same infrastructure failure recurred on ` +
+              `${consecutiveIdenticalInfraFailures} consecutive attempts — stopping ` +
+              `(infrastructure, not retryable)`,
+            kind: 'system'
+          })
+          blueprintTelemetryRepository.record({
+            blueprintId,
+            kind: 'infra_repeat_budget',
+            phase: 'build',
+            taskId: task.taskId,
+            attempt,
+            data: {
+              consecutiveFailures: consecutiveIdenticalInfraFailures,
+              budget: INFRA_REPEAT_BUDGET,
+              fingerprint: lastInfraFingerprint,
+              originalReason: result.failureReason ?? null
+            }
+          })
+          return {
+            ...result,
+            failureReason: INFRA_REPEAT_FAILURE_REASON,
+            failureClass: 'infra',
+            resumeSafe: false,
+            ...(overloadRetries > 0 ? { overloadCount: overloadRetries } : {})
+          }
+        }
         return overloadRetries > 0 ? { ...result, overloadCount: overloadRetries } : result
       }
 
@@ -5160,6 +5398,114 @@ export class BlueprintBuildService extends EventEmitter {
         (firstEvidence
           ? ` — ${firstEvidence}`
           : ' — the command runner is not available on this machine')
+    }
+  }
+
+  /**
+   * The BUILD-side half of the verification-depth contract: run the e2e suite
+   * ONCE on the settled tree after the last wave, when the blueprint asked for
+   * depth `e2e`.
+   *
+   * Why here and not per wave: the suite has a 45-minute budget, and running it
+   * after every wave would dominate the blueprint's runtime while re-proving the
+   * same thing. Why here and not only in VERIFY: a red end-to-end suite is the
+   * single most valuable signal BUILD can produce, and discovering it after
+   * code-review and verify have already run wastes the whole tail of the run.
+   *
+   * Verdict handling matches the wave gates exactly — `fail` fails the build,
+   * `unverifiable` lands in the ledger under `E2E` and blocks nothing. A missing
+   * command is an environment fact, never a code defect.
+   */
+  private async runFinalE2EBackstop(params: {
+    blueprintId: string
+    workspaceId: string
+    workspacePath: string
+    executionPath: string
+    result: BuildResult
+  }): Promise<void> {
+    const { blueprintId, workspaceId, workspacePath, executionPath, result } = params
+
+    let depth: VerificationDepth = DEFAULT_VERIFICATION_DEPTH
+    try {
+      depth = resolveVerificationDepth(blueprintRepository.findById(blueprintId)?.settingsJson)
+    } catch (err) {
+      bpLog.warn('[e2e-backstop] Could not read verification depth — skipping:', err)
+      return
+    }
+    if (!depthRequiresE2E(depth)) return
+
+    this.safeEmit('phaseProgress', {
+      blueprintId,
+      workspaceId,
+      phase: 'build',
+      text: 'Final wave settled: running the end-to-end suite — this can take a while',
+      kind: 'system'
+    })
+
+    let report: GateReport
+    try {
+      report = await runE2EGate({
+        blueprintId,
+        taskId: E2E_LEDGER_TASK_ID,
+        workspacePath,
+        executionPath,
+        plannedFiles: [],
+        packet: null,
+        commands: this.resolveGateCommandsFor(blueprintId, workspacePath)
+      })
+    } catch (err) {
+      bpLog.error('[e2e-backstop] e2e gate threw:', err)
+      report = buildGateReport([
+        {
+          name: 'e2e',
+          verdict: 'unverifiable',
+          reason: 'analysis_unavailable',
+          evidence: boundEvidence([err instanceof Error ? err.message : String(err)]),
+          durationMs: 0
+        }
+      ])
+    }
+
+    // The artifact is keyed by `wave`, not `taskId` — that is the field the
+    // build deliverable filters and sorts on, and a row without it is silently
+    // discarded (the evidence for a 45-minute run would render nowhere).
+    // `headSha` is what lets VERIFY tell whether this proof still describes the
+    // tree it is about to judge.
+    try {
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (buildPhase) {
+        blueprintPhaseRepository.appendArtifact(buildPhase.id, {
+          type: 'wave-gates',
+          contentJson: {
+            wave: E2E_LEDGER_TASK_ID,
+            headSha: resolveHeadSha(executionPath),
+            report
+          }
+        })
+      }
+    } catch (err) {
+      bpLog.warn('[e2e-backstop] Could not persist the e2e gate artifact:', err)
+    }
+
+    const ledgerItems = ledgerItemsFrom(report, E2E_LEDGER_TASK_ID)
+    if (ledgerItems.length > 0) {
+      try {
+        blueprintRepository.appendUnverified(blueprintId, ledgerItems)
+      } catch (err) {
+        bpLog.warn('[e2e-backstop] Ledger append failed:', err)
+      }
+    }
+
+    if (report.overall === 'fail') {
+      result.failed = true
+      this.pushWaveGateFailure(result, E2E_LEDGER_TASK_ID, report)
+      this.safeEmit('phaseProgress', {
+        blueprintId,
+        workspaceId,
+        phase: 'build',
+        text: '✗ End-to-end suite failed on the settled tree — the feature does not work end to end',
+        kind: 'system'
+      })
     }
   }
 
@@ -6767,6 +7113,18 @@ export class BlueprintBuildService extends EventEmitter {
             verification.staleClaimed.length === 0 &&
             verification.missingPlanned.length === 0
 
+          // P1 — a Bash-only protocol-miss pass must be backed by git, not by
+          // counters. Resolved here (an `else if` cannot await) but ONLY for that
+          // exact shape — all-zero, zero write tools, some Bash — so the happy
+          // path never pays for a git diff, mirroring the guard further below.
+          const protocolMissBaselineDiffEmpty =
+            allZero &&
+            cumulativeWriteToolCalls === 0 &&
+            cumulativeBashCalls > 0 &&
+            params.baselineDiffEmpty
+              ? await params.baselineDiffEmpty()
+              : null
+
           // BP-VERIFY-UNPROVEN-01: "exists but not provably fresh" is not "missing".
           // An agent that inspects code, finds it already correct and declines to
           // rewrite it produces stale-only claims — identical on disk to an agent
@@ -6811,7 +7169,8 @@ export class BlueprintBuildService extends EventEmitter {
               allZero,
               cumulativeWriteToolCalls,
               cumulativeBashCalls,
-              hasPlannedFiles
+              hasPlannedFiles,
+              baselineDiffEmpty: protocolMissBaselineDiffEmpty
             })
           ) {
             // GLM-PROTOCOL-MISS-01: "wrote but didn't sign". GLM-5.3 frequently
@@ -6823,14 +7182,19 @@ export class BlueprintBuildService extends EventEmitter {
             // calls — plus every planned file present is the same evidence the
             // BP-VERIFY-UNPROVEN-01 branch above trusts; mtime freshness is only
             // a proxy for it (and attempt-scoped, so multi-attempt tasks read
-            // stale). Zero-write tasks never reach here (`noWriteActivity` guard)
-            // and still hard-fail in `shouldFailForNoWriteActivity`. VERIFY
-            // re-checks the same files either way.
+            // stale). Zero-activity tasks never reach here (`noWriteActivity`
+            // guard) and still hard-fail in `shouldFailForNoWriteActivity`; P1
+            // additionally requires a NON-EMPTY baseline diff when no write tool
+            // fired, so Bash alone can no longer buy the pass. VERIFY re-checks
+            // the same files either way.
             bpLog.warn(
               `[executeTask] Task ${task.taskId} protocol miss — no completion block, ` +
                 `but session performed ${cumulativeWriteToolCalls} write call(s) and ` +
-                `${cumulativeBashCalls} Bash call(s) with all planned files present — ` +
-                `passing as unproven instead of retrying`
+                `${cumulativeBashCalls} Bash call(s) with all planned files present` +
+                (cumulativeWriteToolCalls === 0
+                  ? ', and the gate baseline diff is non-empty (the tree really changed)'
+                  : '') +
+                ` — passing as unproven instead of retrying`
             )
             const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(
               blueprintId,
@@ -6843,7 +7207,11 @@ export class BlueprintBuildService extends EventEmitter {
                   `## Task ${task.taskId} — completed, completion block missing (unproven)\n\n` +
                   `The session performed ${cumulativeWriteToolCalls} write tool call(s) and ` +
                   `${cumulativeBashCalls} Bash call(s), and every planned file is present on ` +
-                  `disk, but the model never emitted the required ` +
+                  `disk` +
+                  (cumulativeWriteToolCalls === 0
+                    ? ' (with a non-empty diff vs this task’s baseline — the work is on disk)'
+                    : '') +
+                  `, but the model never emitted the required ` +
                   `\`\`\`blueprint-phase-complete block (protocol miss). The task is ` +
                   `treated as complete — VERIFY still checks the same files.\n\n` +
                   `**Planned files (${(task.filePathsJson ?? []).length}):**\n` +

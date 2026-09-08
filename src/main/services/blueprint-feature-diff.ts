@@ -86,6 +86,15 @@ export function resolveFeatureBaseline(blueprintId: string, workspacePath: strin
 }
 
 /**
+ * The tree's current HEAD sha, or null when git is unavailable / this is not a
+ * repo. Used to decide whether a proof recorded earlier in the pipeline still
+ * describes the tree being judged now.
+ */
+export function resolveHeadSha(workspacePath: string): string | null {
+  return gitSync(['rev-parse', 'HEAD'], workspacePath)?.trim() || null
+}
+
+/**
  * `git diff <baseline>..HEAD`, capped and memoized.
  *
  * Returns:

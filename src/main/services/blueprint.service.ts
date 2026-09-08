@@ -49,6 +49,30 @@ import type {
 } from '../../shared/blueprint-clarify-parsers'
 import type { BlueprintTaskStatus } from '../../shared/blueprint-types'
 import { modelConfigService, resolveAssignment, buildResolveOpts } from './model-config.service'
+import { blueprintEventRepository } from '../db/repositories/blueprint-event.repository'
+import type { LLMProvider, ModelAction, ResolvedAssignment } from '../../shared/types'
+
+/**
+ * One audit-trail entry in `modelSnapshot.refreshHistory[]`, written by
+ * BlueprintService.refreshModelSnapshotForPhase().
+ */
+interface SnapshotRefreshHistoryEntry {
+  key: string
+  from: { provider: LLMProvider; modelId: string }
+  to: { provider: LLMProvider; modelId: string }
+  at: string
+}
+
+/**
+ * Shape of the frozen modelSnapshot stored in blueprint settingsJson: the
+ * per-phase ResolvedAssignment entries plus the bookkeeping fields create()
+ * and refreshModelSnapshotForPhase() maintain alongside them.
+ */
+type ModelSnapshotRecord = Record<string, ResolvedAssignment | undefined> & {
+  snapshotAt?: string
+  lastRefreshAt?: string
+  refreshHistory?: SnapshotRefreshHistoryEntry[]
+}
 import { resolveContextTier } from './context-management'
 import type { ContextWindowTier } from './context-management'
 import { contextWindowResolver } from './context-window-resolver'
@@ -1013,6 +1037,179 @@ export class BlueprintService extends EventEmitter {
     this.autoRetryTimers.set(key, timer)
 
     return true
+  }
+
+  /**
+   * phase name → snapshot keys refreshed when that phase (re)starts.
+   * build also refreshes the escalation ladder so rungs stay in agreement
+   * with the rung they escalate from (frozen together 2026-09-07, refreshed
+   * together here).
+   */
+  private static readonly PHASE_SNAPSHOT_KEYS: Record<string, string[]> = {
+    specify: ['specify'],
+    clarify: ['clarify'],
+    plan: ['plan'],
+    tasks: ['tasks'],
+    review: ['review'],
+    'code-review': ['codeReview'],
+    build: ['build', 'leadReview', 'peerReview'],
+    verify: ['verify']
+  }
+
+  /** ModelAction string for each snapshot key (mirrors create()'s resolution). */
+  private static readonly SNAPSHOT_KEY_ACTION: Record<string, string> = {
+    specify: 'blueprint:specify',
+    clarify: 'blueprint:clarify',
+    plan: 'blueprint:plan',
+    tasks: 'blueprint:tasks',
+    review: 'blueprint:review',
+    codeReview: 'blueprint:code-review',
+    build: 'blueprint:build',
+    leadReview: 'blueprint:lead-review',
+    peerReview: 'blueprint:peer-review',
+    verify: 'blueprint:verify'
+  }
+
+  /**
+   * Refresh the frozen modelSnapshot entries for a phase right before it
+   * (re)starts, so every dispatch of that phase resolves the CURRENT workspace
+   * binding instead of the one frozen at create() time.
+   *
+   * Semantics:
+   * - Completed phases stay frozen — what ran stays recorded (audit trail).
+   * - Whole entries are replaced (provider + modelId + off-binding together),
+   *   never `modelId` alone — provider/model agreement is pinned by
+   *   blueprint-provider-model-attribution.test.ts.
+   * - No-op when the live resolution equals the frozen entry (no DB write, no
+   *   history spam).
+   * - A legacy row with no modelSnapshot at all gets the full 10-key snapshot
+   *   (exactly what create() builds) before refreshing — heals pre-snapshot
+   *   blueprints.
+   *
+   * Returns the keys refreshed/changed, or null when the blueprint or phase is
+   * unknown. Never throws — callers wrap it so a refresh failure cannot block
+   * a phase start.
+   */
+  refreshModelSnapshotForPhase(
+    blueprintId: string,
+    phase: string
+  ): { refreshed: string[]; changed: string[] } | null {
+    const bp = blueprintRepository.findById(blueprintId)
+    if (!bp) return null
+
+    const keys = BlueprintService.PHASE_SNAPSHOT_KEYS[phase]
+    if (!keys) return null
+
+    const settings = bp.settingsJson ?? {}
+    const snapshot = (settings.modelSnapshot ?? {}) as ModelSnapshotRecord
+
+    // Legacy row (pre-snapshot blueprint): build the full snapshot exactly as
+    // create() does, then proceed to the per-phase refresh below. The healing
+    // itself is a write — without the flag, a healed-but-unchanged snapshot
+    // would take the no-op early return and never reach the DB.
+    const legacyHealed = !settings.modelSnapshot
+    if (legacyHealed) {
+      const legacyOpts = buildResolveOpts(bp.workspaceId)
+      for (const [key, action] of Object.entries(BlueprintService.SNAPSHOT_KEY_ACTION)) {
+        if (!snapshot[key]) {
+          snapshot[key] = resolveAssignment({ action: action as ModelAction, ...legacyOpts })
+        }
+      }
+      snapshot.snapshotAt = new Date().toISOString()
+    }
+
+    // Completed phases stay frozen — the entry must keep describing the model
+    // that actually ran. Ladder keys (leadReview/peerReview) have no phase rows
+    // and are always refreshable.
+    const phaseStatus = new Map(
+      blueprintPhaseRepository.findByBlueprint(blueprintId).map((p) => [p.phase, p.status])
+    )
+    const refreshed: string[] = []
+    const changed: string[] = []
+    const changes: {
+      key: string
+      from: { provider: LLMProvider; modelId: string }
+      to: { provider: LLMProvider; modelId: string }
+      at: string
+    }[] = []
+
+    const resolveOpts = buildResolveOpts(bp.workspaceId)
+    for (const key of keys) {
+      // Ladder keys have no phase rows. Every other key maps 1:1 to a phase
+      // record except codeReview, whose phase name is 'code-review'.
+      const phaseName = (key === 'codeReview' ? 'code-review' : key) as BlueprintPhaseType
+      if (
+        key !== 'leadReview' &&
+        key !== 'peerReview' &&
+        phaseStatus.get(phaseName) === 'complete'
+      ) {
+        continue
+      }
+
+      const action = BlueprintService.SNAPSHOT_KEY_ACTION[key] as ModelAction
+      const live = resolveAssignment({ action, ...resolveOpts })
+      const frozen = snapshot[key]
+
+      if (
+        frozen &&
+        frozen.provider === live.provider &&
+        frozen.modelId === live.modelId &&
+        (frozen.disabled ?? false) === (live.disabled ?? false)
+      ) {
+        continue // unchanged — no write, no history spam
+      }
+
+      snapshot[key] = live
+      refreshed.push(key)
+      if (frozen) {
+        changes.push({
+          key,
+          from: { provider: frozen.provider, modelId: frozen.modelId },
+          to: { provider: live.provider, modelId: live.modelId },
+          at: new Date().toISOString()
+        })
+        changed.push(key)
+      }
+    }
+
+    if (refreshed.length === 0 && !legacyHealed) {
+      return { refreshed: [], changed: [] }
+    }
+
+    snapshot.lastRefreshAt = new Date().toISOString()
+    if (changes.length > 0) {
+      snapshot.refreshHistory = [...(snapshot.refreshHistory ?? []), ...changes]
+    }
+
+    settings.modelSnapshot = snapshot
+    blueprintRepository.update(blueprintId, { settingsJson: settings })
+
+    // Surface it: the hydrated journal already renders system events (same
+    // pattern as RETRY-JOURNAL in blueprint.ipc.ts), so every refresh is
+    // visible with zero new UI plumbing. Best effort — never block on it.
+    try {
+      const summary =
+        changes.length > 0
+          ? changes
+              .map(
+                (c) =>
+                  `${c.key} ${String(c.from.provider)}/${c.from.modelId} → ${String(c.to.provider)}/${c.to.modelId}`
+              )
+              .join(', ')
+          : 'snapshot initialized'
+      blueprintEventRepository.append(blueprintId, 'system', {
+        event: 'modelSnapshotRefresh',
+        message: `Models updated before ${phase}: ${summary}`
+      })
+    } catch {
+      /* best effort */
+    }
+
+    bpLog.info(
+      `[refreshModelSnapshotForPhase] Blueprint ${blueprintId} — ${phase}: refreshed [${refreshed.join(', ')}]`
+    )
+
+    return { refreshed, changed }
   }
 
   /**

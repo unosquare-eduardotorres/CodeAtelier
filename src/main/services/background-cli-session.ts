@@ -230,7 +230,17 @@ export class BackgroundCliSession {
       this.resetIdleTimer()
       sessionLog.info('[bg-cli] Warmup complete — process ready')
     } catch (err) {
-      sessionLog.warn('[bg-cli] Warmup failed (non-fatal):', (err as Error).message)
+      // P4 — name what this actually degrades. Two separate incident analyses
+      // read the bare "[bg-cli] Warmup failed" line as evidence that the agent
+      // SHELL was dead and blamed it for hung Bash tool calls. This process is
+      // the prompt optimizer's warm CLI (see the file header); blueprint/agent
+      // Bash calls run inside the opencode server and are unaffected. The only
+      // consequence of this failure is a cold start on the next optimize.
+      sessionLog.warn(
+        '[bg-cli] Prompt-optimizer warm process failed to start (non-fatal — affects ' +
+          'prompt optimization latency only, NOT agent/blueprint tool execution):',
+        (err as Error).message
+      )
       this.killProcess() // Clean up half-initialized state
     } finally {
       release.release()

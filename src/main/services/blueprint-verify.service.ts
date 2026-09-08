@@ -41,15 +41,22 @@ import { runVerifyGates, runStructuralGate, type GateTaskContext } from './bluep
 import {
   boundEvidence,
   buildGateReport,
+  E2E_LEDGER_TASK_ID,
   ledgerItemsFrom,
   summarizeLedger,
   type GateReport
 } from '../../shared/gate-types'
-import { resolveFeatureBaseline } from './blueprint-feature-diff'
+import { resolveFeatureBaseline, resolveHeadSha } from './blueprint-feature-diff'
 import { resolveBlueprintGateCommands } from './blueprint-gate-command-pipeline'
 import { codeGraphService } from './code-graph.service'
 import { primaryTreeLock, primaryTreeBusyError } from './track.service'
 import { resolveBlueprintTrack, blueprintTrackOwner, autoLandBlueprint } from './blueprint-track'
+import {
+  DEFAULT_VERIFICATION_DEPTH,
+  depthRequiresE2E,
+  resolveVerificationDepth,
+  type VerificationDepth
+} from '../../shared/blueprint-types'
 import type {
   BlueprintPhaseStartPayload,
   BlueprintPhaseCompletePayload,
@@ -79,8 +86,7 @@ export const GENERIC_REMEDIATION_TASK_DESC =
  * worktree and never should, so the task failed verification on every retry
  * (live: blueprint 718c wave 7, R005 burned 2 attempts x ~5 min).
  */
-const NON_REMEDIABLE_PATH_RX =
-  /(?:^|\/)\b(?:tasks|plan|spec|build|build-\d+|verify|review)\.md\b/i
+const NON_REMEDIABLE_PATH_RX = /(?:^|\/)\b(?:tasks|plan|spec|build|build-\d+|verify|review)\.md\b/i
 
 /** True when a scraped path is pipeline metadata (or not a real file path at all). */
 function isNonRemediablePath(path: string): boolean {
@@ -133,6 +139,16 @@ export class BlueprintVerifyService extends EventEmitter {
     workspaceId: string
     workspacePath: string
   }): Promise<void> {
+    // MODEL-SNAPSHOT-REFRESH: resolve the phase's frozen assignment against the
+    // CURRENT workspace binding before anything dispatches. First statement —
+    // model resolution happens later, at session creation. Must never block the
+    // phase start.
+    try {
+      blueprintService.refreshModelSnapshotForPhase(params.blueprintId, 'verify')
+    } catch {
+      /* best effort */
+    }
+
     const { blueprintId, workspaceId, workspacePath } = params
 
     bpLog.info(`[startVerifyPhase] Blueprint ${blueprintId} — starting VERIFY`)
@@ -1050,7 +1066,20 @@ export class BlueprintVerifyService extends EventEmitter {
       commands = {}
     }
 
-    const gatesAvailable = commands.test !== undefined || commands.smoke !== undefined
+    // The depth the human chose at creation time. Read defensively — a blueprint
+    // created before the setting existed has no `verificationDepth` and must keep
+    // behaving exactly as it did (`standard`).
+    let depth: VerificationDepth = DEFAULT_VERIFICATION_DEPTH
+    try {
+      depth = resolveVerificationDepth(blueprintRepository.findById(blueprintId)?.settingsJson)
+    } catch (err) {
+      bpLog.warn('[verify:quality-gates] Could not read verification depth — using standard:', err)
+    }
+
+    const gatesAvailable =
+      commands.test !== undefined ||
+      commands.smoke !== undefined ||
+      (depthRequiresE2E(depth) && commands.e2e !== undefined)
 
     // 2. Feature baseline for the structural gate — same contract as
     //    lead-review's assembleFeatureDiff (settings baseline, merge-base fallback).
@@ -1076,7 +1105,10 @@ export class BlueprintVerifyService extends EventEmitter {
         baselineCommit
       }
 
-      const commandReport = await runVerifyGates(ctx)
+      const commandReport = await runVerifyGates(ctx, {
+        depth,
+        e2eProvenAt: this.e2eAlreadyProvenAt(blueprintId, executionPath)
+      })
       const structural = await runStructuralGate(ctx, {
         indexWorkspace: (wsId, wsPath) => codeGraphService.indexWorkspace(wsId, wsPath),
         findDeadCode: (wsId, wsPath, opts) => codeGraphService.findDeadCode(wsId, wsPath, opts),
@@ -1131,7 +1163,12 @@ export class BlueprintVerifyService extends EventEmitter {
       }
     }
 
-    const ledgerItems = ledgerItemsFrom(report, 'verify')
+    // The e2e gate is ledgered under one task id wherever it runs, so a single
+    // missing e2e command cannot surface twice (BUILD backstop + VERIFY) through
+    // `appendUnverified`'s (taskId, gate, reason) dedupe.
+    const ledgerItems = ledgerItemsFrom(report, 'verify').map((item) =>
+      item.gate === 'e2e' ? { ...item, taskId: E2E_LEDGER_TASK_ID } : item
+    )
     if (ledgerItems.length > 0) {
       try {
         blueprintRepository.appendUnverified(blueprintId, ledgerItems)
@@ -1173,6 +1210,41 @@ export class BlueprintVerifyService extends EventEmitter {
       failed: findings.some((f) => f.severity === 'error'),
       gatesAvailable,
       findings
+    }
+  }
+
+  /**
+   * The commit the BUILD-final e2e backstop proved green, when that proof still
+   * describes the tree VERIFY is about to judge. Null otherwise — which is the
+   * safe answer, because it means VERIFY runs the suite itself.
+   *
+   * Both halves of the condition matter. `pass` only: a failed or unverifiable
+   * backstop proves nothing and must be retried here. Same HEAD only: BUILD→
+   * code-review→remediation moves HEAD, and a proof of an earlier tree is not a
+   * proof of this one. A missing HEAD (no git) also returns null, so the
+   * non-repo case keeps its old behaviour of running the gate.
+   */
+  private e2eAlreadyProvenAt(blueprintId: string, executionPath: string): string | null {
+    try {
+      const head = resolveHeadSha(executionPath)
+      if (!head) return null
+
+      const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
+      if (!buildPhase) return null
+
+      for (const artifact of buildPhase.artifactsJson ?? []) {
+        if (artifact.type !== 'wave-gates') continue
+        const content = artifact.contentJson as
+          { wave?: unknown; headSha?: unknown; report?: GateReport } | undefined
+        if (!content || content.wave !== E2E_LEDGER_TASK_ID) continue
+        if (content.headSha !== head) continue
+        const e2eGate = content.report?.gates?.find((g) => g.name === 'e2e')
+        if (e2eGate?.verdict === 'pass') return head
+      }
+      return null
+    } catch (err) {
+      bpLog.warn('[verify:quality-gates] Could not read the BUILD e2e proof:', err)
+      return null
     }
   }
 

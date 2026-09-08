@@ -23,7 +23,9 @@ import {
   MessageSquarePlus,
   UserCheck,
   CheckCircle2,
-  GitBranch
+  GitBranch,
+  Download,
+  Lightbulb
 } from 'lucide-react'
 import { formatPhaseLabel } from '../../../../../../shared/blueprint-types'
 import type { BlueprintWithDetails } from '../../../../../../shared/blueprint-types'
@@ -42,8 +44,10 @@ import { getOutcomeStats, formatDuration } from './phase-summaries'
 import { findArtifact, findAllArtifacts } from '../deliverables/artifact-helpers'
 import { deriveTaskFailureDisplay, capTaskList } from '@renderer/utils/task-failure-display'
 import { BlueprintAttachments } from './BlueprintAttachments'
+import { TestabilityFollowUpDialog } from './TestabilityFollowUpDialog'
 import { extractReferenceDocs, readBlueprintBranchName } from './reference-docs'
 import { DraftPanel } from './DraftPanel'
+import { VerificationDepthBadge, VerificationDepthCaveat } from '../VerificationDepthBadge'
 import BlueprintFileViewerDrawer from '../BlueprintFileViewerDrawer'
 
 // ── Jira write-back summary ──
@@ -170,6 +174,10 @@ export function BlueprintDetailView({
   // The handoff card sits below the phase banners — roughly a screen down on a
   // finished run. The header button scrolls to it rather than duplicating the
   // intent picker: one place to choose an intent, two places to find it.
+  // D — the ledger export answers "what was never proven?" into a file; this
+  // dialog is the route from that answer back into schedulable work.
+  const [followUpOpen, setFollowUpOpen] = useState(false)
+
   const handoffCardRef = useRef<HTMLDivElement>(null)
   const scrollToHandoff = useCallback(() => {
     handoffCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -231,6 +239,10 @@ export function BlueprintDetailView({
           <div className="flex items-center gap-2 flex-wrap">
             <h4 className="text-sm font-semibold text-text-primary">{bp.title}</h4>
             <StatusBadge status={bp.status} />
+            {/* U2 — the depth this run was verified at. Without it, "complete"
+                cannot be read correctly: the same badge means three different
+                strengths of proof. */}
+            <VerificationDepthBadge settingsJson={bp.settingsJson} />
             {/* The run's own branch. Absent until the run starts, and deliberately
               distinct from the status bar, which shows the workspace checkout. */}
             {branchName && (
@@ -262,6 +274,7 @@ export function BlueprintDetailView({
             )}
           </div>
           {bp.description && <DescriptionBlock description={bp.description} />}
+          <VerificationDepthCaveat settingsJson={bp.settingsJson} className="block" />
           <div className="flex items-center gap-2 text-[10px] text-text-muted">
             <Clock size={10} />
             <span title={bp.createdAt}>Created {formatTimeAgo(new Date(bp.createdAt))}</span>
@@ -340,6 +353,35 @@ export function BlueprintDetailView({
                 </span>
               </div>
             </div>
+            {/* U4 — the export lives at the bottom of the page, but the amber
+                banner is where a user reading "UNPROVEN" actually is. Same IPC
+                call, second entry point. */}
+            <div className="px-4 pb-3 -mt-1">
+              <button
+                type="button"
+                data-testid="blueprint-export-testability-banner"
+                onClick={() => {
+                  void window.api
+                    .blueprintExportTestability({ blueprintId: bp.id })
+                    .catch(() => undefined)
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-warning/30 px-2.5 py-1 text-[11px] text-warning transition-colors hover:bg-warning/10"
+                title="Export the list of tasks and checks this blueprint never proved, as Markdown"
+              >
+                <Download size={12} />
+                Export testability ledger
+              </button>
+              <button
+                type="button"
+                data-testid="blueprint-followup-ideas-banner"
+                onClick={() => setFollowUpOpen(true)}
+                className="ml-2 inline-flex items-center gap-1.5 rounded-lg border border-warning/30 px-2.5 py-1 text-[11px] text-warning transition-colors hover:bg-warning/10"
+                title="Create one idea per unproven item, so the gap becomes scheduled work"
+              >
+                <Lightbulb size={12} />
+                Create follow-up ideas
+              </button>
+            </div>
             <div className="border-t border-warning/10 px-4 py-3 space-y-1.5">
               {bp.unverifiedJson.map((item, i) => (
                 <div key={i} className="flex items-start gap-2">
@@ -355,6 +397,46 @@ export function BlueprintDetailView({
               ))}
             </div>
           </div>
+        )}
+
+        {/* Testability ledger export — the exportable "what was never proven"
+            list. Deliberately NOT gated on the unverified ledger being
+            non-empty: the most dangerous case is a blueprint whose gates all
+            ran clean but whose tasks closed `preexisting`/`accepted_by_user`,
+            which is invisible in the amber banner above. */}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            data-testid="blueprint-export-testability"
+            onClick={() => {
+              void window.api
+                .blueprintExportTestability({ blueprintId: bp.id })
+                .catch(() => undefined)
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-border-subtle px-2.5 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary"
+            title="Export the list of tasks and checks this blueprint never proved, as Markdown"
+          >
+            <Download size={13} />
+            Export testability ledger
+          </button>
+          <button
+            type="button"
+            data-testid="blueprint-followup-ideas"
+            onClick={() => setFollowUpOpen(true)}
+            className="ml-2 flex items-center gap-1.5 rounded-lg border border-border-subtle px-2.5 py-1.5 text-xs text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary"
+            title="Create one idea per unproven item, so the gap becomes scheduled work"
+          >
+            <Lightbulb size={13} />
+            Create follow-up ideas
+          </button>
+        </div>
+
+        {followUpOpen && (
+          <TestabilityFollowUpDialog
+            blueprintId={bp.id}
+            blueprintTitle={bp.title}
+            onClose={() => setFollowUpOpen(false)}
+          />
         )}
 
         <JiraSyncNote settings={bp.settingsJson} />

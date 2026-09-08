@@ -26,6 +26,7 @@ import { PHASE_ICONS } from '../phase-icons'
 import { FileListSection } from '@renderer/components/common/FileListSection'
 import { DeliverableHeader, MetricTile, DiscoveriesSection, CappedMarkdownBlock } from './shared'
 import { findArtifact, extractDiscoveries } from './artifact-helpers'
+import { GateReportRow } from './GateReportRow'
 import { formatDurationMs } from '../detail/phase-summaries'
 import { taskReadiness, waveCompletion } from '../../../../../../shared/task-readiness'
 
@@ -58,19 +59,17 @@ export function BuildDeliverable({
 
   // M9.4 — persisted wave-gate evidence (P1.1). One artifact per wave; survives
   // reload, unlike the transient taskGates event. B2 manual runs land here too
-  // with wave: 'MANUAL' — rendered by the same row shape, newest last.
+  // with wave: 'MANUAL', and the depth-`e2e` final backstop with wave: 'E2E' —
+  // all rendered by the same row shape, newest last.
   const waveGateReports = phase.artifactsJson
     .filter((a) => a.type === 'wave-gates')
-    .map(
-      (a) =>
-        a.contentJson as {
-          wave: number | 'MANUAL'
-          report: GateReport
-          /** B1 — commits in range with no task id, named on a failed wave. */
-          ungatedCommits?: Array<{ sha: string; subject: string }>
-        }
+    .map((a) => a.contentJson as unknown as WaveGateArtifact)
+    .filter(
+      (w) =>
+        w &&
+        (typeof w.wave === 'number' || w.wave === 'MANUAL' || w.wave === 'E2E') &&
+        w.report?.gates
     )
-    .filter((w) => w && (typeof w.wave === 'number' || w.wave === 'MANUAL') && w.report?.gates)
     .sort((a, b) => waveSortKey(a.wave) - waveSortKey(b.wave))
 
   const progressPct =
@@ -396,11 +395,12 @@ export function BuildDeliverable({
         {waveGateReports.length > 0 && (
           <div className="space-y-2">
             {waveGateReports.map((w, i) => (
-              <WaveGateRow
+              <GateReportRow
                 key={`${w.wave}-${i}`}
-                wave={w.wave}
+                label={waveLabel(w.wave)}
                 report={w.report}
                 ungatedCommits={w.ungatedCommits}
+                testId={w.wave === 'E2E' ? 'blueprint-e2e-backstop-row' : undefined}
               />
             ))}
           </div>
@@ -472,76 +472,31 @@ export function BuildDeliverable({
 
 // ── Wave-gate evidence (M9.4) ──
 
-const GATE_VERDICT_STYLE: Record<string, string> = {
-  pass: 'text-success bg-success/10',
-  fail: 'text-danger bg-danger/10',
-  unverifiable: 'text-warning bg-warning/10'
-}
+type WaveLabel = number | 'MANUAL' | 'E2E'
 
-/** MANUAL sorts after every numbered wave (the newest probe). */
-function waveSortKey(wave: number | 'MANUAL'): number {
-  return wave === 'MANUAL' ? Number.MAX_SAFE_INTEGER : wave
-}
-
-function WaveGateRow({
-  wave,
-  report,
-  ungatedCommits
-}: {
-  wave: number | 'MANUAL'
+interface WaveGateArtifact {
+  wave: WaveLabel
   report: GateReport
+  /** B1 — commits in range with no task id, named on a failed wave. */
   ungatedCommits?: Array<{ sha: string; subject: string }>
-}): JSX.Element {
-  return (
-    <div className="rounded-lg border border-border-subtle bg-surface-inset/30 px-3 py-2">
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs font-mono font-semibold text-text-secondary">
-          {wave === 'MANUAL' ? 'Manual' : `Wave ${wave}`}
-        </span>
-        <span
-          className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-            report.overall === 'fail'
-              ? 'text-danger bg-danger/10'
-              : report.overall === 'unverifiable'
-                ? 'text-warning bg-warning/10'
-                : 'text-success bg-success/10'
-          }`}
-        >
-          {report.overall}
-        </span>
-        {report.gates.map((g) => (
-          <span
-            key={g.name}
-            title={g.evidence.join('\n')}
-            className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${GATE_VERDICT_STYLE[g.verdict] ?? 'text-text-muted bg-surface-inset'}`}
-          >
-            {g.name}:{g.verdict}
-            {g.verdict === 'unverifiable' && g.reason ? ` (${g.reason})` : ''}
-          </span>
-        ))}
-      </div>
-      {/* B1 — attribution for commits no gate ever graded (manual terminal
-          commits during the wave). Shown only on failed waves, by design. */}
-      {ungatedCommits && ungatedCommits.length > 0 && (
-        <div className="mt-2 rounded-md border border-warning/20 bg-warning/5 px-2.5 py-1.5">
-          <div className="flex items-center gap-1.5 mb-1">
-            <AlertTriangle size={11} className="text-warning" />
-            <span className="text-[11px] text-warning">
-              {ungatedCommits.length} commit{ungatedCommits.length > 1 ? 's' : ''} since the build
-              began carry no task id and were never gated:
-            </span>
-          </div>
-          <ul className="space-y-0.5">
-            {ungatedCommits.slice(0, 5).map((c) => (
-              <li key={c.sha} className="text-[11px] font-mono text-text-muted truncate">
-                {c.sha.slice(0, 8)} “{c.subject}”
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
+  /** Set by the depth-`e2e` backstop: the tree the suite actually proved. */
+  headSha?: string | null
+}
+
+/**
+ * E2E sorts last (it runs on the settled tree after every wave), MANUAL just
+ * before it (the newest on-demand probe), numbered waves in order.
+ */
+function waveSortKey(wave: WaveLabel): number {
+  if (wave === 'E2E') return Number.MAX_SAFE_INTEGER
+  if (wave === 'MANUAL') return Number.MAX_SAFE_INTEGER - 1
+  return wave
+}
+
+function waveLabel(wave: WaveLabel): string {
+  if (wave === 'E2E') return 'End-to-end (final)'
+  if (wave === 'MANUAL') return 'Manual'
+  return `Wave ${wave}`
 }
 
 // ── User-skip helpers ──

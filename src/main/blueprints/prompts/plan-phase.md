@@ -113,9 +113,12 @@ Rules:
 - **If the workspace already has a toolchain, read it** — `package.json` scripts, `*.csproj`, `Cargo.toml`, `pyproject.toml` — and name the real commands. Do not invent scripts that do not exist.
 - **If the workspace is new or empty, you MUST declare the commands the toolchain WILL have**, and your plan must include the task that creates them (the `package.json`, the project file, the test harness). Gates come online progressively: early scaffolding tasks are expected to report `unverifiable`, and once the toolchain exists on disk every later task is gated.
 - Prefer a **typecheck** over a full build for `build` — same question, far cheaper, and it runs after every task.
-- `smoke` is optional: a single command that proves the thing boots. Omit it rather than guess.
+- `smoke` is optional at the default depth: a single command that proves the thing boots. Omit it rather than guess.
+- `e2e` is the end-to-end suite. Declare it only when the verification depth below asks for it, or when the repo already has one. It must never duplicate `test`.
 - Each value is a plain command line, or `{"command": "...", "cwd": "relative/dir"}` when it must run in a subdirectory.
 - **No shell chaining.** `&&`, `;`, `|`, backticks and `$(...)` are rejected outright. If a gate needs several steps, the repo needs a script — put creating it in the plan.
+
+{{VERIFICATION_DEPTH_DIRECTIVE}}
 
 ## Completion
 

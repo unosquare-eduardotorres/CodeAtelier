@@ -185,13 +185,93 @@ Shipped in response to the premortem; each item is defensive, none change the P2
 
 ## P3 — Execution engine
 
-- [ ] **P3.1** NEW `src/main/services/design-agent.service.ts` — mirror `AuditAgentService` structure: per-workspace `{ running, abortController, session }`, sequential command execution (order: detector first, then `critique`, then `audit`), retry (MAX_RETRIES=1), events `progress`/`result`/`intermediate_findings`/`stream`/`complete`. One `audit_results` row per command (`trackId = 'design:<commandId>'`), run row with `kind: 'design'`, `selected_tracks` reused for commandIds, `selected_skills` for `{ brief, scope }`. Reuse `AuditCoverageTracker` + coverage gate; `applicability: 'not-applicable'` when scope has zero design-relevant files.
+> **Status: `[C]` coded, typecheck + eslint + unit green.**
+
+### Ground truth captured in the P3.0 spike (supersedes the P3 guesses)
+
+Run against the real engine, scanning real repo files. Nothing was written to the repo.
+
+| Topic | Verified fact (engine v0.1.3, 2026-09-07) |
+|---|---|
+| Top-level JSON | A **bare array** `[ {...} ]` on **stdout** — *not* an envelope object. Empty scan → `[]`. Human-readable text goes to stderr. |
+| Keys | `antipattern`, `name`, `description`, `severity`, `category`, `file`, `line`, `snippet`, optional `importedBy`, optional `advisory`. |
+| `file` | **Absolute path.** Relativized at the mapper boundary — see correction 1. |
+| `line` | **`0` means file-level**, not line zero (e.g. `em-dash-overuse`). Never rendered as `:0`. |
+| Exit codes | `0` clean · `1` a target could not be scanned · `2` findings present. Confirmed empirically. |
+| **Advisory findings** | **RESOLVED: they DO appear in `--json`, and they ARE distinguishable — twice over** (`severity: "advisory"` *and* a dedicated `advisory: true` field). Per the decision rule fixed in advance, they are **included and mapped to `info`**, not suppressed with `--no-advisory`. An advisory-only scan still exits `0`, which is why exit `0` must be parsed rather than short-circuited. |
+| Observed severities | `warning`, `advisory`. |
+| Observed categories | `slop` **and `quality`** — the P3 text claimed `slop` only. |
+| Full enum | Still **not enumerable** (packed binary, no rule-catalog command), hence the defensive severity map with `unknown → medium` logged once per run. |
+
+### Deviations from the P3 text, and why
+
+1. **NEW `design-discovery.service.ts`** (unplanned). P3.1 assumed the audit discovery could be reused, but `discoverAuditableFiles` selects by *track* via a fixed pattern config and its walker is not exported. Design selects by *user-chosen scope*. Separate module, same skip-list and caps.
+2. **NEW `role-adapters/design.adapter.ts`** (implied but not itemised). It reuses **`role: 'audit'`** rather than adding a `'design'` `AgentRole`: a new role would make `resolveModelAction` derive a non-existent `'design:plan'` action and silently fall back. Sharing a role across adapters is already established here — four blueprint adapters share `'blueprint-review'`. The model is still routed through the dedicated `design:audit` action, so the Design rows in model settings control it.
+3. **Prompt assembly strips sections, it does not merely truncate.** Roughly half of `critique.md` and a third of `audit.md` tell the agent to run the `scripts/impeccable` launcher, write a report in Impeccable's format, persist a snapshot, and ask the user questions. Those conflict with our read-only, single-shot, `audit-finding` contract — this is a **correctness** filter, not a budget one. `Assessment B: Detector + Browser Evidence` is dropped for the same reason: it points at `.claude/skills/impeccable/scripts/impeccable detect` (a path we do not ship into the user's workspace) and at browser automation the session does not have. We run the detector ourselves and inject its output instead.
+   - **Measured against the real payload:** all 16 command layers land under the 8 000-char cap, worst case **7 776**. `audit` retains its full five-dimension Diagnostic Scan; `critique` (42.7 KB raw) retains Purpose, Hard Invariants, Assessment A and the Cognitive Load reference material.
+4. **`AuditRun.designConfig`** added as a typed field over the existing `selected_skills` column (no migration). P3.1 said to reuse that column for `{ brief, scope }`; surfacing it as `selectedSkills` would have been a lie, since the two populations are disjoint by `kind`.
+5. **Fallback when no evaluate command is selected.** Refine cards never execute, so a selection of only refine cards would have produced a run with zero result rows. `resolveExecutableCommands` falls back to `critique` and the refine cards shape its prompt.
+6. **Detector findings attach to the FIRST executed command only.** The detector runs once per run; repeating its findings on every command would multiply them in the UI and in the blueprint brief.
+
+### Bug the tests caught before it shipped
+
+The first `normalizeTitleKey` sliced both titles to a fixed 24 chars to compare "prefixes". That **cannot** make a shorter title match a longer one extending it (`sidetabaccentborder` vs `sidetabaccentbordersoncar`), so detector/LLM suppression would have **silently never fired** and every covered finding would have been reported twice. Replaced with un-truncated normalisation plus an explicit `titlesMatch` prefix-containment check with a minimum overlap floor.
+
+- [C] **P3.1** NEW `src/main/services/design-agent.service.ts` — mirror `AuditAgentService` structure: per-workspace `{ running, abortController, session }`, sequential command execution (order: detector first, then `critique`, then `audit`), retry (MAX_RETRIES=1), events `progress`/`result`/`intermediate_findings`/`stream`/`complete`. One `audit_results` row per command (`trackId = 'design:<commandId>'`), run row with `kind: 'design'`, `selected_tracks` reused for commandIds, `selected_skills` for `{ brief, scope }`. Reuse `AuditCoverageTracker` + coverage gate; `applicability: 'not-applicable'` when scope has zero design-relevant files.
 - [ ] **P3.2** NEW `src/main/services/design-prompt-templates.ts` — per-command system prompt = audit scaffold + **Impeccable layer** (SKILL.md content trimmed to the command's guidance via tiered budgets, hard cap ~6–8K chars) + PRODUCT.md/DESIGN.md contents when present (the context files Impeccable commands expect) + user brief + scope file list. Output contract: same progressive ` ```audit-finding ` / ` ```audit-score ` blocks so `parseAuditResponse` works **unchanged**. Detector summary injected into round-2+ prompts (feedback loop).
 - [ ] **P3.3** NEW `src/main/services/impeccable-detector.service.ts` — `runDetection(workspacePath, targets)`: spawn engine `detect --json <targets>`, `cwd = workspacePath` (honors `.impeccable/config.json` + inline waivers), 60s timeout, `windowsHide`; exit 0/2 → parse stdout; 1 → `{ status: 'failed' }` warn-skip. Defensive JSON mapper → `AuditFinding[]` with `source: 'impeccable-detector'`; severity mapping pinned against captured real output.
 - [ ] **P3.4** Merge logic in the service: detector findings deduped against LLM findings by `filePath + normalized title prefix`; `skillsUsed += ['impeccable-detector']`; detector output excluded from coverage stats (it is not agent evidence).
 - [ ] **P3.5** Wire `DESIGN_START/CANCEL` → service; persist via `AuditRepository`; forward events through `getSessionEventRouter().sendWorkspaceEvent()` (mirror audit.ipc.ts wiring).
-- [ ] **P3.6** Tests: templates (layer inclusion per command, budget caps, context-file injection, brief/scope presence), detector mapper (fixture JSONs, exit-code semantics, timeout, dedupe), orchestration with stubbed sessions (event emission, per-command result rows, not-applicable path). Register everywhere.
-- **Verify**: unit green; one stubbed run end-to-end produces a completed run row with findings.
+- [C] **P3.6** Tests: 84 across three NEW suites — `impeccable-detector.test.ts` (real captured fixtures under `__tests__/fixtures/impeccable-detect/`), `design-prompt-templates.test.ts` (section stripping against fixtures reproducing the real heading structure, plus the cap invariant driven by a 100 KB pathological playbook), `design-agent.test.ts` (merge rules, command resolution, scope discovery). Registered in **both** `run-tests.ts` and `run-all.ts`.
+- **Verify**: [V] `npm run typecheck` clean · [V] eslint clean on all new/changed files · [V] 84/84 new tests green · [V] **detector regression pin**: `runDetection` against `src/renderer/src/assets/` returns the **3 distinct `side-tab` findings** (lines 480/502/604) with relativized paths, distinct ids, and `source: 'impeccable-detector'` — no absolute path leaked.
+
+> **Not verified in P3 (deferred, and not claimed):** no design run has been executed against a live LLM — the orchestration path is covered only by unit tests with the session layer untouched. `DESIGN_*` still does not reach the preload until P4.6, so there is nothing an E2E could drive. Real end-to-end execution remains **P7.4**, and in-app engine resolution from `app.getAppPath()` remains **P7.3**.
+
+## P3.7 — Hardening pass (blocked P4)
+
+Eight defects found auditing P1–P3 against the code. Two of them meant the feature did not do what it said.
+
+**Root cause:** P3.6 shipped 84 tests over *pure functions only*. `runDesign`, `wireDesignEvents` and the `DESIGN_START` success path had zero coverage — which is exactly where items 3, 4 and 5 lived. P3.7.8 is the item that stops this recurring.
+
+- [C] **P3.7.1** *(Critical)* `ensureProvisioned()` had **zero production callers** — the skill payload was never installed, so `readSkillMarkdown()` returned `null`, `buildImpeccableLayer()` returned `''`, and every design run ran with no Impeccable knowledge at all while still reporting `skillsUsed: ['impeccable']`. `runDesign` now provisions before the detector phase, narrates the first-run download, emits a visible degradation chunk on `unavailable`/`failed`, and claims the skill only when `getProvisionState().provisioned` is true. **Silent degradation was the actual bug**: an empty layer still produces a plausible-looking review, so nobody notices.
+- [C] **P3.7.2** *(Critical)* `DesignRoleAdapter` did not override `getUsageModelAction()`, so `resolveAdapterModelAction` fell back to `resolveModelAction('audit', false)` and the Design → Evaluate row added in P2.4 had **no effect on model selection**. Now returns `'design:audit'`, mirroring `BlueprintBaseAdapter:173`, which exists for the same reason (several adapters share one role).
+- [C] **P3.7.3** *(High)* `DESIGN_START` guards on `isRunningForWorkspace`, so cross-workspace concurrency is permitted — but no event payload carried a `workspaceId` and `wireDesignEvents` attaches per-workspace listeners to a singleton emitter, so workspace A's listener persisted workspace B's findings into A's run row. All four payloads plus `stream` now carry `workspaceId` and every listener early-returns on mismatch.
+- [C] **P3.7.4** *(High)* Detector findings attach to `commands[0]`, but `runDesign`'s catch emitted `findings: []` — an exhausted-retry critique discarded the whole deterministic scan. The failed result now carries the detector findings that command owned, with `skillsUsed: [DETECTOR_SOURCE]`.
+- [C] **P3.7.5** *(Medium)* `runDesign` is wrapped in `try/finally`: `state.running` stayed `true` and `complete` never fired if anything between the guard and the loop threw — a permanent workspace lockout plus leaked listeners. `complete` now has a single emit point, so it fires exactly once by construction.
+- [C] **P3.7.6** *(Medium)* A finished design run announced "Audit completed" and navigated to the Workspace Health page. `CompletionNotification.service` / `targetPage` gained `'design'`. The `PAGE_NAV_MAP` entry lands with **P4.5**; an unmapped `targetPage` is a verified no-op (`NotificationStack.tsx:69,169` guard on `nav &&`), which beats navigating somewhere wrong.
+- [C] **P3.7.7** *(Medium)* `runDetection` takes an optional `AbortSignal` threaded to `execFile`, so cancelling during the detector phase no longer waits out the full spawn budget. An abort is reported as `unavailable` / reason `cancelled`, checked before the timeout branch because a killed child is otherwise indistinguishable from a timeout.
+- [C] **P3.7.8** *(Medium — the root-cause item)* NEW `design-orchestration.test.ts`, 15 tests, registered in **both** `run-tests.ts` and `run-all.ts`. Drives the real `runDesign` with the session, adapter, detector and provisioner stubbed at module-load time: event sequence and one result row per executable command, `not-applicable` path, per-command failure, detector-findings-survive-failure, state reset + `complete` on the throw path, provisioning-unavailable degradation, every-event-carries-`workspaceId`, two concurrent workspaces staying separate, duplicate-run refusal, `DESIGN_START` success path (run `kind='design'`, result rows for executable commands only, `selected_tracks` carrying the *full* selection including refine cards), listener isolation against the mocked repo, and the `design:audit` routing assertion.
+- [C] **P3.7.9** *(unmeasured risk — now measured)* **The decision rule fired, and the reason is worse than latency.** Engine 0.1.3 on this repo, 2026-09-07:
+
+  | scan | wall time | findings |
+  |---|---|---|
+  | `detect .` (default project scope) | **37.8 s** | **4283** |
+  | `detect src/renderer` | **0.47 s** | **27** |
+
+  Both thresholds blown (>30 s, >200 findings). The cause is not repo size: **the engine does not honour `.gitignore`**, so a project scan walks `coverage/` and `out/` — 98 % of those 4283 findings came from generated build artifacts (`coverage/lcov-report` 2105, `coverage/main` 1968), and 3776 of them were a single rule (`undersized-ui-text`) firing on generated HTML. Consequences, per the rule fixed in advance:
+  - **In P3.7:** project scans get `PROJECT_DETECT_TIMEOUT_MS = 180_000` (scoped scans keep the 60 s budget). 60 s left almost no margin, and a detector timeout silently discards the entire deterministic scan.
+  - **For P4.4:** the scope step **must** default to the detected UI directory, never whole-project. This is now a requirement, not a preference — a project-scope default would flood every blueprint remediation brief with findings about coverage reports.
+
+- **Verify**: [V] `npm run typecheck` + eslint clean · [V] `npm run test:unit` **13 203 passed / 1 failed** — the single failure is the known pre-existing `blueprint-session-resume` (`specialist-ingestion-gate`, the other known flake, passed this run) · [V] `npm run test:repo` **612 passed / 0 failed** · [V] all 16 orchestration tests green *in the full run*, not just standalone.
+- **Verify — the part unit tests cannot see.** Items 1 and 2 are invisible to stubs by construction, so both were exercised against the real engine binary in a scratch provision root:
+
+  ```
+  ensureProvisioned() -> ready in 4585ms
+  SKILL.md exists: true          SKILL.md chars: 11661
+  [audit]    playbook 7873 chars -> assembled layer 6171 chars, 7 sections
+  [critique] playbook 42656 chars -> assembled layer 6885 chars, 6 sections
+  resolveAdapterModelAction(DesignRoleAdapter, false) = design:audit
+  ```
+
+  Before P3.7 both of those lines read `assembled layer 0 chars` and `audit`. The layer also lands inside the ~8 K budget from both a 7.9 KB and a 42.7 KB playbook, so P3.2's cap holds on real content.
+
+> **Still not verified (unchanged from P3):** no design run has executed against a live LLM — `DESIGN_*` does not reach the preload until P4.6, so there is nothing to drive end-to-end yet. That remains **P7.4**, and packaged-app engine resolution remains **P7.3**.
+
+### Ordering bug the new suite caught in itself
+
+`design-orchestration.test.ts` stubs `workspaceRepository.findById` to return a workspace — and the mock repositories are process-global, so it leaked into every later IPC suite. `codeGraph:indexStart` rejects *only* because that lookup comes back empty, so its "rejects missing workspaceId" test silently started passing for the wrong reason (`true !== false` in the full run, green standalone). Attributed with a two-file probe rather than guessed at, and fixed with a trailing spy-restore test. Worth remembering: a new IPC suite that stubs a shared repository owns restoring it.
+
+> **Deliberately not fixed here:** `audit.ipc.ts` has the same listener shape but is protected by a *global* `isRunning` guard, so it cannot cross-talk today. Widening it to per-workspace concurrency without first adding `workspaceId` to its payloads would reintroduce P3.7.3 in Workspace Health — tracked as a separate ticket, see Risks.
 
 ## P4 — Wizard UX, model settings section, navigation
 
@@ -200,7 +280,7 @@ Shipped in response to the premortem; each item is defensive, none change the P2
 - [ ] **P4.3** NEW `src/main/services/design-route.service.ts` — one-shot `design:route` call: `{ brief, contextStatus }` → `{ commandIds, scopeHint, rationale }`; deterministic keyword fallback (`animate→animate`, `audit/review→audit+critique`, `bold→bolder`, `generic/slop→critique+distill`, …) when model call fails or times out (10s); **never blocks the wizard** — degrade to no preselect.
 - [ ] **P4.4** NEW `src/renderer/src/components/workspace/DesignPage.tsx` + `design/` folder:
   - `DesignLanding` — history via `DESIGN_GET_HISTORY` (kind='design'), empty state, "New Design Audit" CTA (mirror HealthLanding).
-  - `DesignWizard` — `BriefStep` (textarea + `DESIGN_BRIEF_EXAMPLES` chips; fires `DESIGN_ROUTE` in background) → `CommandCardsStep` (cards grouped by category, pre-selected from route with rationale line, live `validateDesignCommandSet` conflict badges + disable invalid toggles) → `ScopeStep` (whole-project toggle + extension-filtered file/dir picker defaulting to detected UI dir; design-context status banner from `DESIGN_CONTEXT_STATUS`) → provider toggle → Run.
+  - `DesignWizard` — `BriefStep` (textarea + `DESIGN_BRIEF_EXAMPLES` chips; fires `DESIGN_ROUTE` in background) → `CommandCardsStep` (cards grouped by category, pre-selected from route with rationale line, live `validateDesignCommandSet` conflict badges + disable invalid toggles) → `ScopeStep` (extension-filtered file/dir picker; **defaults to the detected UI directory — see P3.7.9, whole-project is 37.8 s / 4283 findings on this repo, 98 % of them from gitignored build output**; whole-project remains available as an explicit opt-in; design-context status banner from `DESIGN_CONTEXT_STATUS`) → provider toggle → Run.
   - `DesignRunView` — reuse health/ rendering patterns: stream view, score hero (audit: 5 dimension scores; critique: heuristic/persona/slop-verdict parsed from result), findings list with `source` badge for detector findings, per-command sidebar.
   - `DesignRunCard` for history.
 - [ ] **P4.5** Navigation: register `design` tab in `WorkspaceSettingsContent.tsx` (alongside `health`), icon + label in the nav config.
@@ -242,6 +322,8 @@ P1 → P2 → P3 → P4 (P4.1 parallel with P4.2–P4.6) → P5 → P6 → P7. E
 - **afterPack strips skill/binary payload** → explicit whitelist + hard build assertion (P1.4) + DMG verification gate.
 - **Codesign rejects the nested 12.7 MB vendor Mach-O** → the most likely P1 blocker. `build-mac.sh:242` gates on `codesign --verify --deep --strict`; electron-builder signs after `afterPack`, so it should be picked up. If not, sign it explicitly inside the hook with the same identity.
 - **`install` escapes to the enclosing git repo** → `.git` containment marker at the provision root; a test asserts nothing is written outside `userData`.
+- **`audit.ipc.ts` listener cross-talk (open ticket, latent)** → its `progress`/`result`/`intermediate_findings`/`complete` payloads carry no `workspaceId` and its listeners attach to a singleton emitter, exactly as design's did before P3.7.3. It is safe *only* because `AuditAgentService` uses a **global** `isRunning` guard, so two audits can never overlap. Anyone making audit runs per-workspace concurrent must add `workspaceId` to those payloads first.
+- **Detector ignores `.gitignore`** → a project-scope scan reports on `coverage/` and `out/` (P3.7.9). Mitigated by defaulting scope to the detected UI directory (P4.4) and a 180 s project-scan budget. If upstream never fixes this, the next step is a curated target list from `discoverDesignFiles` rather than `.`.
 - **DMG grows ~12.7 MB** (plus ~14 MB in `userData` after first provisioning, which includes a duplicate engine copy) → accepted.
 - **Detector JSON schema drift** (undocumented fields) → exact version pin, defensive parser, severity map validated against captured real output before the mapper is finalized.
 - **Upstream release cadence** (3.2→3.6 in days) → exact pin; upgrades deliberate; tarball-layout knowledge isolated in `impeccable-runtime.service.ts`.

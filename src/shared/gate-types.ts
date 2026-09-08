@@ -42,6 +42,12 @@ export type GateName =
   | 'full-suite'
   /** VERIFY — optional "does it boot" smoke command. */
   | 'smoke'
+  /**
+   * VERIFY — the end-to-end suite, run only when the blueprint's verification
+   * depth is `e2e`. The gate that answers "is any of this actually wired up",
+   * which build/lint/unit-test cannot.
+   */
+  | 'e2e'
   /** VERIFY — code-graph structural analysis (new dead code / import cycles). */
   | 'structural'
   /** CODE-REVIEW — adversarial whole-diff review findings (M7). */
@@ -207,6 +213,15 @@ export function boundEvidence(
 export function gatesBlockAdvance(report: GateReport | null | undefined): boolean {
   return report?.overall === 'fail'
 }
+
+/**
+ * The single ledger task id for the end-to-end gate, wherever it runs.
+ *
+ * The e2e gate has two producers — the BUILD-final backstop and VERIFY — and
+ * `appendUnverified` de-duplicates on `(taskId, gate, reason)`. Ledgering them
+ * under different task ids would report one missing e2e command twice.
+ */
+export const E2E_LEDGER_TASK_ID = 'E2E'
 
 /** Collect the unverifiable results of a report as ledger items. */
 export function ledgerItemsFrom(

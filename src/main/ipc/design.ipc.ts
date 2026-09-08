@@ -24,17 +24,38 @@ import type { BrowserWindow } from 'electron'
 import { ipcMain } from 'electron'
 import { isAbsolute, normalize } from 'node:path'
 import { IPC_CHANNELS } from '../../shared/constants'
-import { DESIGN_COMMANDS, validateDesignCommandSet } from '../../shared/design-commands'
+import {
+  DESIGN_COMMANDS,
+  toDesignTrackId,
+  validateDesignCommandSet
+} from '../../shared/design-commands'
 import type {
+  AgentStatus,
   AuditRun,
+  AuditTrackId,
   DesignCommandId,
   DesignIpcResult,
   DesignRunConfig,
-  DesignScope
+  DesignScope,
+  LLMProvider
 } from '../../shared/types'
-import { auditRepository } from '../db/repositories'
+import { auditRepository, workspaceRepository } from '../db/repositories'
 import { requireObject, requireString } from './validate-args'
 import { mainLogger } from '../logger'
+import { detectTechStack } from '../services/tech-stack-detector.service'
+import {
+  DesignAgentService,
+  designAgentService,
+  type DesignCompletePayload,
+  type DesignIntermediateFindingsPayload,
+  type DesignProgressPayload,
+  type DesignResultPayload,
+  type DesignStreamPayload
+} from '../services/design-agent.service'
+import { getSessionEventRouter } from '../services/session-event-router'
+import { createTimedCleanupMap } from './listener-cleanup'
+import { notificationService } from '../services/notification.service'
+import { resolveWorkspaceName } from './resolve-workspace-name'
 
 const log = mainLogger
 
@@ -65,7 +86,7 @@ function fail(reason: string): DesignIpcResult<never> {
 }
 
 function notImplemented(what: string): DesignIpcResult<never> {
-  return fail(`${what} is not implemented until P3 (DesignAgentService)`)
+  return fail(`${what} is not implemented yet`)
 }
 
 /**
@@ -189,19 +210,70 @@ export function registerDesignIpc(_mainWindow: BrowserWindow): void {
   // ── Catalogue-driven validation (pure, available now) ─────────────────────
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_START, async (_e, args: unknown) => {
-    // Validate eagerly so a malformed payload fails loudly and identically to
-    // how it will once the service exists.
+    const obj = requireObject(args, IPC_CHANNELS.DESIGN_START)
+    const workspaceId = requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_START)
     const config = parseDesignRunConfig(args, IPC_CHANNELS.DESIGN_START)
-    log.info(
-      `[design] START requested (${config.commandIds.join(', ')}; scope=${config.scope.mode}) — not yet implemented`
+
+    if (designAgentService.isRunningForWorkspace(workspaceId)) {
+      return fail('A design run is already in progress for this workspace.')
+    }
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) return fail(`Workspace ${workspaceId} not found`)
+    if (!workspace.repoPath) return fail(`Workspace ${workspaceId} has no repo path`)
+    const workspacePath = workspace.repoPath
+
+    const settings = workspaceRepository.getSettings(workspaceId)
+    const llmProvider: LLMProvider =
+      (config.llmProvider as LLMProvider | undefined) ?? settings.llmProvider ?? 'claude'
+
+    const detectedTechs = detectTechStack(workspacePath).detectedTechs
+
+    // The run row records the user's FULL selection (refine cards included) so a
+    // later report or blueprint handoff can reproduce their intent. Only the
+    // evaluate commands get result rows, because only those execute.
+    const selectedTracks: AuditTrackId[] = config.commandIds.map(toDesignTrackId)
+    const executable = DesignAgentService.resolveExecutableCommands(config)
+
+    // 'deep' is the only honest mode here: a design run has no light/deep split,
+    // and 'deep' is what the multi-round session actually performs.
+    const run = auditRepository.createRun(
+      workspaceId,
+      'deep',
+      selectedTracks,
+      detectedTechs,
+      { commandIds: config.commandIds, scope: config.scope, brief: config.brief },
+      'design'
     )
-    return notImplemented('design:start')
+    run.results = auditRepository.createResults(run.id, executable.map(toDesignTrackId))
+
+    log.info(
+      `[design:start] workspaceId=${workspaceId} runId=${run.id} ` +
+        `commands=${config.commandIds.join(',')} executing=${executable.join(',')} ` +
+        `scope=${config.scope.mode} provider=${llmProvider}`
+    )
+
+    wireDesignEvents(run.id, workspaceId)
+
+    // Non-blocking: the run streams progress over the event channels.
+    designAgentService
+      .runDesign({ workspaceId, workspacePath, config, designRunId: run.id, llmProvider })
+      .catch((err) => {
+        log.error('[design:start] runDesign failed:', err)
+      })
+
+    auditRepository.updateRun(run.id, { status: 'running' })
+    run.status = 'running'
+
+    return ok(run)
   })
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_CANCEL, async (_e, args: unknown) => {
     const obj = requireObject(args, IPC_CHANNELS.DESIGN_CANCEL)
-    requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_CANCEL)
-    return notImplemented('design:cancel')
+    const workspaceId = requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_CANCEL)
+    designAgentService.cancel(workspaceId)
+    log.info(`[design:cancel] workspaceId=${workspaceId}`)
+    return ok(null)
   })
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_ROUTE, async (_e, args: unknown) => {
@@ -264,4 +336,194 @@ export function registerDesignIpc(_mainWindow: BrowserWindow): void {
   })
 
   log.info('[design] IPC handlers registered')
+}
+
+// ── Event forwarding ───────────────────────────────────────────────────────
+
+/** Per-workspace listener cleanup, mirroring `audit.ipc.ts`. */
+const designCleanup = createTimedCleanupMap('design')
+
+/**
+ * Bridge `designAgentService` events to the renderer and to the DB.
+ *
+ * Persisting here rather than inside the service keeps the service free of
+ * repository knowledge and testable with stubbed sessions — the same split
+ * `audit.ipc.ts` uses.
+ *
+ * ── Why every listener re-checks `workspaceId` ──
+ * `DESIGN_START` guards on `isRunningForWorkspace`, so two workspaces may run
+ * design passes concurrently — but `designAgentService` is a singleton emitter,
+ * so each of these listeners sees BOTH runs' events. Without the guard,
+ * workspace A's listener writes workspace B's findings into A's run row and
+ * completes A's run when B finishes. (`audit.ipc.ts` has the same listener
+ * shape but is protected by a *global* running guard; fixing it is a separate
+ * ticket, tracked in the plan doc.)
+ */
+function wireDesignEvents(runId: string, workspaceId: string): void {
+  const cleanups = designCleanup.prepareCleanups(workspaceId)
+
+  // ── progress ──
+  designCleanup.addListener<DesignProgressPayload>(
+    cleanups,
+    designAgentService,
+    'progress',
+    (data) => {
+      if (data.workspaceId !== workspaceId) return
+
+      if (data.status === 'running' || data.status === 'cancelled') {
+        const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+        if (resultRow) {
+          auditRepository.updateResult(resultRow.id, {
+            status: data.status,
+            ...(data.status === 'running' ? { startedAt: new Date().toISOString() } : {})
+          })
+        }
+      }
+
+      getSessionEventRouter().sendWorkspaceEvent(
+        IPC_CHANNELS.DESIGN_PROGRESS,
+        workspaceId,
+        data as unknown as Record<string, unknown>
+      )
+    }
+  )
+
+  // ── result ──
+  designCleanup.addListener<DesignResultPayload>(cleanups, designAgentService, 'result', (data) => {
+    if (data.workspaceId !== workspaceId) return
+
+    const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+    if (resultRow) {
+      auditRepository.updateResult(resultRow.id, {
+        status: data.status,
+        score: data.score,
+        findings: data.findings,
+        summary: data.summary,
+        skillsUsed: data.skillsUsed,
+        completedAt: new Date().toISOString(),
+        coverageStats: data.coverageStats,
+        coverageSufficient: data.coverageSufficient
+      })
+    }
+
+    const updated = resultRow ? auditRepository.findResultById(resultRow.id) : null
+    if (updated) {
+      getSessionEventRouter().sendWorkspaceEvent(
+        IPC_CHANNELS.DESIGN_RESULT,
+        workspaceId,
+        updated as unknown as Record<string, unknown>
+      )
+    }
+  })
+
+  // ── intermediate findings ── persisted for crash resilience mid-run
+  designCleanup.addListener<DesignIntermediateFindingsPayload>(
+    cleanups,
+    designAgentService,
+    'intermediate_findings',
+    (data) => {
+      if (data.workspaceId !== workspaceId) return
+
+      const resultRow = auditRepository.findResultByTrack(runId, data.trackId)
+      if (resultRow) {
+        auditRepository.updateResult(resultRow.id, {
+          findings: data.findings,
+          summary: `Round ${data.roundNumber}: ${data.findings.length} finding(s), ${data.coverageStats.fileCount} file(s) reviewed`,
+          coverageStats: data.coverageStats
+        })
+      }
+
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.DESIGN_INTERMEDIATE, workspaceId, {
+        trackId: data.trackId,
+        findings: data.findings,
+        coverageStats: data.coverageStats,
+        roundNumber: data.roundNumber,
+        totalRounds: data.totalRounds,
+        totalFiles: data.totalFiles,
+        batchSize: data.batchSize
+      })
+    }
+  )
+
+  // ── complete ──
+  designCleanup.addListener<DesignCompletePayload>(
+    cleanups,
+    designAgentService,
+    'complete',
+    (data) => {
+      if (data.workspaceId !== workspaceId) return
+
+      const results = auditRepository.findResultsByRunId(runId)
+      const hasFailed = results.some((r) => r.status === 'failed')
+      const hasCancelled = results.some((r) => r.status === 'cancelled')
+
+      let finalStatus: 'completed' | 'partial' | 'cancelled' = 'completed'
+      if (hasCancelled && !results.some((r) => r.status === 'completed')) {
+        finalStatus = 'cancelled'
+      } else if (hasFailed || hasCancelled) {
+        finalStatus = 'partial'
+      }
+
+      const updatedRun = auditRepository.updateRun(runId, {
+        status: finalStatus,
+        overallScore: data.overallScore
+      })
+
+      if (updatedRun) {
+        getSessionEventRouter().sendWorkspaceEvent(
+          IPC_CHANNELS.DESIGN_COMPLETE,
+          workspaceId,
+          updatedRun as unknown as Record<string, unknown>
+        )
+      }
+
+      if (finalStatus !== 'cancelled') {
+        notificationService.dispatch({
+          workspaceId,
+          workspaceName: resolveWorkspaceName(workspaceId),
+          // A design run is not an audit run: announcing 'audit' made a
+          // finished design review say "Audit completed" and navigate to the
+          // Workspace Health page. `targetPage: 'design'` has no PAGE_NAV_MAP
+          // entry until P4.5 lands the Design page — an unmapped page is a
+          // no-op click, which beats navigating somewhere wrong.
+          service: 'design',
+          status: 'completed',
+          summary:
+            finalStatus === 'partial'
+              ? `Design review finished (partial) — score: ${data.overallScore ?? 'N/A'}`
+              : `Design review completed — score: ${data.overallScore ?? 'N/A'}`,
+          targetPage: 'design'
+        })
+      }
+
+      log.info(
+        `[design:complete] runId=${runId} status=${finalStatus} overallScore=${data.overallScore}`
+      )
+
+      designCleanup.runCleanup(workspaceId)
+    }
+  )
+
+  // ── stream ── raw chunk passthrough for the live run view
+  designCleanup.addListener<DesignStreamPayload>(cleanups, designAgentService, 'stream', (data) => {
+    if (data.workspaceId !== workspaceId) return
+
+    getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.DESIGN_STREAM_CHUNK, workspaceId, {
+      trackId: data.trackId,
+      chunk: data.chunk as unknown as Record<string, unknown>
+    })
+  })
+
+  // ── status ── live token/context counters
+  designCleanup.addListener<{ workspaceId?: string; status: AgentStatus }>(
+    cleanups,
+    designAgentService,
+    'status',
+    (data) => {
+      if (data.workspaceId && data.workspaceId !== workspaceId) return
+      getSessionEventRouter().sendWorkspaceEvent(IPC_CHANNELS.AGENT_STATUS_UPDATE, workspaceId, {
+        ...data.status
+      })
+    }
+  )
 }

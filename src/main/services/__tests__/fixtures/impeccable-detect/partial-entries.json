@@ -1,0 +1,34 @@
+[
+  {
+    "antipattern": "side-tab",
+    "name": "Side-tab accent border",
+    "description": "Thick colored border on one side of a card.",
+    "severity": "warning",
+    "category": "slop",
+    "file": "/Users/dev/projects/sample-app/src/app.css",
+    "line": 12,
+    "snippet": "border-left: 3px solid red"
+  },
+  { "name": "Missing rule id", "severity": "warning", "file": "/Users/dev/projects/sample-app/src/a.css", "line": 3 },
+  { "antipattern": "no-file", "name": "Missing file", "severity": "warning", "line": 5 },
+  null,
+  "not-an-object",
+  {
+    "antipattern": "unknown-severity-rule",
+    "name": "Rule with an unrecognised severity",
+    "description": "Severity value the mapper has never seen before.",
+    "severity": "catastrophic",
+    "category": "slop",
+    "file": "/Users/dev/projects/sample-app/src/b.css",
+    "line": 9,
+    "snippet": "something"
+  },
+  {
+    "antipattern": "no-line",
+    "name": "Rule with no line",
+    "description": "File-level finding.",
+    "severity": "error",
+    "category": "quality",
+    "file": "/Users/dev/projects/sample-app/src/c.css"
+  }
+]
