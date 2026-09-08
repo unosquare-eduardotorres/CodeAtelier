@@ -2780,16 +2780,28 @@ Troubleshooting:
    * reasonable proxy but the badge already falls back to summed totals, and
    * changing that is a UI-behaviour change, not a measurement fix.
    *
-   * SCOPE — corrected 2026-09-07. This used to claim that a turn whose usage came
-   * from the live event path never reached this backstop, leaving `prefix_tokens`
-   * NULL. That was false in both directions. `handleMessageUpdated` was reading
-   * `properties.tokens`, a field the server does not emit and its schema forbids
-   * (see §0.3 of docs/blueprint-execution-improvements.md), so the event path
-   * reported **no** usage and this backstop ran on every OpenCode turn — it was
-   * the sole source, not the fallback. That handler now reads `properties.info.
-   * tokens` and sets the prefix itself, using the identical write-once + strictly
-   * positive guard, so the two paths agree by construction rather than by
-   * one of them being dead.
+   * SCOPE — corrected twice; read this before moving usage onto the event path.
+   *
+   * This method is the ONLY producer of a turn's token totals. The event path
+   * deliberately produces none, and the two facts are load-bearing for each
+   * other: the caller gates this call on `tokenUsage.input + output === 0`
+   * (see the call site), so anything that writes a non-zero total during the
+   * stream does not supplement this method — it **suppresses** it.
+   *
+   * That is not hypothetical. G7 repaired `handleMessageUpdated`'s dead read
+   * (`properties.tokens`, schema-forbidden) and had it assign the totals from
+   * `properties.info.tokens`. Those are ONE message's absolutes, so the result
+   * was last-message-wins totals *and* a skipped backstop: v1.0.107 billed each
+   * turn as its final assistant message, ~51% low on a 2-call turn. Reverted in
+   * G11; see §0.3 and the G11 row of docs/blueprint-execution-improvements.md.
+   *
+   * The prefix is the one value both paths write, and there the earlier claim
+   * that they "agree by construction" does hold — same `input + cache.read`
+   * formula, same write-once + strictly-positive guard, so whichever observes
+   * the turn first wins and the other is a no-op. It was wrong only because it
+   * was stated about the paths as a whole when it was true of the prefix alone.
+   * A cross-path test now compares the full `ExecutorTokenUsage` from both
+   * rather than each in isolation, which is what let the divergence ship.
    */
   private async sumAssistantTokensSince(
     sessionId: string,

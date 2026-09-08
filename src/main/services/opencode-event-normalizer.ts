@@ -619,8 +619,8 @@ function handleMessageRemoved(properties: EventProperties): StreamChunk[] {
 }
 
 /**
- * Per-turn token usage. This is the primary usage signal on the OpenCode path —
- * GLM and other providers report nothing else.
+ * First-call prefix capture (Gate T). Despite the name this handler deliberately
+ * reports NO turn totals — see the regression note below.
  *
  * SHAPE FIX 2026-09-07. This used to read `properties.tokens`. The server emits
  * `message.updated` as exactly `{ sessionID, info: Message }` with
@@ -632,6 +632,23 @@ function handleMessageRemoved(properties: EventProperties): StreamChunk[] {
  *
  * The `properties.part` branch went with it: `message.updated` has no `part`
  * (that is `message.part.updated`, handled separately), so it was unreachable.
+ *
+ * G11 REGRESSION FIX 2026-09-07 — why the totals are not written here.
+ * Repairing the read above made this handler start assigning `tokenUsage.input`
+ * / `.output`, and `tokens` on a `message.updated` is that ONE message's
+ * absolute usage, not the turn's. The assignment was therefore last-message-
+ * wins, and because the executor's post-turn backstop is gated on
+ * `tokenUsage.input + tokenUsage.output === 0` (`opencode-executor.ts`), writing
+ * a non-zero total here ALSO suppressed the only code that summed the turn.
+ * A turn of N agentic round-trips recorded the cost of its final message alone.
+ * That shipped in v1.0.107; see G11 in docs/blueprint-execution-improvements.md.
+ *
+ * Correctly accumulating here would need per-turn, per-message-id deduplication
+ * (the stream emits ~3 `message.updated` per message id) held in state that is
+ * genuinely per-turn — `NormalizerState` is an executor instance field shared
+ * across concurrent turns on the shared server, so it cannot hold it. Until
+ * that exists, leaving the totals at zero is what keeps the backstop — which
+ * sums correctly, and was the sole and correct source before G7 — running.
  */
 function handleMessageUpdated(
   properties: EventProperties,
@@ -647,21 +664,16 @@ function handleMessageUpdated(
   const output = Number(tokens.output ?? 0)
   // opencode emits an all-zero `tokens` object for an assistant message before
   // the populated one (live-verified: ~3 updates per message, first is zeros).
-  // Without this guard that zero would overwrite the turn's real totals.
+  // Kept identical to `sumAssistantTokensSince`'s guard so both paths admit and
+  // reject exactly the same messages when choosing the first-call prefix.
   if (input <= 0 && output <= 0) return []
 
   const cache = tokens.cache as Record<string, unknown> | undefined
   const cacheRead = Number(cache?.read ?? 0)
-  // Last message wins — these are per-message absolutes, not deltas.
-  tokenUsage.input = input
-  tokenUsage.output = output
-  tokenUsage.cacheReadInputTokens = cacheRead
-  tokenUsage.cacheCreationInputTokens = Number(cache?.write ?? 0)
 
-  // Gate T. Repairing the read above has a side effect that would otherwise
-  // silently undo it: once this handler reports usage, the executor stops
-  // calling its post-turn backstop, and the backstop was the only thing setting
-  // `prefix_tokens` — so the column would go back to NULL. Set it here too.
+  // Gate T — the prefix, and ONLY the prefix. `tokenUsage.input`/`.output` are
+  // deliberately left untouched so the executor's backstop still fires and sums
+  // the whole turn (see the G11 note above).
   //
   // `input + cacheRead` is that call's FULL prompt size: opencode reports
   // `total = input + cache.read + output`, i.e. `input` is the uncached portion
@@ -671,6 +683,10 @@ function handleMessageUpdated(
   // both paths instead of one of them dropping it. `undefined` is true only for
   // the turn's first assistant message: `tokenUsage` is constructed fresh per
   // turn by the executor.
+  //
+  // Write-once means this path — which runs live, during the stream — wins, and
+  // the backstop's own identical attempt is then a no-op. The two agree on the
+  // prefix because they compute it identically, not because either is dead.
   const prefix = input + cacheRead
   if (tokenUsage.firstCallContextTokens === undefined && prefix > 0) {
     tokenUsage.firstCallContextTokens = prefix
@@ -1068,20 +1084,30 @@ function handleModelSwitched(properties: EventProperties): StreamChunk[] {
   return [{ type: 'status', content: `model_switched:${modelId}` }]
 }
 
-/** session.next.step.ended — extracts per-step token usage when available. */
-function handleStepEnded(
-  properties: EventProperties,
-  _sessionId: string,
-  tokenUsage: ExecutorTokenUsage
-): StreamChunk[] {
-  const usage = properties.usage as Record<string, number> | undefined
-  if (usage) {
-    tokenUsage.input = usage.inputTokens ?? usage.input ?? tokenUsage.input
-    tokenUsage.output = usage.outputTokens ?? usage.output ?? tokenUsage.output
-    tokenUsage.cacheReadInputTokens = usage.cacheReadInputTokens ?? tokenUsage.cacheReadInputTokens
-    tokenUsage.cacheCreationInputTokens =
-      usage.cacheCreationInputTokens ?? tokenUsage.cacheCreationInputTokens
-  }
+/**
+ * `session.next.step.ended` — a no-op, for two independent reasons.
+ *
+ * DEAD READ, deleted 2026-09-07 (G11 Phase 3). This handler read
+ * `properties.usage.inputTokens` etc. `EventSessionNextStepEnded.properties` is
+ * `additionalProperties: false` with required keys `timestamp, sessionID,
+ * assistantMessageID, finish, cost, tokens` — there is no `usage`, so the read
+ * was structurally impossible and never once executed. Verified against a live
+ * opencode 1.18.25 `/doc`; no schema in that document exposes a `usage`
+ * property under any name. Same class as `handleSessionUpdated` above, and the
+ * same stale-`@opencode-ai/sdk`-types trap (the installed SDK is 1.18.18 and
+ * declares no step-ended type at all).
+ *
+ * NOT REWIRED to the `tokens` that this event genuinely does carry. Those are
+ * per-step absolutes keyed by `assistantMessageID`, so assigning them here
+ * would reproduce G11 exactly: last-step-wins totals that also suppress the
+ * executor's post-turn backstop (gated on `input + output === 0`), which is the
+ * only code that sums a turn. Per-turn usage has one owner — that backstop —
+ * and the prefix has one owner, `handleMessageUpdated`.
+ *
+ * Still registered in EVENT_HANDLERS so the event does not fall through to the
+ * "Unhandled event type" log.
+ */
+function handleStepEnded(): StreamChunk[] {
   return []
 }
 

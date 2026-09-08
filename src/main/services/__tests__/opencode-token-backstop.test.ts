@@ -15,6 +15,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 import { test, describe, summaryAsync } from './test-harness'
 import { OpenCodeExecutor } from '../opencode-executor'
+import { normalizeOpenCodeEvent, type NormalizerState } from '../opencode-event-normalizer'
 import type { ExecutorTokenUsage } from '../executor-types'
 
 /**
@@ -432,6 +433,130 @@ describe('sumAssistantTokensSince — zero-match warn', () => {
     )
     assert.equal(counted, 2)
     assert.deepEqual(logMock.__findRecords('warn', fetchedFragment(5)), [])
+  })
+})
+
+// ── G11: the two usage paths must agree on the TURN, not just on the prefix ──
+
+/**
+ * The invariant whose absence let G11 ship. The event-path tests and the
+ * backstop tests each asserted their own path in isolation and both passed,
+ * while the two disagreed by 51% on the only number that reaches `usage_log`.
+ *
+ * Nothing here mocks the agreement into existence: the same two assistant
+ * messages are pushed through `normalizeOpenCodeEvent` (live, during the
+ * stream) and through `sumAssistantTokensSince` (post-turn), and the resulting
+ * `ExecutorTokenUsage` objects are compared field by field.
+ */
+describe('G11 cross-path invariant — event path vs backstop', () => {
+  const freshState = (): NormalizerState => ({ childSessions: new Map(), sessionMap: new Map() })
+
+  /** The captured two-call turn: total === input + cache.read + output, both calls. */
+  const CALL_1 = {
+    total: 9562,
+    input: 1323,
+    output: 47,
+    reasoning: 0,
+    cache: { read: 8192, write: 0 }
+  }
+  const CALL_2 = {
+    total: 9591,
+    input: 1387,
+    output: 12,
+    reasoning: 0,
+    cache: { read: 8192, write: 0 }
+  }
+
+  /** Drives the live event path exactly as the executor does, zero-prelude included. */
+  function viaEvents(calls: Array<Record<string, unknown>>): ExecutorTokenUsage {
+    const usage = freshUsage()
+    const state = freshState()
+    for (const [i, tokens] of calls.entries()) {
+      // opencode emits ~3 message.updated per assistant message and the first
+      // carries an all-zero tokens object — replayed so the comparison is
+      // against the real stream, not a tidied version of it.
+      for (const t of [
+        { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+        tokens
+      ]) {
+        normalizeOpenCodeEvent(
+          {
+            type: 'message.updated',
+            properties: {
+              sessionID: 'ses_test',
+              info: { id: `msg_${i}`, role: 'assistant', sessionID: 'ses_test', tokens: t }
+            }
+          },
+          'ses_test',
+          usage,
+          state
+        )
+      }
+    }
+    return usage
+  }
+
+  test('both paths produce an identical ExecutorTokenUsage for the same turn', async () => {
+    const eventUsage = viaEvents([CALL_1, CALL_2])
+
+    // The executor only reaches the backstop when the event path left the totals
+    // at zero. Asserting that here IS test 2.2 — it pins the gate condition in
+    // `opencode-executor.ts` rather than trusting it.
+    assert.equal(
+      eventUsage.input + eventUsage.output,
+      0,
+      'event path must leave totals at zero or the executor skips the backstop entirely'
+    )
+
+    const backstopUsage = eventUsage
+    const counted = await sumWith(
+      [sdkAssistant(T0_SECONDS + 10, CALL_1), sdkAssistant(T0_SECONDS + 20, CALL_2)],
+      T0_MS,
+      backstopUsage
+    )
+
+    assert.equal(counted, 2, 'both assistant messages must be counted')
+    // The direct falsifier for G11: the turn total, not the last message's.
+    assert.equal(backstopUsage.input, 1323 + 1387, 'turn input is the SUM of both calls')
+    assert.equal(backstopUsage.output, 47 + 12)
+    assert.equal(backstopUsage.cacheReadInputTokens, 8192 * 2)
+    assert.equal(backstopUsage.cacheCreationInputTokens, 0)
+    // And the prefix stays the FIRST call's prompt — write-once, so the event
+    // path's live value survives the backstop's identical attempt.
+    assert.equal(backstopUsage.firstCallContextTokens, 1323 + 8192)
+  })
+
+  test('the prefix is identical whichever path observes the turn first', async () => {
+    // Event path only.
+    const eventOnly = viaEvents([CALL_1, CALL_2])
+
+    // Backstop only (the pre-G7 world, and any turn whose stream is missed).
+    const backstopOnly = freshUsage()
+    await sumWith(
+      [sdkAssistant(T0_SECONDS + 10, CALL_1), sdkAssistant(T0_SECONDS + 20, CALL_2)],
+      T0_MS,
+      backstopOnly
+    )
+
+    assert.equal(
+      eventOnly.firstCallContextTokens,
+      backstopOnly.firstCallContextTokens,
+      'the two paths compute the prefix identically — by construction, not by one being dead'
+    )
+    assert.equal(eventOnly.firstCallContextTokens, 9515)
+  })
+
+  test('a fully-cached first call is admitted by both paths alike', async () => {
+    // input 0 / cache.read 8192. A `input > 0` guard on either side would drop
+    // this on one path only, and the prefixes would silently diverge.
+    const cached = { input: 0, output: 50, reasoning: 0, cache: { read: 8192, write: 0 } }
+    const eventOnly = viaEvents([cached])
+
+    const backstopOnly = freshUsage()
+    await sumWith([sdkAssistant(T0_SECONDS + 10, cached)], T0_MS, backstopOnly)
+
+    assert.equal(eventOnly.firstCallContextTokens, 8192)
+    assert.equal(backstopOnly.firstCallContextTokens, 8192)
   })
 })
 

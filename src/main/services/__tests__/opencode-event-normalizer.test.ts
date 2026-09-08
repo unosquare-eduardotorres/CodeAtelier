@@ -181,14 +181,21 @@ describe('normalizeOpenCodeEvent — message.updated token usage (captured paylo
     cache: { read: 8192, write: 0 }
   }
 
-  test('assistant message.updated populates all four usage fields from info.tokens', () => {
+  test('G11: assistant message.updated sets the prefix and leaves turn totals at zero', () => {
+    // This test asserted `usage.input === 1323` until 2026-09-07, which encoded
+    // the G11 defect as expected behaviour: `info.tokens` is ONE message's
+    // absolute usage, so assigning it produced last-message-wins totals AND
+    // suppressed the executor backstop (gated on `input + output === 0`) that is
+    // the only code summing the turn. The totals staying zero here is precisely
+    // what keeps that backstop running.
     const usage = freshUsage()
     const out = normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS), SID, usage, freshState())
     assert.deepEqual(out, [], 'token-only message.updated emits no chunks')
-    assert.equal(usage.input, 1323)
-    assert.equal(usage.output, 47)
-    assert.equal(usage.cacheReadInputTokens, 8192)
+    assert.equal(usage.input, 0, 'turn totals are the backstop’s job, not this handler’s')
+    assert.equal(usage.output, 0)
+    assert.equal(usage.cacheReadInputTokens, 0)
     assert.equal(usage.cacheCreationInputTokens, 0)
+    assert.equal(usage.firstCallContextTokens, 9515, 'the prefix IS this handler’s job')
   })
 
   test('CHARACTERIZATION: the old flat properties.tokens shape populates nothing', () => {
@@ -210,15 +217,18 @@ describe('normalizeOpenCodeEvent — message.updated token usage (captured paylo
       usage,
       freshState()
     )
-    assert.equal(usage.input, 0, 'flat properties.tokens must not be read')
+    // `firstCallContextTokens` is the live sentinel now that the totals are
+    // deliberately left at zero on the correct shape too.
+    assert.equal(usage.firstCallContextTokens, undefined, 'flat properties.tokens must not be read')
+    assert.equal(usage.input, 0)
     assert.equal(usage.output, 0)
     assert.equal(usage.cacheReadInputTokens, 0)
-    assert.equal(usage.firstCallContextTokens, undefined)
   })
 
-  test('the all-zero update that precedes each message does not clobber real totals', () => {
+  test('the all-zero update that precedes each message does not claim the prefix', () => {
     // Live-observed: opencode emits ~3 message.updated per assistant message and
-    // the FIRST carries an all-zero tokens object.
+    // the FIRST carries an all-zero tokens object. If that zero claimed the
+    // write-once prefix slot, every turn would report prefix 0.
     const usage = freshUsage()
     const state = freshState()
     normalizeOpenCodeEvent(
@@ -227,26 +237,25 @@ describe('normalizeOpenCodeEvent — message.updated token usage (captured paylo
       usage,
       state
     )
-    assert.equal(usage.input, 0)
     assert.equal(usage.firstCallContextTokens, undefined, 'zero must not claim the prefix slot')
 
     normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS), SID, usage, state)
-    assert.equal(usage.input, 1323)
     assert.equal(usage.firstCallContextTokens, 1323 + 8192)
+    assert.equal(usage.input, 0, 'still no turn totals from the event path')
   })
 
   test('user-role message.updated is ignored', () => {
     const usage = freshUsage()
     normalizeOpenCodeEvent(messageUpdated(REAL_TOKENS, { role: 'user' }), SID, usage, freshState())
-    assert.equal(usage.input, 0)
     assert.equal(usage.firstCallContextTokens, undefined)
+    assert.equal(usage.input, 0)
   })
 
   test('message.updated with no tokens object is a no-op', () => {
     const usage = freshUsage()
     const out = normalizeOpenCodeEvent(messageUpdated(undefined), SID, usage, freshState())
     assert.deepEqual(out, [])
-    assert.equal(usage.input, 0)
+    assert.equal(usage.firstCallContextTokens, undefined)
   })
 
   test('Gate T: first assistant message sets firstCallContextTokens = input + cache.read', () => {
@@ -283,7 +292,11 @@ describe('normalizeOpenCodeEvent — message.updated token usage (captured paylo
       state
     )
     assert.equal(usage.firstCallContextTokens, 9515, 'prefix pinned to the first call')
-    assert.equal(usage.input, 1387, 'running usage is still last-message-wins')
+    // Was `assert.equal(usage.input, 1387, 'running usage is still last-message-wins')`.
+    // That assertion was the G11 defect written down as a requirement: 1387 is
+    // the SECOND call's prompt alone, while the turn actually cost 1323 + 1387.
+    assert.equal(usage.input, 0, 'G11: no last-message-wins totals; the backstop sums the turn')
+    assert.equal(usage.output, 0)
   })
 
   test('Gate T: a fully-cached first call still records a prefix', () => {
@@ -302,9 +315,9 @@ describe('normalizeOpenCodeEvent — message.updated token usage (captured paylo
 
   test('CROSS-SESSION: message.updated for a sibling session must not touch usage', () => {
     // The regression pin for the shared OpenCode server. Before the handler read
-    // a real field this was harmless; now that it folds tokens into the turn, a
-    // sibling session's usage leaking past the filter would corrupt both the
-    // running totals and the Gate T prefix.
+    // a real field this was harmless; now that it derives the Gate T prefix from
+    // `info.tokens`, a sibling session's message leaking past the filter would
+    // pin this turn's prefix to another turn's first call.
     const usage = freshUsage()
     const out = normalizeOpenCodeEvent(
       messageUpdated(REAL_TOKENS, { sessionID: 'ses_someone_elses_session' }),
@@ -1357,24 +1370,57 @@ describe('normalizeOpenCodeEvent — session.next.* handlers', () => {
     assert.ok(out[0].content!.startsWith('session_diff:'))
   })
 
-  test('session.next.step.ended updates token usage', () => {
+  test('CHARACTERIZATION: session.next.step.ended `properties.usage` does not exist', () => {
+    // This test asserted input===500/output===100 until 2026-09-07. The payload
+    // it fed in is structurally impossible: `EventSessionNextStepEnded.
+    // properties` is `additionalProperties: false` with required keys
+    // timestamp/sessionID/assistantMessageID/finish/cost/tokens, and no schema
+    // in opencode 1.18.25's `/doc` exposes a `usage` property under any name.
+    // The handler's read never executed; the test passed only because it
+    // asserted against the same invented shape the handler read.
     const usage = freshUsage()
     normalizeOpenCodeEvent(
       {
         type: 'session.next.step.ended',
+        properties: { usage: { inputTokens: 500, outputTokens: 100 } }
+      },
+      SID,
+      usage,
+      freshState()
+    )
+    assert.equal(usage.input, 0, 'invented `usage` shape must not be read')
+    assert.equal(usage.output, 0)
+  })
+
+  test('G11: the real step.ended payload does NOT write turn totals', () => {
+    // The schema-accurate payload. `tokens` genuinely exists here, but it is one
+    // step's absolutes keyed by assistantMessageID — assigning it would recreate
+    // G11 (last-step-wins totals that also suppress the executor's summing
+    // backstop). Per-turn usage has exactly one owner: that backstop.
+    const usage = freshUsage()
+    const out = normalizeOpenCodeEvent(
+      {
+        type: 'session.next.step.ended',
         properties: {
-          usage: { inputTokens: 500, outputTokens: 100 }
+          timestamp: 1788813926522,
+          sessionID: SID,
+          assistantMessageID: 'msg_07d9d7a0f00179H85Jtc6rVdBR',
+          finish: 'stop',
+          cost: 0,
+          tokens: { input: 1323, output: 47, reasoning: 0, cache: { read: 8192, write: 0 } }
         }
       },
       SID,
       usage,
       freshState()
     )
-    assert.equal(usage.input, 500)
-    assert.equal(usage.output, 100)
+    assert.deepEqual(out, [])
+    assert.equal(usage.input, 0)
+    assert.equal(usage.output, 0)
+    assert.equal(usage.cacheReadInputTokens, 0)
   })
 
-  test('session.next.step.ended without usage is a no-op', () => {
+  test('session.next.step.ended with empty properties is a no-op', () => {
     const usage = freshUsage()
     const out = normalizeOpenCodeEvent(
       { type: 'session.next.step.ended', properties: {} },
