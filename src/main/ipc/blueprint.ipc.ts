@@ -32,6 +32,7 @@ import { blueprintPeerReviewService } from '../services/blueprint-peer-review.se
 import { blueprintLeadReviewService } from '../services/blueprint-lead-review.service'
 import { modelConfigService } from '../services/model-config.service'
 import { workspaceRepository, ideaRepository } from '../db/repositories'
+import { getDatabase } from '../db/index'
 import { loadBranchOptions } from './load-branch-options'
 import { getModifiedFilesSince } from '../services/blueprint-modified-files'
 import { trackService } from '../services/track.service'
@@ -1045,21 +1046,35 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     // Recompute in main rather than trusting renderer-supplied entry bodies:
     // the ledger is the source of truth and the dedupe map must key off it.
     const entries = collectTestability(testabilitySourcesFor(blueprintId, blueprint))
-    const alreadyLinked = readTestabilityIdeaRefs(blueprint.settingsJson)
 
-    const created: Array<{ entryKey: string; ideaId: string }> = []
-    for (const { entryKey, entry } of selectTestabilityIdeas(entries, selected, alreadyLinked)) {
-      const draft = testabilityIdeaDraft(entry, blueprint.title)
-      const idea = ideaRepository.create(blueprint.workspaceId, draft.title, draft.description)
-      created.push({ entryKey, ideaId: idea.id })
-    }
+    // The ideas and the dedupe map that hides them must land together. Written
+    // separately, an idea insert that succeeds while the settings write is lost
+    // — to a throw, or to a concurrent `{ ...settingsJson }` clobber from the
+    // running blueprint — leaves ideas in the DB that nothing remembers
+    // creating, so the next click on the same entry creates them all over
+    // again. Re-read settingsJson inside the transaction for the same reason:
+    // the copy fetched above is only as fresh as the last write.
+    const created = getDatabase().transaction((): Array<{ entryKey: string; ideaId: string }> => {
+      const settings = blueprintRepository.findById(blueprintId)?.settingsJson ?? {}
+      const linked = readTestabilityIdeaRefs(settings)
+
+      const rows: Array<{ entryKey: string; ideaId: string }> = []
+      for (const { entryKey, entry } of selectTestabilityIdeas(entries, selected, linked)) {
+        const draft = testabilityIdeaDraft(entry, blueprint.title)
+        const idea = ideaRepository.create(blueprint.workspaceId, draft.title, draft.description)
+        rows.push({ entryKey, ideaId: idea.id })
+      }
+      if (rows.length === 0) return rows
+
+      const merged = { ...linked }
+      for (const { entryKey, ideaId } of rows) merged[entryKey] = ideaId
+      blueprintRepository.update(blueprintId, {
+        settingsJson: { ...settings, [TESTABILITY_IDEA_IDS_KEY]: merged }
+      })
+      return rows
+    })()
 
     if (created.length > 0) {
-      const merged = { ...alreadyLinked }
-      for (const { entryKey, ideaId } of created) merged[entryKey] = ideaId
-      blueprintRepository.update(blueprintId, {
-        settingsJson: { ...blueprint.settingsJson, [TESTABILITY_IDEA_IDS_KEY]: merged }
-      })
       bpLog.info(
         `[blueprint:linkTestabilityIdeas] Created ${created.length} follow-up idea(s) for ${blueprintId}`
       )

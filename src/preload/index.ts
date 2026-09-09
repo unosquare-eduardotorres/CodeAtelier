@@ -68,6 +68,16 @@ import type {
   AuditResult,
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
+  DesignCommandId,
+  DesignCompleteEvent,
+  DesignIntermediateEvent,
+  DesignIpcResult,
+  DesignProgressEvent,
+  DesignResultEvent,
+  DesignRouteResult,
+  DesignScope,
+  DesignScopeTree,
+  DesignStreamChunkEvent,
   LLMProvider,
   ModelRoleMap,
   CommunicationTone,
@@ -2426,6 +2436,70 @@ const api = {
     const handler = (_: unknown, data: AuditIntermediateEvent): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.AUDIT_INTERMEDIATE, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.AUDIT_INTERMEDIATE, handler)
+  },
+
+  // ── Design (Impeccable) ──
+  // Every design:* handler answers with a DesignIpcResult envelope and this
+  // layer passes it through untouched. Unwrapping here by throwing on `ok:
+  // false` would turn refusals the UI should render as a message ("a design run
+  // is already in progress for this workspace") into exceptions.
+  designStart: (args: {
+    workspaceId: string
+    commandIds: DesignCommandId[]
+    scope?: DesignScope
+    brief?: string
+    llmProvider?: LLMProvider
+  }): Promise<DesignIpcResult<AuditRun>> => ipcRenderer.invoke(IPC_CHANNELS.DESIGN_START, args),
+
+  designCancel: (args: { workspaceId: string }): Promise<DesignIpcResult<null>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_CANCEL, args),
+
+  designGetLatest: (args: { workspaceId: string }): Promise<DesignIpcResult<AuditRun | null>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_GET_LATEST, args),
+
+  designGetHistory: (args: { workspaceId: string }): Promise<DesignIpcResult<AuditRun[]>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_GET_HISTORY, args),
+
+  designDeleteRun: (args: { runId: string }): Promise<DesignIpcResult<null>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_DELETE_RUN, args),
+
+  designRoute: (args: {
+    workspaceId: string
+    brief: string
+  }): Promise<DesignIpcResult<DesignRouteResult>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_ROUTE, args),
+
+  designScopeTree: (args: { workspaceId: string }): Promise<DesignIpcResult<DesignScopeTree>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_SCOPE_TREE, args),
+
+  onDesignProgress: (cb: (data: DesignProgressEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: DesignProgressEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.DESIGN_PROGRESS, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DESIGN_PROGRESS, handler)
+  },
+
+  onDesignResult: (cb: (data: DesignResultEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: DesignResultEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.DESIGN_RESULT, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DESIGN_RESULT, handler)
+  },
+
+  onDesignComplete: (cb: (data: DesignCompleteEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: DesignCompleteEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.DESIGN_COMPLETE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DESIGN_COMPLETE, handler)
+  },
+
+  onDesignStreamChunk: (cb: (data: DesignStreamChunkEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: DesignStreamChunkEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.DESIGN_STREAM_CHUNK, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DESIGN_STREAM_CHUNK, handler)
+  },
+
+  onDesignIntermediate: (cb: (data: DesignIntermediateEvent) => void): (() => void) => {
+    const handler = (_: unknown, data: DesignIntermediateEvent): void => cb(data)
+    ipcRenderer.on(IPC_CHANNELS.DESIGN_INTERMEDIATE, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DESIGN_INTERMEDIATE, handler)
   },
 
   // ── Grill (dedicated agent) ──

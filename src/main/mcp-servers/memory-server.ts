@@ -288,7 +288,14 @@ async function main(): Promise<void> {
   )
 }
 
-main().catch((err) => {
-  console.error('[memory-server] Fatal:', err)
-  process.exit(1)
-})
+// Only self-start when spawned directly as the stdio MCP child process (see
+// cli-mcp-config-writer.ts — args: [server.js]). A plain import (tests,
+// bundler, the unified coverage runner) must not start the server: a failed
+// start calls process.exit(1) and takes the whole importing process down with
+// it, silently truncating whatever that process was doing.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[memory-server] Fatal:', err)
+    process.exit(1)
+  })
+}

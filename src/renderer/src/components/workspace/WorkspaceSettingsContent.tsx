@@ -16,6 +16,7 @@ import IntegrationsPage from './IntegrationsPage'
 import { JiraTicketsPage } from './jira'
 import SpecialistPage from './SpecialistPage'
 import HealthPage from './HealthPage'
+import DesignPage from './DesignPage'
 import GoalPage from './GoalPage'
 import PlansPage from './PlansPage'
 import BlueprintPage from './BlueprintPage'
@@ -138,6 +139,7 @@ export default function WorkspaceSettingsContent({
           onNavigateToBlueprints={() => onSettingsTabChange?.('blueprints')}
         />
       )}
+      {tab === 'design' && <DesignPage />}
       {tab === 'goals' && <GoalPage onNavigateToChat={onNavigateToChat} />}
       {tab === 'council' && (
         <div className="p-6">

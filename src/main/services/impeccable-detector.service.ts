@@ -75,6 +75,34 @@ const PROJECT_DETECT_TIMEOUT_MS = 180_000
 /** Marks findings produced here. The UI badges on this, and coverage excludes it. */
 export const DETECTOR_SOURCE = 'impeccable-detector'
 
+/**
+ * Hard cap on detector findings carried out of a scan.
+ *
+ * The measurement above is the whole argument: a whole-project scan of this repo
+ * returns **4283** findings, 98 % of them about `coverage/` and `out/`. Every one
+ * of those would be persisted into a single `audit_results.findings` JSON blob,
+ * shipped over IPC, and rendered as an un-virtualised checkbox row — a
+ * multi-second renderer freeze on the user's first run, for findings nobody
+ * wants. Capping at the source is cheaper and more honest than virtualising a
+ * list that should never have been that long.
+ *
+ * 200 is well above any scoped scan seen so far (`detect src/renderer` → 27) and
+ * far below the point where a human reads further down the list.
+ */
+export const MAX_DETECTOR_FINDINGS = 200
+
+/**
+ * Truncation order. Highest severity survives — dropping a `critical` to keep an
+ * `info` would be the one outcome worse than truncating at all.
+ */
+const SEVERITY_RANK: Readonly<Record<Severity, number>> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4
+}
+
 export interface DetectionResult {
   /**
    * - `ok`          — the scan ran; `findings` is authoritative (possibly empty)
@@ -86,6 +114,12 @@ export interface DetectionResult {
   findings: AuditFinding[]
   /** Distinct `antipattern` rule ids represented in `findings`. */
   ruleCount: number
+  /**
+   * Findings dropped by `MAX_DETECTOR_FINDINGS`. Non-zero means `findings` is
+   * the highest-severity slice, not the whole scan — callers must say so rather
+   * than present a truncated list as complete.
+   */
+  truncated: number
   /** Human-readable explanation for a non-`ok` status. */
   reason?: string
 }
@@ -217,6 +251,8 @@ export interface ParsedDetectorPayload {
   malformed: boolean
   /** Entries that were structurally unusable and skipped. */
   skipped: number
+  /** Findings dropped by `MAX_DETECTOR_FINDINGS`. */
+  truncated: number
 }
 
 /**
@@ -231,7 +267,8 @@ export function parseDetectorPayload(stdout: string, workspacePath: string): Par
     findings: [],
     ruleCount: 0,
     malformed: false,
-    skipped: 0
+    skipped: 0,
+    truncated: 0
   }
 
   const trimmed = stdout.trim()
@@ -260,8 +297,9 @@ export function parseDetectorPayload(stdout: string, workspacePath: string): Par
     return { ...empty, malformed: true }
   }
 
-  const findings: AuditFinding[] = []
-  const rules = new Set<string>()
+  // Carried as pairs so the rule id survives the cap below: `AuditFinding` has
+  // no rule field, and `ruleCount` must describe the kept set, not the raw scan.
+  const mapped: { finding: AuditFinding; rule: string }[] = []
   const unknownSeverities = new Set<string>()
   const seen = new Set<string>()
   let skipped = 0
@@ -300,27 +338,59 @@ export function parseDetectorPayload(stdout: string, workspacePath: string): Par
     const snippet = typeof raw.snippet === 'string' ? raw.snippet.trim() : ''
     const isAdvisory = raw.advisory === true || raw.severity === 'advisory'
 
-    rules.add(rule)
-    findings.push({
-      id: randomUUID(),
-      severity: mapSeverity(raw.severity, unknownSeverities),
-      title: name,
-      description: buildDescription(
-        description,
-        rule,
-        category,
+    mapped.push({
+      rule,
+      finding: {
+        id: randomUUID(),
+        severity: mapSeverity(raw.severity, unknownSeverities),
+        title: name,
+        description: buildDescription(
+          description,
+          rule,
+          category,
+          filePath,
+          line,
+          snippet,
+          readImportedBy(raw.importedBy),
+          isAdvisory
+        ),
         filePath,
-        line,
-        snippet,
-        readImportedBy(raw.importedBy),
-        isAdvisory
-      ),
-      filePath,
-      source: DETECTOR_SOURCE
+        source: DETECTOR_SOURCE
+      }
     })
   }
 
-  return { findings, ruleCount: rules.size, malformed: false, skipped }
+  // Cap AFTER mapping, not during: severity is only known once the entry has
+  // been mapped, and truncating in scan order would keep whatever the engine
+  // happened to walk first (`coverage/`, alphabetically early) over the
+  // criticals in `src/`. `sort` is stable in V8, so original order is preserved
+  // within a severity band.
+  const truncated = Math.max(0, mapped.length - MAX_DETECTOR_FINDINGS)
+  const kept =
+    truncated === 0
+      ? mapped
+      : [...mapped]
+          .sort((a, b) => SEVERITY_RANK[a.finding.severity] - SEVERITY_RANK[b.finding.severity])
+          .slice(0, MAX_DETECTOR_FINDINGS)
+
+  if (truncated > 0) {
+    log.warn(
+      `[impeccable-detector] ${mapped.length} findings exceeded the ${MAX_DETECTOR_FINDINGS} cap — ` +
+        `keeping the highest-severity ${MAX_DETECTOR_FINDINGS} and dropping ${truncated}. ` +
+        `A scan this large is usually a whole-project scope reaching build output.`
+    )
+  }
+
+  // Counted over the KEPT set so "N findings across M rules" stays internally
+  // consistent with the list the user is actually shown.
+  const rules = new Set(kept.map((m) => m.rule))
+  return {
+    findings: kept.map((m) => m.finding),
+    ruleCount: rules.size,
+    malformed: false,
+    skipped,
+    truncated
+  }
 }
 
 /**
@@ -354,7 +424,7 @@ export async function runDetection(
 
   if (signal?.aborted) {
     log.info('[impeccable-detector] detector aborted by cancellation')
-    return { status: 'unavailable', findings: [], ruleCount: 0, reason: 'cancelled' }
+    return { status: 'unavailable', findings: [], ruleCount: 0, truncated: 0, reason: 'cancelled' }
   }
 
   if (result.timedOut) {
@@ -362,11 +432,17 @@ export async function runDetection(
       `[impeccable-detector] detector timed out after ` +
         `${isProjectScan ? PROJECT_DETECT_TIMEOUT_MS : DETECT_TIMEOUT_MS}ms — skipping`
     )
-    return { status: 'unavailable', findings: [], ruleCount: 0, reason: 'detector timed out' }
+    return {
+      status: 'unavailable',
+      findings: [],
+      ruleCount: 0,
+      truncated: 0,
+      reason: 'detector timed out'
+    }
   }
   if (result.error) {
     log.warn(`[impeccable-detector] engine unavailable: ${result.error}`)
-    return { status: 'unavailable', findings: [], ruleCount: 0, reason: result.error }
+    return { status: 'unavailable', findings: [], ruleCount: 0, truncated: 0, reason: result.error }
   }
 
   // 0 = clean (but advisories may still be listed), 2 = findings present.
@@ -378,11 +454,12 @@ export async function runDetection(
       status: 'failed',
       findings: [],
       ruleCount: 0,
+      truncated: 0,
       reason: `detector exited ${result.code}${detail ? `: ${detail}` : ''}`
     }
   }
 
-  const { findings, ruleCount, malformed, skipped } = parseDetectorPayload(
+  const { findings, ruleCount, malformed, skipped, truncated } = parseDetectorPayload(
     result.stdout,
     workspacePath
   )
@@ -392,13 +469,15 @@ export async function runDetection(
       status: 'failed',
       findings: [],
       ruleCount: 0,
+      truncated: 0,
       reason: 'detector output could not be parsed'
     }
   }
 
   log.info(
     `[impeccable-detector] ${findings.length} finding(s) across ${ruleCount} rule(s)` +
-      (skipped > 0 ? `, ${skipped} entr(ies) skipped` : '')
+      (skipped > 0 ? `, ${skipped} entr(ies) skipped` : '') +
+      (truncated > 0 ? `, ${truncated} dropped by the cap` : '')
   )
-  return { status: 'ok', findings, ruleCount }
+  return { status: 'ok', findings, ruleCount, truncated }
 }

@@ -41,7 +41,6 @@ import {
   type ApprovalPreflightData,
   type PreflightResult
 } from '../../shared/preflight-types'
-import { E2E_LEDGER_TASK_ID } from '../../shared/gate-types'
 
 const bpLog = log.scope('blueprint-review')
 
@@ -444,14 +443,11 @@ export class BlueprintReviewService extends EventEmitter {
       const { commands } = resolveBlueprintGateCommands(blueprintId, workspacePath)
       const resolved = { smoke: commands.smoke !== undefined, e2e: commands.e2e !== undefined }
 
-      // G1 — at depth `e2e`, "no e2e command anywhere" is FULLY KNOWN here.
-      // Resolution has already consulted every source (workspace override → the
-      // PLAN artifact's gate-commands declaration → detection), and none of them
-      // can gain an entry between REVIEW and VERIFY. Ledgering it now marks the
-      // blueprint unproven at the human decision point instead of 45 minutes
-      // into the tail, when the only remaining option is to re-run everything.
+      // G1 — at depth `e2e`, "no e2e command anywhere" is FULLY KNOWN here, so
+      // warn at the human decision point instead of 45 minutes into the tail.
+      // Warn ONLY — see `warnMissingE2ECommand` for why this must not ledger.
       if (depth === 'e2e' && !resolved.e2e) {
-        this.ledgerMissingE2ECommand(blueprintId, workspaceId)
+        this.warnMissingE2ECommand(blueprintId, workspaceId)
       }
 
       const check = verificationDepthPreflightCheck(depth, resolved)
@@ -473,30 +469,26 @@ export class BlueprintReviewService extends EventEmitter {
   }
 
   /**
-   * G1 — record "the requested end-to-end proof has no command" in the ledger at
-   * REVIEW, and say so in the phase stream.
+   * G1 — say "the requested end-to-end proof has no command" in the phase stream
+   * and, via the preflight check, on the approval gate.
    *
    * Deliberately NOT a keyword scan of what TASKS authored: asserting that the
    * model "wrote e2e work" by pattern-matching its prose would manufacture
    * exactly the false confidence this feature exists to prevent. A declared
    * command is the only mechanical proxy worth trusting.
    *
-   * `appendUnverified` de-duplicates on (taskId, gate, reason), and the BUILD
-   * backstop and VERIFY both ledger under `E2E_LEDGER_TASK_ID`, so writing early
-   * cannot double-count the same gap later.
+   * Deliberately NOT a ledger write either. The unverified ledger is append-only
+   * — `appendUnverified` is its sole writer and nothing removes entries — so
+   * every entry must be a TERMINAL fact. At REVIEW the gap is still fixable: a
+   * user who declares the command and gets a green e2e gate in VERIFY would
+   * otherwise be branded UNPROVEN forever for complying. The preflight blocker
+   * carries this warning instead, and self-heals because preflight is recomputed
+   * on re-run; it still reaches the testability export, which folds preflight
+   * non-passes in as `blocked-by-environment`.
    */
-  private ledgerMissingE2ECommand(blueprintId: string, workspaceId: string): void {
-    blueprintRepository.appendUnverified(blueprintId, [
-      {
-        taskId: E2E_LEDGER_TASK_ID,
-        gate: 'e2e',
-        reason: 'no_command',
-        detail: 'Verification depth is “End-to-end” but no e2e command resolved at REVIEW.',
-        at: new Date().toISOString()
-      }
-    ])
+  private warnMissingE2ECommand(blueprintId: string, workspaceId: string): void {
     bpLog.warn(
-      `[startReviewPhase] Blueprint ${blueprintId} — depth is e2e with no e2e command; ledgered as unproven`
+      `[startReviewPhase] Blueprint ${blueprintId} — depth is e2e with no e2e command resolved`
     )
     this.safeEmit('phaseProgress', {
       blueprintId,
@@ -504,8 +496,8 @@ export class BlueprintReviewService extends EventEmitter {
       phase: 'review',
       text:
         '⚠️ Verification depth is “End-to-end” but no e2e command resolved. ' +
-        'The end-to-end gate cannot run, so this blueprint is already recorded as ' +
-        'unproven end to end. Declare an `e2e` command in the plan’s gate-commands ' +
+        'The end-to-end gate cannot run, so this blueprint will finish without ' +
+        'end-to-end proof. Declare an `e2e` command in the plan’s gate-commands ' +
         'block, or under Workspace Settings → Repository → Gate commands.'
     })
   }

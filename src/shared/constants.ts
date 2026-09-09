@@ -572,6 +572,7 @@ export const IPC_CHANNELS = {
   DESIGN_GET_HISTORY: 'design:getHistory',
   DESIGN_DELETE_RUN: 'design:deleteRun',
   DESIGN_CONTEXT_STATUS: 'design:contextStatus',
+  DESIGN_SCOPE_TREE: 'design:scopeTree',
   DESIGN_GENERATE_REPORT: 'design:generateReport',
   DESIGN_HANDOFF_TO_BLUEPRINT: 'design:handoffToBlueprint',
   // Renderer-bound events (mirror the AUDIT_* event channels).

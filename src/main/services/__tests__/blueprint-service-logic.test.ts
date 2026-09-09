@@ -9,6 +9,7 @@ import { test, describe, summaryAsync } from './test-harness'
 import {
   BlueprintService,
   PHASE_ARTIFACT_RELEVANCE,
+  MIRRORED_ARTIFACT_TYPES,
   keepNewestArtifactPerType
 } from '../blueprint.service'
 import type { BlueprintArtifact, BlueprintPhaseType } from '../../../shared/blueprint-types'
@@ -436,6 +437,42 @@ describe('PHASE_ARTIFACT_RELEVANCE', () => {
         `${phase} should not reference clarify-qa — resolutions are merged into spec`
       )
     }
+  })
+
+  test('no_phase_ever_receives_the_preflight_artifact', () => {
+    // SECURITY. Preflight checks embed internal hostnames and DSN targets
+    // (`cache.internal:6379`, `db.corp.example:5432`) in their messages. The
+    // REVIEW phase persists them as a `preflight` artifact, and everything in
+    // this map is rendered into a phase prompt and sent to the model provider.
+    // Today preflight is excluded from every set — but only by omission, which
+    // one "give the reviewer better context" edit silently undoes. This test is
+    // the thing that stops that edit.
+    const phases: BlueprintPhaseType[] = [
+      'specify',
+      'clarify',
+      'plan',
+      'tasks',
+      'review',
+      'build',
+      'code-review',
+      'verify'
+    ]
+    for (const phase of phases) {
+      assert.ok(
+        !PHASE_ARTIFACT_RELEVANCE[phase].has('preflight'),
+        `${phase} must not receive the preflight artifact — it leaks internal hostnames to the model provider`
+      )
+    }
+  })
+
+  test('the_preflight_artifact_is_never_mirrored_to_disk', () => {
+    // Same exposure by a second route: mirrored types are written to
+    // `blueprints/<name>/<type>.md` and the phase prompts explicitly tell the
+    // agent it may Read those files.
+    assert.ok(
+      !MIRRORED_ARTIFACT_TYPES.has('preflight'),
+      'mirroring preflight puts internal hostnames in a file the prompts invite the agent to Read'
+    )
   })
 
   test('all_phases_are_covered', () => {

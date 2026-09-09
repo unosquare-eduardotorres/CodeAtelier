@@ -14,6 +14,68 @@ import { findArtifact, findAllArtifacts, extractDiscoveries } from './artifact-h
 
 // ── Helpers ──
 
+/** One persisted preflight check. Mirrors `PreflightCheck` in shared/preflight-types. */
+interface PreflightCheckRecord {
+  id: string
+  name: string
+  status: string
+  message: string
+  remediation?: string
+}
+
+/**
+ * The environment preflight the approval gate showed, replayed after the fact.
+ *
+ * REVIEW persists the result as a `preflight` artifact, but until now nothing
+ * rendered it once the gate was answered — so "why did this run start with a
+ * red gate?" was unanswerable a day later, and the testability export was its
+ * only reader. Passing checks collapse to a count: the reason to come back
+ * here is the ones that did not pass.
+ */
+function PreflightSection({ artifacts }: { artifacts: BlueprintArtifact[] }): JSX.Element | null {
+  const record = artifacts.find((a) => a.type === 'preflight')?.contentJson as
+    { checks?: PreflightCheckRecord[] } | undefined
+  const checks = Array.isArray(record?.checks) ? record.checks : []
+  if (checks.length === 0) return null
+
+  const passed = checks.filter((c) => c.status === 'pass').length
+  const notPassed = checks.filter((c) => c.status !== 'pass')
+
+  return (
+    <div className="mb-6" data-testid="blueprint-review-preflight">
+      <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+        Environment Preflight
+      </h3>
+      <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
+        <div className="text-[11px] text-text-muted mb-2">
+          {passed} of {checks.length} check{checks.length === 1 ? '' : 's'} passed at the approval
+          gate{notPassed.length === 0 ? ' — nothing outstanding.' : ':'}
+        </div>
+        <div className="space-y-1.5">
+          {notPassed.map((check) => (
+            <div key={check.id} className="flex items-start gap-2">
+              {check.status === 'blocker' ? (
+                <XCircle size={12} className="mt-0.5 flex-shrink-0 text-danger" />
+              ) : (
+                <AlertTriangle size={12} className="mt-0.5 flex-shrink-0 text-warning" />
+              )}
+              <div className="min-w-0">
+                <span className="text-xs text-text-secondary">
+                  <span className="font-mono text-[10px] text-text-muted">{check.name}</span>{' '}
+                  {check.message}
+                </span>
+                {check.remediation && (
+                  <p className="text-[11px] text-text-muted italic">{check.remediation}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function getRecommendationDisplay(recommendation: string): {
   label: string
   icon: typeof CheckCircle2
@@ -269,6 +331,9 @@ export function ReviewDeliverable({
           maxH="max-h-[500px]"
         />
       )}
+
+      {/* What the environment looked like when the gate was answered */}
+      <PreflightSection artifacts={phase.artifactsJson} />
 
       {/* The change requests and what the agent did with them */}
       <PlanRevisionsSection artifacts={phase.artifactsJson} />

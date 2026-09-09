@@ -104,6 +104,29 @@ describe('KNOWN_SERVICES registry', () => {
     )
   })
 
+  test('F4: redis, mongodb and mysql DSNs warn rather than block', () => {
+    // These clients are routinely constructed from host/port options in code
+    // with no DSN env var at all. Blocking on them paints a red "Build Anyway"
+    // gate on every blueprint in such a repo, and a gate that is always red
+    // trains the team to ignore red — taking the depth blocker down with it.
+    // Postgres's DATABASE_URL stays required; it is a genuine convention.
+    for (const [id, envVar] of [
+      ['redis', 'REDIS_URL'],
+      ['mongodb', 'MONGODB_URI'],
+      ['mysql', 'MYSQL_URL']
+    ] as const) {
+      const svc = KNOWN_SERVICES.find((s) => s.id === id)!
+      assert.equal(svc.requiredEnvVars.length, 0, `${id} must require no env var`)
+      assert.ok(svc.optionalEnvVars?.includes(envVar), `${id}: ${envVar} should be optional`)
+    }
+
+    const postgres = KNOWN_SERVICES.find((s) => s.id === 'postgres')!
+    assert.ok(
+      postgres.requiredEnvVars.includes('DATABASE_URL'),
+      'DATABASE_URL stays required — the demotion is not a blanket one'
+    )
+  })
+
   test('B5: psql is presenceWarnOnly (hosted DBs)', () => {
     const postgres = KNOWN_SERVICES.find((s) => s.id === 'postgres')!
     assert.ok(postgres.presenceWarnOnly, 'psql should be presenceWarnOnly')
@@ -597,6 +620,29 @@ describe('envVarAlternatives — DATABASE_URL satisfied by split DSNs', () => {
       const result = await runPreflightChecks(dir)
       const dbCheck = result.checks.find((c) => c.id === 'DATABASE_URL')
       assert.equal(dbCheck?.status, 'blocker', 'missing DSN must stay a blocker')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('F4: alternatives also satisfy an OPTIONAL env var', async () => {
+    // The demotion to optional must not cost accuracy: a project on REDIS_HOST
+    // is configured, and a warning saying otherwise is a false one, not a soft
+    // one.
+    const dir = mkdtempSync(join(tmpdir(), 'preflight-optalt-'))
+    try {
+      writeFileSync(
+        join(dir, 'package.json'),
+        JSON.stringify({ name: 't', dependencies: { ioredis: '^5' } })
+      )
+      writeFileSync(join(dir, '.env'), 'REDIS_HOST=cache.internal\n')
+
+      const result = await runPreflightChecks(dir)
+      const check = result.checks.find((c) => c.id === 'REDIS_URL')
+      assert.ok(check, 'REDIS_URL check missing from results')
+      assert.equal(check.status, 'pass', `expected pass via alternative, got ${check.message}`)
+      assert.ok(check.message.includes('REDIS_HOST'), 'message should name the satisfying var')
+      assert.equal(result.hasBlockers, false, 'a redis-only workspace must never block')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

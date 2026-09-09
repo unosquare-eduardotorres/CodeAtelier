@@ -516,6 +516,10 @@ const TEST_FILES: string[] = [
   './design-agent.test',
   // ─── Design run orchestration: runDesign event sequence + IPC wiring ───
   './design-orchestration.test',
+  // ─── Design store reducers: the per-workspace event filter (G2) ───
+  '../../../renderer/src/store/__tests__/design-store-reducers.test',
+  // ─── Design brief routing: keyword fallback + catalogue/conflict filtering ───
+  './design-route.test',
   // ─── Loopback update feed server (cloud-drive auto-update transport) ───
   './update-feed-server.test',
   // ─── Update feed publishing + failure surfacing ───

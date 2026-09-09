@@ -77,6 +77,16 @@ import type {
   AuditResult,
   AuditStreamChunkEvent,
   AuditIntermediateEvent,
+  DesignCommandId,
+  DesignCompleteEvent,
+  DesignIntermediateEvent,
+  DesignIpcResult,
+  DesignProgressEvent,
+  DesignResultEvent,
+  DesignRouteResult,
+  DesignScope,
+  DesignScopeTree,
+  DesignStreamChunkEvent,
   LLMProvider,
   ModelRoleMap,
   CommunicationTone,
@@ -1415,6 +1425,29 @@ interface Api {
   onAuditComplete: (cb: (data: AuditRun) => void) => () => void
   onAuditStreamChunk: (cb: (data: AuditStreamChunkEvent) => void) => () => void
   onAuditIntermediate: (cb: (data: AuditIntermediateEvent) => void) => () => void
+
+  // Design (Impeccable) — every handler answers with a DesignIpcResult envelope
+  designStart: (args: {
+    workspaceId: string
+    commandIds: DesignCommandId[]
+    scope?: DesignScope
+    brief?: string
+    llmProvider?: LLMProvider
+  }) => Promise<DesignIpcResult<AuditRun>>
+  designCancel: (args: { workspaceId: string }) => Promise<DesignIpcResult<null>>
+  designGetLatest: (args: { workspaceId: string }) => Promise<DesignIpcResult<AuditRun | null>>
+  designGetHistory: (args: { workspaceId: string }) => Promise<DesignIpcResult<AuditRun[]>>
+  designDeleteRun: (args: { runId: string }) => Promise<DesignIpcResult<null>>
+  designRoute: (args: {
+    workspaceId: string
+    brief: string
+  }) => Promise<DesignIpcResult<DesignRouteResult>>
+  designScopeTree: (args: { workspaceId: string }) => Promise<DesignIpcResult<DesignScopeTree>>
+  onDesignProgress: (cb: (data: DesignProgressEvent) => void) => () => void
+  onDesignResult: (cb: (data: DesignResultEvent) => void) => () => void
+  onDesignComplete: (cb: (data: DesignCompleteEvent) => void) => () => void
+  onDesignStreamChunk: (cb: (data: DesignStreamChunkEvent) => void) => () => void
+  onDesignIntermediate: (cb: (data: DesignIntermediateEvent) => void) => () => void
 
   // Grill (dedicated agent)
   grillEvaluate: (args: {

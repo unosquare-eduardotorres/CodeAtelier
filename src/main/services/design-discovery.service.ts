@@ -15,7 +15,7 @@
 import { readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import type { DesignScope } from '../../shared/types'
-import { isDesignRelevantPath } from '../../shared/design-commands'
+import { isDesignRelevantPath, MAX_DESIGN_FILES } from '../../shared/design-commands'
 import { skillLogger } from '../logger'
 
 const log = {
@@ -41,20 +41,27 @@ const SKIP_DIRS = new Set([
   '.turbo'
 ])
 
-/**
- * Cap on files handed to the agent. Matches the audit cap: beyond this the
- * multi-round loop is the limiting factor, not discovery.
- */
-export const MAX_DESIGN_FILES = 100
-
 /** Max recursion depth, guarding pathological trees and symlink loops. */
 const MAX_DEPTH = 10
 
 export interface DesignDiscoveryResult {
   /** Total design-relevant files found, before the cap. */
   totalFiles: number
-  /** Workspace-relative POSIX paths, capped at `MAX_DESIGN_FILES`. */
+  /** Workspace-relative POSIX paths, capped at `limit` (default `MAX_DESIGN_FILES`). */
   filePaths: string[]
+}
+
+export interface DesignDiscoveryOptions {
+  /**
+   * Cap on returned `filePaths`. Defaults to `MAX_DESIGN_FILES`, which is the
+   * budget a *run* can actually review.
+   *
+   * The scope-tree channel overrides it: rolling 100 truncated paths up to
+   * directories would report a fraction of each directory's real file count and
+   * pick the wrong `suggested` default. Counting is not reviewing, so it does
+   * not share the review budget.
+   */
+  limit?: number
 }
 
 function toPosix(p: string): string {
@@ -119,8 +126,10 @@ function walk(
  */
 export function discoverDesignFiles(
   workspacePath: string,
-  scope: DesignScope
+  scope: DesignScope,
+  options: DesignDiscoveryOptions = {}
 ): DesignDiscoveryResult {
+  const limit = options.limit ?? MAX_DESIGN_FILES
   const found = new Set<string>()
 
   const collect = (relPath: string): void => {
@@ -162,8 +171,8 @@ export function discoverDesignFiles(
 
   log.info(
     `[design-discovery] scope=${scope.mode}: ${all.length} design-relevant file(s), ` +
-      `returning ${Math.min(all.length, MAX_DESIGN_FILES)}`
+      `returning ${Math.min(all.length, limit)}`
   )
 
-  return { totalFiles: all.length, filePaths: all.slice(0, MAX_DESIGN_FILES) }
+  return { totalFiles: all.length, filePaths: all.slice(0, limit) }
 }

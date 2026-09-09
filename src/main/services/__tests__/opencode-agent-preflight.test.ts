@@ -214,8 +214,13 @@ describe('OpenCode agent preflight — worktree regression', () => {
   })
 })
 
-// Await pending async tests before exiting.
-summaryAsync().catch((err: unknown) => {
-  console.error(err)
-  process.exitCode = 1
-})
+// summaryAsync() calls process.exit() — only run it as the entry point.
+// Fired at module scope under the unified runner (run-all.ts), it terminates
+// the shared run mid-list and every test file registered after this one
+// silently contributes zero coverage.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync().catch((err: unknown) => {
+    console.error(err)
+    process.exitCode = 1
+  })
+}

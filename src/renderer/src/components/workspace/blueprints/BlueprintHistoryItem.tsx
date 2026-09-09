@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { Clock, ChevronRight, Trash2 } from 'lucide-react'
 import { StatusBadge } from './StatusBadge'
+import { VerificationDepthBadge } from './VerificationDepthBadge'
 import { formatTimeAgo, stripMarkdownInline } from './utils'
 import type { Blueprint } from '../../../../../shared/blueprint-types'
 
@@ -42,6 +43,10 @@ export default function BlueprintHistoryItem({
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-text-primary truncate">{blueprint.title}</span>
           <StatusBadge status={blueprint.status} />
+          {/* Without this, "Complete" in the list is unreadable: it means
+              something different at each depth, and the only way to find out
+              which was to open the run. */}
+          <VerificationDepthBadge settingsJson={blueprint.settingsJson} className="flex-shrink-0" />
         </div>
         {blueprint.description && (
           <p className="text-xs text-text-muted mt-0.5 truncate">

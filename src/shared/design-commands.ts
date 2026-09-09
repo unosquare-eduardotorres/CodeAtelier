@@ -236,6 +236,16 @@ export const IMPECCABLE_DESIGN_EXTENSIONS: readonly string[] = [
   '.mjs'
 ]
 
+/**
+ * Cap on files handed to the agent in one run. Matches the audit cap: beyond
+ * this the multi-round loop is the limiting factor, not discovery.
+ *
+ * Shared rather than main-only because the wizard has to quote it: a scope
+ * holding 393 files still gets 100 reviewed, and a Run button reading
+ * "393 files" is a promise the run does not keep.
+ */
+export const MAX_DESIGN_FILES = 100
+
 /** True when a path looks like something a design pass could act on. */
 export function isDesignRelevantPath(filePath: string): boolean {
   const lower = filePath.toLowerCase()

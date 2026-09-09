@@ -284,3 +284,34 @@ export function blueprintOutcome(blueprint: {
   if (blueprint.status !== 'complete') return 'incomplete'
   return (blueprint.unverifiedJson?.length ?? 0) > 0 ? 'complete-unproven' : 'complete'
 }
+
+/**
+ * F2 — an end-to-end suite that finished this fast did not drive a browser.
+ *
+ * Below this, a `pass` is far more likely to be a command that exits 0 without
+ * running anything (`echo ok`, a script whose glob matches no specs) than a
+ * real run. Even a single-spec Playwright run pays browser launch.
+ */
+export const SHALLOW_E2E_MS = 2000
+
+/**
+ * F2 — does this e2e gate's `pass` deserve to be trusted at face value?
+ *
+ * `gateCommand` grades purely on `exitCode === 0`, and the command itself is a
+ * string the PLAN model authored. `{"e2e": "echo ok"}` therefore produces a
+ * green e2e gate and a blueprint that claims end-to-end proof it never got.
+ *
+ * This returns a WARNING, never a verdict. Auto-failing on a duration
+ * heuristic would manufacture the opposite false verdict — a genuinely fast
+ * suite would be branded broken — and the whole point of this feature is to
+ * stop the pipeline asserting things it does not know. The honest move is to
+ * put the duration and the command in front of the user and let them judge.
+ */
+export function isShallowE2EPass(gate: {
+  name: string
+  verdict: string
+  durationMs?: number
+}): boolean {
+  if (gate.name !== 'e2e' || gate.verdict !== 'pass') return false
+  return (gate.durationMs ?? 0) < SHALLOW_E2E_MS
+}

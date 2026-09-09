@@ -193,46 +193,66 @@ if (loaded) {
      * real config writer and reads the file back off disk.
      */
     test('the written config names glm, with its verbatim base URL and limits', () => {
-      const WS = '/repo/glm-e2e-ws'
-      settingsByPath = new Map([
-        [
+      // writeConfig's shell-env injection writes WORKSPACE_PATH/NODE_OPTIONS into
+      // this process's env (the OpenCode server inherits them in production).
+      // Capture and restore — the leaked WORKSPACE_PATH once poisoned a later
+      // module's module-level `process.env.WORKSPACE_PATH ?? cwd` read.
+      const savedEnv = {
+        WORKSPACE_PATH: process.env.WORKSPACE_PATH,
+        NODE_OPTIONS: process.env.NODE_OPTIONS
+      }
+      try {
+        const WS = '/repo/glm-e2e-ws'
+        settingsByPath = new Map([
+          [
+            WS,
+            {
+              llmProvider: 'claude', // workspace default — deliberately NOT glm
+              glmBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
+              glmModel: 'glm-5.3',
+              glmApiKey: 'zai-plaintext-key',
+              glmContextLimit: 200_000
+            }
+          ]
+        ])
+
+        const { OpenCodeConfigWriter } = require('../opencode-config-writer')
+        const writer = new OpenCodeConfigWriter()
+
+        const provider = snapshotResolver.resolveOpenCodeProviderFromSnapshot(
+          null,
           WS,
-          {
-            llmProvider: 'claude', // workspace default — deliberately NOT glm
-            glmBaseUrl: 'https://api.z.ai/api/coding/paas/v4',
-            glmModel: 'glm-5.3',
-            glmApiKey: 'zai-plaintext-key',
-            glmContextLimit: 200_000
+          false,
+          'glm'
+        )
+        const configPath = writer.writeConfig({
+          workspacePath: WS,
+          workspaceId: 'ws-glm-e2e',
+          conversationId: null,
+          mode: 'plan',
+          provider,
+          featureFlags: {
+            repomapEnabled: false,
+            semanticSearchEnabled: false,
+            githubConfigured: false,
+            localMcpActive: {}
           }
-        ]
-      ])
+        })
 
-      const { OpenCodeConfigWriter } = require('../opencode-config-writer')
-      const writer = new OpenCodeConfigWriter()
+        const written = JSON.parse(readFileSync(configPath, 'utf-8'))
+        assert.ok(written.model.startsWith('glm/'), `expected a glm model, got ${written.model}`)
+        assert.equal(written.provider.glm.options.baseURL, 'https://api.z.ai/api/coding/paas/v4')
+        assert.ok(!written.provider.anthropic, 'anthropic must not be configured for a GLM run')
 
-      const provider = snapshotResolver.resolveOpenCodeProviderFromSnapshot(null, WS, false, 'glm')
-      const configPath = writer.writeConfig({
-        workspacePath: WS,
-        workspaceId: 'ws-glm-e2e',
-        conversationId: null,
-        mode: 'plan',
-        provider,
-        featureFlags: {
-          repomapEnabled: false,
-          semanticSearchEnabled: false,
-          githubConfigured: false,
-          localMcpActive: {}
+        // GLM-P2: the file holds a plaintext key — disposeAll() must remove it.
+        writer.disposeAll()
+        assert.equal(existsSync(configPath), false, 'disposeAll must delete the config file')
+      } finally {
+        for (const [key, value] of Object.entries(savedEnv)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
         }
-      })
-
-      const written = JSON.parse(readFileSync(configPath, 'utf-8'))
-      assert.ok(written.model.startsWith('glm/'), `expected a glm model, got ${written.model}`)
-      assert.equal(written.provider.glm.options.baseURL, 'https://api.z.ai/api/coding/paas/v4')
-      assert.ok(!written.provider.anthropic, 'anthropic must not be configured for a GLM run')
-
-      // GLM-P2: the file holds a plaintext key — disposeAll() must remove it.
-      writer.disposeAll()
-      assert.equal(existsSync(configPath), false, 'disposeAll must delete the config file')
+      }
     })
   })
 

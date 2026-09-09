@@ -108,7 +108,14 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     packagePatterns: ['redis', 'ioredis', 'bullmq', 'bull', 'connect-redis'],
     fileMarkers: ['redis.conf'],
     taskKeywords: ['redis'],
-    requiredEnvVars: ['REDIS_URL'],
+    // Warn, never block: unlike Postgres's DATABASE_URL, a Redis client is
+    // routinely constructed from host/port options in code with no DSN env var
+    // at all (`new Redis({ host, port })`). Blocking on it would paint a red
+    // "Build Anyway" gate on every blueprint in an ioredis repo, and a gate
+    // that is always red teaches the team to ignore red. The connectivity
+    // probe below answers the question that actually matters.
+    requiredEnvVars: [],
+    optionalEnvVars: ['REDIS_URL'],
     envVarAlternatives: { REDIS_URL: ['REDIS_URI', 'REDIS_HOST', 'CACHE_URL'] },
     presenceProbe: { cmd: 'redis-cli', args: ['--version'] },
     presenceWarnOnly: true, // hosted/containerised Redis needs no local CLI
@@ -124,7 +131,9 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     packagePatterns: ['mongodb', 'mongoose', '@nestjs/mongoose'],
     fileMarkers: ['mongod.conf'],
     taskKeywords: ['mongodb', 'mongoose'],
-    requiredEnvVars: ['MONGODB_URI'],
+    // Warn, never block — see the Redis entry for the reasoning.
+    requiredEnvVars: [],
+    optionalEnvVars: ['MONGODB_URI'],
     envVarAlternatives: { MONGODB_URI: ['MONGO_URL', 'MONGODB_URL', 'MONGO_URI', 'DATABASE_URL'] },
     presenceProbe: { cmd: 'mongosh', args: ['--version'] },
     presenceWarnOnly: true, // Atlas and other hosted clusters need no local shell
@@ -143,7 +152,9 @@ export const KNOWN_SERVICES: PreflightServiceDef[] = [
     packagePatterns: ['mysql', 'mysql2', 'knex-mysql'],
     fileMarkers: ['my.cnf'],
     taskKeywords: ['mysql', 'mariadb'],
-    requiredEnvVars: ['MYSQL_URL'],
+    // Warn, never block — see the Redis entry for the reasoning.
+    requiredEnvVars: [],
+    optionalEnvVars: ['MYSQL_URL'],
     envVarAlternatives: { MYSQL_URL: ['MYSQL_URI', 'MARIADB_URL', 'DATABASE_URL'] },
     presenceProbe: { cmd: 'mysql', args: ['--version'] },
     presenceWarnOnly: true,
@@ -810,15 +821,24 @@ export async function runPreflightChecks(
     // B5: Optional env vars → warn, not blocker
     for (const envVar of def.optionalEnvVars ?? []) {
       const isAvailable = availableEnv.has(envVar)
+      // Alternatives count here too — a project on REDIS_HOST is configured, and
+      // saying otherwise would be a false warning, not a soft one.
+      const presentAlts = (def.envVarAlternatives?.[envVar] ?? []).filter((alt) =>
+        availableEnv.has(alt)
+      )
+      const satisfiedByAlts = !isAvailable && presentAlts.length > 0
       checks.push({
         id: envVar,
         name: envVar,
         kind: 'env-var',
-        status: isAvailable ? 'pass' : 'warn',
+        status: isAvailable || satisfiedByAlts ? 'pass' : 'warn',
         message: isAvailable
           ? `${envVar} is set`
-          : `${envVar} is not set (optional — some features may be limited)`,
-        remediation: isAvailable ? undefined : `Add ${envVar} to your .env file if needed`,
+          : satisfiedByAlts
+            ? `${envVar} not set, but ${presentAlts.join('/')} ${presentAlts.length === 1 ? 'is' : 'are'} — requirement satisfied`
+            : `${envVar} is not set (optional — some features may be limited)`,
+        remediation:
+          isAvailable || satisfiedByAlts ? undefined : `Add ${envVar} to your .env file if needed`,
         sources
       })
     }
@@ -1027,8 +1047,14 @@ function findDotnetProjects(root: string): string[] {
 function findVenvPython(workspacePath: string): string | undefined {
   const candidates =
     process.platform === 'win32'
-      ? [join(workspacePath, '.venv', 'Scripts', 'python.exe'), join(workspacePath, 'venv', 'Scripts', 'python.exe')]
-      : [join(workspacePath, '.venv', 'bin', 'python'), join(workspacePath, 'venv', 'bin', 'python')]
+      ? [
+          join(workspacePath, '.venv', 'Scripts', 'python.exe'),
+          join(workspacePath, 'venv', 'Scripts', 'python.exe')
+        ]
+      : [
+          join(workspacePath, '.venv', 'bin', 'python'),
+          join(workspacePath, 'venv', 'bin', 'python')
+        ]
   for (const candidate of candidates) {
     try {
       if (existsSync(candidate)) return candidate

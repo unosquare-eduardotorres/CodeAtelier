@@ -487,11 +487,18 @@ export class DesignAgentService extends EventEmitter {
       return { findings: [], summary: '' }
     }
 
+    // Truncation is stated, never swallowed: a capped list presented as complete
+    // would have the user believe a whole-project scan was fully reviewed.
+    const truncationNote =
+      detection.truncated > 0
+        ? ` ${detection.truncated} lower-severity finding(s) were dropped to keep this list readable — narrow the scope for full coverage.`
+        : ''
+
     this.emit('progress', {
       workspaceId: params.workspaceId,
       trackId,
       status: 'running',
-      streamChunk: `✅ Detector found ${detection.findings.length} issue(s) across ${detection.ruleCount} rule(s).\n\n`
+      streamChunk: `✅ Detector found ${detection.findings.length} issue(s) across ${detection.ruleCount} rule(s).${truncationNote}\n\n`
     } satisfies DesignProgressPayload)
 
     return {

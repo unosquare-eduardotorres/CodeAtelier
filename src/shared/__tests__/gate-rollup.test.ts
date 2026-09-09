@@ -9,7 +9,13 @@
 import assert from 'node:assert/strict'
 import { test, describe, summaryAsync } from '../../main/services/__tests__/test-harness'
 
-import { summarizeLedger, blueprintOutcome, type UnverifiedItem } from '../gate-types'
+import {
+  summarizeLedger,
+  blueprintOutcome,
+  isShallowE2EPass,
+  SHALLOW_E2E_MS,
+  type UnverifiedItem
+} from '../gate-types'
 
 // ── summarizeLedger ──
 
@@ -128,6 +134,52 @@ describe('blueprintOutcome', () => {
         `outcome=${outcome} must agree with isCompletedWithWarnings=${withWarnings}`
       )
     }
+  })
+})
+
+// ── isShallowE2EPass (F2) ──
+
+describe('isShallowE2EPass', () => {
+  test('a sub-threshold e2e pass is flagged', () => {
+    // The `"e2e": "echo ok"` case: exit 0, no browser, green gate.
+    assert.equal(isShallowE2EPass({ name: 'e2e', verdict: 'pass', durationMs: 40 }), true)
+  })
+
+  test('a real-length e2e pass is not flagged', () => {
+    assert.equal(
+      isShallowE2EPass({ name: 'e2e', verdict: 'pass', durationMs: SHALLOW_E2E_MS + 1 }),
+      false
+    )
+  })
+
+  test('exactly at the threshold is not flagged', () => {
+    // Strictly-below keeps the boundary on the trusting side: the warning
+    // exists to prompt a look, and firing it on a borderline real run is the
+    // failure mode that teaches people to ignore it.
+    assert.equal(
+      isShallowE2EPass({ name: 'e2e', verdict: 'pass', durationMs: SHALLOW_E2E_MS }),
+      false
+    )
+  })
+
+  test('a fast FAIL is not flagged — nothing is being over-claimed', () => {
+    assert.equal(isShallowE2EPass({ name: 'e2e', verdict: 'fail', durationMs: 10 }), false)
+  })
+
+  test('a fast unverifiable is not flagged — it already says it proved nothing', () => {
+    assert.equal(isShallowE2EPass({ name: 'e2e', verdict: 'unverifiable', durationMs: 0 }), false)
+  })
+
+  test('other gates are never flagged, however fast', () => {
+    // lint and stub-scan legitimately finish in milliseconds; only the e2e gate
+    // makes a claim whose cost floor we can reason about.
+    for (const name of ['lint', 'build', 'smoke', 'full-suite', 'task-tests']) {
+      assert.equal(isShallowE2EPass({ name, verdict: 'pass', durationMs: 1 }), false, name)
+    }
+  })
+
+  test('a missing durationMs is treated as suspicious, not as absolution', () => {
+    assert.equal(isShallowE2EPass({ name: 'e2e', verdict: 'pass' }), true)
   })
 })
 

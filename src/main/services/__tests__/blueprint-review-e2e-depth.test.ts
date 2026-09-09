@@ -21,17 +21,20 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, describe, summaryAsync } from './test-harness'
-import { trySetupTestDb } from '../../db/repositories/__tests__/db-test-helper'
+import { attachTestDb, liveTestDb } from '../../db/repositories/__tests__/db-test-helper'
 import type { PreflightResult } from '../../../shared/preflight-types'
 
-const env = trySetupTestDb()
+// `attachTestDb`, not `trySetupTestDb`: the latter installs a BRAND-NEW database
+// globally, which under the shared runner replaces the one every earlier file is
+// still using and turns their seeded rows into FOREIGN KEY failures. This file
+// needs *a* database, not a pristine one.
+const env = attachTestDb()
 
 if (!env) {
   describe('REVIEW e2e-depth enforcement (skipped — native module unavailable)', () => {
     test('depth_enforcement', () => {}, { skipReason: 'no DB' })
   })
 } else {
-  const { db } = env
   const {
     blueprintRepository,
     blueprintPhaseRepository
@@ -43,12 +46,12 @@ if (!env) {
 
   // repo_path is UNIQUE, so each workspace needs its own (unused) path. The scan
   // root passed to the check is `scanRoot` regardless.
+  // Resolved at call time via `liveTestDb()` so the seed and the repositories
+  // always hit the SAME database, whichever file installed it.
   const seedWs = (id: string): string => {
-    db.prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`).run(
-      id,
-      'Depth Test',
-      join(scanRoot, id)
-    )
+    liveTestDb()
+      .prepare(`INSERT OR IGNORE INTO workspaces (id, name, repo_path) VALUES (?, ?, ?)`)
+      .run(id, 'Depth Test', join(scanRoot, id))
     return id
   }
 
@@ -107,15 +110,15 @@ if (!env) {
     }>
 
   describe('REVIEW enforcement of verification depth e2e', () => {
-    test('missing_e2e_command_is_ledgered_at_review_not_at_verify', () => {
+    test('missing_e2e_command_is_never_ledgered_at_review', () => {
+      // The unverified ledger is append-only and has no remover, so entries must
+      // be TERMINAL facts. At REVIEW the gap is still fixable — ledgering here
+      // would brand a user UNPROVEN forever for declaring the command and
+      // passing the gate. The preflight blocker carries the warning instead.
       const bpId = seedBlueprint('no-cmd', 'e2e')
       runDepthCheck(bpId)
 
-      const items = ledgerOf(bpId)
-      const e2e = items.find((i) => i.gate === 'e2e')
-      assert.ok(e2e, 'the gap must be recorded before BUILD burns, not after')
-      assert.equal(e2e.reason, 'no_command')
-      assert.equal(e2e.taskId, 'E2E', 'must share the single e2e ledger task id')
+      assert.equal(ledgerOf(bpId).length, 0, 'REVIEW must not record a still-fixable gap')
     })
 
     test('missing_e2e_command_raises_a_blocker_in_the_preflight_result', () => {
@@ -141,14 +144,15 @@ if (!env) {
       assert.equal(result.hasBlockers, false)
     })
 
-    test('running_twice_does_not_double_count_the_same_gap', () => {
-      // The BUILD backstop and VERIFY both ledger under the same task id; a
-      // re-run of REVIEW must not make one missing command look like two.
+    test('re_running_review_leaves_the_ledger_empty_and_the_blocker_intact', () => {
+      // The warning is recomputed from scratch on every run, so it self-heals
+      // once a command is declared — unlike a ledger entry, which cannot.
       const bpId = seedBlueprint('dedupe', 'e2e')
       runDepthCheck(bpId)
-      runDepthCheck(bpId)
+      const result = runDepthCheck(bpId)
 
-      assert.equal(ledgerOf(bpId).filter((i) => i.gate === 'e2e').length, 1)
+      assert.equal(ledgerOf(bpId).length, 0)
+      assert.equal(result.checks.filter((c) => c.id === 'verification-depth-e2e').length, 1)
     })
 
     test('standard_depth_ledgers_nothing', () => {

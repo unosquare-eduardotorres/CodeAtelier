@@ -6,10 +6,12 @@
  *   - Selecting any of the 16 workspace settings sub-tabs
  *   - Verifying the active settings tab
  *
- * The 16 settings tabs are organized into two groups:
- *   Tools:         health, goals, council, ideas, plans, blueprints
- *   Configuration: specialist, team, repository, brain (memory), code-intelligence,
- *                  integrations, models, documents, tokens, events
+ * The settings tabs are organized into three groups (hidden entries resolve
+ * but are not rendered):
+ *   Tools:             health, design, goals, council, ideas, plans, blueprints, jira, testing
+ *   Agents & Models:   specialist, team, models
+ *   Workspace Systems: repository, brain (memory), code-intelligence, integrations, tracks,
+ *                      documents, tokens, events
  */
 import type { Page } from '@playwright/test'
 
@@ -17,6 +19,7 @@ import type { Page } from '@playwright/test'
 export type SettingsTab =
   | 'specialist'
   | 'health'
+  | 'design'
   | 'goals'
   | 'council'
   | 'ideas'
@@ -37,6 +40,9 @@ const TAB_LABELS: Record<SettingsTab, string> = {
   specialist: 'Specialist',
   // Relabelled in the nav (was 'Health') — the tab id is unchanged.
   health: 'Audit Code',
+  // Deliberately parallel to 'Audit Code'; the two are matched with anchored
+  // regexes above, so the shared prefix does not make them ambiguous.
+  design: 'Audit Design',
   goals: 'Goals',
   council: 'Council',
   ideas: 'Ideas',

@@ -12,6 +12,8 @@
     "src/main/db/migrations/**",
     "src/shared/types.ts",
     "src/shared/mpa-types.ts",
+    "src/shared/track-types.ts",
+    "src/shared/blueprint-snapshot-types.ts",
     "src/main/services/agent-session.types.ts",
     "src/main/services/executor-types.ts",
     "src/renderer/**",

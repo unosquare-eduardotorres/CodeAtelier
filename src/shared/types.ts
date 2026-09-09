@@ -2560,6 +2560,51 @@ export interface DesignContextStatus {
   stale: boolean
 }
 
+/** One directory in the scope picker, with the design-relevant files under it. */
+export interface DesignScopeDir {
+  /** Workspace-relative POSIX path. */
+  path: string
+  /** Design-relevant files at or below this directory. */
+  fileCount: number
+}
+
+/**
+ * What the scope step renders.
+ *
+ * The renderer has no filesystem access, so this is the only way it can offer a
+ * picker whose contents agree with what a run would actually review — both come
+ * from `discoverDesignFiles`.
+ */
+/**
+ * What `design:route` returns — an LLM's read of a free-text brief.
+ *
+ * `commandIds` is always catalogue-filtered and conflict-checked before it
+ * leaves main, so the wizard can preselect it without re-validating.
+ */
+export interface DesignRouteResult {
+  commandIds: DesignCommandId[]
+  /** A workspace-relative directory the brief pointed at, when it named one. */
+  scopeHint: string | null
+  /** One line explaining the selection, shown next to the preselected cards. */
+  rationale: string
+  /** True when the model call was skipped or failed and keywords decided. */
+  usedFallback: boolean
+}
+
+export interface DesignScopeTree {
+  /** Descending by `fileCount`, capped. */
+  dirs: DesignScopeDir[]
+  /** Design-relevant files in the whole workspace, before any cap. */
+  totalFiles: number
+  /**
+   * The directory to preselect — the densest one. Derived rather than
+   * hard-coded, and null when the workspace has no design-relevant files.
+   */
+  suggested: string | null
+  /** True when `dirs` was truncated, so the UI can say so. */
+  truncated: boolean
+}
+
 export interface AuditCoverageStats {
   filesInspected: string[]
   fileCount: number
@@ -2721,6 +2766,48 @@ export interface AuditStreamChunkEvent {
   type: 'text' | 'tool_activity'
   content?: string
   toolActivity?: Partial<ToolActivity> & { id: string; toolName: string }
+}
+
+// ─── Design run events (renderer-facing) ───────────────────────────────
+// Design runs reuse audit storage, so `design:result` / `design:complete` carry
+// the persisted rows verbatim. `sendWorkspaceEvent` prepends `workspaceId` to
+// every payload — which the design store filters on, because design runs are
+// per-workspace concurrent and every listener sees every workspace's events.
+
+/** Shape-identical to the audit event; aliased so the design surface reads as its own. */
+export type DesignProgressEvent = AuditProgressEvent
+
+export type DesignIntermediateEvent = AuditIntermediateEvent
+
+/** `AuditResult` has no workspace column, so the tag is genuinely additive here. */
+export type DesignResultEvent = AuditResult & { workspaceId: string }
+
+/**
+ * `AuditRun` already carries `workspaceId`, and `sendWorkspaceEvent` spreads the
+ * payload *after* the tag — so the run's own value wins and the wire shape is
+ * exactly `AuditRun`. Intersecting the tag on again would only be redundant.
+ */
+export type DesignCompleteEvent = AuditRun
+
+/**
+ * `design:stream-chunk` as the renderer sees it.
+ *
+ * Unlike the audit path, `design.ipc.ts` forwards the agent's raw `StreamChunk`
+ * untouched. That interface lives in `src/main`, which the renderer cannot
+ * import, so this is the structural subset the live view actually reads — a
+ * narrower view of the same object, not a second contract.
+ */
+export interface DesignStreamChunkEvent {
+  workspaceId: string
+  trackId: AuditTrackId
+  chunk: {
+    type: string
+    content?: string
+    toolName?: string
+    toolInput?: string
+    toolId?: string
+    isError?: boolean
+  }
 }
 
 /** Memory tier for hardware-aware model recommendations */

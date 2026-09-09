@@ -39,7 +39,7 @@ describe('core-agent-prompt.ipc validation contracts', () => {
   test('CORE_AGENT_PROMPT_GET requires agentRole and mode', () => {
     const ch = 'coreAgentPrompt:get'
     const args = requireObject({ agentRole: 'specialist', mode: 'plan' }, ch)
-    assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
+    assert.equal(requireString(args, 'agentRole', ch), 'specialist')
     assert.equal(requireString(args, 'mode', ch), 'plan')
   })
 
@@ -49,7 +49,7 @@ describe('core-agent-prompt.ipc validation contracts', () => {
       { agentRole: 'specialist', mode: 'build', promptText: 'You are a builder.' },
       ch
     )
-    assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
+    assert.equal(requireString(args, 'agentRole', ch), 'specialist')
     assert.equal(requireString(args, 'mode', ch), 'build')
     assert.equal(requireString(args, 'promptText', ch), 'You are a builder.')
   })
@@ -63,7 +63,7 @@ describe('core-agent-prompt.ipc validation contracts', () => {
   test('CORE_AGENT_PROMPT_RESET requires agentRole and mode', () => {
     const ch = 'coreAgentPrompt:reset'
     const args = requireObject({ agentRole: 'specialist', mode: 'danger' }, ch)
-    assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
+    assert.equal(requireString(args, 'agentRole', ch), 'specialist')
     assert.equal(requireString(args, 'mode', ch), 'danger')
   })
 })
@@ -74,7 +74,7 @@ describe('core-agent-alias.ipc validation contracts', () => {
   test('CORE_AGENT_UPSERT requires agentRole', () => {
     const ch = 'coreAgent:upsert'
     const args = requireObject({ agentRole: 'specialist', alias: 'Claude' }, ch)
-    assert.equal(requireString(args, 'agentRole', ch), 'da-vinci')
+    assert.equal(requireString(args, 'agentRole', ch), 'specialist')
   })
 
   test('CORE_AGENT_UPSERT accepts nullable alias', () => {

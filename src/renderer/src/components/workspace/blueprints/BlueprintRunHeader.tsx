@@ -20,6 +20,7 @@ import {
   GitBranch
 } from 'lucide-react'
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
+import { VerificationDepthBadge } from './VerificationDepthBadge'
 import { formatPhaseDuration } from '@renderer/store/blueprint.store'
 import type { BlueprintPhaseType } from '../../../../../shared/blueprint-types'
 
@@ -72,6 +73,12 @@ export interface BlueprintRunHeaderProps {
   blueprintTitle: string | null
   /** The branch this run works on, once it has been reserved. */
   branchName?: string | null
+  /**
+   * The run's settings, for the verification-depth badge. A user watching a
+   * build cannot otherwise tell which level of proof the VERIFY phase at the
+   * end of it is going to apply.
+   */
+  settingsJson?: Record<string, unknown> | null
   pipelineStartedAt: number | null
   phaseDurations: Partial<Record<BlueprintPhaseType, number>>
   phaseStartedAt: number | null
@@ -99,6 +106,7 @@ export function BlueprintRunHeader({
   currentPhase,
   blueprintTitle,
   branchName,
+  settingsJson,
   pipelineStartedAt,
   phaseDurations: _phaseDurations,
   phaseStartedAt,
@@ -188,6 +196,9 @@ export function BlueprintRunHeader({
             <span className="truncate">{branchName}</span>
           </span>
         )}
+
+        {/* Depth — what "verified" is going to mean when this run ends */}
+        <VerificationDepthBadge settingsJson={settingsJson} className="flex-shrink-0" />
 
         {/* Title */}
         {blueprintTitle && (

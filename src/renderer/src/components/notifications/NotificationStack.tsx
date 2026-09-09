@@ -22,6 +22,7 @@ const PAGE_NAV_MAP: Record<string, { sidebarView: 'chat' | 'settings'; settingsT
   chat: { sidebarView: 'chat' },
   grill: { sidebarView: 'settings', settingsTab: 'ideas' },
   audit: { sidebarView: 'settings', settingsTab: 'health' },
+  design: { sidebarView: 'settings', settingsTab: 'design' },
   mpa: { sidebarView: 'settings', settingsTab: 'goals' },
   council: { sidebarView: 'settings', settingsTab: 'council' },
   blueprints: { sidebarView: 'settings', settingsTab: 'blueprints' },

@@ -2,7 +2,7 @@
  * Tests for AuditPlanRepository — savePlan, getPlansForRun, JSON mapping.
  */
 import assert from 'node:assert/strict'
-import { test, describe } from '../../../services/__tests__/test-harness'
+import { test, describe, summaryAsync } from '../../../services/__tests__/test-harness'
 import { trySetupTestDb } from './db-test-helper'
 
 const env = trySetupTestDb()
@@ -16,8 +16,8 @@ if (!env) {
   const { auditPlanRepository } = require('../audit-plan.repository')
   const { auditRepository } = require('../audit.repository')
 
-  // Seed an audit run for FK
-  const run = auditRepository.createRun(wsId, 'full', ['security'], ['typescript'])
+  // Seed an audit run for FK ('light'/'deep' are the only modes the schema CHECK allows)
+  const run = auditRepository.createRun(wsId, 'light', ['security'], ['typescript'])
 
   describe('AuditPlanRepository', () => {
     test('savePlan() returns mapped record', () => {
@@ -56,7 +56,7 @@ if (!env) {
     })
 
     test('getPlansForRun() returns plans newest first', () => {
-      const run2 = auditRepository.createRun(wsId, 'full', ['performance'], ['ts'])
+      const run2 = auditRepository.createRun(wsId, 'deep', ['performance'], ['ts'])
       auditPlanRepository.savePlan(run2.id, {
         version: 1,
         title: 'First',
@@ -76,13 +76,21 @@ if (!env) {
         requirementDocument: ''
       } as any)
 
+      // Backdate the first plan: created_at has 1-second granularity, so two
+      // INSERTs in the same tick tie and the DESC order is unstable.
+      db
+        .prepare(
+          `UPDATE audit_plans SET created_at = datetime('now', '-1 minute') WHERE title = 'First'`
+        )
+        .run()
+
       const plans = auditPlanRepository.getPlansForRun(run2.id)
       assert.equal(plans.length, 2)
       assert.equal(plans[0].title, 'Second') // newest first
     })
 
     test('getPlansForRun() returns empty for run with no plans', () => {
-      const run3 = auditRepository.createRun(wsId, 'quick', ['security'], ['ts'])
+      const run3 = auditRepository.createRun(wsId, 'light', ['security'], ['ts'])
       const plans = auditPlanRepository.getPlansForRun(run3.id)
       assert.equal(plans.length, 0)
     })
@@ -102,19 +110,20 @@ if (!env) {
       assert.equal(found.title, 'Findable')
     })
 
-    test('mapRow() parses plan_json with safeParseJSON fallback', () => {
-      // Insert a row with bad plan JSON
-      db.prepare(
-        `INSERT INTO audit_plans (audit_run_id, title, summary, plan_json, source_finding_ids)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run(run.id, 'Bad JSON Plan', 'summary', 'NOT VALID JSON', '[]')
-
-      const plans = auditPlanRepository.getPlansForRun(run.id)
-      const badPlan = plans.find((p: any) => p.title === 'Bad JSON Plan')
-      assert.ok(badPlan)
-      // safeParseJSON fallback creates a minimal plan
-      assert.ok(badPlan.plan)
-      assert.equal(badPlan.plan.title, 'Bad JSON Plan')
+    test('audit_plans CHECK constraint rejects malformed plan_json', () => {
+      // plan_json is `TEXT NOT NULL CHECK (json_valid(plan_json))` — the schema
+      // now guarantees rows are parseable, which is what safeParseJSON's
+      // malformed-input fallback used to defend against at read time.
+      assert.throws(
+        () =>
+          db
+            .prepare(
+              `INSERT INTO audit_plans (audit_run_id, title, summary, plan_json, source_finding_ids)
+               VALUES (?, ?, ?, ?, ?)`
+            )
+            .run(run.id, 'Bad JSON Plan', 'summary', 'NOT VALID JSON', '[]'),
+        /CHECK constraint failed/
+      )
     })
 
     test('mapRow() parses source_finding_ids from JSON', () => {
@@ -128,4 +137,10 @@ if (!env) {
       assert.deepEqual(plan!.sourceFindingIds, ['a', 'b', 'c'])
     })
   })
+}
+
+// summaryAsync() calls process.exit() — only run it as the entry point; fired
+// at module scope under a shared runner it terminates that run mid-list.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  void summaryAsync()
 }

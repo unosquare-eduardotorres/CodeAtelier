@@ -134,8 +134,11 @@ async function resolveEntry(ref: string): Promise<RecallPlanEntry | null> {
 }
 
 // ── Tool schema registration (synchronous — no heavy imports) ───────────
+//
+// Exported so tests can register the tools on the module-scoped server (and
+// capture the handlers) without going through main()'s stdio transport.
 
-function registerToolSchemas(): void {
+export function registerToolSchemas(): void {
   // ── recall_plans ──────────────────────────────────────────────────────
   server.tool(
     'recall_plans',
@@ -349,7 +352,14 @@ async function main(): Promise<void> {
   )
 }
 
-main().catch((err) => {
-  console.error('[recall-server] Fatal:', err)
-  process.exit(1)
-})
+// Only self-start when spawned directly as the stdio MCP child process (see
+// cli-mcp-config-writer.ts — args: [server.js]). A plain import (tests,
+// bundler, the unified coverage runner) must not start the server: a failed
+// start calls process.exit(1) and takes the whole importing process down with
+// it, silently truncating whatever that process was doing.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[recall-server] Fatal:', err)
+    process.exit(1)
+  })
+}

@@ -184,7 +184,13 @@ const MAX_REVISION_REQUESTS = 20
 // Controls which artifact *types* each phase receives from prior phases.
 // Eliminates the 146–214KB prompt bloat from blindly accumulating all artifacts.
 
-/** @internal Exported for testing */
+/**
+ * Nothing here may ever include `preflight`. Preflight check messages carry
+ * internal hostnames and DSN targets; anything in this map is rendered into a
+ * phase prompt and shipped to the model provider.
+ *
+ * @internal Exported for testing
+ */
 export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> = {
   specify: new Set(), // first phase — no prior artifacts
   clarify: new Set(['spec']), // needs spec to ask about
@@ -223,8 +229,13 @@ export const PHASE_ARTIFACT_RELEVANCE: Record<BlueprintPhaseType, Set<string>> =
  * `discoveries` is excluded because formatArtifacts merges its entries across
  * artifacts rather than rendering one document, and `*-partial` types are
  * excluded by construction (they are retry payloads, not deliverables).
+ *
+ * `preflight` must never be added here — see the `preflight` assertions in
+ * blueprint-service-logic.test.ts.
+ *
+ * @internal Exported for testing
  */
-const MIRRORED_ARTIFACT_TYPES = new Set(['spec', 'plan', 'tasks', 'build'])
+export const MIRRORED_ARTIFACT_TYPES = new Set(['spec', 'plan', 'tasks', 'build'])
 
 // ── Helpers ──
 

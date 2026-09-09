@@ -18,6 +18,7 @@ import { test, describe } from './test-harness'
 import {
   DETECTOR_SOURCE,
   detectorFindingKey,
+  MAX_DETECTOR_FINDINGS,
   parseDetectorPayload,
   relativizeDetectorPath
 } from '../impeccable-detector.service'
@@ -204,5 +205,69 @@ describe('parseDetectorPayload', () => {
     const r = parseDetectorPayload(JSON.stringify([one, one]), WS)
     assert.equal(r.findings.length, 1)
     assert.equal(r.skipped, 1)
+  })
+
+  test('a scan under the cap reports no truncation', () => {
+    const r = parseDetectorPayload(fixture('slop-warnings'), WS)
+    assert.equal(r.truncated, 0)
+    assert.ok(r.findings.length <= MAX_DETECTOR_FINDINGS)
+  })
+})
+
+// ── The cap (C2) ─────────────────────────────────────────────────────────────
+
+describe('parseDetectorPayload — findings cap', () => {
+  /**
+   * A whole-project `detect .` on this repo returns 4283 findings, 98 % of them
+   * about `coverage/` and `out/`. Uncapped they were persisted as one JSON blob
+   * and rendered as 4283 un-virtualised checkbox rows — a renderer freeze on the
+   * user's first run. 5000 here is deliberately worse than the measurement.
+   */
+  const HUGE = JSON.stringify([
+    // Ten criticals, buried at the END of the payload so a scan-order truncation
+    // would drop every one of them.
+    ...Array.from({ length: 4_990 }, (_, i) => ({
+      antipattern: 'noise',
+      name: 'Build output noise',
+      severity: 'advisory',
+      file: `${WS}/coverage/lcov-report/f${i}.html`,
+      line: i
+    })),
+    ...Array.from({ length: 10 }, (_, i) => ({
+      antipattern: 'contrast',
+      name: 'Unreadable contrast',
+      severity: 'critical',
+      file: `${WS}/src/renderer/Card${i}.tsx`,
+      line: i
+    }))
+  ])
+
+  test('caps a 5000-finding payload and reports what it dropped', () => {
+    const r = parseDetectorPayload(HUGE, WS)
+    assert.equal(r.findings.length, MAX_DETECTOR_FINDINGS)
+    assert.equal(r.truncated, 5_000 - MAX_DETECTOR_FINDINGS)
+    assert.equal(r.malformed, false)
+  })
+
+  test('REGRESSION: the criticals survive, the advisory noise is what is dropped', () => {
+    // Truncating in scan order would keep 200 `coverage/` advisories and discard
+    // every critical — the one outcome worse than truncating at all.
+    const r = parseDetectorPayload(HUGE, WS)
+    const criticals = r.findings.filter((f) => f.severity === 'critical')
+    assert.equal(criticals.length, 10, 'every critical must survive the cap')
+    assert.ok(
+      criticals.every((f) => f.filePath?.startsWith('src/renderer/')),
+      'criticals must keep their real paths'
+    )
+  })
+
+  test('ruleCount describes the kept set, not the raw scan', () => {
+    // Otherwise the run reports "200 findings across 2 rules" when one of those
+    // rules contributed nothing the user can see.
+    const r = parseDetectorPayload(HUGE, WS)
+    const rulesInKept = new Set(
+      r.findings.map((f) => (f.severity === 'critical' ? 'contrast' : 'noise'))
+    )
+    assert.equal(r.ruleCount, rulesInKept.size)
   })
 })

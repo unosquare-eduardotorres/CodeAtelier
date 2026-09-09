@@ -35,8 +35,10 @@ import type {
   AuditTrackId,
   DesignCommandId,
   DesignIpcResult,
+  DesignRouteResult,
   DesignRunConfig,
   DesignScope,
+  DesignScopeTree,
   LLMProvider
 } from '../../shared/types'
 import { auditRepository, workspaceRepository } from '../db/repositories'
@@ -52,6 +54,8 @@ import {
   type DesignResultPayload,
   type DesignStreamPayload
 } from '../services/design-agent.service'
+import { discoverDesignFiles } from '../services/design-discovery.service'
+import { designRouteService } from '../services/design-route.service'
 import { getSessionEventRouter } from '../services/session-event-router'
 import { createTimedCleanupMap } from './listener-cleanup'
 import { notificationService } from '../services/notification.service'
@@ -74,6 +78,28 @@ export const MAX_BRIEF_CHARS = 4_000
  * runaway renderer cannot hand P3 an enumeration list that never terminates.
  */
 export const MAX_SCOPE_PATHS = 200
+
+/**
+ * Cap on directories returned by `design:scopeTree`.
+ *
+ * The picker is a list a human reads, not a full tree; beyond a couple of
+ * hundred rows it is noise, and an unbounded rollup of a monorepo would ship
+ * thousands of entries across IPC for no gain.
+ */
+export const MAX_SCOPE_TREE_DIRS = 200
+
+/**
+ * Coverage a child directory must still hold before `suggested` descends into
+ * it.
+ *
+ * Ranking directories by file count alone degenerates: cumulative counts make
+ * every ancestor score at least as high as its children, so the answer would
+ * always be the top-level directory — i.e. "the whole project", which is the
+ * default P3.7.9 measured at 37.8 s and exists to avoid. Descending the densest
+ * chain while coverage holds instead lands on the tightest directory that still
+ * contains essentially all the design surface.
+ */
+const SUGGESTED_MIN_COVERAGE = 0.8
 
 // ── Result envelope (A7) ─────────────────────────────────────────────────────
 
@@ -206,6 +232,132 @@ export function parseDesignRunConfig(args: unknown, channel: string): DesignRunC
   return { commandIds, scope, brief, llmProvider }
 }
 
+// ── Scope tree (P4.0) ────────────────────────────────────────────
+
+/** `'a/b/c.tsx'` → `'a/b'`; a workspace-root path has no parent. */
+function parentDir(path: string): string | null {
+  const cut = path.lastIndexOf('/')
+  return cut === -1 ? null : path.slice(0, cut)
+}
+
+/**
+ * Cumulative design-relevant file counts for every ancestor directory.
+ *
+ * Cumulative rather than direct-children-only: the picker offers directories as
+ * *scopes*, and selecting `src/renderer` reviews everything beneath it, so the
+ * number next to it has to be that same everything.
+ */
+export function rollupScopeDirs(filePaths: readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const filePath of filePaths) {
+    let cursor = parentDir(filePath)
+    while (cursor !== null) {
+      counts.set(cursor, (counts.get(cursor) ?? 0) + 1)
+      cursor = parentDir(cursor)
+    }
+  }
+  return counts
+}
+
+/**
+ * The directory to preselect: walk down the densest chain from the root for as
+ * long as the child still holds `SUGGESTED_MIN_COVERAGE` of the whole workspace.
+ *
+ * Returns null when there is nothing to suggest — an empty workspace, or one
+ * whose design files all sit at the root — in which case the UI falls back to
+ * whole-project scope.
+ */
+export function pickSuggestedDir(
+  counts: ReadonlyMap<string, number>,
+  totalFiles: number
+): string | null {
+  if (totalFiles === 0) return null
+
+  const byParent = new Map<string | null, Array<[string, number]>>()
+  for (const entry of counts) {
+    const key = parentDir(entry[0])
+    const bucket = byParent.get(key)
+    if (bucket) bucket.push(entry)
+    else byParent.set(key, [entry])
+  }
+
+  const floor = totalFiles * SUGGESTED_MIN_COVERAGE
+  let current: string | null = null
+  // Terminates: each step strictly increases path depth.
+  for (;;) {
+    const children = byParent.get(current)
+    if (!children || children.length === 0) return current
+    let best = children[0]
+    for (const child of children) {
+      if (child[1] > best[1]) best = child
+    }
+    if (best[1] < floor) return current
+    current = best[0]
+  }
+}
+
+/**
+ * Reconcile a run the DB still calls `running`/`pending` while nothing executes.
+ *
+ * Without this a run interrupted by a quit or a crash dead-ends the Design tab
+ * for that workspace forever: `loadLatest` derives `isRunning` from the row, the
+ * page pins itself to the run view, and Cancel is a no-op because
+ * `designAgentService` lost its in-memory state on restart — so nothing ever
+ * writes a terminal status back. `audit.ipc.ts` reconciles on `AUDIT_GET_LATEST`
+ * for exactly this reason; design mirrored the store but not the recovery.
+ *
+ * Mutates the returned run in place as well as persisting, because the caller
+ * ships this object straight to the renderer.
+ */
+export function reconcileStaleDesignRun(
+  run: AuditRun | null,
+  workspaceId: string
+): AuditRun | null {
+  if (!run) return null
+  if (run.status !== 'running' && run.status !== 'pending') return run
+  if (designAgentService.isRunningForWorkspace(workspaceId)) return run
+
+  log.warn(`[design] stale ${run.status} run detected (runId=${run.id}) — reconciling`)
+
+  const results = run.results ?? []
+  for (const result of results) {
+    if (result.status === 'running' || result.status === 'pending') {
+      auditRepository.updateResult(result.id, { status: 'cancelled' })
+      result.status = 'cancelled'
+    }
+  }
+
+  // A run that got some passes through is 'partial', not 'cancelled' — the
+  // completed findings are still worth reading.
+  const finalStatus = results.some((r) => r.status === 'completed') ? 'partial' : 'cancelled'
+  const updated = auditRepository.updateRun(run.id, { status: finalStatus })
+  if (updated) return updated
+
+  run.status = finalStatus
+  return run
+}
+
+/**
+ * Reduce a model-suggested scope hint to a safe workspace-relative path, or
+ * drop it.
+ *
+ * The hint reaches the renderer as a preselected scope and from there flows
+ * back into `scope.paths` on the next `DESIGN_START`. Normalising it here keeps
+ * every renderer-visible path under the same rule as a hand-picked one — a
+ * model that answers `../../etc` must not be able to seed the picker with it.
+ * A bad hint is dropped rather than rejected: routing is an assist, and losing
+ * the hint costs the user one dropdown click.
+ */
+export function sanitizeScopeHint(hint: string | null): string | null {
+  if (hint === null) return null
+  try {
+    return normalizeScopePath(hint, IPC_CHANNELS.DESIGN_ROUTE)
+  } catch {
+    log.warn(`[design:route] dropping unusable scopeHint ${JSON.stringify(hint)}`)
+    return null
+  }
+}
+
 export function registerDesignIpc(_mainWindow: BrowserWindow): void {
   // ── Catalogue-driven validation (pure, available now) ─────────────────────
 
@@ -272,12 +424,19 @@ export function registerDesignIpc(_mainWindow: BrowserWindow): void {
     const obj = requireObject(args, IPC_CHANNELS.DESIGN_CANCEL)
     const workspaceId = requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_CANCEL)
     designAgentService.cancel(workspaceId)
+    // Cancelling a run the service no longer knows about (app restarted mid-run)
+    // would otherwise be a silent no-op that leaves the row 'running' forever.
+    reconcileStaleDesignRun(
+      auditRepository.getLatestForWorkspace(workspaceId, 'design'),
+      workspaceId
+    )
     log.info(`[design:cancel] workspaceId=${workspaceId}`)
     return ok(null)
   })
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_ROUTE, async (_e, args: unknown) => {
     const obj = requireObject(args, IPC_CHANNELS.DESIGN_ROUTE)
+    const workspaceId = requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_ROUTE)
     const brief = requireString(obj, 'brief', IPC_CHANNELS.DESIGN_ROUTE)
     // Routing sends the brief to an LLM, so it is bounded on this path too.
     if (brief.length > MAX_BRIEF_CHARS) {
@@ -285,13 +444,57 @@ export function registerDesignIpc(_mainWindow: BrowserWindow): void {
         `${IPC_CHANNELS.DESIGN_ROUTE}: brief is ${brief.length} characters (max ${MAX_BRIEF_CHARS})`
       )
     }
-    return notImplemented('design:route')
+
+    // `route` never throws — a model failure is already a keyword fallback.
+    const routed = await designRouteService.route({ workspaceId, brief })
+
+    return ok<DesignRouteResult>({ ...routed, scopeHint: sanitizeScopeHint(routed.scopeHint) })
   })
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_CONTEXT_STATUS, async (_e, args: unknown) => {
     const obj = requireObject(args, IPC_CHANNELS.DESIGN_CONTEXT_STATUS)
     requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_CONTEXT_STATUS)
     return notImplemented('design:contextStatus')
+  })
+
+  ipcMain.handle(IPC_CHANNELS.DESIGN_SCOPE_TREE, async (_e, args: unknown) => {
+    const obj = requireObject(args, IPC_CHANNELS.DESIGN_SCOPE_TREE)
+    const workspaceId = requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_SCOPE_TREE)
+
+    const workspace = workspaceRepository.findById(workspaceId)
+    if (!workspace) return fail(`Workspace ${workspaceId} not found`)
+    if (!workspace.repoPath) return fail(`Workspace ${workspaceId} has no repo path`)
+
+    // Uncapped deliberately: `MAX_DESIGN_FILES` is the budget a *run* can
+    // review, and rolling only the first 100 paths up to directories would
+    // under-count every directory and preselect the wrong default.
+    const discovery = discoverDesignFiles(
+      workspace.repoPath,
+      { mode: 'project', paths: [] },
+      { limit: Number.MAX_SAFE_INTEGER }
+    )
+
+    const counts = rollupScopeDirs(discovery.filePaths)
+    const suggested = pickSuggestedDir(counts, discovery.totalFiles)
+
+    const ranked = [...counts.entries()]
+      .map(([path, fileCount]) => ({ path, fileCount }))
+      .sort((a, b) => b.fileCount - a.fileCount || a.path.localeCompare(b.path))
+
+    const dirs = ranked.slice(0, MAX_SCOPE_TREE_DIRS)
+    // The suggested directory is what the UI preselects, so it must be in the
+    // list even in the pathological case where the cap would have cut it.
+    if (suggested !== null && !dirs.some((d) => d.path === suggested)) {
+      const row = ranked.find((d) => d.path === suggested)
+      if (row) dirs.push(row)
+    }
+
+    return ok<DesignScopeTree>({
+      dirs,
+      totalFiles: discovery.totalFiles,
+      suggested,
+      truncated: ranked.length > MAX_SCOPE_TREE_DIRS
+    })
   })
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_GENERATE_REPORT, async (_e, args: unknown) => {
@@ -311,7 +514,8 @@ export function registerDesignIpc(_mainWindow: BrowserWindow): void {
   ipcMain.handle(IPC_CHANNELS.DESIGN_GET_LATEST, async (_e, args: unknown) => {
     const obj = requireObject(args, IPC_CHANNELS.DESIGN_GET_LATEST)
     const workspaceId = requireString(obj, 'workspaceId', IPC_CHANNELS.DESIGN_GET_LATEST)
-    return ok<AuditRun | null>(auditRepository.getLatestForWorkspace(workspaceId, 'design'))
+    const run = auditRepository.getLatestForWorkspace(workspaceId, 'design')
+    return ok<AuditRun | null>(reconcileStaleDesignRun(run, workspaceId))
   })
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_GET_HISTORY, async (_e, args: unknown) => {
@@ -361,6 +565,13 @@ const designCleanup = createTimedCleanupMap('design')
  */
 function wireDesignEvents(runId: string, workspaceId: string): void {
   const cleanups = designCleanup.prepareCleanups(workspaceId)
+
+  // Safety net, matching audit/council (90 min) and grill (60 min). The
+  // `try/finally` around `runDesign` (P3.7.5) means `complete` fires even on a
+  // throw, so this should never trigger — but design was the one module without
+  // it, and if that guarantee ever breaks five listeners leak per run for the
+  // life of the process.
+  designCleanup.scheduleAutoCleanup(workspaceId, cleanups, 90 * 60_000)
 
   // ── progress ──
   designCleanup.addListener<DesignProgressPayload>(
