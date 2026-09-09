@@ -218,7 +218,7 @@ export function TestabilityFollowUpDialog({
               data-testid="testability-followup-create"
               onClick={onCreate}
               disabled={creating || selected.size === 0 || createdCount !== null}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent/80 disabled:opacity-40"
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-on-accent transition-colors hover:bg-accent/80 disabled:opacity-40"
             >
               {creating ? <Loader2 size={12} className="animate-spin" /> : <Lightbulb size={12} />}
               Create {selected.size > 0 ? selected.size : ''} idea{selected.size === 1 ? '' : 's'}

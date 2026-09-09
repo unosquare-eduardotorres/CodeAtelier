@@ -265,7 +265,7 @@ function BubbleContentBody({
       data-testid="message-bubble-content"
       className={`rounded shadow-sm ${
         isUser
-          ? `px-5 py-4 bg-user-bubble text-text-body border-l-2 overflow-hidden min-w-0 ${sizeClasses.proseMax} ${isGrillActivation ? 'border-grill' : 'border-primary'}`
+          ? `px-5 py-4 bg-user-bubble text-text-body border overflow-hidden min-w-0 ${sizeClasses.proseMax} ${isGrillActivation ? 'border-grill/60' : 'border-border-subtle'}`
           : aiBubbleClass
       }`}
     >
@@ -323,6 +323,9 @@ function SaveToMemoryButton({ message }: { message: Message }): React.JSX.Elemen
       setTimeout(() => setFeedbackLabel(null), 3000)
     } catch (err) {
       console.error('Failed to save to memory:', err)
+      // Surface the failure — a silently reverting button reads as success.
+      setFeedbackLabel('Save failed')
+      setTimeout(() => setFeedbackLabel(null), 5000)
     } finally {
       setSaving(false)
     }
@@ -332,7 +335,11 @@ function SaveToMemoryButton({ message }: { message: Message }): React.JSX.Elemen
     <button
       onClick={handleSave}
       disabled={saving || feedbackLabel !== null}
-      className="inline-flex items-center gap-0.5 text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100 disabled:opacity-50"
+      className={`inline-flex items-center gap-0.5 text-[10px] transition-colors opacity-0 group-hover:opacity-100 focus-visible:opacity-100 disabled:opacity-50 ${
+        feedbackLabel === 'Save failed'
+          ? 'text-danger hover:text-danger'
+          : 'text-text-muted hover:text-primary-text'
+      }`}
       title={feedbackLabel ?? 'Save to memory'}
     >
       <BookmarkPlus className="w-3 h-3" />
@@ -416,7 +423,7 @@ function BubbleFooterActions({
                   }
                 }
               }}
-              className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100"
+              className="text-[10px] text-text-muted hover:text-primary-text transition-colors opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
               title="Undo to this message"
             >
               Undo to here
@@ -466,7 +473,7 @@ function MessageBubbleInner({
    * is the root class for both the plain-markdown bubble and every
    * MessageCardRenderer variant — capping it once covers both paths.
    */
-  const aiBubbleClass = `rounded-md px-4 py-3 bg-surface-overlay text-text-body border-l-2 border-primary/50 shadow-sm overflow-hidden min-w-0 ${sizeClasses.proseMax}`
+  const aiBubbleClass = `rounded-md px-4 py-3 bg-surface-overlay text-text-body border border-border-subtle shadow-sm overflow-hidden min-w-0 ${sizeClasses.proseMax}`
 
   return (
     <div

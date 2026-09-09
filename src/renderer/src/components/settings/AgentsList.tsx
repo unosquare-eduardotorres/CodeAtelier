@@ -156,7 +156,7 @@ export default function AgentsList({ workspacePath }: AgentsListProps): React.JS
         <button
           onClick={handleAutoActivate}
           disabled={isDeploying}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-on-accent text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isDeploying ? (
             <>

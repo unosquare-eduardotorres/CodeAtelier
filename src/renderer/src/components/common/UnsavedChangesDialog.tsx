@@ -92,7 +92,7 @@ export default function UnsavedChangesDialog({
           <button
             ref={saveRef}
             onClick={onSave}
-            className="px-4 py-2 text-sm font-medium bg-primary hover:bg-primary-hover text-white rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale"
+            className="px-4 py-2 text-sm font-medium bg-primary hover:bg-primary-hover text-on-accent rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale"
           >
             Save &amp; continue
           </button>

@@ -58,7 +58,7 @@ export function SkillMarketSection({
           <button
             onClick={onImportSkill}
             disabled={importingSkill}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-primary text-white hover:bg-primary/90 disabled:opacity-40 transition-colors"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-primary text-on-accent hover:bg-primary/90 disabled:opacity-40 transition-colors"
           >
             <Download size={12} />
             {importingSkill ? 'Importing…' : 'Import'}

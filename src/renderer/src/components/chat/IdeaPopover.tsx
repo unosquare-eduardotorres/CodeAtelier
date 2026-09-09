@@ -91,6 +91,7 @@ export default function IdeaPopover({
             />
             <textarea
               placeholder="Description (optional)..."
+              aria-label="Idea description (optional)"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}

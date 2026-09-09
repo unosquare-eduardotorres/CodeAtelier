@@ -177,7 +177,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
                   <span className="text-xs text-text-secondary mb-1 px-1">
                     {name.trim() || 'You'}
                   </span>
-                  <div className="rounded-2xl px-4 py-2.5 bg-primary/90 text-white text-sm">
+                  <div className="rounded-2xl px-4 py-2.5 bg-primary/90 text-on-accent text-sm">
                     Hey team, let&apos;s build something amazing!
                   </div>
                 </div>
@@ -191,7 +191,7 @@ export default function WelcomeModal({ onComplete }: WelcomeModalProps): React.J
           <button
             onClick={handleGetStarted}
             disabled={!name.trim() || isSaving}
-            className="w-full h-12 rounded-xl text-sm font-semibold bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised"
+            className="w-full h-12 rounded-xl text-sm font-semibold bg-primary hover:bg-primary-hover text-on-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised"
           >
             {isSaving ? (
               <>

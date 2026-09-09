@@ -348,7 +348,7 @@ export function DraftPanel({ blueprint, workspaceId }: DraftPanelProps): JSX.Ele
             data-testid="draft-save-btn"
             onClick={handleSave}
             disabled={busy}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 disabled:opacity-50 rounded-lg transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-on-accent bg-accent hover:bg-accent/80 disabled:opacity-50 rounded-lg transition-colors"
           >
             <Save size={12} />
             {busy ? 'Saving…' : 'Save changes'}
@@ -422,7 +422,7 @@ export function DraftPanel({ blueprint, workspaceId }: DraftPanelProps): JSX.Ele
             data-testid="draft-start-btn"
             onClick={handleStart}
             disabled={busy || !workspaceId}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent/80 disabled:opacity-50 rounded-lg transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-on-accent bg-accent hover:bg-accent/80 disabled:opacity-50 rounded-lg transition-colors"
           >
             <PlayCircle size={12} />
             {busy ? 'Starting…' : 'Start Blueprint'}

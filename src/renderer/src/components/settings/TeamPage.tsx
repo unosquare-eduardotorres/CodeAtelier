@@ -66,7 +66,7 @@ export default function TeamPage({ workspacePath }: TeamPageProps): React.JSX.El
             <button
               onClick={handleAutoActivate}
               disabled={isDeploying}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary/50"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-primary hover:bg-primary-hover text-on-accent text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed focus-visible:ring-2 focus-visible:ring-primary/50"
               aria-label="Auto-activate specialist agents"
             >
               {isDeploying ? (

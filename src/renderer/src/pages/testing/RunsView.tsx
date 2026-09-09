@@ -11,7 +11,7 @@
  * Clicking a result row calls onOpenDetail to drill into the full-page detail view.
  */
 
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, lazy, Suspense } from 'react'
 import {
   CheckCircle2,
   XCircle,
@@ -35,9 +35,10 @@ import type { ScenarioDelta } from '../TestingPage'
 import RunSummaryBar from './RunSummaryBar'
 import RunHistory from './RunHistory'
 import type { DetailTarget } from './ResultDetailView'
-import PassRateTrendChart from './charts/PassRateTrendChart'
-import RunCompositionChart from './charts/RunCompositionChart'
-import CategoryPassRateChart from './charts/CategoryPassRateChart'
+// ECharts is a large dependency — load it only when the charts render.
+const PassRateTrendChart = lazy(() => import('./charts/PassRateTrendChart'))
+const RunCompositionChart = lazy(() => import('./charts/RunCompositionChart'))
+const CategoryPassRateChart = lazy(() => import('./charts/CategoryPassRateChart'))
 import SectionCard from './SectionCard'
 
 interface RunsViewProps {
@@ -157,24 +158,30 @@ export default function RunsView({
             {/* Charts row */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <SectionCard title="Pass-rate trend" icon={<TrendingUp size={14} />}>
-                <PassRateTrendChart
-                  runs={runs}
-                  selectedRunId={selectedRunId}
-                  onSelectRun={onSelectRun}
-                />
+                <Suspense fallback={<div className="h-40" />}>
+                  <PassRateTrendChart
+                    runs={runs}
+                    selectedRunId={selectedRunId}
+                    onSelectRun={onSelectRun}
+                  />
+                </Suspense>
               </SectionCard>
               <SectionCard title="Run composition" icon={<BarChart3 size={14} />}>
-                <RunCompositionChart
-                  runs={runs}
-                  selectedRunId={selectedRunId}
-                  onSelectRun={onSelectRun}
-                />
+                <Suspense fallback={<div className="h-40" />}>
+                  <RunCompositionChart
+                    runs={runs}
+                    selectedRunId={selectedRunId}
+                    onSelectRun={onSelectRun}
+                  />
+                </Suspense>
               </SectionCard>
             </div>
 
             {/* Category pass rates */}
             <SectionCard title="Category pass rates" icon={<ListChecks size={14} />}>
-              <CategoryPassRateChart results={results} scenarios={scenarios} />
+              <Suspense fallback={<div className="h-40" />}>
+                <CategoryPassRateChart results={results} scenarios={scenarios} />
+              </Suspense>
             </SectionCard>
 
             {/* Results table */}

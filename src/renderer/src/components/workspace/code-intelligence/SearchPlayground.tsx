@@ -89,7 +89,7 @@ export default function SearchPlayground({
         <button
           onClick={handleSearch}
           disabled={!indexLoaded || !query.trim() || isSearching}
-          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-on-accent bg-primary hover:bg-primary-hover rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSearching ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
           Search

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react'
 import { Home, Sliders, CircleHelp, Bug } from 'lucide-react'
 import { Sidebar, UnifiedSidebar } from '@renderer/components/layout'
 import { ChatPanel } from '@renderer/components/chat'
@@ -16,13 +16,17 @@ import {
   TokenDetailsModal,
   UnsavedChangesDialog
 } from '@renderer/components/common'
-import {
-  WorkspaceTransition,
-  useTransitionState,
-  consumeUserInitiated
-} from '@renderer/components/transitions'
+import { useTransitionState, consumeUserInitiated } from '@renderer/components/transitions'
+// Three.js rides behind the transition overlay — load it only when a
+// workspace transition actually animates, not at app startup.
+const WorkspaceTransition = lazy(() =>
+  import('@renderer/components/transitions/WorkspaceTransition').then((m) => ({
+    default: m.WorkspaceTransition
+  }))
+)
 import { NotificationStack } from '@renderer/components/notifications'
 import { useBackgroundSessionListeners } from '@renderer/hooks/useBackgroundSessionListeners'
+import { useDangerModeGuard } from '@renderer/hooks/useDangerModeGuard'
 import { BugTrackerPage } from '@renderer/components/bugs'
 import {
   useWorkspaceStore,
@@ -129,7 +133,7 @@ function HeaderIconButton({
     >
       <Icon size={16} />
       {badge !== undefined && badge > 0 && (
-        <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-0.5 text-[9px] font-bold bg-red-500 text-white rounded-full">
+        <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[14px] h-[14px] px-0.5 text-[10px] font-bold bg-danger text-on-accent rounded-full">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -419,12 +423,14 @@ export default function AppLayout(): React.JSX.Element {
     }
   }, [view, sidebarView, guardedSetView, guardedSetSidebarView])
 
-  // Keyboard shortcuts — extracted to dedicated hook
+  // Keyboard shortcuts — extracted to dedicated hook. Mode changes route
+  // through the danger guard: entering Danger requires explicit confirmation.
+  const { guardedModeChange, guardDialog: dangerGuardDialog } = useDangerModeGuard(updateMode)
   useAppKeyboardShortcuts({
     activeWorkspace,
     activeConversation,
     isStreaming,
-    updateMode,
+    updateMode: guardedModeChange,
     navigateBack,
     view,
     setSidebarCollapsed,
@@ -605,14 +611,18 @@ export default function AppLayout(): React.JSX.Element {
         onCancel={handleUnsavedCancel}
       />
 
+      {dangerGuardDialog}
+
       {shouldShowOverlay && (
-        <WorkspaceTransition
-          phase={transitionState.phase}
-          animationType={transitionState.animationType}
-          workspaceName={transitionState.workspaceName}
-          onAnimationComplete={completeAnimation}
-          onAnimationError={forceComplete}
-        />
+        <Suspense fallback={null}>
+          <WorkspaceTransition
+            phase={transitionState.phase}
+            animationType={transitionState.animationType}
+            workspaceName={transitionState.workspaceName}
+            onAnimationComplete={completeAnimation}
+            onAnimationError={forceComplete}
+          />
+        </Suspense>
       )}
     </div>
   )

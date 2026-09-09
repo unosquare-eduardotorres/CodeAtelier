@@ -5,6 +5,7 @@
 import { useRef, useMemo } from 'react'
 import type { E2ERunSummary } from '../../../../../shared/types'
 import { useECharts } from './useECharts'
+import { useChartColors } from './chart-theme'
 import type { EChartsOption } from 'echarts'
 
 interface Props {
@@ -19,6 +20,7 @@ export default function RunCompositionChart({
   onSelectRun
 }: Props): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
+  const colors = useChartColors()
 
   const completed = useMemo(() => {
     return runs
@@ -33,7 +35,18 @@ export default function RunCompositionChart({
     const labels = completed.map((_, i) => `R${i + 1}`)
     const selectedIdx = completed.findIndex((r) => r.id === selectedRunId)
 
-    const makeSeries = (name: string, color: string, getter: (r: E2ERunSummary) => number) => ({
+    const makeSeries = (
+      name: string,
+      color: string,
+      getter: (r: E2ERunSummary) => number
+    ): {
+      name: string
+      type: 'bar'
+      stack: string
+      barWidth: string
+      data: { value: number; itemStyle: { color: string; opacity: number } }[]
+      emphasis: object
+    } => ({
       name,
       type: 'bar' as const,
       stack: 'total',
@@ -60,19 +73,19 @@ export default function RunCompositionChart({
           return (
             `<b>Run ${ps[0].dataIndex + 1}</b><br/>` +
             ps.map((p) => `${p.seriesName}: ${p.value}`).join('<br/>') +
-            `<br/><span style="color:#64748b">Click to select</span>`
+            `<br/><span style="color:${colors.textSecondary}">Click to select</span>`
           )
         }
       },
       legend: { show: false },
       series: [
-        makeSeries('Passed', '#22c55e', (r) => r.totalPassed),
-        makeSeries('Failed', '#ef4444', (r) => r.totalFailed),
-        makeSeries('Error', '#f59e0b', (r) => r.totalError),
-        makeSeries('Skipped', '#64748b', (r) => r.totalSkipped)
+        makeSeries('Passed', colors.success, (r) => r.totalPassed),
+        makeSeries('Failed', colors.danger, (r) => r.totalFailed),
+        makeSeries('Error', colors.warning, (r) => r.totalError),
+        makeSeries('Skipped', colors.muted, (r) => r.totalSkipped)
       ]
     }
-  }, [completed, selectedRunId])
+  }, [completed, selectedRunId, colors])
 
   useECharts(containerRef, option)
 

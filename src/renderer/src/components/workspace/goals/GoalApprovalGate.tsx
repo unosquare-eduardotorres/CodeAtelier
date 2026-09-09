@@ -162,7 +162,7 @@ export default function GoalApprovalGate({
             type="button"
             data-testid="goal-approval-approve-btn"
             onClick={onApprove}
-            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white bg-success hover:bg-success/80 rounded-lg transition-colors"
+            className="flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-on-accent bg-success hover:bg-success/80 rounded-lg transition-colors"
           >
             <CheckCircle size={14} />
             Approve & Execute

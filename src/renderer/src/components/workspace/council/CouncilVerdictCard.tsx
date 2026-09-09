@@ -121,7 +121,7 @@ function SectionBlock({
   accentColor: string
 }): React.JSX.Element {
   return (
-    <div className={`rounded-lg border border-border-subtle p-3 border-l-2 ${accentColor}`}>
+    <div className={`rounded-lg border p-3 ${accentColor}`}>
       <div className="flex items-center gap-2 mb-2">
         <Icon size={14} className="text-text-secondary" />
         <span className="text-sm font-semibold text-text-primary">{title}</span>
@@ -190,25 +190,25 @@ export default function CouncilVerdictCard({
           icon={CheckCircle2}
           title="Agreement"
           content={verdict.sections.agrees}
-          accentColor="border-l-success"
+          accentColor="border-success/40"
         />
         <SectionBlock
           icon={AlertTriangle}
           title="Disagreements"
           content={verdict.sections.clashes}
-          accentColor="border-l-warning"
+          accentColor="border-warning/40"
         />
         <SectionBlock
           icon={Eye}
           title="Blind Spots"
           content={verdict.sections.blindSpots}
-          accentColor="border-l-danger"
+          accentColor="border-danger/40"
         />
         <SectionBlock
           icon={Lightbulb}
           title="Recommendation"
           content={verdict.sections.recommendation}
-          accentColor="border-l-primary"
+          accentColor="border-primary/40"
         />
       </div>
 

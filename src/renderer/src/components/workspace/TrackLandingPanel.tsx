@@ -159,7 +159,7 @@ export function TrackLandingPanel({
           }}
           disabled={!canLand || busy || !mode}
           data-testid="track-landing-confirm"
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-white text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-accent text-on-accent text-xs disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {busy ? <Loader2 size={12} className="animate-spin" /> : <GitMerge size={12} />}
           Land

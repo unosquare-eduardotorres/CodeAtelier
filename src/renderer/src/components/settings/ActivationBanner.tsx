@@ -106,7 +106,7 @@ export default function ActivationBanner({
               data-testid="activation-deploy-btn"
               onClick={handleActivate}
               disabled={isActivating}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-primary-hover text-on-accent text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isActivating ? (
                 <>

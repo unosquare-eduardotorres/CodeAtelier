@@ -9,6 +9,13 @@
   --color-surface-raised: rgba(16, 20, 36, 0.72);
   --color-surface-overlay: rgba(22, 28, 48, 0.78);
   --color-surface-float: rgba(30, 36, 58, 0.85);
+  --color-surface-hover: rgba(226, 228, 240, 0.08);
+  --color-surface-inset: #080a12;
+  --color-surface-elevated: #1e2440;
+  --color-surface-panel: rgba(26, 32, 54, 0.8);
+
+  /* ── Text on accent fills (bright glass accents → dark ink) ── */
+  --color-on-accent: var(--color-surface-base);
 
   /* ── Border layers (frosted white) ── */
   --color-border-subtle: rgba(255, 255, 255, 0.07);
@@ -19,7 +26,7 @@
   --color-text-primary: #e2e4f0;
   --color-text-body: #c4c8dc;
   --color-text-secondary: #8a8ea6;
-  --color-text-muted: #5e6280;
+  --color-text-muted: #7b8098;
 
   /* ── Code text ── */
   --color-code-text: #d0d4e8;
@@ -34,6 +41,7 @@
 
   /* ── Accent (Lavender purple — replaces cyan) ── */
   --color-accent: #a78bfa;
+  --color-accent-hover: #bca9fb;
   --color-accent-muted: rgba(167, 139, 250, 0.12);
 
   /* ── Teal / Forest (muted steel-blue support colors) ── */
@@ -46,6 +54,7 @@
 
   /* ── Semantic status ── */
   --color-success: #4ade80;
+  --color-success-hover: #6ee79a;
   --color-success-muted: rgba(74, 222, 128, 0.15);
   --color-warning: #fbbf24;
   --color-warning-muted: rgba(251, 191, 36, 0.15);
@@ -60,14 +69,14 @@
   --color-mode-plan-text: #b4befe;
   --color-mode-plan-border: rgba(20, 24, 48, 0.3);
 
-  --color-mode-build: #6366f1;
+  --color-mode-build: #4f46e5;
   --color-mode-build-muted: rgba(99, 102, 241, 0.3);
-  --color-mode-build-text: #a78bfa;
+  --color-mode-build-text: #e0daff;
   --color-mode-build-border: rgba(99, 102, 241, 0.3);
 
   --color-mode-danger: #991b1b;
   --color-mode-danger-muted: rgba(153, 27, 27, 0.3);
-  --color-mode-danger-text: #f87171;
+  --color-mode-danger-text: #fecaca;
   --color-mode-danger-border: rgba(153, 27, 27, 0.4);
 
   /* ── Plan Card ── */

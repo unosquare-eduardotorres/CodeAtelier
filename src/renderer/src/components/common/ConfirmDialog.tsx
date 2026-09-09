@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
+import { useFocusTrap } from '@renderer/hooks/useFocusTrap'
 
 interface ConfirmDialogProps {
   isOpen: boolean
@@ -23,11 +24,18 @@ export default function ConfirmDialog({
   onCancel
 }: ConfirmDialogProps): React.JSX.Element | null {
   const confirmRef = useRef<HTMLButtonElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
+  // Danger dialogs focus the non-destructive action so an accidental Enter
+  // cannot trigger the destructive one; default dialogs focus Confirm.
+  const initialFocusRef = variant === 'danger' ? cancelRef : confirmRef
+  const trapRef = useFocusTrap<HTMLDivElement>(isOpen, { initialFocusRef })
 
   useEffect(() => {
     if (isOpen) {
-      confirmRef.current?.focus()
+      initialFocusRef.current?.focus()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen])
 
   useEffect(() => {
@@ -61,6 +69,7 @@ export default function ConfirmDialog({
 
       {/* Dialog */}
       <div
+        ref={trapRef}
         data-testid="confirm-dialog"
         className="relative bg-surface-float border border-border-default rounded shadow-2xl p-6 max-w-sm w-full mx-4 animate-in fade-in zoom-in-95"
       >
@@ -82,6 +91,7 @@ export default function ConfirmDialog({
 
         <div className="flex items-center justify-end gap-2 mt-6">
           <button
+            ref={cancelRef}
             onClick={onCancel}
             className="px-4 py-2 text-sm font-medium text-text-body hover:text-text-primary bg-surface-overlay hover:bg-surface-raised rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-border-default"
             aria-label={cancelLabel}
@@ -93,8 +103,8 @@ export default function ConfirmDialog({
             onClick={onConfirm}
             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 press-scale ${
               variant === 'danger'
-                ? 'bg-danger hover:bg-danger text-white focus-visible:ring-danger'
-                : 'bg-primary hover:bg-primary-hover text-white focus-visible:ring-primary'
+                ? 'bg-danger hover:opacity-90 text-on-accent focus-visible:ring-danger'
+                : 'bg-primary hover:bg-primary-hover text-on-accent focus-visible:ring-primary'
             }`}
             aria-label={confirmLabel}
           >

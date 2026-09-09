@@ -536,7 +536,7 @@ export default function CompleteDialog({
             <button
               onClick={handleClose}
               disabled={isSubmitting}
-              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-warning bg-warning hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-warning bg-warning hover:brightness-110 text-on-accent disabled:opacity-50 flex items-center gap-2"
             >
               {isSubmitting ? (
                 <>
@@ -551,7 +551,7 @@ export default function CompleteDialog({
             <button
               onClick={handleConfirm}
               disabled={isSubmitting || !commitMessage.trim() || !branchName.trim()}
-              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success bg-success hover:brightness-110 text-white disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success bg-success hover:brightness-110 text-on-accent disabled:opacity-50 flex items-center gap-2"
             >
               {isSubmitting ? (
                 <>

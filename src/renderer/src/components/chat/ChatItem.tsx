@@ -120,7 +120,7 @@ function ChatItemActions({
   title: string
 }): React.JSX.Element {
   return (
-    <div className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0">
+    <div className="hidden group-hover:flex group-focus-within:flex items-center gap-0.5 flex-shrink-0">
       <button
         className="flex items-center justify-center w-6 h-6 rounded-md hover:bg-surface-float text-text-muted hover:text-text-primary transition-colors"
         onClick={onEdit}
@@ -227,7 +227,7 @@ export default function ChatItem({
       }}
     >
       {draggable && (
-        <div className="hidden group-hover:flex items-center text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0">
+        <div className="hidden group-hover:flex group-focus-within:flex items-center text-text-muted cursor-grab active:cursor-grabbing flex-shrink-0">
           <GripVertical size={12} />
         </div>
       )}

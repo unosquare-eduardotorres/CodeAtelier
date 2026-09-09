@@ -386,7 +386,7 @@ export default function StartIndexingModal({
             data-testid="start-indexing-confirm"
             onClick={handleConfirm}
             disabled={busy}
-            className="px-4 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors disabled:opacity-50"
+            className="px-4 py-1.5 text-xs font-medium text-on-accent bg-primary hover:bg-primary-hover rounded-md transition-colors disabled:opacity-50"
           >
             {reviewOnly ? 'Save Exclusions' : 'Start Indexing'}
           </button>

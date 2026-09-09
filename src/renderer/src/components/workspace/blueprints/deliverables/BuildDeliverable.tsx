@@ -36,12 +36,15 @@ export function BuildDeliverable({
   phase,
   duration,
   tasks: dbTasks,
-  blueprintId
+  blueprintId,
+  readOnly = false
 }: {
   phase: BlueprintPhase
   duration: number | null
   tasks: BlueprintTask[]
   blueprintId?: string
+  /** Read-only surfaces (the detail view) hide task-mutation affordances. */
+  readOnly?: boolean
 }): JSX.Element {
   const config = PHASE_ICONS.build
   const build = findArtifact(phase.artifactsJson, 'build', 'build-metrics')
@@ -250,7 +253,7 @@ export function BuildDeliverable({
             Task Execution
           </h3>
 
-          {acceptableFailed.length > 1 && (
+          {!readOnly && acceptableFailed.length > 1 && (
             <BulkAcceptBar
               count={acceptableFailed.length}
               draft={bulkDraft}
@@ -328,7 +331,7 @@ export function BuildDeliverable({
                       </td>
                       <td className="px-4 py-2 text-text-secondary">
                         {task.description}
-                        {acceptDraft?.taskId === task.taskId && (
+                        {!readOnly && acceptDraft?.taskId === task.taskId && (
                           <AcceptNoteInput
                             note={acceptDraft.note}
                             isPending={skipPending === task.taskId}
@@ -342,21 +345,30 @@ export function BuildDeliverable({
                         <TaskStatusBadge task={task} skip={resolveSkip(task, skipOverlay)} />
                       </td>
                       <td className="px-4 py-2 text-right">
-                        <TaskActionButton
-                          isSkipped={resolveSkip(task, skipOverlay).skippedAt != null}
-                          isFailed={task.status === 'failed'}
-                          isPending={skipPending === task.taskId}
-                          onClick={() => {
-                            const isSkipped = resolveSkip(task, skipOverlay).skippedAt != null
-                            if (isSkipped) {
-                              void toggleSkip(task, false)
-                            } else if (task.status === 'failed') {
-                              setAcceptDraft({ taskId: task.taskId, note: '' })
-                            } else {
-                              void toggleSkip(task, true)
-                            }
-                          }}
-                        />
+                        {readOnly ? (
+                          <span
+                            className="text-text-muted"
+                            title="Read-only view — task actions live in the live execution view"
+                          >
+                            —
+                          </span>
+                        ) : (
+                          <TaskActionButton
+                            isSkipped={resolveSkip(task, skipOverlay).skippedAt != null}
+                            isFailed={task.status === 'failed'}
+                            isPending={skipPending === task.taskId}
+                            onClick={() => {
+                              const isSkipped = resolveSkip(task, skipOverlay).skippedAt != null
+                              if (isSkipped) {
+                                void toggleSkip(task, false)
+                              } else if (task.status === 'failed') {
+                                setAcceptDraft({ taskId: task.taskId, note: '' })
+                              } else {
+                                void toggleSkip(task, true)
+                              }
+                            }}
+                          />
+                        )}
                       </td>
                     </tr>
                   ))
@@ -376,21 +388,23 @@ export function BuildDeliverable({
           <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider">
             Wave Gates
           </h3>
-          <button
-            type="button"
-            onClick={() => void runGatesNow()}
-            disabled={gatesPending || !activeWorkspaceId}
-            data-testid="blueprint-run-gates-now"
-            title="Run the wave command gates (lint/build/full-suite) on the worktree as it stands — useful after a manual rescue commit"
-            className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary disabled:opacity-40 transition-colors"
-          >
-            {gatesPending ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <ShieldCheck size={12} />
-            )}
-            {gatesPending ? 'Running gates…' : 'Run gates now'}
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => void runGatesNow()}
+              disabled={gatesPending || !activeWorkspaceId}
+              data-testid="blueprint-run-gates-now"
+              title="Run the wave command gates (lint/build/full-suite) on the worktree as it stands — useful after a manual rescue commit"
+              className="inline-flex items-center gap-1.5 text-xs text-text-muted hover:text-text-secondary disabled:opacity-40 transition-colors"
+            >
+              {gatesPending ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <ShieldCheck size={12} />
+              )}
+              {gatesPending ? 'Running gates…' : 'Run gates now'}
+            </button>
+          )}
         </div>
         {waveGateReports.length > 0 && (
           <div className="space-y-2">

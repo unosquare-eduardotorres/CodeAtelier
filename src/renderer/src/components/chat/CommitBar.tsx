@@ -106,7 +106,7 @@ export default function CommitBar({
               <button
                 type="button"
                 onClick={() => setShowPrModal(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary hover:bg-primary-hover text-white transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-primary hover:bg-primary-hover text-on-accent transition-colors"
               >
                 <GitPullRequest size={12} />
                 Create PR
@@ -158,7 +158,7 @@ export default function CommitBar({
                 type="button"
                 onClick={() => void commitSelected(conversationId)}
                 disabled={!hasMessage || isCommitting}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-primary hover:bg-primary-hover text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium bg-primary hover:bg-primary-hover text-on-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
               >
                 {isCommitting ? (
                   <Loader2 size={12} className="animate-spin" />
@@ -177,7 +177,7 @@ export default function CommitBar({
               className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
                 hasChecked
                   ? 'border border-border-default bg-surface-float text-text-primary hover:bg-surface-overlay'
-                  : 'bg-primary hover:bg-primary-hover text-white'
+                  : 'bg-primary hover:bg-primary-hover text-on-accent'
               }`}
             >
               {isCommitting && !hasChecked ? (

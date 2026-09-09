@@ -179,7 +179,7 @@ export default function GitConfigSection({
                   <button
                     onClick={onSaveRemote}
                     disabled={isSavingRemote || !remoteUrl.trim()}
-                    className="px-2 py-1 text-xs bg-primary hover:bg-primary-hover text-white rounded disabled:opacity-50 transition-colors flex items-center gap-1 shrink-0"
+                    className="px-2 py-1 text-xs bg-primary hover:bg-primary-hover text-on-accent rounded disabled:opacity-50 transition-colors flex items-center gap-1 shrink-0"
                   >
                     {isSavingRemote ? <Loader2 size={10} className="animate-spin" /> : 'Save'}
                   </button>
@@ -210,7 +210,7 @@ export default function GitConfigSection({
               data-testid="git-init-btn"
               onClick={onInitRepo}
               disabled={isInitializingRepo}
-              className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5 shrink-0"
+              className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-on-accent rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5 shrink-0"
             >
               {isInitializingRepo ? (
                 <Loader2 size={12} className="animate-spin" />

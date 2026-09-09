@@ -24,14 +24,14 @@ const SIZE_MAP = {
 // ── Accent colors for initials circles (deterministic by first char) ──
 
 const INITIALS_COLORS = [
-  'bg-blue-600',
-  'bg-emerald-600',
-  'bg-violet-600',
-  'bg-cyan-600',
-  'bg-rose-600',
-  'bg-indigo-600',
-  'bg-teal-600',
-  'bg-purple-600'
+  'bg-agent-react',
+  'bg-agent-cloud',
+  'bg-agent-dotnet',
+  'bg-agent-postgres',
+  'bg-agent-ux',
+  'bg-agent-git',
+  'bg-agent-requirements',
+  'bg-agent-codeplanner'
 ] as const
 
 function getInitialsColor(key: string): string {
@@ -123,7 +123,7 @@ export default function Avatar({
           style={initialsStyle}
           aria-hidden="true"
         >
-          <span className={`${sizeClass} font-semibold text-white select-none`}>
+          <span className={`${sizeClass} font-semibold text-on-accent select-none`}>
             {getInitials(avatarKey)}
           </span>
         </div>

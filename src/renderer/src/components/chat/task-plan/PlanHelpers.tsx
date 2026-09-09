@@ -54,7 +54,7 @@ export function RootCausesList({ rootCauses }: { rootCauses: PlanRootCause[] }):
       {rootCauses.map((rc) => (
         <div
           key={`root-cause-${rc.id}`}
-          className="rounded border-l-4 border-danger bg-surface-base/40 p-4"
+          className="rounded border border-danger/40 bg-danger-muted/40 p-4"
         >
           <div className="text-sm font-semibold text-text-primary mb-1">
             Root Cause {rc.id} — {rc.title}
@@ -134,7 +134,7 @@ export function PhasesList({
   }
 
   const riskBorderColor = (risk: 'low' | 'medium' | 'high'): string =>
-    risk === 'low' ? 'border-l-success' : risk === 'medium' ? 'border-l-warning' : 'border-l-danger'
+    risk === 'low' ? 'border-success/40' : risk === 'medium' ? 'border-warning/40' : 'border-danger/40'
 
   const isFileTouched = (phase: PlanPhase, filePath: string): boolean => {
     const phaseExec = execution?.phases.find((p) => p.phaseId === phase.id)
@@ -279,7 +279,7 @@ export function PhasesList({
           return (
             <div
               key={`phase-${phase.id}`}
-              className={`rounded border border-[var(--color-plan-card-phase-border)] ${riskBorderColor(phase.risk)} border-l-4 bg-[var(--color-plan-card-phase-bg)] overflow-hidden`}
+              className={`rounded border ${riskBorderColor(phase.risk)} bg-[var(--color-plan-card-phase-bg)] overflow-hidden`}
             >
               <button
                 type="button"

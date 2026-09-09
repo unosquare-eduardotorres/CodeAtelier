@@ -412,7 +412,7 @@ function ServerModelRow({
               </button>
             )}
             {isLLMType && isSelected && (
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-primary text-white">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium bg-primary text-on-accent">
                 <Check size={10} />
                 Active
               </span>

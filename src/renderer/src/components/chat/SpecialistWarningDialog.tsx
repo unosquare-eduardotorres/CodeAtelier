@@ -181,7 +181,7 @@ export default function SpecialistWarningDialog({
             data-testid="specialist-warning-confirm"
             onClick={() => void handleContinue()}
             disabled={isSubmitting || isLoading}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-warning text-white hover:brightness-110 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-warning text-on-accent hover:brightness-110 transition-colors disabled:opacity-50"
           >
             {isSubmitting && <Loader2 size={12} className="animate-spin" />}
             Continue

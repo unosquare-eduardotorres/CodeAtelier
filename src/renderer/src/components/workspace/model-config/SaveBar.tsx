@@ -40,7 +40,7 @@ export default function SaveBar({
         <button
           onClick={onSave}
           disabled={saving}
-          className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-white bg-primary hover:bg-primary-hover transition-colors disabled:opacity-50"
+          className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg text-on-accent bg-primary hover:bg-primary-hover transition-colors disabled:opacity-50"
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : <Save size={12} />}
           Save

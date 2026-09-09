@@ -198,6 +198,7 @@ function BlueprintActiveView({
         currentPhase={currentPhase}
         blueprintTitle={blueprintTitle}
         branchName={readBlueprintBranchName(currentBlueprint?.settingsJson)}
+        settingsJson={currentBlueprint?.settingsJson}
         pipelineStartedAt={pipelineStartedAt}
         phaseDurations={phaseDurations}
         phaseStartedAt={phaseStartedAt}
@@ -401,7 +402,7 @@ function ClarifyAnswerPanel({
           type="button"
           onClick={handleSend}
           disabled={!answer.trim()}
-          className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-white bg-info hover:bg-info/80 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-medium text-on-accent bg-info hover:bg-info/80 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Send size={12} />
           Send Answer
@@ -770,27 +771,29 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
           </p>
         )}
 
+        {/* Error banner — every view EXCEPT detail, where OutcomePanel's
+            verdict banner already tells this story (one verdict leads, not
+            two siblings repeating it). */}
+        {lastError && effectiveView !== 'detail' && (
+          <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-danger/20 bg-danger-muted text-danger">
+            <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
+            <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+              <span className="text-sm font-medium">Blueprint failed to start</span>
+              <span className="text-xs opacity-80 break-words">{lastError.message}</span>
+            </div>
+            <button
+              onClick={() => useBlueprintStore.setState({ lastError: null })}
+              className="inline-flex items-center justify-center w-6 h-6 text-danger/60 hover:text-danger rounded transition-colors flex-shrink-0"
+              title="Dismiss"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
+
         {/* ── Landing View ── */}
         {effectiveView === 'landing' && (
           <>
-            {/* Error banner — shown when a blueprint start/phase failed silently */}
-            {lastError && (
-              <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-red-500/20 bg-red-500/5 text-red-300">
-                <AlertTriangle size={16} className="mt-0.5 flex-shrink-0" />
-                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
-                  <span className="text-sm font-medium">Blueprint failed to start</span>
-                  <span className="text-xs opacity-80 break-words">{lastError.message}</span>
-                </div>
-                <button
-                  onClick={() => useBlueprintStore.setState({ lastError: null })}
-                  className="inline-flex items-center justify-center w-6 h-6 text-red-400/60 hover:text-red-300 rounded transition-colors flex-shrink-0"
-                  title="Dismiss"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            )}
-
             {/* Empty state */}
             {history.length === 0 && (
               <div className="flex flex-col items-center justify-center py-10 px-4">

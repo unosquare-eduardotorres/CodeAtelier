@@ -232,7 +232,7 @@ export default function AISubscriptionsSection(): React.JSX.Element {
         <button
           onClick={runValidation}
           disabled={isValidating}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary hover:bg-primary-hover text-on-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <RefreshCw size={12} className={isValidating ? 'animate-spin' : ''} />
           {isValidating ? 'Validating...' : 'Validate All'}

@@ -156,27 +156,18 @@ export default function UnifiedSidebar({
     handleTabChange('chats')
   }
 
-  const sortedConversations = [...conversations]
-    .filter((c) => !c.title.startsWith('\u{1F4A1} Grill:'))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+  // Grill conversations stay in the list — hiding them forced users to
+  // remember they live behind Ideas (a memory bridge, audit heuristic 6).
+  // The 💡 prefix in the title is their badge.
+  const sortedConversations = [...conversations].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  )
 
   // --- Tab bar component ---
+  // Chats comes first: it is the primary surface, and opening on Settings
+  // buried the chat list one click deep every session.
   const renderTabBar = (): React.JSX.Element => (
     <div className="flex border-b border-border-subtle flex-shrink-0">
-      <button
-        onClick={() => handleTabChange('settings')}
-        className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors ${
-          activeTab === 'settings'
-            ? 'text-primary-text border-b-2 border-primary bg-primary-muted/30'
-            : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
-        }`}
-        aria-label="Settings"
-        data-testid="sidebar-tab-settings"
-        title="Workspace Settings"
-      >
-        <Settings size={14} />
-        {!isCollapsed && <span>Settings</span>}
-      </button>
       <button
         onClick={() => handleTabChange('chats')}
         className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors ${
@@ -190,6 +181,20 @@ export default function UnifiedSidebar({
       >
         <MessageSquare size={14} />
         {!isCollapsed && <span>Chats</span>}
+      </button>
+      <button
+        onClick={() => handleTabChange('settings')}
+        className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors ${
+          activeTab === 'settings'
+            ? 'text-primary-text border-b-2 border-primary bg-primary-muted/30'
+            : 'text-text-secondary hover:text-text-primary hover:bg-surface-overlay'
+        }`}
+        aria-label="Workspace"
+        data-testid="sidebar-tab-settings"
+        title="Workspace tools and settings"
+      >
+        <Settings size={14} />
+        {!isCollapsed && <span>Workspace</span>}
       </button>
     </div>
   )
@@ -325,12 +330,9 @@ export default function UnifiedSidebar({
                   onViewChange('chat')
                 }}
                 onDelete={(id) => {
-                  const target = conversations.find((c) => c.id === id)
-                  if (target && target.title === 'New Conversation') {
-                    closeConversation(id)
-                  } else {
-                    setDeleteTarget(id)
-                  }
+                  // Every deletion confirms — a conversation RENAMED to
+                  // "New Conversation" must not be treated as disposable.
+                  setDeleteTarget(id)
                 }}
                 onRename={renameConversation}
               />

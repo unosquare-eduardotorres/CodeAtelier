@@ -356,12 +356,12 @@ function UnparseablePlanCard({ planContent }: { planContent: string }): JSX.Elem
       <button
         type="button"
         onClick={() => setShowRaw((v) => !v)}
-        className="text-xs text-text-tertiary hover:text-text-primary"
+        className="text-xs text-text-muted hover:text-text-primary"
       >
         {showRaw ? 'Hide' : 'Show'} raw content ({planContent.length.toLocaleString()} chars)
       </button>
       {showRaw && (
-        <pre className="max-h-64 overflow-auto text-[10px] leading-tight text-text-tertiary whitespace-pre-wrap break-all">
+        <pre className="max-h-64 overflow-auto text-[10px] leading-tight text-text-muted whitespace-pre-wrap break-all">
           {planContent}
         </pre>
       )}

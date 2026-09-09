@@ -449,7 +449,7 @@ export default function GrillQuestionCard({
         <button
           onClick={handleSubmit}
           disabled={!canSubmit}
-          className="flex items-center gap-1.5 px-5 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 press-scale"
+          className="flex items-center gap-1.5 px-5 py-2 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg text-sm font-semibold transition-colors focus-visible:ring-2 focus-visible:ring-primary/50 press-scale"
         >
           <Send size={14} />
           Submit Answers

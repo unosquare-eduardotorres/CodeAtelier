@@ -242,9 +242,9 @@ export function ModelPicker({
               )
             })}
             {hasMixedProviders && (
-              <div className="flex items-start gap-2 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/20 mt-1.5">
-                <AlertCircle size={12} className="text-amber-400 shrink-0 mt-0.5" />
-                <p className="text-xs text-amber-300">
+              <div className="flex items-start gap-2 px-2 py-1.5 rounded bg-warning-muted border border-warning/20 mt-1.5">
+                <AlertCircle size={12} className="text-warning shrink-0 mt-0.5" />
+                <p className="text-xs text-warning">
                   <span className="font-medium">Mixed providers</span> — all actions will use the
                   Plan model&apos;s provider.
                 </p>

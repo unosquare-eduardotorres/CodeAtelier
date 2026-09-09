@@ -8,6 +8,13 @@
   --color-surface-raised: #1f2133;
   --color-surface-overlay: #24283b;
   --color-surface-float: #2f3347;
+  --color-surface-hover: rgba(192, 202, 245, 0.08);
+  --color-surface-inset: #14151f;
+  --color-surface-elevated: #363b52;
+  --color-surface-panel: #282c42;
+
+  /* ── Text on accent fills (pastel accents → dark ink) ── */
+  --color-on-accent: var(--color-surface-base);
 
   /* ── Border layers (blue-gray tinted) ── */
   --color-border-subtle: rgba(148, 163, 184, 0.08);
@@ -17,8 +24,8 @@
   /* ── Text hierarchy (blue-tinted whites — crisp, never yellow) ── */
   --color-text-primary: #c0caf5;
   --color-text-body: #a9b1d6;
-  --color-text-secondary: #787c99;
-  --color-text-muted: #565a6e;
+  --color-text-secondary: #8589a8;
+  --color-text-muted: #7e829f;
 
   /* ── Code text ── */
   --color-code-text: #a9b1d6;
@@ -33,6 +40,7 @@
 
   /* ── Accent (soft teal-green — muted, NOT neon) ── */
   --color-accent: #73daca;
+  --color-accent-hover: #8ee6d8;
   --color-accent-muted: rgba(115, 218, 202, 0.12);
 
   /* ── Teal / Forest ── */
@@ -45,6 +53,7 @@
 
   /* ── Semantic status ── */
   --color-success: #9ece6a;
+  --color-success-hover: #b0dd85;
   --color-success-muted: rgba(158, 206, 106, 0.15);
   --color-warning: #e0af68;
   --color-warning-muted: rgba(224, 175, 104, 0.15);

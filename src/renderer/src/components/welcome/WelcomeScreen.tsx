@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Bot, FolderOpen, Plus, Sparkles, Mic, Keyboard, Flame } from 'lucide-react'
 import { useWorkspaceStore } from '@renderer/store'
 import { useWorkspaceCardsData } from '@renderer/hooks/useWorkspaceCardsData'
@@ -87,6 +87,14 @@ export default function WelcomeScreen(): React.JSX.Element {
   const cardData = useWorkspaceCardsData(workspaces)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [showDialog, setShowDialog] = useState(false)
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  useEffect(() => {
+    window.api
+      .getPlatformInfo()
+      .then((info) => setAppVersion(info.appVersion))
+      .catch(() => setAppVersion(''))
+  }, [])
 
   const handleAddWorkspace = useCallback(async (): Promise<void> => {
     try {
@@ -178,7 +186,7 @@ export default function WelcomeScreen(): React.JSX.Element {
 
         {/* Footer: Version */}
         <div className="text-center">
-          <span className="text-xs text-text-muted">v1.0.0</span>
+          <span className="text-xs text-text-muted">{appVersion ? `v${appVersion}` : ''}</span>
         </div>
       </div>
 

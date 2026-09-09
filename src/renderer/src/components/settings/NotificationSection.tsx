@@ -51,10 +51,10 @@ export default function NotificationSection(): React.JSX.Element {
 
       {/* Warning banner — shown when enabled but macOS won't deliver */}
       {enabled && probeResult === 'denied' && (
-        <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
-          <AlertTriangle size={14} className="text-amber-400 shrink-0 mt-0.5" />
+        <div className="mt-3 flex items-start gap-2 p-3 rounded-lg bg-warning-muted border border-warning/20">
+          <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" />
           <div>
-            <p className="text-xs font-medium text-amber-400">macOS notifications unavailable</p>
+            <p className="text-xs font-medium text-warning">macOS notifications unavailable</p>
             <p className="text-xs text-text-secondary mt-0.5">
               This app needs to be code-signed and notarized for native macOS notifications. In-app
               toasts will still appear when background tasks complete.

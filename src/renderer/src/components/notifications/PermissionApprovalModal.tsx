@@ -12,6 +12,8 @@
  * file paths, key-value params) via ToolInputPreview instead of a raw summary.
  */
 
+import { useFocusTrap } from '@renderer/hooks/useFocusTrap'
+
 import {
   Shield,
   MessageCircle,
@@ -126,6 +128,7 @@ export default function PermissionApprovalModal({
   onDismiss: _onDismiss
 }: PermissionApprovalModalProps): React.JSX.Element {
   const theme = TYPE_THEMES[permission.type]
+  const trapRef = useFocusTrap<HTMLDivElement>(true)
   const TypeIcon = theme.icon
 
   // ── Extract structured data — new fields preferred, fall back to payload parsing ──
@@ -158,7 +161,10 @@ export default function PermissionApprovalModal({
         e.stopPropagation()
       }}
     >
-      <div className="bg-surface-float border border-border-default rounded-xl shadow-2xl w-[520px] overflow-hidden permission-modal-card-enter">
+      <div
+        ref={trapRef}
+        className="bg-surface-float border border-border-default rounded-xl shadow-2xl w-[520px] max-w-[90vw] overflow-hidden permission-modal-card-enter"
+      >
         {/* ── Animated Header Illustration ── */}
         <div
           className={`relative h-32 flex items-center justify-center overflow-hidden bg-gradient-to-b ${theme.bgClass} to-transparent`}
@@ -212,7 +218,7 @@ export default function PermissionApprovalModal({
               <ToolInputPreview toolName={toolName!} input={toolInput!} />
             </div>
           ) : (
-            <p className="text-sm text-text-default mt-3">{permission.summary}</p>
+            <p className="text-sm text-text-body mt-3">{permission.summary}</p>
           )}
 
           {queueCount > 1 && (

@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, lazy, Suspense } from 'react'
 import { Brain } from 'lucide-react'
 
 import { useWorkspaceStore, useMemoryStore } from '@renderer/store'
 import { ErrorBoundary } from '@renderer/components/common/ErrorBoundary'
 import { Button, Tabs, type TabItem } from '@renderer/components/common/ui'
 import {
-  GraphView,
   ClaudeMdPanel,
   FactsTab,
   ReviewTab,
@@ -14,6 +13,10 @@ import {
   CleanupPanel
 } from './memory'
 import { EmbeddingBar, EmbeddingChip } from './memory/EmbeddingStatus'
+
+// three.js + react-force-graph are the heaviest deps in the renderer — load
+// them only when the Graph tab is opened.
+const GraphView = lazy(() => import('./memory/GraphView'))
 
 // ── Constants ──
 
@@ -194,7 +197,9 @@ export default function MemorySettingsPage(): React.JSX.Element {
             }
           >
             <div className="flex-1 min-h-0 overflow-auto">
-              <GraphView workspaceId={workspaceId} />
+              <Suspense fallback={<div className="h-64" />}>
+                <GraphView workspaceId={workspaceId} />
+              </Suspense>
             </div>
           </ErrorBoundary>
         )}

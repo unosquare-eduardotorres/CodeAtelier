@@ -25,12 +25,15 @@ export function DeliverableHeader({
 }): JSX.Element {
   const Icon = config.icon
   return (
-    <div className="flex items-center gap-4 mb-6">
-      <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-surface-overlay border border-border-subtle">
-        <Icon size={20} className="text-accent" />
+    <div className="flex items-center gap-3 mb-6">
+      <div className="w-7 h-7 rounded-lg flex items-center justify-center bg-surface-overlay border border-border-subtle">
+        <Icon size={16} className="text-accent" />
       </div>
       <div className="flex-1 min-w-0">
-        <h2 className="text-lg font-semibold text-text-primary">{config.label} Phase</h2>
+        {/* h3, not h2 — the page title leads; a phase section is subordinate
+            (impeccable review: the old h2/text-lg here inverted hierarchy,
+            making nested content the loudest type on the page). */}
+        <h3 className="text-base font-semibold text-text-primary">{config.label} Phase</h3>
         <p className="text-sm text-text-secondary">{summary}</p>
       </div>
       {duration != null && (

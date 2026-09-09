@@ -166,7 +166,7 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
                 </button>
                 <button
                   onClick={checkForUpdates}
-                  className="px-4 py-2 text-xs font-medium rounded-lg bg-primary text-white hover:bg-primary-hover transition-colors"
+                  className="px-4 py-2 text-xs font-medium rounded-lg bg-primary text-on-accent hover:bg-primary-hover transition-colors"
                 >
                   Retry
                 </button>
@@ -274,7 +274,7 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
                 </button>
                 <button
                   onClick={installUpdate}
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-success text-white hover:bg-success/90 transition-colors"
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium rounded-lg bg-success text-on-accent hover:bg-success/90 transition-colors"
                 >
                   <RefreshCw size={12} />
                   {isCountingDown ? 'Restart now' : 'Restart & Install'}
@@ -294,7 +294,7 @@ export default function UpdateAvailableModal(): React.JSX.Element | null {
                 {currentVersion && (
                   <span className="update-arrow-enter text-text-secondary text-sm">→</span>
                 )}
-                <span className="update-arrow-enter text-2xl font-bold tabular-nums bg-gradient-to-r from-primary to-info bg-clip-text text-transparent">
+                <span className="update-arrow-enter text-2xl font-bold tabular-nums text-primary-text">
                   v{availableVersion}
                 </span>
               </div>

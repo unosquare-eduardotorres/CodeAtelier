@@ -82,6 +82,7 @@ const CHAT_ROLES = rolesInGroup('chat')
 const BLUEPRINT_ROLES = rolesInGroup('blueprint')
 const QUALITY_ROLES = rolesInGroup('quality')
 const COUNCIL_ROLES = rolesInGroup('council')
+const DESIGN_ROLES = rolesInGroup('design')
 const BACKGROUND_ROLES = rolesInGroup('background')
 
 // ─── Role Row Component ─────────────────────────────────
@@ -238,19 +239,10 @@ function RoleRow({
           </optgroup>
         )}
       </select>
-      {/* Thinking Budget — Phase C placeholder */}
-      <select
-        disabled
-        aria-label={`${role.label} thinking budget`}
-        title="Thinking Budget — coming in a future release"
-        className="bg-surface-base border border-border-subtle rounded-lg px-3 py-1.5 text-xs font-medium text-text-muted focus:outline-none shrink-0 w-24 opacity-50 cursor-not-allowed"
-      >
-        <option>Medium</option>
-      </select>
       {isUnavailable && (
         <AlertTriangle
           size={14}
-          className="text-amber-400 shrink-0"
+          className="text-warning shrink-0"
           aria-label="Model not found on current server"
         />
       )}
@@ -530,6 +522,27 @@ export default function ModelRolesSection({
         <SettingsCard>
           <div className="divide-y divide-border-subtle">
             {COUNCIL_ROLES.map((role) => (
+              <RoleRow
+                key={role.label}
+                role={role}
+                modelRoles={modelRoles}
+                claudeModelOverrides={claudeModelOverrides}
+                workspaceProvider={workspaceProvider}
+                modelOptions={modelOptions}
+                localBackend={localBackend}
+                onAssign={handleAssign}
+              />
+            ))}
+          </div>
+        </SettingsCard>
+      </div>
+
+      {/* ── Design ── */}
+      <div>
+        <h4 className="text-xs font-medium text-text-secondary mb-2">Design</h4>
+        <SettingsCard>
+          <div className="divide-y divide-border-subtle">
+            {DESIGN_ROLES.map((role) => (
               <RoleRow
                 key={role.label}
                 role={role}

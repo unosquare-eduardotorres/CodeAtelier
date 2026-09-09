@@ -9,8 +9,18 @@
 import type {
   BlueprintPhase,
   BlueprintTask,
-  BlueprintArtifact
+  BlueprintArtifact,
+  BlueprintWithDetails
 } from '../../../../../../shared/blueprint-types'
+import { formatPhaseLabel } from '../../../../../../shared/blueprint-types'
+// Aliased: this module declares its own 2-arg findArtifact for summaries;
+// the failure story needs the 3-arg artifact-helpers variant.
+import { findArtifact as findArtifactTyped, findAllArtifacts } from '../deliverables/artifact-helpers'
+import {
+  deriveTaskFailureDisplay,
+  capTaskList,
+  type TaskFailureDisplay
+} from '@renderer/utils/task-failure-display'
 
 // ── Duration formatter ──
 
@@ -360,4 +370,120 @@ export function getOutcomeStats(
     acknowledgedAt,
     totalDuration
   }
+}
+
+// ── Failure story (failed runs) ─────────────────────────────────────────────
+
+export interface FailureStory {
+  failedPhase: BlueprintPhase | null
+  /** Ephemeral lastError for this blueprint (null after reload). */
+  errorMsg: string | null
+  /** F4 — persisted environmental blocker from the retry-context snapshot. */
+  environmentalFailure: string | null
+  /** Derived context when lastError is absent (gaps_found path). */
+  context: {
+    title: string
+    description: string
+    isGaps: boolean
+    isEnvironmental: boolean
+  } | null
+  /** WAVE-RACE — persisted per-task failure reasons (build phase, capped at 5). */
+  failedTaskList: { shown: BlueprintTask[]; hiddenCount: number } | null
+  /** Resolve the verification-failure artifact content for a task, if any. */
+  artifactForTask: (taskId: string) => string | null
+  /** Pre-computed display shapes for the shown failed tasks. */
+  taskDisplays: { task: BlueprintTask; display: TaskFailureDisplay }[]
+}
+
+/**
+ * getFailureStory — everything the failed-run banner needs, derived PURELY
+ * from the blueprint record. Extracted from the 195-line IIFE that used to
+ * live inline in BlueprintDetailView so it stays testable and the view stays
+ * a layout.
+ */
+export function getFailureStory(
+  bp: BlueprintWithDetails,
+  lastError: { blueprintId: string; message: string } | null
+): FailureStory {
+  const failedPhase = bp.phases.find((p) => p.status === 'failed') ?? null
+  const errorMsg = lastError?.blueprintId === bp.id ? lastError.message : null
+
+  let environmentalFailure: string | null = null
+  if (failedPhase?.contextSnapshot) {
+    try {
+      const snap = JSON.parse(failedPhase.contextSnapshot) as Record<string, unknown>
+      if (typeof snap.environmentalFailure === 'string' && snap.environmentalFailure) {
+        environmentalFailure = snap.environmentalFailure
+      }
+    } catch {
+      /* malformed snapshot — treat as absent */
+    }
+  }
+
+  let context: FailureStory['context'] = null
+  if (environmentalFailure) {
+    // Environmental outranks gaps: it explains why retrying cannot help.
+    context = {
+      title: 'Environmental Failure — Retry Disabled',
+      description: environmentalFailure,
+      isGaps: false,
+      isEnvironmental: true
+    }
+  } else if (!errorMsg && failedPhase) {
+    const verifyArt = findArtifactTyped(failedPhase.artifactsJson, 'verify', 'verification')
+    const json = verifyArt?.contentJson as Record<string, unknown> | undefined
+    if (json?.overallStatus === 'gaps_found') {
+      const remTasks =
+        (json?.remediationTasks as unknown[]) ??
+        ((json?.tasks as Array<Record<string, unknown>>) ?? []).filter((t) =>
+          String(t.taskId ?? '').startsWith('R')
+        )
+      context = {
+        title: 'Gaps Found During Verification',
+        description:
+          remTasks.length > 0
+            ? `The verifier identified ${remTasks.length} issue(s) requiring remediation.`
+            : 'The verifier identified issues but could not generate remediation tasks.',
+        isGaps: true,
+        isEnvironmental: false
+      }
+    }
+  }
+
+  const failedTaskList =
+    failedPhase?.phase === 'build'
+      ? capTaskList(
+          (bp.tasks ?? []).filter((t) => t.status === 'failed'),
+          5
+        )
+      : null
+
+  const verifyFailArts = failedPhase
+    ? findAllArtifacts(failedPhase.artifactsJson, 'verification-failure')
+    : []
+  const artifactForTask = (taskId: string): string | null => {
+    const art = verifyFailArts.find((a) => a.contentMd?.startsWith(`## Task ${taskId} `))
+    return art?.contentMd ?? null
+  }
+
+  const taskDisplays = (failedTaskList?.shown ?? []).map((t) => ({
+    task: t,
+    display: deriveTaskFailureDisplay(t, artifactForTask(t.taskId))
+  }))
+
+  return {
+    failedPhase,
+    errorMsg,
+    environmentalFailure,
+    context,
+    failedTaskList,
+    artifactForTask,
+    taskDisplays
+  }
+}
+
+/** Phase label for the failed/stopped banner ("Retry to continue from the X phase"). */
+export function failedPhaseLabel(bp: BlueprintWithDetails): string {
+  const phase = bp.currentPhase ?? bp.phases.find((p) => p.status === 'failed')?.phase ?? null
+  return phase ? formatPhaseLabel(phase) : 'current'
 }

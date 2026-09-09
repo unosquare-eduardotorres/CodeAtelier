@@ -33,7 +33,8 @@
     "coverage:rank": "node scripts/coverage-rank.mjs",
     "test:cov:report": "npm run test:cov && npm run coverage:rank",
     "test:check-orphans": "node scripts/check-test-orphans.mjs",
-    "icons:extract": "tsx scripts/extract-language-icons.ts"
+    "icons:extract": "tsx scripts/extract-language-icons.ts",
+    "lint:design": "node scripts/check-design-tokens.mjs"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",

@@ -15,9 +15,9 @@ export default function ScrollToBottomButton({
     <button
       onClick={onClick}
       className={`absolute bottom-4 right-6 z-20 flex items-center justify-center
-        w-9 h-9 rounded-full bg-primary-base border border-primary-muted
-        shadow-lg shadow-primary-base/20 hover:bg-primary-hover
-        text-white
+        w-9 h-9 rounded-full bg-primary border border-primary-muted
+        shadow-lg shadow-primary/20 hover:bg-primary-hover
+        text-on-accent
         transition-all duration-200
         ${
           visible

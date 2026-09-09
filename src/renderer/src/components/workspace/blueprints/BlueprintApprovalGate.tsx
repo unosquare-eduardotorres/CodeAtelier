@@ -776,7 +776,7 @@ export default function BlueprintApprovalGate({
             type="button"
             onClick={onApprove}
             disabled={revising || accepting}
-            className={`flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-white rounded-lg transition-colors disabled:opacity-50 ${
+            className={`flex items-center gap-1.5 px-4 py-1.5 text-sm font-semibold text-on-accent rounded-lg transition-colors disabled:opacity-50 ${
               preflight?.result.hasBlockers
                 ? 'bg-warning hover:bg-warning/80'
                 : 'bg-success hover:bg-success/80'

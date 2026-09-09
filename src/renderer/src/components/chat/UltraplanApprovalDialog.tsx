@@ -12,12 +12,14 @@
 import { useState } from 'react'
 import { Cloud, Play, PlusCircle, X } from 'lucide-react'
 import { useUltraplanStore } from '@renderer/store/ultraplan.store'
+import { useFocusTrap } from '@renderer/hooks/useFocusTrap'
 
 export default function UltraplanApprovalDialog(): React.JSX.Element | null {
   const status = useUltraplanStore((s) => s.status)
   const planContent = useUltraplanStore((s) => s.planContent)
   const reset = useUltraplanStore((s) => s.reset)
   const [responding, setResponding] = useState(false)
+  const trapRef = useFocusTrap<HTMLDivElement>(status === 'approved')
 
   if (status !== 'approved') return null
 
@@ -40,11 +42,14 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       data-testid="ultraplan-approval-dialog"
     >
-      <div className="w-full max-w-lg mx-4 rounded-xl border border-border bg-surface-primary shadow-2xl">
+      <div
+        ref={trapRef}
+        className="w-full max-w-lg mx-4 rounded-xl border border-border bg-surface-float shadow-2xl"
+      >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-sky-500/10">
-            <Cloud className="w-4 h-4 text-sky-400" />
+          <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-info-muted">
+            <Cloud className="w-4 h-4 text-info" />
           </div>
           <div>
             <h2 className="text-sm font-semibold text-primary">UltraPlan Ready</h2>
@@ -58,7 +63,7 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
         {planContent && (
           <div className="px-5 py-3 border-b border-border">
             <div
-              className="max-h-48 overflow-y-auto rounded-lg bg-surface-secondary p-3 text-xs text-secondary font-mono whitespace-pre-wrap"
+              className="max-h-48 overflow-y-auto rounded-lg bg-surface-raised p-3 text-xs text-secondary font-mono whitespace-pre-wrap"
               data-testid="ultraplan-plan-preview"
             >
               {planContent.length > 500 ? planContent.slice(0, 500) + '…' : planContent}
@@ -73,7 +78,7 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
             data-testid="ultraplan-implement"
             disabled={responding}
             onClick={() => handleAction('implement_here')}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-surface-secondary hover:bg-surface-tertiary transition-colors text-left disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-surface-raised hover:bg-surface-overlay transition-colors text-left disabled:opacity-50"
           >
             <Play className="w-4 h-4 text-success shrink-0" />
             <div>
@@ -89,7 +94,7 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
             data-testid="ultraplan-new-session"
             disabled={responding}
             onClick={() => handleAction('new_session')}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-surface-secondary hover:bg-surface-tertiary transition-colors text-left disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-surface-raised hover:bg-surface-overlay transition-colors text-left disabled:opacity-50"
           >
             <PlusCircle className="w-4 h-4 text-sky-400 shrink-0" />
             <div>
@@ -105,7 +110,7 @@ export default function UltraplanApprovalDialog(): React.JSX.Element | null {
             data-testid="ultraplan-cancel"
             disabled={responding}
             onClick={() => handleAction('cancel')}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-surface-secondary hover:bg-surface-tertiary transition-colors text-left disabled:opacity-50"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-lg border border-border bg-surface-raised hover:bg-surface-overlay transition-colors text-left disabled:opacity-50"
           >
             <X className="w-4 h-4 text-secondary shrink-0" />
             <div>

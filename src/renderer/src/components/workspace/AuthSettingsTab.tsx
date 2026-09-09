@@ -125,7 +125,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             placeholder="sk-ant-..."
-            className="w-full px-3 py-2 rounded-lg border border-border-subtle bg-surface-overlay text-text-primary text-sm placeholder:text-text-tertiary focus:border-primary focus:ring-1 focus:ring-primary/30 transition-colors"
+            className="w-full px-3 py-2 rounded-lg border border-border-subtle bg-surface-overlay text-text-primary text-sm placeholder:text-text-muted focus:border-primary focus:ring-1 focus:ring-primary/30 transition-colors"
           />
           <p className="text-xs text-text-secondary mt-1.5">
             Your API key is stored locally in the workspace settings database. It is never sent to
@@ -139,7 +139,7 @@ export default function AuthSettingsTab(): React.JSX.Element {
         <button
           onClick={handleSave}
           disabled={isSaving}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-on-accent text-sm font-medium hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
           Save

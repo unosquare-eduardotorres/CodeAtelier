@@ -292,7 +292,7 @@ export default function BugDetail({
                 <button
                   onClick={handleSaveNote}
                   disabled={isSavingNote}
-                  className="px-3 py-1.5 text-sm bg-primary text-white rounded-md hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="px-3 py-1.5 text-sm bg-primary text-on-accent rounded-md hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSavingNote ? 'Saving...' : 'Save'}
                 </button>
@@ -334,7 +334,7 @@ export default function BugDetail({
             <button
               onClick={handleSaveNote}
               disabled={isSavingNote || !note.trim()}
-              className="px-3 py-1.5 text-sm bg-primary text-white rounded-md hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1.5 text-sm bg-primary text-on-accent rounded-md hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isSavingNote ? 'Saving...' : 'Save'}
             </button>

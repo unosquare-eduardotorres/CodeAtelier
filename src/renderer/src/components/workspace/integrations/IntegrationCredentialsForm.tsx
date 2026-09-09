@@ -231,7 +231,7 @@ export default function IntegrationCredentialsForm({
         <button
           onClick={handleSave}
           disabled={saving}
-          className="px-2.5 py-1 rounded bg-accent text-white text-[11px] font-medium disabled:opacity-50"
+          className="px-2.5 py-1 rounded bg-accent text-on-accent text-[11px] font-medium disabled:opacity-50"
         >
           {saving ? 'Saving…' : saved ? 'Saved' : 'Save'}
         </button>

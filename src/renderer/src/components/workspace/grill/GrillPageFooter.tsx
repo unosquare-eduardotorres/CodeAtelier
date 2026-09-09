@@ -84,7 +84,7 @@ export default function GrillPageFooter({
             <button
               onClick={onConvertDirectly}
               aria-label="Continue in chat"
-              className="flex items-center gap-1.5 px-5 py-2.5 bg-primary hover:bg-primary-hover text-white rounded-lg text-sm font-semibold transition-colors press-scale"
+              className="flex items-center gap-1.5 px-5 py-2.5 bg-primary hover:bg-primary-hover text-on-accent rounded-lg text-sm font-semibold transition-colors press-scale"
             >
               <MessageSquare size={14} />
               Continue in Chat
@@ -128,7 +128,7 @@ export default function GrillPageFooter({
             <button
               onClick={onGeneratePlan}
               aria-label="Generate structured plan from grill decisions"
-              className="flex items-center gap-1.5 px-5 py-2.5 bg-success hover:bg-success-hover text-white rounded-lg text-sm font-semibold transition-colors press-scale"
+              className="flex items-center gap-1.5 px-5 py-2.5 bg-success hover:bg-success-hover text-on-accent rounded-lg text-sm font-semibold transition-colors press-scale"
             >
               <FileText size={14} />
               Complete &amp; Generate Plan
@@ -159,7 +159,7 @@ export default function GrillPageFooter({
               aria-label="Convert idea directly to conversation"
               className={`flex items-center gap-1.5 rounded-lg text-sm transition-colors press-scale ${
                 shouldSuggestCompletion
-                  ? 'px-5 py-2.5 bg-success hover:bg-success-hover text-white font-semibold'
+                  ? 'px-5 py-2.5 bg-success hover:bg-success-hover text-on-accent font-semibold'
                   : 'px-3 py-2.5 border border-success text-success hover:bg-success/10 font-medium'
               }`}
             >
@@ -172,7 +172,7 @@ export default function GrillPageFooter({
               onClick={onSubmit}
               disabled={!canSubmit || isAtCharLimit}
               aria-label="Accept answers and re-evaluate"
-              className="flex items-center gap-1.5 px-5 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-semibold transition-colors press-scale"
+              className="flex items-center gap-1.5 px-5 py-2.5 bg-primary hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed text-on-accent rounded-lg text-sm font-semibold transition-colors press-scale"
             >
               <Check size={14} />
               Accept &amp; Re-evaluate

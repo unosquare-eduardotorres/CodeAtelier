@@ -512,7 +512,7 @@ export default function MessageInput({
         {(isStreaming || isSending) && (
           <button
             onClick={() => void dialogs.handleStop()}
-            className="flex-shrink-0 p-2 rounded-lg bg-danger text-white hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
+            className="flex-shrink-0 p-2 rounded-lg bg-danger text-on-accent hover:brightness-110 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
             aria-label="Stop generation"
             title="Stop generation"
           >
@@ -570,7 +570,7 @@ export default function MessageInput({
             void handleSend()
           }}
           disabled={isDisabled || !text.trim()}
-          className="flex-shrink-0 p-2 rounded-lg bg-primary text-white hover:bg-primary-hover disabled:opacity-30 disabled:hover:bg-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
+          className="flex-shrink-0 p-2 rounded-lg bg-primary text-on-accent hover:bg-primary-hover disabled:opacity-30 disabled:hover:bg-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-surface-base press-scale"
           aria-label="Send message (Enter)"
           title="Send message (Enter)"
         >

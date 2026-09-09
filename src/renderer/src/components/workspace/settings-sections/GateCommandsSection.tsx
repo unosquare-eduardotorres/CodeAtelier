@@ -187,7 +187,7 @@ export default function GateCommandsSection({
           onClick={() => void save()}
           disabled={saving || hasInvalid}
           data-testid="gate-commands-save"
-          className="text-xs font-medium px-3 py-1.5 rounded-lg bg-accent text-white hover:bg-accent/80 disabled:opacity-40 transition-colors"
+          className="text-xs font-medium px-3 py-1.5 rounded-lg bg-accent text-on-accent hover:bg-accent/80 disabled:opacity-40 transition-colors"
         >
           {saving ? 'Saving…' : 'Save gate commands'}
         </button>

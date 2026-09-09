@@ -6,6 +6,7 @@
 import { useRef, useMemo } from 'react'
 import type { E2ERunSummary } from '../../../../../shared/types'
 import { useECharts } from './useECharts'
+import { useChartColors, withAlpha } from './chart-theme'
 import { echarts } from './echarts-setup'
 import type { EChartsOption } from 'echarts'
 
@@ -21,6 +22,7 @@ export default function PassRateTrendChart({
   onSelectRun
 }: Props): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
+  const colors = useChartColors()
 
   // Last 20 completed runs, oldest→newest
   const completed = useMemo(() => {
@@ -68,13 +70,13 @@ export default function PassRateTrendChart({
           symbol: 'circle',
           symbolSize: (_, params) => (params.dataIndex === selectedIdx ? 10 : 5),
           itemStyle: {
-            color: (params) => (params.dataIndex === selectedIdx ? '#3b82f6' : '#22c55e')
+            color: (params) => (params.dataIndex === selectedIdx ? colors.info : colors.success)
           },
-          lineStyle: { color: '#22c55e', width: 2 },
+          lineStyle: { color: colors.success, width: 2 },
           areaStyle: {
             color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: 'rgba(34, 197, 94, 0.25)' },
-              { offset: 1, color: 'rgba(34, 197, 94, 0.02)' }
+              { offset: 0, color: withAlpha(colors.success, 0.25) },
+              { offset: 1, color: withAlpha(colors.success, 0.02) }
             ])
           },
           markLine:
@@ -83,13 +85,13 @@ export default function PassRateTrendChart({
                   silent: true,
                   symbol: 'none',
                   data: [{ xAxis: selectedIdx }],
-                  lineStyle: { color: '#3b82f6', type: 'dashed', width: 1 }
+                  lineStyle: { color: colors.info, type: 'dashed', width: 1 }
                 }
               : undefined
         }
       ]
     }
-  }, [completed, selectedRunId])
+  }, [completed, selectedRunId, colors])
 
   useECharts(containerRef, option)
 

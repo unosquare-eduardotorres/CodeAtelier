@@ -146,7 +146,7 @@ export default function ProfileSection(): React.JSX.Element {
             <span className="text-xs text-text-secondary mb-1 px-1">
               {editName.trim() || 'You'}
             </span>
-            <div className="rounded-2xl px-4 py-2.5 bg-primary/90 text-white text-sm">
+            <div className="rounded-2xl px-4 py-2.5 bg-primary/90 text-on-accent text-sm">
               Hey team, let&apos;s build something amazing!
             </div>
           </div>

@@ -154,7 +154,7 @@ export default function EmbeddingModelCard({
         ) : (
           <button
             onClick={onNavigateToModels}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-md transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-on-accent bg-primary hover:bg-primary-hover rounded-md transition-colors"
           >
             Configure Embedding Connection →
           </button>

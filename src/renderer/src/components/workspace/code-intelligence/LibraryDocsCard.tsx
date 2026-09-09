@@ -57,7 +57,7 @@ export default function LibraryDocsCard({
               placeholder="ctx7sk-..."
               className="w-full px-2 py-1.5 text-xs font-mono rounded
                 bg-surface-base border border-border-subtle text-text-body
-                placeholder:text-text-muted focus:outline-none focus:border-accent-primary"
+                placeholder:text-text-muted focus:outline-none focus:border-accent"
             />
             <button
               onClick={() => setShowKey(!showKey)}
@@ -68,8 +68,8 @@ export default function LibraryDocsCard({
           </div>
           <button
             onClick={handleSave}
-            className="px-3 py-1.5 text-xs rounded bg-accent-primary text-white
-              hover:bg-accent-primary/90 flex items-center gap-1"
+            className="px-3 py-1.5 text-xs rounded bg-accent text-on-accent
+              hover:bg-accent/90 flex items-center gap-1"
           >
             {saved ? (
               <>
@@ -86,7 +86,7 @@ export default function LibraryDocsCard({
             href="https://context7.com/dashboard"
             target="_blank"
             rel="noreferrer"
-            className="text-accent-primary hover:underline"
+            className="text-accent hover:underline"
           >
             context7.com/dashboard
           </a>

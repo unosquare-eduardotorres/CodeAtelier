@@ -7,6 +7,13 @@
   --color-surface-raised: #182428;
   --color-surface-overlay: #1e2c31;
   --color-surface-float: #263538;
+  --color-surface-hover: rgba(236, 230, 220, 0.07);
+  --color-surface-inset: #0d1518;
+  --color-surface-elevated: #2b3c40;
+  --color-surface-panel: #223338;
+
+  /* ── Text on accent fills (gold/copper accents are light → dark ink) ── */
+  --color-on-accent: var(--color-surface-base);
 
   /* ── Border layers (gold-based) ── */
   --color-border-subtle: rgba(184, 151, 106, 0.15);
@@ -32,6 +39,7 @@
 
   /* ── Accent (Jewel Copper) ── */
   --color-accent: #84d0e6;
+  --color-accent-hover: #a5ddee;
   --color-accent-muted: rgba(123, 184, 201, 0.15);
 
   /* ── Deep Teal / Forest Green ── */
@@ -44,6 +52,7 @@
 
   /* ── Semantic status ── */
   --color-success: #5db88a;
+  --color-success-hover: #6ec99a;
   --color-success-muted: rgba(93, 184, 138, 0.15);
   --color-warning: #d49353;
   --color-warning-muted: rgba(212, 147, 83, 0.15);
@@ -55,17 +64,17 @@
   /* ── Mode tokens (Plan / Build / Danger) ── */
   --color-mode-plan: #3c4b46;
   --color-mode-plan-muted: rgba(60, 75, 70, 0.3);
-  --color-mode-plan-text: #8a9a9e;
+  --color-mode-plan-text: #b4c3c7;
   --color-mode-plan-border: rgba(60, 75, 70, 0.3);
 
   --color-mode-build: #6a4638;
   --color-mode-build-muted: rgba(106, 70, 56, 0.3);
-  --color-mode-build-text: #d49353;
+  --color-mode-build-text: #e9bd8c;
   --color-mode-build-border: rgba(106, 70, 56, 0.3);
 
   --color-mode-danger: #6b2020;
   --color-mode-danger-muted: rgba(107, 32, 32, 0.3);
-  --color-mode-danger-text: #e05252;
+  --color-mode-danger-text: #f09090;
   --color-mode-danger-border: rgba(107, 32, 32, 0.4);
 
   /* ── Plan Card ── */

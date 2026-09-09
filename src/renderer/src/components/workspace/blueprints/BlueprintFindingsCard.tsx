@@ -57,10 +57,10 @@ export const CATEGORY_LABELS: Record<ClarifyFindingCategory, string> = {
 // ── Severity Colors ──
 
 const SEVERITY_COLORS: Record<ClarifyFindingSeverity, string> = {
-  critical: 'bg-red-500/20 text-red-400 border-red-500/30',
-  high: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
-  medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
-  low: 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+  critical: 'bg-danger-muted text-danger border-danger/30',
+  high: 'bg-warning-muted text-warning border-warning/30',
+  medium: 'bg-warning-muted/60 text-warning/90 border-warning/25',
+  low: 'bg-info-muted text-info border-info/30'
 }
 
 // ── Status Chips ──

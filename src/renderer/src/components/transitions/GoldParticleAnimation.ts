@@ -7,7 +7,9 @@ import {
   ShaderMaterial,
   Points,
   Color,
-  NormalBlending
+  NormalBlending,
+  Mesh,
+  Line
 } from 'three'
 import {
   SCENE_BG,
@@ -17,7 +19,40 @@ import {
   PARTICLE_COUNT_LOW,
   FRAME_TIME_THRESHOLD
 } from './transition-constants'
-import { teardownRenderer } from './transition-utils'
+
+/** Dispose all Three.js objects in a scene (geometries + materials) */
+function disposeScene(scene: Scene): void {
+  scene.traverse((object) => {
+    if (object instanceof Mesh || object instanceof Points || object instanceof Line) {
+      object.geometry?.dispose()
+      const mat = object.material
+      if (Array.isArray(mat)) {
+        mat.forEach((m) => m.dispose())
+      } else if (mat) {
+        mat.dispose()
+      }
+    }
+  })
+}
+
+/** Full renderer teardown sequence */
+function teardownRenderer(
+  renderer: WebGLRenderer | null,
+  scene: Scene | null,
+  container: HTMLElement | null,
+  animationId: number | null
+): void {
+  // 1. Stop animation loop FIRST
+  if (animationId !== null) cancelAnimationFrame(animationId)
+  // 2. Dispose scene objects
+  if (scene) disposeScene(scene)
+  // 3. Dispose renderer (releases WebGL context)
+  if (renderer) {
+    renderer.dispose()
+    const canvas = renderer.domElement
+    if (container?.contains(canvas)) container.removeChild(canvas)
+  }
+}
 
 // ── Gold palette for vertex colors (monochromatic warm gold) ──
 const GOLD_PALETTE: readonly [number, number, number][] = [

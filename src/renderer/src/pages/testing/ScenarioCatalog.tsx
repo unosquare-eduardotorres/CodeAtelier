@@ -488,7 +488,7 @@ export default function ScenarioCatalog({
                             {scenario.knownIssue && (
                               <span
                                 title={scenario.knownIssue}
-                                className="text-xs px-1.5 py-0.5 rounded-lg bg-warning-muted/20 text-warning-text border border-warning-muted/40"
+                                className="text-xs px-1.5 py-0.5 rounded-lg bg-warning-muted/20 text-warning border border-warning-muted/40"
                               >
                                 Known Issue
                               </span>

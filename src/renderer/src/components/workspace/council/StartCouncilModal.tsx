@@ -48,13 +48,13 @@ export default function StartCouncilModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <div
         data-testid="council-start-modal"
-        className="bg-surface-float rounded-xl border border-indigo-500/30 shadow-xl w-[520px] overflow-hidden"
+        className="bg-surface-float rounded-xl border border-accent/30 shadow-xl w-[520px] max-w-[90vw] mx-4 overflow-hidden"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 bg-indigo-500/10 border-b border-indigo-500/20">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-accent-muted border-b border-accent/20">
           <div className="flex items-center gap-2">
-            <Landmark size={16} className="text-indigo-400" />
-            <span className="text-sm font-medium text-indigo-400">New Council Review</span>
+            <Landmark size={16} className="text-accent" />
+            <span className="text-sm font-medium text-accent">New Council Review</span>
           </div>
           <button
             onClick={onClose}

@@ -22,14 +22,7 @@ import type {
   BlueprintPhaseType
 } from '../../../../../shared/blueprint-types'
 import { PHASE_ICONS, type PhaseIconKey } from './phase-icons'
-import { SpecifyDeliverable } from './deliverables/SpecifyDeliverable'
-import { ClarifyDeliverable } from './deliverables/ClarifyDeliverable'
-import { PlanDeliverable } from './deliverables/PlanDeliverable'
-import { TasksDeliverable } from './deliverables/TasksDeliverable'
-import { ReviewDeliverable } from './deliverables/ReviewDeliverable'
-import { BuildDeliverable } from './deliverables/BuildDeliverable'
-import { CodeReviewDeliverable } from './deliverables/CodeReviewDeliverable'
-import { VerifyDeliverable } from './deliverables/VerifyDeliverable'
+import { PhaseDeliverableRouter } from './deliverables/PhaseDeliverableRouter'
 import BlueprintFileViewerDrawer from './BlueprintFileViewerDrawer'
 
 // ── Props ──
@@ -137,7 +130,7 @@ function EmptyDeliverableState({ currentPhase }: { currentPhase: string | null }
   )
 }
 
-// ── Phase Content Router ──
+// ── Phase Content Router — delegates to the ONE shared dispatcher ──
 
 function PhaseDeliverableContent({
   phase,
@@ -155,33 +148,14 @@ function PhaseDeliverableContent({
       ? Math.max(0, new Date(phase.completedAt).getTime() - new Date(phase.startedAt).getTime())
       : null)
 
-  switch (phase.phase) {
-    case 'specify':
-      return <SpecifyDeliverable phase={phase} duration={duration} />
-    case 'clarify':
-      return <ClarifyDeliverable phase={phase} duration={duration} />
-    case 'plan':
-      return <PlanDeliverable phase={phase} duration={duration} />
-    case 'tasks':
-      return <TasksDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
-    case 'review':
-      return <ReviewDeliverable phase={phase} duration={duration} />
-    case 'build':
-      return (
-        <BuildDeliverable
-          phase={phase}
-          duration={duration}
-          tasks={blueprint.tasks}
-          blueprintId={blueprint.id}
-        />
-      )
-    case 'code-review':
-      return <CodeReviewDeliverable phase={phase} duration={duration} tasks={blueprint.tasks} />
-    case 'verify':
-      return <VerifyDeliverable phase={phase} duration={duration} blueprintId={blueprint.id} />
-    default:
-      return <p className="text-xs text-text-muted italic">No renderer for phase: {phase.phase}</p>
-  }
+  return (
+    <PhaseDeliverableRouter
+      phase={phase}
+      tasks={blueprint.tasks}
+      blueprintId={blueprint.id}
+      duration={duration}
+    />
+  )
 }
 
 // ── Main Component ──

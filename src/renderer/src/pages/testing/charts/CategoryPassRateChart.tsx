@@ -5,6 +5,7 @@
 import { useRef, useMemo } from 'react'
 import type { E2EResultSummary, E2EScenarioSummary } from '../../../../../shared/types'
 import { useECharts } from './useECharts'
+import { useChartColors } from './chart-theme'
 import type { EChartsOption } from 'echarts'
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -31,6 +32,7 @@ export default function CategoryPassRateChart({
   scenarios
 }: Props): React.JSX.Element | null {
   const containerRef = useRef<HTMLDivElement>(null)
+  const colors = useChartColors()
 
   const option = useMemo<EChartsOption | null>(() => {
     if (results.length === 0) return null
@@ -85,7 +87,7 @@ export default function CategoryPassRateChart({
           data: rates.map((v) => ({
             value: v,
             itemStyle: {
-              color: v >= 80 ? '#22c55e' : v >= 50 ? '#f59e0b' : '#ef4444',
+              color: v >= 80 ? colors.success : v >= 50 ? colors.warning : colors.danger,
               borderRadius: [0, 3, 3, 0]
             }
           })),
@@ -95,12 +97,12 @@ export default function CategoryPassRateChart({
             position: 'right',
             formatter: '{c}%',
             fontSize: 10,
-            color: '#94a3b8'
+            color: colors.muted
           }
         }
       ]
     }
-  }, [results, scenarios])
+  }, [results, scenarios, colors])
 
   useECharts(containerRef, option)
 

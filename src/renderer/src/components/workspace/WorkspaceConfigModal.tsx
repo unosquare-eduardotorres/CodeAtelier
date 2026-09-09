@@ -60,7 +60,7 @@ export default function WorkspaceConfigModal({
         {/* Modal */}
         <div
           data-testid="workspace-config-modal"
-          className="relative bg-surface-float border border-border-default rounded w-[480px] max-h-[600px] shadow-2xl flex flex-col"
+          className="relative bg-surface-float border border-border-default rounded w-[480px] max-w-[90vw] mx-4 max-h-[600px] shadow-2xl flex flex-col"
         >
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-4 border-b border-border-subtle">
@@ -158,7 +158,7 @@ export default function WorkspaceConfigModal({
               data-testid="workspace-config-save"
               onClick={handleAddWorkspace}
               disabled={isAdding}
-              className="flex items-center gap-2 px-4 py-2 w-full justify-center rounded-lg bg-primary hover:bg-primary-hover text-white text-sm font-medium transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="flex items-center gap-2 px-4 py-2 w-full justify-center rounded-lg bg-primary hover:bg-primary-hover text-on-accent text-sm font-medium transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             >
               <Plus size={16} />
               <span>Add Workspace</span>

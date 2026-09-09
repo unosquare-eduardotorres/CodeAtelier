@@ -41,6 +41,7 @@ import { useRateLimitState } from './useRateLimitState'
 import { useApiRetryState } from './useApiRetryState'
 import { useSessionRecoveryState } from './useSessionRecoveryState'
 import { useMcpIntegrations } from './useMcpIntegrations'
+import { useDangerModeGuard } from '@renderer/hooks/useDangerModeGuard'
 import ApiRetryBanner from './ApiRetryBanner'
 import ModelConfigPopover from './ModelConfigPopover'
 
@@ -283,7 +284,7 @@ function ChatPanelBanners({
         isStreaming && (
           <div
             data-testid="stream-stall-banner"
-            className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-amber-300 animate-in fade-in slide-in-from-top-2 duration-300"
+            className="mx-4 mt-2 flex items-center gap-3 rounded-lg border border-warning/20 bg-warning-muted px-4 py-3 text-warning animate-in fade-in slide-in-from-top-2 duration-300"
           >
             <AlertTriangle size={16} className="flex-shrink-0" />
             <div className="flex flex-1 flex-col gap-0.5">
@@ -496,6 +497,9 @@ export default function ChatPanel({
   const { activeWorkspace, agentStatus } = useWorkspaceStore()
   const { createConversation, sendMessage, loadContextUsage, updateMode, setEffort } =
     useChatActions()
+  // Pill-driven mode changes route through the danger guard (⌘. does the same
+  // in AppLayout): entering Danger requires explicit confirmation.
+  const { guardedModeChange, guardDialog: dangerGuardDialog } = useDangerModeGuard(updateMode)
   const effortLevels = useChatStore((s) => s.effortLevels)
   const activeConversation = useChatStore((s) => s.activeConversation)
   const messages = useChatStore((s) => s.messages)
@@ -829,8 +833,8 @@ export default function ChatPanel({
                     few seconds.
                   </p>
                   <div className="mt-4 flex items-center gap-2">
-                    <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.3s]" />
-                    <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce [animation-delay:-0.15s]" />
+                    <div className="w-2 h-2 bg-primary-text rounded-full animate-pulse [animation-delay:-0.3s]" />
+                    <div className="w-2 h-2 bg-primary-text rounded-full animate-pulse [animation-delay:-0.15s]" />
                     <div className="w-2 h-2 bg-primary-text rounded-full animate-bounce" />
                   </div>
                 </div>
@@ -847,7 +851,7 @@ export default function ChatPanel({
                   isStreaming={isStreaming}
                   effortLevel={effortLevels[activeConversation.id] ?? ('medium' as const)}
                   mcpIntegrations={availableMcpIntegrations}
-                  onCycleMode={() => updateMode(MODE_CYCLE[activeConversation.mode])}
+                  onCycleMode={() => guardedModeChange(MODE_CYCLE[activeConversation.mode])}
                   onSetEffort={(effort) => setEffort(activeConversation.id, effort)}
                   onMcpToggle={handleMcpToggle}
                 />
@@ -909,6 +913,8 @@ export default function ChatPanel({
       )}
 
       {activeTab === 'files' && <ChatFilesTab />}
+
+      {dangerGuardDialog}
     </div>
   )
 }

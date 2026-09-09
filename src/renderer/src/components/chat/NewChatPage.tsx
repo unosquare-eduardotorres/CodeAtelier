@@ -397,11 +397,15 @@ export default function NewChatPage({
             maxLength={TITLE_MAX}
             autoComplete="off"
           />
-          <div className="flex justify-end mt-1">
-            <span className="text-xs text-text-muted">
-              {title.length}/{TITLE_MAX}
-            </span>
-          </div>
+          {/* Counter appears only as the limit approaches — an always-on
+              "0/500" is noise for the empty state. */}
+          {title.length >= TITLE_MAX * 0.8 && (
+            <div className="flex justify-end mt-1">
+              <span className="text-xs text-text-muted">
+                {title.length}/{TITLE_MAX}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Mode Toggle */}
@@ -552,7 +556,7 @@ export default function NewChatPage({
               disabled={!isValid}
               className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary press-scale ${
                 isValid
-                  ? 'bg-primary hover:bg-primary-hover text-white'
+                  ? 'bg-primary hover:bg-primary-hover text-on-accent'
                   : 'bg-primary/30 text-white/40 cursor-not-allowed'
               }`}
             >

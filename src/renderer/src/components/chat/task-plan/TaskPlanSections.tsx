@@ -134,7 +134,7 @@ function buildImplementationOrderSection(
   if (isNaturalOrder) return false
 
   return (
-    <div className="rounded border-l-3 border-info bg-surface-base/20 pl-4 pr-3 py-3">
+    <div className="rounded border border-info/40 bg-info-muted/30 pl-4 pr-3 py-3">
       <div className="flex items-center gap-2 text-sm font-semibold text-text-primary mb-3">
         <ArrowRight size={14} className="text-info" />
         Recommended Implementation Order
@@ -287,7 +287,7 @@ export function buildSectionMap(props: TaskPlanSectionsProps): Record<SectionKey
       iconColor="text-warning"
       label="Key Decisions"
       labelColor="text-text-primary"
-      className="rounded border-l-3 border-[var(--color-plan-card-accent)] bg-surface-base/30 pl-4 pr-3 py-3"
+      className="rounded border border-[var(--color-plan-card-phase-border)] bg-surface-base/30 pl-4 pr-3 py-3"
     >
       <div className="space-y-2.5">
         {visibleDecisions.map((d, i) => (

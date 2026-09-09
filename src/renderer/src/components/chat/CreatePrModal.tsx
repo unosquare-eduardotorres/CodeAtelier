@@ -210,7 +210,7 @@ export default function CreatePrModal({
               type="button"
               onClick={() => void handleCreate()}
               disabled={!title.trim() || isCreating}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium bg-primary hover:bg-primary-hover text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-xs font-medium bg-primary hover:bg-primary-hover text-on-accent disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {isCreating ? (
                 <Loader2 size={12} className="animate-spin" />

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   ShieldCheck,
   ChevronDown,
@@ -8,6 +8,7 @@ import {
   FileText,
   AlertTriangle
 } from 'lucide-react'
+import { useFocusTrap } from '@renderer/hooks/useFocusTrap'
 
 interface CheckpointApprovalRequest {
   id: string
@@ -28,21 +29,28 @@ const TYPE_BADGES: Record<CheckpointApprovalRequest['type'], { label: string; cl
   {
     phase_gate: {
       label: 'Phase Gate',
-      className: 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+      className: 'bg-info-muted text-info border-info/30'
     },
     merge_approval: {
       label: 'Merge Approval',
-      className: 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+      className: 'bg-warning-muted text-warning border-warning/30'
     },
     destructive_action: {
       label: 'Destructive Action',
-      className: 'bg-red-500/20 text-red-400 border-red-500/30'
+      className: 'bg-danger-muted text-danger border-danger/30'
     }
   }
 
 export default function CheckpointApprovalModal(): React.JSX.Element | null {
   const [requests, setRequests] = useState<CheckpointApprovalRequest[]>([])
   const [filesExpanded, setFilesExpanded] = useState(false)
+  const rejectRef = useRef<HTMLButtonElement>(null)
+  const hasRequests = requests.length > 0
+  // Focus lands on Reject (the safe action): an accidental Enter must never
+  // approve a destructive action.
+  const trapRef = useFocusTrap<HTMLDivElement>(hasRequests, {
+    initialFocusRef: rejectRef
+  })
 
   useEffect(() => {
     const cleanup = window.api.onCheckpointApprovalRequest((data) => {
@@ -70,8 +78,9 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
       aria-labelledby="checkpoint-approval-title"
     >
       <div
+        ref={trapRef}
         data-testid="checkpoint-approval-modal"
-        className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[520px] max-h-[80vh] flex flex-col"
+        className="bg-surface-float border border-border-default rounded-xl shadow-2xl overflow-hidden w-[520px] max-w-[90vw] mx-4 max-h-[80vh] flex flex-col"
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 bg-surface-overlay border-b border-border-default">
@@ -117,10 +126,10 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
           </div>
 
           {/* Risk */}
-          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
-            <AlertTriangle size={14} className="text-amber-400 flex-shrink-0 mt-0.5" />
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-warning-muted border border-warning/20">
+            <AlertTriangle size={14} className="text-warning flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider mb-0.5">
+              <p className="text-[11px] font-semibold text-warning uppercase tracking-wider mb-0.5">
                 Risk
               </p>
               <p className="text-xs text-text-body">{current.details.risk}</p>
@@ -167,9 +176,10 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
         {/* Actions */}
         <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-border-default bg-surface-overlay">
           <button
+            ref={rejectRef}
             data-testid="checkpoint-reject-btn"
             onClick={() => handleRespond(current.id, false)}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-red-400 bg-red-500/10 hover:bg-red-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-danger bg-danger-muted hover:bg-danger/25 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-danger"
             aria-label="Reject checkpoint"
           >
             <XCircle size={15} />
@@ -178,7 +188,7 @@ export default function CheckpointApprovalModal(): React.JSX.Element | null {
           <button
             data-testid="checkpoint-approve-btn"
             onClick={() => handleRespond(current.id, true)}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500"
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-success bg-success-muted hover:bg-success/25 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-success"
             aria-label="Approve checkpoint"
           >
             <CheckCircle2 size={15} />

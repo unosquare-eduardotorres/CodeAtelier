@@ -15,6 +15,13 @@
   --color-surface-raised: var(--color-surface-raised);
   --color-surface-overlay: var(--color-surface-overlay);
   --color-surface-float: var(--color-surface-float);
+  --color-surface-hover: var(--color-surface-hover);
+  --color-surface-inset: var(--color-surface-inset);
+  --color-surface-elevated: var(--color-surface-elevated);
+  --color-surface-panel: var(--color-surface-panel);
+
+  /* ── Text on accent fills (contrast-safe per theme) ── */
+  --color-on-accent: var(--color-on-accent);
 
   /* ── Border layers ── */
   --color-border-subtle: var(--color-border-subtle);
@@ -40,6 +47,7 @@
 
   /* ── Accent ── */
   --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
   --color-accent-muted: var(--color-accent-muted);
 
   /* ── Teal / Forest ── */
@@ -52,6 +60,7 @@
 
   /* ── Semantic status ── */
   --color-success: var(--color-success);
+  --color-success-hover: var(--color-success-hover);
   --color-success-muted: var(--color-success-muted);
   --color-warning: var(--color-warning);
   --color-warning-muted: var(--color-warning-muted);
@@ -160,7 +169,6 @@
   --duration-slow: 1200ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* enter — graceful deceleration */
   --ease-in: cubic-bezier(0.55, 0, 1, 0.45); /* exit */
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* playful */
 
   /* ── Code Atelier typography ── */
   --ca-font-display: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;

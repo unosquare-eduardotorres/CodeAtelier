@@ -16,7 +16,11 @@ import {
   ScanEye
 } from 'lucide-react'
 import type { BlueprintPhase } from '../../../../../../shared/blueprint-types'
-import type { GateReport } from '../../../../../../shared/gate-types'
+import {
+  isShallowE2EPass,
+  SHALLOW_E2E_MS,
+  type GateReport
+} from '../../../../../../shared/gate-types'
 import { PHASE_ICONS } from '../phase-icons'
 import { useFileViewerStore } from '@renderer/store/file-viewer.store'
 import { useBlueprintStore } from '@renderer/store/blueprint.store'
@@ -219,6 +223,12 @@ export function VerifyDeliverable({
     .map((a) => (a.contentJson as { report?: GateReport } | undefined)?.report)
     .filter((r): r is GateReport => Boolean(r?.gates?.length))
   const verifyGateReport = verifyGateReports[verifyGateReports.length - 1] ?? null
+
+  // F2 — the e2e gate is graded purely on `exitCode === 0`, against a command
+  // the PLAN model authored. The chip row above says `e2e:pass` and stops
+  // there, which is exactly as much as `"e2e": "echo ok"` would say. Pull the
+  // gate out and show what it actually ran and for how long.
+  const e2eGate = verifyGateReport?.gates.find((g) => g.name === 'e2e') ?? null
   const recommendation = (json?.recommendation as string) ?? null
   const humanVerification = (json?.humanVerificationNeeded as string[]) ?? []
   const discoveries = extractDiscoveries(phase.artifactsJson)
@@ -331,6 +341,59 @@ export function VerifyDeliverable({
             report={verifyGateReport}
             testId="blueprint-verify-gates-row"
           />
+
+          {/* F2 — end-to-end evidence, not just a verdict chip. A `pass` here
+              is the strongest claim the pipeline makes; it should be the one
+              the user can audit most easily. */}
+          {e2eGate && (
+            <div
+              data-testid="blueprint-e2e-evidence"
+              className="mt-2 rounded-lg border border-border-subtle bg-surface-inset/30 px-3 py-2"
+            >
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-mono font-semibold text-text-secondary">
+                  End-to-end
+                </span>
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    e2eGate.verdict === 'fail'
+                      ? 'text-danger bg-danger/10'
+                      : e2eGate.verdict === 'unverifiable'
+                        ? 'text-warning bg-warning/10'
+                        : 'text-success bg-success/10'
+                  }`}
+                >
+                  {e2eGate.verdict}
+                </span>
+                <span className="text-[10px] font-mono text-text-muted">
+                  ran for {(e2eGate.durationMs / 1000).toFixed(1)}s
+                </span>
+              </div>
+              {e2eGate.evidence.length > 0 && (
+                <ul className="mt-1.5 space-y-0.5">
+                  {e2eGate.evidence.slice(0, 5).map((line, i) => (
+                    <li key={i} className="text-[11px] font-mono text-text-muted break-all">
+                      {line}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {isShallowE2EPass(e2eGate) && (
+                <div
+                  data-testid="blueprint-e2e-shallow-warning"
+                  className="mt-2 flex items-start gap-1.5 rounded-md border border-warning/20 bg-warning/5 px-2.5 py-1.5"
+                >
+                  <AlertTriangle size={11} className="mt-0.5 flex-shrink-0 text-warning" />
+                  <span className="text-[11px] text-warning">
+                    This gate passed in under {SHALLOW_E2E_MS / 1000}s. A real end-to-end suite pays
+                    browser startup, so a run this short usually means the command exited 0 without
+                    executing any specs. The gate is still a pass — this is a prompt to check the
+                    command above, not a verdict.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -399,238 +462,254 @@ export function VerifyDeliverable({
         </div>
       )}
 
-      {/* 3. Findings — the primary "what went wrong" answer */}
-      {findings.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            <AlertTriangle size={12} className="inline mr-1 text-warning" />
-            Findings ({findings.length})
-          </h3>
-          <div className="space-y-3">
-            {findings.map((finding, i) => (
-              <div
-                key={i}
-                className="rounded-xl border border-border-subtle bg-surface-overlay p-4"
-              >
-                <div className="flex items-start gap-3">
-                  <SeverityBadge severity={finding.severity} />
-                  <span className="text-sm text-text-secondary leading-relaxed flex-1">
-                    {finding.description}
-                  </span>
-                </div>
-                {finding.files.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-2 ml-0">
-                    {finding.files.map((file, fi) => (
-                      <button
-                        key={fi}
-                        type="button"
-                        onClick={() => handleOpenFindingFile(file)}
-                        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-inset text-[11px] font-mono text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
-                        title={file}
-                      >
-                        <FileLanguageIcon filePath={file} size={12} />
-                        {file}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {/* 3–7. Full verification evidence — findings, remediation, human
+          verification, quality gates, artifact/key-links/coverage/anti-patterns.
 
-      {/* 4. Remediation tasks */}
-      {remediationTasks.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Remediation Tasks ({remediationTasks.length})
-          </h3>
-          <div className="rounded-xl border border-border-subtle overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-surface-overlay border-b border-border-subtle">
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider w-16">
-                    Task
-                  </th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider">
-                    Description
-                  </th>
-                  <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider w-28">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {remediationTasks.map((task) => (
-                  <tr key={task.taskId} className="border-b border-border-subtle last:border-b-0">
-                    <td className="px-4 py-2 text-xs font-mono text-text-muted w-16">
-                      {task.taskId}
-                    </td>
-                    <td className="px-4 py-2 text-text-secondary">{task.description}</td>
-                    <td className="px-4 py-2 w-28">
-                      {task.status === 'complete' ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-success">
-                          <CheckCircle2 size={12} /> Complete
-                        </span>
-                      ) : task.status === 'failed' ? (
-                        <span className="inline-flex items-center gap-1 text-xs text-danger">
-                          <XCircle size={12} /> Failed
-                        </span>
-                      ) : (
-                        <span className="text-xs text-text-muted">{task.status ?? 'Pending'}</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+          Grouped behind one disclosure (impeccable focused review 2026-09-09):
+          this is audit-depth material that sat at verdict rank, pushing the
+          default render to ~16 blocks. On a NON-pass verdict the evidence IS
+          the story, so it opens by default; on a pass it waits one click. */}
+      <details className="mt-2 mb-6 group" open={overallStatus !== 'pass'}>
+        <summary className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-text-muted uppercase tracking-wider mb-3 select-none list-none [&::-webkit-details-marker]:hidden">
+          <ChevronDown size={12} className="transition-transform group-open:rotate-180" />
+          Full verification evidence
+        </summary>
 
-      {/* 5. Human verification */}
-      {humanVerification.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            <UserCheck size={12} className="inline mr-1" />
-            Human Verification Needed
-          </h3>
-          <div className="space-y-2">
-            {humanVerification.map((item, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-2 px-3 py-2 rounded-lg bg-info/5 border border-info/10"
-              >
-                <span className="text-info mt-0.5">•</span>
-                <span className="text-sm text-text-secondary">{item}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 6. Quality gates */}
-      {qualityGates.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Quality Gates
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            {qualityGates.map((gate) => (
-              <MetricTile
-                key={gate.name}
-                label={gate.name}
-                value={
-                  gate.value != null
-                    ? String(gate.value)
-                    : gate.status === 'pass'
-                      ? '✓ Pass'
-                      : gate.status === 'fail'
-                        ? '✗ Fail'
-                        : gate.status === 'warn'
-                          ? '⚠ Warning'
-                          : gate.status.replace(/_/g, ' ')
-                }
-                variant={
-                  gate.status === 'pass'
-                    ? 'success'
-                    : gate.status === 'fail'
-                      ? 'danger'
-                      : gate.status === 'warn'
-                        ? 'warning'
-                        : 'default'
-                }
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* 7. Artifact verification / Key links / Coverage / Anti-patterns */}
-      {artifacts && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Artifact Verification
-          </h3>
-          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
-            <ArtifactVerificationBar
-              verified={artifacts.verified ?? 0}
-              hollow={artifacts.hollow ?? 0}
-              stub={artifacts.stub ?? 0}
-              missing={artifacts.missing ?? 0}
-            />
-          </div>
-        </div>
-      )}
-
-      {keyLinks && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Key Links
-          </h3>
-          <div className="grid grid-cols-2 gap-3">
-            <MetricTile label="Verified" value={keyLinks.verified ?? 0} variant="success" />
-            <MetricTile
-              label="Broken"
-              value={keyLinks.broken ?? 0}
-              variant={(keyLinks.broken ?? 0) > 0 ? 'danger' : 'success'}
-            />
-          </div>
-        </div>
-      )}
-
-      {totalRequirements > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            Requirements Coverage
-          </h3>
-          <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-sm text-text-secondary">
-                {requirementsCovered}/{totalRequirements} requirements covered
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-3 bg-surface-inset rounded-full overflow-hidden">
+        {/* 3. Findings — the primary "what went wrong" answer */}
+        {findings.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              <AlertTriangle size={12} className="inline mr-1 text-warning" />
+              Findings ({findings.length})
+            </h3>
+            <div className="space-y-3">
+              {findings.map((finding, i) => (
                 <div
-                  className={`h-full rounded-full transition-all ${
-                    coverageVariant === 'success'
-                      ? 'bg-success'
-                      : coverageVariant === 'warning'
-                        ? 'bg-warning'
-                        : 'bg-danger'
-                  }`}
-                  style={{ width: `${coveragePct ?? 0}%` }}
-                />
-              </div>
-              <span className="text-sm font-mono text-text-muted tabular-nums">
-                {coveragePct ?? 0}%
-              </span>
+                  key={i}
+                  className="rounded-xl border border-border-subtle bg-surface-overlay p-4"
+                >
+                  <div className="flex items-start gap-3">
+                    <SeverityBadge severity={finding.severity} />
+                    <span className="text-sm text-text-secondary leading-relaxed flex-1">
+                      {finding.description}
+                    </span>
+                  </div>
+                  {finding.files.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2 ml-0">
+                      {finding.files.map((file, fi) => (
+                        <button
+                          key={fi}
+                          type="button"
+                          onClick={() => handleOpenFindingFile(file)}
+                          className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-inset text-[11px] font-mono text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+                          title={file}
+                        >
+                          <FileLanguageIcon filePath={file} size={12} />
+                          {file}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {antiPatterns.length > 0 && (
-        <div className="mb-6">
-          <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
-            <AlertTriangle size={12} className="inline mr-1 text-warning" />
-            Anti-patterns Detected ({antiPatterns.length})
-          </h3>
-          <div className="space-y-2">
-            {antiPatterns.map((pattern, i) => (
-              <div
-                key={i}
-                className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/5 border border-warning/10"
-              >
-                <span className="text-warning mt-0.5">•</span>
-                <span className="text-sm text-text-secondary">{pattern}</span>
-              </div>
-            ))}
+        {/* 4. Remediation tasks */}
+        {remediationTasks.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              Remediation Tasks ({remediationTasks.length})
+            </h3>
+            <div className="rounded-xl border border-border-subtle overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-surface-overlay border-b border-border-subtle">
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider w-16">
+                      Task
+                    </th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider">
+                      Description
+                    </th>
+                    <th className="text-left px-4 py-2 text-xs font-semibold text-text-muted uppercase tracking-wider w-28">
+                      Status
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {remediationTasks.map((task) => (
+                    <tr key={task.taskId} className="border-b border-border-subtle last:border-b-0">
+                      <td className="px-4 py-2 text-xs font-mono text-text-muted w-16">
+                        {task.taskId}
+                      </td>
+                      <td className="px-4 py-2 text-text-secondary">{task.description}</td>
+                      <td className="px-4 py-2 w-28">
+                        {task.status === 'complete' ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-success">
+                            <CheckCircle2 size={12} /> Complete
+                          </span>
+                        ) : task.status === 'failed' ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-danger">
+                            <XCircle size={12} /> Failed
+                          </span>
+                        ) : (
+                          <span className="text-xs text-text-muted">
+                            {task.status ?? 'Pending'}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {/* 5. Human verification */}
+        {humanVerification.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              <UserCheck size={12} className="inline mr-1" />
+              Human Verification Needed
+            </h3>
+            <div className="space-y-2">
+              {humanVerification.map((item, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 px-3 py-2 rounded-lg bg-info/5 border border-info/10"
+                >
+                  <span className="text-info mt-0.5">•</span>
+                  <span className="text-sm text-text-secondary">{item}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 6. Quality gates */}
+        {qualityGates.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              Quality Gates
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+              {qualityGates.map((gate) => (
+                <MetricTile
+                  key={gate.name}
+                  label={gate.name}
+                  value={
+                    gate.value != null
+                      ? String(gate.value)
+                      : gate.status === 'pass'
+                        ? '✓ Pass'
+                        : gate.status === 'fail'
+                          ? '✗ Fail'
+                          : gate.status === 'warn'
+                            ? '⚠ Warning'
+                            : gate.status.replace(/_/g, ' ')
+                  }
+                  variant={
+                    gate.status === 'pass'
+                      ? 'success'
+                      : gate.status === 'fail'
+                        ? 'danger'
+                        : gate.status === 'warn'
+                          ? 'warning'
+                          : 'default'
+                  }
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 7. Artifact verification / Key links / Coverage / Anti-patterns */}
+        {artifacts && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              Artifact Verification
+            </h3>
+            <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
+              <ArtifactVerificationBar
+                verified={artifacts.verified ?? 0}
+                hollow={artifacts.hollow ?? 0}
+                stub={artifacts.stub ?? 0}
+                missing={artifacts.missing ?? 0}
+              />
+            </div>
+          </div>
+        )}
+
+        {keyLinks && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              Key Links
+            </h3>
+            <div className="grid grid-cols-2 gap-3">
+              <MetricTile label="Verified" value={keyLinks.verified ?? 0} variant="success" />
+              <MetricTile
+                label="Broken"
+                value={keyLinks.broken ?? 0}
+                variant={(keyLinks.broken ?? 0) > 0 ? 'danger' : 'success'}
+              />
+            </div>
+          </div>
+        )}
+
+        {totalRequirements > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              Requirements Coverage
+            </h3>
+            <div className="rounded-xl border border-border-subtle bg-surface-overlay p-4">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-sm text-text-secondary">
+                  {requirementsCovered}/{totalRequirements} requirements covered
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-3 bg-surface-inset rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      coverageVariant === 'success'
+                        ? 'bg-success'
+                        : coverageVariant === 'warning'
+                          ? 'bg-warning'
+                          : 'bg-danger'
+                    }`}
+                    style={{ width: `${coveragePct ?? 0}%` }}
+                  />
+                </div>
+                <span className="text-sm font-mono text-text-muted tabular-nums">
+                  {coveragePct ?? 0}%
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {antiPatterns.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
+              <AlertTriangle size={12} className="inline mr-1 text-warning" />
+              Anti-patterns Detected ({antiPatterns.length})
+            </h3>
+            <div className="space-y-2">
+              {antiPatterns.map((pattern, i) => (
+                <div
+                  key={i}
+                  className="flex items-start gap-2 px-3 py-2 rounded-lg bg-warning/5 border border-warning/10"
+                >
+                  <span className="text-warning mt-0.5">•</span>
+                  <span className="text-sm text-text-secondary">{pattern}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </details>
 
       {/* 8. Full Verification Report — collapsed by default */}
       {verify?.contentMd && (

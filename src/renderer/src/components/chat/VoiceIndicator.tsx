@@ -47,8 +47,8 @@ export default function VoiceIndicator({
       <span className="text-text-secondary truncate flex-1">{interimText || 'Listening...'}</span>
       {/* Animated recording dots */}
       <div className="flex items-center gap-0.5 ml-auto flex-shrink-0">
-        <div className="w-1.5 h-1.5 bg-danger rounded-full animate-bounce [animation-delay:-0.3s]" />
-        <div className="w-1.5 h-1.5 bg-danger rounded-full animate-bounce [animation-delay:-0.15s]" />
+        <div className="w-1.5 h-1.5 bg-danger rounded-full animate-pulse [animation-delay:-0.3s]" />
+        <div className="w-1.5 h-1.5 bg-danger rounded-full animate-pulse [animation-delay:-0.15s]" />
         <div className="w-1.5 h-1.5 bg-danger rounded-full animate-bounce" />
       </div>
     </div>

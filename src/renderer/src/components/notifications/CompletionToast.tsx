@@ -54,7 +54,7 @@ export default function CompletionToast({
     >
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        <span className="w-6 h-6 rounded bg-primary-subtle flex items-center justify-center text-xs font-bold text-primary-text">
+        <span className="w-6 h-6 rounded bg-primary-muted flex items-center justify-center text-xs font-bold text-primary-text">
           {notification.workspaceName.charAt(0).toUpperCase()}
         </span>
         <span className="text-sm font-medium text-text-primary truncate flex-1">
@@ -88,7 +88,7 @@ export default function CompletionToast({
       </div>
 
       {/* Summary */}
-      <p className="text-sm text-text-default mb-3 line-clamp-2">{notification.summary}</p>
+      <p className="text-sm text-text-body mb-3 line-clamp-2">{notification.summary}</p>
 
       {/* View button */}
       <button

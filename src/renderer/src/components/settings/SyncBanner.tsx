@@ -76,7 +76,7 @@ export default function SyncBanner({
             <button
               onClick={onAutoSync}
               disabled={isSyncing}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-on-accent bg-primary hover:bg-primary-hover rounded-lg transition-colors disabled:opacity-50"
             >
               {isSyncing ? (
                 <>

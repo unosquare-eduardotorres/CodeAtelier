@@ -177,7 +177,7 @@ export default function PlanDetailPage({
   return (
     <div data-testid="plan-detail-page" className="flex flex-col h-full">
       {/* ── Sticky Header ── */}
-      <div className="sticky top-0 z-10 bg-surface-primary border-b border-border-subtle px-6 py-4">
+      <div className="sticky top-0 z-10 bg-surface-base border-b border-border-subtle px-6 py-4">
         {/* Top row: back + actions */}
         <div className="flex items-center justify-between mb-2">
           <button

@@ -553,7 +553,7 @@ export default function TracksSettingsTab({
                       setConfirmDiscardId(null)
                       void run(track.id, () => window.api.trackDiscard({ trackId: track.id }))
                     }}
-                    className="px-2 py-1 rounded bg-danger text-white"
+                    className="px-2 py-1 rounded bg-danger text-on-accent"
                   >
                     Discard
                   </button>

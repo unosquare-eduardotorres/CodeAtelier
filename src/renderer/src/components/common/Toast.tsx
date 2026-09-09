@@ -16,10 +16,10 @@ const iconMap = {
 } as const
 
 const colorMap = {
-  bug: 'text-orange-400',
-  info: 'text-blue-400',
-  success: 'text-emerald-400',
-  error: 'text-red-400'
+  bug: 'text-warning',
+  info: 'text-info',
+  success: 'text-success',
+  error: 'text-danger'
 } as const
 
 export default function Toast({ toast, onDismiss, onNavigate }: ToastProps): React.JSX.Element {

@@ -98,7 +98,7 @@ export default function FileChangeList({
         {onNavigateToSettings && (
           <button
             onClick={onNavigateToSettings}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-white hover:brightness-110 transition-colors"
+            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg bg-primary text-on-accent hover:brightness-110 transition-colors"
           >
             <Settings size={12} />
             Set up Repository

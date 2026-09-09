@@ -66,7 +66,7 @@ export default function ClaudeMdDiffModal({
             data-testid="claude-md-approve"
             onClick={() => onConfirm(editedContent)}
             disabled={isConfirming}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-success hover:bg-success/90 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium bg-success hover:bg-success/90 text-on-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isConfirming ? (
               <>

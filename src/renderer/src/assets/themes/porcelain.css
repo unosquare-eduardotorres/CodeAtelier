@@ -7,6 +7,13 @@
   --color-surface-raised: #ecedf2;
   --color-surface-overlay: #e8e9ed;
   --color-surface-float: #dddee3;
+  --color-surface-hover: rgba(30, 41, 59, 0.06);
+  --color-surface-inset: #eceef2;
+  --color-surface-elevated: #ffffff;
+  --color-surface-panel: #e5e7ec;
+
+  /* ── Text on accent fills (darker accents on light theme → light ink) ── */
+  --color-on-accent: var(--color-surface-base);
 
   /* ── Border layers (slate-based) ── */
   --color-border-subtle: rgba(100, 116, 139, 0.2);
@@ -16,8 +23,8 @@
   /* ── Text hierarchy (dark on light) ── */
   --color-text-primary: #1e293b;
   --color-text-body: #303c50;
-  --color-text-secondary: #64748b;
-  --color-text-muted: #94a3b8;
+  --color-text-secondary: #5c6b80;
+  --color-text-muted: #67717e;
 
   /* ── Code text ── */
   --color-code-text: #1e293b;
@@ -32,6 +39,7 @@
 
   /* ── Accent (Ocean Blue — APCA-calibrated for surface-overlay #e8e9ed) ── */
   --color-accent: #0564a0;
+  --color-accent-hover: #05527f;
   --color-accent-muted: rgba(2, 132, 199, 0.1);
 
   /* ── Teal / Forest ── */
@@ -43,10 +51,11 @@
   --color-forest-light: #22c55e;
 
   /* ── Semantic status ── */
-  --color-success: #16a34a;
-  --color-success-muted: rgba(22, 163, 74, 0.1);
-  --color-warning: #d97706;
-  --color-warning-muted: rgba(217, 119, 6, 0.1);
+  --color-success: #15803d;
+  --color-success-hover: #166534;
+  --color-success-muted: rgba(21, 128, 61, 0.1);
+  --color-warning: #b45309;
+  --color-warning-muted: rgba(180, 83, 9, 0.1);
   --color-danger: #dc2626;
   --color-danger-muted: rgba(220, 38, 38, 0.1);
   --color-info: #2563eb;
@@ -65,7 +74,7 @@
 
   --color-mode-danger: #fee2e2;
   --color-mode-danger-muted: rgba(220, 38, 38, 0.08);
-  --color-mode-danger-text: #dc2626;
+  --color-mode-danger-text: #b91c1c;
   --color-mode-danger-border: rgba(220, 38, 38, 0.3);
 
   /* ── Plan Card ── */
@@ -91,7 +100,7 @@
   --color-agent-postgres: #2563eb;
   --color-agent-ux: #be185d;
   --color-agent-git: #475569;
-  --color-agent-requirements: #16a34a;
+  --color-agent-requirements: #15803d;
   --color-agent-codeplanner: #4d7c0f;
   --color-agent-execution: #c2410c;
   --color-agent-cicd: #dc2626;

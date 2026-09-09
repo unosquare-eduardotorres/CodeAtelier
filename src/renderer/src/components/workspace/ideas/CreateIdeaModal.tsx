@@ -98,6 +98,7 @@ export default function CreateIdeaModal({
 
           <textarea
             placeholder="Describe your idea — context, goal, sections, requirements. Markdown welcome."
+            aria-label="Describe your idea — context, goal, sections, requirements. Markdown welcome."
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             onKeyDown={handleKeyDown}

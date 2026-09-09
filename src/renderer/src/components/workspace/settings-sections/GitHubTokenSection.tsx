@@ -80,7 +80,7 @@ export default function GitHubTokenSection({
               <button
                 onClick={onSaveToken}
                 disabled={isSavingToken || !token.trim()}
-                className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-white rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                className="px-3 py-1.5 text-xs font-medium bg-primary hover:bg-primary-hover text-on-accent rounded-lg disabled:opacity-50 transition-colors flex items-center gap-1.5"
               >
                 {isSavingToken ? <Loader2 size={12} className="animate-spin" /> : 'Connect'}
               </button>

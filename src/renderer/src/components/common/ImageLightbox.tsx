@@ -32,7 +32,7 @@ export default function ImageLightbox({
     >
       <button
         onClick={onClose}
-        className="absolute top-4 right-4 p-2 rounded-full bg-surface-overlay/60 text-white hover:bg-surface-overlay transition-colors"
+        className="absolute top-4 right-4 p-2 rounded-full bg-black/60 text-white hover:bg-black/80 transition-colors"
         aria-label="Close"
       >
         <X size={20} />

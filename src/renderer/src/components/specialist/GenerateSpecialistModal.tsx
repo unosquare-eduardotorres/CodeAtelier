@@ -257,7 +257,7 @@ export default function GenerateSpecialistModal({
               data-testid="generate-specialist-btn"
               onClick={handleGenerate}
               disabled={isBuilding}
-              className="flex-1 h-12 rounded-xl text-sm font-semibold bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised"
+              className="flex-1 h-12 rounded-xl text-sm font-semibold bg-primary hover:bg-primary-hover text-on-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-surface-raised"
             >
               {isBuilding ? (
                 <>

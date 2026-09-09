@@ -270,7 +270,7 @@ function RebuildButton({
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
         disabled
           ? 'bg-surface-overlay text-text-muted cursor-not-allowed'
-          : 'bg-primary text-white hover:bg-primary/90'
+          : 'bg-primary text-on-accent hover:bg-primary/90'
       }`}
     >
       <Hammer size={14} />

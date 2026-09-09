@@ -601,7 +601,7 @@ export default function GoalCampaignPanel({
                 type="button"
                 onClick={handleStart}
                 disabled={busy}
-                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-30"
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-on-accent bg-accent hover:bg-accent-hover rounded-lg disabled:opacity-30"
               >
                 {busy ? <Loader2 size={14} className="animate-spin" /> : <Rocket size={14} />}
                 Start Campaign

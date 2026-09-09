@@ -81,7 +81,7 @@ export default function MarkdownViewer({
             <button
               onClick={handleSave}
               disabled={isSaving}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary-hover text-on-accent text-xs font-medium transition-colors"
             >
               {isSaving ? (
                 <>

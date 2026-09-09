@@ -62,7 +62,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
         </span>
         <button
           onClick={openModal}
-          className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-primary hover:bg-primary-hover text-white text-xs font-medium transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-primary hover:bg-primary-hover text-on-accent text-xs font-medium transition-colors"
         >
           <Download size={12} />
           Download
@@ -110,7 +110,7 @@ export default function UpdateBanner(): React.JSX.Element | null {
         </span>
         <button
           onClick={openModal}
-          className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-success hover:bg-success text-white text-xs font-medium transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1 rounded-md bg-success hover:bg-success text-on-accent text-xs font-medium transition-colors"
         >
           <RefreshCw size={12} />
           Restart & Install
