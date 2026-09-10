@@ -18,7 +18,11 @@ import type { DesignRunRequest } from './design'
 
 type DesignView = 'landing' | 'configure' | 'run'
 
-export default function DesignPage(): React.JSX.Element {
+export default function DesignPage({
+  onNavigateToBlueprints
+}: {
+  onNavigateToBlueprints?: () => void
+}): React.JSX.Element {
   const { activeWorkspace } = useWorkspaceStore()
   const workspaceId = activeWorkspace?.id
 
@@ -106,7 +110,12 @@ export default function DesignPage(): React.JSX.Element {
   }
 
   if (view === 'run') {
-    return <DesignRunView onBack={() => setView('landing')} />
+    return (
+      <DesignRunView
+        onBack={() => setView('landing')}
+        onNavigateToBlueprints={onNavigateToBlueprints}
+      />
+    )
   }
 
   return (

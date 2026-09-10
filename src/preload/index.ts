@@ -2472,6 +2472,18 @@ const api = {
   designScopeTree: (args: { workspaceId: string }): Promise<DesignIpcResult<DesignScopeTree>> =>
     ipcRenderer.invoke(IPC_CHANNELS.DESIGN_SCOPE_TREE, args),
 
+  designGenerateReport: (args: {
+    runId: string
+  }): Promise<DesignIpcResult<{ path: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_GENERATE_REPORT, args),
+
+  designHandoffToBlueprint: (args: {
+    workspaceId: string
+    runId: string
+    findingIds?: string[]
+  }): Promise<DesignIpcResult<{ blueprintId: string; title: string; findingCount: number }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.DESIGN_HANDOFF_TO_BLUEPRINT, args),
+
   onDesignProgress: (cb: (data: DesignProgressEvent) => void): (() => void) => {
     const handler = (_: unknown, data: DesignProgressEvent): void => cb(data)
     ipcRenderer.on(IPC_CHANNELS.DESIGN_PROGRESS, handler)

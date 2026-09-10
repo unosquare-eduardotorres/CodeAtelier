@@ -119,7 +119,13 @@ describe('jira-server — get_issue', () => {
     await runExclusive(async () => {
       mockFetch(
         () =>
-          ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected token') } }) as never
+          ({
+            ok: true,
+            status: 200,
+            json: async () => {
+              throw new Error('Unexpected token')
+            }
+          }) as never
       )
       const out = textOf(await invokeTool(capture, 'get_issue', { issueKey: 'PROJ-1' }))
       assert.ok(out.includes('not JSON'), out)
@@ -140,7 +146,14 @@ describe('jira-server — search_issues', () => {
   test('issues the JQL search and renders compact rows', async () => {
     await runExclusive(async () => {
       mockFetch(() =>
-        jsonResponse({ issues: [{ key: 'PROJ-9', fields: { summary: 'Nil guard', status: { name: 'Open' }, assignee: null } }] })
+        jsonResponse({
+          issues: [
+            {
+              key: 'PROJ-9',
+              fields: { summary: 'Nil guard', status: { name: 'Open' }, assignee: null }
+            }
+          ]
+        })
       )
       const out = textOf(
         await invokeTool(capture, 'search_issues', { jql: 'project = PROJ', maxResults: 5 })
@@ -155,7 +168,9 @@ describe('jira-server — add_comment', () => {
   test('refuses an empty comment', async () => {
     await runExclusive(async () => {
       mockFetch(() => jsonResponse(null, 204))
-      const out = textOf(await invokeTool(capture, 'add_comment', { issueKey: 'PROJ-1', body: '   ' }))
+      const out = textOf(
+        await invokeTool(capture, 'add_comment', { issueKey: 'PROJ-1', body: '   ' })
+      )
       assert.ok(out.includes('empty'), out)
       assert.equal(fetchCalls.length, 0)
     })
@@ -194,7 +209,11 @@ describe('jira-server — assign_issue', () => {
 describe('jira-server — transition_issue', () => {
   const TRANSITIONS = {
     transitions: [
-      { id: '11', name: 'In Progress', to: { name: 'In Progress', statusCategory: { key: 'indeterminate' } } },
+      {
+        id: '11',
+        name: 'In Progress',
+        to: { name: 'In Progress', statusCategory: { key: 'indeterminate' } }
+      },
       { id: '31', name: 'Done', to: { name: 'Done', statusCategory: { key: 'done' } } }
     ]
   }
@@ -210,7 +229,9 @@ describe('jira-server — transition_issue', () => {
 
   test('a matching transition is executed', async () => {
     await runExclusive(async () => {
-      mockFetch((url, init) => (init?.method === 'POST' ? jsonResponse(null, 204) : jsonResponse(TRANSITIONS)))
+      mockFetch((_url, init) =>
+        init?.method === 'POST' ? jsonResponse(null, 204) : jsonResponse(TRANSITIONS)
+      )
       const out = textOf(
         await invokeTool(capture, 'transition_issue', { issueKey: 'PROJ-1', transition: 'done' })
       )

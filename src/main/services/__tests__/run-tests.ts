@@ -453,6 +453,7 @@ const TEST_FILES: string[] = [
   './opencode-agent-preflight.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
   './phase-summaries-verify.test',
+  './phase-summaries-failure-story.test',
   // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
   './permission-prompt-flow.test',
   // ─── Background CLI Session (persistent warm process for prompt optimizer) ───
@@ -667,6 +668,7 @@ const TEST_FILES: string[] = [
   // ─── Blueprint quality gates (M0) ───
   '../../../shared/__tests__/gate-types.test',
   '../../../shared/__tests__/gate-rollup.test',
+  '../../../shared/__tests__/design-blueprint-format.test',
   '../../../shared/__tests__/model-family.test',
   '../../../shared/__tests__/gate-commands.test',
   '../../../shared/__tests__/testability-ledger.test',
@@ -773,6 +775,11 @@ const TEST_FILES: string[] = [
   // ─── Jira status write-back (transition matcher + blueprint sync) ───
   './jira-issue-sync.test',
   '../../mcp-servers/__tests__/jira-server.test',
+  // ─── Coverage Round 6: real tool-handler tests (also in run-all.ts) ───
+  '../../mcp-servers/__tests__/recall-server-tools.test',
+  '../../mcp-servers/__tests__/jira-server-tools.test',
+  '../../mcp-servers/__tests__/control-actions-server-tools.test',
+  '../../ipc/__tests__/jira-ipc-tools.test',
   // ─── Plan section icon ids ───
   '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   // ─── Inline vs toast routing for permission requests ───

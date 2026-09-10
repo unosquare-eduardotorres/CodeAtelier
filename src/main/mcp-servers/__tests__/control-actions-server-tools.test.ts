@@ -19,6 +19,7 @@ setupElectronStub()
 
 // Build mode so permission_prompt's auto-approve branch is reachable; mode is
 // captured at module scope from the environment.
+const savedConversationMode = process.env.CONVERSATION_MODE
 process.env.CONVERSATION_MODE = 'build'
 delete process.env.IPC_SOCKET_PATH // no socket — emitEvent takes the log-only path
 
@@ -208,6 +209,16 @@ describe('control-actions-server — ask_user', () => {
       () => invokeTool(capture, 'ask_user', {} as never),
       (err: any) => /questions/.test(String(err?.message ?? err))
     )
+  })
+})
+
+describe('control-actions-server — cleanup', () => {
+  test('environment is restored for later files', async () => {
+    await runExclusive(async () => {
+      if (savedConversationMode === undefined) delete process.env.CONVERSATION_MODE
+      else process.env.CONVERSATION_MODE = savedConversationMode
+      assert.ok(true)
+    })
   })
 })
 

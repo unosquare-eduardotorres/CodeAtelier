@@ -1443,6 +1443,14 @@ interface Api {
     brief: string
   }) => Promise<DesignIpcResult<DesignRouteResult>>
   designScopeTree: (args: { workspaceId: string }) => Promise<DesignIpcResult<DesignScopeTree>>
+  designGenerateReport: (args: {
+    runId: string
+  }) => Promise<DesignIpcResult<{ path: string }>>
+  designHandoffToBlueprint: (args: {
+    workspaceId: string
+    runId: string
+    findingIds?: string[]
+  }) => Promise<DesignIpcResult<{ blueprintId: string; title: string; findingCount: number }>>
   onDesignProgress: (cb: (data: DesignProgressEvent) => void) => () => void
   onDesignResult: (cb: (data: DesignResultEvent) => void) => () => void
   onDesignComplete: (cb: (data: DesignCompleteEvent) => void) => () => void

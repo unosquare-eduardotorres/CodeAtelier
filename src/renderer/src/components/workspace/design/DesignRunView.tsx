@@ -15,9 +15,10 @@ import {
   Square,
   CheckCircle2,
   AlertTriangle,
-  Ban
+  Ban,
+  ArrowRightCircle
 } from 'lucide-react'
-import { useDesignStore } from '@renderer/store'
+import { useDesignStore, useWorkspaceStore } from '@renderer/store'
 import {
   DESIGN_COMMANDS_BY_ID,
   designCommandFromTrackId
@@ -29,6 +30,8 @@ import DesignFindingsList from './DesignFindingsList'
 
 interface DesignRunViewProps {
   onBack: () => void
+  /** Navigate to the blueprints tab after a successful Move-to-Blueprint. */
+  onNavigateToBlueprints?: () => void
 }
 
 /** `design:critique` → `Critique`; falls back to the raw id for stale rows. */
@@ -54,12 +57,41 @@ function ResultIcon({ status }: { status: AuditResult['status'] }): React.JSX.El
   }
 }
 
-export default function DesignRunView({ onBack }: DesignRunViewProps): React.JSX.Element {
+export default function DesignRunView({
+  onBack,
+  onNavigateToBlueprints
+}: DesignRunViewProps): React.JSX.Element {
   const currentRun = useDesignStore((s) => s.currentRun)
   const isRunning = useDesignStore((s) => s.isRunning)
   const selectedFindings = useDesignStore((s) => s.selectedFindings)
   const toggleFinding = useDesignStore((s) => s.toggleFinding)
   const cancelDesign = useDesignStore((s) => s.cancelDesign)
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspace?.id)
+  const [handoffPending, setHandoffPending] = useState(false)
+  const [handoffError, setHandoffError] = useState<string | null>(null)
+
+  const handleMoveToBlueprint = async (): Promise<void> => {
+    if (!workspaceId || !currentRun) return
+    setHandoffPending(true)
+    setHandoffError(null)
+    try {
+      const res = await window.api.designHandoffToBlueprint({
+        workspaceId,
+        runId: currentRun.id,
+        // Empty selection hands off the run's full verdict (the handler caps it).
+        findingIds: selectedFindings.map((f) => f.id)
+      })
+      if (res.ok) {
+        onNavigateToBlueprints?.()
+      } else {
+        setHandoffError(res.reason)
+      }
+    } catch (err) {
+      setHandoffError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setHandoffPending(false)
+    }
+  }
 
   const results = useMemo(() => currentRun?.results ?? [], [currentRun])
 
@@ -104,7 +136,7 @@ export default function DesignRunView({ onBack }: DesignRunViewProps): React.JSX
           >
             <ChevronLeft size={16} />
           </button>
-          <Palette size={16} className="text-purple-400" />
+          <Palette size={16} className="text-accent" />
           <h2 className="text-sm font-bold text-text-primary">Design Review</h2>
         </div>
 
@@ -114,6 +146,31 @@ export default function DesignRunView({ onBack }: DesignRunViewProps): React.JSX
             <span className="text-xs text-text-secondary">
               {completedCount}/{results.length} passes
             </span>
+          </div>
+        )}
+
+        {!isRunning && results.some((r) => r.findings.length > 0) && (
+          <div className="flex items-center gap-2">
+            {handoffError && (
+              <span className="text-[11px] text-danger max-w-[240px] truncate" title={handoffError}>
+                {handoffError}
+              </span>
+            )}
+            <button
+              data-testid="design-move-to-blueprint"
+              onClick={() => void handleMoveToBlueprint()}
+              disabled={handoffPending}
+              title="Create one remediation blueprint from this run's findings (selected findings, or the full set if none are selected)"
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-on-accent hover:bg-primary-hover disabled:opacity-50 transition-colors"
+            >
+              {handoffPending ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <ArrowRightCircle size={12} />
+              )}
+              Move to Blueprint
+              {selectedFindings.length > 0 ? ` (${selectedFindings.length})` : ''}
+            </button>
           </div>
         )}
 

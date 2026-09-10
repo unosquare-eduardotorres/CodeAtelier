@@ -54,6 +54,12 @@ try {
 let planRepo: any
 let msgRepo: any
 let convoRepo: any
+/**
+ * Originals of the singleton methods the tests below overwrite. The last
+ * fixture would otherwise stay installed for every later file in the unified
+ * run; the trailing test restores them.
+ */
+const originals: Record<string, any> = {}
 
 const prelude: Promise<void> = (async () => {
   // Cycle-safe load order (same as the repository test files): db/index first,
@@ -63,6 +69,15 @@ const prelude: Promise<void> = (async () => {
   planRepo = require('../../db/repositories/plan.repository').planRepository
   msgRepo = require('../../db/repositories/message.repository').messageRepository
   convoRepo = require('../../db/repositories/conversation.repository').conversationRepository
+  for (const [repo, names] of [
+    [planRepo, ['getForWorkspace', 'getById', 'getPreviousPlan', 'getSupersedingPlan']],
+    [msgRepo, ['findPlanBlockMessages', 'findById', 'findByConversation']],
+    [convoRepo, ['findById']]
+  ] as Array<[any, string[]]>) {
+    for (const name of names)
+      originals[`${repo === planRepo ? 'plan' : repo === msgRepo ? 'msg' : 'convo'}.${name}`] =
+        repo[name]
+  }
 })()
 
 function planRecord(over: Record<string, unknown> = {}): any {
@@ -99,33 +114,33 @@ function textOf(result: any): string {
 
 describe('recall-server — tool registration', () => {
   test('three tools register without error', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       assert.equal(registrationError, undefined, `registration threw: ${registrationError}`)
       assert.deepEqual(capture.names, ['recall_plans', 'recall_plan', 'recall_conversation'])
-  })
+    })
   })
 })
 
 describe('recall-server — recall_plans', () => {
   test('empty workspace lists the no-plans message', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getForWorkspace = () => []
       msgRepo.findPlanBlockMessages = () => []
       const out = textOf(await invokeTool(capture, 'recall_plans', {}))
       assert.ok(out.includes('No past plans recorded'), out)
-  })
+    })
   })
 
   test('registry entries render with refs, and message entries merge in', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getForWorkspace = () => [planRecord({ id: 'p1', title: 'Refactor auth' })]
       msgRepo.findPlanBlockMessages = () => [
@@ -141,13 +156,13 @@ describe('recall-server — recall_plans', () => {
       assert.ok(out.includes('[plan:p1] Refactor auth'), out)
       assert.ok(out.includes('[msg:m9] Migrate billing'), out)
       assert.ok(out.includes('conversation: "Grill: billing"'), out)
-  })
+    })
   })
 
   test('query and source filters apply, limit slices', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getForWorkspace = () => [
         planRecord({ id: 'p1', title: 'Refactor auth' }),
@@ -155,44 +170,44 @@ describe('recall-server — recall_plans', () => {
         planRecord({ id: 'p3', title: 'Refactor tests' })
       ]
       msgRepo.findPlanBlockMessages = () => []
-      const tools = capture.tools.get('recall_plans')!
 
       const queried = textOf(await invokeTool(capture, 'recall_plans', { query: 'refactor' }))
       assert.ok(queried.includes('Refactor auth') && queried.includes('Refactor tests'), queried)
       assert.ok(!queried.includes('Harden billing'), queried)
 
       const bySource = textOf(await invokeTool(capture, 'recall_plans', { source: 'grill' }))
-      assert.ok(bySource.includes('Harden billing') && !bySource.includes('Refactor auth'), bySource)
+      assert.ok(
+        bySource.includes('Harden billing') && !bySource.includes('Refactor auth'),
+        bySource
+      )
 
       const limited = textOf(await invokeTool(capture, 'recall_plans', { limit: 1 }))
       assert.ok(limited.includes('1 plan(s)'), limited)
-  })
+    })
   })
 
   test('includeSuperseded=false hides archived rows', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getForWorkspace = () => [
         planRecord({ id: 'p1', title: 'Current plan', status: 'active' }),
         planRecord({ id: 'p0', title: 'Old revision', status: 'archived' })
       ]
       msgRepo.findPlanBlockMessages = () => []
-      const out = textOf(
-        await invokeTool(capture, 'recall_plans', { includeSuperseded: false })
-      )
+      const out = textOf(await invokeTool(capture, 'recall_plans', { includeSuperseded: false }))
       assert.ok(out.includes('Current plan'), out)
       assert.ok(!out.includes('Old revision'), out)
-  })
+    })
   })
 })
 
 describe('recall-server — recall_plan', () => {
   test('plan: ref returns full detail with lineage', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => planRecord({ id: 'p1', previousPlanId: 'p0' })
       planRepo.getPreviousPlan = () => planRecord({ id: 'p0', title: 'Old revision' })
@@ -200,37 +215,37 @@ describe('recall-server — recall_plan', () => {
       const out = textOf(await invokeTool(capture, 'recall_plan', { ref: 'plan:p1' }))
       assert.ok(out.includes('Refactor auth'), out)
       assert.ok(out.includes('plan:p0'), out) // lineage names the previous revision
-  })
+    })
   })
 
   test('unknown ref yields actionable guidance', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => null
       msgRepo.findById = () => null
       const out = textOf(await invokeTool(capture, 'recall_plan', { ref: 'plan:nope' }))
       assert.ok(out.includes('No plan found for ref "plan:nope"'), out)
-  })
+    })
   })
 
   test('plan from another workspace is not served (workspace scoping)', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => planRecord({ id: 'px', workspaceId: 'ws-other' })
       msgRepo.findById = () => null
       const out = textOf(await invokeTool(capture, 'recall_plan', { ref: 'plan:px' }))
       assert.ok(out.includes('No plan found'), out)
-  })
+    })
   })
 
   test('msg: ref resolves through message + conversation', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => null
       msgRepo.findById = () => ({
@@ -242,39 +257,39 @@ describe('recall-server — recall_plan', () => {
       convoRepo.findById = () => ({ id: 'conv-2', workspaceId: WS, title: 'Grill: billing' })
       const out = textOf(await invokeTool(capture, 'recall_plan', { ref: 'msg:m9' }))
       assert.ok(out.includes('Migrate billing'), out)
-  })
+    })
   })
 })
 
 describe('recall-server — recall_conversation', () => {
   test('no conversation link explains the source instead', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => planRecord({ id: 'p1', linkedConversationId: null, source: 'grill' })
       const out = textOf(await invokeTool(capture, 'recall_conversation', { ref: 'plan:p1' }))
       assert.ok(out.includes('not linked to a chat conversation'), out)
       assert.ok(out.includes('grill'), out)
-  })
+    })
   })
 
   test('conversation gone from the workspace is reported unavailable', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => planRecord({ id: 'p1' })
       convoRepo.findById = () => null
       const out = textOf(await invokeTool(capture, 'recall_conversation', { ref: 'plan:p1' }))
       assert.ok(out.includes('no longer available'), out)
-  })
+    })
   })
 
   test('window is anchored and rendered around the plan message', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => null
       msgRepo.findById = () => ({
@@ -297,13 +312,13 @@ describe('recall-server — recall_conversation', () => {
       )
       assert.ok(out.includes('Grill: billing'), out)
       assert.ok(out.includes('m3') && out.includes('m6'), out) // window spans the anchor
-  })
+    })
   })
 
   test('hidden messages are excluded from the window', async () => {
-  // Tests patch the shared repository singletons — serialize so they
-  // don't race each other's fixtures (harness runs async tests concurrently).
-  await runExclusive(async () => {
+    // Tests patch the shared repository singletons — serialize so they
+    // don't race each other's fixtures (harness runs async tests concurrently).
+    await runExclusive(async () => {
       await prelude
       planRepo.getById = () => null
       msgRepo.findById = () => ({
@@ -328,12 +343,36 @@ describe('recall-server — recall_conversation', () => {
           hidden: false,
           contentMd: '```plan\n# Migrate billing\n```'
         },
-        { id: 'm6', role: 'user', createdAt: '2026-09-02 11:00:04', hidden: false, contentMd: 'visible' }
+        {
+          id: 'm6',
+          role: 'user',
+          createdAt: '2026-09-02 11:00:04',
+          hidden: false,
+          contentMd: 'visible'
+        }
       ]
       const out = textOf(await invokeTool(capture, 'recall_conversation', { ref: 'msg:m5' }))
       assert.ok(!out.includes('secret'), out)
       assert.ok(out.includes('visible'), out)
+    })
   })
+})
+
+describe('recall-server — cleanup', () => {
+  test('repository singletons are restored for later files', async () => {
+    await runExclusive(async () => {
+      await prelude
+      planRepo.getForWorkspace = originals['plan.getForWorkspace']
+      planRepo.getById = originals['plan.getById']
+      planRepo.getPreviousPlan = originals['plan.getPreviousPlan']
+      planRepo.getSupersedingPlan = originals['plan.getSupersedingPlan']
+      msgRepo.findPlanBlockMessages = originals['msg.findPlanBlockMessages']
+      msgRepo.findById = originals['msg.findById']
+      msgRepo.findByConversation = originals['msg.findByConversation']
+      convoRepo.findById = originals['convo.findById']
+      delete process.env.WORKSPACE_ID
+      assert.equal(typeof planRepo.getForWorkspace, 'function')
+    })
   })
 })
 

@@ -49,12 +49,15 @@ export function patchToolCapture(): ToolCapture {
 
   McpServer.prototype.tool = function patchedTool(this: McpServer, ...args: unknown[]) {
     const name = args[0] as string
-    const handler = [...args]
-      .reverse()
-      .find((a) => typeof a === 'function') as CapturedTool['handler'] | undefined
+    const handler = [...args].reverse().find((a) => typeof a === 'function') as
+      CapturedTool['handler'] | undefined
     const description = typeof args[1] === 'string' ? (args[1] as string) : ''
     const params =
-      args.length >= 4 ? args[2] : args.length === 3 && typeof args[1] !== 'string' ? args[1] : undefined
+      args.length >= 4
+        ? args[2]
+        : args.length === 3 && typeof args[1] !== 'string'
+          ? args[1]
+          : undefined
     if (handler) {
       tools.set(name, { name, description, handler, params })
       names.push(name)

@@ -438,8 +438,12 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Blueprint Environment Preflight ───
   '../services/__tests__/blueprint-preflight.test',
   '../services/__tests__/blueprint-review-e2e-depth.test',
+  // R006 orphan-check find: was in the unit runner but never here, so it
+  // contributed zero coverage to the unified run.
+  '../services/__tests__/blueprint-model-snapshot-refresh.test',
   // ─── Verify phase dual-field remediation read (phase-summaries parity) ───
   '../services/__tests__/phase-summaries-verify.test',
+  '../services/__tests__/phase-summaries-failure-story.test',
   // ─── Permission Prompt Flow (registry, stream-normalizer, tool-chunk-processor) ───
   '../services/__tests__/permission-prompt-flow.test',
   // ─── Background CLI Session (persistent warm process for prompt optimizer) ───
@@ -724,6 +728,14 @@ const SERVICE_TEST_FILES: string[] = [
   '../services/__tests__/jira-list-view.test',
   '../services/__tests__/jira-issue-sync.test',
   '../mcp-servers/__tests__/jira-server.test',
+  // ─── Coverage Round 6: real tool-handler tests for previously-dead modules ───
+  // These four targets sat at 0% because their registered tests exercised
+  // adjacent helpers (or nothing) — these drive the actual MCP/IPC handlers
+  // via the McpServer.prototype.tool capture seam (mcp-tool-capture.ts).
+  '../mcp-servers/__tests__/recall-server-tools.test',
+  '../mcp-servers/__tests__/jira-server-tools.test',
+  '../mcp-servers/__tests__/control-actions-server-tools.test',
+  '../ipc/__tests__/jira-ipc-tools.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/workspace-switch-streams.test',
   '../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
@@ -779,6 +791,7 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── Blueprint quality gates (M0) ───
   '../../shared/__tests__/gate-types.test',
   '../../shared/__tests__/gate-rollup.test',
+  '../../shared/__tests__/design-blueprint-format.test',
   '../../shared/__tests__/model-family.test',
   '../../shared/__tests__/gate-commands.test',
   '../../shared/__tests__/testability-ledger.test',

@@ -130,112 +130,163 @@ describe('resolveContextLevel — 200K window boundary', () => {
 
 setupFullMock()
 
+// Fresh module instance so it binds to the db-mock's CURRENT bug repository —
+// an earlier file in the unified run may have reset or replaced the shared
+// stub objects after this module was first cached.
+delete require.cache[require.resolve('../tool-error-reporter')]
 const { reportToolError } = require('../tool-error-reporter')
 const bugRepo = getMockRepo('bug')
 
-/** Calls made to upsertBug since `mark`. */
-function callsSince(mark: number): any[] {
-  return bugRepo.upsertBug.calls.slice(mark)
+/**
+ * Hermetic capture: replace upsertBug with our own collector for the duration
+ * of one test. Earlier files can leave their own spy installed on the shared
+ * stub object; reading its callCount would count (or miss) THEIR calls.
+ */
+let captured: any[] = []
+let priorUpsert: any
+function installCollector(): void {
+  captured = []
+  priorUpsert = bugRepo.upsertBug
+  bugRepo.upsertBug = (input: any) => {
+    captured.push(input)
+    return { isNew: true, bugId: 'bug-1' }
+  }
+}
+function restoreCollector(): void {
+  bugRepo.upsertBug = priorUpsert
 }
 
 describe('reportToolError', () => {
   test('SDK built-in tool gets "Tool error" prefix', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('Read', 'Permission denied\nstack trace here', { agentType: 'grill' })
-    const made = callsSince(mark)
-    assert.equal(made.length, 1)
-    const input = made[0][0]
-    assert.ok(input.errorMessage.startsWith('Tool error:'), input.errorMessage)
-    assert.ok(input.errorMessage.includes('Read'))
-    assert.ok(input.errorMessage.includes('Permission denied'))
-    assert.ok(!input.errorMessage.includes('MCP'))
+    installCollector()
+    try {
+      reportToolError('Read', 'Permission denied\nstack trace here', { agentType: 'grill' })
+      assert.equal(captured.length, 1)
+      const input = captured[0]
+      assert.ok(input.errorMessage.startsWith('Tool error:'), input.errorMessage)
+      assert.ok(input.errorMessage.includes('Read'))
+      assert.ok(input.errorMessage.includes('Permission denied'))
+      assert.ok(!input.errorMessage.includes('MCP'))
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('MCP tool gets "MCP tool error" prefix', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('code_graph__FindSymbol', 'Index not ready\nretry later', {
-      agentType: 'audit'
-    })
-    const made = callsSince(mark)
-    assert.equal(made.length, 1)
-    const input = made[0][0]
-    assert.ok(input.errorMessage.startsWith('MCP tool error:'), input.errorMessage)
-    assert.ok(input.errorMessage.includes('code_graph__FindSymbol'))
-    assert.ok(input.errorMessage.includes('Index not ready'))
+    installCollector()
+    try {
+      reportToolError('code_graph__FindSymbol', 'Index not ready\nretry later', {
+        agentType: 'audit'
+      })
+      assert.equal(captured.length, 1)
+      const input = captured[0]
+      assert.ok(input.errorMessage.startsWith('MCP tool error:'), input.errorMessage)
+      assert.ok(input.errorMessage.includes('code_graph__FindSymbol'))
+      assert.ok(input.errorMessage.includes('Index not ready'))
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('extracts first line only; stackTrace keeps the whole content', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('Bash', 'Line 1\nLine 2\nLine 3', { agentType: 'grill' })
-    const input = callsSince(mark)[0][0]
-    assert.ok(input.errorMessage.includes('Line 1'))
-    assert.ok(!input.errorMessage.includes('Line 2'))
-    assert.ok(input.stackTrace.includes('Line 3'))
+    installCollector()
+    try {
+      reportToolError('Bash', 'Line 1\nLine 2\nLine 3', { agentType: 'grill' })
+      const input = captured[0]
+      assert.ok(input.errorMessage.includes('Line 1'))
+      assert.ok(!input.errorMessage.includes('Line 2'))
+      assert.ok(input.stackTrace.includes('Line 3'))
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('handles empty error content', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('Write', '', { agentType: 'grill' })
-    const made = callsSince(mark)
-    assert.equal(made.length, 1)
-    const input = made[0][0]
-    assert.ok(input.errorMessage.includes('Write'))
-    // Empty first line is not nullish, so no 'Unknown error' text is added.
-    assert.ok(!input.errorMessage.includes('Unknown error'))
+    installCollector()
+    try {
+      reportToolError('Write', '', { agentType: 'grill' })
+      assert.equal(captured.length, 1)
+      const input = captured[0]
+      assert.ok(input.errorMessage.includes('Write'))
+      // Empty first line is not nullish, so no 'Unknown error' text is added.
+      assert.ok(!input.errorMessage.includes('Unknown error'))
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('handles all SDK built-in tools', () => {
-    for (const tool of ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob']) {
-      const mark = bugRepo.upsertBug.calls.length
-      reportToolError(tool, 'test error', { agentType: 'grill' })
-      const input = callsSince(mark)[0][0]
-      assert.ok(
-        input.errorMessage.startsWith('Tool error:'),
-        `${tool} should get Tool error prefix`
-      )
+    installCollector()
+    try {
+      for (const tool of ['Read', 'Write', 'Edit', 'Bash', 'Grep', 'Glob']) {
+        reportToolError(tool, 'test error', { agentType: 'grill' })
+        const input = captured[captured.length - 1]
+        assert.ok(
+          input.errorMessage.startsWith('Tool error:'),
+          `${tool} should get Tool error prefix`
+        )
+      }
+    } finally {
+      restoreCollector()
     }
   })
 
   test('trims whitespace from first line', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('Read', '  spaces around  \nmore text', { agentType: 'grill' })
-    const input = callsSince(mark)[0][0]
-    assert.ok(input.errorMessage.includes('spaces around'))
-    assert.ok(!input.errorMessage.includes('  spaces'))
+    installCollector()
+    try {
+      reportToolError('Read', '  spaces around  \nmore text', { agentType: 'grill' })
+      const input = captured[0]
+      assert.ok(input.errorMessage.includes('spaces around'))
+      assert.ok(!input.errorMessage.includes('  spaces'))
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('context fields reach the bug row', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('Read', 'boom', {
-      agentType: 'council',
-      workspaceId: 'ws-9',
-      agentId: 'agent-7'
-    })
-    const input = callsSince(mark)[0][0]
-    assert.equal(input.componentName, 'council')
-    assert.equal(input.workspaceId, 'ws-9')
-    assert.equal(input.agentId, 'agent-7')
+    installCollector()
+    try {
+      reportToolError('Read', 'boom', {
+        agentType: 'council',
+        workspaceId: 'ws-9',
+        agentId: 'agent-7'
+      })
+      const input = captured[0]
+      assert.equal(input.componentName, 'council')
+      assert.equal(input.workspaceId, 'ws-9')
+      assert.equal(input.agentId, 'agent-7')
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('suppresses expected Bash safety-guard rejections', () => {
-    const mark = bugRepo.upsertBug.calls.length
-    reportToolError('Bash', 'Blocked: rm -rf /', { agentType: 'grill' })
-    assert.equal(callsSince(mark).length, 0, 'Blocked: Bash rejections are not bugs')
+    installCollector()
+    try {
+      reportToolError('Bash', 'Blocked: rm -rf /', { agentType: 'grill' })
+      assert.equal(captured.length, 0, 'Blocked: Bash rejections are not bugs')
+    } finally {
+      restoreCollector()
+    }
   })
 
   test('suppresses expected CLI permission/interaction errors', () => {
-    const suppressed = [
-      'Tool bash has been denied',
-      'permission denied by timeout',
-      'Do you want to proceed?',
-      'command requires approval',
-      'File has been modified since read',
-      'Skill is not enabled'
-    ]
-    for (const content of suppressed) {
-      const mark = bugRepo.upsertBug.calls.length
-      reportToolError('Read', content, { agentType: 'grill' })
-      assert.equal(callsSince(mark).length, 0, `should suppress: ${content}`)
+    installCollector()
+    try {
+      const suppressed = [
+        'Tool bash has been denied',
+        'permission denied by timeout',
+        'Do you want to proceed?',
+        'command requires approval',
+        'File has been modified since read',
+        'Skill is not enabled'
+      ]
+      for (const content of suppressed) {
+        reportToolError('Read', content, { agentType: 'grill' })
+        assert.equal(captured.length, 0, `should suppress: ${content}`)
+      }
+    } finally {
+      restoreCollector()
     }
   })
 })

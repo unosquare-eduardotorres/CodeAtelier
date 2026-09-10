@@ -11,7 +11,7 @@
 
 // ── Source & Target ──────────────────────────────────────────────────
 
-export type HandoffSource = 'chat' | 'grill' | 'audit' | 'council' | 'blueprint' | 'mpa'
+export type HandoffSource = 'chat' | 'grill' | 'audit' | 'design' | 'council' | 'blueprint' | 'mpa'
 export type HandoffTarget = 'chat' | 'grill' | 'audit' | 'council' | 'blueprint' | 'goals'
 
 // ── Handoff Status ───────────────────────────────────────────────────

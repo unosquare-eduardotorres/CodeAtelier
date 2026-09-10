@@ -20,7 +20,7 @@ import {
   deriveTaskFailureDisplay,
   capTaskList,
   type TaskFailureDisplay
-} from '@renderer/utils/task-failure-display'
+} from '../../../../utils/task-failure-display'
 
 // ── Duration formatter ──
 

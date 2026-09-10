@@ -139,7 +139,9 @@ export default function WorkspaceSettingsContent({
           onNavigateToBlueprints={() => onSettingsTabChange?.('blueprints')}
         />
       )}
-      {tab === 'design' && <DesignPage />}
+      {tab === 'design' && (
+        <DesignPage onNavigateToBlueprints={() => onSettingsTabChange?.('blueprints')} />
+      )}
       {tab === 'goals' && <GoalPage onNavigateToChat={onNavigateToChat} />}
       {tab === 'council' && (
         <div className="p-6">

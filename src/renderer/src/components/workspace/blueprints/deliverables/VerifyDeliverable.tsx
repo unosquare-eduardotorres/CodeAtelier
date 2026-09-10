@@ -47,7 +47,7 @@ interface RemediationTask {
 
 interface Finding {
   description: string
-  severity: 'critical' | 'major' | 'minor' | string
+  severity: 'critical' | 'high' | 'medium' | string
   files: string[]
 }
 
@@ -161,7 +161,7 @@ function SeverityBadge({ severity }: { severity: string }): JSX.Element {
   const styles =
     severity === 'critical'
       ? 'bg-danger/10 text-danger border-danger/20'
-      : severity === 'major'
+      : severity === 'high'
         ? 'bg-warning/10 text-warning border-warning/20'
         : 'bg-surface-overlay text-text-muted border-border-subtle'
   const label = severity.charAt(0).toUpperCase() + severity.slice(1)
@@ -251,7 +251,14 @@ export function VerifyDeliverable({
     .filter((f) => f && typeof f.description === 'string')
     .map((f) => ({
       description: String(f.description),
-      severity: String(f.severity ?? 'minor'),
+      // Verifier vocabulary unified with every sibling surface (clarify,
+      // review, code-review): major→high, minor→medium.
+      severity:
+        String(f.severity ?? 'minor') === 'major'
+          ? 'high'
+          : String(f.severity ?? 'minor') === 'minor'
+            ? 'medium'
+            : String(f.severity ?? 'minor'),
       files: Array.isArray(f.files) ? f.files.map(String) : []
     }))
 

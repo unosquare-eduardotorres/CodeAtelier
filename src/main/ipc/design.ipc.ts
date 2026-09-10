@@ -41,7 +41,22 @@ import type {
   DesignScopeTree,
   LLMProvider
 } from '../../shared/types'
-import { auditRepository, workspaceRepository } from '../db/repositories'
+import {
+  auditRepository,
+  workspaceRepository,
+  auditHandoffRepository,
+  handoffRepository
+} from '../db/repositories'
+import {
+  buildDesignBlueprintTitle,
+  deriveBlueprintPriority,
+  formatDesignRemediationBrief
+} from '../../shared/design-blueprint-format'
+import { generateReportForRun, getReportPath, displayPath } from '../services/design-report.service'
+import { blueprintService } from '../services/blueprint.service'
+import { randomUUID } from 'node:crypto'
+import type { AuditFinding } from '../../shared/types'
+import type { HandoffEnvelope } from '../../shared/handoff-types'
 import { requireObject, requireString } from './validate-args'
 import { mainLogger } from '../logger'
 import { detectTechStack } from '../services/tech-stack-detector.service'
@@ -499,15 +514,142 @@ export function registerDesignIpc(_mainWindow: BrowserWindow): void {
 
   ipcMain.handle(IPC_CHANNELS.DESIGN_GENERATE_REPORT, async (_e, args: unknown) => {
     const obj = requireObject(args, IPC_CHANNELS.DESIGN_GENERATE_REPORT)
-    requireString(obj, 'runId', IPC_CHANNELS.DESIGN_GENERATE_REPORT)
-    return notImplemented('design:generateReport')
+    const runId = requireString(obj, 'runId', IPC_CHANNELS.DESIGN_GENERATE_REPORT)
+
+    const { path, error } = await generateReportForRun(runId)
+    if (!path) return fail(error ?? 'report generation failed')
+
+    const run = auditRepository.findRunById(runId)
+    const workspace = run ? workspaceRepository.findById(run.workspaceId) : null
+    return ok({
+      path: workspace?.repoPath ? displayPath(workspace.repoPath, path) : path
+    })
   })
 
-  ipcMain.handle(IPC_CHANNELS.DESIGN_HANDOFF_TO_BLUEPRINT, async (_e, args: unknown) => {
-    const obj = requireObject(args, IPC_CHANNELS.DESIGN_HANDOFF_TO_BLUEPRINT)
-    requireString(obj, 'runId', IPC_CHANNELS.DESIGN_HANDOFF_TO_BLUEPRINT)
-    return notImplemented('design:handoffToBlueprint')
-  })
+  // ── design:handoffToBlueprint — turn selected findings into one blueprint ──
+  // Mirrors AUDIT_HANDOFF_TO_BLUEPRINT: findings are resolved from the
+  // persisted run (never trusted from the renderer), the description is the
+  // prefabricated remediation brief with impeccable command routing, and the
+  // lineage rides in settingsJson so design-sourced builds can be detected.
+  ipcMain.handle(
+    IPC_CHANNELS.DESIGN_HANDOFF_TO_BLUEPRINT,
+    async (
+      _e,
+      args: unknown
+    ): Promise<DesignIpcResult<{ blueprintId: string; title: string; findingCount: number }>> => {
+      const ch = IPC_CHANNELS.DESIGN_HANDOFF_TO_BLUEPRINT
+      const obj = requireObject(args, ch)
+      const workspaceId = requireString(obj, 'workspaceId', ch)
+      const runId = requireString(obj, 'runId', ch)
+      const findingIds = Array.isArray(obj.findingIds) ? obj.findingIds.map(String) : []
+
+      const run = auditRepository.findRunById(runId)
+      if (!run || run.workspaceId !== workspaceId || run.kind !== 'design') {
+        return fail(`design run ${runId} not found for workspace ${workspaceId}`)
+      }
+
+      const wanted = new Set(findingIds)
+      const findings: AuditFinding[] = run.results.flatMap((r) =>
+        r.findings.filter((f) => wanted.has(f.id))
+      )
+      // Empty selection = hand off everything (the run's own verdict), capped.
+      const selected = findings.length > 0 ? findings : run.results.flatMap((r) => r.findings)
+      if (selected.length === 0) return fail(`run ${runId} has no findings to hand off`)
+      if (selected.length > 50) {
+        return fail(`too many findings (${selected.length}); select at most 50.`)
+      }
+
+      const commandIds = run.designConfig?.commandIds ?? []
+      const scope = run.designConfig?.scope
+      const scopeLabel =
+        scope?.mode === 'paths' && scope.paths.length > 0 ? scope.paths.join(', ') : 'whole project'
+
+      // Best effort: a fresh report travels with the lineage reference.
+      await generateReportForRun(runId).catch(() => undefined)
+      const reportPath = getReportPath(runId)
+
+      const title = buildDesignBlueprintTitle(commandIds, scopeLabel)
+      const blueprint = blueprintService.create({
+        workspaceId,
+        title,
+        description: formatDesignRemediationBrief({
+          brief: run.designConfig?.brief ?? '',
+          commandIds,
+          findings: selected,
+          scopeLabel,
+          runId
+        }),
+        priority: deriveBlueprintPriority(selected),
+        settingsJson: {
+          source: 'design',
+          sourceDesignRunId: runId,
+          commandIds,
+          scope,
+          ...(reportPath ? { reportPath } : {})
+        }
+      })
+
+      auditHandoffRepository.record({
+        auditRunId: runId,
+        findingIds: selected.map((f) => f.id),
+        target: 'blueprint',
+        refId: blueprint.id,
+        refTitle: title
+      })
+
+      const envelope: HandoffEnvelope = {
+        id: randomUUID(),
+        version: 1,
+        source: 'design',
+        target: 'blueprint',
+        workspaceId,
+        intent: `Remediate ${selected.length} design-audit finding(s) through the blueprint pipeline`,
+        originalGoal: title,
+        contextSummary: `Design audit findings from run ${runId}`,
+        completedWork: [],
+        remainingWork: selected.map((f) => ({
+          title: f.title,
+          description: f.description,
+          priority:
+            f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : 'medium'
+        })),
+        decisions: [],
+        constraints: [],
+        risks: [],
+        artifacts: [
+          { type: 'finding', path: runId, description: `Design run ${runId}` },
+          ...(reportPath
+            ? [
+                {
+                  type: 'diff' as const,
+                  path: reportPath,
+                  description: 'Impeccable critique report'
+                }
+              ]
+            : [])
+        ],
+        suggestedTools: [],
+        suggestedSkills: [],
+        filesToReadFirst: selected
+          .filter((f) => f.filePath)
+          .map((f) => f.filePath!)
+          .slice(0, 10),
+        commandsToRunFirst: [],
+        sourceSessionId: runId,
+        confidence: 0.8,
+        priority: 'medium',
+        createdAt: new Date().toISOString(),
+        createdBy: 'user'
+      }
+      handoffRepository.create(envelope)
+
+      log.info(
+        `[design:handoff] Created blueprint ${blueprint.id} from ${selected.length} finding(s) of run ${runId}`
+      )
+
+      return ok({ blueprintId: blueprint.id, title, findingCount: selected.length })
+    }
+  )
 
   // ── Read paths (fully functional — they only need the kind discriminator) ──
 
@@ -685,6 +827,15 @@ function wireDesignEvents(runId: string, workspaceId: string): void {
           IPC_CHANNELS.DESIGN_COMPLETE,
           workspaceId,
           updatedRun as unknown as Record<string, unknown>
+        )
+      }
+
+      // P6.2 — auto-write the .impeccable/critique report on completion. Best
+      // effort: the report is regenerable via DESIGN_GENERATE_REPORT, so a
+      // write failure degrades to a warn, never a failed run.
+      if (finalStatus !== 'cancelled') {
+        void generateReportForRun(runId).catch((err) =>
+          log.warn('[design:complete] report write failed:', err)
         )
       }
 
