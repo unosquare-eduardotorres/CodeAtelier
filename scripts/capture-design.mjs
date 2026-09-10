@@ -1,0 +1,16 @@
+import { chromium } from 'playwright'
+import { join } from 'path'
+const OUT = join(process.cwd(), '.impeccable', 'screenshots', '2026-09-10')
+const browser = await chromium.connectOverCDP('http://127.0.0.1:9333', { timeout: 15_000 })
+const page = browser.contexts().flatMap((c) => c.pages()).find((p) => p.url().includes('index.html'))
+await page.bringToFront()
+const sidebarTab = page.locator('[data-testid="sidebar-tab-settings"]')
+await sidebarTab.waitFor({ state: 'visible', timeout: 10_000 })
+await sidebarTab.click(); await page.waitForTimeout(1_000)
+const btn = page.locator('[data-testid="workspace-settings-tab"][data-tab-id="design"]').first()
+console.log('count:', await btn.count())
+await btn.click({ timeout: 8_000 }).catch((e) => console.log('click err:', e.message.slice(0, 70)))
+await page.waitForTimeout(2_500)
+await page.screenshot({ path: join(OUT, '10-design.png') })
+console.log('✓ 10-design captured')
+await browser.close()
