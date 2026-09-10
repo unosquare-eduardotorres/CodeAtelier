@@ -61,6 +61,7 @@ async function createWorkspace(page: Page, name: string, repoPath: string): Prom
 
 test('live design audit: run → findings → report → Move to Blueprint', async ({ page }) => {
   test.setTimeout(15 * 60_000)
+  await page.waitForFunction(() => (window as unknown as { api?: unknown }).api != null, undefined, { timeout: 30_000 })
   const dir = makeRepoDir()
   const workspaceId = await createWorkspace(page, 'live-design', dir)
 
