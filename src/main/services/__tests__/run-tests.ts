@@ -780,6 +780,16 @@ const TEST_FILES: string[] = [
   '../../mcp-servers/__tests__/jira-server-tools.test',
   '../../mcp-servers/__tests__/control-actions-server-tools.test',
   '../../ipc/__tests__/jira-ipc-tools.test',
+  // ─── Coverage Round 7 ───
+  '../../mcp-servers/__tests__/code-graph-server-tools.test',
+  '../../ipc/__tests__/btw-ultraplan-autofix.test',
+  // ─── Coverage Round 8 ───
+  '../../mcp-servers/__tests__/code-analysis-server-tools.test',
+  '../../mcp-servers/__tests__/process-manager-server-tools.test',
+  '../../ipc/__tests__/audit-ipc-handlers-real.test',
+  // ─── Coverage Round 9 ───
+  './electron-main-modules.test',
+  './vector-search-pipeline.test',
   // ─── Plan section icon ids ───
   '../../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   // ─── Inline vs toast routing for permission requests ───

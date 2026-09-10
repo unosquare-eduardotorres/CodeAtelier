@@ -379,7 +379,9 @@ async function handleAnalyzeComplexity(args: {
   }
 }
 
-async function registerTools(): Promise<void> {
+// Exported so tests can register the tools on the module-scoped server (and
+// capture the handlers) without going through main()'s stdio transport.
+export async function registerTools(): Promise<void> {
   server.tool(
     'analyze_complexity',
     'Cyclomatic complexity per function above a threshold. audit_scan already includes this — call it only for a different path or threshold.',
@@ -1238,7 +1240,7 @@ async function handleAuditScan(args: {
 
 // ── ESLint + audit tool registration ────────────────────────────────────
 
-function registerEslintTools(): void {
+export function registerEslintTools(): void {
   server.tool(
     'eslint_check',
     'Run ESLint and return structured results. Omit paths to check only git-changed files. Mandatory after code edits in build mode.',

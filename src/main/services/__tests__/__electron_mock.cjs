@@ -102,12 +102,25 @@ class MockNotification {
 // ── Dock mock ──
 let lastDockBounceType = null
 
+const pathOverrides = {}
 const mockApp = {
   getPath: function (name) {
+    if (pathOverrides[name] !== undefined) return pathOverrides[name]
     return '/tmp/electron-test/' + name
   },
+  setPath: function (name, value) {
+    pathOverrides[name] = value
+  },
+  /** Test hook: forget path overrides set via setPath. */
+  __resetPathOverrides: function () {
+    for (const k of Object.keys(pathOverrides)) delete pathOverrides[k]
+  },
+  setName: function (name) {
+    mockApp.__name = name
+  },
+  __name: 'AgentStudio-test',
   getName: function () {
-    return 'AgentStudio-test'
+    return mockApp.__name
   },
   getVersion: function () {
     return '1.0.0-test'
@@ -126,10 +139,23 @@ const mockApp = {
   }
 }
 
+// Last Menu.buildFromTemplate template — tests assert on menu item labels
+// and click handlers without a real native menu.
+let lastMenuTemplate = null
+
 module.exports = {
   ipcMain: mockIpcMain,
   BrowserWindow: mockBrowserWindow,
   app: mockApp,
+  Menu: {
+    buildFromTemplate: function (template) {
+      lastMenuTemplate = template
+      return { template }
+    },
+    __getLastTemplate: function () {
+      return lastMenuTemplate
+    }
+  },
   dialog: {
     showOpenDialog: async function () {
       return { canceled: true, filePaths: [] }

@@ -81,10 +81,10 @@ const WORKSPACE_ID = process.env.WORKSPACE_ID ?? ''
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH ?? process.cwd()
 const CONTEXT_TIER = process.env.CONTEXT_TIER as 'small' | 'medium' | 'large' | undefined
 
-if (!WORKSPACE_ID) {
-  console.error('[code-graph-server] ERROR: WORKSPACE_ID is required')
-  process.exit(1)
-}
+// The missing-env abort lives in main() (below), not at module scope: a bare
+// import (tests, bundler, the unified coverage runner) must never take the
+// whole importing process down — see the require.main guard for the same
+// reasoning. Handlers that need WORKSPACE_ID read it lazily anyway.
 
 // ── Lazy service initialization ─────────────────────────────────────────
 
@@ -232,7 +232,9 @@ const tool: typeof server.tool = ((name: string, description: string, ...rest: u
     ...rest
   )) as unknown as typeof server.tool
 
-function registerToolSchemas(): void {
+// Exported so tests can register the tools on the module-scoped server (and
+// capture the handlers) without going through main()'s stdio transport.
+export function registerToolSchemas(): void {
   // ── graph_map ──
   tool(
     'graph_map',
@@ -908,6 +910,10 @@ function registerToolSchemas(): void {
 // ── Bootstrap ──
 
 async function main(): Promise<void> {
+  if (!WORKSPACE_ID) {
+    console.error('[code-graph-server] ERROR: WORKSPACE_ID is required')
+    process.exit(1)
+  }
   registerToolSchemas()
   const transport = new StdioServerTransport()
   await server.connect(transport)

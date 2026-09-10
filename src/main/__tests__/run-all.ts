@@ -736,6 +736,16 @@ const SERVICE_TEST_FILES: string[] = [
   '../mcp-servers/__tests__/jira-server-tools.test',
   '../mcp-servers/__tests__/control-actions-server-tools.test',
   '../ipc/__tests__/jira-ipc-tools.test',
+  // ─── Coverage Round 7: code-graph-server tools + the last 0% IPC/service files ───
+  '../mcp-servers/__tests__/code-graph-server-tools.test',
+  '../ipc/__tests__/btw-ultraplan-autofix.test',
+  // ─── Coverage Round 8: code-analysis + process-manager tools, audit handlers ───
+  '../mcp-servers/__tests__/code-analysis-server-tools.test',
+  '../mcp-servers/__tests__/process-manager-server-tools.test',
+  '../ipc/__tests__/audit-ipc-handlers-real.test',
+  // ─── Coverage Round 9: Electron main modules + vector-search pipeline ───
+  '../services/__tests__/electron-main-modules.test',
+  '../services/__tests__/vector-search-pipeline.test',
   '../../renderer/src/store/__tests__/stop-generation-reconcile.test',
   '../../renderer/src/store/__tests__/workspace-switch-streams.test',
   '../../renderer/src/store/__tests__/boot-streaming-rehydrate.test',
