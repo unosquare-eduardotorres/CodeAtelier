@@ -3809,6 +3809,7 @@ const api = {
       seq: number
       workspaceId: string
       blueprintId: string | null
+      blueprintTitle: string | null
       running: boolean
       machineState: string
       currentPhase: string | null
@@ -3841,6 +3842,7 @@ const api = {
     seq: number
     workspaceId: string
     blueprintId: string | null
+    blueprintTitle: string | null
     running: boolean
     machineState: string
     currentPhase: string | null
@@ -3859,6 +3861,27 @@ const api = {
     runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
   }> => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT, args),
+
+  // ── Blueprint Unified Runs (parallel runs — all running snapshots, app-wide) ──
+
+  blueprintGetRunningSnapshots: (): Promise<
+    Array<{
+      seq: number
+      workspaceId: string
+      blueprintId: string | null
+      blueprintTitle: string | null
+      running: boolean
+      machineState: string
+      currentPhase: string | null
+      phaseStartedAt: number | null
+      clarifyFindings: unknown
+      clarifyQuestions: unknown
+      pendingApproval: unknown
+      wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      runningTasks: Record<string, { taskId: string; description: string }> | null
+      lastError: string | null
+    }>
+  > => ipcRenderer.invoke(IPC_CHANNELS.BLUEPRINT_GET_RUNNING_SNAPSHOTS),
 
   // ── Council (LLM Council — multi-advisor review) ──
 

@@ -111,7 +111,7 @@ export class BlueprintLeadReviewService extends EventEmitter {
     try {
       // 1. Pipeline + DB state. The blueprint stays in 'verifying' status —
       // the pass is part of verify's umbrella, not a new phase.
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'verify')
+      blueprintService.markPipelineRunning(blueprintId, 'verify', workspaceId)
 
       // 2. Assemble the whole-feature diff (same baseline as code-review).
       const diff = this.assembleFeatureDiff(blueprintId, workspacePath)
@@ -214,7 +214,7 @@ export class BlueprintLeadReviewService extends EventEmitter {
         )
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       const abortPromise = new Promise<void>((_, reject) => {
         const onAbort = (): void => reject(new Error('Phase cancelled'))
         abortSignal?.addEventListener('abort', onAbort, { once: true })
@@ -345,7 +345,7 @@ export class BlueprintLeadReviewService extends EventEmitter {
       }
       // Only release the pipeline lock when no successor took it over.
       if (!lockHandedOff) {
-        blueprintService.markPipelineStopped(workspaceId)
+        blueprintService.markPipelineStopped(blueprintId)
       }
     }
   }
@@ -460,7 +460,7 @@ export class BlueprintLeadReviewService extends EventEmitter {
     // service's markPipelineRunning throws unless the machine is idle.
     try {
       const { blueprintBuildService } = await import('./blueprint-build.service')
-      blueprintService.markPipelineStopped(workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
       await blueprintBuildService.startBuildPhase({
         blueprintId,
         workspaceId,

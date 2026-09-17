@@ -12,7 +12,8 @@ import { PHASE_ICONS, type PhaseIconKey } from './blueprints/phase-icons'
 import BlueprintChatView, { BlueprintQuestionFooter } from './blueprints/BlueprintChatView'
 import BlueprintExecutionPanel from './blueprints/BlueprintExecutionPanel'
 import BlueprintFileViewerDrawer from './blueprints/BlueprintFileViewerDrawer'
-import { BlueprintRunHeader } from './blueprints/BlueprintRunHeader'
+import { BlueprintRunHeader, type SiblingRun } from './blueprints/BlueprintRunHeader'
+import { useBlueprintStatusBar } from '../layout/hooks/useBlueprintStatusBar'
 import { readBlueprintBranchName } from './blueprints/detail/reference-docs'
 import { BlueprintDetailView } from './blueprints/detail/BlueprintDetailView'
 import { BlueprintInputView } from './blueprints/BlueprintInputView'
@@ -74,7 +75,9 @@ function BlueprintActiveView({
   onSendClarifyAnswer,
   onSkipClarify,
   onProceedGate,
-  onIterateClarify
+  onIterateClarify,
+  siblingRuns,
+  onFocusRun
 }: {
   pendingApproval: {
     blueprintId: string
@@ -138,6 +141,9 @@ function BlueprintActiveView({
   onSkipClarify: () => void
   onProceedGate: () => void
   onIterateClarify: () => void
+  /** Parallel runs — sibling chips in the run header. */
+  siblingRuns: SiblingRun[]
+  onFocusRun: (blueprintId: string) => void
 }): JSX.Element {
   // Tab state: execution (3-col grid) vs deliverables (full-width phase view)
   const [activeTab, setActiveTab] = useState<'execution' | 'deliverables'>('execution')
@@ -215,6 +221,8 @@ function BlueprintActiveView({
         activeTab={activeTab}
         onTabChange={setActiveTab}
         hasCompletedPhases={hasCompletedPhases}
+        siblingRuns={siblingRuns}
+        onFocusRun={onFocusRun}
       />
 
       {activeTab === 'execution' ? (
@@ -632,6 +640,34 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
   // ── Derive view state ──
   const effectiveView = getEffectiveView(viewState, isRunning, pendingApproval, selectedId)
 
+  // ── Parallel runs: sibling chips (every running blueprint except the focused one) ──
+  const { backgroundEntries: allRunning } = useBlueprintStatusBar()
+  const focusedRunId = currentBlueprint?.id ?? null
+  const siblingRuns: SiblingRun[] = useMemo(
+    () =>
+      allRunning
+        .filter((e) => e.blueprintId !== focusedRunId)
+        .map((e) => ({
+          blueprintId: e.blueprintId,
+          title: e.blueprintTitle,
+          currentPhase: (e.currentPhase as BlueprintPhaseType | null) ?? null,
+          phaseStartedAt: null,
+          awaitingApproval: e.machineState.startsWith('awaiting-')
+        })),
+    [allRunning, focusedRunId]
+  )
+  const handleFocusRun = useCallback(
+    (blueprintId: string) => {
+      // Same-workspace focus: hydrate the sibling run's transcript in place.
+      // (Cross-workspace focus flows through the status-bar dropdown.)
+      setSelectedId(blueprintId)
+      setViewState('detail')
+      void loadBlueprint(blueprintId)
+      void hydrateTranscript(blueprintId)
+    },
+    [loadBlueprint, hydrateTranscript]
+  )
+
   // ── Actions ──
   const handleStart = useCallback(
     async (params: {
@@ -1007,6 +1043,8 @@ export default function BlueprintPage({ onNavigateToChat }: BlueprintPageProps):
                 rendererLog.error('[blueprint] Cannot iterate clarify — no blueprint id in scope')
               }
             }}
+            siblingRuns={siblingRuns}
+            onFocusRun={handleFocusRun}
           />
         )}
 

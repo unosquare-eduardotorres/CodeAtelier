@@ -187,7 +187,7 @@ export class BlueprintCodeReviewService extends EventEmitter {
 
     try {
       // 1. Pipeline + DB state
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'code-review')
+      blueprintService.markPipelineRunning(blueprintId, 'code-review', workspaceId)
 
       if (phaseRecord) {
         blueprintPhaseRepository.updateStatus(phaseRecord.id, 'active')
@@ -318,7 +318,7 @@ export class BlueprintCodeReviewService extends EventEmitter {
         )
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       const abortPromise = new Promise<void>((_, reject) => {
         const onAbort = (): void => reject(new Error('Phase cancelled'))
         abortSignal?.addEventListener('abort', onAbort, { once: true })
@@ -442,7 +442,7 @@ export class BlueprintCodeReviewService extends EventEmitter {
       }
 
       const errorMsg = err instanceof Error ? err.message : String(err)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
 
       try {
         blueprintService.saveRetryContext(blueprintId, 'code-review', { error: errorMsg })
@@ -476,7 +476,7 @@ export class BlueprintCodeReviewService extends EventEmitter {
       // Only release the pipeline lock when no successor took it over — the
       // successor's own finally owns markPipelineStopped from that point.
       if (!lockHandedOff) {
-        blueprintService.markPipelineStopped(workspaceId)
+        blueprintService.markPipelineStopped(blueprintId)
       }
     }
   }
@@ -586,7 +586,7 @@ export class BlueprintCodeReviewService extends EventEmitter {
     // finally then owns markPipelineStopped from this point.
     try {
       const { blueprintBuildService } = await import('./blueprint-build.service')
-      blueprintService.markPipelineStopped(workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
       await blueprintBuildService.startBuildPhase({
         blueprintId,
         workspaceId,
@@ -634,7 +634,7 @@ export class BlueprintCodeReviewService extends EventEmitter {
     try {
       // BP-BUILD-VERIFY-STARTLOCK-COLLISION pattern: release this phase's lock
       // before verify re-acquires it, then hand ownership to verify's finally.
-      blueprintService.markPipelineStopped(workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
       blueprintVerifyService
         .startVerifyPhase({
           blueprintId,
@@ -644,14 +644,14 @@ export class BlueprintCodeReviewService extends EventEmitter {
         .catch((err) => {
           bpLog.error('[code-review→verify] Verify phase failed:', err)
           const errorMsg = err instanceof Error ? err.message : String(err)
-          blueprintService.failPipeline(workspaceId, errorMsg)
+          blueprintService.failPipeline(blueprintId, errorMsg)
           blueprintRepository.updateStatus(blueprintId, 'failed')
         })
       return true
     } catch (syncErr) {
       bpLog.error('[code-review→verify] Verify startup failed (sync):', syncErr)
       const errorMsg = syncErr instanceof Error ? syncErr.message : String(syncErr)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
       blueprintRepository.updateStatus(blueprintId, 'failed')
       return false
     }

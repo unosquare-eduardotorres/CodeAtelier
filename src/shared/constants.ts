@@ -795,6 +795,9 @@ export const IPC_CHANNELS = {
   // Blueprint snapshot (M7 — pull-based seed on mount/workspace switch)
   BLUEPRINT_GET_SNAPSHOT: 'blueprint:getSnapshot',
 
+  // Blueprint unified runs (parallel runs — all running snapshots, app-wide)
+  BLUEPRINT_GET_RUNNING_SNAPSHOTS: 'blueprint:getRunningSnapshots',
+
   // Blueprint preflight (environment validation before BUILD)
   BLUEPRINT_PREFLIGHT_RUN: 'blueprint:preflightRun',
   BLUEPRINT_PREFLIGHT_RESULT: 'blueprint:preflightResult',

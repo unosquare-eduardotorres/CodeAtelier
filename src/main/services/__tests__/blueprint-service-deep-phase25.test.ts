@@ -142,10 +142,11 @@ if (loaded) {
   describe('BlueprintService — pipeline state (Phase 25)', () => {
     test('getOrCreatePipeline creates new state', () => {
       const service = new BlueprintService()
-      const state = service.getOrCreatePipeline('ws-test-p25')
+      const state = service.getOrCreatePipeline('bp-test-p25')
       assert.ok(state !== undefined)
       assert.equal(state.running, false)
-      assert.equal(state.blueprintId, null)
+      // PARALLEL-RUNS: pipelines are keyed by blueprintId — the key IS the identity.
+      assert.equal(state.blueprintId, 'bp-test-p25')
     })
 
     test('getOrCreatePipeline returns same state on second call', () => {
@@ -168,13 +169,13 @@ if (loaded) {
   describe('BlueprintService — isRunning (Phase 25)', () => {
     test('returns false for unknown workspace', () => {
       const service = new BlueprintService()
-      assert.equal(service.isRunning('ws-unknown', 'bp-1'), false)
+      assert.equal(service.isRunning('bp-unknown'), false)
     })
 
     test('returns false when not running', () => {
       const service = new BlueprintService()
-      service.getOrCreatePipeline('ws-1')
-      assert.equal(service.isRunning('ws-1', 'bp-1'), false)
+      service.getOrCreatePipeline('bp-1')
+      assert.equal(service.isRunning('bp-1'), false)
     })
   })
 

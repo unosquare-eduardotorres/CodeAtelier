@@ -195,12 +195,16 @@ const TEST_FILES: string[] = [
   '../../../renderer/src/store/__tests__/safety-timeout-policy.test',
   '../../../renderer/src/store/__tests__/safety-timeout-orphan.test',
   '../../../renderer/src/store/__tests__/blueprint-gates-ui.test',
+  '../../../renderer/src/store/__tests__/blueprint-run-focus.test',
+  '../../../renderer/src/store/__tests__/blueprint-run-isolation-dom.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   './evaluation-mcp-config.test',
   './mpa-base-adapter.test',
   './grill-adapter.test',
   './greenfield-grill-adapter.test',
   './blueprint-service-logic.test',
+  './blueprint-run-cap.test',
+  './blueprint-landing-lock.test',
   './cli-mcp-config-writer-logic.test',
   // ─── Run 35: Adapter subclass family + pure functions + config builders ───
   './mpa-planner-adapter.test',
@@ -829,7 +833,9 @@ const TEST_FILES: string[] = [
   // ─── Shared prism language map + lazy grammar loader (diff/chat/file viewer highlighting) ───
   './prism-languages.test',
   // ─── Tool-output line prefix parser (chat tool-activity highlighting) ───
-  './tool-output-lines.test'
+  './tool-output-lines.test',
+  // ─── PARALLEL-RUNS: production-path cap enforcement on real IPC handlers ───
+  './blueprint-start-cap-ipc.test'
 ]
 // NOTE: is-excluded-path.test is registered early (after code-graph-logic)
 // because summaryAsync() calls process.exit(), which can truncate stdout

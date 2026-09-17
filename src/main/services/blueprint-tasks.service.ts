@@ -95,7 +95,7 @@ export class BlueprintTasksService extends EventEmitter {
 
     try {
       // 1. Pipeline + DB state
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'tasks')
+      blueprintService.markPipelineRunning(blueprintId, 'tasks', workspaceId)
 
       tasksPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'tasks')
       if (tasksPhase) {
@@ -294,7 +294,7 @@ export class BlueprintTasksService extends EventEmitter {
         timeoutId = setTimeout(() => reject(new Error('TASKS phase timeout')), PHASE_TIMEOUT_MS)
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
       // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
@@ -448,7 +448,7 @@ export class BlueprintTasksService extends EventEmitter {
 
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
       try {
@@ -478,7 +478,7 @@ export class BlueprintTasksService extends EventEmitter {
       if (session) {
         await session.stop()
       }
-      blueprintService.markPipelineStopped(workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
 
       // BP-CHAIN-TASKS-REVIEW: Dispatch review AFTER releasing the pipeline lock.
       if (pendingReviewDispatch) {

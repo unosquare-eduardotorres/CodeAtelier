@@ -779,17 +779,16 @@ if (!env) {
 
   describe('gate identity', () => {
     test('THE REGRESSION: pendingApproval keeps its blueprintId after markPipelineStopped', () => {
-      // REVIEW's finally calls markPipelineStopped(), which nulls
-      // state.blueprintId while the gate is still up. Any snapshot published
-      // afterwards — a preflight re-run, say — used to broadcast a gate with
-      // blueprintId '' and every gate action silently addressed nothing.
+      // PARALLEL-RUNS re-key: pipelines are keyed by blueprintId, so the
+      // identity is RETAINED after markPipelineStopped — the orphaned-gate
+      // trap (snapshot broadcasting blueprintId '' while the gate was up) is
+      // structurally fixed. The gate still carries its own blueprintId.
       const id = seedBlueprint()
-      const ws = `ws-gate-${id}`
-      blueprintService.setPendingApproval(ws, { blueprintId: id, planSummary: 'summary' })
-      blueprintService.markPipelineStopped(ws)
+      blueprintService.setPendingApproval(id, { blueprintId: id, planSummary: 'summary' })
+      blueprintService.markPipelineStopped(id)
 
-      const snap = blueprintService.getSnapshot(ws)
-      assert.equal(snap.blueprintId, null, 'the pipeline identity is cleared — that is the trap')
+      const snap = blueprintService.getSnapshot(id)
+      assert.equal(snap.blueprintId, id, 'blueprint-keyed pipeline retains identity')
       assert.equal(snap.pendingApproval.blueprintId, id, 'the gate carries its own id')
     })
   })
@@ -819,17 +818,16 @@ if (!env) {
 
       test('acceptRevision leaves the gate standing when the machine is not at it', async () => {
         const id = seedBlueprint()
-        const ws = `ws-accept-${id}`
-        blueprintService.setPendingApproval(ws, { blueprintId: id, planSummary: 'summary' })
+        blueprintService.setPendingApproval(id, { blueprintId: id, planSummary: 'summary' })
 
         await blueprintPlanRevisionService.acceptRevision({
           blueprintId: id,
-          workspaceId: ws,
+          workspaceId: wsId,
           workspacePath: '/tmp'
         })
 
         assert.ok(
-          blueprintService.getPendingApproval(ws),
+          blueprintService.getPendingApproval(id),
           'the gate is not dismissed and TASKS is not re-derived'
         )
       })

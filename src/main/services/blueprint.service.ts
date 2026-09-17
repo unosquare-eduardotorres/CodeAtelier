@@ -40,7 +40,7 @@ import type {
   GrillDecisionForBlueprint,
   BlueprintRevisionRequest
 } from '../../shared/blueprint-types'
-import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS } from '../../shared/blueprint-types'
+import { BLUEPRINT_PHASE_ORDER, PHASE_TO_STATUS, MAX_CONCURRENT_BLUEPRINT_RUNS } from '../../shared/blueprint-types'
 import { BlueprintStateMachine } from './blueprint-state-machine'
 import type { BlueprintPipelineSnapshot } from '../../shared/blueprint-snapshot-types'
 import type {
@@ -394,7 +394,9 @@ export type PendingApproval = NonNullable<BlueprintPipelineSnapshot['pendingAppr
 
 interface BlueprintPipelineState {
   running: boolean
-  blueprintId: string | null
+  blueprintId: string
+  /** Workspace the blueprint belongs to — learned at markPipelineRunning; kept after gates clear other fields. */
+  workspaceId: string | null
   /**
    * E12-fix — monotonic per-workspace run counter. Unlike `blueprintId`,
    * markPipelineStopped does NOT reset it, which is exactly why the auto-retry
@@ -500,8 +502,13 @@ export function capArtifactForIpc(a: BlueprintArtifact): BlueprintArtifact {
 }
 
 export class BlueprintService extends EventEmitter {
+  /**
+   * Per-blueprint pipeline state — keyed by blueprintId (parallel runs: several
+   * blueprints may run concurrently, even in ONE workspace). Workspace-keyed
+   * lookups go through the wrappers below (hasRunningInWorkspace, etc.).
+   */
   private pipelines = new Map<string, BlueprintPipelineState>()
-  /** Per-workspace state machines — replaces startLocks for concurrency control. */
+  /** Per-blueprint state machines — replaces startLocks for concurrency control. */
   private machines = new Map<string, BlueprintStateMachine>()
   /**
    * Tracks auto-retry attempts per blueprint+phase to prevent retry loops.
@@ -518,12 +525,13 @@ export class BlueprintService extends EventEmitter {
 
   // ── Pipeline State ──
 
-  private getOrCreatePipeline(workspaceId: string): BlueprintPipelineState {
-    let state = this.pipelines.get(workspaceId)
+  private getOrCreatePipeline(blueprintId: string): BlueprintPipelineState {
+    let state = this.pipelines.get(blueprintId)
     if (!state) {
       state = {
         running: false,
-        blueprintId: null,
+        blueprintId,
+        workspaceId: null,
         generation: 0,
         currentPhase: null,
         abortController: null,
@@ -533,7 +541,7 @@ export class BlueprintService extends EventEmitter {
         waveState: null,
         runningTasks: null
       }
-      this.pipelines.set(workspaceId, state)
+      this.pipelines.set(blueprintId, state)
     }
     return state
   }
@@ -541,16 +549,16 @@ export class BlueprintService extends EventEmitter {
   /** Monotonic snapshot sequence number — incremented on every publishSnapshot(). */
   private snapshotSeq = 0
 
-  /** Get or lazily create the state machine for a workspace. */
-  getMachine(workspaceId: string): BlueprintStateMachine {
-    let machine = this.machines.get(workspaceId)
+  /** Get or lazily create the state machine for a blueprint. */
+  getMachine(blueprintId: string): BlueprintStateMachine {
+    let machine = this.machines.get(blueprintId)
     if (!machine) {
-      machine = new BlueprintStateMachine(workspaceId)
+      machine = new BlueprintStateMachine(blueprintId)
       // M2: Auto-publish snapshot on every machine state change
       machine.on('stateChange', () => {
-        this.publishSnapshot(workspaceId)
+        this.publishSnapshot(blueprintId)
       })
-      this.machines.set(workspaceId, machine)
+      this.machines.set(blueprintId, machine)
     }
     return machine
   }
@@ -560,23 +568,38 @@ export class BlueprintService extends EventEmitter {
   // ═══════════════════════════════════════════════════════════════════════════
 
   /**
-   * Assemble the full pipeline snapshot for a workspace.
-   * Queries sub-services for clarify/wave data. Cheap — no DB queries.
+   * Assemble the full pipeline snapshot for a blueprint.
+   * Queries sub-services for clarify/wave data. Cheap — one indexed PK lookup
+   * for the title (workspaceId resolution).
    */
-  getSnapshot(workspaceId: string): BlueprintPipelineSnapshot {
-    const state = this.pipelines.get(workspaceId)
-    const machine = this.getMachine(workspaceId)
+  getSnapshot(blueprintId: string): BlueprintPipelineSnapshot {
+    const state = this.pipelines.get(blueprintId)
+    const machine = this.getMachine(blueprintId)
+
+    // Resolve workspace + title from the blueprint row (one indexed PK lookup).
+    // Prefer the cached workspaceId (learned at markPipelineRunning) so a
+    // deleted-mid-run blueprint still snapshots coherently.
+    let workspaceId: string | null = state?.workspaceId ?? null
+    let blueprintTitle: string | null = null
+    try {
+      const row = blueprintRepository.findById(blueprintId)
+      if (row?.workspaceId) workspaceId = row.workspaceId
+      blueprintTitle = row?.title ?? null
+    } catch {
+      // Deleted mid-run / DB unavailable in unit contexts — snapshot still publishes.
+    }
 
     // M9: Read clarify state from local map (pushed by spec service via setClarifyState)
     // — eliminates the require() hack that was fragile and broke module bundling.
-    const clarifyState = this.getClarifyStateForSnapshot(workspaceId)
+    const clarifyState = this.getClarifyStateForSnapshot(blueprintId)
     const clarifyFindings: ClarifyFindingsBlock | null = clarifyState?.findings ?? null
     const clarifyQuestions: ClarifyQuestionsBlock | null = clarifyState?.questions ?? null
 
     return {
       seq: this.snapshotSeq,
-      workspaceId,
-      blueprintId: state?.blueprintId ?? null,
+      workspaceId: workspaceId ?? '',
+      blueprintId,
+      blueprintTitle,
       running: state?.running ?? false,
       machineState: machine.currentState,
       currentPhase: state?.currentPhase ?? null,
@@ -591,12 +614,12 @@ export class BlueprintService extends EventEmitter {
   }
 
   /**
-   * Publish the whole-state snapshot for a workspace.
+   * Publish the whole-state snapshot for a blueprint.
    * Increments seq and emits 'stateSync' event (forwarded to renderer by IPC layer).
    */
-  publishSnapshot(workspaceId: string): void {
+  publishSnapshot(blueprintId: string): void {
     this.snapshotSeq++
-    const snapshot = this.getSnapshot(workspaceId)
+    const snapshot = this.getSnapshot(blueprintId)
     try {
       this.emit('stateSync', snapshot)
     } catch (err) {
@@ -607,48 +630,48 @@ export class BlueprintService extends EventEmitter {
   // ── Snapshot Field Setters (called by sub-services) ──
 
   /** Record when a phase started (for duration tracking). */
-  setPhaseStartedAt(workspaceId: string, timestamp: number): void {
-    const state = this.getOrCreatePipeline(workspaceId)
+  setPhaseStartedAt(blueprintId: string, timestamp: number): void {
+    const state = this.getOrCreatePipeline(blueprintId)
     state.phaseStartedAt = timestamp
   }
 
   /** Set pending approval state (from review service). */
-  setPendingApproval(workspaceId: string, approval: PendingApproval | null): void {
-    const state = this.getOrCreatePipeline(workspaceId)
+  setPendingApproval(blueprintId: string, approval: PendingApproval | null): void {
+    const state = this.getOrCreatePipeline(blueprintId)
     state.pendingApproval = approval
-    this.publishSnapshot(workspaceId)
+    this.publishSnapshot(blueprintId)
   }
 
   /** Get pending approval state (for preflight re-run updates). */
-  getPendingApproval(workspaceId: string): PendingApproval | null {
-    const state = this.getOrCreatePipeline(workspaceId)
+  getPendingApproval(blueprintId: string): PendingApproval | null {
+    const state = this.getOrCreatePipeline(blueprintId)
     return state.pendingApproval
   }
 
   /** Set last error for snapshot (from phase failures). */
-  setLastError(workspaceId: string, error: string | null): void {
-    const state = this.getOrCreatePipeline(workspaceId)
+  setLastError(blueprintId: string, error: string | null): void {
+    const state = this.getOrCreatePipeline(blueprintId)
     state.lastError = error
   }
 
   /** Update wave state (from build service). */
   updateWaveState(
-    workspaceId: string,
+    blueprintId: string,
     wave: { wave: number; taskCount: number; tasks: Record<string, BlueprintTaskStatus> } | null
   ): void {
-    const state = this.getOrCreatePipeline(workspaceId)
+    const state = this.getOrCreatePipeline(blueprintId)
     state.waveState = wave
-    this.publishSnapshot(workspaceId)
+    this.publishSnapshot(blueprintId)
   }
 
   /** G3: Update running tasks map (from build service parallel scheduler). */
   setRunningTasks(
-    workspaceId: string,
+    blueprintId: string,
     tasks: Record<string, { taskId: string; description: string }> | null
   ): void {
-    const state = this.getOrCreatePipeline(workspaceId)
+    const state = this.getOrCreatePipeline(blueprintId)
     state.runningTasks = tasks
-    this.publishSnapshot(workspaceId)
+    this.publishSnapshot(blueprintId)
   }
 
   // ── M9: Clarify state pushed by spec service (removes require() hack) ──
@@ -663,35 +686,81 @@ export class BlueprintService extends EventEmitter {
 
   /** Push clarify UI state from spec service — snapshot reads this instead of require() hack. */
   setClarifyState(
-    workspaceId: string,
+    blueprintId: string,
     state: { findings: ClarifyFindingsBlock | null; questions: ClarifyQuestionsBlock | null } | null
   ): void {
     if (state) {
-      this.clarifyStateByWorkspace.set(workspaceId, state)
+      this.clarifyStateByWorkspace.set(blueprintId, state)
     } else {
-      this.clarifyStateByWorkspace.delete(workspaceId)
+      this.clarifyStateByWorkspace.delete(blueprintId)
     }
   }
 
   /** Get clarify state for snapshot (avoids require() hack). */
-  getClarifyStateForSnapshot(workspaceId: string): {
+  getClarifyStateForSnapshot(blueprintId: string): {
     findings: ClarifyFindingsBlock | null
     questions: ClarifyQuestionsBlock | null
   } | null {
-    return this.clarifyStateByWorkspace.get(workspaceId) ?? null
+    return this.clarifyStateByWorkspace.get(blueprintId) ?? null
   }
 
-  isRunning(workspaceId: string): boolean {
-    return this.pipelines.get(workspaceId)?.running ?? false
+  /** True if this blueprint's pipeline is mid-flight. */
+  isRunning(blueprintId: string): boolean {
+    return this.pipelines.get(blueprintId)?.running ?? false
   }
 
-  /** True if ANY workspace has a blueprint pipeline mid-flight — used by DB maintenance to defer VACUUM. */
+  /** True if ANY blueprint (any workspace) has a pipeline mid-flight — used by DB maintenance to defer VACUUM. */
   hasAnyRunningPipeline(): boolean {
     for (const state of this.pipelines.values()) {
       if (state.running) return true
     }
     return false
   }
+
+  /** True if ANY blueprint is running in the given workspace (tray menu). */
+  hasRunningInWorkspace(workspaceId: string): boolean {
+    for (const [blueprintId, state] of this.pipelines) {
+      if (!state.running) continue
+      if (this.workspaceIdForBlueprint(blueprintId) === workspaceId) return true
+    }
+    return false
+  }
+
+  /**
+   * PARALLEL-RUNS: snapshots for every run currently holding a slot, app-wide.
+   * Seeds the unified status-bar dropdown ("Running Blueprints") in one pull
+   * instead of N per-workspace calls. Gate-parked (awaiting-*) runs included.
+   */
+  getRunningSnapshots(): BlueprintPipelineSnapshot[] {
+    const snapshots: BlueprintPipelineSnapshot[] = []
+    for (const [blueprintId, machine] of this.machines) {
+      if (machine.isIdle() || machine.isTerminal()) continue
+      snapshots.push(this.getSnapshot(blueprintId))
+    }
+    return snapshots
+  }
+
+  /**
+   * Resolve a blueprint's workspaceId via its pipeline state cache, falling
+   * back to the blueprint row. Returns null for unknown/deleted blueprints.
+   */
+  private workspaceIdForBlueprint(blueprintId: string): string | null {
+    const cached = this.workspaceIdCache.get(blueprintId)
+    if (cached) return cached
+    try {
+      const row = blueprintRepository.findById(blueprintId)
+      if (row?.workspaceId) {
+        this.workspaceIdCache.set(blueprintId, row.workspaceId)
+        return row.workspaceId
+      }
+    } catch {
+      /* DB unavailable in some unit contexts */
+    }
+    return null
+  }
+
+  /** blueprintId → workspaceId, learned at markPipelineRunning time (avoids per-poll DB reads). */
+  private workspaceIdCache = new Map<string, string>()
 
   /**
    * P2 (vitals): compact "phase" summary of every running pipeline, e.g.
@@ -708,33 +777,97 @@ export class BlueprintService extends EventEmitter {
   }
 
   getActiveBlueprintId(workspaceId: string): string | null {
-    return this.pipelines.get(workspaceId)?.blueprintId ?? null
+    // Workspace-keyed wrapper: first running pipeline in the workspace.
+    for (const [blueprintId, state] of this.pipelines) {
+      if (state.running && this.workspaceIdForBlueprint(blueprintId) === workspaceId) {
+        return blueprintId
+      }
+    }
+    return null
   }
 
   /**
-   * E12-fix — monotonic per-workspace run counter. Unlike `blueprintId`,
+   * E12-fix — monotonic per-blueprint run counter. Unlike `blueprintId`,
    * markPipelineStopped does NOT reset it — which is exactly why the
    * auto-retry guard uses it.
    */
-  getPipelineGeneration(workspaceId: string): number {
-    return this.pipelines.get(workspaceId)?.generation ?? 0
+  getPipelineGeneration(blueprintId: string): number {
+    return this.pipelines.get(blueprintId)?.generation ?? 0
   }
 
-  /** Get the abort signal for a workspace pipeline — used by phase services to race against cancel. */
-  getAbortSignal(workspaceId: string): AbortSignal | null {
-    return this.pipelines.get(workspaceId)?.abortController?.signal ?? null
+  /** Get the abort signal for a blueprint pipeline — used by phase services to race against cancel. */
+  getAbortSignal(blueprintId: string): AbortSignal | null {
+    return this.pipelines.get(blueprintId)?.abortController?.signal ?? null
   }
 
-  /** Mark a pipeline as running for a workspace. Called by phase services. */
-  markPipelineRunning(workspaceId: string, blueprintId: string, phase: BlueprintPhaseType): void {
-    const machine = this.getMachine(workspaceId)
+  // ── Global concurrency cap (parallel runs) ──
 
-    // Auto-recover from terminal states when starting a NEW blueprint.
-    // A previous blueprint's failed/cancelled state should not block a fresh run.
-    if (machine.isTerminal() && machine.blueprintId !== blueprintId) {
+  /**
+   * Count slots currently held app-wide. A slot is held by every machine that
+   * is neither idle nor terminal — phase-running AND all awaiting-* gate
+   * states (approval gates, clarify gates, remediation windows hold the slot
+   * by design). Keyed by blueprintId, independent of `pipelines.running`
+   * (which markPipelineStopped clears at gates).
+   */
+  countHeldSlots(): number {
+    let held = 0
+    for (const machine of this.machines.values()) {
+      if (!machine.isIdle() && !machine.isTerminal()) held++
+    }
+    return held
+  }
+
+  /**
+   * Admission control for a NEW run start. Rejects when the app-wide cap of
+   * MAX_CONCURRENT_BLUEPRINT_RUNS is reached. No queue — hard error.
+   */
+  admitRun(): { ok: true } | { ok: false; activeCount: number } {
+    const activeCount = this.countHeldSlots()
+    if (activeCount >= MAX_CONCURRENT_BLUEPRINT_RUNS) {
+      return { ok: false, activeCount }
+    }
+    return { ok: true }
+  }
+
+  /**
+   * Admission for re-entry paths (retry/resume/advance/approval-respond):
+   * exempt when THIS blueprint already holds a slot (parked at a gate or
+   * mid-remediation) — re-entering your own slot must never hit the cap.
+   */
+  admitRunUnlessHeld(blueprintId: string): { ok: true } | { ok: false; activeCount: number } {
+    if (this.isSlotHeldBy(blueprintId)) return { ok: true }
+    return this.admitRun()
+  }
+
+  /** True when this blueprint's machine is neither idle nor terminal (holds a slot). */
+  isSlotHeldBy(blueprintId: string): boolean {
+    const machine = this.machines.get(blueprintId)
+    if (!machine) return false
+    return !machine.isIdle() && !machine.isTerminal()
+  }
+
+  /** Human-facing error thrown by IPC start paths when the cap is reached. */
+  static runCapErrorMessage(): string {
+    return (
+      `Cannot start: ${MAX_CONCURRENT_BLUEPRINT_RUNS} blueprints are already running. ` +
+      `Wait for one to finish (check the status bar).`
+    )
+  }
+
+  /** Mark a pipeline as running for a blueprint. Called by phase services. */
+  markPipelineRunning(
+    blueprintId: string,
+    phase: BlueprintPhaseType,
+    workspaceId?: string
+  ): void {
+    const machine = this.getMachine(blueprintId)
+
+    // Auto-recover from terminal states when starting a NEW run of this
+    // blueprint (previous attempt failed/cancelled — forceReset frees it).
+    if (machine.isTerminal()) {
       bpLog.info(
-        `[markPipelineRunning] Auto-resetting terminal machine (state=${machine.currentState}, ` +
-          `old=${machine.blueprintId}) for new blueprint ${blueprintId}`
+        `[markPipelineRunning] Auto-resetting terminal machine (state=${machine.currentState}) ` +
+          `for re-run of blueprint ${blueprintId}`
       )
       machine.forceReset()
     }
@@ -743,7 +876,7 @@ export class BlueprintService extends EventEmitter {
     // valid from idle. If the machine is in any other state, the transition fails.
     if (!machine.transition('startPhase', { blueprintId, phase })) {
       throw new Error(
-        `Blueprint pipeline cannot start for workspace ${workspaceId} ` +
+        `Blueprint pipeline cannot start for blueprint ${blueprintId} ` +
           `— machine in state '${machine.currentState}'`
       )
     }
@@ -751,16 +884,22 @@ export class BlueprintService extends EventEmitter {
     // a snapshot. At that point state.running is still false — the snapshot is
     // transiently incoherent. We mutate state below and publish a corrective
     // snapshot (higher seq) that overwrites the transient one.
-    const state = this.getOrCreatePipeline(workspaceId)
+    const state = this.getOrCreatePipeline(blueprintId)
     state.running = true
     state.blueprintId = blueprintId
+    if (workspaceId) {
+      state.workspaceId = workspaceId
+      this.workspaceIdCache.set(blueprintId, workspaceId)
+    } else {
+      void this.workspaceIdForBlueprint(blueprintId) // warm the cache for workspace-keyed scans
+    }
     state.generation += 1 // E12-fix: new run → supersede any pending auto-retry
     state.currentPhase = phase
     state.abortController = new AbortController()
     state.phaseStartedAt = Date.now()
     state.lastError = null
     // Corrective snapshot — overwrites the transient incoherent one from stateChange
-    this.publishSnapshot(workspaceId)
+    this.publishSnapshot(blueprintId)
   }
 
   /**
@@ -798,7 +937,7 @@ export class BlueprintService extends EventEmitter {
   }
 
   /**
-   * Mark a pipeline as stopped for a workspace. Called by phase services.
+   * Mark a pipeline as stopped for a blueprint. Called by phase services.
    *
    * C1 FIX: `keepGate: true` suppresses only the machine.transition('phaseComplete')
    * call — for phases that legitimately end at a gate (review → awaiting-approval,
@@ -807,15 +946,14 @@ export class BlueprintService extends EventEmitter {
    * awaiting state instead of being yanked through an invalid transition by the
    * finally block.
    */
-  markPipelineStopped(workspaceId: string, opts?: { keepGate?: boolean }): void {
+  markPipelineStopped(blueprintId: string, opts?: { keepGate?: boolean }): void {
     // COHERENT-SNAPSHOT-FIX: Mutate pipeline state BEFORE machine.transition()
     // so the snapshot published by the stateChange listener already sees
     // running=false. Previously state was mutated after, causing the snapshot
     // to broadcast {machineState:'idle', running:true} → permanent "Analyzing…".
-    const state = this.pipelines.get(workspaceId)
+    const state = this.pipelines.get(blueprintId)
     if (state) {
       state.running = false
-      state.blueprintId = null // Clear stale identity
       state.currentPhase = null // Clear stale phase
       state.abortController = null
       state.phaseStartedAt = null
@@ -823,7 +961,7 @@ export class BlueprintService extends EventEmitter {
       state.runningTasks = null
     }
     if (opts?.keepGate) return // SM stays in its awaiting state — gate owns the next transition
-    const machine = this.getMachine(workspaceId)
+    const machine = this.getMachine(blueprintId)
     // phaseComplete is idempotent when idle — safe to call multiple times.
     machine.transition('phaseComplete')
   }
@@ -834,17 +972,18 @@ export class BlueprintService extends EventEmitter {
    * this explicitly marks the pipeline as failed so the renderer shows error state.
    * Valid from ALL active states (phase-running, awaiting-*).
    * If the 'fail' transition is invalid (already idle/cancelled/failed), forces reset.
+   * Failed = terminal → the run's slot is freed for the cap.
    */
-  failPipeline(workspaceId: string, error: string): void {
+  failPipeline(blueprintId: string, error: string): void {
     // COHERENT-SNAPSHOT-FIX: Mutate pipeline state BEFORE machine.transition()
     // so the snapshot published by stateChange already has running=false.
-    const state = this.pipelines.get(workspaceId)
+    const state = this.pipelines.get(blueprintId)
     if (state) {
       state.running = false
       state.abortController = null
       state.lastError = error
     }
-    const machine = this.getMachine(workspaceId)
+    const machine = this.getMachine(blueprintId)
     if (!machine.transition('fail')) {
       // Machine is in a state where 'fail' isn't valid (idle, cancelled, failed).
       // Force reset to ensure consistency.
@@ -971,7 +1110,7 @@ export class BlueprintService extends EventEmitter {
     // caller's finally) nulls blueprintId but does NOT touch generation; a NEW
     // run (markPipelineRunning) bumps it, which is the "workspace moved on"
     // signal the old blueprintId comparison tried and failed to express.
-    const scheduledGeneration = this.getPipelineGeneration(ctx.workspaceId)
+    const scheduledGeneration = this.getPipelineGeneration(ctx.blueprintId)
     bpLog.info(
       `[phase-auto-retry] Scheduling auto-retry ${attempt}/${MAX_PHASE_AUTO_RETRIES} for ` +
         `${ctx.phase} phase of blueprint ${ctx.blueprintId} in ${delayMs}ms (class: ${delayClass}, ` +
@@ -1007,9 +1146,9 @@ export class BlueprintService extends EventEmitter {
       try {
         const decision = shouldDispatchScheduledRetry({
           blueprint: blueprintRepository.findById(ctx.blueprintId),
-          isRunning: this.isRunning(ctx.workspaceId),
+          isRunning: this.isRunning(ctx.blueprintId),
           scheduledGeneration,
-          currentGeneration: this.getPipelineGeneration(ctx.workspaceId)
+          currentGeneration: this.getPipelineGeneration(ctx.blueprintId)
         })
         if (!decision.dispatch) {
           // E12-fix: telemetry honesty — the schedule-time row above cannot
@@ -1250,11 +1389,11 @@ export class BlueprintService extends EventEmitter {
    * AND no clarify session/gate/approval is pending → machine is stranded.
    * Called on-demand from getPipelineStatus (every renderer poll self-heals).
    */
-  assertMachineConsistency(workspaceId: string): void {
-    const machine = this.getMachine(workspaceId)
+  assertMachineConsistency(blueprintId: string): void {
+    const machine = this.getMachine(blueprintId)
     if (machine.isIdle() || machine.isTerminal()) return
 
-    const state = this.pipelines.get(workspaceId)
+    const state = this.pipelines.get(blueprintId)
     if (state?.running) return // Active pipeline — expected
 
     // Check for valid awaiting states (clarify session, pending gate, or approval)
@@ -1285,8 +1424,8 @@ export class BlueprintService extends EventEmitter {
 
     // Machine is stranded — no running pipeline, no valid awaiting reason.
     bpLog.warn(
-      `[watchdog] Machine stranded in '${machine.currentState}' for workspace ${workspaceId} ` +
-        `(blueprint=${state?.blueprintId}) — forcing reset`
+      `[watchdog] Machine stranded in '${machine.currentState}' for blueprint ${blueprintId} ` +
+        `— forcing reset`
     )
     machine.forceReset()
     if (state) {
@@ -1387,20 +1526,47 @@ export class BlueprintService extends EventEmitter {
    * Cancel (stop) an active Blueprint pipeline.
    * Resets any in-flight 'active' phase rows to 'pending' so a subsequent
    * resume (retryPhase) can pick up where it left off.
+   *
+   * Workspace-keyed entry: resolves the workspace's running blueprint, then
+   * cancels that blueprint's pipeline. Cancelled = terminal → slot freed.
    */
   cancel(workspaceId: string): void {
-    const state = this.pipelines.get(workspaceId)
-    // BP-CANCEL-WINDOW-SILENT-01: Check blueprintId presence (identity) rather
+    const blueprintId = this.getActiveBlueprintId(workspaceId)
+    // BP-CANCEL-WINDOW-SILENT-01: Check machine presence (identity) rather
     // than running state (activity). During the BUILD→VERIFY transition window,
-    // running=false but blueprintId is still set — the user's cancel must still
-    // take effect and update the DB status so VERIFY aborts on startup.
-    if (!state?.blueprintId) {
+    // running=false but the machine still holds the blueprint — the user's
+    // cancel must still take effect and update the DB status so VERIFY aborts
+    // on startup.
+    if (!blueprintId) {
+      // Fall back: a gate-parked (not running) machine for this workspace.
+      const state = this.findPipelineStateForWorkspace(workspaceId)
+      if (state?.blueprintId) {
+        return this.cancelBlueprint(state.blueprintId)
+      }
       bpLog.warn('[cancel] No active blueprint pipeline to cancel')
+      return
+    }
+    this.cancelBlueprint(blueprintId)
+  }
+
+  /** Find a pipeline state whose blueprint belongs to the workspace (gate-parked included). */
+  private findPipelineStateForWorkspace(workspaceId: string): BlueprintPipelineState | null {
+    for (const [blueprintId, state] of this.pipelines) {
+      if (this.workspaceIdForBlueprint(blueprintId) === workspaceId) return state
+    }
+    return null
+  }
+
+  /** Cancel a specific blueprint's pipeline (per-blueprint path). */
+  private cancelBlueprint(blueprintId: string): void {
+    const state = this.pipelines.get(blueprintId)
+    if (!state) {
+      bpLog.warn(`[cancel] No pipeline state for blueprint ${blueprintId}`)
       return
     }
 
     // Drive the state machine — cancel is idempotent when idle.
-    const machine = this.getMachine(workspaceId)
+    const machine = this.getMachine(blueprintId)
     machine.transition('cancel')
 
     if (state.abortController) {
@@ -1412,9 +1578,8 @@ export class BlueprintService extends EventEmitter {
     // Without this, a crash between phase resets and status update leaves
     // inconsistent state (pending phases + non-cancelled status).
     const db = getDatabase()
-    const bpId = state.blueprintId
     db.transaction(() => {
-      const phases = blueprintPhaseRepository.findByBlueprint(bpId!)
+      const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
       for (const phase of phases) {
         if (phase.status === 'active') {
           blueprintPhaseRepository.updateStatus(phase.id, 'pending')
@@ -1425,22 +1590,21 @@ export class BlueprintService extends EventEmitter {
           }
         }
       }
-      blueprintRepository.updateStatus(bpId!, 'cancelled')
+      blueprintRepository.updateStatus(blueprintId, 'cancelled')
     })()
 
-    bpLog.info(`[cancel] Blueprint ${state.blueprintId} cancelled`)
-    this.clearAutoRetryState(state.blueprintId!)
-    state.blueprintId = null
+    bpLog.info(`[cancel] Blueprint ${blueprintId} cancelled`)
+    this.clearAutoRetryState(blueprintId)
     state.currentPhase = null
 
     // COHERENT-SNAPSHOT-FIX (cancel): the snapshot published by the cancel
     // transition fires BEFORE the pipeline fields above are cleared, so the
-    // last broadcast still carries running:true + the stale blueprintId/
+    // last broadcast still carries running:true + the stale
     // currentPhase. A renderer that misses that transient (e.g. webContents
     // reload at cancel time — log-confirmed 2026-08-29 23:09) keeps showing
     // the Stop button and every subsequent press no-ops. Publish a final,
     // fully-coherent snapshot so any connected client converges on cancelled.
-    this.publishSnapshot(workspaceId)
+    this.publishSnapshot(blueprintId)
   }
 
   /**
@@ -1450,29 +1614,27 @@ export class BlueprintService extends EventEmitter {
     blueprintRepository.delete(blueprintId)
     bpLog.info(`[delete] Blueprint ${blueprintId} deleted`)
 
-    // BP-DELETE-MACHINE-RESET: If the workspace machine is still holding this
-    // blueprint (e.g. it was awaiting user input when deleted), reset it —
-    // otherwise the machine stays stranded in awaiting-clarify-input and every
-    // subsequent startPhase for the workspace throws "cannot start … machine in
-    // state 'awaiting-clarify-input'". The machine is per-workspace, so scan
-    // the pipeline states for one whose blueprintId matches.
-    for (const [workspaceId, state] of this.pipelines) {
-      if (state.blueprintId === blueprintId) {
-        const machine = this.getMachine(workspaceId)
-        if (!machine.isIdle()) {
-          bpLog.info(
-            `[delete] Resetting stranded machine (state=${machine.currentState}) for ` +
-              `deleted blueprint ${blueprintId}`
-          )
-          machine.forceReset()
-        }
-        state.running = false
-        state.blueprintId = null
-        state.currentPhase = null
-        state.abortController = null
-        break
-      }
+    // BP-DELETE-MACHINE-RESET: If this blueprint's machine is still holding a
+    // slot (e.g. it was awaiting user input when deleted), reset it — otherwise
+    // the machine stays stranded in awaiting-clarify-input and holds a cap slot
+    // forever. Blueprint-keyed since the parallel-runs re-key.
+    const machine = this.machines.get(blueprintId)
+    if (machine && !machine.isIdle()) {
+      bpLog.info(
+        `[delete] Resetting stranded machine (state=${machine.currentState}) for ` +
+          `deleted blueprint ${blueprintId}`
+      )
+      machine.forceReset()
     }
+    const state = this.pipelines.get(blueprintId)
+    if (state) {
+      state.running = false
+      state.currentPhase = null
+      if (state.abortController) state.abortController.abort()
+      state.abortController = null
+    }
+    // Free any cap slot + workspace cache entries the deleted run held.
+    this.workspaceIdCache.delete(blueprintId)
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1748,7 +1910,7 @@ export class BlueprintService extends EventEmitter {
     ])
     const isRetryable = blueprint.status === 'failed' || blueprint.status === 'cancelled'
     const isOrphaned =
-      MID_PIPELINE_STATUSES.has(blueprint.status) && !this.isRunning(blueprint.workspaceId)
+      MID_PIPELINE_STATUSES.has(blueprint.status) && !this.isRunning(blueprintId)
 
     // BP-COMPLETE-RETRY: Allow retrying 'complete' blueprints when verification
     // found gaps — user wants another build pass.
@@ -1768,9 +1930,9 @@ export class BlueprintService extends EventEmitter {
       })()
 
     if (!isRetryable && !isOrphaned && !isCompletedWithGaps) {
-      if (MID_PIPELINE_STATUSES.has(blueprint.status) && this.isRunning(blueprint.workspaceId)) {
+      if (MID_PIPELINE_STATUSES.has(blueprint.status) && this.isRunning(blueprintId)) {
         throw new Error(
-          `Cannot retry blueprint ${blueprintId} — pipeline is currently active for workspace ${blueprint.workspaceId}`
+          `Cannot retry blueprint ${blueprintId} — its pipeline is currently active`
         )
       }
       throw new Error(
@@ -1792,10 +1954,8 @@ export class BlueprintService extends EventEmitter {
     // mutations. Without this, the state machine guard at line 890 can throw
     // AFTER tasks, status, and remediationRound have already been modified,
     // orphaning the blueprint in a partially-reset state.
-    if (this.isRunning(blueprint.workspaceId)) {
-      throw new Error(
-        `Cannot retry blueprint ${blueprintId} — pipeline is currently active for workspace ${blueprint.workspaceId}`
-      )
+    if (this.isRunning(blueprintId)) {
+      throw new Error(`Cannot retry blueprint ${blueprintId} — its pipeline is currently active`)
     }
 
     const phases = blueprintPhaseRepository.findByBlueprint(blueprintId)
@@ -2034,7 +2194,7 @@ export class BlueprintService extends EventEmitter {
 
     // Drive the state machine: retry transitions cancelled/failed → idle,
     // making the machine ready for the next startPhase call.
-    const machine = this.getMachine(blueprint.workspaceId)
+    const machine = this.getMachine(blueprintId)
     if (machine.isTerminal()) {
       machine.transition('retry')
     } else if (!machine.isIdle()) {
@@ -2042,8 +2202,8 @@ export class BlueprintService extends EventEmitter {
       // Don't force-reset it — that would kill the running blueprint.
       if (machine.isRunning()) {
         throw new Error(
-          `Cannot retry blueprint ${blueprintId} — pipeline is currently active ` +
-            `for workspace ${blueprint.workspaceId} (machine=${machine.currentState})`
+          `Cannot retry blueprint ${blueprintId} — its pipeline is currently active ` +
+            `(machine=${machine.currentState})`
         )
       }
       // Orphan recovery — machine may be stuck in a non-terminal, non-running
@@ -2777,13 +2937,14 @@ export class BlueprintService extends EventEmitter {
     blueprintId: string | null
     currentPhase: BlueprintPhaseType | null
   } {
-    // M5: Watchdog — self-heal on every renderer poll
-    this.assertMachineConsistency(workspaceId)
+    // M5: Watchdog — self-heal on every renderer poll (per running blueprint)
+    const activeId = this.getActiveBlueprintId(workspaceId)
+    if (activeId) this.assertMachineConsistency(activeId)
 
-    const state = this.pipelines.get(workspaceId)
+    const state = activeId ? this.pipelines.get(activeId) : undefined
     return {
       running: state?.running ?? false,
-      blueprintId: state?.blueprintId ?? null,
+      blueprintId: activeId,
       currentPhase: state?.currentPhase ?? null
     }
   }
@@ -2804,7 +2965,7 @@ export class BlueprintService extends EventEmitter {
     tasksCompleted: number
     totalTasks: number
   } | null {
-    if (this.isRunning(workspaceId)) return null
+    if (this.hasRunningInWorkspace(workspaceId)) return null
 
     const MID_PIPELINE_STATUSES = new Set([
       'specifying',
@@ -2927,13 +3088,13 @@ export class BlueprintService extends EventEmitter {
 
       // Restore state machine to awaiting-approval
       // Path: idle → startPhase → phase-running → approvalNeeded → awaiting-approval
-      const machine = this.getMachine(workspaceId)
+      const machine = this.getMachine(blueprintId)
       machine.forceReset()
       machine.transition('startPhase', { blueprintId, phase: 'review' })
       machine.transition('approvalNeeded')
 
       // Rebuild pendingApproval (in-memory) from persisted artifacts
-      this.setPendingApproval(workspaceId, {
+      this.setPendingApproval(blueprintId, {
         blueprintId,
         planSummary,
         completion: completion ?? undefined,
@@ -2942,12 +3103,13 @@ export class BlueprintService extends EventEmitter {
       })
 
       // Mark the pipeline as having this blueprint
-      const state = this.getOrCreatePipeline(workspaceId)
-      state.blueprintId = blueprintId
+      const state = this.getOrCreatePipeline(blueprintId)
+      state.workspaceId = workspaceId
+      this.workspaceIdCache.set(blueprintId, workspaceId)
       state.currentPhase = 'review'
 
       // Publish snapshot so renderer picks it up
-      this.publishSnapshot(workspaceId)
+      this.publishSnapshot(blueprintId)
 
       bpLog.info(
         `[reconcile] Restored blueprint ${blueprintId} to awaiting-approval for workspace ${workspaceId}`

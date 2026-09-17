@@ -161,6 +161,42 @@ export function shouldDropCancelledEvent(
   return cancelledIds.has(blueprintId)
 }
 
+// ── Pure guard for focused-run event routing (parallel runs) ──
+
+/**
+ * Module-level focus for parallel runs: the blueprint whose transcript this
+ * store instance is following. Null = no explicit focus yet (single-run
+ * behavior — first event adopts, preserving today's semantics).
+ * Set on start/hydration/focus-switch; events for a DIFFERENT blueprint are
+ * dropped so a sibling run's chunks never land in this transcript.
+ */
+let focusedBlueprintId: string | null = null
+
+/** Test/preview access to the focused run. */
+export function getFocusedBlueprintId(): string | null {
+  return focusedBlueprintId
+}
+
+/** Set the focused run (start, hydration, dropdown/chip focus switch). */
+export function setFocusedBlueprintId(blueprintId: string | null): void {
+  focusedBlueprintId = blueprintId
+}
+
+/**
+ * Decide whether a blueprint IPC event belongs to the focused run.
+ * 'process' — event's blueprintId matches focus (or no focus set yet → adopt,
+ * preserving single-run behavior).
+ * 'drop' — event belongs to a sibling run; the focused run's state must not
+ * change. Extracted as a pure function for unit testing.
+ */
+export function resolveFocusedRunAction(
+  focusedId: string | null,
+  eventBlueprintId: string
+): 'process' | 'drop' {
+  if (focusedId === null) return 'process'
+  return focusedId === eventBlueprintId ? 'process' : 'drop'
+}
+
 // ── Pure guard for workspace event adoption ──
 
 /**
@@ -407,6 +443,12 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         id: blueprintId
       })) as BlueprintWithDetails | null
       if (data) {
+        // PARALLEL-RUNS: viewing a blueprint focuses it — subsequent IPC events
+        // for other runs won't mutate this transcript. (Detail-view focus;
+        // harmless in single-run mode, which is the null-focus adopt path.)
+        if (getFocusedBlueprintId() === null && data.status && !['complete', 'failed', 'cancelled'].includes(data.status)) {
+          setFocusedBlueprintId(blueprintId)
+        }
         const updates: Partial<BlueprintState> = { currentBlueprint: data }
 
         // Phase 3: Seed totalTaskCount/totalWaves from DB tasks when zero
@@ -448,6 +490,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
 
       // Clear cancelled guard — this blueprint should receive events
       recentlyCancelledIds.delete(result.id)
+      // PARALLEL-RUNS: focus the new run — its events drive this transcript.
+      setFocusedBlueprintId(result.id)
 
       // SEED-FIX: Load the new blueprint immediately so the task panel
       // has a currentBlueprint even before the first phaseStart event.
@@ -482,6 +526,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     // already persisted (Jira conversion, or a saved edit) and only needs the
     // specify phase kicked off.
     recentlyCancelledIds.delete(blueprintId)
+    // PARALLEL-RUNS: focus the run being started.
+    setFocusedBlueprintId(blueprintId)
     useBlueprintStreamStore.getState().reset()
     useBlueprintLaneStore.getState().resetAll()
     // Set running state BEFORE the await — main emits phaseStart within a few
@@ -762,6 +808,8 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   retryPhase: async (blueprintId: string, workspaceId: string) => {
     // Clear cancelled guard — resume must receive events again
     recentlyCancelledIds.delete(blueprintId)
+    // PARALLEL-RUNS: focus the run being resumed/retried.
+    setFocusedBlueprintId(blueprintId)
     // Set running state BEFORE await — main emits phaseStart ~22ms into the call;
     // if activeWorkspaceId isn't set, the workspace guard drops the event.
     useBlueprintStreamStore.getState().reset()
@@ -988,6 +1036,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       const action = resolveAction(data.workspaceId)
       if (action === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Phase started: ${data.phase} (action=${action})`)
 
       // SEED-FIX: Ensure currentBlueprint tracks the running blueprint.
@@ -999,7 +1048,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // BP-REMEDIATION-HANDOFF-CLEAR: Build phaseStart confirms the remediation
       // handoff completed — clear the guard so idle snapshots propagate normally.
       if (data.phase === 'build') {
-        remediationPendingAt.delete(data.workspaceId)
+        remediationPendingAt.delete(data.blueprintId)
       }
       const now = Date.now()
       // Reset stream store + accumulated raw text for fresh phase
@@ -1054,6 +1103,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       const action = resolveAction(data.workspaceId)
       if (action === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       const key = data.phase
       const kind: StreamEvent['kind'] =
         (data as Record<string, unknown>).kind === 'tool' ? 'tool' : 'text'
@@ -1162,6 +1212,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintPhaseComplete, 'onBlueprintPhaseComplete', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Phase complete: ${data.phase} — ${data.status}`)
 
       // Commit any remaining streamed content as agent bubble (ALL phases)
@@ -1225,7 +1276,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         const wsId = get().activeWorkspaceId
         // BP-SNAPSHOT-RESURRECTION-GUARD: Record terminal completion timestamp
         // so applySnapshot can reject stale phase-running snapshots.
-        if (wsId) terminalPhaseSeenAt.set(wsId, Date.now())
+        if (wsId) terminalPhaseSeenAt.set(data.blueprintId, Date.now())
         set({ isRunning: false, activeWorkspaceId: null })
         if (wsId) void get().loadHistory(wsId)
       }
@@ -1233,7 +1284,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         // Keep run adopted: do NOT touch isRunning/activeWorkspaceId/terminalPhaseSeenAt.
         // Record remediation handoff timestamp for the snapshot guard.
         const wsId = data.workspaceId
-        if (wsId) remediationPendingAt.set(wsId, Date.now())
+        if (wsId) remediationPendingAt.set(data.blueprintId, Date.now())
         // Refetch so appended R-tasks appear in the task list.
         void get().loadBlueprint(data.blueprintId)
       }
@@ -1241,7 +1292,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         const wsId = get().activeWorkspaceId
         // BP-SNAPSHOT-RESURRECTION-GUARD: Also record terminal timestamp on failure
         // so stale phase-running snapshots don't resurrect the UI.
-        if (wsId && data.phase === 'verify') terminalPhaseSeenAt.set(wsId, Date.now())
+        if (wsId && data.phase === 'verify') terminalPhaseSeenAt.set(data.blueprintId, Date.now())
         const errorMsg = (data as Record<string, unknown>).error
           ? String((data as Record<string, unknown>).error)
           : null
@@ -1257,6 +1308,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintPhaseArtifact, 'onBlueprintPhaseArtifact', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Phase artifact: ${data.phase} — ${data.artifact.type}`)
 
       // Merge artifact into currentBlueprint.phases[].artifactsJson so the
@@ -1288,6 +1340,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       (data) => {
         if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
         if (resolveAction(data.workspaceId) === 'drop') return
+        if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
         rendererLog.info(`[blueprint] Clarify awaiting input for ${data.blueprintId}`)
         // Commit streamed content as agent bubble
         commitStreamAsAgentMessage()
@@ -1306,6 +1359,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         const payload = data as { blueprintId: string; workspaceId: string; findings: unknown }
         if (shouldDropCancelledEvent(recentlyCancelledIds, payload.blueprintId)) return
         if (resolveAction(payload.workspaceId) === 'drop') return
+        if (resolveFocusedRunAction(focusedBlueprintId, payload.blueprintId) === 'drop') return
         rendererLog.info(`[blueprint] Clarify findings for ${payload.blueprintId}`)
         const findings = payload.findings as ClarifyFindingsBlock
         // Commit streamed intro text as agent bubble BEFORE the findings card
@@ -1337,6 +1391,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         const payload = data as { blueprintId: string; workspaceId: string; questions: unknown }
         if (shouldDropCancelledEvent(recentlyCancelledIds, payload.blueprintId)) return
         if (resolveAction(payload.workspaceId) === 'drop') return
+        if (resolveFocusedRunAction(focusedBlueprintId, payload.blueprintId) === 'drop') return
         rendererLog.info(`[blueprint] Clarify questions for ${payload.blueprintId}`)
         // Commit streamed content as agent bubble
         commitStreamAsAgentMessage()
@@ -1357,6 +1412,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
         const payload = data as { blueprintId: string; workspaceId: string; findings: unknown }
         if (shouldDropCancelledEvent(recentlyCancelledIds, payload.blueprintId)) return
         if (resolveAction(payload.workspaceId) === 'drop') return
+        if (resolveFocusedRunAction(focusedBlueprintId, payload.blueprintId) === 'drop') return
         rendererLog.info(`[blueprint] Clarify gate ready for ${payload.blueprintId}`)
         // Commit streamed content as agent bubble
         commitStreamAsAgentMessage()
@@ -1377,6 +1433,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintApprovalNeeded, 'onBlueprintApprovalNeeded', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Approval needed for ${data.blueprintId}`)
       // Commit stream before the gate so transcript is finalized
       commitStreamAsAgentMessage()
@@ -1412,6 +1469,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
 
     safeSubscribe(window.api.onBlueprintPreflightResult, 'onBlueprintPreflightResult', (data) => {
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       set((state) => {
         if (!state.pendingApproval) return state
         return {
@@ -1428,6 +1486,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintWaveStart, 'onBlueprintWaveStart', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} started (${data.taskCount} tasks)`)
       // FIX-B: Do NOT resetAll() lane stores on wave start — completed lanes
       // must survive across waves so their accumulated content remains visible.
@@ -1453,6 +1512,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintWaveTaskStart, 'onBlueprintWaveTaskStart', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} task ${data.taskId} started`)
       const taskGoal = (data as Record<string, unknown>).goal as string | undefined
       set((state) => ({
@@ -1473,6 +1533,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintWaveTaskComplete, 'onBlueprintWaveTaskComplete', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} task ${data.taskId} ${data.status}`)
       // F9: the task is terminal — snapshot its lane and release the segment
       // accumulator. Completed lanes stay alive across waves (FIX-B), so without
@@ -1499,6 +1560,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintWaveComplete, 'onBlueprintWaveComplete', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       rendererLog.info(`[blueprint] Wave ${data.wave} complete — ${data.status}`)
       set((state) => ({
         // Part A: Clear running tasks on wave complete
@@ -1528,6 +1590,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     safeSubscribe(window.api.onBlueprintTaskGates, 'onBlueprintTaskGates', (data) => {
       if (shouldDropCancelledEvent(recentlyCancelledIds, data.blueprintId)) return
       if (resolveAction(data.workspaceId) === 'drop') return
+      if (resolveFocusedRunAction(focusedBlueprintId, data.blueprintId) === 'drop') return
       if (/^W\d+$/.test(data.taskId)) return
       set((state) => ({
         gatesByTask: { ...state.gatesByTask, [data.taskId]: data.report }
@@ -1551,10 +1614,17 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     const applySnapshot = (
       snap: Parameters<Parameters<typeof window.api.onBlueprintStateSync>[0]>[0]
     ): void => {
-      // Drop stale/reordered snapshots (per-workspace tracking)
-      const lastSeq = lastSnapshotSeqByWorkspace.get(snap.workspaceId) ?? -1
+      // PARALLEL-RUNS: snapshot routing is per-blueprint now. Focus (when set)
+      // decides which run's snapshots mutate this store — a sibling run's
+      // snapshot must never touch the focused transcript/wave state. When no
+      // focus is set (single-run / first event), adopt per today's behavior.
+      const focusId = getFocusedBlueprintId()
+      if (focusId !== null && snap.blueprintId && snap.blueprintId !== focusId) return
+
+      // Drop stale/reordered snapshots (per-blueprint tracking)
+      const lastSeq = lastSnapshotSeqByWorkspace.get(snap.blueprintId ?? snap.workspaceId) ?? -1
       if (snap.seq <= lastSeq) return
-      lastSnapshotSeqByWorkspace.set(snap.workspaceId, snap.seq)
+      lastSnapshotSeqByWorkspace.set(snap.blueprintId ?? snap.workspaceId, snap.seq)
 
       // Workspace guard: only process snapshots for our active workspace
       const viewedWsId = useWorkspaceStore.getState().activeWorkspace?.id ?? null
@@ -1570,7 +1640,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // window (< 10s). These would otherwise resurrect isRunning=true and the
       // "Analyzing…" bubble permanently (combined with bug where session.stop()
       // failure skips markPipelineStopped).
-      const terminalTs = terminalPhaseSeenAt.get(snap.workspaceId)
+      const terminalTs = terminalPhaseSeenAt.get(snap.blueprintId ?? snap.workspaceId)
       if (
         terminalTs &&
         machineState === 'phase-running' &&
@@ -1587,7 +1657,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
       // (< 10s), ignore transient idle snapshots that would flip isRunning=false
       // and flash the "Interrupted" banner. Only drop machineState==='idle' —
       // failed/cancelled snapshots must still propagate.
-      const remTs = remediationPendingAt.get(snap.workspaceId)
+      const remTs = remediationPendingAt.get(snap.blueprintId ?? snap.workspaceId)
       if (remTs && machineState === 'idle' && !snap.running && Date.now() - remTs < 10_000) {
         rendererLog.info('[blueprint] Dropping transient idle snapshot during remediation handoff')
         return
@@ -1749,6 +1819,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
     if (lastResetWorkspaceId === workspaceId) return // same workspace re-mount — keep transcript
     lastResetWorkspaceId = workspaceId
     hydratedBlueprintId = null // Phase 1: clear hydration sentinel on workspace switch
+    setFocusedBlueprintId(null) // PARALLEL-RUNS: no focus until a run starts/is viewed
     useBlueprintStreamStore.getState().reset()
     useBlueprintLaneStore.getState().resetAll()
     set({
@@ -1789,6 +1860,7 @@ export const useBlueprintStore = create<BlueprintState>((set, get) => ({
   reset: () => {
     lastResetWorkspaceId = null
     hydratedBlueprintId = null
+    setFocusedBlueprintId(null)
     remediationPendingAt.clear()
     useBlueprintStreamStore.getState().reset()
     useBlueprintLaneStore.getState().resetAll()

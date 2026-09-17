@@ -154,8 +154,8 @@ export class BlueprintPlanRevisionService extends EventEmitter {
     // anywhere other than the gate that would raise a gate over whatever is
     // actually running — a BUILD, say — and hand the human an Approve button
     // for work already underway.
-    const machineState = blueprintService.getMachine(workspaceId).currentState
-    const gate = blueprintService.getPendingApproval(workspaceId)
+    const machineState = blueprintService.getMachine(blueprintId).currentState
+    const gate = blueprintService.getPendingApproval(blueprintId)
     const block = approvalGateBlock({ blueprintId, machineState, gate })
     if (block) {
       bpLog.warn(
@@ -349,10 +349,10 @@ export class BlueprintPlanRevisionService extends EventEmitter {
         blueprintId,
         round: entry.round,
         revision,
-        priorApproval: blueprintService.getPendingApproval(workspaceId)
+        priorApproval: blueprintService.getPendingApproval(blueprintId)
       })
 
-      blueprintService.setPendingApproval(workspaceId, approval)
+      blueprintService.setPendingApproval(blueprintId, approval)
       this.safeEmit('approvalNeeded', { ...approval, workspaceId, phase: 'review' })
 
       this.safeEmit('revisionComplete', {
@@ -393,7 +393,7 @@ export class BlueprintPlanRevisionService extends EventEmitter {
    * a refused accept looks to the gate exactly like one still running, and the
    * button spins forever.
    */
-  acceptBlockedReason(blueprintId: string, workspaceId: string): string | null {
+  acceptBlockedReason(blueprintId: string): string | null {
     // Accepting mid-turn would re-derive TASKS from a plan the running turn is
     // about to replace, and the turn would then re-raise a gate over the
     // re-derivation it never knew about.
@@ -405,8 +405,8 @@ export class BlueprintPlanRevisionService extends EventEmitter {
     // approval and rewind the wrong pipeline.
     const block = approvalGateBlock({
       blueprintId,
-      machineState: blueprintService.getMachine(workspaceId).currentState,
-      gate: blueprintService.getPendingApproval(workspaceId)
+      machineState: blueprintService.getMachine(blueprintId).currentState,
+      gate: blueprintService.getPendingApproval(blueprintId)
     })
     if (block === 'not-at-gate') return 'This blueprint is no longer waiting at the approval gate.'
     if (block === 'wrong-blueprint') {
@@ -431,14 +431,14 @@ export class BlueprintPlanRevisionService extends EventEmitter {
 
     // Re-checked here and not only at the IPC edge: this is the invariant, and
     // it must hold for every caller.
-    const blocked = this.acceptBlockedReason(blueprintId, workspaceId)
+    const blocked = this.acceptBlockedReason(blueprintId)
     if (blocked) {
       bpLog.warn(`[acceptRevision] Blueprint ${blueprintId} — refused: ${blocked}`)
       return
     }
 
-    const machine = blueprintService.getMachine(workspaceId)
-    blueprintService.setPendingApproval(workspaceId, null)
+    const machine = blueprintService.getMachine(blueprintId)
+    blueprintService.setPendingApproval(blueprintId, null)
     machine.transition('approvalResponded')
 
     // Reset only what must be recomputed. rewindToPhase('tasks') also clears

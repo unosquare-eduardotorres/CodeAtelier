@@ -50,7 +50,7 @@ function BlueprintIndicatorWithDropdown({
 }: {
   blueprintStatus: BlueprintStatusBarInfo
   onNavigateToBlueprint: () => void
-  onSwitchToWorkspaceBlueprint: (workspaceId: string) => void
+  onSwitchToWorkspaceBlueprint: (blueprintId: string, workspaceId: string) => void
 }): React.JSX.Element {
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -165,7 +165,7 @@ interface StatusBarProps {
   onOpenTokenModal: () => void
   onNavigateToGrill: (ideaId: string) => void
   onNavigateToBlueprint: () => void
-  onSwitchToWorkspaceBlueprint: (workspaceId: string) => void
+  onSwitchToWorkspaceBlueprint: (blueprintId: string, workspaceId: string) => void
   onNavigateToMemory: () => void
   onSwitchToWorkspaceMemory: (workspaceId: string) => void
   onZoomIn: () => void

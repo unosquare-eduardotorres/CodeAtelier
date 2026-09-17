@@ -1136,7 +1136,7 @@ export class BlueprintBuildService extends EventEmitter {
       // finally's markPipelineStopped() is guaranteed to run.
 
       // 1. Pipeline + DB state
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'build')
+      blueprintService.markPipelineRunning(blueprintId, 'build', workspaceId)
       this.activeBlueprintIds.set(workspaceId, blueprintId)
 
       const track = await ensureBlueprintTrack({ blueprintId, workspaceId, workspacePath })
@@ -1684,7 +1684,7 @@ export class BlueprintBuildService extends EventEmitter {
         // before VERIFY acquires its own. Without this, VERIFY's markPipelineRunning()
         // always throws because BUILD's startLock is still held.
         // VERIFY's finally block owns markPipelineStopped() from this point.
-        blueprintService.markPipelineStopped(workspaceId)
+        blueprintService.markPipelineStopped(blueprintId)
         this.finalizeSuccess(
           blueprintId,
           workspaceId,
@@ -1786,7 +1786,7 @@ export class BlueprintBuildService extends EventEmitter {
       // same owner id), so releasing here would free the tree out from under a
       // phase that is already running in it. VERIFY's own finally releases.
       if (!verifyTriggered) {
-        blueprintService.markPipelineStopped(workspaceId)
+        blueprintService.markPipelineStopped(blueprintId)
         if (holdsPrimaryTree) primaryTreeLock.release(workspaceId, primaryTreeOwnerId)
       }
     }
@@ -2113,8 +2113,7 @@ export class BlueprintBuildService extends EventEmitter {
         running[taskId] = { taskId, description: entry.task.description }
       }
       blueprintService.setRunningTasks(
-        workspaceId,
-        Object.keys(running).length > 0 ? running : null
+        blueprintId,Object.keys(running).length > 0 ? running : null
       )
     }
 
@@ -2211,7 +2210,7 @@ export class BlueprintBuildService extends EventEmitter {
 
     // ── Main loop ──
     while (true) {
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       if (abortSignal?.aborted && !draining) {
         bpLog.info(`[executeDag] Aborted — draining ${inFlight.size} in-flight tasks`)
         draining = true
@@ -2373,7 +2372,7 @@ export class BlueprintBuildService extends EventEmitter {
       }
     }
 
-    blueprintService.setRunningTasks(workspaceId, null)
+    blueprintService.setRunningTasks(blueprintId, null)
 
     // ── Residual-risk hedge: warn on undeclared reported-file overlaps ──
     const taskIdsForOverlap = [...reportedFiles.keys()]
@@ -2714,14 +2713,13 @@ export class BlueprintBuildService extends EventEmitter {
         running[taskId] = { taskId, description: entry.task.description }
       }
       blueprintService.setRunningTasks(
-        workspaceId,
-        Object.keys(running).length > 0 ? running : null
+        blueprintId,Object.keys(running).length > 0 ? running : null
       )
     }
 
     while (pendingIdx < pending.length || inFlight.size > 0) {
       // Check abort
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       if (abortSignal?.aborted) {
         bpLog.info(`[executeWave] Aborted — draining ${inFlight.size} in-flight tasks`)
         draining = true
@@ -2950,7 +2948,7 @@ export class BlueprintBuildService extends EventEmitter {
     }
 
     // Clear running tasks
-    blueprintService.setRunningTasks(workspaceId, null)
+    blueprintService.setRunningTasks(blueprintId, null)
 
     // ── 3. Residual-risk hedge: warn if completed tasks' reported files overlap ──
     // H2 FIX: Compare *reported* filesModified (actual writes) instead of declared
@@ -3928,7 +3926,7 @@ export class BlueprintBuildService extends EventEmitter {
         })
 
         try {
-          await abortAwareSleep(delay, blueprintService.getAbortSignal(workspaceId) ?? undefined)
+          await abortAwareSleep(delay, blueprintService.getAbortSignal(blueprintId) ?? undefined)
         } catch {
           // Aborted during backoff. Report it as such rather than as overload —
           // 'overload' would send the wave scheduler into its drain path with a
@@ -4035,7 +4033,7 @@ export class BlueprintBuildService extends EventEmitter {
         try {
           await abortAwareSleep(
             infraDelay,
-            blueprintService.getAbortSignal(workspaceId) ?? undefined
+            blueprintService.getAbortSignal(blueprintId) ?? undefined
           )
           // The wait is short, but a peer can still land inside it — and an
           // exemption set read before the wait would attribute its writes here.
@@ -6375,7 +6373,7 @@ export class BlueprintBuildService extends EventEmitter {
       blueprintPhaseRepository.updateStatus(buildPhaseId, 'failed', errorMsg)
     }
 
-    blueprintService.failPipeline(workspaceId, errorMsg)
+    blueprintService.failPipeline(blueprintId, errorMsg)
 
     const autoRetrying = workspacePath
       ? blueprintService.scheduleAutoRetry({
@@ -6508,13 +6506,13 @@ export class BlueprintBuildService extends EventEmitter {
           .catch((err) => {
             bpLog.error('[build→code-review] Code-review phase failed:', err)
             const errorMsg = err instanceof Error ? err.message : String(err)
-            blueprintService.failPipeline(workspaceId, errorMsg)
+            blueprintService.failPipeline(blueprintId, errorMsg)
             blueprintRepository.updateStatus(blueprintId, 'failed')
           })
       } catch (syncErr) {
         bpLog.error('[build→code-review] Code-review startup failed (sync):', syncErr)
         const errorMsg = syncErr instanceof Error ? syncErr.message : String(syncErr)
-        blueprintService.failPipeline(workspaceId, errorMsg)
+        blueprintService.failPipeline(blueprintId, errorMsg)
         blueprintRepository.updateStatus(blueprintId, 'failed')
       }
       return
@@ -6537,13 +6535,13 @@ export class BlueprintBuildService extends EventEmitter {
           // BP-02: If verify rejects, pipeline is never marked stopped.
           // Clean up here so the workspace isn't permanently locked.
           const errorMsg = err instanceof Error ? err.message : String(err)
-          blueprintService.failPipeline(workspaceId, errorMsg)
+          blueprintService.failPipeline(blueprintId, errorMsg)
           blueprintRepository.updateStatus(blueprintId, 'failed')
         })
     } catch (syncErr) {
       bpLog.error('[build→verify] Verify startup failed (sync):', syncErr)
       const errorMsg = syncErr instanceof Error ? syncErr.message : String(syncErr)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
       blueprintRepository.updateStatus(blueprintId, 'failed')
     }
   }
@@ -6908,7 +6906,7 @@ export class BlueprintBuildService extends EventEmitter {
         )
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       // BP-ABORT-TOCTOU-01: Attach listener BEFORE checking aborted status to
       // close the race window where the signal fires between check and addEventListener.
       // BP-ABORT-LISTENER-LEAK-01: Hoist handler so it can be removed in finally.
@@ -7460,7 +7458,7 @@ export class BlueprintBuildService extends EventEmitter {
       // would later be re-driven as a resume. Only the workspace abort signal
       // counts — the stall watchdog and TASK_TIMEOUT_MS throw the same shape but
       // ARE infra (and resume-safe).
-      const abortedDuringSend = blueprintService.getAbortSignal(workspaceId)?.aborted === true
+      const abortedDuringSend = blueprintService.getAbortSignal(blueprintId)?.aborted === true
       taskResult = {
         success: false,
         completion: null,

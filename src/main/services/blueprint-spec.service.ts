@@ -178,11 +178,11 @@ export class BlueprintSpecService extends EventEmitter {
    * M9: Push clarify UI state to blueprintService for snapshot assembly.
    * Eliminates the require() hack in getSnapshot().
    */
-  private pushClarifyState(blueprintId: string, workspaceId: string): void {
+  private pushClarifyState(blueprintId: string): void {
     const uiState = this.clarifyUiState.get(blueprintId)
     const findings = this.latestFindingsByBlueprint.get(blueprintId) ?? null
     const questions = uiState?.questions ?? null
-    blueprintService.setClarifyState(workspaceId, { findings, questions })
+    blueprintService.setClarifyState(blueprintId, { findings, questions })
   }
 
   /**
@@ -275,7 +275,7 @@ export class BlueprintSpecService extends EventEmitter {
 
     try {
       // Update pipeline state
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'specify')
+      blueprintService.markPipelineRunning(blueprintId, 'specify', workspaceId)
 
       // 2. Update phase record → 'active'
       specifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'specify')
@@ -464,7 +464,7 @@ export class BlueprintSpecService extends EventEmitter {
         timeoutId = setTimeout(() => reject(new Error('SPECIFY phase timeout')), PHASE_TIMEOUT_MS)
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
       // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
@@ -645,7 +645,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
       try {
@@ -677,7 +677,7 @@ export class BlueprintSpecService extends EventEmitter {
       }
 
       // Clean up pipeline state
-      blueprintService.markPipelineStopped(workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
 
       // BP-CHAIN-SPECIFY-CLARIFY: Dispatch clarify AFTER releasing the pipeline lock
       // so markPipelineRunning() in startClarifyPhase doesn't throw.
@@ -743,7 +743,7 @@ export class BlueprintSpecService extends EventEmitter {
 
     try {
       // Mark pipeline running so getPipelineStatus() reflects CLARIFY activity
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'clarify')
+      blueprintService.markPipelineRunning(blueprintId, 'clarify', workspaceId)
 
       // 1. Update blueprint status → 'clarifying'
       blueprintRepository.updateStatus(blueprintId, 'clarifying')
@@ -892,7 +892,7 @@ export class BlueprintSpecService extends EventEmitter {
         const questionsBlock: ClarifyQuestionsBlock = { questions: newQuestions }
         this.previouslyAskedQuestions.set(blueprintId, this.mergeAsked(blueprintId, newQuestions))
         this.clarifyUiState.set(blueprintId, { questions: questionsBlock, awaitingInput: false })
-        this.pushClarifyState(blueprintId, workspaceId)
+        this.pushClarifyState(blueprintId)
         this.safeEmit('clarifyQuestions', { blueprintId, workspaceId, questions: questionsBlock })
       })
 
@@ -915,7 +915,7 @@ export class BlueprintSpecService extends EventEmitter {
       if (clarifyState) clarifyState.activeWatchdog = clarifyWatchdog
 
       try {
-        const abortSignal = blueprintService.getAbortSignal(workspaceId)
+        const abortSignal = blueprintService.getAbortSignal(blueprintId)
         const abortPromise = new Promise<void>((_, reject) => {
           const onAbort = (): void => reject(new Error('Phase cancelled'))
           abortSignal?.addEventListener('abort', onAbort, { once: true })
@@ -946,7 +946,7 @@ export class BlueprintSpecService extends EventEmitter {
       // Guard: if the machine is already awaiting user input, the phase didn't
       // fail — it's waiting for the user. Teardown errors during quit/switch
       // (e.g. session.stop() racing an ask_user turn) must not paint it red.
-      const awaitingInput = blueprintService.getMachine(workspaceId).isAwaitingInput()
+      const awaitingInput = blueprintService.getMachine(blueprintId).isAwaitingInput()
       if (currentStatus !== 'cancelled' && !awaitingInput) {
         // BP-RETRY-UI-01: Same as specify — resolve the phase row when the
         // failure preceded phase assignment so the Retry banner can render.
@@ -960,7 +960,7 @@ export class BlueprintSpecService extends EventEmitter {
 
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
       try {
@@ -1006,7 +1006,7 @@ export class BlueprintSpecService extends EventEmitter {
     this.markPendingAnswered(blueprintId)
 
     // Drive state machine: awaiting-clarify-questions/input → phase-running
-    const machine = blueprintService.getMachine(workspaceId)
+    const machine = blueprintService.getMachine(blueprintId)
     if (!machine.transition('answerReceived')) {
       bpLog.warn(
         `[sendClarifyAnswer] Machine rejected answerReceived (state=${machine.currentState}) — proceeding anyway`
@@ -1043,7 +1043,7 @@ export class BlueprintSpecService extends EventEmitter {
 
     try {
       // M9: Race send against abort signal + stall watchdog
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       const abortPromise = new Promise<void>((_, reject) => {
         const onAbort = (): void => reject(new Error('Phase cancelled'))
         abortSignal?.addEventListener('abort', onAbort, { once: true })
@@ -1061,11 +1061,11 @@ export class BlueprintSpecService extends EventEmitter {
 
       // M5: Recover machine state before rethrowing.
       // If session is dead, fail the pipeline. Otherwise restore to an awaiting state.
-      const machine = blueprintService.getMachine(workspaceId)
+      const machine = blueprintService.getMachine(blueprintId)
       if (!this.clarifySessions.has(blueprintId) || !sessionState.session) {
         // Session is dead — fail pipeline
         const errorMsg = err instanceof Error ? err.message : String(err)
-        blueprintService.failPipeline(workspaceId, errorMsg)
+        blueprintService.failPipeline(blueprintId, errorMsg)
       } else if (machine.currentState === 'phase-running') {
         // Machine stuck in phase-running after send failure — restore to awaiting
         machine.transition('awaitingInput')
@@ -1094,7 +1094,7 @@ export class BlueprintSpecService extends EventEmitter {
     if (sessionState) {
       await sessionState.session.stop()
       this.clarifySessions.delete(blueprintId)
-      blueprintService.markPipelineStopped(sessionState.workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
     }
     blueprintService.skipPhase(blueprintId, 'clarify')
 
@@ -1128,7 +1128,7 @@ export class BlueprintSpecService extends EventEmitter {
     workspaceId: string,
     text: string
   ): Promise<void> {
-    const machine = blueprintService.getMachine(workspaceId)
+    const machine = blueprintService.getMachine(blueprintId)
 
     // 1. Parse & emit findings (always emitted if present)
     const findings = parseClarifyFindings(text)
@@ -1226,7 +1226,7 @@ export class BlueprintSpecService extends EventEmitter {
       // Nudge exhausted — fall through to awaitingInput emit
       machine.transition('awaitingInput')
       this.clarifyUiState.set(blueprintId, { questions: null, awaitingInput: true })
-      this.pushClarifyState(blueprintId, workspaceId)
+      this.pushClarifyState(blueprintId)
       this.safeEmit('clarifyAwaitingInput', { blueprintId, workspaceId })
       return
     }
@@ -1245,7 +1245,7 @@ export class BlueprintSpecService extends EventEmitter {
       this.pendingGates.set(blueprintId, { completion, findings: gateFindings, workspaceId, text })
       // B2-FIX: Clear UI state — gate supersedes questions/awaitingInput
       this.clarifyUiState.set(blueprintId, { questions: null, awaitingInput: false })
-      this.pushClarifyState(blueprintId, workspaceId)
+      this.pushClarifyState(blueprintId)
       this.safeEmit('clarifyGateReady', {
         blueprintId,
         workspaceId,
@@ -1259,7 +1259,7 @@ export class BlueprintSpecService extends EventEmitter {
       // Questions block parsed — emit questions (this is the primary input signal)
       // B2-FIX: Track for reload hydration
       this.clarifyUiState.set(blueprintId, { questions, awaitingInput: false })
-      this.pushClarifyState(blueprintId, workspaceId)
+      this.pushClarifyState(blueprintId)
       this.safeEmit('clarifyQuestions', { blueprintId, workspaceId, questions })
     } else {
       // Drive state machine: phase-running → awaiting-clarify-input
@@ -1268,7 +1268,7 @@ export class BlueprintSpecService extends EventEmitter {
       // Fallback: no structured block parsed — awaiting free-text input
       // B2-FIX: Track for reload hydration
       this.clarifyUiState.set(blueprintId, { questions: null, awaitingInput: true })
-      this.pushClarifyState(blueprintId, workspaceId)
+      this.pushClarifyState(blueprintId)
       this.safeEmit('clarifyAwaitingInput', { blueprintId, workspaceId })
     }
   }
@@ -1284,7 +1284,7 @@ export class BlueprintSpecService extends EventEmitter {
     }
 
     // Drive state machine: awaiting-clarify-gate → idle (clarify done)
-    const machine = blueprintService.getMachine(gate.workspaceId)
+    const machine = blueprintService.getMachine(blueprintId)
     machine.transition('proceedGate')
 
     bpLog.info(`[proceedClarifyGate] Blueprint ${blueprintId} — user proceeding to plan`)
@@ -1308,7 +1308,7 @@ export class BlueprintSpecService extends EventEmitter {
     }
 
     // Drive state machine: awaiting-clarify-gate → phase-running
-    const machine = blueprintService.getMachine(sessionState.workspaceId)
+    const machine = blueprintService.getMachine(blueprintId)
     if (!machine.transition('iterate')) {
       bpLog.warn(
         `[iterateClarify] Machine rejected iterate (state=${machine.currentState}) — proceeding anyway`
@@ -1325,7 +1325,7 @@ export class BlueprintSpecService extends EventEmitter {
 
     try {
       // M9: Race send against abort signal
-      const abortSignal = blueprintService.getAbortSignal(sessionState.workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       const abortPromise = new Promise<void>((_, reject) => {
         const onAbort = (): void => reject(new Error('Phase cancelled'))
         abortSignal?.addEventListener('abort', onAbort, { once: true })
@@ -1341,11 +1341,11 @@ export class BlueprintSpecService extends EventEmitter {
       bpLog.error(`[iterateClarify] Failed:`, err)
 
       // M5: Recover machine state before rethrowing.
-      const machine = blueprintService.getMachine(sessionState.workspaceId)
+      const machine = blueprintService.getMachine(blueprintId)
       if (!this.clarifySessions.has(blueprintId)) {
         // Session is dead — fail pipeline
         const errorMsg = err instanceof Error ? err.message : String(err)
-        blueprintService.failPipeline(sessionState.workspaceId, errorMsg)
+        blueprintService.failPipeline(blueprintId, errorMsg)
       } else if (machine.currentState === 'phase-running') {
         // Restore to gate state since iterate came from there
         machine.transition('gateParsed')
@@ -1413,7 +1413,7 @@ export class BlueprintSpecService extends EventEmitter {
     // B1/B2-FIX: Clean up cached state for this blueprint
     this.latestFindingsByBlueprint.delete(blueprintId)
     this.clarifyUiState.delete(blueprintId)
-    blueprintService.setClarifyState(workspaceId, null)
+    blueprintService.setClarifyState(blueprintId, null)
 
     // Save clarify artifacts
     const clarifyPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'clarify')
@@ -1456,7 +1456,7 @@ export class BlueprintSpecService extends EventEmitter {
       this.clarifySessions.delete(blueprintId)
     }
 
-    blueprintService.markPipelineStopped(workspaceId)
+    blueprintService.markPipelineStopped(blueprintId)
 
     // Advance to next phase (plan)
     blueprintService.advancePhase(blueprintId)
@@ -1537,14 +1537,14 @@ export class BlueprintSpecService extends EventEmitter {
 
     const sessionState = this.clarifySessions.get(blueprintId)
     if (sessionState) {
-      blueprintService.setClarifyState(sessionState.workspaceId, null)
+      blueprintService.setClarifyState(blueprintId, null)
     }
     if (!sessionState) return
 
     const { workspaceId } = sessionState
     await sessionState.session.stop()
     this.clarifySessions.delete(blueprintId)
-    blueprintService.markPipelineStopped(workspaceId)
+    blueprintService.markPipelineStopped(blueprintId)
 
     this.safeEmit('phaseComplete', {
       blueprintId,

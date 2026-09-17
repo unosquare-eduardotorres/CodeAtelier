@@ -131,7 +131,7 @@ function getWorkspaceStatusLabel(workspaceId: string): string {
     }
 
     // Blueprint
-    if (blueprintService.isRunning(workspaceId)) return 'Blueprint: running'
+    if (blueprintService.hasRunningInWorkspace(workspaceId)) return 'Blueprint: running'
 
     // MPA (goal orchestration)
     if (mpaOrchestrationService.isRunningForWorkspace(workspaceId)) return 'Goal: running'

@@ -978,6 +978,61 @@ export async function autoLandBlueprint(params: {
   /** Tag the merge subject — this work completed without being fully proven. */
   humanReviewNeeded: boolean
 }): Promise<void> {
+  const { workspaceId } = params
+
+  // PARALLEL-RUNS: per-repo landing lock. Multiple blueprints may run BUILD in
+  // one workspace concurrently, but landing (merge) must serialize per repo —
+  // a second merge that starts mid-merge races the git index. Promise-chain
+  // mutex: FIFO by arrival order; the existing 'conflicted' outcome below
+  // already handles genuine overlap once the second merge sees the first's
+  // commits.
+  const prior = landingChains.get(workspaceId) ?? Promise.resolve()
+  const run: Promise<void> = prior.then(() => landBlueprintSerialized(params))
+  // Keep the chain alive even if one landing rejects — a failed land must not
+  // block the next blueprint's landing.
+  landingChains.set(
+    workspaceId,
+    run.then(
+      () => undefined,
+      () => undefined
+    )
+  )
+  await run
+}
+
+/** Per-workspace (per-repo) landing chains — arrival order = landing order. */
+const landingChains = new Map<string, Promise<void>>()
+
+/**
+ * Pure promise-chain mutex factory (exported for unit tests). Every call
+ * returns a run promise that resolves only after every previously enqueued
+ * run on the same key has settled — FIFO serialization without interleave.
+ * A rejected run never poisons the chain for the next arrival.
+ */
+export function enqueueLandingChain<T>(
+  chains: Map<string, Promise<void>>,
+  key: string,
+  task: () => Promise<T>
+): Promise<T> {
+  const prior = chains.get(key) ?? Promise.resolve()
+  const run = prior.then(task)
+  chains.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined
+    )
+  )
+  return run
+}
+
+/** The original autoLandBlueprint body, executed under the per-repo lock. */
+async function landBlueprintSerialized(params: {
+  blueprintId: string
+  workspaceId: string
+  summary?: string
+  humanReviewNeeded: boolean
+}): Promise<void> {
   const { blueprintId, workspaceId, summary, humanReviewNeeded } = params
 
   try {

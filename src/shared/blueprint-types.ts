@@ -775,6 +775,15 @@ export interface BlueprintPipelineStatus {
 
 // ── Ordered phases (useful for iteration) ──
 
+/**
+ * Global cap on concurrently running blueprints (app-wide, across workspaces).
+ * A slot is held from start until terminal status (complete/failed/cancelled) —
+ * approval/clarify gates and remediation windows hold it. The 4th start is a
+ * hard error; there is deliberately NO queue. Shared by main (admission
+ * guard) and renderer (copy shown in the error surface).
+ */
+export const MAX_CONCURRENT_BLUEPRINT_RUNS = 3
+
 export const BLUEPRINT_PHASE_ORDER: readonly BlueprintPhaseType[] = [
   'specify',
   'clarify',

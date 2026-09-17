@@ -189,7 +189,7 @@ export class BlueprintPeerReviewService extends EventEmitter {
         timeoutId = setTimeout(() => reject(new Error('PEER-REVIEW pass timeout')), PASS_TIMEOUT_MS)
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       const abortPromise = new Promise<void>((_, reject) => {
         const onAbort = (): void => reject(new Error('Phase cancelled'))
         abortSignal?.addEventListener('abort', onAbort, { once: true })

@@ -1991,6 +1991,7 @@ interface Api {
       seq: number
       workspaceId: string
       blueprintId: string | null
+      blueprintTitle: string | null
       running: boolean
       machineState: string
       currentPhase: string | null
@@ -2016,6 +2017,7 @@ interface Api {
     seq: number
     workspaceId: string
     blueprintId: string | null
+    blueprintTitle: string | null
     running: boolean
     machineState: string
     currentPhase: string | null
@@ -2034,6 +2036,26 @@ interface Api {
     runningTasks: Record<string, { taskId: string; description: string }> | null
     lastError: string | null
   }>
+
+  // Blueprint Unified Runs (parallel runs — all running snapshots, app-wide)
+  blueprintGetRunningSnapshots: () => Promise<
+    Array<{
+      seq: number
+      workspaceId: string
+      blueprintId: string | null
+      blueprintTitle: string | null
+      running: boolean
+      machineState: string
+      currentPhase: string | null
+      phaseStartedAt: number | null
+      clarifyFindings: unknown
+      clarifyQuestions: unknown
+      pendingApproval: unknown
+      wave: { wave: number; taskCount: number; tasks: Record<string, string> } | null
+      runningTasks: Record<string, { taskId: string; description: string }> | null
+      lastError: string | null
+    }>
+  >
 
   // Council (LLM Council — multi-advisor review)
   councilStart: (args: {

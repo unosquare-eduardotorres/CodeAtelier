@@ -1,7 +1,7 @@
 /**
  * BlueprintDropdown — shown when clicking the badge on the blueprint status indicator.
- * Lists all background workspaces with running blueprints. Clicking an entry switches
- * to that workspace and opens the Blueprint page.
+ * Lists every running blueprint across all workspaces (keyed by blueprintId).
+ * Clicking an entry switches to that workspace (if needed) and focuses the run.
  */
 
 import { LayoutGrid } from 'lucide-react'
@@ -14,12 +14,14 @@ const PHASE_LABELS: Record<string, string> = {
   tasks: 'Tasking',
   review: 'Reviewing',
   build: 'Building',
+  'code-review': 'Code Review',
   verify: 'Verifying'
 }
 
 interface BlueprintDropdownProps {
   entries: BlueprintStatusEntry[]
-  onSelect: (workspaceId: string) => void
+  /** Focus a run — same-workspace focus or cross-workspace switch. */
+  onSelect: (blueprintId: string, workspaceId: string) => void
   onClose: () => void
 }
 
@@ -35,9 +37,9 @@ export function BlueprintDropdown({
       </div>
       {entries.map((entry) => (
         <button
-          key={entry.workspaceId}
+          key={entry.blueprintId}
           onClick={() => {
-            onSelect(entry.workspaceId)
+            onSelect(entry.blueprintId, entry.workspaceId)
             onClose()
           }}
           className="flex items-center gap-2 w-full px-2 py-2 rounded-md hover:bg-surface-overlay transition-colors text-left"
@@ -45,10 +47,10 @@ export function BlueprintDropdown({
           <LayoutGrid size={12} className="text-cyan-400 animate-pulse shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-medium text-text-primary truncate">
-              {entry.workspaceName}
+              {entry.blueprintTitle ?? entry.blueprintId.slice(0, 8)}
             </div>
-            <div className="text-[10px] text-text-muted">
-              {PHASE_LABELS[entry.currentPhase ?? ''] ?? 'Running…'}
+            <div className="text-[10px] text-text-muted truncate">
+              {entry.workspaceName} · {PHASE_LABELS[entry.currentPhase ?? ''] ?? 'Running…'}
             </div>
           </div>
         </button>

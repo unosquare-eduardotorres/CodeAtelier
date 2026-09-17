@@ -211,7 +211,7 @@ export class BlueprintVerifyService extends EventEmitter {
       }
 
       // 1. Pipeline + DB state
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'verify')
+      blueprintService.markPipelineRunning(blueprintId, 'verify', workspaceId)
 
       if (
         !track.isolated &&
@@ -331,7 +331,7 @@ export class BlueprintVerifyService extends EventEmitter {
         timeoutId = setTimeout(() => reject(new Error('VERIFY phase timeout')), PHASE_TIMEOUT_MS)
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       // BP-ABORT-TOCTOU-01: Attach listener BEFORE checking aborted status to
       // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
@@ -934,7 +934,7 @@ export class BlueprintVerifyService extends EventEmitter {
 
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
       try {
@@ -980,7 +980,7 @@ export class BlueprintVerifyService extends EventEmitter {
           bpLog.error('[verify] session.stop() failed:', err)
         }
       }
-      blueprintService.markPipelineStopped(workspaceId)
+      blueprintService.markPipelineStopped(blueprintId)
       primaryTreeLock.release(workspaceId, primaryTreeOwnerId)
     }
 
@@ -1007,7 +1007,7 @@ export class BlueprintVerifyService extends EventEmitter {
             // The pass records its own failures to the ledger and completes;
             // this catch is the belt-and-braces path (e.g. import failure).
             const errorMsg = err instanceof Error ? err.message : String(err)
-            blueprintService.failPipeline(payload.workspaceId, errorMsg)
+            blueprintService.failPipeline(payload.blueprintId, errorMsg)
             blueprintRepository.updateStatus(payload.blueprintId, 'failed')
           })
       })

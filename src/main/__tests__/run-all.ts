@@ -228,6 +228,8 @@ const SERVICE_TEST_FILES: string[] = [
   '../../renderer/src/store/__tests__/safety-timeout-policy.test',
   '../../renderer/src/store/__tests__/safety-timeout-orphan.test',
   '../../renderer/src/store/__tests__/blueprint-gates-ui.test',
+  '../../renderer/src/store/__tests__/blueprint-run-focus.test',
+  '../../renderer/src/store/__tests__/blueprint-run-isolation-dom.test',
   // ─── Run 34: Adapter family + session accessors + blueprint/eval pure functions ───
   '../services/__tests__/evaluation-mcp-config.test',
   '../services/__tests__/mpa-base-adapter.test',
@@ -922,6 +924,8 @@ const REPO_TEST_FILES: string[] = [
   // higher up, this becomes the FIRST attachTestDb() caller and audit-handoff's
   // FK-cascade test starts reading a different database than it wrote to.
   '../db/repositories/__tests__/blueprint-telemetry.repository.test',
+  // PARALLEL-RUNS: production-path cap enforcement (must run after all service files — evicts and re-binds modules under its own mock)
+  '../services/__tests__/blueprint-start-cap-ipc.test',
   // ─── Memory cleanup GC + undo log (migration 159) ───
   // Same ordering constraint as the two files above.
   '../db/repositories/__tests__/memory-cleanup.repository.test'

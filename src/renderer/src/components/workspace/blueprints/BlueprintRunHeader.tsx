@@ -65,6 +65,51 @@ function PhaseElapsed({
   return <>{formatPhaseDuration(ticking ? now - startedAt : Date.now() - startedAt)}</>
 }
 
+// ── Sibling run chip (parallel runs) ──
+
+export interface SiblingRun {
+  blueprintId: string
+  title: string | null
+  currentPhase: BlueprintPhaseType | null
+  phaseStartedAt: number | null
+  awaitingApproval: boolean
+  focused?: boolean
+}
+
+/**
+ * A clickable chip for one of the other concurrently running blueprints.
+ * Amber + pulse when that run is parked at a gate needing the user.
+ */
+function SiblingRunChip({
+  run,
+  onFocus
+}: {
+  run: SiblingRun
+  onFocus: (blueprintId: string) => void
+}): JSX.Element {
+  const label = run.title ?? run.blueprintId.slice(0, 8)
+  const phase = run.currentPhase ? run.currentPhase.replace('-', ' ') : 'running'
+  return (
+    <button
+      type="button"
+      data-testid={`sibling-run-chip-${run.blueprintId}`}
+      onClick={() => onFocus(run.blueprintId)}
+      title={`${label} — ${phase}${run.awaitingApproval ? ' (awaiting approval)' : ''} — click to focus`}
+      className={`inline-flex items-center gap-1.5 px-2 py-1 text-[11px] font-medium rounded-md border transition-colors flex-shrink-0 max-w-[180px] ${
+        run.awaitingApproval
+          ? 'bg-warning/15 text-warning border-warning/40 animate-pulse'
+          : run.focused
+            ? 'bg-accent/15 text-accent border-accent/30'
+            : 'bg-surface-inset text-text-muted border-border-subtle hover:bg-surface-hover hover:text-text-secondary'
+      }`}
+    >
+      {run.awaitingApproval && <Zap size={11} className="flex-shrink-0" />}
+      <span className="truncate">{label}</span>
+      <span className="text-[10px] opacity-70">{phase}</span>
+    </button>
+  )
+}
+
 // ── Props ──
 
 export interface BlueprintRunHeaderProps {
@@ -99,6 +144,9 @@ export interface BlueprintRunHeaderProps {
   activeTab: 'execution' | 'deliverables'
   onTabChange: (tab: 'execution' | 'deliverables') => void
   hasCompletedPhases: boolean
+  /** Parallel runs — sibling chips (cap 3), focused one highlighted. */
+  siblingRuns?: SiblingRun[]
+  onFocusRun?: (blueprintId: string) => void
 }
 
 export function BlueprintRunHeader({
@@ -122,7 +170,9 @@ export function BlueprintRunHeader({
   onCancel,
   activeTab,
   onTabChange,
-  hasCompletedPhases
+  hasCompletedPhases,
+  siblingRuns = [],
+  onFocusRun
 }: BlueprintRunHeaderProps): JSX.Element {
   // Live-ticking total elapsed
   const [now, setNow] = useState(Date.now())
@@ -199,6 +249,13 @@ export function BlueprintRunHeader({
 
         {/* Depth — what "verified" is going to mean when this run ends */}
         <VerificationDepthBadge settingsJson={settingsJson} className="flex-shrink-0" />
+
+        {/* Sibling runs (parallel runs) — up to 3 chips, amber when awaiting approval */}
+        {siblingRuns.length > 0 &&
+          onFocusRun &&
+          siblingRuns.slice(0, 3).map((run) => (
+            <SiblingRunChip key={run.blueprintId} run={run} onFocus={onFocusRun} />
+          ))}
 
         {/* Title */}
         {blueprintTitle && (

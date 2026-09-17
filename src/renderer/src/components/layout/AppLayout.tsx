@@ -40,7 +40,7 @@ import {
   useIndexingStore
 } from '@renderer/store'
 import { useSettingsStore } from '@renderer/store/settings.store'
-import { useBlueprintStore } from '@renderer/store/blueprint.store'
+import { useBlueprintStore, setFocusedBlueprintId } from '@renderer/store/blueprint.store'
 
 import StatusBar from './StatusBar'
 import {
@@ -325,7 +325,10 @@ export default function AppLayout(): React.JSX.Element {
   }, [guardedSetSidebarView, guardedSetTab])
 
   const handleSwitchToWorkspaceBlueprint = useCallback(
-    async (workspaceId: string) => {
+    async (blueprintId: string, workspaceId: string) => {
+      // PARALLEL-RUNS: switching from the runs dropdown focuses the target run
+      // (same or cross workspace) before navigating.
+      setFocusedBlueprintId(blueprintId)
       await openWorkspace(workspaceId)
       setSidebarView('settings')
       setWorkspaceSettingsTab('blueprints')

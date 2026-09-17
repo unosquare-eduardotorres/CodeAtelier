@@ -95,7 +95,7 @@ export class BlueprintReviewService extends EventEmitter {
 
     try {
       // 1. Pipeline + DB state
-      blueprintService.markPipelineRunning(workspaceId, blueprintId, 'review')
+      blueprintService.markPipelineRunning(blueprintId, 'review', workspaceId)
 
       reviewPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'review')
       if (reviewPhase) {
@@ -192,7 +192,7 @@ export class BlueprintReviewService extends EventEmitter {
         timeoutId = setTimeout(() => reject(new Error('REVIEW phase timeout')), PHASE_TIMEOUT_MS)
       })
 
-      const abortSignal = blueprintService.getAbortSignal(workspaceId)
+      const abortSignal = blueprintService.getAbortSignal(blueprintId)
       // BP-ABORT-TOCTOU-02: Attach listener BEFORE checking aborted status to
       // close the race window where the signal fires between check and addEventListener.
       const abortPromise = new Promise<void>((_, reject) => {
@@ -309,13 +309,13 @@ export class BlueprintReviewService extends EventEmitter {
 
       // 11. Emit approval gate — human must approve before BUILD
       // Drive state machine: phase-running → awaiting-approval
-      const machine = blueprintService.getMachine(workspaceId)
+      const machine = blueprintService.getMachine(blueprintId)
       machine.transition('approvalNeeded')
       endedAtGate = true
 
       const planSummary = this.buildApprovalSummary(completion ?? null)
       // M2: Track approval state for snapshot sync
-      blueprintService.setPendingApproval(workspaceId, {
+      blueprintService.setPendingApproval(blueprintId, {
         blueprintId,
         planSummary,
         completion: completion ? (completion as Record<string, unknown>) : undefined,
@@ -380,7 +380,7 @@ export class BlueprintReviewService extends EventEmitter {
 
       // M5: Use failPipeline to properly transition machine to 'failed' state
       const errorMsg = err instanceof Error ? err.message : String(err)
-      blueprintService.failPipeline(workspaceId, errorMsg)
+      blueprintService.failPipeline(blueprintId, errorMsg)
 
       // BP-RETRY-CONTEXT: Save structured retry context for next attempt
       try {
@@ -415,8 +415,7 @@ export class BlueprintReviewService extends EventEmitter {
       // C1 FIX: keepGate — the SM is already at awaiting-approval; the pipeline
       // fields still clear + snapshot still publishes, but no phaseComplete fires.
       blueprintService.markPipelineStopped(
-        workspaceId,
-        endedAtGate ? { keepGate: true } : undefined
+        blueprintId,endedAtGate ? { keepGate: true } : undefined
       )
     }
   }

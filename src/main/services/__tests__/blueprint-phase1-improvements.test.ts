@@ -685,14 +685,14 @@ if (!gitAvailable || !dbContext) {
 
         // The failure scenario every caller produces: phase ran, failed, and
         // the finally block calls markPipelineStopped BEFORE the timer fires.
-        blueprintService.markPipelineRunning(ws.id, bpIdHolder.id, 'specify')
+        blueprintService.markPipelineRunning(bpIdHolder.id, 'specify', ws.id)
         // Simulate the failure the caller persists BEFORE scheduling:
         blueprintRepository.updateStatus(bpIdHolder.id, 'failed')
         const phaseRow = blueprintPhaseRepository
           .findByBlueprint(bpIdHolder.id)
           .find((p) => p.phase === 'specify')
         if (phaseRow) blueprintPhaseRepository.updateStatus(phaseRow.id, 'failed')
-        blueprintService.markPipelineStopped(ws.id) // ← the finally-block call that nulled blueprintId pre-fix
+        blueprintService.markPipelineStopped(bpIdHolder.id) // ← the finally-block call (pre-fix: nulled identity)
 
         return blueprintService.scheduleAutoRetry({
           blueprintId: bpIdHolder.id,
@@ -753,9 +753,9 @@ if (!gitAvailable || !dbContext) {
         const bp = blueprintService.create({ workspaceId: ws.id, title: 'E12 superseded' })
         bpIdHolder.id = bp.id
 
-        blueprintService.markPipelineRunning(ws.id, bpIdHolder.id, 'specify')
+        blueprintService.markPipelineRunning(bpIdHolder.id, 'specify', ws.id)
         blueprintRepository.updateStatus(bpIdHolder.id, 'failed')
-        blueprintService.markPipelineStopped(ws.id)
+        blueprintService.markPipelineStopped(bpIdHolder.id)
 
         const ok = blueprintService.scheduleAutoRetry({
           blueprintId: bpIdHolder.id,
@@ -767,12 +767,16 @@ if (!gitAvailable || !dbContext) {
           error: 'ECONNRESET socket hang up'
         })
 
-        // A different blueprint starts on the workspace while the retry pends
-        // (inside the same synchronous window, so the clamped timer cannot fire
-        // between schedule and bump — the generation check is exercised exactly).
+        // A NEW RUN of the SAME blueprint starts while the retry pends (inside
+        // the same synchronous window, so the clamped timer cannot fire between
+        // schedule and bump — the generation check is exercised exactly).
+        // PARALLEL-RUNS: generations are per-blueprint now — a sibling
+        // blueprint's run does NOT supersede this one's retry, so the bump must
+        // come from re-running the same blueprint.
         const bp2 = blueprintService.create({ workspaceId: ws.id, title: 'E12 other' })
-        blueprintService.markPipelineRunning(ws.id, bp2.id, 'plan')
-        blueprintService.markPipelineStopped(ws.id)
+        void bp2
+        blueprintService.markPipelineRunning(bpIdHolder.id, 'plan', ws.id)
+        blueprintService.markPipelineStopped(bpIdHolder.id)
         return ok
       })
       assert.equal(scheduled, true, 'a retryable error must schedule')

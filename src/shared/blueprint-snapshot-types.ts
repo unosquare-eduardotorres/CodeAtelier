@@ -28,6 +28,8 @@ export interface BlueprintPipelineSnapshot {
   seq: number
   workspaceId: string
   blueprintId: string | null
+  /** Blueprint title at publish time — lets the runs dropdown/chips label a run without a blueprint fetch. */
+  blueprintTitle: string | null
   running: boolean
   machineState: BlueprintMachineState
   currentPhase: BlueprintPhaseType | null

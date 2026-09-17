@@ -19,7 +19,7 @@ import { parseBlueprintPlan, parseBlueprintTasks } from '../../shared/blueprint-
 import { memoryEngineService } from '../services/memory-engine.service'
 import { setManagedDocsRoot } from '../services/blueprint-document-loader'
 // M6: Wire-once pattern — listeners registered once in registerBlueprintIpc, no TTL cleanup needed
-import { blueprintService } from '../services/blueprint.service'
+import { blueprintService, BlueprintService } from '../services/blueprint.service'
 import { blueprintSpecService } from '../services/blueprint-spec.service'
 import { blueprintPlanService } from '../services/blueprint-plan.service'
 import { blueprintTasksService } from '../services/blueprint-tasks.service'
@@ -72,6 +72,18 @@ import {
 } from '../services/blueprint-track'
 
 const bpLog = log.scope('blueprint-ipc')
+
+/**
+ * PARALLEL-RUNS: admission for re-entry paths (retry/resume/advance). A
+ * blueprint already holding a slot (gate-parked, remediation window) re-enters
+ * its own slot without counting against the cap.
+ */
+function assertRunCapUnlessHeld(blueprintId: string): void {
+  const admission = blueprintService.admitRunUnlessHeld(blueprintId)
+  if (!admission.ok) {
+    throw new Error(BlueprintService.runCapErrorMessage())
+  }
+}
 
 /**
  * Repository-backed sources for the Testability Ledger, shared by the Markdown
@@ -594,6 +606,9 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, ch)
     const blueprintId = requireString(args, 'blueprintId', ch)
     const phase = requireString(args, 'phase', ch) as BlueprintPhaseType
+    // PARALLEL-RUNS: rewind re-enters the blueprint's own held slot (rejected
+    // gate → plan); exempt when held, otherwise needs a free slot.
+    assertRunCapUnlessHeld(blueprintId)
     blueprintService.rewindToPhase(blueprintId, phase)
     return { rewound: true }
   })
@@ -643,10 +658,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     // Ask before firing: the re-derivation is non-blocking, so a refusal that
     // happened inside it would be invisible to the renderer and leave the
     // Accept button spinning on a gate that is going nowhere.
-    const blocked = blueprintPlanRevisionService.acceptBlockedReason(
-      blueprintId,
-      blueprint.workspaceId
-    )
+    const blocked = blueprintPlanRevisionService.acceptBlockedReason(blueprintId)
     if (blocked) return { accepted: false as const, error: blocked }
 
     // Non-blocking: TASKS → REVIEW is minutes of work and the renderer follows
@@ -801,7 +813,7 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       if (blueprint) {
         // G9: If preflight had blockers, persist preflightOverride in settingsJson
         // so remediation/retry paths inherit the override
-        const pendingApproval = blueprintService.getPendingApproval(blueprint.workspaceId)
+        const pendingApproval = blueprintService.getPendingApproval(blueprintId)
         if (pendingApproval?.preflight) {
           const pfResult = pendingApproval.preflight.result as Record<string, unknown>
           if (pfResult.hasBlockers) {
@@ -818,8 +830,8 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
         }
 
         // M2: Clear approval state before machine transition (snapshot publishes on transition)
-        blueprintService.setPendingApproval(blueprint.workspaceId, null)
-        const machine = blueprintService.getMachine(blueprint.workspaceId)
+        blueprintService.setPendingApproval(blueprintId, null)
+        const machine = blueprintService.getMachine(blueprintId)
         machine.transition('approvalResponded')
       }
 
@@ -868,8 +880,8 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       const rejBlueprint = blueprintService.getBlueprint(blueprintId)
       if (rejBlueprint) {
         // M2: Clear approval state
-        blueprintService.setPendingApproval(rejBlueprint.workspaceId, null)
-        const machine = blueprintService.getMachine(rejBlueprint.workspaceId)
+        blueprintService.setPendingApproval(blueprintId, null)
+        const machine = blueprintService.getMachine(blueprintId)
         machine.transition('approvalResponded')
       }
       blueprintService.rewindToPhase(blueprintId, 'plan')
@@ -954,9 +966,9 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     }
 
     // Update pending approval with new preflight data
-    const pendingApproval = blueprintService.getPendingApproval(workspaceId)
+    const pendingApproval = blueprintService.getPendingApproval(blueprintId)
     if (pendingApproval) {
-      blueprintService.setPendingApproval(workspaceId, {
+      blueprintService.setPendingApproval(blueprintId, {
         ...pendingApproval,
         preflight: { result: result as unknown as Record<string, unknown>, overridden: false }
       })
@@ -1158,6 +1170,30 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       throw new Error(`Blueprint not found: ${blueprintId}`)
     }
 
+    // PARALLEL-RUNS: global cap — 4th concurrent run is a hard error (no queue).
+    // Re-entering a draft the user re-starts is NOT exempt: startSpecify always
+    // begins a fresh run from idle.
+    const admission = blueprintService.admitRun()
+    if (!admission.ok) {
+      const message = BlueprintService.runCapErrorMessage()
+      // Toast even if the user is elsewhere — the click failure alone is
+      // invisible when the blueprint page isn't focused.
+      try {
+        notificationService.dispatch({
+          workspaceId,
+          workspaceName: resolveWorkspaceName(workspaceId),
+          service: 'blueprint',
+          status: 'failed',
+          summary: message,
+          targetPage: 'blueprints',
+          entityId: blueprintId
+        })
+      } catch {
+        /* non-fatal */
+      }
+      throw new Error(message)
+    }
+
     // Extract grill decisions and reference documents from settings (validated)
     const grillDecisions = extractGrillDecisions(
       blueprint.settingsJson as Record<string, unknown> | null
@@ -1205,6 +1241,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     if (!workspace) {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
+
+    // PARALLEL-RUNS: mid-pipeline start — exempt when this blueprint already
+    // holds a slot (gate advance), otherwise needs a free slot under the cap.
+    assertRunCapUnlessHeld(blueprintId)
 
     // Start the CLARIFY phase (non-blocking)
     blueprintSpecService
@@ -1301,6 +1341,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
 
+    // PARALLEL-RUNS: mid-pipeline start — exempt when this blueprint already
+    // holds a slot (gate advance), otherwise needs a free slot under the cap.
+    assertRunCapUnlessHeld(blueprintId)
+
     // Start the PLAN phase (non-blocking)
     blueprintPlanService
       .startPlanPhase({
@@ -1332,6 +1376,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     if (!workspace) {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
+
+    // PARALLEL-RUNS: mid-pipeline start — exempt when this blueprint already
+    // holds a slot (gate advance), otherwise needs a free slot under the cap.
+    assertRunCapUnlessHeld(blueprintId)
 
     // Start the TASKS phase (non-blocking)
     blueprintTasksService
@@ -1365,6 +1413,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
 
+    // PARALLEL-RUNS: mid-pipeline start — exempt when this blueprint already
+    // holds a slot (gate advance), otherwise needs a free slot under the cap.
+    assertRunCapUnlessHeld(blueprintId)
+
     // Start the REVIEW phase (non-blocking)
     blueprintReviewService
       .startReviewPhase({
@@ -1396,6 +1448,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     if (!workspace) {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
+
+    // PARALLEL-RUNS: mid-pipeline start — exempt when this blueprint already
+    // holds a slot (gate advance), otherwise needs a free slot under the cap.
+    assertRunCapUnlessHeld(blueprintId)
 
     // Start the BUILD phase (non-blocking)
     blueprintBuildService
@@ -1429,6 +1485,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
       throw new Error(`Workspace not found: ${workspaceId}`)
     }
 
+    // PARALLEL-RUNS: mid-pipeline start — exempt when this blueprint already
+    // holds a slot (gate advance), otherwise needs a free slot under the cap.
+    assertRunCapUnlessHeld(blueprintId)
+
     // Start the VERIFY phase (non-blocking)
     blueprintVerifyService
       .startVerifyPhase({
@@ -1451,6 +1511,10 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const args = requireObject(rawArgs, ch)
     const blueprintId = requireString(args, 'blueprintId', ch)
     const workspaceId = requireString(args, 'workspaceId', ch)
+
+    // PARALLEL-RUNS: retry/resume re-enters this blueprint's own held slot
+    // when parked at a gate; a fresh retry of a failed run needs a free slot.
+    assertRunCapUnlessHeld(blueprintId)
 
     // retryPhase resets the failed phase → pending and returns the phase type
     const { phase } = blueprintService.retryPhase(blueprintId)
@@ -1633,7 +1697,18 @@ export function registerBlueprintIpc(_mainWindow: BrowserWindow): void {
     const ch = IPC_CHANNELS.BLUEPRINT_GET_SNAPSHOT
     const args = requireObject(rawArgs, ch)
     const workspaceId = requireString(args, 'workspaceId', ch)
-    return blueprintService.getSnapshot(workspaceId)
+    // PARALLEL-RUNS: with multiple runs per workspace, the renderer seeds the
+    // ACTIVE (focused) run's snapshot — the first running blueprint in the
+    // workspace. The full set comes from BLUEPRINT_GET_RUNNING_SNAPSHOTS.
+    const activeId = blueprintService.getActiveBlueprintId(workspaceId)
+    return blueprintService.getSnapshot(activeId ?? workspaceId)
+  })
+
+  // ── PARALLEL-RUNS: blueprint:getRunningSnapshots — every held slot, app-wide ──
+
+  ipcMain.handle(IPC_CHANNELS.BLUEPRINT_GET_RUNNING_SNAPSHOTS, (event) => {
+    validateSender(event)
+    return blueprintService.getRunningSnapshots()
   })
 
   // ── Stale blueprint detection on registration ──
@@ -2460,29 +2535,14 @@ function wireOnceEventForwarding(): void {
         return
       }
 
-      // BP-REMEDIATION-PIPELINE-GUARD: If the pipeline is occupied, decide
-      // based on WHICH blueprint owns it.
-      if (blueprintService.isRunning(workspaceId)) {
-        // Same blueprint already running (e.g. user clicked Resume during the
-        // dispatch window) → skip silently. Do NOT mark it failed while it runs.
-        if (blueprintService.getActiveBlueprintId(workspaceId) === blueprintId) {
-          bpLog.info(
-            `[remediation] Blueprint ${blueprintId} already running — skipping duplicate dispatch`
-          )
-          return
-        }
-        // A DIFFERENT blueprint took the pipeline → mark this one failed
-        bpLog.warn(
-          `[remediation] Pipeline occupied for workspace ${workspaceId} — ` +
-            `cannot dispatch remediation build for blueprint ${blueprintId}. Marking failed.`
+      // BP-REMEDIATION-PIPELINE-GUARD: Re-dispatching remediation on THIS
+      // blueprint is exempt from the cap (it re-enters its own slot). A
+      // DIFFERENT blueprint holding a slot elsewhere in the workspace is fine
+      // now (parallel runs) — the only conflict is THIS blueprint mid-run.
+      if (blueprintService.isRunning(blueprintId)) {
+        bpLog.info(
+          `[remediation] Blueprint ${blueprintId} already running — skipping duplicate dispatch`
         )
-        // Reset orphaned phase statuses from remediation setup
-        // (verify set build='active', verify='pending' before releasing the pipeline)
-        const buildPhase = blueprintPhaseRepository.findByBlueprintAndPhase(blueprintId, 'build')
-        if (buildPhase?.status === 'active') {
-          blueprintPhaseRepository.updateStatus(buildPhase.id, 'failed')
-        }
-        blueprintRepository.updateStatus(blueprintId, 'failed')
         return
       }
 
