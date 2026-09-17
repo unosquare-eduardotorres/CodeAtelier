@@ -501,9 +501,11 @@ export function useAppIpcListeners(): void {
       for (const data of batch) handleMessageChunk(data as MessageChunkPayload, chatActions)
     })
     const unsubChunk = window.api.onMessageChunk((data) => consumer.push(data))
-    const unsubComplete = window.api.onMessageComplete((data) =>
+    const unsubComplete = window.api.onMessageComplete((data) => {
+      // Chunks sent before completion may still be waiting for a frame.
+      consumer.drain()
       handleMessageComplete(data, chatActions.finalizeStream)
-    )
+    })
     const unsubAskQuestion = window.api.onAskQuestion((data) => {
       // MULTI-CHAT-01: Only show ask-user cards for the active conversation.
       // Without this guard, an ask_user from conversation A appears in conversation B.

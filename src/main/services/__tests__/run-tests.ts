@@ -481,6 +481,7 @@ const TEST_FILES: string[] = [
   // ─── F9: completed build lanes snapshot-and-release ───
   '../../../renderer/src/store/__tests__/blueprint-lane-finalize.test',
   '../../../renderer/src/hooks/__tests__/background-stream-routing.test',
+  '../../../renderer/src/hooks/__tests__/chunk-consumer-drain.test',
   '../../../renderer/src/store/__tests__/update-snooze.test',
   '../../../renderer/src/store/__tests__/bootstrap-snapshot-patch.test',
   '../../../renderer/src/components/workspace/memory/bootstrap/__tests__/detail-line.test',

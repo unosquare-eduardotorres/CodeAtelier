@@ -752,6 +752,7 @@ const SERVICE_TEST_FILES: string[] = [
   // ─── F9: completed build lanes snapshot-and-release ───
   '../../renderer/src/store/__tests__/blueprint-lane-finalize.test',
   '../../renderer/src/hooks/__tests__/background-stream-routing.test',
+  '../../renderer/src/hooks/__tests__/chunk-consumer-drain.test',
   '../../renderer/src/store/__tests__/update-snooze.test',
   '../../renderer/src/utils/__tests__/lucide-icon-by-name.test',
   '../../renderer/src/lib/__tests__/permission-routing.test',

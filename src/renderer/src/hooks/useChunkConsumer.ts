@@ -70,6 +70,22 @@ export class ChunkConsumer {
     }
   }
 
+  /**
+   * Process every queued chunk now instead of on the next frame.
+   *
+   * Call before handling any event that must observe all chunks sent ahead of
+   * it (stream completion). Completion bypasses this queue, so when frames are
+   * starved — a backgrounded window or a heavy render — it would otherwise
+   * finalize a truncated message and let the leftover chunks open a new
+   * streaming bubble that never completes.
+   */
+  drain(): void {
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId)
+    }
+    this.flush()
+  }
+
   /** Clean up: cancel pending rAF and clear queue. */
   destroy(): void {
     if (this.rafId !== null) {
